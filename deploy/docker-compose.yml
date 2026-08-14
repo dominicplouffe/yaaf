@@ -1,0 +1,84 @@
+# yaaf — single-box deployment. This IS the primary target: agent runs are
+# I/O-bound on someone else's inference, so rate limits arrive long before
+# worker capacity does. Extra worker machines are a deploy choice, not an
+# architecture change.
+#
+# Host prerequisite (sibling-container workspace mounts need identical
+# host/container paths):
+#   sudo mkdir -p /var/lib/yaaf/workspaces /var/lib/yaaf/artifacts
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: yaaf
+      POSTGRES_PASSWORD: yaaf
+      POSTGRES_DB: yaaf
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U yaaf"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    command: yaaf-server
+    environment:
+      YAAF_DATABASE_URL: postgresql+psycopg://yaaf:yaaf@db:5432/yaaf
+      YAAF_ADMIN_TOKEN: ${YAAF_ADMIN_TOKEN:-dev-admin-token}
+      YAAF_MASTER_KEY: ${YAAF_MASTER_KEY:-}
+      YAAF_API_BASE_URL: http://api:8080
+      YAAF_ARTIFACTS_ROOT: /var/lib/yaaf/artifacts
+    volumes:
+      - /var/lib/yaaf/artifacts:/var/lib/yaaf/artifacts
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [default, sandbox]
+
+  runner:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    command: yaaf-runner
+    environment:
+      YAAF_DATABASE_URL: postgresql+psycopg://yaaf:yaaf@db:5432/yaaf
+      YAAF_API_BASE_URL: http://api:8080
+      YAAF_MASTER_KEY: ${YAAF_MASTER_KEY:-}
+      YAAF_SANDBOX_IMAGE: yaaf-sandbox:latest
+      YAAF_SANDBOX_NETWORK: yaaf_sandbox
+      YAAF_EGRESS_PROXY_URL: http://proxy:3128
+      YAAF_WORKSPACES_ROOT: /var/lib/yaaf/workspaces
+    volumes:
+      # The runner launches sibling sandbox containers.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Host path == container path, so sibling mounts resolve identically.
+      - /var/lib/yaaf/workspaces:/var/lib/yaaf/workspaces
+    depends_on:
+      db:
+        condition: service_healthy
+
+  proxy:
+    image: ubuntu/squid:latest
+    # The image's default entrypoint exits silently with a custom config;
+    # run the daemon in foreground explicitly.
+    command: ["squid", "--foreground", "-f", "/etc/squid/squid.conf"]
+    volumes:
+      - ./proxy/squid.conf:/etc/squid/squid.conf:ro
+      - ./proxy/allowlist.txt:/etc/squid/allowlist.txt:ro
+    networks: [default, sandbox]
+
+networks:
+  default: {}
+  sandbox:
+    name: yaaf_sandbox
+    internal: true   # sandbox containers reach the world ONLY through the proxy
+
+volumes:
+  pgdata: {}

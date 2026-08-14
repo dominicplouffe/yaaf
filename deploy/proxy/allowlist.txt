@@ -1,0 +1,7 @@
+# One dstdomain per line. A leading dot allows subdomains.
+# Platform requirements (the Agent SDK's CLI talks to Anthropic):
+.anthropic.com
+.claude.ai
+.claude.com
+# Add per-project/role domains below and HUP the proxy container:
+#   docker kill --signal=HUP <proxy-container>
