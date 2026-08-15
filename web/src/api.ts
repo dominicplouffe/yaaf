@@ -60,6 +60,27 @@ export const get = <T = unknown>(path: string) => api<T>("GET", path);
 export const post = <T = unknown>(path: string, body?: unknown) => api<T>("POST", path, body);
 export const patch = <T = unknown>(path: string, body?: unknown) => api<T>("PATCH", path, body);
 
+/** GET an endpoint that returns plain text (run traces) — no JSON parsing. */
+export async function getText(path: string): Promise<string> {
+  const response = await fetch(path, {
+    headers: getToken() ? { Authorization: `Bearer ${getToken()}` } : {},
+  });
+  if (!response.ok) {
+    if (response.status === 401) {
+      clearToken();
+      if (!location.hash.startsWith("#/login")) location.hash = "#/login";
+    }
+    let detail = `HTTP ${response.status}`;
+    try {
+      detail = String((JSON.parse(await response.text()) as { detail?: string }).detail ?? detail);
+    } catch {
+      /* not a JSON error body */
+    }
+    throw new ApiError(response.status, detail);
+  }
+  return response.text();
+}
+
 // ── shared shapes (mirrors the observe/admin API) ──────────────────────────────
 
 export interface ProjectSummary {
@@ -85,6 +106,11 @@ export interface Dashboard {
   drought_active: boolean;
   runs: { running: number; queued: number };
   pending_approvals: number;
+  ceo_judgment: {
+    tasks_created: number;
+    tasks_with_verified_external: number;
+    conversion: number | null;
+  };
   constitution: Record<string, unknown>;
   config: Record<string, unknown>;
   billing_secret_id: string | null;
@@ -134,8 +160,19 @@ export interface RunRow {
   cost_usd: number | null;
   refusals: number;
   summary: string | null;
+  has_trace: boolean;
   started_at: string | null;
   finished_at: string | null;
+}
+
+export interface AmendmentRow {
+  id: string;
+  reason: string;
+  changes: Record<string, unknown>;
+  status: "pending" | "applied" | "cancelled";
+  proposed_at: string;
+  effective_at: string;
+  disclosed: boolean;
 }
 
 export interface ApprovalRow {

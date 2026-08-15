@@ -7,7 +7,8 @@ interface SpotAudit {
     description: string; source_url: string | null }[];
   completed_tasks: { id: string; title: string;
     success_test: { type: string; command?: string; target?: string };
-    evidence: string | null; check_output: string | null }[];
+    evidence: string | null; check_output: string | null;
+    audit_status: string | null; audit_note: string | null }[];
 }
 
 function verifyBadge(verification: string) {
@@ -48,6 +49,12 @@ export default function EvidenceTab({ projectId }: { projectId: string }) {
     const note = prompt(ok ? "Audit note (optional):" : "Why does this fail your audit?") ?? "";
     await post(`/admin/evidence/${id}/audit`, { ok, note });
     reloadEvidence();
+    if (audit) runSpotAudit();
+  }
+
+  async function auditTask(id: string, ok: boolean) {
+    const note = prompt(ok ? "Audit note (optional):" : "Why does this fail your audit?") ?? "";
+    await post(`/admin/tasks/${id}/audit`, { ok, note });
     if (audit) runSpotAudit();
   }
 
@@ -195,6 +202,11 @@ export default function EvidenceTab({ projectId }: { projectId: string }) {
             <div className="card" key={task.id}>
               <div className="pill-row">
                 <span className="badge accent">completed task</span>
+                {task.audit_status && (
+                  <span className={`badge ${task.audit_status === "passed" ? "good" : "critical"}`}>
+                    audit: {task.audit_status}
+                  </span>
+                )}
               </div>
               <strong>{task.title}</strong>
               <dl className="kv" style={{ marginTop: 8 }}>
@@ -212,7 +224,21 @@ export default function EvidenceTab({ projectId }: { projectId: string }) {
                     </dd>
                   </>
                 )}
+                {task.audit_note && (
+                  <>
+                    <dt>audit note</dt>
+                    <dd>{task.audit_note}</dd>
+                  </>
+                )}
               </dl>
+              <div className="actions">
+                <button className="small" onClick={() => auditTask(task.id, true)}>
+                  ✓ passes audit
+                </button>
+                <button className="small danger" onClick={() => auditTask(task.id, false)}>
+                  ✕ fails
+                </button>
+              </div>
             </div>
           ))}
         </div>

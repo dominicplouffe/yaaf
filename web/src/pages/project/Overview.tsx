@@ -144,7 +144,23 @@ export default function Overview({ projectId, dash }: { projectId: string; dash:
           <div className="value">{dash.pending_approvals}</div>
           <div className="sub">expire to DENY</div>
         </div>
+        <div className="tile">
+          <div className="label">CEO judgment</div>
+          <div className="value">
+            {dash.ceo_judgment.conversion === null
+              ? "—"
+              : `${Math.round(dash.ceo_judgment.conversion * 100)}%`}
+          </div>
+          <div className="sub">
+            {dash.ceo_judgment.tasks_with_verified_external} / {dash.ceo_judgment.tasks_created}{" "}
+            bets converted
+          </div>
+        </div>
       </div>
+      <p className="subtitle">
+        CEO judgment is the share of the CEO's bets (top-level tasks) that ever produced verified
+        external evidence — the CEO-quality signal, and an M2 rubric input.
+      </p>
 
       <BudgetMeter dash={dash} />
 

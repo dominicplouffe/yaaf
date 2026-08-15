@@ -1,6 +1,7 @@
 import { NavLink, Route, Routes, useParams } from "react-router-dom";
 import { Dashboard, get, post } from "../api";
 import { usePoll } from "../hooks";
+import { useProjectLive } from "../ws";
 import { statusBadge } from "./Projects";
 import Overview from "./project/Overview";
 import Boardroom from "./project/Boardroom";
@@ -28,6 +29,10 @@ export default function ProjectPage() {
     () => get<Dashboard>(`/observe/projects/${projectId}`),
     6000,
   );
+  // Latency hint over the 6s poll above: a change stamp on the socket pulls
+  // the same reload forward. The poll stays — it is the source of truth, and
+  // the UI works identically (just staler) if the socket never connects.
+  useProjectLive(projectId, reload);
 
   async function lifecycle(action: "start" | "pause" | "stop") {
     const reason =

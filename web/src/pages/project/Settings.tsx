@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Dashboard, get, patch, post, RoleSummary } from "../../api";
+import { AmendmentRow, Dashboard, get, patch, post, RoleSummary } from "../../api";
+import { fmtWhen, usePoll } from "../../hooks";
 
 interface SecretRow {
   id: string;
@@ -10,6 +11,15 @@ interface SecretRow {
 
 function envVarName(name: string): string {
   return name.replace(/[^A-Za-z0-9]+/g, "_").replace(/^_+|_+$/g, "").toUpperCase();
+}
+
+function amendmentBadge(status: AmendmentRow["status"]) {
+  const cls = status === "applied" ? "good" : status === "pending" ? "warn" : "";
+  return <span className={`badge ${cls}`}>{status}</span>;
+}
+
+function hoursUntil(iso: string): number {
+  return Math.max(0, Math.ceil((new Date(iso).getTime() - Date.now()) / 3_600_000));
 }
 
 interface StoredSecret {
@@ -208,6 +218,10 @@ export default function Settings({
 
   const [amendReason, setAmendReason] = useState("");
   const [amendChanges, setAmendChanges] = useState('{\n  "queue_ceiling": 8\n}');
+  const { data: amendments, reload: reloadAmendments } = usePoll(
+    () => get<AmendmentRow[]>(`/admin/projects/${projectId}/amendments`),
+    10000,
+  );
 
   const [secrets, setSecrets] = useState<SecretRow[]>([]);
   useEffect(() => {
@@ -485,12 +499,71 @@ export default function Settings({
                   reason: amendReason,
                   changes,
                 });
+                setAmendReason("");
+                reloadAmendments();
               }, "Amendment proposed — in force after the cooling-off, then disclosed to the CEO.")
             }
           >
             Propose amendment
           </button>
         </div>
+
+        {amendments && amendments.length > 0 && (
+          <>
+            <label className="field">Amendments proposed so far</label>
+            <table>
+              <thead>
+                <tr>
+                  <th>Status</th>
+                  <th style={{ width: "28%" }}>Reason</th>
+                  <th style={{ width: "30%" }}>Changes</th>
+                  <th>Effective</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {amendments.map((amendment) => (
+                  <tr key={amendment.id}>
+                    <td>
+                      {amendmentBadge(amendment.status)}
+                      {amendment.disclosed && <div className="help">disclosed to CEO</div>}
+                    </td>
+                    <td>{amendment.reason}</td>
+                    <td>
+                      <pre className="block" style={{ margin: 0 }}>
+                        {JSON.stringify(amendment.changes, null, 1)}
+                      </pre>
+                    </td>
+                    <td className="mono">
+                      {fmtWhen(amendment.effective_at)}
+                      {amendment.status === "pending" && (
+                        <div className="help">takes effect in {hoursUntil(amendment.effective_at)}h</div>
+                      )}
+                    </td>
+                    <td>
+                      {amendment.status === "pending" && (
+                        <button
+                          className="small danger"
+                          disabled={busy}
+                          onClick={() => {
+                            if (!confirm("Cancel this amendment? Its changes will never take effect."))
+                              return;
+                            act(async () => {
+                              await post(`/admin/amendments/${amendment.id}/cancel`);
+                              reloadAmendments();
+                            }, "Amendment cancelled — the constitution stays as it is.");
+                          }}
+                        >
+                          cancel
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>
+        )}
       </div>
     </>
   );

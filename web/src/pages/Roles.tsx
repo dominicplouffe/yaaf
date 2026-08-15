@@ -10,8 +10,15 @@ interface RoleDetail {
   system_prompt: string;
   model: string;
   effort: string;
-  tool_permissions: Record<string, boolean>;
+  // Booleans for the sandbox tools plus egress_allow: string[] — unknown keys
+  // are preserved verbatim on save (the proxy generator reads this dict too).
+  tool_permissions: Record<string, unknown>;
   secret_scopes: string[];
+}
+
+function egressLines(perms: Record<string, unknown>): string {
+  const list = perms["egress_allow"];
+  return Array.isArray(list) ? list.join("\n") : "";
 }
 
 const EMPTY: RoleDetail = {
@@ -32,6 +39,9 @@ export default function Roles() {
   const [editing, setEditing] = useState<RoleDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
+  // Raw textarea text for the egress list — kept separate so blank lines
+  // survive typing; the parsed domains live in tool_permissions.egress_allow.
+  const [egressText, setEgressText] = useState("");
 
   function refresh() {
     get<RoleSummary[]>("/admin/roles").then(setRoles).catch((e: Error) => setError(e.message));
@@ -41,7 +51,9 @@ export default function Roles() {
   async function openRole(slug: string) {
     setSaved(null);
     try {
-      setEditing(await get<RoleDetail>(`/admin/roles/${slug}`));
+      const detail = await get<RoleDetail>(`/admin/roles/${slug}`);
+      setEditing(detail);
+      setEgressText(egressLines(detail.tool_permissions));
     } catch (e) {
       setError((e as Error).message);
     }
@@ -110,7 +122,7 @@ export default function Roles() {
             </tbody>
           </table>
           <div className="actions">
-            <button onClick={() => { setSaved(null); setEditing({ ...EMPTY }); }}>+ New role</button>
+            <button onClick={() => { setSaved(null); setEditing({ ...EMPTY }); setEgressText(""); }}>+ New role</button>
           </div>
         </div>
 
@@ -202,6 +214,30 @@ export default function Roles() {
                 </label>
               ))}
             </div>
+            <label className="field">
+              Egress allowlist — one domain per line; blank = role uses the global allowlist
+            </label>
+            <textarea
+              className="mono"
+              style={{ minHeight: 70 }}
+              value={egressText}
+              placeholder={"api.wordpress.com\nen.wikipedia.org"}
+              onChange={(e) => {
+                setEgressText(e.target.value);
+                const domains = e.target.value
+                  .split("\n")
+                  .map((line) => line.trim())
+                  .filter(Boolean);
+                const next = { ...perms };
+                if (domains.length) next["egress_allow"] = domains;
+                else delete next["egress_allow"];
+                setEditing({ ...editing, tool_permissions: next });
+              }}
+            />
+            <p className="help" style={{ margin: "4px 0 0" }}>
+              Per-role egress scoping, enforced by the proxy config generator — this role's
+              sandboxes can reach only these hosts, whatever the global list allows.
+            </p>
             <label className="field">Secret scopes (comma-separated names this role may receive)</label>
             <input
               value={editing.secret_scopes.join(", ")}
