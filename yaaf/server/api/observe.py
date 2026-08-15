@@ -31,6 +31,7 @@ from yaaf.core.models import (
     Role,
     RoleVersion,
     Run,
+    RunKind,
     RunQueue,
     Secret,
     Suggestion,
@@ -39,8 +40,9 @@ from yaaf.core.models import (
     Team,
     utcnow,
 )
-from yaaf.server import policy
+from yaaf.server import policy, typing_state
 from yaaf.server.deps import admin_auth, db
+from yaaf.server.dispatcher import chat_session_live
 
 router = APIRouter(dependencies=[Depends(admin_auth)])
 
@@ -84,9 +86,12 @@ def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
     open_tasks = policy.open_top_level_tasks(session, project.id)
     window = utcnow() - timedelta(hours=cons.drought_hours)
     evidence_count = policy.countable_external_evidence(session, project.id, window)
+    # The resident chat session is presence, not work — counting it here would
+    # pin "working" indicators on forever. It surfaces as chat_live instead.
     running = session.execute(
         select(func.count(Run.id)).where(
-            Run.project_id == project.id, Run.status == "running"
+            Run.project_id == project.id, Run.status == "running",
+            Run.kind != RunKind.CHAT_SESSION,
         )
     ).scalar_one()
     queued = session.execute(
@@ -113,6 +118,7 @@ def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
         "external_evidence_in_window": evidence_count,
         "drought_active": policy.drought_active(session, project.id, cons),
         "runs": {"running": running, "queued": queued},
+        "chat_live": chat_session_live(session, project),
         "pending_approvals": pending_approvals,
         "ceo_judgment": policy.ceo_judgment(session, project.id),
         "constitution": cons.model_dump(),
@@ -215,11 +221,30 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
     # Slack: config present implies its secrets exist.
     slack = config.get("slack") or {}
     if slack:
-        missing = [slack.get(k) for k in ("bot_token_secret", "signing_secret")
+        missing = [slack.get(k) for k in ("bot_token_secret", "signing_secret",
+                                          "app_token_secret")
                    if slack.get(k) and slack.get(k) not in secrets_by_name]
+        detail = "Slack bridge configured"
+        if slack.get("app_token_secret") and not missing:
+            detail = "Slack bridge configured; socket mode on — chat from Slack works"
         add("slack", "fail" if missing else "ok",
             ("Slack config references missing secret(s): " + ", ".join(missing))
-            if missing else "Slack bridge configured", "settings")
+            if missing else detail, "settings")
+
+    # The chat lane: a running project with billing should have its CEO chat
+    # session live (the supervisor restarts it within seconds; a persistent
+    # absence means the runner is down or the session is boot-looping).
+    chat_on = ((project.config or {}).get("chat") or {}).get("enabled", True)
+    if project.status == "running" and project.billing_secret_id is not None and chat_on:
+        if chat_session_live(session, project):
+            add("chat", "ok", "CEO chat session is live — the boardroom answers "
+                "in seconds", None)
+        else:
+            add("chat", "warn",
+                "CEO chat session is not live — boardroom replies fall back to "
+                "queued runs (minutes). It starts within seconds of the runner "
+                "seeing the project; if this persists, check the runner's logs.",
+                "runs")
 
     # Connectors: controlled GitHub accounts registered but webhooks unprovisioned.
     if any(str(d).startswith("github:") for d in (project.controlled_domains or [])) \
@@ -289,6 +314,13 @@ def channels(project_id: str, session: Session = Depends(db)) -> list[dict]:
             select(Channel).where(Channel.project_id == project.id)
         ).scalars()
     ]
+
+
+@router.get("/channels/{channel_id}/typing")
+def channel_typing(channel_id: str) -> dict:
+    """Ephemeral presence for the chat UI — true while the CEO's chat session
+    is composing a reply. In-memory, self-expiring, never stored."""
+    return {"typing": typing_state.is_typing(channel_id)}
 
 
 @router.get("/channels/{channel_id}/messages")

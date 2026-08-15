@@ -44,7 +44,7 @@ from yaaf.core.models import (
     VerificationStatus,
     utcnow,
 )
-from yaaf.server import policy
+from yaaf.server import policy, typing_state
 from yaaf.server.deps import RunContext, db, run_auth
 from yaaf.server.policy import Refusal
 
@@ -441,6 +441,64 @@ def post_message(
     session.add(message)
     notify(session, WAKE_CHANNEL, ctx.project.id)
     return {"id": message.id, "at": message.created_at.isoformat() if message.created_at else None}
+
+
+# ── chat lane ───────────────────────────────────────────────────────────────────
+
+
+class TypingIn(BaseModel):
+    channel_id: str
+    seconds: float = Field(default=15.0, ge=0, le=120)
+
+
+@router.post("/typing")
+def set_typing(
+    body: TypingIn, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
+) -> dict:
+    """Presence, not state: the chat session flips this on while composing a
+    reply so the boardroom can show "typing…". Expires by itself."""
+    channel = session.get(Channel, body.channel_id)
+    if channel is None or channel.id not in policy.agent_channel_ids(session, ctx.agent):
+        raise Refusal("Not a member of that channel.", status_code=403)
+    typing_state.set_typing(channel.id, body.seconds)
+    return {"ok": True}
+
+
+class ChatUsage(BaseModel):
+    tokens_in: int = Field(ge=0)
+    tokens_out: int = Field(ge=0)
+    cost_usd: float | None = Field(default=None, ge=0)
+
+
+@router.post("/chat_usage")
+def book_chat_usage(
+    body: ChatUsage, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
+) -> dict:
+    """Per-turn metering for the resident chat session. Ordinary runs meter at
+    finalize; a chat session may live for days, so each turn books immediately —
+    the monthly budget gates see chat spend the moment it happens."""
+    if ctx.run.kind != RunKind.CHAT_SESSION:
+        raise Refusal("Only a chat session books usage this way; runs are metered "
+                      "at finalize.", status_code=403)
+    ctx.run.tokens_in += body.tokens_in
+    ctx.run.tokens_out += body.tokens_out
+    # Tokens always; dollars only when dollars move (see runner.finalize).
+    subscription = ctx.project.billing_mode == "subscription"
+    usd = None if subscription else body.cost_usd
+    if usd is not None:
+        ctx.run.cost_usd = (ctx.run.cost_usd or 0.0) + usd
+    if body.tokens_in or body.tokens_out or usd:
+        session.add(LedgerEntry(
+            id=ids.new_id(ids.LEDGER),
+            project_id=ctx.project.id,
+            kind="model_usage",
+            tokens_in=body.tokens_in,
+            tokens_out=body.tokens_out,
+            usd=usd,
+            run_id=ctx.run.id,
+            note="chat_session turn" + (" (subscription: tokens only)" if subscription else ""),
+        ))
+    return {"ok": True}
 
 
 # ── memory ──────────────────────────────────────────────────────────────────────

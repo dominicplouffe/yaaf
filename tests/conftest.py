@@ -108,7 +108,7 @@ def agent_by_name(project: dict, name: str) -> str:
     raise KeyError(name)
 
 
-def live_token(project_id: str, agent_id: str) -> tuple[str, str]:
+def live_token(project_id: str, agent_id: str, kind: str = "agent_run") -> tuple[str, str]:
     """Mint a real running run + token for an agent, exactly as the runner would."""
     plaintext, token_hash = mint()
     with db_session() as session:
@@ -116,7 +116,7 @@ def live_token(project_id: str, agent_id: str) -> tuple[str, str]:
             id=ids.new_id(ids.RUN),
             project_id=project_id,
             agent_id=agent_id,
-            kind="agent_run",
+            kind=kind,
             trigger={"type": "test"},
             status=RunStatus.RUNNING,
             token_hash=token_hash,

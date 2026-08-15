@@ -384,6 +384,9 @@ async def main() -> int:
         cwd="/workspace",
         setting_sources=[],
         max_turns=100,
+        # A big MCP tool result (a real data pull) overflows the SDK's default
+        # 1MB transport buffer and kills the run; seen live on audit data.
+        max_buffer_size=16 * 1024 * 1024,
     )
     prompt = (
         "Here is your context for this run (trigger, unread messages, notices, board, and "

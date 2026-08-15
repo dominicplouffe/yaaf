@@ -138,6 +138,67 @@ def run_agent_container(
             container.remove(force=True)
 
 
+# ── the chat lane ───────────────────────────────────────────────────────────────
+
+# Chat containers are found by label, not by handle: the supervisor must
+# re-adopt a session that outlived a runner restart.
+CHAT_LABEL = "yaaf.chat.project"
+
+
+def start_chat_container(*, project_id: str, name: str, workspace_dir: str,
+                         env: dict[str, str], proxy_url: str | None = None,
+                         memory: str = "2g") -> str:
+    """Launch the resident chat entrypoint, detached; returns the container id.
+    Same image, mounts, network, and limits as an agent run — the talk lane
+    gets no extra privileges, only a different entrypoint and no timeout."""
+    import docker
+
+    client = docker.from_env()
+    for stale in client.containers.list(all=True, filters={"name": name}):
+        with contextlib.suppress(Exception):
+            stale.remove(force=True)
+    container = client.containers.run(
+        settings().sandbox_image,
+        command=["python3", "/opt/yaaf/chat_entry.py"],
+        name=name,
+        labels={CHAT_LABEL: project_id},
+        environment={**_proxy_env(proxy_url), **env},
+        volumes={workspace_dir: {"bind": "/workspace", "mode": "rw"}},
+        working_dir="/workspace",
+        network=settings().sandbox_network,
+        mem_limit=memory,
+        nano_cpus=2_000_000_000,
+        security_opt=["no-new-privileges"],
+        detach=True,
+    )
+    return str(container.id)
+
+
+def chat_container_running(project_id: str) -> bool:
+    import docker
+
+    client = docker.from_env()
+    return bool(client.containers.list(filters={"label": f"{CHAT_LABEL}={project_id}"}))
+
+
+def stop_chat_container(project_id: str) -> str:
+    """Stop and remove the project's chat container(s); returns the last logs
+    for the session run's summary."""
+    import docker
+
+    client = docker.from_env()
+    logs = ""
+    for container in client.containers.list(
+        all=True, filters={"label": f"{CHAT_LABEL}={project_id}"}
+    ):
+        logs = _container_logs(container)
+        with contextlib.suppress(Exception):
+            container.stop(timeout=5)
+        with contextlib.suppress(Exception):
+            container.remove(force=True)
+    return logs
+
+
 def _container_logs(container) -> str:
     with contextlib.suppress(Exception):
         return container.logs(stdout=True, stderr=True, tail=1000).decode(errors="replace")[-16000:]

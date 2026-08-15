@@ -21,12 +21,19 @@ export default function Boardroom({ projectId, dash }: { projectId: string; dash
       channelId
         ? get<MessageRow[]>(`/observe/channels/${channelId}/messages?limit=200`)
         : Promise.resolve([] as MessageRow[]),
-    4000,
+    dash.chat_live ? 2000 : 4000,
+  );
+  const { data: typing } = usePoll(
+    () =>
+      channelId && dash.chat_live
+        ? get<{ typing: boolean }>(`/observe/channels/${channelId}/typing`)
+        : Promise.resolve({ typing: false }),
+    2000,
   );
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages?.length]);
+  }, [messages?.length, typing?.typing]);
 
   async function send() {
     if (!draft.trim()) return;
@@ -43,19 +50,19 @@ export default function Boardroom({ projectId, dash }: { projectId: string; dash
   return (
     <>
       <p className="subtitle">
-        Your only speaking channel. The CEO wakes within seconds of a message here. Don't ask
-        questions it's authorized to decide — give direction, and decide approvals.
+        Your only speaking channel. Don't ask questions the CEO is authorized to decide —
+        give direction, and decide approvals.
       </p>
-      {/* "Nothing is happening" is the most common false alarm in a new
-          project: the CEO's first planning run takes minutes and only replies
-          when it finishes. Say so while anything is in flight. */}
-      {dash.runs.running > 0 ? (
+      {/* With a live chat session the boardroom IS a chat: the typing dots
+          below carry presence. The wait-explainer banners only matter in
+          fallback mode, when replies ride the run queue. */}
+      {!dash.chat_live && dash.runs.running > 0 ? (
         <div className="notice-box working">
           <span className="working-dot" aria-hidden="true" />
           The CEO is working — {dash.runs.running === 1 ? "a run is" : `${dash.runs.running} runs are`} in
           flight. Replies land here when its run finishes; first planning runs take a few minutes.
         </div>
-      ) : dash.runs.queued > 0 ? (
+      ) : !dash.chat_live && dash.runs.queued > 0 ? (
         <div className="notice-box working">
           <span className="working-dot" aria-hidden="true" />
           The CEO is waking up — a run is queued to start.
@@ -73,6 +80,16 @@ export default function Boardroom({ projectId, dash }: { projectId: string; dash
         ))}
         {messages && messages.length === 0 && (
           <p className="help">Nothing yet. Open with the goal, constraints, and how you want to work.</p>
+        )}
+        {typing?.typing && (
+          <div className="msg typing" aria-label="The CEO is typing">
+            <div className="who">CEO</div>
+            <div className="body">
+              <span className="typing-dot" />
+              <span className="typing-dot" />
+              <span className="typing-dot" />
+            </div>
+          </div>
         )}
         <div ref={endRef} />
       </div>

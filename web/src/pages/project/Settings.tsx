@@ -83,6 +83,7 @@ function RoleChecks({
 interface SlackConfig {
   bot_token_secret: string;
   signing_secret: string;
+  app_token_secret?: string;
   chairman_slack_user: string;
   channel_map: Record<string, string>;
 }
@@ -102,6 +103,7 @@ function SlackBridge({
   const [org, setOrg] = useState<OrgView | null>(null);
   const [botToken, setBotToken] = useState("");
   const [signingSecret, setSigningSecret] = useState("");
+  const [appToken, setAppToken] = useState("");
   const [chairmanUser, setChairmanUser] = useState(existing?.chairman_slack_user ?? "");
   const [channels, setChannels] = useState<Record<string, string>>(existing?.channel_map ?? {});
 
@@ -159,6 +161,14 @@ function SlackBridge({
           <input type="password" value={signingSecret} placeholder="from Basic Information"
                  onChange={(e) => setSigningSecret(e.target.value)} />
         </div>
+        <div>
+          <label className="field">
+            App token (xapp-…) — chat from Slack, no public URL needed
+            {existing?.app_token_secret ? " — blank keeps current" : ""}
+          </label>
+          <input type="password" value={appToken} placeholder="xapp-… (enables Socket Mode)"
+                 onChange={(e) => setAppToken(e.target.value)} />
+        </div>
       </div>
       <div className="row">
         <div>
@@ -193,17 +203,24 @@ function SlackBridge({
                 await post("/admin/secrets", { project_id: projectId, name: "slack-signing",
                   value: signingSecret.trim(), role_scopes: [], kind: "service" });
               }
+              if (appToken.trim()) {
+                await post("/admin/secrets", { project_id: projectId, name: "slack-app",
+                  value: appToken.trim(), role_scopes: [], kind: "service" });
+              }
+              const socketMode = appToken.trim() !== "" || !!existing?.app_token_secret;
               await patch(`/admin/projects/${projectId}`, {
                 config: { slack: {
                   bot_token_secret: "slack-bot",
                   signing_secret: "slack-signing",
+                  ...(socketMode ? { app_token_secret: "slack-app" } : {}),
                   chairman_slack_user: chairmanUser.trim(),
                   channel_map: Object.fromEntries(mapped.map(([k, v]) => [k, v.trim()])),
                 }},
               });
               setBotToken("");
               setSigningSecret("");
-            }, "Slack connected. Mapped channels start mirroring within one janitor tick (~15s).")
+              setAppToken("");
+            }, "Slack connected. Mirroring starts within seconds.")
           }
         >
           {existing ? "Update bridge" : "Connect Slack"}
@@ -225,10 +242,12 @@ function SlackBridge({
         )}
       </div>
       <p className="help">
-        Inbound (optional): in the Slack app, enable Event Subscriptions for the bot event
-        `message.channels` with request URL <code>{eventsUrl}</code> — Slack requires this to be
-        reachable over public HTTPS (a tunnel like cloudflared works). Skip it and the mirror
-        still runs; you just reply from the boardroom here instead.
+        To chat from Slack: in the Slack app, enable <b>Socket Mode</b> (Settings → Socket
+        Mode), create an app-level token with the `connections:write` scope, paste it above,
+        and subscribe the bot to the `message.channels` event. Your messages in the mapped
+        boardroom channel reach the CEO instantly and its replies mirror back — no public
+        URL, no tunnel. The Event Subscriptions request URL <code>{eventsUrl}</code> remains
+        the alternative for boxes that are publicly reachable.
       </p>
     </>
   );

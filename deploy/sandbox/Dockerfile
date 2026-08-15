@@ -15,5 +15,6 @@ ENV PATH="/opt/venv/bin:${PATH}"
 # Non-root: the workspace mount is the only writable surface that matters.
 RUN useradd -m -u 10001 agent
 COPY yaaf/runner/sandbox_entry.py /opt/yaaf/sandbox_entry.py
+COPY yaaf/runner/chat_entry.py /opt/yaaf/chat_entry.py
 USER agent
 WORKDIR /workspace

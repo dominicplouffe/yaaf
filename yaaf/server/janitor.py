@@ -39,6 +39,7 @@ from yaaf.core.models import (
     Project,
     ProjectStatus,
     Run,
+    RunKind,
     RunQueue,
     RunStatus,
     Task,
@@ -47,7 +48,6 @@ from yaaf.core.models import (
 )
 from yaaf.server import policy
 from yaaf.server.notify import chairman_notify
-from yaaf.server.slack.bridge import mirror_once
 from yaaf.server.verifier import verify_pending_evidence
 
 log = logging.getLogger("yaaf.janitor")
@@ -87,12 +87,8 @@ def janitor_once(session: Session) -> None:
         release_dead_claims(session, project, cons)
         warn_drought(session, project, cons)
     verify_pending_evidence(session)
-    # The Slack bridge is best-effort transport over a canonical bus; a Slack
-    # outage must never fail an enforcement tick.
-    try:
-        mirror_once(session)
-    except Exception:
-        log.warning("slack mirror failed this tick; retrying next tick", exc_info=True)
+    # Slack mirroring moved to its own 2s loop (slack.socket.fast_mirror_loop):
+    # chat-grade latency, and no double-post race with an enforcement tick.
 
 
 def _notice_ceo(session: Session, project: Project, kind: str, body: str) -> None:
@@ -130,7 +126,9 @@ def reap_stale_runs(session: Session, project: Project, cons: ConstitutionDoc) -
                 (
                     (Run.heartbeat_at.is_(None) & (Run.created_at <= cutoff))
                     | (Run.heartbeat_at <= cutoff)
-                    | (Run.started_at <= hard_cutoff)
+                    # Chat sessions are resident by design: a long life is
+                    # normal, only a stale heartbeat means death.
+                    | ((Run.started_at <= hard_cutoff) & (Run.kind != RunKind.CHAT_SESSION))
                 ),
             )
         ).scalars()
@@ -140,7 +138,9 @@ def reap_stale_runs(session: Session, project: Project, cons: ConstitutionDoc) -
         run.token_revoked = True
         run.finished_at = now
         _release_claims_of_run(session, run.id, "run reaped: lease expired")
-        if run.agent_id is not None:
+        if run.agent_id is not None and run.kind != RunKind.CHAT_SESSION:
+            # A dead chat session is restarted quietly by its supervisor — a
+            # "your run died, re-check your work" notice would only confuse.
             _notice_agent(
                 session, project, run.agent_id, NoticeKind.AGENT_RUN_REAPED,
                 f"Your previous run {run.id} died mid-flight and was reaped. Any task it "

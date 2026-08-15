@@ -167,8 +167,15 @@ tests/          invariant suite that attacks every rule over HTTP, chaos
 docs/PLAN.md    the founding plan, kill conditions included
 ```
 
+Talking to your CEO is a **chat, not a ticket queue**: every running project
+keeps a resident CEO conversation session, so the Boardroom answers in
+seconds — typing indicator and all — and the same session answers you in
+Slack. Background work still runs through the governed queue; chatting never
+consumes its caps.
+
 Integrations, all optional, all configured from the dashboard: **Slack**
-(mirror your company's channels; reply to the CEO from Slack), **GitHub**
+(chat with your CEO from Slack via Socket Mode — no public URL needed — and
+mirror your company's channels), **GitHub**
 (private repo per project as the agents' workspace; repo events become
 verified evidence), **external MCP servers** as one-form data sources —
 name, URL, roles, Save; the URL is validated at the door, egress and the

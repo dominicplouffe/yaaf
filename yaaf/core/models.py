@@ -138,6 +138,11 @@ class RunStatus(enum.StrEnum):
 class RunKind(enum.StrEnum):
     AGENT_RUN = "agent_run"
     SUCCESS_CHECK = "success_check"  # platform executes a command-type success test
+    # The talk lane: a resident CEO conversation session, supervised by the
+    # runner outside the run queue. Exempt from wake/concurrency/daily caps —
+    # chat is not work — but it authenticates, meters, heartbeats, and revokes
+    # exactly like a run.
+    CHAT_SESSION = "chat_session"
 
 
 class ApprovalKind(enum.StrEnum):

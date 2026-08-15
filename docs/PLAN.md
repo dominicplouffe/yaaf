@@ -228,6 +228,22 @@ squid image's bash entrypoint — no reload ever landed), and scoped role ports
 now keep the global-allowlist floor (without it a scoped role was cut off
 from the model API itself).
 
+**Also (2026-08-15, evening): the chat lane (chairman's call — "I should not
+have to wait my turn").** Every running project keeps a resident CEO chat
+session: a long-lived sandbox container (same image, egress, billing, tools,
+and server-side refusals as a run) supervised by the runner outside the run
+queue. It polls the boardroom as the CEO and answers in seconds; reading
+advances the CEO's cursor and a live session suppresses boardroom message
+wakes, so one message gets exactly one reply, with queued runs as the
+fallback within a lease TTL. Recorded as Run kind `chat_session` (auth,
+revocation, per-turn ledger metering via `/agent/chat_usage`), exempt from
+wake/daily/concurrency caps, quiet-reaped, restart-backstopped. Slack Socket
+Mode (app token in the Settings Slack card) feeds the same lane with no
+public URL, with a 2s outbound mirror loop replacing the janitor-tick mirror.
+Web Boardroom is a real chat: typing indicator, chat-aware banners,
+`dash.chat_live`. Also fixed live: Agent SDK 1MB transport buffer overflow
+on large MCP results (now 16MB in both entrypoints).
+
 **M6 (Proxmox fleet): NOT STARTED** — still demoted, on demonstrated need.
 
 **Open items:** golden-transcript evals before role editing counts as safe; M2

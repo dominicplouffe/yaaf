@@ -32,6 +32,7 @@ from yaaf.core.models import (
     AgentKind,
     AgentStatus,
     Channel,
+    ChannelKind,
     ChannelRead,
     Heartbeat,
     Message,
@@ -85,9 +86,12 @@ def _dispatch_project(session: Session, project: Project, cons: ConstitutionDoc)
     now = utcnow()
 
     # Per-project daily ceiling: runs created today, queued or historical.
+    # Chat sessions are the talk lane, not work — they never count against
+    # the ceilings this function enforces.
     day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     today = session.execute(
         select(func.count(Run.id)).where(Run.project_id == project.id,
+                                         Run.kind != RunKind.CHAT_SESSION,
                                          Run.created_at >= day_start)
     ).scalar_one()
     today += session.execute(
@@ -101,6 +105,7 @@ def _dispatch_project(session: Session, project: Project, cons: ConstitutionDoc)
     max_concurrent = int(project.config.get("max_concurrent_runs", DEFAULT_MAX_CONCURRENT_RUNS))
     in_flight = session.execute(
         select(func.count(Run.id)).where(Run.project_id == project.id,
+                                         Run.kind != RunKind.CHAT_SESSION,
                                          Run.status == RunStatus.RUNNING)
     ).scalar_one()
     in_flight += session.execute(
@@ -145,8 +150,11 @@ def _agent_busy(session: Session, agent: Agent) -> bool:
     ).scalar_one()
     if queued:
         return True
+    # A resident chat session is not "busy": the CEO must stay wakeable for
+    # work while it holds a conversation.
     running = session.execute(
         select(func.count(Run.id)).where(Run.agent_id == agent.id,
+                                         Run.kind != RunKind.CHAT_SESSION,
                                          Run.status == RunStatus.RUNNING)
     ).scalar_one()
     return bool(running)
@@ -156,6 +164,7 @@ def _wakes_last_hour(session: Session, agent: Agent) -> int:
     hour_ago = utcnow() - timedelta(hours=1)
     n = session.execute(
         select(func.count(Run.id)).where(Run.agent_id == agent.id,
+                                         Run.kind != RunKind.CHAT_SESSION,
                                          Run.created_at >= hour_ago)
     ).scalar_one()
     n += session.execute(
@@ -172,15 +181,42 @@ def _primary_task(reasons: list[dict]) -> str | None:
     return None
 
 
+def chat_session_live(session: Session, project: Project) -> bool:
+    """A resident chat session with a fresh heartbeat. While one is live, the
+    boardroom is the chat lane's to answer; if it dies, message wakes resume as
+    the fallback within one lease TTL."""
+    cutoff = utcnow() - timedelta(seconds=settings().lease_ttl_s)
+    return bool(session.execute(
+        select(func.count(Run.id)).where(Run.project_id == project.id,
+                                         Run.kind == RunKind.CHAT_SESSION,
+                                         Run.status == RunStatus.RUNNING,
+                                         Run.heartbeat_at >= cutoff)
+    ).scalar_one())
+
+
 def _wake_reasons(
     session: Session, project: Project, cons: ConstitutionDoc, agent: Agent
 ) -> list[dict]:
     reasons: list[dict] = []
     now = utcnow()
 
+    # The chat lane answers the chairman in seconds; a work run for the same
+    # message would produce a second, minutes-late reply. Boardroom messages
+    # stop being a wake reason for the CEO while its chat session is live.
+    skip_channels: set[str] = set()
+    if agent.kind == AgentKind.CEO and chat_session_live(session, project):
+        skip_channels = {
+            c.id for c in session.execute(
+                select(Channel).where(Channel.project_id == project.id,
+                                      Channel.kind == ChannelKind.BOARDROOM)
+            ).scalars()
+        }
+
     # 1. Unread messages — with the pair circuit-breaker standing between a
     #    ping-pong thread and yet another wake.
     for channel_id in policy.agent_channel_ids(session, agent):
+        if channel_id in skip_channels:
+            continue
         cursor = session.execute(
             select(ChannelRead).where(ChannelRead.agent_id == agent.id,
                                       ChannelRead.channel_id == channel_id)

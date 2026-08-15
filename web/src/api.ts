@@ -106,6 +106,9 @@ export interface Dashboard {
   external_evidence_in_window: number;
   drought_active: boolean;
   runs: { running: number; queued: number };
+  /** True while the resident CEO chat session is live — boardroom replies
+      arrive in seconds instead of via queued runs. */
+  chat_live: boolean;
   pending_approvals: number;
   ceo_judgment: {
     tasks_created: number;

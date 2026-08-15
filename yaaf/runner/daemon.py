@@ -54,10 +54,14 @@ MAX_PARALLEL = 4
 
 
 def main() -> None:  # pragma: no cover - process entrypoint
+    # Imported here, not at module top: chat imports this module's helpers.
+    from yaaf.runner.chat import chat_supervisor_loop
+
     logging.basicConfig(level=logging.INFO)
     pool = ThreadPoolExecutor(max_workers=MAX_PARALLEL)
     log.info("runner %s starting", settings().worker_name)
     threading.Thread(target=_egress_watch_loop, daemon=True).start()
+    threading.Thread(target=chat_supervisor_loop, daemon=True).start()
     while True:
         leased = lease_and_prepare(limit=MAX_PARALLEL)
         for job in leased:
