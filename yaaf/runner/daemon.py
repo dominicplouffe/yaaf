@@ -405,7 +405,88 @@ def finalize(job: RunJob, result: RunResult, was_revoked: bool = False) -> None:
         if job.kind == RunKind.SUCCESS_CHECK:
             _finalize_success_check(session, job, result)
         elif run.status == RunStatus.FAILED:
+            if project is not None and _looks_like_credential_failure(run.summary):
+                _flag_credential_failure(session, project, run)
             _retry_failed_run(session, run)
+
+
+CREDENTIAL_FAILURE_MARKERS = (
+    "not logged in", "please run /login", "invalid x-api-key",
+    "authentication_error", "invalid bearer token", "oauth token has expired",
+    "credit balance is too low",
+)
+
+
+def _looks_like_credential_failure(summary: str | None) -> bool:
+    lowered = (summary or "").lower()
+    return any(marker in lowered for marker in CREDENTIAL_FAILURE_MARKERS)
+
+
+def _flag_credential_failure(session: Session, project: Project, run: Run) -> None:
+    """A dead billing credential fails every run it touches, and the scheduler
+    would happily wake agents into it forever. So: audit every occurrence,
+    chase the chairman at most once a day — and after three consecutive
+    credential-failed runs, pause the project outright, exactly like budget
+    exhaustion. A notification is not an enforcement mechanism; the pause is."""
+    from datetime import timedelta
+
+    from yaaf.core.models import AuditLog
+    from yaaf.server.notify import chairman_notify
+
+    session.add(AuditLog(
+        id=ids.new_id(ids.AUDIT), project_id=project.id, actor="runner",
+        action="billing.credential_failure", entity="run", entity_id=run.id,
+        detail={"summary": (run.summary or "")[:300]},
+    ))
+    recent = session.execute(
+        select(Run)
+        .where(Run.project_id == project.id, Run.kind == RunKind.AGENT_RUN,
+               Run.finished_at.is_not(None))
+        .order_by(Run.finished_at.desc())
+        .limit(3)
+    ).scalars().all()
+    dead = len(recent) == 3 and all(
+        r.status == RunStatus.FAILED and _looks_like_credential_failure(r.summary)
+        for r in recent
+    )
+    if dead and project.status == ProjectStatus.RUNNING:
+        project.status = ProjectStatus.PAUSED
+        project.status_reason = ("billing credential invalid: 3 consecutive runs failed "
+                                 "to authenticate")
+        for queued in session.execute(
+            select(RunQueue).where(RunQueue.project_id == project.id)
+        ).scalars():
+            session.delete(queued)
+        chairman_notify(
+            session, project, "project auto-paused: billing credential invalid",
+            "Three consecutive runs failed to authenticate ('Not logged in' / invalid "
+            "key). No run can succeed until the credential is fixed. Reconnect billing "
+            "in Settings (the 'test' button verifies it), then resume the project.",
+        )
+        log.warning("project %s auto-paused: credential failures", project.slug)
+        return
+    from sqlalchemy import func
+
+    day_ago = utcnow() - timedelta(hours=24)
+    already = session.execute(
+        select(func.count(AuditLog.id)).where(
+            AuditLog.project_id == project.id,
+            AuditLog.action == "billing.credential_notify",
+            AuditLog.at >= day_ago,
+        )
+    ).scalar_one()
+    if not already:
+        session.add(AuditLog(
+            id=ids.new_id(ids.AUDIT), project_id=project.id, actor="runner",
+            action="billing.credential_notify", entity="project", entity_id=project.id,
+            detail={},
+        ))
+        chairman_notify(
+            session, project, "a run failed to authenticate",
+            "A run failed with a credential error. If this repeats twice more, the "
+            "project will pause itself. Check Settings → billing (the 'test' button "
+            "verifies the credential without burning a run).",
+        )
 
 
 def _stash_trace(job: RunJob) -> str | None:

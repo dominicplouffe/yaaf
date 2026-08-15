@@ -410,7 +410,28 @@ export default function Settings({
         billing_secret_id: secret.id,
       });
       setCredential("");
-    }, `Billing connected: ${billingChoice} using "${name}". New runs use it immediately.`);
+      // Preflight immediately: a bad credential should be news now, not after
+      // a night of failed runs.
+      const check = await post<{ ok: boolean; detail: string }>(
+        `/admin/projects/${projectId}/billing_check`, {});
+      if (!check.ok) throw new Error(`connected, but the check failed: ${check.detail}`);
+    }, `Billing connected and verified: ${billingChoice} using "${name}". New runs use it immediately.`);
+  }
+
+  async function testBilling() {
+    setError(null);
+    setMessage(null);
+    setBusy(true);
+    try {
+      const check = await post<{ ok: boolean; detail: string }>(
+        `/admin/projects/${projectId}/billing_check`, {});
+      if (check.ok) setMessage(check.detail);
+      else setError(check.detail);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
   }
 
   const billingReady = dash.billing_secret_id !== null;
@@ -535,7 +556,11 @@ export default function Settings({
                         )}
                       </td>
                       <td>
-                        {!active && (
+                        {active ? (
+                          <button className="small" disabled={busy} onClick={testBilling}>
+                            test
+                          </button>
+                        ) : (
                           <button
                             className="small"
                             onClick={() =>

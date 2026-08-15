@@ -394,6 +394,21 @@ class ProjectPatch(BaseModel):
     config: dict | None = None
 
 
+def _billing_shape_error(mode: str, plaintext: str) -> str | None:
+    """Subscription tokens come from `claude setup-token` and start sk-ant-oat;
+    API keys start sk-ant-api. A mismatched pair fails every future run with a
+    baffling 'Not logged in' — refuse it while the human is still looking."""
+    is_oauth = plaintext.startswith("sk-ant-oat")
+    if mode == "subscription" and not is_oauth:
+        return ("that credential is not a subscription token (sk-ant-oat…). Run "
+                "`claude setup-token` and paste the result — or switch to API-key mode.")
+    if mode == "api_key" and is_oauth:
+        return ("that credential is a subscription OAuth token, not an API key "
+                "(sk-ant-api…). Paste a key from the Anthropic console — or switch "
+                "to subscription mode.")
+    return None
+
+
 @router.patch("/projects/{project_id}")
 def patch_project(project_id: str, body: ProjectPatch, session: Session = Depends(db)) -> dict:
     project = _get_project(session, project_id)
@@ -414,6 +429,15 @@ def patch_project(project_id: str, body: ProjectPatch, session: Session = Depend
             )
         project.billing_secret_id = body.billing_secret_id
         changed["billing_secret_id"] = body.billing_secret_id
+    # Validate the (mode, credential) pair whenever either side moved.
+    if (body.billing_mode is not None or body.billing_secret_id is not None) \
+            and project.billing_secret_id:
+        from yaaf.core.crypto import decrypt
+
+        attached = session.get(Secret, project.billing_secret_id)
+        shape_error = _billing_shape_error(project.billing_mode, decrypt(attached.ciphertext))
+        if shape_error:
+            raise HTTPException(status_code=422, detail=shape_error)
     if body.controlled_domains is not None:
         project.controlled_domains = body.controlled_domains
         changed["controlled_domains"] = body.controlled_domains
@@ -424,6 +448,53 @@ def patch_project(project_id: str, body: ProjectPatch, session: Session = Depend
     return {"id": project.id, "billing_mode": project.billing_mode,
             "billing_secret_id": project.billing_secret_id,
             "controlled_domains": project.controlled_domains, "config": project.config}
+
+
+@router.post("/projects/{project_id}/billing_check")
+def billing_check(project_id: str, session: Session = Depends(db)) -> dict:
+    """Preflight the active billing credential without burning an agent run.
+    API keys are verified against the live API (a free models-list call);
+    subscription tokens can only be shape-checked here — they authenticate
+    through the Claude Code CLI, which exists only inside sandboxes."""
+    import httpx
+
+    from yaaf.core.crypto import decrypt
+
+    project = _get_project(session, project_id)
+    if not project.billing_secret_id:
+        raise HTTPException(status_code=422, detail="no billing credential attached")
+    secret = session.get(Secret, project.billing_secret_id)
+    plaintext = decrypt(secret.ciphertext)
+    shape_error = _billing_shape_error(project.billing_mode, plaintext)
+    result: dict
+    if shape_error:
+        result = {"ok": False, "detail": shape_error}
+    elif project.billing_mode == "api_key":
+        try:
+            response = httpx.get(
+                "https://api.anthropic.com/v1/models",
+                headers={"x-api-key": plaintext, "anthropic-version": "2023-06-01"},
+                timeout=15,
+            )
+            if response.status_code == 200:
+                result = {"ok": True, "detail": "API key verified against the live API."}
+            elif response.status_code in (401, 403):
+                result = {"ok": False,
+                          "detail": "the API rejected this key (revoked or mistyped) — "
+                                    "paste a fresh one from the Anthropic console"}
+            else:
+                result = {"ok": False,
+                          "detail": f"unexpected API response ({response.status_code}); "
+                                    "try again shortly"}
+        except httpx.HTTPError as exc:
+            result = {"ok": False, "detail": f"could not reach the API: {exc.__class__.__name__}"}
+    else:
+        result = {"ok": True,
+                  "detail": "token has the right shape (sk-ant-oat…); full validation "
+                            "happens on the first run — expired tokens surface there"}
+    _audit(session, project.id, "billing.check", "project", project.id,
+           {"ok": result["ok"]})
+    return result
 
 
 @router.post("/projects/{project_id}/start")
