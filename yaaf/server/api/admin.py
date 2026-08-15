@@ -385,6 +385,26 @@ def add_team(project_id: str, body: TeamSpec, session: Session = Depends(db)) ->
             "agents": [{"id": a.id, "name": a.name} for a in agents]}
 
 
+@router.post("/teams/{team_id}/repin")
+def repin_team(team_id: str, session: Session = Depends(db)) -> dict:
+    """Adopt the latest version of the team's role. Teams pin their role
+    version at creation so an edited prompt never changes running agents
+    behind the chairman's back; this is the chairman explicitly adopting it —
+    the golden evals are the gate on the edit itself."""
+    team = session.get(Team, team_id)
+    if team is None:
+        raise HTTPException(status_code=404, detail="unknown team")
+    current = session.get(RoleVersion, team.role_version_id)
+    role = session.get(Role, current.role_id)
+    latest = _latest_role_version(session, role.slug)
+    if latest.id == team.role_version_id:
+        return {"team_id": team.id, "changed": False, "version": latest.version}
+    team.role_version_id = latest.id
+    _audit(session, team.project_id, "team.repin", "team", team.id,
+           {"role": role.slug, "from_version": current.version, "to_version": latest.version})
+    return {"team_id": team.id, "changed": True, "version": latest.version}
+
+
 class ProjectPatch(BaseModel):
     billing_mode: str | None = Field(default=None, pattern="^(api_key|subscription)$")
     billing_secret_id: str | None = None

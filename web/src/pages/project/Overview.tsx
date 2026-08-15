@@ -190,6 +190,22 @@ export default function Overview({ projectId, dash }: { projectId: string; dash:
                 </span>
               ))}
             </div>
+            {/* Teams pin their role version at creation; edited roles apply
+                only when the chairman explicitly adopts them. */}
+            <div className="actions" style={{ marginTop: 8 }}>
+              <button
+                className="small"
+                onClick={async () => {
+                  const result = await post<{ changed: boolean; version: number }>(
+                    `/admin/teams/${team.id}/repin`, {});
+                  alert(result.changed
+                    ? `${team.name} now runs role version ${result.version}; effective on the next run.`
+                    : `${team.name} is already on the latest role version (${result.version}).`);
+                }}
+              >
+                adopt latest role version
+              </button>
+            </div>
           </div>
         ))}
         <AddTeam projectId={projectId} onAdded={reloadOrg} />

@@ -100,3 +100,32 @@ def test_patch_cannot_touch_constitution(client):
 
     with db_session() as session:
         assert effective(session, project["id"]).queue_ceiling == 8
+
+
+def test_team_repin_adopts_latest_role_version(client):
+    """Teams pin their role version at creation; an edited role reaches a
+    running team only when the chairman explicitly adopts it."""
+    from tests.conftest import seed_role
+    from yaaf.core.db import db_session
+    from yaaf.core.models import Agent
+    from yaaf.server.contextpack import role_version_for
+
+    project = make_project(client)
+    team_id = project["teams"][0]["id"]
+    employee_id = project["teams"][0]["agents"][0]["id"]
+
+    # A new role version is published — the pinned team must NOT see it yet.
+    seed_role(client, "worker", tool_permissions={
+        "bash": True, "mcp_servers": [{"name": "data", "url_env": "DATA_URL"}]})
+    with db_session() as session:
+        agent = session.get(Agent, employee_id)
+        assert "mcp_servers" not in (role_version_for(session, agent).tool_permissions or {})
+
+    adopted = client.post(f"/admin/teams/{team_id}/repin", headers=ADMIN).json()
+    assert adopted["changed"] is True and adopted["version"] == 2
+    with db_session() as session:
+        agent = session.get(Agent, employee_id)
+        assert role_version_for(session, agent).tool_permissions["mcp_servers"][0]["name"] == "data"
+
+    again = client.post(f"/admin/teams/{team_id}/repin", headers=ADMIN).json()
+    assert again["changed"] is False
