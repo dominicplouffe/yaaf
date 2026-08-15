@@ -284,6 +284,10 @@ def _role_secret_env(session: Session, project: Project, role_version) -> dict:
     ).scalars()
     env: dict = {}
     for secret in candidates:
+        if secret.kind == "billing":
+            continue  # belt and suspenders: the API refuses grants on billing
+            # secrets, but even a hand-edited DB row must not leak the model
+            # credential into a role's env.
         if not secret.role_scopes or role.slug not in secret.role_scopes:
             continue
         var = _env_var_name(secret.name)

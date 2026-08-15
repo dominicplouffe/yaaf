@@ -7,6 +7,7 @@ interface SecretRow {
   name: string;
   project_id: string | null;
   role_scopes: string[];
+  kind: "service" | "billing";
 }
 
 function envVarName(name: string): string {
@@ -27,6 +28,7 @@ interface StoredSecret {
   name: string;
   project_id: string | null;
   role_scopes: string[];
+  kind: "service" | "billing";
 }
 
 function RoleChecks({
@@ -65,12 +67,10 @@ function CredentialsManager({
   projectId,
   act,
   busy,
-  billingSecretId,
 }: {
   projectId: string;
   act: (fn: () => Promise<unknown>, ok: string) => Promise<void>;
   busy: boolean;
-  billingSecretId: string | null;
 }) {
   const [roles, setRoles] = useState<RoleSummary[]>([]);
   const [stored, setStored] = useState<StoredSecret[]>([]);
@@ -79,7 +79,11 @@ function CredentialsManager({
   const [grants, setGrants] = useState<string[]>([]);
 
   function refresh() {
-    get<StoredSecret[]>(`/admin/secrets?project_id=${projectId}`).then(setStored).catch(() => {});
+    // Service credentials only — billing credentials live in the billing card
+    // and can never be role-granted (the server refuses).
+    get<StoredSecret[]>(`/admin/secrets?project_id=${projectId}`)
+      .then((all) => setStored(all.filter((s) => s.kind !== "billing")))
+      .catch(() => {});
   }
   useEffect(() => {
     get<RoleSummary[]>("/admin/roles")
@@ -127,6 +131,7 @@ function CredentialsManager({
                 name: name.trim(),
                 value,
                 role_scopes: grants,
+                kind: "service",
               });
               setName("");
               setValue("");
@@ -151,14 +156,7 @@ function CredentialsManager({
           <tbody>
             {stored.map((secret) => (
               <tr key={secret.id}>
-                <td className="mono">
-                  {secret.name}
-                  {secret.id === billingSecretId && (
-                    <div>
-                      <span className="badge good">billing</span>
-                    </div>
-                  )}
-                </td>
+                <td className="mono">{secret.name}</td>
                 <td className="mono">
                   {secret.role_scopes.length ? `$${envVarName(secret.name)}` : "—"}
                 </td>
@@ -251,6 +249,7 @@ export default function Settings({
         name,
         value: credential.trim(),
         role_scopes: [],
+        kind: "billing",
       });
       await patch(`/admin/projects/${projectId}`, {
         billing_mode: billingChoice,
@@ -354,9 +353,9 @@ export default function Settings({
           </p>
         )}
 
-        {secrets.length > 0 && (
+        {secrets.filter((s) => s.kind === "billing").length > 0 && (
           <>
-            <label className="field">Stored credentials for this project</label>
+            <label className="field">Stored billing credentials for this project</label>
             <table>
               <thead>
                 <tr>
@@ -366,7 +365,10 @@ export default function Settings({
                 </tr>
               </thead>
               <tbody>
-                {secrets.map((secret) => {
+                {/* Billing kind only: service credentials (WordPress passwords,
+                    API keys for other services) can never pay for Claude — the
+                    server refuses them as billing_secret_id. */}
+                {secrets.filter((s) => s.kind === "billing").map((secret) => {
                   const active = secret.id === dash.billing_secret_id;
                   return (
                     <tr key={secret.id}>
@@ -419,7 +421,6 @@ export default function Settings({
           projectId={projectId}
           act={act}
           busy={busy}
-          billingSecretId={dash.billing_secret_id}
         />
       </div>
 

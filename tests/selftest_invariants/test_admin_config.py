@@ -13,7 +13,7 @@ def test_patch_project_config_and_billing(client):
     secret = client.post(
         "/admin/secrets",
         json={"project_id": project["id"], "name": "anthropic-api-key",
-              "value": "sk-ant-test-not-real", "role_scopes": []},
+              "value": "sk-ant-test-not-real", "role_scopes": [], "kind": "billing"},
         headers=ADMIN,
     ).json()
 

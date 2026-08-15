@@ -653,6 +653,12 @@ class Secret(Base):
     name: Mapped[str] = mapped_column(String(120))
     ciphertext: Mapped[str] = mapped_column(Text)
     role_scopes: Mapped[list] = mapped_column(JSONVariant, default=list)  # role slugs
+    # "service" (role-granted, injected under its own name) vs "billing"
+    # (attached as billing_secret_id, injected into EVERY run as the model
+    # credential). The split is a refusal, not a hint: billing secrets refuse
+    # role grants, billing_secret_id refuses service secrets — a WordPress
+    # password can never become the model credential, or vice versa.
+    kind: Mapped[str] = mapped_column(String(16), default="service")
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 

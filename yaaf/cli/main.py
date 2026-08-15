@@ -114,6 +114,8 @@ def set_secret(
     name: str,
     project: str = typer.Option(None, "--project", help="Project id/slug; omit for platform-level"),
     scopes: str = typer.Option("", "--scopes", help="Comma-separated role slugs"),
+    kind: str = typer.Option("service", "--kind",
+                             help="service (role-granted) or billing (refuses role grants)"),
 ) -> None:
     """Store an encrypted secret (value prompted, never echoed or logged)."""
     value = typer.prompt("Secret value", hide_input=True)
@@ -121,7 +123,7 @@ def set_secret(
         project_id = _resolve_project(client, project) if project else None
         _show(client.post("/admin/secrets", json={
             "project_id": project_id, "name": name, "value": value,
-            "role_scopes": [s for s in scopes.split(",") if s],
+            "role_scopes": [s for s in scopes.split(",") if s], "kind": kind,
         }))
 
 

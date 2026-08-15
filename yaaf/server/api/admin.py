@@ -405,6 +405,13 @@ def patch_project(project_id: str, body: ProjectPatch, session: Session = Depend
         secret = session.get(Secret, body.billing_secret_id)
         if secret is None or (secret.project_id not in (None, project.id)):
             raise HTTPException(status_code=422, detail="unknown secret for this project")
+        if secret.kind != "billing":
+            raise HTTPException(
+                status_code=422,
+                detail=f"'{secret.name}' is a service credential, not a billing one — "
+                       "agents cannot pay for Claude with it. Connect a billing "
+                       "credential (kind='billing') instead.",
+            )
         project.billing_secret_id = body.billing_secret_id
         changed["billing_secret_id"] = body.billing_secret_id
     if body.controlled_domains is not None:
@@ -742,6 +749,10 @@ class SecretIn(BaseModel):
     # Omit value to update role grants only — no re-pasting to change access.
     value: str | None = Field(default=None, min_length=1)
     role_scopes: list[str] = Field(default_factory=list)
+    # Fixed at creation; omit on update. "billing" credentials refuse role
+    # grants — they are injected everywhere by the billing path, so a grant
+    # would hand agents the raw model credential under a second name.
+    kind: str | None = Field(default=None, pattern="^(service|billing)$")
 
 
 @router.get("/secrets")
@@ -752,7 +763,8 @@ def list_secrets(project_id: str | None = None, session: Session = Depends(db)) 
     if project_id is not None:
         stmt = stmt.where(Secret.project_id == project_id)
     return [
-        {"id": s.id, "name": s.name, "project_id": s.project_id, "role_scopes": s.role_scopes}
+        {"id": s.id, "name": s.name, "project_id": s.project_id,
+         "role_scopes": s.role_scopes, "kind": s.kind}
         for s in session.execute(stmt.order_by(Secret.created_at)).scalars()
     ]
 
@@ -811,6 +823,18 @@ def put_secret(body: SecretIn, session: Session = Depends(db)) -> dict:
         select(Secret).where(Secret.project_id == body.project_id, Secret.name == body.name)
     ).scalar_one_or_none()
     if existing:
+        if body.kind is not None and body.kind != existing.kind:
+            raise HTTPException(
+                status_code=422,
+                detail="a secret's kind is fixed at creation — store a new secret instead",
+            )
+        if existing.kind == "billing" and body.role_scopes:
+            raise HTTPException(
+                status_code=422,
+                detail="billing credentials cannot be granted to roles: the billing path "
+                       "already injects them into every run — a grant would hand agents "
+                       "the raw model credential",
+            )
         rotated = False
         if body.value is not None:
             existing.ciphertext = encrypt(body.value)
@@ -821,14 +845,22 @@ def put_secret(body: SecretIn, session: Session = Depends(db)) -> dict:
         return {"id": existing.id, "rotated": rotated, "role_scopes": existing.role_scopes}
     if body.value is None:
         raise HTTPException(status_code=422, detail="a new secret needs a value")
+    kind = body.kind or "service"
+    if kind == "billing" and body.role_scopes:
+        raise HTTPException(
+            status_code=422,
+            detail="billing credentials cannot be granted to roles: the billing path "
+                   "already injects them into every run",
+        )
     row = Secret(
         id=ids.new_id(ids.SECRET),
         project_id=body.project_id,
         name=body.name,
         ciphertext=encrypt(body.value),
         role_scopes=body.role_scopes,
+        kind=kind,
     )
     session.add(row)
     _audit(session, body.project_id, "secret.create", "secret", row.id,
-           {"role_scopes": body.role_scopes})
-    return {"id": row.id, "rotated": False, "role_scopes": row.role_scopes}
+           {"role_scopes": body.role_scopes, "kind": kind})
+    return {"id": row.id, "rotated": False, "role_scopes": row.role_scopes, "kind": kind}
