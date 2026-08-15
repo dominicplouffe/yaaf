@@ -21,6 +21,9 @@ class RunJob:
     effort: str = "high"
     tool_permissions: dict = field(default_factory=dict)
     timeout_s: int = 1800
+    # Per-role egress: set when the role has its own scoped proxy port
+    # (yaaf/server/egress.py); None = default port + global allowlist.
+    egress_proxy_url: str | None = None
     # Injected credentials (never logged):
     api_base_url: str = ""
     api_token: str = ""            # per-run yaaf token (plaintext)

@@ -26,6 +26,12 @@ dev = [
     "pytest>=8.2",
     "ruff>=0.5",
 ]
+# S3-compatible artifact store backend (MinIO, R2, AWS). The base install
+# stays boto3-free: yaaf.core.artifacts imports it lazily, only when
+# YAAF_ARTIFACT_S3_ENDPOINT is set.
+s3 = [
+    "boto3>=1.34",
+]
 
 [project.scripts]
 yaaf = "yaaf.cli.main:app"

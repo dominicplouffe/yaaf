@@ -88,17 +88,24 @@ def run_agent_container(
     env: dict[str, str],
     timeout_s: int,
     memory: str = "2g",
+    stop_event=None,
+    proxy_url: str | None = None,
 ) -> tuple[int, str]:
     """Launch the sandbox entrypoint for an agent run; return (exit_code, logs).
     The entry script reads its inputs from /workspace/.yaaf/ and writes
-    result.json + a trace there."""
+    result.json + a trace there. If ``stop_event`` (a threading.Event) is set —
+    the run token was revoked by a kill switch, pause, or budget trip — the
+    container itself is stopped: a revoked run must stop burning tokens, not
+    just lose its API access."""
+    import time as _time
+
     import docker
 
     client = docker.from_env()
     container = client.containers.run(
         settings().sandbox_image,
         command=["python3", "/opt/yaaf/sandbox_entry.py"],
-        environment={**_proxy_env(), **env},
+        environment={**_proxy_env(proxy_url), **env},
         volumes={workspace_dir: {"bind": "/workspace", "mode": "rw"}},
         working_dir="/workspace",
         network=settings().sandbox_network,
@@ -107,22 +114,38 @@ def run_agent_container(
         security_opt=["no-new-privileges"],
         detach=True,
     )
+    deadline = _time.monotonic() + timeout_s
     try:
-        result = container.wait(timeout=timeout_s)
-        exit_code = int(result.get("StatusCode", 1))
-        logs = container.logs(stdout=True, stderr=True, tail=1000).decode(errors="replace")
-        return exit_code, logs[-16000:]
-    except Exception as exc:
-        with contextlib.suppress(Exception):
-            container.kill()
-        return 124, f"agent run killed (timeout or error): {exc!r}"
+        while True:
+            try:
+                result = container.wait(timeout=5)
+                exit_code = int(result.get("StatusCode", 1))
+                break
+            except Exception:  # wait timed out (or transient API hiccup): reassess
+                if stop_event is not None and stop_event.is_set():
+                    with contextlib.suppress(Exception):
+                        container.stop(timeout=10)
+                    logs = _container_logs(container)
+                    return 137, f"agent run stopped: token revoked\n{logs}"
+                if _time.monotonic() >= deadline:
+                    with contextlib.suppress(Exception):
+                        container.kill()
+                    logs = _container_logs(container)
+                    return 124, f"agent run killed at {timeout_s}s timeout\n{logs}"
+        return exit_code, _container_logs(container)
     finally:
         with contextlib.suppress(Exception):
             container.remove(force=True)
 
 
-def _proxy_env() -> dict[str, str]:
-    proxy = settings().egress_proxy_url
+def _container_logs(container) -> str:
+    with contextlib.suppress(Exception):
+        return container.logs(stdout=True, stderr=True, tail=1000).decode(errors="replace")[-16000:]
+    return ""
+
+
+def _proxy_env(proxy_url: str | None = None) -> dict[str, str]:
+    proxy = proxy_url or settings().egress_proxy_url
     if not proxy:
         return {}
     return {

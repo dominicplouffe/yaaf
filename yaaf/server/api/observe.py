@@ -8,11 +8,14 @@ from __future__ import annotations
 
 import random
 from datetime import timedelta
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import PlainTextResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from yaaf.core import artifacts
 from yaaf.core.constitution import effective
 from yaaf.core.models import (
     Agent,
@@ -108,6 +111,7 @@ def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
         "drought_active": policy.drought_active(session, project.id, cons),
         "runs": {"running": running, "queued": queued},
         "pending_approvals": pending_approvals,
+        "ceo_judgment": policy.ceo_judgment(session, project.id),
         "constitution": cons.model_dump(),
         "config": project.config or {},
         "billing_secret_id": project.billing_secret_id,
@@ -201,11 +205,52 @@ def runs(project_id: str, limit: int = 50, session: Session = Depends(db)) -> li
             "trigger": r.trigger, "attempt": r.attempt,
             "tokens_in": r.tokens_in, "tokens_out": r.tokens_out, "cost_usd": r.cost_usd,
             "refusals": r.refusal_count, "summary": r.summary,
+            "has_trace": r.trace_path is not None,
             "started_at": r.started_at.isoformat() if r.started_at else None,
             "finished_at": r.finished_at.isoformat() if r.finished_at else None,
         }
         for r in rows
     ]
+
+
+def _artifact_text(path_or_uri: str, missing: str) -> str:
+    """Rows written since the artifact store hold a store uri (file:// or
+    s3://); older rows hold a plain filesystem path. Serve both."""
+    try:
+        if artifacts.is_store_uri(path_or_uri):
+            data = artifacts.read_uri(path_or_uri)
+        else:  # pre-store row: a plain path on this host
+            path = Path(path_or_uri)
+            if not path.exists():
+                raise FileNotFoundError(path_or_uri)
+            data = path.read_bytes()
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=missing) from None
+    return data.decode(errors="replace")
+
+
+@router.get("/runs/{run_id}/trace")
+def run_trace(run_id: str, session: Session = Depends(db)) -> PlainTextResponse:
+    """The run's raw JSONL trace, as stashed in the artifact store at finalize."""
+    run = session.get(Run, run_id)
+    if run is None or not run.trace_path:
+        raise HTTPException(status_code=404, detail="no trace recorded for this run")
+    text = _artifact_text(run.trace_path, missing="trace not present in the artifact store")
+    return PlainTextResponse(text[-500_000:])
+
+
+@router.get("/evidence/{evidence_id}/snapshot")
+def evidence_snapshot(evidence_id: str, session: Session = Depends(db)) -> PlainTextResponse:
+    """The verifier's snapshot of the evidence source, fetched and stored at
+    verification time. The sha256 on the row is the authoritative record; this
+    is the human-readable copy for spot audits."""
+    evidence_row = session.get(Evidence, evidence_id)
+    if evidence_row is None or not evidence_row.snapshot_path:
+        raise HTTPException(status_code=404, detail="no snapshot recorded for this evidence")
+    text = _artifact_text(
+        evidence_row.snapshot_path, missing="snapshot not present in the artifact store"
+    )
+    return PlainTextResponse(text)
 
 
 @router.get("/projects/{project_id}/ledger")
@@ -331,10 +376,12 @@ def spot_audit(project_id: str, n: int = 5, session: Session = Depends(db)) -> d
         ],
         "completed_tasks": [
             {"id": t.id, "title": t.title, "success_test": t.success_test,
-             "evidence": t.completion_evidence, "check_output": t.check_output}
+             "evidence": t.completion_evidence, "check_output": t.check_output,
+             "audit_status": t.audit_status, "audit_note": t.audit_note}
             for t in sample_tasks
         ],
-        "note": "POST /admin/evidence/{id}/audit with ok=false to fail a bad sample.",
+        "note": "POST /admin/evidence/{id}/audit or /admin/tasks/{id}/audit "
+                "with ok=false to fail a bad sample.",
     }
 
 

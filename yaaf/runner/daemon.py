@@ -124,7 +124,7 @@ def _materialize(session: Session, queued: RunQueue, project: Project) -> RunJob
         attempt=queued.attempt,
         timeout_s=cons.run_timeout_s,
         api_base_url=settings().api_base_url,
-        workspace_dir=str(Path(settings().workspaces_root) / project.slug),
+        workspace_dir=_prepare_workspace(session, project),
     )
 
     if queued.kind == RunKind.SUCCESS_CHECK:
@@ -155,6 +155,7 @@ def _materialize(session: Session, queued: RunQueue, project: Project) -> RunJob
     job.model = agent.model_override or (role_version.model if role_version else "claude-sonnet-5")
     job.effort = role_version.effort if role_version else "high"
     job.tool_permissions = dict(role_version.tool_permissions) if role_version else {}
+    job.egress_proxy_url = _role_egress_url(session, role_version, job.tool_permissions)
     role_secrets = _role_secret_env(session, project, role_version)
     job.billing_env = {**_billing_env(session, project), **role_secrets}
     if role_secrets:
@@ -164,6 +165,94 @@ def _materialize(session: Session, queued: RunQueue, project: Project) -> RunJob
             "print, log, or write them to files."
         )
     return job
+
+
+def _prepare_workspace(session: Session, project: Project) -> str:
+    """The job's workspace path. GitHub-backed projects get their repo cloned
+    on first touch; after that (or on any failure) the workspace is exactly
+    the plain local dir it always was — agents own the working tree, and a
+    workspace must never hard-block a run."""
+    workspace = Path(settings().workspaces_root) / project.slug
+    if project.github_repo and not (workspace / ".git").exists():
+        _clone_workspace(session, project.github_repo, workspace)
+    workspace.mkdir(parents=True, exist_ok=True)
+    return str(workspace)
+
+
+def _clone_workspace(session: Session, full_name: str, workspace: Path) -> None:
+    """Clone with the platform "github" token, then scrub the credential from
+    the remote so nothing under .git ever holds it — agents push with their
+    own role-scoped secret. Failures log and degrade to the plain dir; log
+    lines and exceptions are kept token-free (a TimeoutExpired repr would
+    happily print the whole authenticated URL)."""
+    import subprocess
+
+    from yaaf.server import github
+
+    token = github.platform_token(session)
+    if token is None:
+        log.warning("project repo %s configured but the platform 'github' secret is "
+                    "missing; using a plain local dir", full_name)
+        return
+    workspace.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        proc = subprocess.run(
+            ["git", "clone", github.clone_url(full_name, token), str(workspace)],
+            capture_output=True, text=True, timeout=120,
+        )
+    except Exception as exc:
+        _scrub_remote(workspace, full_name)  # a killed clone may have written .git
+        log.warning("clone of %s failed (%s); using a plain local dir",
+                    full_name, type(exc).__name__)
+        return
+    if proc.returncode != 0:
+        _scrub_remote(workspace, full_name)
+        log.warning("clone of %s failed; using a plain local dir: %s", full_name,
+                    (proc.stderr or "").replace(token, "<redacted>").strip()[:500])
+        return
+    _scrub_remote(workspace, full_name)
+    log.info("cloned %s into %s", full_name, workspace)
+
+
+def _scrub_remote(workspace: Path, full_name: str) -> None:
+    """Point origin back at the credential-free URL. If even that fails, the
+    .git dir is removed outright — leaving the token behind is the one
+    unacceptable outcome."""
+    import shutil
+    import subprocess
+
+    from yaaf.server import github
+
+    if not (workspace / ".git").exists():
+        return
+    try:
+        subprocess.run(
+            ["git", "-C", str(workspace), "remote", "set-url", "origin",
+             github.public_url(full_name)],
+            capture_output=True, timeout=30, check=True,
+        )
+    except Exception:
+        shutil.rmtree(workspace / ".git", ignore_errors=True)
+        log.warning("could not scrub the clone credential for %s; dropped .git", full_name)
+
+
+def _role_egress_url(session: Session, role_version, tool_permissions: dict) -> str | None:
+    """A role with its own egress_allow talks to its own squid port (a pure
+    function of the role slug — see yaaf/server/egress.py). Everyone else uses
+    the default port and the global allowlist."""
+    if role_version is None or not tool_permissions.get("egress_allow"):
+        return None
+    from yaaf.core.models import Role
+    from yaaf.server.egress import role_port
+
+    role = session.get(Role, role_version.role_id)
+    base = settings().egress_proxy_url
+    if role is None or not base:
+        return None
+    host, _, port = base.rpartition(":")
+    if not port.isdigit():
+        host = base  # no explicit port in the configured URL
+    return f"{host}:{role_port(role.slug)}"
 
 
 def _env_var_name(secret_name: str) -> str:
@@ -236,7 +325,9 @@ def execute_job(job: RunJob, backend=None) -> RunResult:
             result = _run_success_check(job)
         else:
             backend = backend or _backend_for(job)
-            result = backend.execute(job)
+            # The revoked event reaches the sandbox layer so a kill switch,
+            # pause, or budget trip stops the container, not just its token.
+            result = backend.execute(job, stop_event=revoked)
     except Exception as exc:
         log.exception("job %s crashed in backend", job.run_id)
         result = RunResult(ok=False, summary=f"backend crashed: {exc!r}")
@@ -289,7 +380,7 @@ def finalize(job: RunJob, result: RunResult, was_revoked: bool = False) -> None:
         project = session.get(Project, job.project_id)
         subscription = project is not None and project.billing_mode == "subscription"
         run.cost_usd = None if subscription else result.cost_usd
-        run.trace_path = result.trace_path
+        run.trace_path = _stash_trace(job) or result.trace_path
         run.summary = (result.summary or "")[:4000]
 
         if result.tokens_in or result.tokens_out or run.cost_usd:
@@ -311,6 +402,22 @@ def finalize(job: RunJob, result: RunResult, was_revoked: bool = False) -> None:
             _finalize_success_check(session, job, result)
         elif run.status == RunStatus.FAILED:
             _retry_failed_run(session, run)
+
+
+def _stash_trace(job: RunJob) -> str | None:
+    """Copy the run's trace out of the (ephemeral, runner-only) workspace into
+    the artifact store, where the API can serve it. Best-effort: a missing
+    trace never fails a finalize."""
+    from yaaf.core.artifacts import store
+
+    try:
+        src = Path(job.workspace_dir) / ".yaaf" / f"trace-{job.run_id}.jsonl"
+        if not src.exists():
+            return None
+        return store().put_bytes(f"traces/{job.run_id}.jsonl", src.read_bytes())
+    except Exception:
+        log.warning("could not stash trace for %s", job.run_id, exc_info=True)
+        return None
 
 
 MAX_RUN_ATTEMPTS = 3

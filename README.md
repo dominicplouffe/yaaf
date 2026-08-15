@@ -27,28 +27,36 @@ of rules it never held.
 | Wake-loop prevention: per-agent wake caps, daily run ceiling, ping-pong thread circuit breaker, per-run refusal cap (token revoked) | dispatcher + API |
 | Idempotent side effects: recorded **before** firing; retries see the ledger | `side_effects` + context packs |
 | Stale runs are reaped; claims released; nothing double-fires | janitor leases |
-| The constitution freezes at project start; chairman amendments cool off 72h and are disclosed to the CEO | `constitutions` + `amendments` |
+| The constitution freezes at project start; chairman amendments cool off 72h (cancellable meanwhile) and are disclosed to the CEO | `constitutions` + `amendments` |
+| Revoked runs stop burning: kill switches stop the **container**, and killed runs still book their tokens | runner + usage checkpoints |
+| Connector evidence agents cannot forge (GitHub events, signed generic webhooks, Slack inbound) | HMAC-verified `/webhooks/*` |
+| Per-role egress: a role's containers can only reach that role's allowlist | squid ports generated from the role library |
 
 ## Layout
 
 ```
-yaaf/core       models, constitution, ids, tokens, crypto, db
-yaaf/server     FastAPI (agent/admin/observe APIs), policy engine,
-                dispatcher, janitor, evidence verifier, context packs
+yaaf/core       models, constitution, ids, tokens, crypto, db, artifact store
+yaaf/server     FastAPI (agent/admin/observe/webhooks APIs + WebSocket), policy
+                engine, dispatcher, janitor, evidence verifier, context packs,
+                Slack bridge, GitHub provisioning, egress generator, notifier
 yaaf/runner     lease daemon, MockModel backend, Agent SDK backend,
                 Docker sandbox + sandbox_entry (runs inside the container)
-yaaf/cli        `yaaf` — the chairman's terminal (observe + the few powers)
+yaaf/cli        `yaaf` — the chairman's terminal, incl. `yaaf experiment` (M2)
+web/            React SPA — the chairman's cockpit (served under /app)
 roles/          seed role library (CEO, engineer, researcher, writer, …)
-deploy/         docker-compose (db, api, runner, egress proxy), Dockerfiles
+evals/          golden-transcript evals (gate for role-prompt edits)
+experiments/    M2 baseline-experiment spec + runbook
+deploy/         docker-compose (db, api, runner, egress proxy, optional minio)
 migrations/     alembic
-tests/          invariant selftests (attack every rule over HTTP) + MockModel e2e
+tests/          invariant selftests (attack every rule over HTTP), MockModel
+                e2e, chaos suite (tests/chaos), golden-eval checks
 ```
 
 ## Quickstart (dev, no Docker)
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
-.venv/bin/python -m pytest tests/          # 26 invariant + e2e tests, $0 in tokens
+.venv/bin/python -m pytest tests/          # the whole suite runs at $0 in tokens
 
 # A live smoke on SQLite:
 export YAAF_DATABASE_URL=sqlite:////tmp/yaaf.db YAAF_ADMIN_TOKEN=dev-admin-token \
@@ -114,9 +122,13 @@ Everything else is observation: `dashboard`, `board`, `org`, `channels`, `tail`,
 
 ## Status
 
-M1 (the experiment rig) per the plan: schema, policy engine, agent/admin/observe
-APIs, dispatcher, janitor, verifier, runner with Mock + Agent SDK backends,
-sandbox + proxy assets, seed roles, CLI, and the invariant selftest suite.
-Next: M2 — the baseline experiment (CEO+team vs a single agent under identical
-governance, goal, and budget) that decides whether the org structure earns its
-tokens.
+M1 (the experiment rig), the full org mechanics of M3, the M4 integrations
+(evidence connectors, Slack bridge, GitHub workspaces, artifact store, per-role
+egress), and the M5 hardening assets (chaos suite, CI, golden-transcript evals)
+are built — see docs/PLAN.md's status appendix for the authoritative ledger.
+
+The gate is now **M2**: the baseline experiment (CEO+team vs a single agent
+under identical governance, goal, and budget) that decides whether the org
+structure earns its tokens. Protocol: docs/M2_PROTOCOL.md; harness:
+`yaaf experiment` + experiments/README.md. Goal selection awaits the chairman;
+per the kill condition the experiment is decided by 2026-09-30.

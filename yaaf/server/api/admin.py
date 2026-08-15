@@ -10,6 +10,7 @@ discipline is the product.
 
 from __future__ import annotations
 
+import secrets as pysecrets
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -23,6 +24,7 @@ from yaaf.core.db import notify
 from yaaf.core.models import (
     Agent,
     AgentKind,
+    Amendment,
     Approval,
     ApprovalStatus,
     AuditLog,
@@ -44,6 +46,7 @@ from yaaf.core.models import (
     RunStatus,
     Secret,
     Task,
+    TaskStatus,
     Team,
     User,
     VerificationStatus,
@@ -189,7 +192,9 @@ def list_roles(session: Session = Depends(db)) -> list[dict]:
 class TeamSpec(BaseModel):
     role_slug: str
     name: str
-    employees: list[str] = Field(min_length=1)  # agent display names
+    # Agent display names. Empty is only legal in solo mode (the CEO is the
+    # team); create_project/add_team enforce that below.
+    employees: list[str] = Field(default_factory=list)
     lead: str | None = None  # employee name; defaults to first when >1
 
 
@@ -205,6 +210,10 @@ class ProjectCreate(BaseModel):
     ceo_role_slug: str = "ceo"
     ceo_name: str = "CEO"
     teams: list[TeamSpec] = Field(default_factory=list)
+    # Solo mode (the M2 single-agent arm): the CEO is placed as the sole member
+    # — hence derived lead — of the only team, so one brain plans AND executes
+    # under byte-identical policy. Requires exactly one team with no employees.
+    solo: bool = False
 
 
 def _latest_role_version(session: Session, slug: str) -> RoleVersion:
@@ -228,6 +237,13 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
         raise HTTPException(status_code=422, detail="chairman user does not exist; create it first")
     if session.execute(select(Project).where(Project.slug == body.slug)).scalar_one_or_none():
         raise HTTPException(status_code=409, detail="project slug already exists")
+    if body.solo and (len(body.teams) != 1 or body.teams[0].employees):
+        raise HTTPException(
+            status_code=422,
+            detail="solo mode takes exactly one team with no employees — the CEO is the team",
+        )
+    if not body.solo and any(not spec.employees for spec in body.teams):
+        raise HTTPException(status_code=422, detail="every team needs at least one employee")
 
     ceo_role_version = _latest_role_version(session, body.ceo_role_slug)
 
@@ -293,6 +309,9 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
             team.lead_agent_id = lead.id
         session.add(Channel(id=ids.new_id(ids.CHANNEL), project_id=project.id,
                             kind=ChannelKind.TEAM, team_id=team.id))
+        if body.solo:
+            ceo.team_id = team.id
+            agents.append(ceo)
         team_out.append({"id": team.id, "name": team.name,
                          "agents": [{"id": a.id, "name": a.name} for a in agents]})
 
@@ -329,6 +348,8 @@ def _revoke_running(session: Session, project_id: str) -> int:
 @router.post("/projects/{project_id}/teams")
 def add_team(project_id: str, body: TeamSpec, session: Session = Depends(db)) -> dict:
     """Add a team to an existing project: agents, derived lead, team channel."""
+    if not body.employees:
+        raise HTTPException(status_code=422, detail="a team needs at least one employee")
     project = _get_project(session, project_id)
     role_version = _latest_role_version(session, body.role_slug)
     team = Team(
@@ -595,6 +616,51 @@ def amend_constitution(
     }
 
 
+def _amendment_status(a: Amendment) -> str:
+    if a.applied_constitution_id:
+        return "applied"
+    if a.cancelled_at:
+        return "cancelled"
+    return "pending"
+
+
+@router.get("/projects/{project_id}/amendments")
+def list_amendments(project_id: str, session: Session = Depends(db)) -> list[dict]:
+    project = _get_project(session, project_id)
+    rows = session.execute(
+        select(Amendment)
+        .where(Amendment.project_id == project.id)
+        .order_by(Amendment.created_at.desc())
+    ).scalars()
+    return [
+        {
+            "id": a.id,
+            "reason": a.reason,
+            "changes": a.changes,
+            "status": _amendment_status(a),
+            "proposed_at": a.created_at.isoformat(),
+            "effective_at": a.effective_at.isoformat(),
+            "disclosed": a.disclosed_at is not None,
+        }
+        for a in rows
+    ]
+
+
+@router.post("/amendments/{amendment_id}/cancel")
+def cancel_amendment(amendment_id: str, session: Session = Depends(db)) -> dict:
+    """The cooling-off period is for reconsidering; this is the reconsidering."""
+    row = session.get(Amendment, amendment_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="unknown amendment")
+    if _amendment_status(row) != "pending":
+        raise HTTPException(
+            status_code=409, detail=f"amendment is {_amendment_status(row)}, not pending"
+        )
+    row.cancelled_at = utcnow()
+    _audit(session, row.project_id, "constitution.amendment_cancel", "amendment", row.id)
+    return {"id": row.id, "status": "cancelled"}
+
+
 @router.post("/threads/{message_id}/unfreeze")
 def unfreeze_thread(message_id: str, session: Session = Depends(db)) -> dict:
     root = session.get(Message, message_id)
@@ -613,6 +679,15 @@ class EvidenceAudit(BaseModel):
     note: str = Field(default="", max_length=4000)
 
 
+def _notice_ceo(session: Session, project_id: str, kind: str, body: str) -> None:
+    ceo = policy.ceo_of(session, project_id)
+    if ceo is not None:
+        session.add(
+            Notice(id=ids.new_id(ids.NOTICE), project_id=project_id, agent_id=ceo.id,
+                   kind=kind, body=body)
+        )
+
+
 @router.post("/evidence/{evidence_id}/audit")
 def audit_evidence(
     evidence_id: str, body: EvidenceAudit, session: Session = Depends(db)
@@ -623,7 +698,42 @@ def audit_evidence(
     row.verification = VerificationStatus.VERIFIED if body.ok else VerificationStatus.FAILED
     row.verifier_notes = ((row.verifier_notes or "") + f"\n[chairman audit] {body.note}").strip()
     _audit(session, row.project_id, "evidence.audit", "evidence", row.id, {"ok": body.ok})
+    if not body.ok:
+        _notice_ceo(
+            session, row.project_id, NoticeKind.AUDIT_FAILED,
+            f"A chairman spot-audit FAILED evidence '{row.description[:120]}' "
+            f"(by {row.created_by_agent_id or 'connector'}). That agent's evidence stream "
+            "is suspect: re-verify its recent claims before trusting them in planning.",
+        )
     return {"id": row.id, "verification": row.verification}
+
+
+class TaskAudit(BaseModel):
+    ok: bool
+    note: str = Field(default="", max_length=4000)
+
+
+@router.post("/tasks/{task_id}/audit")
+def audit_task(task_id: str, body: TaskAudit, session: Session = Depends(db)) -> dict:
+    """Completions join the spot-audit sample alongside evidence rows: LLM
+    reviewers approve nearly everything, so the chairman's verdict is recorded
+    on the task itself."""
+    row = session.get(Task, task_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="unknown task")
+    if row.status != TaskStatus.DONE:
+        raise HTTPException(status_code=409, detail="only completed tasks can be audited")
+    row.audit_status = "passed" if body.ok else "failed"
+    row.audit_note = body.note or None
+    _audit(session, row.project_id, "task.audit", "task", row.id, {"ok": body.ok})
+    if not body.ok:
+        _notice_ceo(
+            session, row.project_id, NoticeKind.AUDIT_FAILED,
+            f"A chairman spot-audit FAILED the completion of '{row.title[:120]}' "
+            f"(completed by {row.claimed_by_agent_id}). Its claimed result does not hold; "
+            "treat that agent's completions as suspect and re-check what depended on this.",
+        )
+    return {"id": row.id, "audit_status": row.audit_status}
 
 
 class SecretIn(BaseModel):
@@ -645,6 +755,52 @@ def list_secrets(project_id: str | None = None, session: Session = Depends(db)) 
         {"id": s.id, "name": s.name, "project_id": s.project_id, "role_scopes": s.role_scopes}
         for s in session.execute(stmt.order_by(Secret.created_at)).scalars()
     ]
+
+
+@router.post("/projects/{project_id}/webhook_secrets")
+def provision_webhook_secrets(project_id: str, session: Session = Depends(db)) -> dict:
+    """Generate the signing secrets for the inbound evidence connectors. The
+    secrets live only in project.config — never in a role scope — so no run
+    ever holds them, which is what makes webhook evidence unforgeable by
+    agents."""
+    project = _get_project(session, project_id)
+    github_secret = pysecrets.token_hex(32)
+    generic_secret = pysecrets.token_hex(32)
+    # Merge, never clobber: config also carries cadences, Slack mapping, etc.
+    project.config = {
+        **(project.config or {}),
+        "github_webhook_secret": github_secret,
+        "webhook_secret": generic_secret,
+    }
+    _audit(session, project.id, "webhook_secrets.provision", "project", project.id,
+           {"keys": ["github_webhook_secret", "webhook_secret"]})
+    return {
+        "github_webhook_secret": github_secret,
+        "webhook_secret": generic_secret,
+        "note": "Shown once: point your senders at these now. Recovering them "
+                "later means regenerating, which invalidates the old ones.",
+    }
+
+
+class GithubAttach(BaseModel):
+    # A bare name ("widget") creates a private repo under the platform token's
+    # user; "owner/repo" attaches an existing one after verifying access.
+    repo: str = Field(min_length=1, max_length=200, pattern=r"^[\w.-]+(/[\w.-]+)?$")
+
+
+@router.post("/projects/{project_id}/github")
+def attach_github(project_id: str, body: GithubAttach, session: Session = Depends(db)) -> dict:
+    """Provision the project's private GitHub workspace repo. The platform
+    token does the creating and the runner's one-time clone; it never enters a
+    sandbox — agents push with their own role-scoped secret."""
+    from yaaf.server import github
+
+    project = _get_project(session, project_id)
+    full_name = github.provision_repo(session, project, body.repo)
+    project.github_repo = full_name
+    _audit(session, project.id, "project.github_attach", "project", project.id,
+           {"github_repo": full_name})
+    return {"github_repo": full_name}
 
 
 @router.post("/secrets")

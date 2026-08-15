@@ -11,3 +11,6 @@ deploy/.env
 notes.txt
 web/node_modules/
 web/dist/
+
+# M2 experiment blind-judging bundles (contain sealed mappings)
+m2-bundles/

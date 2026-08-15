@@ -46,6 +46,8 @@ from yaaf.core.models import (
     utcnow,
 )
 from yaaf.server import policy
+from yaaf.server.notify import chairman_notify
+from yaaf.server.slack.bridge import mirror_once
 from yaaf.server.verifier import verify_pending_evidence
 
 log = logging.getLogger("yaaf.janitor")
@@ -79,11 +81,18 @@ def janitor_once(session: Session) -> None:
             continue
         reap_stale_runs(session, project, cons)
         expire_hypotheses(session, project)
-        expire_approvals(session, project)
+        nag_approvals(session, project, cons)
+        expire_approvals(session, project, cons)
         enforce_budget(session, project, cons)
         release_dead_claims(session, project, cons)
         warn_drought(session, project, cons)
     verify_pending_evidence(session)
+    # The Slack bridge is best-effort transport over a canonical bus; a Slack
+    # outage must never fail an enforcement tick.
+    try:
+        mirror_once(session)
+    except Exception:
+        log.warning("slack mirror failed this tick; retrying next tick", exc_info=True)
 
 
 def _notice_ceo(session: Session, project: Project, kind: str, body: str) -> None:
@@ -237,9 +246,39 @@ def expire_hypotheses(session: Session, project: Project) -> int:
     return expired
 
 
-def expire_approvals(session: Session, project: Project) -> int:
+APPROVAL_NAG_HOURS = 48  # how far before expiry the chairman gets chased
+
+
+def nag_approvals(session: Session, project: Project, cons: ConstitutionDoc) -> int:
+    """Chase the chairman once per approval as expiry approaches. The nag is
+    transport, not enforcement — expiry itself still lands as the constitution
+    says, answered or not."""
+    horizon = utcnow() + timedelta(hours=APPROVAL_NAG_HOURS)
+    nagged = 0
+    for approval in session.execute(
+        select(Approval).where(
+            Approval.project_id == project.id,
+            Approval.status == ApprovalStatus.PENDING,
+            Approval.expires_at <= horizon,
+            Approval.nag_sent_at.is_(None),
+        )
+    ).scalars():
+        chairman_notify(
+            session, project,
+            f"approval expiring: {approval.title}",
+            f"'{approval.title}' expires at {approval.expires_at:%Y-%m-%d %H:%M} UTC and "
+            f"the timeout decision is {cons.approval_timeout_decision.upper()}. "
+            f"Decide it in the approvals inbox.\n\n{approval.body[:2000]}",
+        )
+        approval.nag_sent_at = utcnow()
+        nagged += 1
+    return nagged
+
+
+def expire_approvals(session: Session, project: Project, cons: ConstitutionDoc) -> int:
     now = utcnow()
     expired = 0
+    approve_on_timeout = cons.approval_timeout_decision == "approve"
     for approval in session.execute(
         select(Approval).where(
             Approval.project_id == project.id,
@@ -247,13 +286,21 @@ def expire_approvals(session: Session, project: Project) -> int:
             Approval.expires_at <= now,
         )
     ).scalars():
-        approval.status = ApprovalStatus.EXPIRED
+        if approve_on_timeout:
+            approval.status = ApprovalStatus.APPROVED
+            approval.decision_note = (
+                "expired: no chairman decision in time; this constitution auto-APPROVES on timeout"
+            )
+        else:
+            approval.status = ApprovalStatus.EXPIRED
+            approval.decision_note = "expired: no chairman decision in time; default is deny"
         approval.decided_at = now
-        approval.decision_note = "expired: no chairman decision in time; default is deny"
         _notice_agent(
             session, project, approval.requested_by_agent_id, NoticeKind.APPROVAL_EXPIRED,
-            f"Approval '{approval.title}' expired unanswered and is DENIED by default. "
-            "Re-plan without it, or resubmit with a stronger recommendation.",
+            f"Approval '{approval.title}' expired unanswered and is "
+            f"{'APPROVED per this constitution' if approve_on_timeout else 'DENIED by default'}. "
+            + ("Proceed accordingly." if approve_on_timeout
+               else "Re-plan without it, or resubmit with a stronger recommendation."),
         )
         expired += 1
     return expired
@@ -296,6 +343,11 @@ def enforce_budget(session: Session, project: Project, cons: ConstitutionDoc) ->
             session, project, NoticeKind.BUDGET_EXHAUSTED,
             f"The monthly budget is exhausted ({spent:,.0f}/{cap:,.0f} {unit}); the platform "
             "paused the project and the chairman was informed. When resumed, cut burn first.",
+        )
+        chairman_notify(
+            session, project, "project auto-paused: budget exhausted",
+            f"{spent:,.0f}/{cap:,.0f} {unit} spent this month. Live runs were revoked and "
+            "the queue purged. Resume from the project page when you have decided what to cut.",
         )
         log.warning("project %s auto-paused: budget exhausted", project.slug)
     elif spent >= cap * cons.budget_warn_ratio:

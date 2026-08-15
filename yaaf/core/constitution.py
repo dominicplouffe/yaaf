@@ -129,6 +129,7 @@ def apply_due_amendments(session: Session, project_id: str) -> list[Amendment]:
             .where(
                 Amendment.project_id == project_id,
                 Amendment.applied_constitution_id.is_(None),
+                Amendment.cancelled_at.is_(None),
                 Amendment.effective_at <= now,
             )
             .order_by(Amendment.effective_at)

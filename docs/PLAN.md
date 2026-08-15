@@ -178,14 +178,56 @@ failed-run retries that return their triggers, add-team-to-existing-project,
 WordPress draft-first publishing in the blog-writer role, subscription-mode
 token-only ledger.
 
-**M2 — the baseline experiment: NOT STARTED.** The gate still stands: protocol
-and rubric written before any runs; org arm vs single-agent arm under identical
-governance, goal, and budget; decided by **2026-09-30** (one chairman extension
-allowed). Nothing in M3+ beyond the pulled-forward UI may proceed past it.
+**M2 — the baseline experiment: HARNESS BUILT, RUNS NOT STARTED.** Protocol
+and preregistered rubric drafted (docs/M2_PROTOCOL.md), spec with three
+candidate goal pairs (experiments/m2.spec.json), and the full harness:
+`yaaf experiment init/status/export/judge/score/decide` — paired-arm
+provisioning (org arm vs a **solo-mode** single agent: the CEO as sole member
+and derived lead of its one team, byte-identical policy), sealed-label blind
+bundling, judge-model + human rubric passes, composite scoring, and the
+decision writer. **Blocked on the chairman:** goal-pair selection and protocol
+freeze. The gate still decides by **2026-09-30** (one extension allowed).
 
-**M4 (GitHub workspaces, Slack, evidence connectors), M5 (chaos/hardening
-pilot), M6 (Proxmox fleet): NOT STARTED.**
+**M3 remainder (2026-08-15): DONE.** Per-CEO judgment metric (API + Overview
+tile), approval nags via a chairman notifier (SMTP/webhook, best-effort),
+constitution amendments listable/cancellable during cooling-off, completed-task
+spot-audit verdicts (failed audits wake the CEO), Postgres FTS memory search,
+and the golden-transcript eval harness (evals/, goldens enforced in CI) — the
+gate on role editing is now real.
 
-**Open items:** subscription-auth ToS verification for multi-agent use (running
-personal-project-only meanwhile); golden-transcript evals before role editing
-counts as safe; M2 goal selection needs chairman approval.
+**M4 (2026-08-15): DONE, built ahead of the M2 gate by chairman instruction.**
+Inbound evidence connectors (`/webhooks/github` + HMAC generic, producing
+platform-attested evidence; chairman-provisioned secrets agents never hold),
+Slack bridge (bus canonical, best-effort mirror, signed inbound
+chairman→boardroom), GitHub workspace provisioning (private repo per project,
+credential-scrubbed clones), artifact store (local default, S3/MinIO optional,
+snapshots + traces + agent `artifact_put` deliverables), and per-role egress
+scoping (squid ports generated from the role library, `yaaf egress sync`).
+
+**M5 (2026-08-15): hardening assets DONE; live pilot pending.** Chaos suite
+(worker races on SKIP LOCKED — held on real Postgres; reap/retry side-effect
+integrity; DB-restart recovery), CI (SQLite + Postgres + lint + web build),
+runner integrity fixes (usage checkpointing so hard kills are metered,
+revocation stops the container, traces stashed and served). The *pilot with
+real external-evidence semantics* is M2 itself — by design it comes next.
+
+**Also (2026-08-15):** WebSocket live updates layered over polling (latency
+hint, never source of truth), record-of-build note: the chairman authorized
+building M3+ machinery ahead of the M2 result; the kill condition is
+unchanged — if the org arm loses, the org-framework parts are shelved and the
+salvage path (governance harness for single agents) proceeds.
+
+**M6 (Proxmox fleet): NOT STARTED** — still demoted, on demonstrated need.
+
+**Open items:** golden-transcript evals before role editing counts as safe; M2
+goal selection needs chairman approval (draft protocol: docs/M2_PROTOCOL.md).
+
+**Resolved 2026-08-15 — subscription-auth ToS verification: NOT permitted for
+multi-agent use.** Anthropic's consumer terms prohibit automated access except
+via API key; the Claude Code legal docs state OAuth/subscription credentials
+are for ordinary personal use of Anthropic's own apps, and that products built
+on the Agent SDK must use API-key auth. Verdict: API-key billing is the
+required mode for yaaf agents (subscription mode remains in the codebase for
+single-user personal experimentation only, at the operator's own judgment).
+Sources: anthropic.com/legal/consumer-terms, code.claude.com/docs/en/legal-and-compliance,
+support.claude.com article 15036540.

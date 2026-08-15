@@ -18,14 +18,13 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from pathlib import Path
 from urllib.parse import urlparse
 
 import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from yaaf.core.config import settings
+from yaaf.core.artifacts import store
 from yaaf.core.models import (
     Evidence,
     EvidenceKind,
@@ -136,13 +135,11 @@ def _verify_one(session: Session, evidence: Evidence, fetch) -> None:
         return
 
     digest = hashlib.sha256(content).hexdigest()
-    snapshot_dir = Path(settings().artifacts_root) / "evidence"
     try:
-        snapshot_dir.mkdir(parents=True, exist_ok=True)
-        snapshot_path = snapshot_dir / f"{evidence.id}.snapshot"
-        snapshot_path.write_bytes(content[:MAX_BYTES])
-        evidence.snapshot_path = str(snapshot_path)
-    except OSError as exc:  # snapshot is best-effort; the hash is the record
+        evidence.snapshot_path = store().put_bytes(
+            f"evidence/{evidence.id}.snapshot", content[:MAX_BYTES]
+        )
+    except Exception as exc:  # snapshot is best-effort; the hash is the record
         log.warning("could not write snapshot for %s: %s", evidence.id, exc)
     evidence.snapshot_sha256 = digest
     evidence.verification = VerificationStatus.VERIFIED

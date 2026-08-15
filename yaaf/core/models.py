@@ -177,6 +177,7 @@ class NoticeKind(enum.StrEnum):
     TASK_CHECK_FAILED = "task_check_failed"
     TASK_BLOCKED = "task_blocked"
     AGENT_RUN_REAPED = "agent_run_reaped"
+    AUDIT_FAILED = "audit_failed"  # chairman spot-audit failed an evidence row or completion
 
 
 # ── people & projects ───────────────────────────────────────────────────────────
@@ -254,6 +255,9 @@ class Amendment(Base):
     changes: Mapped[dict] = mapped_column(JSONVariant)  # partial constitution overlay
     effective_at: Mapped[datetime] = mapped_column(UTCDateTime)  # now + cooling-off
     applied_constitution_id: Mapped[str | None] = mapped_column(String(40))
+    # The cooling-off period exists so the chairman can reconsider; a pending
+    # amendment may be cancelled until it is applied.
+    cancelled_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     # Set once the CEO has seen it in a context pack — disclosure is mandatory.
     disclosed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
@@ -401,6 +405,9 @@ class Task(Base):
     claim_run_id: Mapped[str | None] = mapped_column(String(40))
     completion_evidence: Mapped[str | None] = mapped_column(Text)
     check_output: Mapped[str | None] = mapped_column(Text)  # platform-run success test output
+    # Chairman spot-audit verdict on the completion ("passed"/"failed"); null = unaudited.
+    audit_status: Mapped[str | None] = mapped_column(String(16))
+    audit_note: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         UTCDateTime, default=utcnow, onupdate=utcnow
@@ -625,6 +632,9 @@ class Approval(Base):
     amount_usd: Mapped[float | None] = mapped_column(Float)
     status: Mapped[str] = mapped_column(String(16), default=ApprovalStatus.PENDING)
     expires_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    # The chairman is nagged before expiry — a vacationing chairman degrades
+    # the project, never deadlocks it, but not silently.
+    nag_sent_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     decided_by_user_id: Mapped[str | None] = mapped_column(String(40))
     decided_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     decision_note: Mapped[str | None] = mapped_column(Text)

@@ -7,11 +7,13 @@ never held: they live here, server-side, not in its prompt.
 
 from __future__ import annotations
 
+import base64
+import binascii
 from datetime import datetime
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from yaaf.core import ids
@@ -492,8 +494,16 @@ def memory_search(
             or_(Memory.scope == "project", Memory.team_id == ctx.agent.team_id)
         )
     if q.strip():
-        like = f"%{q.strip()}%"
-        stmt = stmt.where(or_(Memory.subject.ilike(like), Memory.body.ilike(like)))
+        if session.get_bind().dialect.name == "postgresql":
+            # Matches the GIN index expression from migration 0001 exactly.
+            stmt = stmt.where(
+                func.to_tsvector("english", Memory.subject + " " + Memory.body).op("@@")(
+                    func.plainto_tsquery("english", q.strip())
+                )
+            )
+        else:
+            like = f"%{q.strip()}%"
+            stmt = stmt.where(or_(Memory.subject.ilike(like), Memory.body.ilike(like)))
     rows = session.execute(stmt.order_by(Memory.created_at.desc()).limit(min(limit, 50))).scalars()
     return [
         {"id": m.id, "scope": m.scope, "kind": m.kind, "subject": m.subject, "body": m.body,
@@ -833,3 +843,43 @@ def side_effect_finish(
     row.result = body.result
     row.completed_at = utcnow()
     return {"id": row.id, "status": row.status}
+
+
+# ── artifacts (durable deliverables) ────────────────────────────────────────────
+
+
+MAX_ARTIFACT_BYTES = 5 * 1024 * 1024
+
+
+class ArtifactPut(BaseModel):
+    filename: str = Field(min_length=1, max_length=200)
+    content_base64: str
+
+
+@router.post("/artifacts")
+def artifact_put(body: ArtifactPut, ctx: RunContext = Depends(run_auth)) -> dict:
+    """Persist a finished deliverable to the artifact store. The workspace is
+    ephemeral; this is where finished work goes to outlive the run. The
+    platform picks the location — projects/<project>/<run>/<filename> — so an
+    agent names a file, never a path."""
+    from yaaf.core.artifacts import store
+
+    filename = body.filename.strip()
+    if "/" in filename or "\\" in filename or filename in (".", "..") or "\x00" in filename:
+        raise Refusal(
+            "filename must be a plain file name — no path separators. The platform "
+            "chooses where artifacts live: projects/<project_id>/<run_id>/<filename>.",
+            status_code=422,
+        )
+    try:
+        data = base64.b64decode(body.content_base64, validate=True)
+    except (binascii.Error, ValueError):
+        raise Refusal("content_base64 is not valid base64.", status_code=422) from None
+    if len(data) > MAX_ARTIFACT_BYTES:
+        raise Refusal(
+            f"artifact is {len(data)} bytes; the limit is 5 MB. Store large deliverables "
+            "somewhere addressable and record the URL as evidence instead.",
+            status_code=413,
+        )
+    uri = store().put_bytes(f"projects/{ctx.project.id}/{ctx.run.id}/{filename}", data)
+    return {"uri": uri}

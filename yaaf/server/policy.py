@@ -25,8 +25,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy import func, or_, select
+from sqlalchemy.orm import Session, aliased
 
 from yaaf.core import ids
 from yaaf.core.constitution import ConstitutionDoc
@@ -142,6 +142,40 @@ def countable_external_evidence(session: Session, project_id: str, since: dateti
             Evidence.created_at >= since,
         )
     ).scalar_one()
+
+
+def ceo_judgment(session: Session, project_id: str) -> dict:
+    """The per-CEO quality signal: of the top-level tasks the CEO created, how
+    many ever produced countable external evidence — directly or through their
+    subtasks. What to queue, kill, and prioritize is the CEO's actual product;
+    this is its scoreboard, and a primary M2 rubric input."""
+    created = session.execute(
+        select(func.count(Task.id)).where(
+            Task.project_id == project_id, Task.parent_task_id.is_(None)
+        )
+    ).scalar_one()
+    if not created:
+        return {"tasks_created": 0, "tasks_with_verified_external": 0, "conversion": None}
+    sub = aliased(Task)
+    converted = session.execute(
+        select(func.count(func.distinct(Task.id)))
+        .select_from(Task)
+        .join(sub, or_(sub.id == Task.id, sub.parent_task_id == Task.id))
+        .join(Evidence, Evidence.task_id == sub.id)
+        .where(
+            Task.project_id == project_id,
+            Task.parent_task_id.is_(None),
+            Evidence.kind == EvidenceKind.EXTERNAL,
+            Evidence.verification.in_(
+                [VerificationStatus.VERIFIED, VerificationStatus.NOT_APPLICABLE]
+            ),
+        )
+    ).scalar_one()
+    return {
+        "tasks_created": int(created),
+        "tasks_with_verified_external": int(converted),
+        "conversion": round(converted / created, 3),
+    }
 
 
 def drought_active(session: Session, project_id: str, cons: ConstitutionDoc) -> bool:

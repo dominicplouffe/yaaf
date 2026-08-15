@@ -35,6 +35,12 @@ services:
       YAAF_MASTER_KEY: ${YAAF_MASTER_KEY:-}
       YAAF_API_BASE_URL: http://api:8080
       YAAF_ARTIFACTS_ROOT: /var/lib/yaaf/artifacts
+      # S3 artifact store (optional): start minio with `docker compose --profile s3 up`
+      # and uncomment these on BOTH api and runner. Local files stay the default.
+      # YAAF_ARTIFACT_S3_ENDPOINT: http://minio:9000
+      # YAAF_ARTIFACT_S3_BUCKET: yaaf-artifacts
+      # YAAF_ARTIFACT_S3_ACCESS_KEY: ${MINIO_ROOT_USER:-yaaf}
+      # YAAF_ARTIFACT_S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-yaaf-minio-dev}
     volumes:
       - /var/lib/yaaf/artifacts:/var/lib/yaaf/artifacts
     ports:
@@ -58,14 +64,45 @@ services:
       YAAF_SANDBOX_NETWORK: yaaf_sandbox
       YAAF_EGRESS_PROXY_URL: http://proxy:3128
       YAAF_WORKSPACES_ROOT: /var/lib/yaaf/workspaces
+      YAAF_ARTIFACTS_ROOT: /var/lib/yaaf/artifacts
+      # S3 artifact store (optional): keep in lockstep with the api service above.
+      # YAAF_ARTIFACT_S3_ENDPOINT: http://minio:9000
+      # YAAF_ARTIFACT_S3_BUCKET: yaaf-artifacts
+      # YAAF_ARTIFACT_S3_ACCESS_KEY: ${MINIO_ROOT_USER:-yaaf}
+      # YAAF_ARTIFACT_S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-yaaf-minio-dev}
     volumes:
       # The runner launches sibling sandbox containers.
       - /var/run/docker.sock:/var/run/docker.sock
       # Host path == container path, so sibling mounts resolve identically.
       - /var/lib/yaaf/workspaces:/var/lib/yaaf/workspaces
+      # Shared with the api service: run traces are stashed here at finalize.
+      - /var/lib/yaaf/artifacts:/var/lib/yaaf/artifacts
     depends_on:
       db:
         condition: service_healthy
+
+  # Optional S3-compatible artifact store. Off by default — plain
+  # `docker compose up` is unchanged; opt in with `docker compose --profile s3 up`
+  # and uncomment the YAAF_ARTIFACT_S3_* lines on api and runner. The bucket is
+  # created by yaaf on first use.
+  minio:
+    profiles: ["s3"]
+    restart: unless-stopped
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-yaaf}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-yaaf-minio-dev}
+    volumes:
+      - minio:/data
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # web console
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
   proxy:
     restart: unless-stopped
@@ -76,6 +113,9 @@ services:
     volumes:
       - ./proxy/squid.conf:/etc/squid/squid.conf:ro
       - ./proxy/allowlist.txt:/etc/squid/allowlist.txt:ro
+      # Per-role ports + allowlists, written by `yaaf egress sync`; reload with
+      # `docker kill --signal=HUP <this container>` after a sync.
+      - ./proxy/generated:/etc/squid/generated:ro
     networks: [default, sandbox]
 
 networks:
@@ -86,3 +126,4 @@ networks:
 
 volumes:
   pgdata: {}
+  minio: {}

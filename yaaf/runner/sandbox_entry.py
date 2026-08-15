@@ -274,13 +274,29 @@ async def t_side_effect_finish(args):
     return _text(_call("POST", f"/agent/side_effects/{effect_id}/finish", dict(args)))
 
 
+@tool(
+    "artifact_put",
+    "Persist a finished deliverable (report, dataset, document) to the platform's "
+    "artifact store — the durable home for finished work; your workspace is ephemeral "
+    "and vanishes after the run. filename is a plain file name (no paths), "
+    "content_base64 is the file's bytes base64-encoded, max 5 MB decoded. Returns the "
+    "artifact's uri — cite it in evidence, task completions, and messages.",
+    {"filename": str, "content_base64": str},
+)
+async def t_artifact_put(args):
+    return _text(
+        _call("POST", "/agent/artifacts",
+              {"filename": args["filename"], "content_base64": args["content_base64"]})
+    )
+
+
 ALL_TOOLS = [
     t_board, t_task_create, t_task_claim, t_task_complete, t_task_block, t_task_kill,
     t_suggest, t_channels, t_messages_read, t_message_post,
     t_memory_search, t_memory_add, t_memory_supersede, t_memory_forget,
     t_evidence_add, t_hypothesis_add, t_hypothesis_kill, t_decision_add,
     t_approval_request, t_approvals_list, t_spend_book,
-    t_side_effect_begin, t_side_effect_finish,
+    t_side_effect_begin, t_side_effect_finish, t_artifact_put,
 ]
 
 
@@ -326,6 +342,27 @@ async def main() -> int:
     cost_usd = None
     tokens_in = tokens_out = 0
     ok = True
+
+    def write_result(partial: bool) -> None:
+        # Written after every message (atomically), not just at the end: a
+        # container killed at the timeout still leaves its last known token
+        # count behind, so hard kills are metered, not free.
+        tmp = result_path.with_suffix(".tmp")
+        tmp.write_text(
+            json.dumps(
+                {
+                    "ok": ok and not partial,
+                    "partial": partial,
+                    "summary": ("\n".join(summary_parts))[-4000:],
+                    "cost_usd": cost_usd,
+                    "tokens_in": tokens_in,
+                    "tokens_out": tokens_out,
+                    "trace_path": str(trace_path),
+                }
+            )
+        )
+        os.replace(tmp, result_path)
+
     with trace_path.open("a") as trace:
         try:
             async for message in query(prompt=prompt, options=options):
@@ -352,23 +389,14 @@ async def main() -> int:
                 else:
                     trace.write(json.dumps({"type": type(message).__name__,
                                             "repr": repr(message)[:2000]}) + "\n")
+                trace.flush()
+                write_result(partial=True)
         except Exception as exc:
             ok = False
             summary_parts.append(f"[sandbox_entry error: {exc!r}]")
             trace.write(json.dumps({"type": "error", "error": repr(exc)}) + "\n")
 
-    result_path.write_text(
-        json.dumps(
-            {
-                "ok": ok,
-                "summary": ("\n".join(summary_parts))[-4000:],
-                "cost_usd": cost_usd,
-                "tokens_in": tokens_in,
-                "tokens_out": tokens_out,
-                "trace_path": str(trace_path),
-            }
-        )
-    )
+    write_result(partial=False)
     return 0 if ok else 1
 
 

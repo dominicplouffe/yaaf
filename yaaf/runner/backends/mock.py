@@ -80,7 +80,7 @@ class MockBackend:
     def __init__(self, client: httpx.Client | None = None):
         self._client = client
 
-    def execute(self, job: RunJob) -> RunResult:
+    def execute(self, job: RunJob, stop_event=None) -> RunResult:
         behavior = (
             _REGISTRY.get(job.context_pack.get("you", {}).get("name", ""))
             or _REGISTRY.get("*")

@@ -28,12 +28,18 @@ def _web_dist() -> Path | None:
 
 
 def create_app() -> FastAPI:
-    from yaaf.server.api import admin, agent, observe
+    from yaaf.server.api import admin, agent, observe, webhooks, ws
 
     app = FastAPI(title="yaaf", version="0.1.0")
     app.include_router(agent.router, prefix="/agent", tags=["agent"])
     app.include_router(admin.router, prefix="/admin", tags=["admin"])
     app.include_router(observe.router, prefix="/observe", tags=["observe"])
+    # Unauthenticated by bearer-token design: senders sign each body with a
+    # chairman-provisioned secret instead. See yaaf.server.api.webhooks.
+    app.include_router(webhooks.router, prefix="/webhooks", tags=["webhooks"])
+    # Live-update sockets: a latency hint over the SPA's polling, never a
+    # replacement for it (mirrors LISTEN/NOTIFY over the dispatcher's floor).
+    app.include_router(ws.router, tags=["ws"])
 
     @app.exception_handler(Refusal)
     def refusal_handler(request: Request, exc: Refusal) -> JSONResponse:

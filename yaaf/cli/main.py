@@ -19,6 +19,14 @@ import typer
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 
 
+def _register_experiment() -> None:
+    # Imported lazily at module bottom: experiment.py imports _client from here.
+    from yaaf.cli.experiment import experiment_app
+
+    app.add_typer(experiment_app, name="experiment",
+                  help="The M2 baseline-experiment harness (docs/M2_PROTOCOL.md).")
+
+
 def _env_file_token() -> str | None:
     """Fall back to deploy/.env (cwd or repo root) so the CLI works without
     exporting anything."""
@@ -298,6 +306,36 @@ def audit_evidence(evidence_id: str, ok: bool = typer.Option(..., "--ok/--bad"),
         _show(client.post(f"/admin/evidence/{evidence_id}/audit",
                           json={"ok": ok, "note": note}))
 
+
+@app.command()
+def egress_sync(
+    out: Path = typer.Option(Path("deploy/proxy/generated"), "--out"),
+    hup_container: str = typer.Option(None, "--hup-container",
+                                      help="Proxy container to HUP after writing"),
+) -> None:
+    """Regenerate per-role squid config from the role library (direct DB —
+    run on the box that hosts deploy/), then HUP the proxy to load it."""
+    from yaaf.core.db import db_session
+    from yaaf.server.egress import generate
+
+    with db_session() as session:
+        assignments = generate(session, out)
+    if not assignments:
+        typer.echo("no roles define egress_allow; global allowlist covers everything")
+    for slug, port in sorted(assignments.items()):
+        typer.echo(f"{slug}: proxy port {port}")
+    if hup_container:
+        import subprocess
+
+        result = subprocess.run(["docker", "kill", "--signal=HUP", hup_container],
+                                capture_output=True, text=True)
+        typer.echo("proxy reloaded" if result.returncode == 0
+                   else f"HUP failed: {result.stderr.strip()} — reload the proxy manually")
+    else:
+        typer.echo("Reload with: docker kill --signal=HUP <proxy container>")
+
+
+_register_experiment()
 
 if __name__ == "__main__":
     app()

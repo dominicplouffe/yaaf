@@ -19,7 +19,7 @@ log = logging.getLogger("yaaf.agent_sdk")
 
 
 class AgentSDKBackend:
-    def execute(self, job: RunJob) -> RunResult:
+    def execute(self, job: RunJob, stop_event=None) -> RunResult:
         from yaaf.runner.sandbox import run_agent_container
 
         workspace = Path(job.workspace_dir)
@@ -45,15 +45,22 @@ class AgentSDKBackend:
             **job.billing_env,
         }
         exit_code, logs = run_agent_container(
-            workspace_dir=str(workspace), env=env, timeout_s=job.timeout_s
+            workspace_dir=str(workspace), env=env, timeout_s=job.timeout_s,
+            stop_event=stop_event, proxy_url=job.egress_proxy_url,
         )
 
         if result_path.exists():
             try:
                 data = json.loads(result_path.read_text())
+                summary = str(data.get("summary", ""))[:4000]
+                if data.get("partial"):
+                    # The entry script never finished, but it checkpointed usage
+                    # after every message — the kill is metered, not free.
+                    summary = (f"[killed mid-run, exit {exit_code}; usage recovered from "
+                               f"checkpoint]\n{summary}")
                 return RunResult(
-                    ok=bool(data.get("ok")),
-                    summary=str(data.get("summary", ""))[:4000],
+                    ok=bool(data.get("ok")) and not data.get("partial"),
+                    summary=summary,
                     tokens_in=int(data.get("tokens_in", 0)),
                     tokens_out=int(data.get("tokens_out", 0)),
                     cost_usd=data.get("cost_usd"),
