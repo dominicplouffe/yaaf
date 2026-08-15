@@ -1,0 +1,62 @@
+# Every violation attempted, every violation refused, no state changed by any
+# refused call. The project is backdated past the drought window and the queue
+# ceiling is lowered to 2, so a single CEO run can hit: drought (internal task
+# refused), vague command/observable/prose success tests, the queue ceiling,
+# and completion without a claim. The lead then tries to hoard a second claim
+# and complete with "Done" as evidence; the employee, egged on by the lead's
+# message, tries to create tasks, claim a team task, and write project memory.
+# refusal_cap_per_run is raised so every attempt lands in the transcript
+# instead of tripping the (separately tested) refusal-storm terminator.
+name: rule_breaker_ceo
+description: >
+  A rule-breaking cast probes the queue ceiling, vague success tests, the
+  evidence drought, evidence-free completion, claim hoarding, and employee
+  overreach; every violation must come back 4xx and change nothing.
+project:
+  slug: rulebreaker
+  goal: Demonstrate that the walls hold.
+  config:
+    runtime: mock
+  constitution:
+    queue_ceiling: 2
+    refusal_cap_per_run: 12
+  backdate_hours: 48
+  teams:
+    - role_slug: worker
+      name: Alpha
+      employees: [Lead, Emp2]
+      lead: Lead
+behaviors:
+  CEO: evals.behaviors.rule_breaker_ceo
+  Lead: evals.behaviors.rule_breaker_lead
+  Emp2: evals.behaviors.rule_breaker_employee
+ticks: 4
+expectations:
+  refusals:
+    total: 11
+    by_path:
+      /agent/tasks: 6
+      /agent/tasks/{id}/claim: 2
+      /agent/tasks/{id}/complete: 2
+      /agent/memory: 1
+    substrings:
+      - "Evidence drought"
+      - "Queue ceiling"
+      - "too short to be a real check"
+      - "must name a checkable artifact"
+      - "falsifiable test"
+      - "only a claimed task can be completed"
+      - "One item at a time"
+      - "is not evidence"
+      - "Only the CEO creates tasks"
+      - "claimed by the team lead"
+      - "Project-scope memory is the CEO's"
+  tasks:
+    total: 2
+    status_counts:
+      ready: 1
+      claimed: 1
+    within_ceilings: true
+    structural_success_tests: true
+  hypotheses:
+    total: 1

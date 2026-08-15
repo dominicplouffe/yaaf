@@ -1,0 +1,43 @@
+# Multi-employee decomposition against a lowered subtask ceiling: the lead
+# claims the team task, creates assignments for both employees (exactly at the
+# ceiling of 2), and the third assignment is refused. Both employees deliver,
+# the platform runs all three success checks, and the lead completes the team
+# task only once its assignments are done.
+name: decomposition_flow
+description: >
+  Lead claims a team task, decomposes to the subtask ceiling (the one-over
+  assignment is refused), assigns two employees, and completes after the
+  platform verifies both parts.
+project:
+  slug: decompo
+  goal: Assemble a two-part deliverable through real decomposition.
+  config:
+    runtime: mock
+  constitution:
+    subtask_ceiling: 2
+  teams:
+    - role_slug: worker
+      name: Alpha
+      employees: [Lead, Emp2, Emp3]
+      lead: Lead
+behaviors:
+  CEO: evals.behaviors.decomposition_ceo
+  Lead: evals.behaviors.decomposition_lead
+  Emp2: evals.behaviors.decomposition_employee
+  Emp3: evals.behaviors.decomposition_employee
+ticks: 7
+expectations:
+  refusals:
+    total: 1
+    by_path:
+      /agent/tasks: 1
+    substrings:
+      - "Subtask ceiling"
+  tasks:
+    total: 3
+    status_counts:
+      done: 3
+    within_ceilings: true
+    structural_success_tests: true
+  hypotheses:
+    total: 0

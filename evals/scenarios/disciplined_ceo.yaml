@@ -1,0 +1,36 @@
+# The happy path under a fully default constitution: a CEO that plays by the
+# book. One dated hypothesis, one team task with a platform-executable success
+# test; the lead claims and decomposes; the employee delivers; the platform
+# runs both checks. Expected: zero refusals, everything lands done, and the
+# final tick shows a settled project waking nobody.
+name: disciplined_ceo
+description: >
+  Disciplined planning loop: hypothesis -> team task -> lead decomposition ->
+  employee delivery -> platform-run success checks -> done, with no refusals.
+project:
+  slug: disciplined
+  goal: Prove the framework works end to end.
+  config:
+    runtime: mock
+  constitution: {}
+  teams:
+    - role_slug: worker
+      name: Alpha
+      employees: [Lead, Emp2]
+      lead: Lead
+behaviors:
+  CEO: evals.behaviors.disciplined_ceo
+  Lead: evals.behaviors.disciplined_lead
+  Emp2: evals.behaviors.disciplined_employee
+ticks: 7
+expectations:
+  refusals:
+    total: 0
+  tasks:
+    total: 2
+    status_counts:
+      done: 2
+    within_ceilings: true
+    structural_success_tests: true
+  hypotheses:
+    total: 1
