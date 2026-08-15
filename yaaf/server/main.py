@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 
 import uvicorn
@@ -14,6 +15,10 @@ from yaaf.server.slack.socket import fast_mirror_loop, socket_mode_loop
 
 
 def main() -> None:
+    # Uvicorn configures only its own loggers; without this, every INFO line
+    # from the dispatcher/janitor/slack threads is silently dropped — which
+    # made a mute Slack socket undiagnosable live.
+    logging.basicConfig(level=logging.INFO)
     threading.Thread(target=dispatcher_loop, name="dispatcher", daemon=True).start()
     threading.Thread(target=janitor_loop, name="janitor", daemon=True).start()
     threading.Thread(target=fast_mirror_loop, name="slack-mirror", daemon=True).start()
