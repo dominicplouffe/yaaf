@@ -40,6 +40,11 @@ class ArtifactStore(ABC):
     @abstractmethod
     def exists(self, key: str) -> bool: ...
 
+    @abstractmethod
+    def list_keys(self, prefix: str) -> list[dict]:
+        """Keys under a prefix, each {"key", "size", "modified" (iso | None)}.
+        The chairman's Files view is the consumer — bounded, newest last."""
+
 
 class LocalStore(ArtifactStore):
     def __init__(self, root: str | Path):
@@ -62,6 +67,24 @@ class LocalStore(ArtifactStore):
 
     def exists(self, key: str) -> bool:
         return self._path(key).is_file()
+
+    def list_keys(self, prefix: str) -> list[dict]:
+        from datetime import UTC, datetime
+
+        base = self._path(prefix)
+        if not base.is_dir():
+            return []
+        out = []
+        for path in sorted(base.rglob("*")):
+            if not path.is_file():
+                continue
+            stat = path.stat()
+            out.append({
+                "key": str(path.relative_to(self.root)),
+                "size": stat.st_size,
+                "modified": datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat(),
+            })
+        return out
 
 
 class S3Store(ArtifactStore):
@@ -103,6 +126,19 @@ class S3Store(ArtifactStore):
             return True
         except self._client_error:
             return False
+
+    def list_keys(self, prefix: str) -> list[dict]:
+        out = []
+        paginator = self.client.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=self.bucket, Prefix=prefix):
+            for obj in page.get("Contents", []):
+                modified = obj.get("LastModified")
+                out.append({
+                    "key": obj["Key"],
+                    "size": int(obj.get("Size", 0)),
+                    "modified": modified.isoformat() if modified else None,
+                })
+        return out
 
 
 @lru_cache

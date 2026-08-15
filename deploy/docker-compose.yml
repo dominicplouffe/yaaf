@@ -43,6 +43,9 @@ services:
       # YAAF_ARTIFACT_S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-yaaf-minio-dev}
     volumes:
       - /var/lib/yaaf/artifacts:/var/lib/yaaf/artifacts
+      # Read-only: the Files view lists and serves agents' work in progress;
+      # only the runner (which owns the sandboxes) ever writes here.
+      - /var/lib/yaaf/workspaces:/var/lib/yaaf/workspaces:ro
     ports:
       - "8080:8080"
     depends_on:

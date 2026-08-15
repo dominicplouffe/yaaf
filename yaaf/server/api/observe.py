@@ -7,10 +7,10 @@ completions. In M1 this backs the CLI; the SPA consumes the same endpoints."""
 from __future__ import annotations
 
 import random
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.responses import PlainTextResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -520,6 +520,95 @@ def memories(project_id: str, session: Session = Depends(db)) -> list[dict]:
          "subject": m.subject, "body": m.body, "at": m.created_at.isoformat()}
         for m in rows
     ]
+
+
+# ── files: the workspace (work in progress) and the artifact store ─────────────
+
+MAX_FILE_LISTING = 2000
+MAX_SERVED_BYTES = 20 * 1024 * 1024
+# Platform plumbing, not agent work: staging (tokens, prompts, traces) and git
+# internals never show in the chairman's Files view.
+_SKIPPED_DIRS = {".git", ".yaaf"}
+
+
+def _workspace_root(project: Project) -> Path:
+    from yaaf.core.config import settings
+
+    return Path(settings().workspaces_root) / project.slug
+
+
+@router.get("/projects/{project_id}/files")
+def project_files(project_id: str, session: Session = Depends(db)) -> dict:
+    """Everything the agents have written: the shared workspace (work in
+    progress — every sandbox mounts it) and the artifact store (finalized
+    deliverables, keyed projects/<project>/<run>/<name>)."""
+    project = _project(session, project_id)
+    workspace: list[dict] = []
+    root = _workspace_root(project)
+    if root.is_dir():
+        for path in sorted(root.rglob("*")):
+            rel = path.relative_to(root)
+            if any(part in _SKIPPED_DIRS for part in rel.parts):
+                continue
+            if path.is_symlink() or not path.is_file():
+                continue
+            stat = path.stat()
+            workspace.append({
+                "path": str(rel), "size": stat.st_size,
+                "modified": datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat(),
+            })
+            if len(workspace) >= MAX_FILE_LISTING:
+                break
+    rows = []
+    for entry in artifacts.store().list_keys(f"projects/{project.id}/"):
+        parts = entry["key"].split("/")
+        rows.append({**entry,
+                     "run_id": parts[2] if len(parts) > 3 else None,
+                     "name": parts[-1]})
+    return {"workspace": workspace, "artifacts": rows}
+
+
+@router.get("/projects/{project_id}/files/content")
+def project_file_content(
+    project_id: str, path: str = "", artifact: str = "",
+    session: Session = Depends(db),
+) -> Response:
+    """One file's bytes, ALWAYS as a download (octet-stream) — agent-written
+    HTML must never render on this origin, where the chairman's admin token
+    lives. Untrusted content + that token + a browser is the lethal
+    combination; the disposition header is the leg removed."""
+    project = _project(session, project_id)
+    if bool(path) == bool(artifact):
+        raise HTTPException(status_code=422, detail="pass exactly one of ?path= or ?artifact=")
+    if artifact:
+        # Keys are validated against THIS project's prefix — the store holds
+        # every project's deliverables. ".." would satisfy the prefix check
+        # and still resolve into another project's keys; refuse it outright.
+        if (not artifact.startswith(f"projects/{project.id}/")
+                or ".." in artifact.split("/")):
+            raise HTTPException(status_code=404, detail="no such artifact")
+        try:
+            data = artifacts.store().get_bytes(artifact)
+        except (FileNotFoundError, ValueError):
+            raise HTTPException(status_code=404, detail="no such artifact") from None
+        name = artifact.rsplit("/", 1)[-1]
+    else:
+        root = _workspace_root(project).resolve()
+        target = (root / path).resolve()
+        if (not target.is_relative_to(root)
+                or any(part in _SKIPPED_DIRS for part in Path(path).parts)):
+            raise HTTPException(status_code=404, detail="no such file")
+        if not target.is_file():
+            raise HTTPException(status_code=404, detail="no such file")
+        if target.stat().st_size > MAX_SERVED_BYTES:
+            raise HTTPException(status_code=413, detail="file exceeds the 20MB serving limit")
+        data = target.read_bytes()
+        name = target.name
+    safe_name = name.replace('"', "")
+    return Response(
+        content=data, media_type="application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}"'},
+    )
 
 
 @router.get("/projects/{project_id}/suggestions")
