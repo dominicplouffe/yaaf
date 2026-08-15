@@ -1,8 +1,9 @@
 # M2 — Baseline experiment protocol
 
-**Status: DRAFT — awaiting chairman approval of goal selection (§4) and rubric
-weights (§6). Per PLAN.md, this document must be frozen before any experiment
-run starts. Once frozen, changes require a chairman amendment recorded in §9.**
+**Status: FROZEN 2026-08-15 — the chairman approved the goal selection (§4:
+all three pairs, G1/G2/G3), the rubric weights (§6), the budget, and the
+window. Changes from here require a chairman amendment recorded in §9. The
+decision gate remains 2026-09-30 (one extension allowed, in writing).**
 
 ## 1. Question and stakes
 
@@ -43,7 +44,7 @@ workspaces/accounts so their external evidence cannot mingle.
   24h using a fixed decision rubric (approve anything within budget and law
   that does not leak arm identity between projects); chairman does not coach.
 
-## 4. Goal pairs (candidates — chairman selects 2–3 and approves)
+## 4. Goal pairs (chairman-approved 2026-08-15: all three run)
 
 External evidence must be **platform-verifiable**: attested via connectors or
 verifiable by the server-side evidence verifier against uncontrolled domains,
@@ -125,7 +126,11 @@ Per goal pair, each arm gets composite
 
 ## 9. Amendments
 
-*(none — draft)*
+- **2026-08-15 — frozen.** Chairman approved goal selection (all three pairs:
+  G1 open-source utility, G2 curated technical resource, G3 technical writing
+  with organic reach), rubric weights as drafted (evidence .35, quality .35,
+  cost .15, time .15), budget (15M tokens / $300 per arm), and the 14-day
+  window. No other changes; protocol as pre-registered.
 
 ## 10. Runbook (operational)
 

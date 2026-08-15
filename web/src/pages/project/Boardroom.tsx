@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { ChannelRow, get, MessageRow, post } from "../../api";
+import { ChannelRow, Dashboard, get, MessageRow, post } from "../../api";
 import { fmtWhen, usePoll } from "../../hooks";
 import Markdown from "../../Markdown";
 
-export default function Boardroom({ projectId }: { projectId: string }) {
+export default function Boardroom({ projectId, dash }: { projectId: string; dash: Dashboard }) {
   const [channelId, setChannelId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
@@ -46,6 +46,21 @@ export default function Boardroom({ projectId }: { projectId: string }) {
         Your only speaking channel. The CEO wakes within seconds of a message here. Don't ask
         questions it's authorized to decide — give direction, and decide approvals.
       </p>
+      {/* "Nothing is happening" is the most common false alarm in a new
+          project: the CEO's first planning run takes minutes and only replies
+          when it finishes. Say so while anything is in flight. */}
+      {dash.runs.running > 0 ? (
+        <div className="notice-box working">
+          <span className="working-dot" aria-hidden="true" />
+          The CEO is working — {dash.runs.running === 1 ? "a run is" : `${dash.runs.running} runs are`} in
+          flight. Replies land here when its run finishes; first planning runs take a few minutes.
+        </div>
+      ) : dash.runs.queued > 0 ? (
+        <div className="notice-box working">
+          <span className="working-dot" aria-hidden="true" />
+          The CEO is waking up — a run is queued to start.
+        </div>
+      ) : null}
       <div className="chat">
         {(messages ?? []).map((message) => (
           <div key={message.id} className={"msg" + (message.from_user ? " me" : "")}>

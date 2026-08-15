@@ -187,3 +187,7 @@ sandbox, integrations, dashboard, eval + chaos suites, CI) is built and
 tested; the org-vs-single-agent experiment is the current milestone. One
 production project runs on it daily. Expect sharp edges; read
 [docs/PLAN.md](docs/PLAN.md) for where this is going and what would kill it.
+
+## License
+
+[Apache-2.0](LICENSE).

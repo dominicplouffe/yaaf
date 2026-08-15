@@ -93,7 +93,7 @@ export default function ProjectPage() {
 
       <Routes>
         <Route index element={<Overview projectId={projectId} dash={dash} />} />
-        <Route path="boardroom" element={<Boardroom projectId={projectId} />} />
+        <Route path="boardroom" element={<Boardroom projectId={projectId} dash={dash} />} />
         <Route path="board" element={<Board projectId={projectId} />} />
         <Route path="channels" element={<Channels projectId={projectId} />} />
         <Route path="runs" element={<Runs projectId={projectId} />} />
