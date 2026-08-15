@@ -11,6 +11,8 @@ something needs them, do one unit of work, and go back to sleep. Everything
 runs on your own machine with Docker Compose, and you watch and steer from a
 web dashboard.
 
+<img src="docs/screenshots/cockpit-overview.png" alt="The chairman's cockpit: open tasks vs queue ceiling, runs, verified external evidence, pending approvals, the CEO-judgment metric, budget meter, and the org roster">
+
 ## The problem
 
 Anyone who has left an autonomous agent running for more than an afternoon has
@@ -59,6 +61,8 @@ break a rule, it doesn't get a stern reminder — it gets a 403.
   "constitution") at creation. You can amend it, but amendments take 72 hours
   to land, are disclosed to the CEO, and are logged — so nobody, including
   you at 2am, quietly loosens the rules.
+
+<img src="docs/screenshots/evidence-spot-audit.png" alt="The Evidence tab: falsifiable hypotheses with kill dates, verified external evidence, and the human spot-audit sample">
 
 ## How is this different from a standalone agent?
 
