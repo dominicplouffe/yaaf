@@ -43,14 +43,27 @@ def _log(text: str) -> None:
     print(f"[chat_entry] {text}", file=sys.stderr, flush=True)
 
 
-def _boardroom_channel() -> str | None:
+def _boardroom_channel() -> tuple[str, int] | None:
+    """(channel_id, unread_count) for the boardroom, or None on any failure —
+    the unread count is captured BEFORE the first read advances the cursor,
+    so a session that boots onto a waiting chairman message answers it."""
     result = base._call("GET", "/agent/channels")
     if result["status"] != 200:
         return None
     for channel in result["body"]:
         if channel.get("kind") == "boardroom":
-            return str(channel["id"])
+            return str(channel["id"]), int(channel.get("unread", 0))
     return None
+
+
+def _split_backlog(messages: list[dict], unread: int) -> tuple[list[dict], list[dict]]:
+    """(history, backlog): history was read by some earlier run — never
+    re-answer it; the unread tail's chairman messages are a backlog this
+    session owes an answer to, restart or not."""
+    if unread <= 0:
+        return messages, []
+    history, tail = messages[:-unread], messages[-unread:]
+    return history, [m for m in tail if m.get("from_user")]
 
 
 def _read_messages(channel_id: str, limit: int = 50) -> list[dict] | None:
@@ -139,42 +152,58 @@ async def main() -> int:
         max_buffer_size=16 * 1024 * 1024,
     )
 
-    channel_id = None
-    while channel_id is None:
-        channel_id = _boardroom_channel()
-        if channel_id is None:
+    resolved = None
+    boot_failures = 0
+    while resolved is None:
+        resolved = _boardroom_channel()
+        if resolved is None:
+            boot_failures += 1
+            # A dead token 401s here forever; a booting API recovers in a few
+            # ticks. Persistent failure means exit and let the supervisor
+            # start a clean session — a zombie that retries forever also
+            # silently suppresses the fallback wake path (seen live).
+            if boot_failures >= 10:
+                _log("boardroom unresolvable after repeated attempts; exiting for the supervisor")
+                return 1
             _log("boardroom not resolvable yet; retrying")
             await asyncio.sleep(POLL_S)
+    channel_id, unread = resolved
 
-    # Baseline read: everything before boot is history, not a backlog to answer
-    # (a work run may already have answered it). It also advances the cursor.
-    history = _read_messages(channel_id) or []
-    last_seen = history[-1]["id"] if history else None
+    # Baseline read advances the cursor. What some earlier run already read is
+    # history; the unread tail is a backlog this session answers immediately —
+    # a chairman must never be silently skipped because a session restarted.
+    messages = _read_messages(channel_id) or []
+    history, backlog = _split_backlog(messages, unread)
+    last_seen = messages[-1]["id"] if messages else None
     first_turn = True
     auth_failures = 0
 
-    _log(f"chat session live on {channel_id}; {len(history)} message(s) of history")
+    _log(f"chat session live on {channel_id}; {len(history)} message(s) of history, "
+         f"{len(backlog)} awaiting an answer")
 
     async with ClaudeSDKClient(options) as client:
         while True:
-            messages = _read_messages(channel_id)
-            if messages is None:
-                auth_failures += 1
-                if auth_failures >= AUTH_FAILURES_TO_EXIT:
-                    _log("token appears revoked; exiting for the supervisor")
-                    return 0
-                await asyncio.sleep(POLL_S)
-                continue
-            auth_failures = 0
+            if backlog:
+                fresh, backlog = backlog, []
+            else:
+                messages = _read_messages(channel_id)
+                if messages is None:
+                    auth_failures += 1
+                    if auth_failures >= AUTH_FAILURES_TO_EXIT:
+                        _log("token appears revoked; exiting for the supervisor")
+                        return 0
+                    await asyncio.sleep(POLL_S)
+                    continue
+                auth_failures = 0
 
-            seen_ids = [m["id"] for m in messages]
-            start = seen_ids.index(last_seen) + 1 if last_seen in seen_ids else 0
-            fresh = [m for m in messages[start:] if m.get("from_user")]
-            if messages:
-                last_seen = messages[-1]["id"]
-            if not fresh:
-                await asyncio.sleep(POLL_S)
-                continue
+                seen_ids = [m["id"] for m in messages]
+                start = seen_ids.index(last_seen) + 1 if last_seen in seen_ids else 0
+                fresh = [m for m in messages[start:] if m.get("from_user")]
+                if messages:
+                    last_seen = messages[-1]["id"]
+                if not fresh:
+                    await asyncio.sleep(POLL_S)
+                    continue
 
             _set_typing(channel_id, 120)
             prompt_lines = [f"Chairman: {m['body']}" for m in fresh]

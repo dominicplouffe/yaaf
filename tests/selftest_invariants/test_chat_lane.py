@@ -175,34 +175,49 @@ def test_reaping_a_chat_session_is_quiet_and_lifetime_is_unlimited(client):
             kind=NoticeKind.AGENT_RUN_REAPED).count() == 0
 
 
-def test_supervisor_lifecycle(client, monkeypatch):
-    """Start when running+billed, adopt-and-heartbeat while alive, end on
-    pause, and hold off when boot-looping."""
-    from yaaf.runner import chat, sandbox
+def _fake_sandbox(monkeypatch):
+    """In-memory stand-in for the docker layer: {project_id: run_id} plus the
+    call log the tests assert on."""
+    from yaaf.runner import sandbox
 
-    started: list[str] = []
-    stopped: list[str] = []
-    containers_alive: set[str] = set()
-    monkeypatch.setattr(sandbox, "start_chat_container",
-                        lambda *, project_id, **kw: (started.append(project_id),
-                                                     containers_alive.add(project_id))[0])
-    monkeypatch.setattr(sandbox, "chat_container_running",
-                        lambda project_id: project_id in containers_alive)
-    monkeypatch.setattr(sandbox, "stop_chat_container",
-                        lambda project_id: (stopped.append(project_id),
-                                            containers_alive.discard(project_id))[0] or "")
+    state = {"containers": {}, "started": [], "stopped": []}
+    monkeypatch.setattr(
+        sandbox, "start_chat_container",
+        lambda *, project_id, run_id, **kw: (state["started"].append(project_id),
+                                             state["containers"].__setitem__(project_id, run_id),
+                                             "cid")[2])
+    monkeypatch.setattr(
+        sandbox, "chat_container_run_ids",
+        lambda project_id: ({state["containers"][project_id]}
+                            if project_id in state["containers"] else set()))
+    monkeypatch.setattr(
+        sandbox, "stop_chat_container",
+        lambda project_id: (state["stopped"].append(project_id),
+                            state["containers"].pop(project_id, None), "")[2])
+    return state
 
-    project = make_project(client)
+
+def _attach_billing(client, project_id: str) -> None:
     secret = client.post("/admin/secrets",
-                         json={"project_id": project["id"], "name": "anthropic-api-key",
+                         json={"project_id": project_id, "name": "anthropic-api-key",
                                "value": "sk-ant-api03-fake", "kind": "billing"},
                          headers=ADMIN).json()
-    client.patch(f"/admin/projects/{project['id']}",
+    client.patch(f"/admin/projects/{project_id}",
                  json={"billing_mode": "api_key", "billing_secret_id": secret["id"]},
                  headers=ADMIN)
 
+
+def test_supervisor_lifecycle(client, monkeypatch):
+    """Start when running+billed, adopt-and-heartbeat while alive, end on
+    pause, and hold off when boot-looping."""
+    from yaaf.runner import chat
+
+    state = _fake_sandbox(monkeypatch)
+    project = make_project(client)
+    _attach_billing(client, project["id"])
+
     chat.chat_supervisor_once()
-    assert started == [project["id"]]
+    assert state["started"] == [project["id"]]
     with db_session() as session:
         run = session.query(Run).filter_by(kind="chat_session",
                                            status=RunStatus.RUNNING).one()
@@ -211,7 +226,7 @@ def test_supervisor_lifecycle(client, monkeypatch):
 
     # Second tick: adopt, don't restart; the tick is the heartbeat.
     chat.chat_supervisor_once()
-    assert started == [project["id"]]
+    assert state["started"] == [project["id"]]
     with db_session() as session:
         assert session.get(Run, run_id).heartbeat_at >= first_beat
 
@@ -219,7 +234,7 @@ def test_supervisor_lifecycle(client, monkeypatch):
     client.post(f"/admin/projects/{project['id']}/pause",
                 json={"reason": "test"}, headers=ADMIN)
     chat.chat_supervisor_once()
-    assert stopped == [project["id"]]
+    assert state["stopped"] == [project["id"]]
     with db_session() as session:
         ended = session.get(Run, run_id)
         assert ended.status == RunStatus.KILLED
@@ -229,11 +244,83 @@ def test_supervisor_lifecycle(client, monkeypatch):
     client.post(f"/admin/projects/{project['id']}/start", headers=ADMIN)
     for _ in range(3):
         chat.chat_supervisor_once()
-        containers_alive.discard(project["id"])  # container "dies" instantly
+        state["containers"].pop(project["id"], None)  # container "dies" instantly
         chat.chat_supervisor_once()
-    starts_now = len(started)
+    starts_now = len(state["started"])
     chat.chat_supervisor_once()
-    assert len(started) == starts_now  # held: too many starts in the window
+    assert len(state["started"]) == starts_now  # held: too many starts in the window
+
+
+def test_zombie_chat_container_is_replaced_never_adopted(client, monkeypatch):
+    """The live failure this pins down: a deploy-time reap left a container
+    running whose run row was dead. The old supervisor saw 'a container is
+    running' and heartbeated the NEW run row forever — muting the boardroom,
+    because the fresh heartbeat also suppressed the fallback wakes while the
+    zombie polled with a dead token. Liveness must mean THE container for
+    THIS run."""
+    from yaaf.runner import chat
+
+    state = _fake_sandbox(monkeypatch)
+    project = make_project(client)
+    _attach_billing(client, project["id"])
+
+    chat.chat_supervisor_once()
+    with db_session() as session:
+        first = session.query(Run).filter_by(kind="chat_session",
+                                             status=RunStatus.RUNNING).one().id
+
+    # The deploy race: the run row dies while its container keeps running.
+    with db_session() as session:
+        session.get(Run, first).status = RunStatus.REAPED
+    assert state["containers"][project["id"]] == first  # the zombie
+
+    chat.chat_supervisor_once()
+    assert state["stopped"] == [project["id"]]  # zombie cleared, not adopted
+    with db_session() as session:
+        replacement = session.query(Run).filter_by(kind="chat_session",
+                                                   status=RunStatus.RUNNING).one()
+        assert replacement.id != first
+    assert state["containers"][project["id"]] == replacement.id
+
+    # And a mismatched container (row live, container from another run) is
+    # also rebuilt rather than heartbeated.
+    state["containers"][project["id"]] = "run_somebody_else"
+    chat.chat_supervisor_once()
+    with db_session() as session:
+        rebuilt = session.query(Run).filter_by(kind="chat_session",
+                                               status=RunStatus.RUNNING).one()
+        assert rebuilt.id != replacement.id
+        assert session.get(Run, replacement.id).status == RunStatus.FAILED
+    assert state["containers"][project["id"]] == rebuilt.id
+
+
+def test_boot_backlog_is_answered_not_skipped(client, monkeypatch):
+    """A chairman message that arrived while no session was reading must be
+    answered by the next session, not filed as history — restart amnesia was
+    how a live 'Hello?' went silently unanswered."""
+    import importlib
+    import sys
+
+    monkeypatch.setenv("YAAF_API_BASE_URL", "http://api:8080")
+    monkeypatch.setenv("YAAF_API_TOKEN", "test-token")
+    monkeypatch.setenv("YAAF_RUN_ID", "run_test")
+    monkeypatch.setenv("YAAF_TOOL_PERMISSIONS", "{}")
+    import yaaf.runner.sandbox_entry as sandbox_entry_module
+
+    sys.modules["sandbox_entry"] = importlib.reload(sandbox_entry_module)
+    chat_entry = importlib.import_module("yaaf.runner.chat_entry")
+
+    messages = [
+        {"id": "m1", "from_user": "u1", "body": "old, already read"},
+        {"id": "m2", "from_user": None, "body": "a CEO reply"},
+        {"id": "m3", "from_user": "u1", "body": "unanswered while sessions were down"},
+    ]
+    history, backlog = chat_entry._split_backlog(messages, unread=2)
+    assert [m["id"] for m in history] == ["m1"]
+    assert [m["id"] for m in backlog] == ["m3"]  # the CEO's own message is not a backlog
+
+    history, backlog = chat_entry._split_backlog(messages, unread=0)
+    assert len(history) == 3 and backlog == []
 
 
 def test_chat_harness_speaks_real_api_paths(client, monkeypatch):

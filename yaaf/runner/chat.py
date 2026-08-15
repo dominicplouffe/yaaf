@@ -109,8 +109,10 @@ def _supervise_project(session: Session, project: Project) -> None:
                           Run.status == RunStatus.RUNNING)
     ).scalars().first()
 
+    running_ids = sandbox.chat_container_run_ids(project.id)
+
     if not should_be_live:
-        if live_run is not None or sandbox.chat_container_running(project.id):
+        if live_run is not None or running_ids:
             _end_session(session, project, live_run,
                          f"chat session ended: project is {project.status}"
                          if project.status != ProjectStatus.RUNNING
@@ -129,14 +131,26 @@ def _supervise_project(session: Session, project: Project) -> None:
         if live_run.token_revoked:
             _end_session(session, project, live_run, "chat session ended: token revoked")
             return
-        if sandbox.chat_container_running(project.id):
-            # Alive and wanted: the supervisor tick is the lease heartbeat.
-            live_run.heartbeat_at = utcnow()
+        # Liveness means THE container for THIS run — a running container whose
+        # run died (deploy-time reap race) is a zombie polling with a dead
+        # token, and adopting it mutes the boardroom entirely: the run row
+        # heartbeat suppresses the fallback wakes while nobody actually reads.
+        if running_ids == {live_run.id}:
+            live_run.heartbeat_at = utcnow()  # the supervisor tick is the lease heartbeat
             return
+        if running_ids:
+            log.warning("chat container mismatch for %s (have %s, want %s); rebuilding",
+                        project.slug, running_ids, live_run.id)
+            sandbox.stop_chat_container(project.id)
         live_run.status = RunStatus.FAILED
         live_run.finished_at = utcnow()
-        live_run.summary = "chat session container exited; supervisor will restart it"
-        log.warning("chat container for %s died; restarting", project.slug)
+        live_run.summary = "chat session container lost or mismatched; supervisor restarts it"
+        log.warning("chat session for %s lost its container; restarting", project.slug)
+    elif running_ids:
+        # Containers with no live run at all: zombies from a reaped session.
+        log.warning("clearing orphaned chat container(s) for %s: %s",
+                    project.slug, running_ids)
+        sandbox.stop_chat_container(project.id)
 
     window_start = utcnow() - RESTART_WINDOW
     recent_starts = session.execute(
@@ -218,6 +232,7 @@ def _start_session(session: Session, project: Project, ceo: Agent) -> None:
     }
     sandbox.start_chat_container(
         project_id=project.id,
+        run_id=run.id,
         name=f"yaaf-chat-{project.slug}",
         workspace_dir=str(workspace),
         env=env,

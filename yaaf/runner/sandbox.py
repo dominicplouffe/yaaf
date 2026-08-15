@@ -141,13 +141,17 @@ def run_agent_container(
 # ── the chat lane ───────────────────────────────────────────────────────────────
 
 # Chat containers are found by label, not by handle: the supervisor must
-# re-adopt a session that outlived a runner restart.
+# re-adopt a session that outlived a runner restart. The run-id label binds a
+# container to ITS run row — a running container whose run died is a zombie
+# (polling with a dead token forever), and adopting one silently suppresses
+# the fallback wake path. Seen live; never again.
 CHAT_LABEL = "yaaf.chat.project"
+CHAT_RUN_LABEL = "yaaf.chat.run"
 
 
-def start_chat_container(*, project_id: str, name: str, workspace_dir: str,
-                         env: dict[str, str], proxy_url: str | None = None,
-                         memory: str = "2g") -> str:
+def start_chat_container(*, project_id: str, run_id: str, name: str,
+                         workspace_dir: str, env: dict[str, str],
+                         proxy_url: str | None = None, memory: str = "2g") -> str:
     """Launch the resident chat entrypoint, detached; returns the container id.
     Same image, mounts, network, and limits as an agent run — the talk lane
     gets no extra privileges, only a different entrypoint and no timeout."""
@@ -161,7 +165,7 @@ def start_chat_container(*, project_id: str, name: str, workspace_dir: str,
         settings().sandbox_image,
         command=["python3", "/opt/yaaf/chat_entry.py"],
         name=name,
-        labels={CHAT_LABEL: project_id},
+        labels={CHAT_LABEL: project_id, CHAT_RUN_LABEL: run_id},
         environment={**_proxy_env(proxy_url), **env},
         volumes={workspace_dir: {"bind": "/workspace", "mode": "rw"}},
         working_dir="/workspace",
@@ -174,11 +178,16 @@ def start_chat_container(*, project_id: str, name: str, workspace_dir: str,
     return str(container.id)
 
 
-def chat_container_running(project_id: str) -> bool:
+def chat_container_run_ids(project_id: str) -> set[str]:
+    """Run ids of the RUNNING chat containers for a project. More than one, or
+    one that doesn't match the live run row, means zombies to clear."""
     import docker
 
     client = docker.from_env()
-    return bool(client.containers.list(filters={"label": f"{CHAT_LABEL}={project_id}"}))
+    return {
+        (c.labels or {}).get(CHAT_RUN_LABEL, "")
+        for c in client.containers.list(filters={"label": f"{CHAT_LABEL}={project_id}"})
+    }
 
 
 def stop_chat_container(project_id: str) -> str:
