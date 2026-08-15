@@ -4,7 +4,7 @@ A hardened multi-agent company platform. A project gets an LLM **CEO**, teams of
 role-based LLM agents (with a derived **team lead** per team), and a human
 **chairman**. The chairman speaks only to the CEO (boardroom); leads speak to the
 CEO (leadership); employees speak in their team room. Everything is recorded in
-Postgres; Slack, when attached later, is a mirror — never the source of truth.
+Postgres; Slack, when attached, is a mirror — never the source of truth.
 
 yaaf generalizes the discipline of the lana-project experiment: **rules live in
 code, not prompts.** Agents interact with the platform through an authenticated
@@ -22,8 +22,8 @@ of rules it never held.
 | External evidence counts only when platform-verified (fetch, hash, controlled-domain check, postdate check) | verifier + drought/floor computations |
 | Evidence drought → internal task creation refused | 409 refusal |
 | Hypotheses expire **at** their kill date; linked tasks block; only the chairman extends, once | janitor auto-expiry |
-| Spends ≥ threshold need chairman approval; approvals expire to **deny** | 403 refusal + janitor expiry |
-| Budgets: tokens always booked, dollars only when real; 80% warns, 100% auto-pauses | janitor |
+| Spends ≥ threshold need chairman approval; approvals expire per the constitution (default **deny**), with the chairman nagged before expiry | 403 refusal + janitor expiry + notifier |
+| Budgets: tokens always booked, dollars only when real; 80% warns, 100% auto-pauses and notifies the chairman | janitor |
 | Wake-loop prevention: per-agent wake caps, daily run ceiling, ping-pong thread circuit breaker, per-run refusal cap (token revoked) | dispatcher + API |
 | Idempotent side effects: recorded **before** firing; retries see the ledger | `side_effects` + context packs |
 | Stale runs are reaped; claims released; nothing double-fires | janitor leases |
@@ -31,6 +31,7 @@ of rules it never held.
 | Revoked runs stop burning: kill switches stop the **container**, and killed runs still book their tokens | runner + usage checkpoints |
 | Connector evidence agents cannot forge (GitHub events, signed generic webhooks, Slack inbound) | HMAC-verified `/webhooks/*` |
 | Per-role egress: a role's containers can only reach that role's allowlist | squid ports generated from the role library |
+| Failed chairman spot-audits (evidence **or** completions) mark the stream suspect and wake the CEO | `/admin/*/audit` + notices |
 
 ## Layout
 
@@ -82,7 +83,7 @@ Project spec (`project.json`):
   "chairman_email": "you@example.com",
   "ceo_role_slug": "ceo",
   "billing_mode": "api_key",
-  "controlled_domains": ["mytoyproject.example"],
+  "controlled_domains": ["mytoyproject.example", "github:myaccount"],
   "constitution": {"monthly_usd_cap": 200},
   "config": {"runtime": "agent_sdk", "ceo_heartbeat_hours": 6},
   "teams": [
@@ -94,8 +95,13 @@ Project spec (`project.json`):
 `config.runtime` is `agent_sdk` (real model, Docker sandbox) or `mock`
 (scripted behaviors; CI). Billing: store the project's credential with
 `POST /admin/secrets` and set `billing_secret_id` — `api_key` mode injects
-`ANTHROPIC_API_KEY`, `subscription` mode injects `CLAUDE_CODE_OAUTH_TOKEN`
-into the sandbox.
+`ANTHROPIC_API_KEY` into the sandbox. (Subscription mode exists but Anthropic's
+consumer terms do **not** permit multi-agent platforms on subscription auth —
+API-key billing is the required mode; see docs/PLAN.md.)
+
+`"solo": true` with exactly one employee-less team creates a **solo project**:
+the CEO is the sole member and derived lead of its only team — one brain that
+plans and executes under byte-identical policy. This is the M2 single-agent arm.
 
 ## Full stack (Docker Compose)
 
@@ -105,30 +111,134 @@ docker build -f deploy/sandbox/Dockerfile -t yaaf-sandbox:latest .
 cd deploy && YAAF_ADMIN_TOKEN=… YAAF_MASTER_KEY=… docker compose up --build
 ```
 
-Services: Postgres, API (dispatcher+janitor), runner (launches sibling sandbox
-containers via the Docker socket), and the **egress proxy** — sandbox containers
-sit on an internal network whose only way out is a squid allowlist
-(`deploy/proxy/allowlist.txt`). Requires the invoking user in the `docker` group.
+Services: Postgres, API (dispatcher+janitor, migrations applied on start),
+runner (launches sibling sandbox containers via the Docker socket), and the
+**egress proxy** — sandbox containers sit on an internal network whose only way
+out is a squid allowlist. `docker compose --profile s3 up` adds a MinIO
+artifact store (see Integrations). The web cockpit is served at
+**http://localhost:8080/app** — log in with the admin token from `deploy/.env`.
+
+## The chairman's cockpit (web UI)
+
+Login → project list → per-project tabs: **Overview** (budget meter, org
+roster, constitution in force, and the **CEO judgment** tile — the share of the
+CEO's bets that ever produced verified external evidence), **Boardroom** (talk
+to the CEO), **Board**, **Channels** (read-all/write-none), **Runs** (tokens,
+refusals, wake reasons, full trace viewer), **Approvals**, **Evidence**
+(hypotheses, evidence, and the spot-audit sample with pass/fail verdicts on
+both evidence and completions), **Settings** (billing, service credentials with
+per-role grants, amendments with cooling-off countdown and cancel). A
+WebSocket layers live updates over the polling — a latency hint, never the
+source of truth. There's also a project wizard and a role-library editor
+(guarded by the golden evals, below).
 
 ## The chairman's powers (deliberately few)
 
-`yaaf say` (boardroom), `yaaf decide` (approvals), `yaaf extend` (one hypothesis
-extension), `yaaf pause|stop` (kill switches, which revoke live run tokens),
-`yaaf unfreeze` (circuit-broken threads), `yaaf audit` + `yaaf audit-evidence`
+`yaaf say` (boardroom), `yaaf decide` (approvals), `yaaf extend` (one
+hypothesis extension), `yaaf pause|stop` (kill switches — they stop the
+containers, not just the tokens), `yaaf unfreeze` (circuit-broken threads),
+`yaaf audit` + `yaaf audit-evidence` and `POST /admin/tasks/{id}/audit`
 (spot-audit sampling — the human layer that doesn't approve everything put in
-front of it), and constitution amendments via the admin API (72h cooling-off).
-Everything else is observation: `dashboard`, `board`, `org`, `channels`, `tail`,
-`runs`, `ledger`, `evidence`, `hypotheses`.
+front of it), constitution amendments (72h cooling-off, cancellable, listed),
+`yaaf egress-sync` (regenerate per-role proxy config), and webhook-secret
+provisioning. Everything else is observation: `dashboard`, `board`, `org`,
+`channels`, `tail`, `runs`, `ledger`, `evidence`, `hypotheses`.
+
+The chairman is also **notified outward** (approval nags before expiry, budget
+auto-pauses) via SMTP and/or a JSON webhook — set `YAAF_SMTP_HOST` (+
+`_PORT/_USERNAME/_PASSWORD/_FROM`) and/or `YAAF_CHAIRMAN_WEBHOOK_URL`; unset
+means log-only.
+
+## Integrations (M4)
+
+**Evidence connectors** — evidence agents cannot forge, arriving as
+`platform_attested`. Provision per-project secrets once with
+`POST /admin/projects/{id}/webhook_secrets` (shown once; regenerate to
+recover), then point senders at:
+
+- `POST /webhooks/github/{project_id}` — a GitHub repo webhook (signed
+  `X-Hub-Signature-256`). Stars, watches, forks, opened issues/PRs, and issue
+  comments by accounts **not** registered as `github:<login>` in
+  `controlled_domains` become external evidence. Redeliveries dedupe.
+- `POST /webhooks/generic/{project_id}` — `{description, source_url?,
+  occurred_at?}` signed with `X-Yaaf-Signature` (HMAC-SHA256 of the raw body).
+  For anything you can teach to send a signed POST: mail routes, Stripe
+  forwarders, analytics jobs.
+
+**Slack bridge** (optional, per project; the bus stays canonical). Store the
+bot token and signing secret as project-level secrets (no role grants — agents
+never hold them), then set:
+
+```json
+"config": {"slack": {"bot_token_secret": "slack-bot", "signing_secret": "slack-signing",
+  "chairman_slack_user": "U…",
+  "channel_map": {"boardroom": "C…", "leadership": "C…", "team:<team_id>": "C…"}}}
+```
+
+The janitor mirrors mapped channels outward each tick (best-effort; an outage
+never fails an enforcement tick). Point the Slack app's events URL at
+`POST /webhooks/slack/{project_id}`: only the chairman's Slack user posting in
+the mapped boardroom channel becomes a boardroom message — everything else is
+ignored and audited.
+
+**GitHub workspaces.** Store a platform-level secret named `github` (a PAT),
+then `POST /admin/projects/{id}/github {"repo": "name-or-owner/name"}` creates
+(or verifies) a private repo and pins it to the project. The runner clones it
+into the workspace at lease time and scrubs the credential from `.git/config`;
+agents push with their own role-scoped secret (`github` in `secret_scopes`).
+
+**Artifact store.** Local files under `artifacts_root` by default; set
+`YAAF_ARTIFACT_S3_ENDPOINT` (+ `_BUCKET/_ACCESS_KEY/_SECRET_KEY`, and
+`pip install 'yaaf[s3]'`) to switch to any S3-compatible store —
+`docker compose --profile s3 up` ships MinIO. Holds evidence snapshots, run
+traces (`GET /observe/runs/{id}/trace`), and agent deliverables: the
+`artifact_put` sandbox tool is the durable home for finished work, because
+workspaces are ephemeral.
+
+**Per-role egress.** Give a role `tool_permissions.egress_allow` (in the role
+editor or roles/*.json), run `yaaf egress-sync`, and HUP the proxy: that role's
+containers get their own squid port whose allowlist is exactly that list,
+default-deny beyond it. Roles without one stay on the global allowlist.
+
+## The M2 experiment
+
+The gate the whole org-framework bet stands or falls on: CEO+team vs a single
+agent under identical governance, goal, and budget. The protocol
+(docs/M2_PROTOCOL.md) is frozen before any run; the harness drives it:
+
+```
+yaaf experiment init experiments/m2.spec.json    # provision both arms per goal pair
+yaaf experiment status experiments/m2.spec.json  # live E / tokens / time / conversion
+yaaf experiment export …                         # sealed random-label blind bundles
+yaaf experiment judge …                          # 3 judge-model rubric passes per bundle
+yaaf experiment score … <label> f c u co         # the chairman's blind pass
+yaaf experiment decide …                         # unseal, composite, verdict → docs/M2_RESULT.md
+```
+
+See experiments/README.md for the runbook and arm construction.
+
+## Verification
+
+- **Invariant selftests** attack every rule over HTTP with real scoped tokens,
+  on SQLite and (via `YAAF_TEST_DATABASE_URL`) real Postgres.
+- **Chaos suite** (tests/chaos): worker races on SKIP LOCKED, worker death →
+  reap → retry sees prior side effects, reaped runs can't double-book,
+  DB-connection loss between ticks, pause-mid-queue.
+- **Golden-transcript evals** (evals/): scripted scenarios replay against the
+  real API at $0; transcripts — every refusal verbatim — are normalized and
+  diffed against recorded goldens. `python -m evals.run --record` to bless a
+  deliberate change; CI fails on any silent drift. This is the gate that makes
+  role-prompt editing safe.
+- **CI** (.github/workflows/ci.yml): lint, SQLite suite, Postgres suite, web
+  build — every push and PR.
 
 ## Status
 
 M1 (the experiment rig), the full org mechanics of M3, the M4 integrations
-(evidence connectors, Slack bridge, GitHub workspaces, artifact store, per-role
-egress), and the M5 hardening assets (chaos suite, CI, golden-transcript evals)
-are built — see docs/PLAN.md's status appendix for the authoritative ledger.
+above, and the M5 hardening assets are built — docs/PLAN.md's status appendix
+is the authoritative ledger.
 
-The gate is now **M2**: the baseline experiment (CEO+team vs a single agent
-under identical governance, goal, and budget) that decides whether the org
-structure earns its tokens. Protocol: docs/M2_PROTOCOL.md; harness:
-`yaaf experiment` + experiments/README.md. Goal selection awaits the chairman;
-per the kill condition the experiment is decided by 2026-09-30.
+The gate is now **M2**: goal selection awaits the chairman; per the kill
+condition the experiment is decided by 2026-09-30. If the org arm loses, the
+org framework is shelved and the salvage path (a governance harness for single
+agents) proceeds.
