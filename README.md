@@ -130,7 +130,10 @@ export YAAF_API=http://localhost:8080
 ```
 
 Then open **http://localhost:8080/app**, log in with the admin token, and
-create a project from the wizard.
+create a project from the wizard — **[docs/CREATING_A_PROJECT.md](docs/CREATING_A_PROJECT.md)
+walks through your first project in plain English**, from writing a goal the
+CEO can actually plan from to connecting billing, credentials, and data
+sources.
 
 **The real thing — Docker Compose** (real Claude agents, sandboxed):
 
