@@ -18,3 +18,6 @@ m2-bundles/
 # Per-role egress allowlists are generated from the live role library — site
 # domains stay out of the repo. (generated/roles.conf stays tracked: ports only.)
 deploy/proxy/generated/allowlist_*.txt
+
+# Session handoff notes for Claude — local only
+HANDOFF.md
