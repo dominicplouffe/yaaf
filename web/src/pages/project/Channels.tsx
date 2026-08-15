@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { ChannelRow, get, MessageRow, post } from "../../api";
 import { fmtWhen, usePoll } from "../../hooks";
+import Markdown from "../../Markdown";
 
 export default function Channels({ projectId }: { projectId: string }) {
   const { data: channels } = usePoll(
@@ -56,7 +57,9 @@ export default function Channels({ projectId }: { projectId: string }) {
             <tr key={message.id}>
               <td className="mono">{fmtWhen(message.at)}</td>
               <td className="mono">{message.from_user ? "chairman" : message.from_agent?.slice(-6)}</td>
-              <td style={{ whiteSpace: "pre-wrap" }}>{message.body}</td>
+              <td>
+                <Markdown>{message.body}</Markdown>
+              </td>
               <td>
                 {message.frozen && (
                   <>

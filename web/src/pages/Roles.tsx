@@ -21,6 +21,40 @@ function egressLines(perms: Record<string, unknown>): string {
   return Array.isArray(list) ? list.join("\n") : "";
 }
 
+interface McpSpec {
+  name: string;
+  url_env: string;
+  bearer_env?: string;
+  transport?: string;
+}
+
+// One server per line: "name URL_ENV_VAR [bearer TOKEN_ENV_VAR] [sse]".
+// Friendlier than raw JSON, loses nothing we support.
+function mcpLines(perms: Record<string, unknown>): string {
+  const list = perms["mcp_servers"];
+  if (!Array.isArray(list)) return "";
+  return (list as McpSpec[])
+    .map((s) =>
+      [s.name, s.url_env, s.bearer_env ? `bearer ${s.bearer_env}` : "",
+       s.transport === "sse" ? "sse" : ""].filter(Boolean).join(" "))
+    .join("\n");
+}
+
+function parseMcpLines(text: string): McpSpec[] {
+  const specs: McpSpec[] = [];
+  for (const line of text.split("\n")) {
+    const words = line.trim().split(/\s+/).filter(Boolean);
+    if (words.length < 2) continue;
+    const spec: McpSpec = { name: words[0], url_env: words[1] };
+    for (let i = 2; i < words.length; i++) {
+      if (words[i] === "bearer" && words[i + 1]) spec.bearer_env = words[++i];
+      else if (words[i] === "sse") spec.transport = "sse";
+    }
+    specs.push(spec);
+  }
+  return specs;
+}
+
 const EMPTY: RoleDetail = {
   slug: "",
   name: "",
@@ -42,6 +76,7 @@ export default function Roles() {
   // Raw textarea text for the egress list — kept separate so blank lines
   // survive typing; the parsed domains live in tool_permissions.egress_allow.
   const [egressText, setEgressText] = useState("");
+  const [mcpText, setMcpText] = useState("");
 
   function refresh() {
     get<RoleSummary[]>("/admin/roles").then(setRoles).catch((e: Error) => setError(e.message));
@@ -54,6 +89,7 @@ export default function Roles() {
       const detail = await get<RoleDetail>(`/admin/roles/${slug}`);
       setEditing(detail);
       setEgressText(egressLines(detail.tool_permissions));
+      setMcpText(mcpLines(detail.tool_permissions));
     } catch (e) {
       setError((e as Error).message);
     }
@@ -122,7 +158,7 @@ export default function Roles() {
             </tbody>
           </table>
           <div className="actions">
-            <button onClick={() => { setSaved(null); setEditing({ ...EMPTY }); setEgressText(""); }}>+ New role</button>
+            <button onClick={() => { setSaved(null); setEditing({ ...EMPTY }); setEgressText(""); setMcpText(""); }}>+ New role</button>
           </div>
         </div>
 
@@ -236,8 +272,47 @@ export default function Roles() {
             />
             <p className="help" style={{ margin: "4px 0 0" }}>
               Per-role egress scoping, enforced by the proxy config generator — this role's
-              sandboxes can reach only these hosts, whatever the global list allows.
+              sandboxes can reach only these hosts, whatever the global list allows. Ports
+              beyond 80/443 need an entry in egress ports below.
             </p>
+            <label className="field">
+              External MCP servers — one per line: name URL_ENV_VAR [bearer TOKEN_ENV_VAR] [sse]
+            </label>
+            <textarea
+              className="mono"
+              style={{ minHeight: 54 }}
+              value={mcpText}
+              placeholder={"ppc MCP_SERVER_URL bearer MCP_SERVER_TOKEN"}
+              onChange={(e) => {
+                setMcpText(e.target.value);
+                const specs = parseMcpLines(e.target.value);
+                const next = { ...perms };
+                if (specs.length) next["mcp_servers"] = specs;
+                else delete next["mcp_servers"];
+                setEditing({ ...editing, tool_permissions: next });
+              }}
+            />
+            <p className="help" style={{ margin: "4px 0 0" }}>
+              The URL (and optional bearer token) come from service credentials granted to this
+              role — store the server's full URL (https://host:port/path) as a credential, grant
+              it here, and the sandbox mounts it as real MCP tools. The env var alone mounts
+              nothing; the host must be on this role's egress allowlist (plus its port below).
+            </p>
+            <label className="field">
+              Egress ports beyond 80/443 (comma-separated — e.g. an MCP server's port)
+            </label>
+            <input
+              value={Array.isArray(perms["egress_ports"]) ? (perms["egress_ports"] as number[]).join(", ") : ""}
+              placeholder="3845"
+              onChange={(e) => {
+                const ports = e.target.value.split(",").map((p) => parseInt(p.trim(), 10))
+                  .filter((p) => Number.isFinite(p) && p > 0 && p < 65536);
+                const next = { ...perms };
+                if (ports.length) next["egress_ports"] = ports;
+                else delete next["egress_ports"];
+                setEditing({ ...editing, tool_permissions: next });
+              }}
+            />
             <label className="field">Secret scopes (comma-separated names this role may receive)</label>
             <input
               value={editing.secret_scopes.join(", ")}

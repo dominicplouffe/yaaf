@@ -31,18 +31,28 @@ def role_port(slug: str) -> int:
     return PORT_BASE + zlib.crc32(slug.encode()) % PORT_SPAN
 
 
-def role_egress_domains(session: Session, role_slug: str) -> list[str]:
-    """The latest role version's egress_allow, normalized for squid dstdomain
-    (leading dot = domain plus subdomains)."""
+def _latest_permissions(session: Session, role_slug: str) -> dict:
     role = session.execute(select(Role).where(Role.slug == role_slug)).scalar_one_or_none()
     if role is None:
-        return []
+        return {}
     version = session.execute(
         select(RoleVersion).where(RoleVersion.role_id == role.id)
         .order_by(RoleVersion.version.desc()).limit(1)
     ).scalar_one_or_none()
-    domains = (version.tool_permissions or {}).get("egress_allow", []) if version else []
+    return (version.tool_permissions or {}) if version else {}
+
+
+def role_egress_domains(session: Session, role_slug: str) -> list[str]:
+    """The latest role version's egress_allow, normalized for squid dstdomain
+    (leading dot = domain plus subdomains)."""
+    domains = _latest_permissions(session, role_slug).get("egress_allow", [])
     return [d if d.startswith(".") else f".{d}" for d in domains if d.strip()]
+
+
+def role_egress_ports(session: Session, role_slug: str) -> list[int]:
+    """Extra destination ports beyond 80/443 (egress_ports) — MCP servers and
+    internal APIs rarely sit on the well-known ports."""
+    return [int(p) for p in _latest_permissions(session, role_slug).get("egress_ports", [])]
 
 
 def generate(session: Session, out_dir: Path) -> dict[str, int]:
@@ -70,13 +80,18 @@ def generate(session: Session, out_dir: Path) -> dict[str, int]:
         assignments[role.slug] = port
         safe = role.slug.replace("-", "_")
         (out_dir / f"allowlist_{safe}.txt").write_text("\n".join(domains) + "\n")
+        # Destination ports: 80/443 plus whatever the role declares
+        # (egress_ports) — the CONNECT rule shares the list so TLS on a
+        # custom port (the usual MCP-server shape) works.
+        ok_ports = " ".join(str(p) for p in [80, 443, *role_egress_ports(session, role.slug)])
         lines += [
             "",
             f"http_port {port} name=role_{safe}",
             f"acl port_{safe} myportname role_{safe}",
             f'acl dst_{safe} dstdomain "/etc/squid/generated/allowlist_{safe}.txt"',
-            f"http_access deny port_{safe} !safe_ports",
-            f"http_access deny port_{safe} CONNECT !ssl_ports",
+            f"acl ok_ports_{safe} port {ok_ports}",
+            f"http_access deny port_{safe} !ok_ports_{safe}",
+            f"http_access deny port_{safe} CONNECT !ok_ports_{safe}",
             f"http_access allow port_{safe} dst_{safe}",
             f"http_access deny port_{safe}",
         ]

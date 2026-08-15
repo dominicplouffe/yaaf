@@ -13,7 +13,8 @@ from yaaf.server.egress import generate, role_port
 
 def test_generator_writes_ports_and_allowlists(client, tmp_path):
     seed_role(client, "scoped", tool_permissions={
-        "bash": True, "egress_allow": ["api.example.com", ".wildcard.dev"]})
+        "bash": True, "egress_allow": ["api.example.com", ".wildcard.dev"],
+        "egress_ports": [3845]})
     seed_role(client, "unscoped", tool_permissions={"bash": True})
     out = tmp_path / "generated"
     with db_session() as session:
@@ -24,8 +25,10 @@ def test_generator_writes_ports_and_allowlists(client, tmp_path):
     assert port == role_port("scoped")  # pure function of the slug: runner-computable
     conf = (out / "roles.conf").read_text()
     assert f"http_port {port} name=role_scoped" in conf
-    # Default-deny inside the role scope, safe-ports respected before allows.
-    assert conf.index("deny port_scoped !safe_ports") < conf.index("allow port_scoped")
+    # Default-deny inside the role scope; port discipline before any allow —
+    # 80/443 plus the role's declared extras (an MCP server on 3845).
+    assert "acl ok_ports_scoped port 80 443 3845" in conf
+    assert conf.index("deny port_scoped !ok_ports_scoped") < conf.index("allow port_scoped")
     assert conf.rstrip().endswith("http_access deny port_scoped")
     allowlist = (out / "allowlist_scoped.txt").read_text().splitlines()
     # Bare domains get the subdomain-matching dot; existing dots are kept.

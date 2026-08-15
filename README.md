@@ -167,9 +167,11 @@ docs/PLAN.md    the founding plan, kill conditions included
 Integrations, all optional, all configured from the dashboard or one API
 call: **Slack** (mirror your company's channels; reply to the CEO from
 Slack), **GitHub** (private repo per project as the agents' workspace;
-repo events become verified evidence), **WordPress** or any HTTP service via
-scoped credentials, **email/webhook notifications** when the chairman is
-needed, and **S3-compatible artifact storage**.
+repo events become verified evidence), **external MCP servers** (declare one
+on a role, store its URL as a role-granted credential, and that role's
+sandboxes mount its tools — other roles never see it), **WordPress** or any
+HTTP service via scoped credentials, **email/webhook notifications** when
+the chairman is needed, and **S3-compatible artifact storage**.
 
 ## Project status
 

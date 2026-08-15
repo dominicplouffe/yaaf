@@ -308,7 +308,34 @@ def _allowed_tools() -> list[str]:
         allowed.append("Bash")
     if PERMS.get("web", False):
         allowed += ["WebFetch", "WebSearch"]
+    # Server-level grant: every tool the external MCP server offers.
+    allowed += [f"mcp__{name}" for name in _external_mcp_servers()]
     return allowed
+
+
+def _external_mcp_servers(env: dict[str, str] | None = None) -> dict[str, dict]:
+    """External MCP servers this ROLE declares (tool_permissions.mcp_servers).
+
+    Each entry: {"name": str, "url_env": str, optional "transport": "http"|"sse",
+    optional "bearer_env": str}. The URL (and any bearer token) come from role-
+    scoped secret env vars — so which roles can even see a data source is decided
+    by the chairman's credential grants, never by prompt text. An entry whose
+    env vars are missing is skipped: an ungranted role gets no server, silently,
+    the same way it gets no secret. Remember the sandbox's only network route is
+    the egress proxy — the server's host must be on this role's allowlist.
+    """
+    env = env if env is not None else dict(os.environ)
+    servers: dict[str, dict] = {}
+    for spec in PERMS.get("mcp_servers", []):
+        name, url = spec.get("name"), env.get(spec.get("url_env", ""))
+        if not name or not url or not url.startswith(("http://", "https://")):
+            continue
+        config: dict = {"type": spec.get("transport", "http"), "url": url}
+        token = env.get(spec.get("bearer_env", ""))
+        if token:
+            config["headers"] = {"Authorization": f"Bearer {token}"}
+        servers[name] = config
+    return servers
 
 
 async def main() -> int:
@@ -322,7 +349,7 @@ async def main() -> int:
         system_prompt=system_prompt,
         model=MODEL,
         effort=EFFORT,
-        mcp_servers={"yaaf": server},
+        mcp_servers={"yaaf": server, **_external_mcp_servers()},
         allowed_tools=_allowed_tools(),
         permission_mode="bypassPermissions",  # containment is the sandbox + proxy + API
         cwd="/workspace",

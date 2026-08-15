@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ChannelRow, get, MessageRow, post } from "../../api";
 import { fmtWhen, usePoll } from "../../hooks";
+import Markdown from "../../Markdown";
 
 export default function Boardroom({ projectId }: { projectId: string }) {
   const [channelId, setChannelId] = useState<string | null>(null);
@@ -49,7 +50,9 @@ export default function Boardroom({ projectId }: { projectId: string }) {
         {(messages ?? []).map((message) => (
           <div key={message.id} className={"msg" + (message.from_user ? " me" : "")}>
             <div className="who">{message.from_user ? "You (chairman)" : "CEO"}</div>
-            <div className="body">{message.body}</div>
+            <div className="body">
+              <Markdown>{message.body}</Markdown>
+            </div>
             <div className="when">{fmtWhen(message.at)}</div>
           </div>
         ))}
