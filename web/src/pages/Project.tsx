@@ -94,7 +94,7 @@ export default function ProjectPage() {
         <Route path="runs" element={<Runs projectId={projectId} />} />
         <Route path="approvals" element={<Approvals projectId={projectId} />} />
         <Route path="evidence" element={<EvidenceTab projectId={projectId} />} />
-        <Route path="settings" element={<Settings projectId={projectId} dash={dash} />} />
+        <Route path="settings" element={<Settings projectId={projectId} dash={dash} reload={reload} />} />
       </Routes>
     </>
   );

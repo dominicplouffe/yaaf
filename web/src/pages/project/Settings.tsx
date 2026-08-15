@@ -1,146 +1,165 @@
-import { useEffect, useState } from "react";
-import { Dashboard, get, patch, post } from "../../api";
+import { useState } from "react";
+import { Dashboard, patch, post } from "../../api";
 
-interface SecretRow {
-  id: string;
-  name: string;
-  project_id: string | null;
-  role_scopes: string[];
-}
-
-export default function Settings({ projectId, dash }: { projectId: string; dash: Dashboard }) {
-  const [secrets, setSecrets] = useState<SecretRow[]>([]);
+/** One decision, one button: pick how this project pays for models, paste the
+    credential, Connect does everything (store encrypted secret + attach it +
+    set the billing mode). The status card always reflects the server. */
+export default function Settings({
+  projectId,
+  dash,
+  reload,
+}: {
+  projectId: string;
+  dash: Dashboard;
+  reload: () => void;
+}) {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // New secret form
-  const [secretName, setSecretName] = useState("anthropic-api-key");
-  const [secretValue, setSecretValue] = useState("");
+  const [billingChoice, setBillingChoice] = useState<"api_key" | "subscription">(
+    dash.billing_mode === "subscription" ? "subscription" : "api_key",
+  );
+  const [credential, setCredential] = useState("");
+  const [busy, setBusy] = useState(false);
 
-  // Config form
-  const [runtime, setRuntime] = useState("");
-  const [billingSecret, setBillingSecret] = useState("");
-  const [heartbeatHours, setHeartbeatHours] = useState("");
+  const [runtime, setRuntime] = useState(String(dash.config["runtime"] ?? "agent_sdk"));
+  const [heartbeatHours, setHeartbeatHours] = useState(
+    String(dash.config["ceo_heartbeat_hours"] ?? 6),
+  );
 
-  // Amendment form
   const [amendReason, setAmendReason] = useState("");
   const [amendChanges, setAmendChanges] = useState('{\n  "queue_ceiling": 8\n}');
-
-  function refreshSecrets() {
-    get<SecretRow[]>(`/admin/secrets?project_id=${projectId}`)
-      .then(setSecrets)
-      .catch((e: Error) => setError(e.message));
-  }
-  useEffect(refreshSecrets, [projectId]);
 
   async function act(fn: () => Promise<unknown>, okMessage: string) {
     setError(null);
     setMessage(null);
+    setBusy(true);
     try {
       await fn();
       setMessage(okMessage);
+      reload();
     } catch (e) {
       setError((e as Error).message);
+    } finally {
+      setBusy(false);
     }
   }
+
+  async function connectBilling() {
+    const name = billingChoice === "subscription" ? "claude-subscription-token" : "anthropic-api-key";
+    await act(async () => {
+      const secret = await post<{ id: string }>("/admin/secrets", {
+        project_id: projectId,
+        name,
+        value: credential.trim(),
+        role_scopes: [],
+      });
+      await patch(`/admin/projects/${projectId}`, {
+        billing_mode: billingChoice,
+        billing_secret_id: secret.id,
+      });
+      setCredential("");
+    }, `Billing connected: ${billingChoice} using "${name}". New runs use it immediately.`);
+  }
+
+  const billingReady = dash.billing_secret_id !== null;
+  const runtimeNow = String(dash.config["runtime"] ?? "agent_sdk");
 
   return (
     <>
       {message && <div className="notice-box">{message}</div>}
       {error && <div className="error">{error}</div>}
 
-      <h2 style={{ marginTop: 0 }}>Secrets</h2>
+      <h2 style={{ marginTop: 0 }}>Current state</h2>
       <div className="card">
-        <p className="help">
-          Stored Fernet-encrypted; injected into sandboxes only for roles whose scopes name them.
-          The value is write-only — it is never shown again.
-        </p>
-        <div className="row">
-          <div>
-            <label className="field">Name</label>
-            <input value={secretName} onChange={(e) => setSecretName(e.target.value)} />
-          </div>
-          <div>
-            <label className="field">Value</label>
+        <dl className="kv">
+          <dt>runtime</dt>
+          <dd>
+            <span className={`badge ${runtimeNow === "mock" ? "warn" : "accent"}`}>
+              {runtimeNow}
+            </span>{" "}
+            {runtimeNow === "mock" && <span className="help">scripted — no real model runs</span>}
+          </dd>
+          <dt>billing</dt>
+          <dd>
+            <span className={`badge ${billingReady ? "good" : "critical"}`}>
+              {billingReady
+                ? `${dash.billing_mode} · ${dash.billing_secret_name}`
+                : "not connected"}
+            </span>{" "}
+            {!billingReady && runtimeNow === "agent_sdk" && (
+              <span className="help">real runs will fail until you connect billing below</span>
+            )}
+          </dd>
+          <dt>budget unit</dt>
+          <dd className="help">
+            {dash.billing_mode === "subscription"
+              ? `tokens (cap ${Number(dash.constitution["monthly_token_cap"]).toLocaleString()}/month) — subscription runs book tokens, never dollars`
+              : `USD (cap $${Number(dash.constitution["monthly_usd_cap"]).toLocaleString()}/month)`}
+          </dd>
+          <dt>CEO heartbeat</dt>
+          <dd className="help">every {String(dash.config["ceo_heartbeat_hours"] ?? 6)}h — each wake costs a real run</dd>
+        </dl>
+      </div>
+
+      <h2>Connect billing</h2>
+      <div className="card">
+        <label className="field">How should this project pay for models?</label>
+        <div className="pill-row" style={{ marginBottom: 8 }}>
+          <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
             <input
-              type="password"
-              value={secretValue}
-              onChange={(e) => setSecretValue(e.target.value)}
-              placeholder="sk-ant-…"
+              type="radio"
+              style={{ width: "auto" }}
+              checked={billingChoice === "api_key"}
+              onChange={() => setBillingChoice("api_key")}
             />
-          </div>
+            Anthropic API key — metered, USD budget
+          </label>
+          <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <input
+              type="radio"
+              style={{ width: "auto" }}
+              checked={billingChoice === "subscription"}
+              onChange={() => setBillingChoice("subscription")}
+            />
+            Claude subscription — token budget
+          </label>
         </div>
+        <label className="field">
+          {billingChoice === "subscription"
+            ? "Subscription token — run `claude setup-token` in a terminal and paste the result (sk-ant-oat…)"
+            : "API key from console.anthropic.com (sk-ant-api…)"}
+        </label>
+        <input
+          type="password"
+          value={credential}
+          onChange={(e) => setCredential(e.target.value)}
+          placeholder={billingChoice === "subscription" ? "sk-ant-oat01-…" : "sk-ant-api03-…"}
+        />
         <div className="actions">
-          <button
-            className="primary"
-            disabled={!secretName.trim() || !secretValue}
-            onClick={() =>
-              act(async () => {
-                await post("/admin/secrets", {
-                  project_id: projectId,
-                  name: secretName.trim(),
-                  value: secretValue,
-                  role_scopes: [],
-                });
-                setSecretValue("");
-                refreshSecrets();
-              }, "Secret stored (encrypted).")
-            }
-          >
-            Store secret
+          <button className="primary" disabled={busy || credential.trim().length < 10} onClick={connectBilling}>
+            {busy ? "Connecting…" : "Connect"}
           </button>
+          <span className="help">
+            Stored encrypted, write-only. One click does all of it: store → attach → set mode.
+          </span>
         </div>
-        {secrets.length > 0 && (
-          <table style={{ marginTop: 12 }}>
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Id</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {secrets.map((secret) => (
-                <tr key={secret.id}>
-                  <td>{secret.name}</td>
-                  <td className="mono">{secret.id}</td>
-                  <td>
-                    <button
-                      className="small"
-                      onClick={() =>
-                        act(
-                          () => patch(`/admin/projects/${projectId}`, { billing_secret_id: secret.id }),
-                          `Billing now uses "${secret.name}".`,
-                        )
-                      }
-                    >
-                      use for billing
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        {billingChoice === "subscription" && (
+          <p className="help">
+            Subscription runs share your personal Claude rate limits and are for personal projects;
+            use an API key for anything beyond that.
+          </p>
         )}
       </div>
 
-      <h2>Runtime & billing</h2>
+      <h2>Runtime & cadence</h2>
       <div className="card">
         <div className="row">
           <div>
             <label className="field">Runtime</label>
             <select value={runtime} onChange={(e) => setRuntime(e.target.value)}>
-              <option value="">(unchanged)</option>
-              <option value="agent_sdk">agent_sdk — real model</option>
+              <option value="agent_sdk">agent_sdk — real model in the sandbox</option>
               <option value="mock">mock — scripted, $0</option>
-            </select>
-          </div>
-          <div>
-            <label className="field">Billing mode</label>
-            <select value={billingSecret} onChange={(e) => setBillingSecret(e.target.value)}>
-              <option value="">(unchanged)</option>
-              <option value="api_key">api_key — USD budget</option>
-              <option value="subscription">subscription — token budget</option>
             </select>
           </div>
           <div>
@@ -150,34 +169,28 @@ export default function Settings({ projectId, dash }: { projectId: string; dash:
               min={0.1}
               step={0.5}
               value={heartbeatHours}
-              placeholder="6"
               onChange={(e) => setHeartbeatHours(e.target.value)}
             />
           </div>
         </div>
         <div className="actions">
           <button
-            className="primary"
+            disabled={busy}
             onClick={() =>
-              act(async () => {
-                const config: Record<string, unknown> = {};
-                if (runtime) config["runtime"] = runtime;
-                if (heartbeatHours) config["ceo_heartbeat_hours"] = Number(heartbeatHours);
-                const body: Record<string, unknown> = {};
-                if (Object.keys(config).length) body["config"] = config;
-                if (billingSecret) body["billing_mode"] = billingSecret;
-                if (!Object.keys(body).length) throw new Error("nothing to change");
-                await patch(`/admin/projects/${projectId}`, body);
-              }, "Configuration updated (mutable config only — the constitution is untouched).")
+              act(
+                () =>
+                  patch(`/admin/projects/${projectId}`, {
+                    config: {
+                      runtime,
+                      ceo_heartbeat_hours: Number(heartbeatHours) || 6,
+                    },
+                  }),
+                "Runtime configuration applied.",
+              )
             }
           >
             Apply
           </button>
-          <span className="help">
-            Currently: runtime <code>{String(dash.config["runtime"] ?? "agent_sdk")}</code>, billing{" "}
-            <code>{dash.billing_mode}</code>, heartbeat every{" "}
-            <code>{String(dash.config["ceo_heartbeat_hours"] ?? 6)}h</code>
-          </span>
         </div>
       </div>
 
@@ -197,6 +210,7 @@ export default function Settings({ projectId, dash }: { projectId: string; dash:
         />
         <div className="actions">
           <button
+            disabled={busy || amendReason.trim().length < 10}
             onClick={() =>
               act(async () => {
                 const changes = JSON.parse(amendChanges);
@@ -204,9 +218,8 @@ export default function Settings({ projectId, dash }: { projectId: string; dash:
                   reason: amendReason,
                   changes,
                 });
-              }, "Amendment proposed — in force after the cooling-off.")
+              }, "Amendment proposed — in force after the cooling-off, then disclosed to the CEO.")
             }
-            disabled={amendReason.trim().length < 10}
           >
             Propose amendment
           </button>

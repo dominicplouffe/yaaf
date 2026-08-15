@@ -87,6 +87,8 @@ export interface Dashboard {
   pending_approvals: number;
   constitution: Record<string, unknown>;
   config: Record<string, unknown>;
+  billing_secret_id: string | null;
+  billing_secret_name: string | null;
 }
 
 export interface TaskRow {

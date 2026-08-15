@@ -39,6 +39,15 @@ from yaaf.server.deps import admin_auth, db
 router = APIRouter(dependencies=[Depends(admin_auth)])
 
 
+def _secret_name(session: Session, secret_id: str | None) -> str | None:
+    if not secret_id:
+        return None
+    from yaaf.core.models import Secret
+
+    secret = session.get(Secret, secret_id)
+    return secret.name if secret else None
+
+
 def _project(session: Session, project_id: str) -> Project:
     project = session.get(Project, project_id)
     if project is None:
@@ -101,6 +110,8 @@ def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
         "pending_approvals": pending_approvals,
         "constitution": cons.model_dump(),
         "config": project.config or {},
+        "billing_secret_id": project.billing_secret_id,
+        "billing_secret_name": _secret_name(session, project.billing_secret_id),
     }
 
 
