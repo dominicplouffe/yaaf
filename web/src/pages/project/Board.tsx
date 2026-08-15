@@ -70,7 +70,8 @@ export default function Board({ projectId }: { projectId: string }) {
       <table>
         <thead>
           <tr>
-            <th style={{ width: "45%" }}>Task</th>
+            <th style={{ width: "42%" }}>Task</th>
+            <th>Team</th>
             <th>Status</th>
             <th>External</th>
             <th>Holder</th>
@@ -84,9 +85,10 @@ export default function Board({ projectId }: { projectId: string }) {
                   <strong>{task.title}</strong>
                   <TaskDetails task={task} />
                 </td>
+                <td>{task.team_name ?? "—"}</td>
                 <td>{taskBadge(task.status)}</td>
                 <td>{task.external ? "✓ external" : "internal"}</td>
-                <td className="mono">{task.claimed_by ?? "—"}</td>
+                <td>{task.holder_name ?? "—"}</td>
               </tr>
               {subtasksOf(task.id).map((subtask) => (
                 <tr key={subtask.id}>
@@ -94,16 +96,17 @@ export default function Board({ projectId }: { projectId: string }) {
                     ↳ {subtask.title}
                     <TaskDetails task={subtask} />
                   </td>
+                  <td></td>
                   <td>{taskBadge(subtask.status)}</td>
                   <td></td>
-                  <td className="mono">{subtask.claimed_by ?? subtask.assignee ?? "—"}</td>
+                  <td>{subtask.holder_name ?? "—"}</td>
                 </tr>
               ))}
             </>
           ))}
           {top.length === 0 && (
             <tr>
-              <td colSpan={4} className="help">
+              <td colSpan={5} className="help">
                 No tasks yet — the CEO plans on its heartbeat, or immediately after you speak in the
                 boardroom.
               </td>

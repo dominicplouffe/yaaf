@@ -7,6 +7,7 @@ import Overview from "./project/Overview";
 import Boardroom from "./project/Boardroom";
 import Board from "./project/Board";
 import Channels from "./project/Channels";
+import Memory from "./project/Memory";
 import Runs from "./project/Runs";
 import Approvals from "./project/Approvals";
 import EvidenceTab from "./project/Evidence";
@@ -17,6 +18,7 @@ const TABS = [
   ["boardroom", "Boardroom"],
   ["board", "Board"],
   ["channels", "Channels"],
+  ["memory", "Memory"],
   ["runs", "Runs"],
   ["approvals", "Approvals"],
   ["evidence", "Evidence"],
@@ -96,6 +98,7 @@ export default function ProjectPage() {
         <Route path="boardroom" element={<Boardroom projectId={projectId} dash={dash} />} />
         <Route path="board" element={<Board projectId={projectId} />} />
         <Route path="channels" element={<Channels projectId={projectId} />} />
+        <Route path="memory" element={<Memory projectId={projectId} dash={dash} />} />
         <Route path="runs" element={<Runs projectId={projectId} />} />
         <Route path="approvals" element={<Approvals projectId={projectId} />} />
         <Route path="evidence" element={<EvidenceTab projectId={projectId} />} />

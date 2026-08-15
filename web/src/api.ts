@@ -154,9 +154,12 @@ export interface TaskRow {
   title: string;
   status: string;
   team_id: string;
+  team_name: string | null;
   parent_task_id: string | null;
   assignee: string | null;
   claimed_by: string | null;
+  /** Agent name of whoever holds the task (claimed or assigned). */
+  holder_name: string | null;
   external: boolean;
   success_test: { type: string; command?: string; target?: string };
   evidence: string | null;
@@ -168,6 +171,7 @@ export interface MessageRow {
   id: string;
   from_agent: string | null;
   from_user: string | null;
+  from_name?: string | null;
   thread_id: string | null;
   frozen?: boolean;
   body: string;
@@ -178,6 +182,19 @@ export interface ChannelRow {
   id: string;
   kind: string;
   team_id: string | null;
+  team_name: string | null;
+}
+
+/** One remembered fact — project scope is curated by the CEO, team scope by
+    the team's lead. */
+export interface MemoryRow {
+  id: string;
+  scope: "project" | "team";
+  team_id: string | null;
+  kind: string;
+  subject: string;
+  body: string;
+  at: string;
 }
 
 export interface RunRow {

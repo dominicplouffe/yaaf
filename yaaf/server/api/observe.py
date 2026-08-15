@@ -286,17 +286,29 @@ def org(project_id: str, session: Session = Depends(db)) -> dict:
             "teams": teams}
 
 
+def _name_maps(session: Session, project_id: str) -> tuple[dict, dict]:
+    """{agent_id: name}, {team_id: name} — the chairman reads names, not ids."""
+    agents = {a.id: a.name for a in session.execute(
+        select(Agent).where(Agent.project_id == project_id)).scalars()}
+    teams = {t.id: t.name for t in session.execute(
+        select(Team).where(Team.project_id == project_id)).scalars()}
+    return agents, teams
+
+
 @router.get("/projects/{project_id}/board")
 def board(project_id: str, session: Session = Depends(db)) -> list[dict]:
     project = _project(session, project_id)
+    agents, teams = _name_maps(session, project.id)
     rows = session.execute(
         select(Task).where(Task.project_id == project.id).order_by(Task.created_at.desc()).limit(200)
     ).scalars()
     return [
         {
             "id": t.id, "title": t.title, "status": t.status, "team_id": t.team_id,
+            "team_name": teams.get(t.team_id),
             "parent_task_id": t.parent_task_id, "assignee": t.assignee_agent_id,
             "claimed_by": t.claimed_by_agent_id,
+            "holder_name": agents.get(t.claimed_by_agent_id or t.assignee_agent_id),
             "external": t.produces_external_evidence,
             "success_test": t.success_test, "evidence": t.completion_evidence,
             "check_output": t.check_output, "blocked_reason": t.blocked_reason,
@@ -308,8 +320,10 @@ def board(project_id: str, session: Session = Depends(db)) -> list[dict]:
 @router.get("/projects/{project_id}/channels")
 def channels(project_id: str, session: Session = Depends(db)) -> list[dict]:
     project = _project(session, project_id)
+    _, teams = _name_maps(session, project.id)
     return [
-        {"id": c.id, "kind": c.kind, "team_id": c.team_id}
+        {"id": c.id, "kind": c.kind, "team_id": c.team_id,
+         "team_name": teams.get(c.team_id)}
         for c in session.execute(
             select(Channel).where(Channel.project_id == project.id)
         ).scalars()
@@ -325,6 +339,9 @@ def channel_typing(channel_id: str) -> dict:
 
 @router.get("/channels/{channel_id}/messages")
 def channel_messages(channel_id: str, limit: int = 100, session: Session = Depends(db)) -> list[dict]:
+    channel = session.get(Channel, channel_id)
+    agents = ({} if channel is None
+              else _name_maps(session, channel.project_id)[0])
     rows = list(
         session.execute(
             select(Message)
@@ -336,6 +353,8 @@ def channel_messages(channel_id: str, limit: int = 100, session: Session = Depen
     return [
         {
             "id": m.id, "from_agent": m.sender_agent_id, "from_user": m.sender_user_id,
+            "from_name": ("chairman" if m.sender_user_id
+                          else agents.get(m.sender_agent_id)),
             "thread_id": m.thread_id, "frozen": m.frozen_at is not None,
             "body": m.body, "at": m.created_at.isoformat(),
         }
@@ -498,7 +517,7 @@ def memories(project_id: str, session: Session = Depends(db)) -> list[dict]:
     ).scalars()
     return [
         {"id": m.id, "scope": m.scope, "team_id": m.team_id, "kind": m.kind,
-         "subject": m.subject, "body": m.body}
+         "subject": m.subject, "body": m.body, "at": m.created_at.isoformat()}
         for m in rows
     ]
 

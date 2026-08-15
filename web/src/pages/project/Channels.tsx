@@ -25,7 +25,9 @@ export default function Channels({ projectId }: { projectId: string }) {
   }
 
   const label = (channel: ChannelRow) =>
-    channel.kind === "team" ? `team ${channel.team_id?.slice(-6)}` : channel.kind;
+    channel.kind === "team"
+      ? channel.team_name ?? `team ${channel.team_id?.slice(-6)}`
+      : channel.kind;
 
   return (
     <>
@@ -56,7 +58,7 @@ export default function Channels({ projectId }: { projectId: string }) {
           {(messages ?? []).map((message) => (
             <tr key={message.id}>
               <td className="mono">{fmtWhen(message.at)}</td>
-              <td className="mono">{message.from_user ? "chairman" : message.from_agent?.slice(-6)}</td>
+              <td>{message.from_name ?? (message.from_user ? "chairman" : message.from_agent?.slice(-6))}</td>
               <td>
                 <Markdown>{message.body}</Markdown>
               </td>
