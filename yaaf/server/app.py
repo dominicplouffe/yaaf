@@ -69,6 +69,15 @@ def create_app() -> FastAPI:
     if dist is not None:
         app.mount("/app", StaticFiles(directory=dist, html=True), name="app")
 
+        # The SPA shell must never be cached: hashed assets change every build,
+        # and a stale index.html means a stale UI over a new backend.
+        @app.middleware("http")
+        async def no_cache_shell(request: Request, call_next):
+            response = await call_next(request)
+            if request.url.path in ("/app", "/app/", "/app/index.html"):
+                response.headers["Cache-Control"] = "no-store"
+            return response
+
         @app.get("/")
         def root() -> RedirectResponse:
             return RedirectResponse("/app/")
