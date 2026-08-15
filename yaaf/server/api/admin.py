@@ -385,6 +385,19 @@ def add_team(project_id: str, body: TeamSpec, session: Session = Depends(db)) ->
             "agents": [{"id": a.id, "name": a.name} for a in agents]}
 
 
+@router.get("/egress/config")
+def egress_config(session: Session = Depends(db)) -> dict:
+    """The generated per-role squid config, served for `yaaf egress-sync` to
+    write on the compose host (where deploy/proxy/ actually lives)."""
+    from yaaf.server.egress import build
+
+    try:
+        assignments, files = build(session)
+    except RuntimeError as exc:  # port collision — actionable, not a 500
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"assignments": assignments, "files": files}
+
+
 @router.post("/teams/{team_id}/repin")
 def repin_team(team_id: str, session: Session = Depends(db)) -> dict:
     """Adopt the latest version of the team's role. Teams pin their role

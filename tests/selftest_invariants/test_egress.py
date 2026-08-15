@@ -58,3 +58,17 @@ def test_proxy_env_override_targets_role_port():
     assert env["HTTPS_PROXY"] == "http://proxy:3456"
     # The default path still resolves from settings.
     assert _proxy_env(None)["HTTP_PROXY"].startswith("http://")
+
+
+def test_egress_config_served_over_the_api(client):
+    """The CLI writes files on the compose host; the DB lives in a container —
+    so the generated config travels over the admin API, not a DB socket."""
+    from tests.conftest import ADMIN
+
+    seed_role(client, "scoped", tool_permissions={"egress_allow": ["a.example"],
+                                                  "egress_ports": [3845]})
+    payload = client.get("/admin/egress/config", headers=ADMIN).json()
+    assert payload["assignments"]["scoped"] == role_port("scoped")
+    assert "roles.conf" in payload["files"]
+    assert "acl ok_ports_scoped port 80 443 3845" in payload["files"]["roles.conf"]
+    assert payload["files"]["allowlist_scoped.txt"] == ".a.example\n"

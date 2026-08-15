@@ -77,6 +77,7 @@ export default function Roles() {
   // survive typing; the parsed domains live in tool_permissions.egress_allow.
   const [egressText, setEgressText] = useState("");
   const [mcpText, setMcpText] = useState("");
+  const [portsText, setPortsText] = useState("");
 
   function refresh() {
     get<RoleSummary[]>("/admin/roles").then(setRoles).catch((e: Error) => setError(e.message));
@@ -90,6 +91,8 @@ export default function Roles() {
       setEditing(detail);
       setEgressText(egressLines(detail.tool_permissions));
       setMcpText(mcpLines(detail.tool_permissions));
+      const ports = detail.tool_permissions["egress_ports"];
+      setPortsText(Array.isArray(ports) ? ports.join(", ") : "");
     } catch (e) {
       setError((e as Error).message);
     }
@@ -158,7 +161,7 @@ export default function Roles() {
             </tbody>
           </table>
           <div className="actions">
-            <button onClick={() => { setSaved(null); setEditing({ ...EMPTY }); setEgressText(""); setMcpText(""); }}>+ New role</button>
+            <button onClick={() => { setSaved(null); setEditing({ ...EMPTY }); setEgressText(""); setMcpText(""); setPortsText(""); }}>+ New role</button>
           </div>
         </div>
 
@@ -302,9 +305,13 @@ export default function Roles() {
               Egress ports beyond 80/443 (comma-separated — e.g. an MCP server's port)
             </label>
             <input
-              value={Array.isArray(perms["egress_ports"]) ? (perms["egress_ports"] as number[]).join(", ") : ""}
-              placeholder="3845"
+              className="mono"
+              value={portsText}
+              placeholder="3845, 8443"
               onChange={(e) => {
+                // Raw text kept separately so a trailing comma survives typing;
+                // the parsed ports live in tool_permissions.egress_ports.
+                setPortsText(e.target.value);
                 const ports = e.target.value.split(",").map((p) => parseInt(p.trim(), 10))
                   .filter((p) => Number.isFinite(p) && p > 0 && p < 65536);
                 const next = { ...perms };

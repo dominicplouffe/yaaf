@@ -315,13 +315,14 @@ def egress_sync(
     hup_container: str = typer.Option(None, "--hup-container",
                                       help="Proxy container to HUP after writing"),
 ) -> None:
-    """Regenerate per-role squid config from the role library (direct DB —
-    run on the box that hosts deploy/), then HUP the proxy to load it."""
-    from yaaf.core.db import db_session
-    from yaaf.server.egress import generate
-
-    with db_session() as session:
-        assignments = generate(session, out)
+    """Fetch per-role squid config from the API and write it to deploy/proxy/
+    (run on the box that hosts deploy/), then HUP the proxy to load it."""
+    with _client() as client:
+        payload = _json_or_die(client.get("/admin/egress/config"))
+    out.mkdir(parents=True, exist_ok=True)
+    for name, content in payload["files"].items():
+        (out / name).write_text(content)
+    assignments = payload["assignments"]
     if not assignments:
         typer.echo("no roles define egress_allow; global allowlist covers everything")
     for slug, port in sorted(assignments.items()):
