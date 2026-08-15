@@ -231,7 +231,43 @@ def _wake_reasons(
                 beat.last_fired_at = now
             reasons.append({"kind": "heartbeat", "name": "planning"})
 
+        # 4b. Daily wake at a wall-clock time (config: ceo_daily_at "HH:MM" +
+        #     timezone). Fires once per local day, at or after the target;
+        #     lana's standup pattern, generalized.
+        daily = _daily_wake_due(session, project, agent, now)
+        if daily:
+            reasons.append(daily)
+
     return reasons
+
+
+def _daily_wake_due(session: Session, project: Project, agent: Agent, now) -> dict | None:
+    raw = project.config.get("ceo_daily_at")
+    if not raw:
+        return None
+    try:
+        from zoneinfo import ZoneInfo
+
+        hour, minute = (int(part) for part in str(raw).split(":", 1))
+        tz = ZoneInfo(project.config.get("timezone", "UTC"))
+    except Exception:
+        log.warning("project %s has invalid ceo_daily_at/timezone config", project.slug)
+        return None
+    now_local = now.astimezone(tz)
+    target = now_local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if now_local < target:
+        return None
+    beat = session.execute(
+        select(Heartbeat).where(Heartbeat.agent_id == agent.id, Heartbeat.name == "daily")
+    ).scalar_one_or_none()
+    if beat is not None and beat.last_fired_at.astimezone(tz).date() >= now_local.date():
+        return None
+    if beat is None:
+        session.add(Heartbeat(agent_id=agent.id, name="daily", last_fired_at=now))
+    else:
+        beat.last_fired_at = now
+    return {"kind": "heartbeat", "name": "daily",
+            "note": f"daily {raw} {project.config.get('timezone', 'UTC')} wake"}
 
 
 def _work_reasons(session: Session, agent: Agent, now) -> list[dict]:

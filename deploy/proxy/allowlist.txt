@@ -5,3 +5,6 @@
 .claude.com
 # Add per-project/role domains below and HUP the proxy container:
 #   docker kill --signal=HUP <proxy-container>
+# ai-blog-writer: research sources are fetched via the model's web tools;
+# publishing goes to the chairman's WordPress site:
+.dplouffe.ca

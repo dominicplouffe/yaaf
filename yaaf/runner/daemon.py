@@ -155,8 +155,58 @@ def _materialize(session: Session, queued: RunQueue, project: Project) -> RunJob
     job.model = agent.model_override or (role_version.model if role_version else "claude-sonnet-5")
     job.effort = role_version.effort if role_version else "high"
     job.tool_permissions = dict(role_version.tool_permissions) if role_version else {}
-    job.billing_env = _billing_env(session, project)
+    role_secrets = _role_secret_env(session, project, role_version)
+    job.billing_env = {**_billing_env(session, project), **role_secrets}
+    if role_secrets:
+        job.system_prompt += (
+            "\n\nCREDENTIALS: these environment variables are set in your sandbox for your "
+            f"role: {', '.join(sorted(role_secrets))}. Use them for their purpose; never "
+            "print, log, or write them to files."
+        )
     return job
+
+
+def _env_var_name(secret_name: str) -> str:
+    import re
+
+    return re.sub(r"[^A-Za-z0-9]+", "_", secret_name).strip("_").upper()
+
+
+def _role_secret_env(session: Session, project: Project, role_version) -> dict:
+    """Secrets a role is scoped for, decrypted and named as env vars. A secret
+    reaches a sandbox only when the role's secret_scopes name it AND the
+    secret's own role_scopes (if any) allow the role."""
+    if role_version is None or not role_version.secret_scopes:
+        return {}
+    from sqlalchemy import or_
+
+    from yaaf.core.crypto import decrypt
+    from yaaf.core.models import Role
+
+    role = session.get(Role, role_version.role_id)
+    env: dict = {}
+    for name in role_version.secret_scopes:
+        secret = (
+            session.execute(
+                select(Secret)
+                .where(
+                    Secret.name == name,
+                    or_(Secret.project_id == project.id, Secret.project_id.is_(None)),
+                )
+                .order_by(Secret.project_id.is_(None))  # project-scoped wins
+            )
+            .scalars()
+            .first()
+        )
+        if secret is None:
+            continue
+        if secret.role_scopes and (role is None or role.slug not in secret.role_scopes):
+            continue
+        try:
+            env[_env_var_name(name)] = decrypt(secret.ciphertext)
+        except Exception:
+            log.warning("could not decrypt secret %s for role scope", secret.id)
+    return env
 
 
 def _billing_env(session: Session, project: Project) -> dict:
@@ -261,6 +311,44 @@ def finalize(job: RunJob, result: RunResult, was_revoked: bool = False) -> None:
 
         if job.kind == RunKind.SUCCESS_CHECK:
             _finalize_success_check(session, job, result)
+        elif run.status == RunStatus.FAILED:
+            _retry_failed_run(session, run)
+
+
+MAX_RUN_ATTEMPTS = 3
+
+
+def _retry_failed_run(session: Session, run: Run) -> None:
+    """A failed run consumed its trigger (notices marked read, message cursors
+    advanced) without a model ever acting on it. Give the notices back and
+    requeue the wake with backoff; the retry's context pack re-includes recent
+    messages (see contextpack) so nothing said gets silently eaten."""
+    from datetime import timedelta
+
+    from yaaf.core.models import Notice
+
+    for notice in session.execute(
+        select(Notice).where(Notice.consumed_by_run_id == run.id)
+    ).scalars():
+        notice.consumed_at = None
+        notice.consumed_by_run_id = None
+
+    if run.attempt >= MAX_RUN_ATTEMPTS:
+        log.warning("run %s failed at attempt %s; giving up", run.id, run.attempt)
+        return
+    session.add(
+        RunQueue(
+            id=ids.new_id(ids.RUN),
+            project_id=run.project_id,
+            agent_id=run.agent_id,
+            kind=run.kind,
+            trigger=run.trigger,
+            task_id=run.task_id,
+            attempt=run.attempt + 1,
+            prior_run_id=run.id,
+            not_before=utcnow() + timedelta(seconds=60 * run.attempt),
+        )
+    )
 
 
 def _finalize_success_check(session: Session, job: RunJob, result: RunResult) -> None:

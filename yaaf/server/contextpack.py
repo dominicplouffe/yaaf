@@ -121,7 +121,10 @@ def build_system_prompt(session: Session, agent: Agent, project: Project) -> str
     )
 
 
-def _unread_messages(session: Session, agent: Agent) -> list[dict]:
+def _unread_messages(session: Session, agent: Agent, include_recent: bool = False) -> list[dict]:
+    """Unread per cursor — or, on retry attempts, the recent tail regardless of
+    cursor: a failed prior attempt advanced the cursor without any model ever
+    reading the words, and a chairman's message must never be silently eaten."""
     out = []
     for channel_id in policy.agent_channel_ids(session, agent):
         channel = session.get(Channel, channel_id)
@@ -131,13 +134,15 @@ def _unread_messages(session: Session, agent: Agent) -> list[dict]:
             )
         ).scalar_one_or_none()
         stmt = select(Message).where(Message.channel_id == channel_id)
-        if cursor is not None:
+        if cursor is not None and not include_recent:
             stmt = stmt.where(Message.created_at > cursor.last_read_at)
         rows = [
             m
-            for m in session.execute(stmt.order_by(Message.created_at).limit(50)).scalars()
-            if m.sender_agent_id != agent.id
-        ]
+            for m in session.execute(
+                stmt.order_by(Message.created_at.desc()).limit(30)
+            ).scalars()
+        ][::-1]
+        rows = [m for m in rows if m.sender_agent_id != agent.id]
         if rows:
             out.append(
                 {
@@ -228,7 +233,7 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
         "roster": _roster(session, project),
         "notices": [{"kind": n.kind, "body": n.body, "at": n.created_at.isoformat()}
                     for n in notices],
-        "unread": _unread_messages(session, agent),
+        "unread": _unread_messages(session, agent, include_recent=run.attempt > 1),
         "memory_hint": {
             "note": "Query memory, do not recite it: GET /agent/memory/search?q=...",
             "recent_subjects": [

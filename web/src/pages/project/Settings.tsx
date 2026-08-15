@@ -8,6 +8,59 @@ interface SecretRow {
   role_scopes: string[];
 }
 
+function OtherCredential({
+  projectId,
+  act,
+  busy,
+}: {
+  projectId: string;
+  act: (fn: () => Promise<unknown>, ok: string) => Promise<void>;
+  busy: boolean;
+}) {
+  const [name, setName] = useState("wordpress");
+  const [value, setValue] = useState("");
+  return (
+    <>
+      <div className="row">
+        <div>
+          <label className="field">Name (what roles reference in their secret scopes)</label>
+          <input value={name} onChange={(e) => setName(e.target.value)} />
+        </div>
+        <div>
+          <label className="field">
+            Value {name === "wordpress" && "— format: username:application-password"}
+          </label>
+          <input
+            type="password"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            placeholder={name === "wordpress" ? "dominic:xxxx xxxx xxxx xxxx" : ""}
+          />
+        </div>
+      </div>
+      <div className="actions">
+        <button
+          className="small primary"
+          disabled={busy || !name.trim() || !value}
+          onClick={() =>
+            act(async () => {
+              await post("/admin/secrets", {
+                project_id: projectId,
+                name: name.trim(),
+                value,
+                role_scopes: [],
+              });
+              setValue("");
+            }, `Credential "${name.trim()}" stored (encrypted, write-only).`)
+          }
+        >
+          Store
+        </button>
+      </div>
+    </>
+  );
+}
+
 /** One decision, one button: pick how this project pays for models, paste the
     credential, Connect does everything (store encrypted secret + attach it +
     set the billing mode). The status card always reflects the server. */
@@ -217,6 +270,17 @@ export default function Settings({
             </table>
           </>
         )}
+      </div>
+
+      <h2>Other credentials agents may need</h2>
+      <div className="card">
+        <p className="help" style={{ marginTop: 0 }}>
+          Non-billing credentials (a WordPress application password, a GitHub token…). A credential
+          reaches an agent's sandbox only when its role's <em>secret scopes</em> name it — e.g. the
+          Marketing Blog Writer role asks for <code>wordpress</code>, injected as the{" "}
+          <code>WORDPRESS</code> environment variable.
+        </p>
+        <OtherCredential projectId={projectId} act={act} busy={busy} />
       </div>
 
       <h2>Advanced</h2>
