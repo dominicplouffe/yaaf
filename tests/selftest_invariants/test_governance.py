@@ -241,7 +241,7 @@ def test_amendment_cooling_off(client):
         json={"reason": "the team is drowning, raise the ceiling",
               "changes": {"queue_ceiling": 12}},
         headers=ADMIN,
-    ).json()
+    ).json()["amendments"][0]
 
     # Not in force during the cooling-off.
     with db_session() as session:
@@ -268,6 +268,42 @@ def test_amendment_cooling_off(client):
         headers=ADMIN,
     )
     assert bad.status_code == 422
+
+
+def test_budget_amendments_apply_immediately(client):
+    """Chairman's ruling (2026-08-15): budgets are business reality — a
+    customer changes their mind, a mistake needs correcting NOW. Budget fields
+    skip the cooling-off entirely; behavioral guardrails never do. Both halves
+    are still recorded as amendments and disclosed to the CEO."""
+    from yaaf.core.constitution import effective
+
+    project = make_project(client)
+    response = client.post(
+        f"/admin/projects/{project['id']}/amendments",
+        json={"reason": "customer doubled the retainer for Q4",
+              "changes": {"monthly_usd_cap": 2500.0, "queue_ceiling": 12}},
+        headers=ADMIN,
+    ).json()
+    assert {a["applied_now"] for a in response["amendments"]} == {True, False}
+    assert "NOW" in response["note"]
+
+    # The budget is in force in the very same request — no janitor involved;
+    # the guardrail half of the same save still waits out its cooling-off.
+    with db_session() as session:
+        cons = effective(session, project["id"])
+        assert cons.monthly_usd_cap == 2500.0
+        assert cons.queue_ceiling != 12
+
+    # Disclosure of the immediate half is immediate too.
+    with db_session() as session:
+        notices = session.query(Notice).filter(
+            Notice.project_id == project["id"],
+            Notice.kind == "constitution_amended",
+        ).all()
+        assert len(notices) == 1 and "monthly_usd_cap" in notices[0].body
+
+    listed = client.get(f"/admin/projects/{project['id']}/amendments", headers=ADMIN).json()
+    assert sorted(a["status"] for a in listed) == ["applied", "pending"]
 
 
 def test_evidence_verifier_rules(client):

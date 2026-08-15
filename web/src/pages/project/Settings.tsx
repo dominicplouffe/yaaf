@@ -682,10 +682,13 @@ function CredentialsManager({
     set the billing mode). The status card always reflects the server. */
 // The constitution knobs a chairman actually reaches for, as labeled fields.
 // Everything else stays reachable through the raw overlay under "advanced".
-const GUARDRAIL_FIELDS: { key: string; label: string; apiKeyOnly?: boolean }[] = [
-  { key: "monthly_usd_cap", apiKeyOnly: true,
+// `immediate` = budget reality: applies the moment you save, no cooling-off.
+const GUARDRAIL_FIELDS: {
+  key: string; label: string; apiKeyOnly?: boolean; immediate?: boolean;
+}[] = [
+  { key: "monthly_usd_cap", apiKeyOnly: true, immediate: true,
     label: "Monthly budget (USD) — hard stop: the project pauses itself at 100%" },
-  { key: "monthly_token_cap",
+  { key: "monthly_token_cap", immediate: true,
     label: "Monthly token cap — the budget unit under subscription billing" },
   { key: "approval_threshold_usd",
     label: "Spending above this (USD) needs your approval first" },
@@ -1040,9 +1043,10 @@ export default function Settings({
       <div className="card">
         <p className="help">
           These are the limits the platform enforces right now. Edit what you need and save —
-          the change becomes a constitution amendment: in force after a 72-hour cooling-off,
-          and the CEO is told. A forcing function you could edit instantly would be just a
-          default; the delay is the point.
+          every change is recorded as a constitution amendment and disclosed to the CEO.
+          <b> Budget limits apply the moment you save</b> — budgets are business reality.
+          The behavioral guardrails take a 72-hour cooling-off: a forcing function you could
+          edit instantly would be just a default.
         </p>
         <div className="row">
           {GUARDRAIL_FIELDS.filter(
@@ -1058,11 +1062,12 @@ export default function Settings({
                   setGuardrails((prev) => ({ ...prev, [f.key]: e.target.value }))
                 }
               />
-              {f.key in changedGuardrails && (
-                <p className="help" style={{ margin: "4px 0 0" }}>
-                  {String(cons[f.key])} → {guardrails[f.key]}
-                </p>
-              )}
+              <p className="help" style={{ margin: "4px 0 0" }}>
+                {f.immediate ? "in force the moment you save" : "72h cooling-off"}
+                {f.key in changedGuardrails && (
+                  <> — <b>{String(cons[f.key])} → {guardrails[f.key]}</b></>
+                )}
+              </p>
             </div>
           ))}
         </div>
@@ -1097,14 +1102,15 @@ export default function Settings({
                 const changes = { ...advanced, ...changedGuardrails };
                 if (Object.keys(changes).length === 0)
                   throw new Error("Nothing changed — edit a value first.");
-                await post(`/admin/projects/${projectId}/amendments`, {
-                  reason: amendReason,
-                  changes,
-                });
+                const result = await post<{ note: string }>(
+                  `/admin/projects/${projectId}/amendments`,
+                  { reason: amendReason, changes },
+                );
                 setAmendReason("");
                 setAmendChanges("{}");
                 reloadAmendments();
-              }, "Amendment proposed — in force after the 72h cooling-off, then disclosed to the CEO.")
+                return result;
+              }, (result) => (result as { note: string }).note)
             }
           >
             Save as amendment

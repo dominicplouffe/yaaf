@@ -20,7 +20,7 @@ def test_amendment_cancel_during_cooling_off(client):
         f"/admin/projects/{project['id']}/amendments",
         json={"reason": "loosen the queue for the launch push", "changes": {"queue_ceiling": 20}},
         headers=ADMIN,
-    ).json()
+    ).json()["amendments"][0]
 
     listed = client.get(f"/admin/projects/{project['id']}/amendments", headers=ADMIN).json()
     assert [a["status"] for a in listed] == ["pending"]

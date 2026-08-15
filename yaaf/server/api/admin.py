@@ -866,17 +866,43 @@ def amend_constitution(
 ) -> dict:
     project = _get_project(session, project_id)
     try:
-        amendment = propose_amendment(
+        amendments = propose_amendment(
             session, project.id, project.chairman_user_id, body.reason, body.changes
         )
     except Exception as exc:  # invalid overlay
         raise HTTPException(status_code=422, detail=f"invalid amendment: {exc}") from exc
-    _audit(session, project.id, "constitution.amend", "amendment", amendment.id,
-           {"changes": body.changes, "effective_at": amendment.effective_at.isoformat()})
+    if not amendments:
+        raise HTTPException(status_code=422, detail="the amendment changes nothing")
+    applied_now = [a for a in amendments if a.applied_constitution_id is not None]
+    pending = [a for a in amendments if a.applied_constitution_id is None]
+    for amendment in amendments:
+        _audit(session, project.id, "constitution.amend", "amendment", amendment.id,
+               {"changes": amendment.changes,
+                "effective_at": amendment.effective_at.isoformat(),
+                "applied_now": amendment in applied_now})
+    # Budget amendments applied in this call are disclosed in this call too —
+    # the janitor only discloses what its own apply pass lands.
+    ceo = policy.ceo_of(session, project.id)
+    for amendment in applied_now:
+        if ceo is not None:
+            session.add(Notice(
+                id=ids.new_id(ids.NOTICE), project_id=project.id, agent_id=ceo.id,
+                kind=NoticeKind.CONSTITUTION_AMENDED,
+                body=(f"The chairman amended the constitution (reason: {amendment.reason}). "
+                      f"Changes now in force: {amendment.changes}. Plan accordingly."),
+            ))
+    note_parts = []
+    if applied_now:
+        note_parts.append("Budget changes are in force NOW.")
+    if pending:
+        note_parts.append("The other changes take effect after the 72h cooling-off.")
     return {
-        "id": amendment.id,
-        "effective_at": amendment.effective_at.isoformat(),
-        "note": "Takes effect after the cooling-off period and is disclosed to the CEO.",
+        "amendments": [
+            {"id": a.id, "effective_at": a.effective_at.isoformat(),
+             "applied_now": a in applied_now}
+            for a in amendments
+        ],
+        "note": " ".join(note_parts) + " Everything is disclosed to the CEO.",
     }
 
 

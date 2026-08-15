@@ -96,27 +96,47 @@ def create_initial(session: Session, project_id: str, doc: ConstitutionDoc) -> C
     return row
 
 
+# Budget fields are exempt from the cooling-off (chairman's ruling,
+# 2026-08-15): budgets are business reality — a customer changes their mind,
+# a mistake needs correcting NOW, and a spending cap that lags reality by
+# three days is itself a hazard. Everything else stays a forcing function:
+# for behavioral rules, the delay is the point.
+BUDGET_FIELDS = frozenset({"monthly_usd_cap", "monthly_token_cap", "budget_warn_ratio"})
+
+
 def propose_amendment(
     session: Session,
     project_id: str,
     user_id: str,
     reason: str,
     changes: dict[str, Any],
-) -> Amendment:
-    """Chairman-only (checked by the caller). Validates the overlay now so a
-    bad amendment is refused immediately, but it takes effect only after the
-    cooling-off period — applied by the janitor, disclosed to the CEO."""
+) -> list[Amendment]:
+    """Chairman-only (checked by the caller). Validates the whole overlay now
+    so a bad amendment is refused immediately, then splits it: budget fields
+    take effect in this very call; everything else waits out the cooling-off
+    (applied by the janitor). Both halves are recorded and disclosed to the
+    CEO. Returns the recorded amendments (one or two)."""
     effective(session, project_id).overlay(changes)  # raises if the result is invalid
-    amendment = Amendment(
-        id=ids.new_id(ids.AMENDMENT),
-        project_id=project_id,
-        proposed_by_user_id=user_id,
-        reason=reason,
-        changes=changes,
-        effective_at=utcnow() + timedelta(hours=COOLING_OFF_HOURS),
-    )
-    session.add(amendment)
-    return amendment
+    budget = {k: v for k, v in changes.items() if k in BUDGET_FIELDS}
+    cooled = {k: v for k, v in changes.items() if k not in BUDGET_FIELDS}
+    amendments = []
+    for subset, delay_hours in ((budget, 0), (cooled, COOLING_OFF_HOURS)):
+        if not subset:
+            continue
+        amendment = Amendment(
+            id=ids.new_id(ids.AMENDMENT),
+            project_id=project_id,
+            proposed_by_user_id=user_id,
+            reason=reason,
+            changes=subset,
+            effective_at=utcnow() + timedelta(hours=delay_hours),
+        )
+        session.add(amendment)
+        amendments.append(amendment)
+    if budget:
+        session.flush()
+        apply_due_amendments(session, project_id)  # budgets are in force NOW
+    return amendments
 
 
 def apply_due_amendments(session: Session, project_id: str) -> list[Amendment]:

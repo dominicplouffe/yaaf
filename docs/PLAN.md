@@ -244,6 +244,17 @@ Web Boardroom is a real chat: typing indicator, chat-aware banners,
 `dash.chat_live`. Also fixed live: Agent SDK 1MB transport buffer overflow
 on large MCP results (now 16MB in both entrypoints).
 
+**Also (2026-08-15, night): budget amendments apply immediately (chairman's
+ruling — "budgets change; I can't compromise on this").** `monthly_usd_cap`,
+`monthly_token_cap`, and `budget_warn_ratio` are exempt from the 72h
+cooling-off: a save splits into an immediate budget amendment (applied and
+disclosed to the CEO in the same request) and a cooled one for any behavioral
+guardrails in the same save. The delay stays for everything else — forcing
+functions remain forcing functions. Also that evening: Boards/Channels show
+team and agent names (server-side name join in the observe API), a Memory tab
+(project memory curated by the CEO, per-team memory by leads, slots vs caps),
+and the Budgets & guardrails form replacing the raw-JSON amendment card.
+
 **M6 (Proxmox fleet): NOT STARTED** — still demoted, on demonstrated need.
 
 **Open items:** golden-transcript evals before role editing counts as safe; M2

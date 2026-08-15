@@ -279,8 +279,9 @@ export default function Overview({ projectId, dash }: { projectId: string; dash:
           ))}
         </dl>
         <p className="help">
-          Frozen at project creation. Edit them under Settings → Budgets &amp; guardrails —
-          changes take effect after a 72-hour cooling-off and are disclosed to the CEO.
+          Set at project creation, edited under Settings → Budgets &amp; guardrails. Budget
+          caps apply the moment you save; behavioral guardrails take a 72-hour cooling-off.
+          Every change is disclosed to the CEO.
         </p>
       </div>
     </>
