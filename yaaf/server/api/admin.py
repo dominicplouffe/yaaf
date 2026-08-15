@@ -134,6 +134,31 @@ def create_role(body: RoleIn, session: Session = Depends(db)) -> dict:
     return {"role_id": role.id, "role_version_id": row.id, "version": version}
 
 
+@router.get("/roles/{slug}")
+def get_role(slug: str, session: Session = Depends(db)) -> dict:
+    role = session.execute(select(Role).where(Role.slug == slug)).scalar_one_or_none()
+    if role is None:
+        raise HTTPException(status_code=404, detail="unknown role")
+    latest = session.execute(
+        select(RoleVersion)
+        .where(RoleVersion.role_id == role.id)
+        .order_by(RoleVersion.version.desc())
+        .limit(1)
+    ).scalar_one()
+    return {
+        "slug": role.slug,
+        "name": role.name,
+        "is_ceo_role": role.is_ceo_role,
+        "version": latest.version,
+        "description": latest.description,
+        "system_prompt": latest.system_prompt,
+        "model": latest.model,
+        "effort": latest.effort,
+        "tool_permissions": latest.tool_permissions,
+        "secret_scopes": latest.secret_scopes,
+    }
+
+
 @router.get("/roles")
 def list_roles(session: Session = Depends(db)) -> list[dict]:
     out = []
@@ -568,6 +593,19 @@ class SecretIn(BaseModel):
     name: str = Field(min_length=2, max_length=120)
     value: str = Field(min_length=1)
     role_scopes: list[str] = Field(default_factory=list)
+
+
+@router.get("/secrets")
+def list_secrets(project_id: str | None = None, session: Session = Depends(db)) -> list[dict]:
+    """Names and scopes only — values are write-only, decrypted solely at
+    run-injection time."""
+    stmt = select(Secret)
+    if project_id is not None:
+        stmt = stmt.where(Secret.project_id == project_id)
+    return [
+        {"id": s.id, "name": s.name, "project_id": s.project_id, "role_scopes": s.role_scopes}
+        for s in session.execute(stmt.order_by(Secret.created_at)).scalars()
+    ]
 
 
 @router.post("/secrets")

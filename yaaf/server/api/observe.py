@@ -100,6 +100,7 @@ def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
         "runs": {"running": running, "queued": queued},
         "pending_approvals": pending_approvals,
         "constitution": cons.model_dump(),
+        "config": project.config or {},
     }
 
 

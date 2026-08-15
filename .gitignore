@@ -9,3 +9,5 @@ data/
 *.db
 deploy/.env
 notes.txt
+web/node_modules/
+web/dist/

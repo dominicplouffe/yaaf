@@ -9,13 +9,22 @@ retry loops die in five calls, not five hundred.
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 from yaaf.core.constitution import effective
 from yaaf.core.db import db_session
 from yaaf.core.models import Run
 from yaaf.server.policy import Refusal
+
+
+def _web_dist() -> Path | None:
+    candidate = Path(os.environ.get("YAAF_WEB_DIST", "web/dist"))
+    return candidate if (candidate / "index.html").is_file() else None
 
 
 def create_app() -> FastAPI:
@@ -56,15 +65,24 @@ def create_app() -> FastAPI:
     def healthz() -> dict:
         return {"ok": True}
 
-    @app.get("/")
-    def root() -> dict:
-        return {
-            "service": "yaaf",
-            "version": app.version,
-            "note": "JSON API only — the web UI is a later milestone. "
-                    "Use the `yaaf` CLI, or browse the API at /docs.",
-            "health": "/healthz",
-            "api_docs": "/docs",
-        }
+    dist = _web_dist()
+    if dist is not None:
+        app.mount("/app", StaticFiles(directory=dist, html=True), name="app")
+
+        @app.get("/")
+        def root() -> RedirectResponse:
+            return RedirectResponse("/app/")
+    else:
+
+        @app.get("/")
+        def root() -> dict:
+            return {
+                "service": "yaaf",
+                "version": app.version,
+                "note": "The web UI is not built (web/dist missing). "
+                        "Use the `yaaf` CLI, or browse the API at /docs.",
+                "health": "/healthz",
+                "api_docs": "/docs",
+            }
 
     return app
