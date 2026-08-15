@@ -680,6 +680,23 @@ function CredentialsManager({
 /** One decision, one button: pick how this project pays for models, paste the
     credential, Connect does everything (store encrypted secret + attach it +
     set the billing mode). The status card always reflects the server. */
+// The constitution knobs a chairman actually reaches for, as labeled fields.
+// Everything else stays reachable through the raw overlay under "advanced".
+const GUARDRAIL_FIELDS: { key: string; label: string; apiKeyOnly?: boolean }[] = [
+  { key: "monthly_usd_cap", apiKeyOnly: true,
+    label: "Monthly budget (USD) — hard stop: the project pauses itself at 100%" },
+  { key: "monthly_token_cap",
+    label: "Monthly token cap — the budget unit under subscription billing" },
+  { key: "approval_threshold_usd",
+    label: "Spending above this (USD) needs your approval first" },
+  { key: "runs_per_project_per_day",
+    label: "Runs per day, whole project — the daily activity ceiling" },
+  { key: "wakes_per_agent_per_hour",
+    label: "Wakes per agent per hour — the runaway-loop brake" },
+  { key: "queue_ceiling",
+    label: "Open tasks at once — forces finishing over starting" },
+];
+
 export default function Settings({
   projectId,
   dash,
@@ -704,7 +721,20 @@ export default function Settings({
   );
 
   const [amendReason, setAmendReason] = useState("");
-  const [amendChanges, setAmendChanges] = useState('{\n  "queue_ceiling": 8\n}');
+  const [amendChanges, setAmendChanges] = useState("{}");
+  // The primary limits, editable as a form. Values start at what the
+  // constitution enforces right now; saving proposes an amendment with just
+  // the fields you changed.
+  const cons = dash.constitution as Record<string, unknown>;
+  const [guardrails, setGuardrails] = useState<Record<string, string>>(() =>
+    Object.fromEntries(GUARDRAIL_FIELDS.map((f) => [f.key, String(cons[f.key] ?? "")])),
+  );
+  const changedGuardrails = Object.fromEntries(
+    GUARDRAIL_FIELDS.filter((f) => {
+      const parsed = Number(guardrails[f.key]);
+      return Number.isFinite(parsed) && parsed >= 0 && parsed !== Number(cons[f.key]);
+    }).map((f) => [f.key, Number(guardrails[f.key])]),
+  );
   const { data: amendments, reload: reloadAmendments } = usePoll(
     () => get<AmendmentRow[]>(`/admin/projects/${projectId}/amendments`),
     10000,
@@ -1006,37 +1036,82 @@ export default function Settings({
         </div>
       </details>
 
-      <h2>Constitution amendment</h2>
+      <h2>Budgets &amp; guardrails</h2>
       <div className="card">
         <p className="help">
-          Amendments take effect after a 72-hour cooling-off and are disclosed to the CEO. A forcing
-          function you can edit instantly is just a default — the delay is the point.
+          These are the limits the platform enforces right now. Edit what you need and save —
+          the change becomes a constitution amendment: in force after a 72-hour cooling-off,
+          and the CEO is told. A forcing function you could edit instantly would be just a
+          default; the delay is the point.
         </p>
-        <label className="field">Reason (recorded, shown to the CEO)</label>
-        <input value={amendReason} onChange={(e) => setAmendReason(e.target.value)} />
-        <label className="field">Changes (JSON overlay onto the current constitution)</label>
-        <textarea
-          className="mono"
-          value={amendChanges}
-          onChange={(e) => setAmendChanges(e.target.value)}
+        <div className="row">
+          {GUARDRAIL_FIELDS.filter(
+            (f) => !f.apiKeyOnly || dash.billing_mode === "api_key",
+          ).map((f) => (
+            <div key={f.key}>
+              <label className="field">{f.label}</label>
+              <input
+                type="number"
+                min={0}
+                value={guardrails[f.key]}
+                onChange={(e) =>
+                  setGuardrails((prev) => ({ ...prev, [f.key]: e.target.value }))
+                }
+              />
+              {f.key in changedGuardrails && (
+                <p className="help" style={{ margin: "4px 0 0" }}>
+                  {String(cons[f.key])} → {guardrails[f.key]}
+                </p>
+              )}
+            </div>
+          ))}
+        </div>
+        <details style={{ margin: "10px 0" }}>
+          <summary className="help">
+            Advanced: amend any other constitution field (JSON overlay)
+          </summary>
+          <textarea
+            className="mono"
+            style={{ marginTop: 8 }}
+            value={amendChanges}
+            onChange={(e) => setAmendChanges(e.target.value)}
+          />
+        </details>
+        <label className="field">Why this change? (required — recorded, shown to the CEO)</label>
+        <input
+          value={amendReason}
+          placeholder="e.g. Raising the budget for the launch month"
+          onChange={(e) => setAmendReason(e.target.value)}
         />
         <div className="actions">
           <button
-            disabled={busy || amendReason.trim().length < 10}
+            className="primary"
+            disabled={
+              busy ||
+              amendReason.trim().length < 10 ||
+              (Object.keys(changedGuardrails).length === 0 && amendChanges.trim() === "{}")
+            }
             onClick={() =>
               act(async () => {
-                const changes = JSON.parse(amendChanges);
+                const advanced = JSON.parse(amendChanges.trim() || "{}");
+                const changes = { ...advanced, ...changedGuardrails };
+                if (Object.keys(changes).length === 0)
+                  throw new Error("Nothing changed — edit a value first.");
                 await post(`/admin/projects/${projectId}/amendments`, {
                   reason: amendReason,
                   changes,
                 });
                 setAmendReason("");
+                setAmendChanges("{}");
                 reloadAmendments();
-              }, "Amendment proposed — in force after the cooling-off, then disclosed to the CEO.")
+              }, "Amendment proposed — in force after the 72h cooling-off, then disclosed to the CEO.")
             }
           >
-            Propose amendment
+            Save as amendment
           </button>
+          {amendReason.trim().length > 0 && amendReason.trim().length < 10 && (
+            <span className="help">the reason needs a real sentence (10+ characters)</span>
+          )}
         </div>
 
         {amendments && amendments.length > 0 && (

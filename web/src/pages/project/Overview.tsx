@@ -279,8 +279,8 @@ export default function Overview({ projectId, dash }: { projectId: string; dash:
           ))}
         </dl>
         <p className="help">
-          Frozen at project creation. Changes go through Settings → Amendment, take effect after a
-          72-hour cooling-off, and are disclosed to the CEO.
+          Frozen at project creation. Edit them under Settings → Budgets &amp; guardrails —
+          changes take effect after a 72-hour cooling-off and are disclosed to the CEO.
         </p>
       </div>
     </>
