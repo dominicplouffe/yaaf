@@ -28,8 +28,11 @@ from yaaf.core.models import (
     Memory,
     Message,
     Project,
+    Role,
+    RoleVersion,
     Run,
     RunQueue,
+    Secret,
     Suggestion,
     Task,
     TaskStatus,
@@ -114,8 +117,154 @@ def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
         "ceo_judgment": policy.ceo_judgment(session, project.id),
         "constitution": cons.model_dump(),
         "config": project.config or {},
+        "github_repo": project.github_repo,
         "billing_secret_id": project.billing_secret_id,
         "billing_secret_name": _secret_name(session, project.billing_secret_id),
+    }
+
+
+def _env_name(secret_name: str) -> str:
+    import re
+
+    return re.sub(r"[^A-Za-z0-9]+", "_", secret_name).strip("_").upper()
+
+
+@router.get("/projects/{project_id}/health")
+def project_health(project_id: str, session: Session = Depends(db)) -> dict:
+    """Every way this project's configuration can be silently wrong, checked
+    server-side with a plain-language fix per finding. All green = the UI
+    hides the card. This is the answer to 'is my project set up right?' —
+    the project tells you, instead of failing quietly at 9am."""
+    from sqlalchemy import or_
+
+    from yaaf.core.crypto import decrypt
+    from yaaf.server.api.admin import _billing_shape_error
+
+    project = _project(session, project_id)
+    config = project.config or {}
+    checks: list[dict] = []
+
+    def add(key: str, status: str, detail: str, where: str | None = None,
+            action: dict | None = None) -> None:
+        checks.append({"key": key, "status": status, "detail": detail,
+                       "where": where, "action": action})
+
+    # Billing: attached, and the credential matches the mode.
+    if not project.billing_secret_id:
+        add("billing", "fail", "no billing credential attached — agents cannot run",
+            "settings")
+    else:
+        billing = session.get(Secret, project.billing_secret_id)
+        if billing is None:
+            add("billing", "fail", "the attached billing credential no longer exists",
+                "settings")
+        else:
+            shape_error = _billing_shape_error(project.billing_mode,
+                                               decrypt(billing.ciphertext))
+            add("billing", "fail" if shape_error else "ok",
+                shape_error or f"paying with '{billing.name}' ({project.billing_mode})",
+                "settings")
+
+    secrets = session.execute(
+        select(Secret).where(or_(Secret.project_id == project.id,
+                                 Secret.project_id.is_(None)))
+    ).scalars().all()
+    secrets_by_env = {_env_name(s.name): s for s in secrets}
+    secrets_by_name = {s.name: s for s in secrets}
+
+    # Project data sources: secrets present, granted, and last check green.
+    for source in config.get("mcp_servers", []):
+        name = source.get("name", "?")
+        url_secret = secrets_by_name.get(source.get("url_secret", ""))
+        if url_secret is None:
+            add(f"data-source:{name}", "fail",
+                f"data source '{name}': its URL credential is missing — re-save it",
+                "settings")
+            continue
+        ungranted = [r for r in source.get("roles", [])
+                     if r not in (url_secret.role_scopes or [])]
+        if ungranted:
+            add(f"data-source:{name}", "fail",
+                f"data source '{name}': credential not granted to role(s) "
+                f"{', '.join(ungranted)} — re-save it", "settings")
+            continue
+        last = source.get("last_check") or {}
+        if not last:
+            add(f"data-source:{name}", "warn",
+                f"data source '{name}': never tested — run its check", "settings")
+        elif last.get("ok"):
+            add(f"data-source:{name}", "ok",
+                f"data source '{name}': {last.get('detail', 'reachable')}", "settings")
+        else:
+            add(f"data-source:{name}", "fail",
+                f"data source '{name}': last check failed — {last.get('detail', '')}",
+                "settings")
+
+    # Teams: legacy role-declared sources actually resolvable, and no version drift.
+    for team in session.execute(
+        select(Team).where(Team.project_id == project.id)
+    ).scalars():
+        pinned = session.get(RoleVersion, team.role_version_id)
+        role = session.get(Role, pinned.role_id) if pinned else None
+        if pinned is None or role is None:
+            continue
+        for spec in (pinned.tool_permissions or {}).get("mcp_servers", []):
+            env_var = spec.get("url_env", "")
+            source_name = spec.get("name", "?")
+            row = secrets_by_env.get(env_var)
+            key = f"role-source:{team.name}:{source_name}"
+            if row is None:
+                add(key, "fail",
+                    f"team '{team.name}': role declares data source '{source_name}' "
+                    f"expecting ${env_var}, but no credential produces that variable",
+                    "settings")
+            elif role.slug not in (row.role_scopes or []):
+                add(key, "fail",
+                    f"team '{team.name}': credential '{row.name}' exists but is not "
+                    f"granted to role '{role.slug}' — tick it in Service credentials",
+                    "settings")
+            else:
+                value = decrypt(row.ciphertext)
+                if not value.startswith(("http://", "https://")):
+                    add(key, "fail",
+                        f"team '{team.name}': credential '{row.name}' should be a URL "
+                        f"but starts with '{value[:6]}…' — store the server's full "
+                        "http(s):// address", "settings")
+                else:
+                    add(key, "ok",
+                        f"team '{team.name}': data source '{source_name}' resolves",
+                        None)
+        latest = session.execute(
+            select(RoleVersion).where(RoleVersion.role_id == role.id)
+            .order_by(RoleVersion.version.desc()).limit(1)
+        ).scalar_one()
+        if latest.version > pinned.version:
+            add(f"role-drift:{team.name}", "warn",
+                f"team '{team.name}' runs role '{role.slug}' v{pinned.version}; "
+                f"v{latest.version} exists — adopt it when ready",
+                "overview", {"kind": "repin", "team_id": team.id})
+
+    # Slack: config present implies its secrets exist.
+    slack = config.get("slack") or {}
+    if slack:
+        missing = [slack.get(k) for k in ("bot_token_secret", "signing_secret")
+                   if slack.get(k) and slack.get(k) not in secrets_by_name]
+        add("slack", "fail" if missing else "ok",
+            ("Slack config references missing secret(s): " + ", ".join(missing))
+            if missing else "Slack bridge configured", "settings")
+
+    # Connectors: controlled GitHub accounts registered but webhooks unprovisioned.
+    if any(str(d).startswith("github:") for d in (project.controlled_domains or [])) \
+            and not config.get("github_webhook_secret"):
+        add("connectors", "warn",
+            "controlled GitHub accounts are registered but webhook secrets are not "
+            "provisioned — GitHub events cannot become attested evidence yet",
+            "settings")
+
+    return {
+        "ok": not any(c["status"] == "fail" for c in checks),
+        "all_ok": all(c["status"] == "ok" for c in checks) if checks else True,
+        "checks": checks,
     }
 
 
@@ -126,10 +275,13 @@ def org(project_id: str, session: Session = Depends(db)) -> dict:
     for team in session.execute(select(Team).where(Team.project_id == project.id)).scalars():
         members = policy.team_agents(session, team.id)
         lead = policy.effective_lead(session, team)
+        role_version = session.get(RoleVersion, team.role_version_id)
+        role = session.get(Role, role_version.role_id) if role_version else None
         teams.append(
             {
                 "id": team.id,
                 "name": team.name,
+                "role_slug": role.slug if role else None,
                 "lead_agent_id": lead.id if lead else None,
                 "agents": [
                     {"id": a.id, "name": a.name, "status": a.status} for a in members

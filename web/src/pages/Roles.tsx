@@ -279,7 +279,8 @@ export default function Roles() {
               beyond 80/443 need an entry in egress ports below.
             </p>
             <label className="field">
-              External MCP servers — one per line: name URL_ENV_VAR [bearer TOKEN_ENV_VAR] [sse]
+              External MCP servers (advanced/legacy — prefer Settings → Data sources per project)
+              — one per line: name URL_ENV_VAR [bearer TOKEN_ENV_VAR] [sse]
             </label>
             <textarea
               className="mono"
@@ -296,10 +297,13 @@ export default function Roles() {
               }}
             />
             <p className="help" style={{ margin: "4px 0 0" }}>
-              The URL (and optional bearer token) come from service credentials granted to this
-              role — store the server's full URL (https://host:port/path) as a credential, grant
-              it here, and the sandbox mounts it as real MCP tools. The env var alone mounts
-              nothing; the host must be on this role's egress allowlist (plus its port below).
+              Prefer each project's Settings → Data sources card: one form there wires the URL,
+              secrets, grants, egress, and proxy together. This field is the advanced/legacy
+              path where you assemble those pieces by hand — the URL (and optional bearer token)
+              come from service credentials granted to this role — store the server's full URL
+              (https://host:port/path) as a credential, grant it here, and the sandbox mounts it
+              as real MCP tools. The env var alone mounts nothing; the host must be on this
+              role's egress allowlist (plus its port below).
             </p>
             <label className="field">
               Egress ports beyond 80/443 (comma-separated — e.g. an MCP server's port)

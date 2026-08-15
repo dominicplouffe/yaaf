@@ -290,13 +290,23 @@ async def t_artifact_put(args):
     )
 
 
+@tool(
+    "env_list",
+    "List the environment variable NAMES available in your sandbox (never values). "
+    "Answers 'do I have credential X?' definitively — use it instead of guessing.",
+    {},
+)
+async def t_env_list(args):
+    return _text({"env_names": sorted(os.environ)})
+
+
 ALL_TOOLS = [
     t_board, t_task_create, t_task_claim, t_task_complete, t_task_block, t_task_kill,
     t_suggest, t_channels, t_messages_read, t_message_post,
     t_memory_search, t_memory_add, t_memory_supersede, t_memory_forget,
     t_evidence_add, t_hypothesis_add, t_hypothesis_kill, t_decision_add,
     t_approval_request, t_approvals_list, t_spend_book,
-    t_side_effect_begin, t_side_effect_finish, t_artifact_put,
+    t_side_effect_begin, t_side_effect_finish, t_artifact_put, t_env_list,
 ]
 
 
@@ -325,10 +335,24 @@ def _external_mcp_servers(env: dict[str, str] | None = None) -> dict[str, dict]:
     the egress proxy — the server's host must be on this role's allowlist.
     """
     env = env if env is not None else dict(os.environ)
+    MOUNT_PROBLEMS.clear()
     servers: dict[str, dict] = {}
     for spec in PERMS.get("mcp_servers", []):
-        name, url = spec.get("name"), env.get(spec.get("url_env", ""))
-        if not name or not url or not url.startswith(("http://", "https://")):
+        name, url_env = spec.get("name"), spec.get("url_env", "")
+        url = env.get(url_env)
+        if not name:
+            continue
+        # A declared source that fails to mount must fail LOUDLY — a silent
+        # absence sends agents (and their CEO) on hostname-guessing hunts.
+        if not url:
+            MOUNT_PROBLEMS.append(
+                f"data source '{name}' NOT mounted: env var {url_env or '?'} is absent "
+                "(credential missing or not granted to this role)")
+            continue
+        if not url.startswith(("http://", "https://")):
+            MOUNT_PROBLEMS.append(
+                f"data source '{name}' NOT mounted: {url_env} is not a URL "
+                "(a full http(s)://host:port address is required)")
             continue
         config: dict = {"type": spec.get("transport", "http"), "url": url}
         token = env.get(spec.get("bearer_env", ""))
@@ -336,6 +360,9 @@ def _external_mcp_servers(env: dict[str, str] | None = None) -> dict[str, dict]:
             config["headers"] = {"Authorization": f"Bearer {token}"}
         servers[name] = config
     return servers
+
+
+MOUNT_PROBLEMS: list[str] = []
 
 
 async def main() -> int:
@@ -365,7 +392,7 @@ async def main() -> int:
         "will wake you when there is a reason to."
     )
 
-    summary_parts: list[str] = []
+    summary_parts: list[str] = list(MOUNT_PROBLEMS)
     cost_usd = None
     tokens_in = tokens_out = 0
     ok = True

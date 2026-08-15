@@ -59,6 +59,7 @@ export async function api<T = unknown>(
 export const get = <T = unknown>(path: string) => api<T>("GET", path);
 export const post = <T = unknown>(path: string, body?: unknown) => api<T>("POST", path, body);
 export const patch = <T = unknown>(path: string, body?: unknown) => api<T>("PATCH", path, body);
+export const del = <T = unknown>(path: string) => api<T>("DELETE", path);
 
 /** GET an endpoint that returns plain text (run traces) — no JSON parsing. */
 export async function getText(path: string): Promise<string> {
@@ -113,8 +114,36 @@ export interface Dashboard {
   };
   constitution: Record<string, unknown>;
   config: Record<string, unknown>;
+  github_repo: string | null;
   billing_secret_id: string | null;
   billing_secret_name: string | null;
+}
+
+/** One row of GET /observe/projects/{id}/health — a way the configuration can
+    be silently wrong, with a plain-language fix. */
+export interface HealthCheck {
+  key: string;
+  status: "ok" | "warn" | "fail";
+  detail: string;
+  where: string | null;
+  action: { kind: string; team_id: string } | null;
+}
+
+export interface ProjectHealth {
+  ok: boolean;
+  all_ok: boolean;
+  checks: HealthCheck[];
+}
+
+/** A project data source (MCP server) as stored in dash.config["mcp_servers"]. */
+export interface McpServerEntry {
+  name: string;
+  url_secret: string;
+  bearer_secret?: string;
+  roles: string[];
+  url_host: string;
+  url_port: number;
+  last_check?: { ok: boolean; detail: string; at: string };
 }
 
 export interface TaskRow {
@@ -211,6 +240,7 @@ export interface OrgView {
   teams: {
     id: string;
     name: string;
+    role_slug: string | null;
     lead_agent_id: string | null;
     agents: { id: string; name: string; status: string }[];
   }[];

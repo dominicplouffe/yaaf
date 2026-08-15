@@ -1,6 +1,23 @@
 import { useEffect, useState } from "react";
-import { AmendmentRow, Dashboard, get, OrgView, patch, post, RoleSummary } from "../../api";
+import {
+  AmendmentRow,
+  Dashboard,
+  del,
+  get,
+  McpServerEntry,
+  OrgView,
+  patch,
+  post,
+  RoleSummary,
+} from "../../api";
 import { fmtWhen, usePoll } from "../../hooks";
+
+/** The shared after-action helper: run, show a message (fixed, or computed
+    from the response when the server's answer is the news), reload the dash. */
+type Act = (
+  fn: () => Promise<unknown>,
+  ok: string | ((result: unknown) => string),
+) => Promise<void>;
 
 interface SecretRow {
   id: string;
@@ -217,13 +234,302 @@ function SlackBridge({
   );
 }
 
-function CredentialsManager({
+interface DataSourceSaveResult {
+  name: string;
+  check: { ok: boolean; detail: string };
+  note: string;
+}
+
+function checkBadge(last: McpServerEntry["last_check"]) {
+  if (!last) return <span className="badge warn">never tested</span>;
+  return last.ok ? (
+    <span className="badge good">reachable</span>
+  ) : (
+    <span className="badge critical">unreachable</span>
+  );
+}
+
+function DataSources({
   projectId,
+  dash,
   act,
   busy,
 }: {
   projectId: string;
-  act: (fn: () => Promise<unknown>, ok: string) => Promise<void>;
+  dash: Dashboard;
+  act: Act;
+  busy: boolean;
+}) {
+  const sources = (dash.config["mcp_servers"] as McpServerEntry[] | undefined) ?? [];
+  const [org, setOrg] = useState<OrgView | null>(null);
+  const [name, setName] = useState("");
+  const [url, setUrl] = useState("");
+  const [bearer, setBearer] = useState("");
+  const [roles, setRoles] = useState<string[]>([]);
+
+  useEffect(() => {
+    get<OrgView>(`/observe/projects/${projectId}/org`).then(setOrg).catch(() => {});
+  }, [projectId]);
+
+  // One checkbox per distinct role in the org, labelled with the team(s)
+  // running it — grants are per role, so sibling teams share a box.
+  const roleOptions: { slug: string; teams: string[] }[] = [];
+  for (const team of org?.teams ?? []) {
+    if (!team.role_slug) continue;
+    const existing = roleOptions.find((option) => option.slug === team.role_slug);
+    if (existing) existing.teams.push(team.name);
+    else roleOptions.push({ slug: team.role_slug, teams: [team.name] });
+  }
+
+  return (
+    <>
+      <p className="subtitle">
+        One form wires everything: the URL is validated at save and stored encrypted, egress and
+        the proxy update themselves within ~15 seconds, and the granted roles' sandboxes mount
+        the server as real tools on their next run. No role editing, no repin, no CLI.
+      </p>
+
+      {sources.length > 0 && (
+        <table style={{ marginBottom: 14 }}>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Address</th>
+              <th>Roles</th>
+              <th style={{ width: "35%" }}>Last check</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {sources.map((source) => (
+              <tr key={source.name}>
+                <td className="mono">{source.name}</td>
+                <td className="mono">
+                  {source.url_host}:{source.url_port}
+                </td>
+                <td>
+                  <div className="pill-row">
+                    {source.roles.map((slug) => (
+                      <span key={slug} className="badge accent">
+                        {slug}
+                      </span>
+                    ))}
+                  </div>
+                </td>
+                <td>
+                  {checkBadge(source.last_check)}
+                  {source.last_check && (
+                    <div className="help">
+                      {source.last_check.detail} — {fmtWhen(source.last_check.at)}
+                    </div>
+                  )}
+                </td>
+                <td>
+                  <div className="actions" style={{ margin: 0 }}>
+                    <button
+                      className="small"
+                      disabled={busy}
+                      onClick={() =>
+                        act(async () => {
+                          const check = await post<{ ok: boolean; detail: string }>(
+                            `/admin/projects/${projectId}/mcp_servers/${source.name}/check`,
+                            {},
+                          );
+                          if (!check.ok)
+                            throw new Error(`'${source.name}': ${check.detail}`);
+                          return check;
+                        }, (result) =>
+                          `'${source.name}': ${(result as { detail: string }).detail}`)
+                      }
+                    >
+                      test
+                    </button>
+                    <button
+                      className="small danger"
+                      disabled={busy}
+                      onClick={() => {
+                        if (
+                          !confirm(
+                            `Remove data source '${source.name}'? Its stored URL and token ` +
+                              "secrets are deleted too; granted roles lose these tools on " +
+                              "their next run.",
+                          )
+                        )
+                          return;
+                        act(
+                          () => del(`/admin/projects/${projectId}/mcp_servers/${source.name}`),
+                          `Removed '${source.name}'. Egress and the proxy update themselves within ~15s.`,
+                        );
+                      }}
+                    >
+                      delete
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      <div className="row">
+        <div>
+          <label className="field">Name (lowercase slug — same name updates in place)</label>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="figma, analytics, crm…"
+          />
+        </div>
+        <div>
+          <label className="field">URL — the server's full address</label>
+          <input
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            placeholder="https://host:3845/mcp"
+          />
+        </div>
+        <div>
+          <label className="field">Bearer token (optional)</label>
+          <input
+            type="password"
+            value={bearer}
+            onChange={(e) => setBearer(e.target.value)}
+            placeholder="blank = no auth header"
+          />
+        </div>
+      </div>
+      <label className="field">Which roles get these tools (nobody, until you tick)</label>
+      {roleOptions.length === 0 ? (
+        <p className="help">No teams yet — add a team on the Overview tab first.</p>
+      ) : (
+        <div className="pill-row">
+          {roleOptions.map((option) => (
+            <label key={option.slug} style={{ display: "flex", gap: 5, alignItems: "center" }}>
+              <input
+                type="checkbox"
+                style={{ width: "auto" }}
+                checked={roles.includes(option.slug)}
+                onChange={(e) =>
+                  setRoles(
+                    e.target.checked
+                      ? [...roles, option.slug]
+                      : roles.filter((slug) => slug !== option.slug),
+                  )
+                }
+              />
+              {option.teams.join(", ")} ({option.slug})
+            </label>
+          ))}
+        </div>
+      )}
+      <div className="actions">
+        <button
+          className="small primary"
+          disabled={busy || !name.trim() || !url.trim() || roles.length === 0}
+          onClick={() =>
+            act(async () => {
+              const result = await post<DataSourceSaveResult>(
+                `/admin/projects/${projectId}/mcp_servers`,
+                {
+                  name: name.trim(),
+                  url: url.trim(),
+                  bearer: bearer.trim() || undefined,
+                  roles,
+                },
+              );
+              setName("");
+              setUrl("");
+              setBearer("");
+              setRoles([]);
+              return result;
+            }, (result) => {
+              const saved = result as DataSourceSaveResult;
+              return (
+                `Saved '${saved.name}' — ${saved.check.ok ? "" : "warning: "}` +
+                `${saved.check.detail}. ${saved.note}`
+              );
+            })
+          }
+        >
+          Save data source
+        </button>
+        <span className="help">
+          A garbage URL is refused at this button, not discovered at 9am.
+        </span>
+      </div>
+    </>
+  );
+}
+
+function GithubWorkspace({
+  projectId,
+  dash,
+  act,
+  busy,
+}: {
+  projectId: string;
+  dash: Dashboard;
+  act: Act;
+  busy: boolean;
+}) {
+  const [repo, setRepo] = useState("");
+  return (
+    <>
+      <p className="subtitle">
+        Each project gets a private GitHub repo as the agents' shared workspace — the runner
+        clones it into the sandbox at lease time, so work persists between runs instead of dying
+        with the container.
+      </p>
+      {dash.github_repo ? (
+        <p className="help" style={{ marginBottom: 0 }}>
+          <span className="badge good">connected</span> workspace repo:{" "}
+          <code>{dash.github_repo}</code>
+        </p>
+      ) : (
+        <>
+          <label className="field">
+            Repo — a bare name creates a private repo; owner/name attaches an existing one
+          </label>
+          <input
+            value={repo}
+            onChange={(e) => setRepo(e.target.value)}
+            placeholder="my-project or owner/my-project"
+          />
+          <div className="actions">
+            <button
+              className="small primary"
+              disabled={busy || !repo.trim()}
+              onClick={() =>
+                act(
+                  () =>
+                    post<{ github_repo: string }>(`/admin/projects/${projectId}/github`, {
+                      repo: repo.trim(),
+                    }),
+                  (result) =>
+                    `Workspace repo ready: ${(result as { github_repo: string }).github_repo}. ` +
+                    "The runner clones it at lease time.",
+                )
+              }
+            >
+              Attach workspace repo
+            </button>
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+
+function CredentialsManager({
+  projectId,
+  sources,
+  act,
+  busy,
+}: {
+  projectId: string;
+  sources: McpServerEntry[];
+  act: Act;
   busy: boolean;
 }) {
   const [roles, setRoles] = useState<RoleSummary[]>([]);
@@ -308,9 +614,18 @@ function CredentialsManager({
             </tr>
           </thead>
           <tbody>
-            {stored.map((secret) => (
+            {stored.map((secret) => {
+              const usedBy = sources.find(
+                (s) => s.url_secret === secret.name || s.bearer_secret === secret.name,
+              );
+              return (
               <tr key={secret.id}>
-                <td className="mono">{secret.name}</td>
+                <td className="mono">
+                  {secret.name}
+                  {usedBy && (
+                    <div className="help">used by data source '{usedBy.name}'</div>
+                  )}
+                </td>
                 <td className="mono">
                   {secret.role_scopes.length ? `$${envVarName(secret.name)}` : "—"}
                 </td>
@@ -334,7 +649,8 @@ function CredentialsManager({
                   )}
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       )}
@@ -380,20 +696,20 @@ export default function Settings({
     get<SecretRow[]>(`/admin/secrets?project_id=${projectId}`).then(setSecrets).catch(() => {});
   }, [projectId, dash.billing_secret_id]);
 
-  async function act(fn: () => Promise<unknown>, okMessage: string) {
+  const act: Act = async (fn, okMessage) => {
     setError(null);
     setMessage(null);
     setBusy(true);
     try {
-      await fn();
-      setMessage(okMessage);
+      const result = await fn();
+      setMessage(typeof okMessage === "function" ? okMessage(result) : okMessage);
       reload();
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setBusy(false);
     }
-  }
+  };
 
   async function connectBilling() {
     const name = billingChoice === "subscription" ? "claude-subscription-token" : "anthropic-api-key";
@@ -586,7 +902,12 @@ export default function Settings({
         )}
       </div>
 
-      <h2>Service credentials</h2>
+      <h2>Data sources — MCP servers</h2>
+      <div className="card">
+        <DataSources projectId={projectId} dash={dash} act={act} busy={busy} />
+      </div>
+
+      <h2>Variables &amp; credentials</h2>
       <div className="card">
         <p className="help" style={{ marginTop: 0 }}>
           API keys and passwords your agents need for outside services. <strong>Never paste a key
@@ -594,10 +915,11 @@ export default function Settings({
           here, a credential is encrypted at rest and injected only into the sandboxes of roles you
           tick, as an environment variable. Its value never appears in any prompt, message, or the
           UI again; agents are told the variable's <em>name</em> only. Changing grants takes effect
-          on the next run.
+          on the next run. Plain configuration values are welcome here too, not just secrets.
         </p>
         <CredentialsManager
           projectId={projectId}
+          sources={(dash.config["mcp_servers"] as McpServerEntry[] | undefined) ?? []}
           act={act}
           busy={busy}
         />
@@ -606,6 +928,11 @@ export default function Settings({
       <h2>Slack bridge</h2>
       <div className="card">
         <SlackBridge projectId={projectId} dash={dash} act={act} busy={busy} />
+      </div>
+
+      <h2>GitHub workspace</h2>
+      <div className="card">
+        <GithubWorkspace projectId={projectId} dash={dash} act={act} busy={busy} />
       </div>
 
       <h2>Advanced</h2>

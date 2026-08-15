@@ -65,6 +65,10 @@ services:
       YAAF_EGRESS_PROXY_URL: http://proxy:3128
       YAAF_WORKSPACES_ROOT: /var/lib/yaaf/workspaces
       YAAF_ARTIFACTS_ROOT: /var/lib/yaaf/artifacts
+      # Egress auto-apply: the runner regenerates the per-role squid config on
+      # change and HUPs the proxy — UI edits reach squid with no CLI step.
+      YAAF_PROXY_GENERATED_DIR: /var/lib/yaaf/proxy-generated
+      YAAF_PROXY_CONTAINER: deploy-proxy-1
       # S3 artifact store (optional): keep in lockstep with the api service above.
       # YAAF_ARTIFACT_S3_ENDPOINT: http://minio:9000
       # YAAF_ARTIFACT_S3_BUCKET: yaaf-artifacts
@@ -77,6 +81,8 @@ services:
       - /var/lib/yaaf/workspaces:/var/lib/yaaf/workspaces
       # Shared with the api service: run traces are stashed here at finalize.
       - /var/lib/yaaf/artifacts:/var/lib/yaaf/artifacts
+      # Egress auto-apply writes here; the proxy reads the same dir read-only.
+      - ./proxy/generated:/var/lib/yaaf/proxy-generated
     depends_on:
       db:
         condition: service_healthy

@@ -164,14 +164,18 @@ tests/          invariant suite that attacks every rule over HTTP, chaos
 docs/PLAN.md    the founding plan, kill conditions included
 ```
 
-Integrations, all optional, all configured from the dashboard or one API
-call: **Slack** (mirror your company's channels; reply to the CEO from
-Slack), **GitHub** (private repo per project as the agents' workspace;
-repo events become verified evidence), **external MCP servers** (declare one
-on a role, store its URL as a role-granted credential, and that role's
-sandboxes mount its tools — other roles never see it), **WordPress** or any
-HTTP service via scoped credentials, **email/webhook notifications** when
-the chairman is needed, and **S3-compatible artifact storage**.
+Integrations, all optional, all configured from the dashboard: **Slack**
+(mirror your company's channels; reply to the CEO from Slack), **GitHub**
+(private repo per project as the agents' workspace; repo events become
+verified evidence), **external MCP servers** as one-form data sources —
+name, URL, roles, Save; the URL is validated at the door, egress and the
+proxy update themselves, and the granted roles' sandboxes mount the server
+as real tools — plus **WordPress** or any HTTP service via scoped
+credentials, **email/webhook notifications**, and **S3-compatible artifact
+storage**. A **setup & health checklist** on each project's Overview names
+anything misconfigured (dead billing, a credential that isn't a URL, a team
+running an outdated role version) with a fix link — a healthy project shows
+nothing at all.
 
 ## Project status
 

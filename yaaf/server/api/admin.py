@@ -385,6 +385,149 @@ def add_team(project_id: str, body: TeamSpec, session: Session = Depends(db)) ->
             "agents": [{"id": a.id, "name": a.name} for a in agents]}
 
 
+# ── data sources (MCP servers) ──────────────────────────────────────────────────
+
+
+class DataSourceIn(BaseModel):
+    name: str = Field(pattern="^[a-z0-9-]{2,32}$")
+    url: str
+    bearer: str | None = None
+    roles: list[str] = Field(min_length=1)
+
+
+def _upsert_project_secret(session: Session, project_id: str, name: str, value: str,
+                           role_scopes: list[str]) -> Secret:
+    from yaaf.core.crypto import encrypt
+
+    existing = session.execute(
+        select(Secret).where(Secret.project_id == project_id, Secret.name == name)
+    ).scalar_one_or_none()
+    if existing:
+        existing.ciphertext = encrypt(value)
+        existing.role_scopes = role_scopes
+        return existing
+    row = Secret(id=ids.new_id(ids.SECRET), project_id=project_id, name=name,
+                 ciphertext=encrypt(value), role_scopes=role_scopes, kind="service")
+    session.add(row)
+    return row
+
+
+def _check_data_source(url: str, bearer: str | None) -> dict:
+    """Reachability, not correctness: any HTTP answer means the address is
+    real; a connection failure gets a plain-language reason."""
+    import httpx
+
+    headers = {"Authorization": f"Bearer {bearer}"} if bearer else {}
+    try:
+        response = httpx.get(url, headers=headers, timeout=10, follow_redirects=True)
+        return {"ok": True, "detail": f"reachable (HTTP {response.status_code})"}
+    except httpx.ConnectError:
+        return {"ok": False, "detail": "nothing is listening at that address — check "
+                                       "host and port, and that the server is running"}
+    except httpx.HTTPError as exc:
+        return {"ok": False, "detail": f"could not connect: {exc.__class__.__name__}"}
+
+
+@router.post("/projects/{project_id}/mcp_servers")
+def add_data_source(project_id: str, body: DataSourceIn, session: Session = Depends(db)) -> dict:
+    """One form, everything wired: validates the URL at the door, stores it
+    (and any token) as role-granted secrets, records the mapping in project
+    config, and preflights reachability. Egress and the proxy follow
+    automatically; no role edit, no repin, no CLI."""
+    from urllib.parse import urlparse
+
+    project = _get_project(session, project_id)
+    parsed = urlparse(body.url.strip())
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise HTTPException(
+            status_code=422,
+            detail="that is not a URL — a data source needs a full address like "
+                   "https://host:1234/path (schemes http/https only)",
+        )
+    for slug in body.roles:
+        _latest_role_version(session, slug)  # 422s on unknown role
+
+    url_secret = _upsert_project_secret(
+        session, project.id, f"mcp-{body.name}-url", body.url.strip(), body.roles)
+    entry = {
+        "name": body.name,
+        "url_secret": url_secret.name,
+        "roles": body.roles,
+        # Host/port recorded in config (chairman-visible) so egress derivation
+        # never needs to decrypt anything.
+        "url_host": parsed.hostname,
+        "url_port": parsed.port or (443 if parsed.scheme == "https" else 80),
+    }
+    if body.bearer:
+        token_secret = _upsert_project_secret(
+            session, project.id, f"mcp-{body.name}-token", body.bearer, body.roles)
+        entry["bearer_secret"] = token_secret.name
+
+    check = _check_data_source(body.url.strip(), body.bearer)
+    entry["last_check"] = {**check, "at": utcnow().isoformat()}
+
+    servers = [s for s in (project.config or {}).get("mcp_servers", [])
+               if s.get("name") != body.name]
+    project.config = {**(project.config or {}), "mcp_servers": [*servers, entry]}
+    _audit(session, project.id, "mcp_server.save", "project", project.id,
+           {"name": body.name, "roles": body.roles, "host": entry["url_host"],
+            "check_ok": check["ok"]})
+    return {"name": body.name, "check": check,
+            "note": "Egress updates and the proxy reloads automatically within ~15s; "
+                    "effective on each granted role's next run."}
+
+
+@router.delete("/projects/{project_id}/mcp_servers/{name}")
+def delete_data_source(project_id: str, name: str, session: Session = Depends(db)) -> dict:
+    project = _get_project(session, project_id)
+    servers = (project.config or {}).get("mcp_servers", [])
+    entry = next((s for s in servers if s.get("name") == name), None)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="unknown data source")
+    for secret_name in (entry.get("url_secret"), entry.get("bearer_secret")):
+        if secret_name:
+            row = session.execute(
+                select(Secret).where(Secret.project_id == project.id,
+                                     Secret.name == secret_name)
+            ).scalar_one_or_none()
+            if row is not None:
+                session.delete(row)
+    project.config = {**project.config,
+                      "mcp_servers": [s for s in servers if s.get("name") != name]}
+    _audit(session, project.id, "mcp_server.delete", "project", project.id, {"name": name})
+    return {"deleted": name}
+
+
+@router.post("/projects/{project_id}/mcp_servers/{name}/check")
+def check_data_source(project_id: str, name: str, session: Session = Depends(db)) -> dict:
+    from yaaf.core.crypto import decrypt
+
+    project = _get_project(session, project_id)
+    servers = (project.config or {}).get("mcp_servers", [])
+    entry = next((s for s in servers if s.get("name") == name), None)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="unknown data source")
+
+    def value_of(secret_name: str | None) -> str | None:
+        if not secret_name:
+            return None
+        row = session.execute(
+            select(Secret).where(Secret.project_id == project.id,
+                                 Secret.name == secret_name)
+        ).scalar_one_or_none()
+        return decrypt(row.ciphertext) if row else None
+
+    url = value_of(entry.get("url_secret"))
+    if not url:
+        raise HTTPException(status_code=422, detail="the data source's URL secret is missing")
+    check = _check_data_source(url, value_of(entry.get("bearer_secret")))
+    entry["last_check"] = {**check, "at": utcnow().isoformat()}
+    project.config = {**project.config, "mcp_servers": servers}
+    _audit(session, project.id, "mcp_server.check", "project", project.id,
+           {"name": name, "ok": check["ok"]})
+    return check
+
+
 @router.get("/egress/config")
 def egress_config(session: Session = Depends(db)) -> dict:
     """The generated per-role squid config, served for `yaaf egress-sync` to

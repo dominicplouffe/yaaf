@@ -57,12 +57,60 @@ def main() -> None:  # pragma: no cover - process entrypoint
     logging.basicConfig(level=logging.INFO)
     pool = ThreadPoolExecutor(max_workers=MAX_PARALLEL)
     log.info("runner %s starting", settings().worker_name)
+    threading.Thread(target=_egress_watch_loop, daemon=True).start()
     while True:
         leased = lease_and_prepare(limit=MAX_PARALLEL)
         for job in leased:
             pool.submit(execute_job, job)
         if not leased:
             time.sleep(settings().runner_poll_s)
+
+
+def egress_watch_once(session: Session, out_dir: Path, last_hash: str | None) -> str:
+    """One tick of egress auto-apply: regenerate, and only on change write the
+    files and HUP the proxy. A config edit in the UI reaches squid within one
+    tick — no CLI, no manual reload."""
+    import hashlib
+    import json
+
+    from yaaf.server.egress import build
+
+    _, files = build(session)
+    digest = hashlib.sha256(json.dumps(files, sort_keys=True).encode()).hexdigest()
+    if digest == last_hash:
+        return digest
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for name, content in files.items():
+        (out_dir / name).write_text(content)
+    _hup_proxy()
+    log.info("egress config applied; proxy reload requested")
+    return digest
+
+
+def _hup_proxy() -> None:
+    container = settings().proxy_container
+    if not container:
+        return
+    try:
+        import docker
+
+        docker.from_env().containers.get(container).kill(signal="SIGHUP")
+    except Exception:
+        log.warning("could not HUP proxy container %r", container, exc_info=True)
+
+
+def _egress_watch_loop() -> None:  # pragma: no cover - thin loop
+    if not settings().proxy_generated_dir:
+        return  # manual `yaaf egress-sync` mode (multi-box setups)
+    out_dir = Path(settings().proxy_generated_dir)
+    last: str | None = None
+    while True:
+        try:
+            with db_session() as session:
+                last = egress_watch_once(session, out_dir, last)
+        except Exception:
+            log.exception("egress watch tick failed")
+        time.sleep(15)
 
 
 # ── leasing ─────────────────────────────────────────────────────────────────────
@@ -155,6 +203,7 @@ def _materialize(session: Session, queued: RunQueue, project: Project) -> RunJob
     job.model = agent.model_override or (role_version.model if role_version else "claude-sonnet-5")
     job.effort = role_version.effort if role_version else "high"
     job.tool_permissions = dict(role_version.tool_permissions) if role_version else {}
+    source_names = _merge_project_data_sources(session, project, role_version, job)
     job.egress_proxy_url = _role_egress_url(session, role_version, job.tool_permissions)
     role_secrets = _role_secret_env(session, project, role_version)
     job.billing_env = {**_billing_env(session, project), **role_secrets}
@@ -164,7 +213,46 @@ def _materialize(session: Session, queued: RunQueue, project: Project) -> RunJob
             f"role: {', '.join(sorted(role_secrets))}. Use them for their purpose; never "
             "print, log, or write them to files."
         )
+    if source_names:
+        job.system_prompt += (
+            "\n\nDATA SOURCES: " + ", ".join(f"{n} (tools mcp__{n}__*)" for n in source_names)
+            + " — MCP servers mounted for your role. If a listed source's tools are absent "
+            "from your toolset, report that plainly instead of guessing at causes."
+        )
     return job
+
+
+def _merge_project_data_sources(session: Session, project: Project, role_version,
+                                job: RunJob) -> list[str]:
+    """Project-declared data sources (config.mcp_servers) for this agent's
+    role, merged into the job's tool permissions. This is why connecting a
+    data source needs no role-library edit and no team repin: the mapping
+    lives on the project and is applied at lease time. Returns all mounted
+    source names (role-declared legacy entries included)."""
+    specs = list(job.tool_permissions.get("mcp_servers", []))
+    if role_version is not None:
+        from yaaf.core.models import Role
+
+        role = session.get(Role, role_version.role_id)
+        hosts = list(job.tool_permissions.get("egress_allow", []))
+        for source in (project.config or {}).get("mcp_servers", []):
+            if role is None or role.slug not in source.get("roles", []):
+                continue
+            if source["name"] not in [s.get("name") for s in specs]:
+                spec = {"name": source["name"],
+                        "url_env": _env_var_name(source["url_secret"])}
+                if source.get("bearer_secret"):
+                    spec["bearer_env"] = _env_var_name(source["bearer_secret"])
+                specs.append(spec)
+            host = source.get("url_host")
+            if host and host not in hosts:
+                hosts.append(host)  # routes this role via its scoped proxy port
+        if specs:
+            # New lists, never in-place: job.tool_permissions shallow-copies the
+            # role version's dict and must not mutate its nested lists.
+            job.tool_permissions = {**job.tool_permissions, "mcp_servers": specs,
+                                    **({"egress_allow": hosts} if hosts else {})}
+    return [s.get("name", "?") for s in specs]
 
 
 def _prepare_workspace(session: Session, project: Project) -> str:

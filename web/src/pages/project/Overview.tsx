@@ -1,6 +1,62 @@
 import { useEffect, useState } from "react";
-import { Dashboard, get, OrgView, post, RoleSummary } from "../../api";
+import { Link } from "react-router-dom";
+import { Dashboard, get, HealthCheck, OrgView, post, ProjectHealth, RoleSummary } from "../../api";
 import { usePoll } from "../../hooks";
+
+/** Setup & health checklist: every way the configuration can be silently
+    wrong, checked server-side. A fully green project renders NOTHING — the
+    card's absence is the "all clear"; its presence is the to-do list. */
+function HealthCard({ projectId }: { projectId: string }) {
+  const { data, reload } = usePoll(
+    () => get<ProjectHealth>(`/observe/projects/${projectId}/health`),
+    10000,
+  );
+  if (!data || data.all_ok) return null;
+
+  const badge = (status: HealthCheck["status"]) => (
+    <span className={`badge ${status === "fail" ? "critical" : status === "warn" ? "warn" : "good"}`}>
+      {status}
+    </span>
+  );
+  return (
+    <div className="card">
+      <strong>Setup &amp; health</strong>
+      <p className="subtitle" style={{ margin: "4px 0 8px" }}>
+        The project tells you what it needs, instead of failing quietly at 9am — each row is a
+        server-side check of this project's configuration. Green rows vanish; fix the rest and
+        this whole card disappears.
+      </p>
+      {data.checks.map((check) => (
+        <div
+          key={check.key}
+          style={{
+            display: "flex",
+            gap: 10,
+            alignItems: "baseline",
+            padding: "4px 0",
+            ...(check.status === "ok" ? { opacity: 0.5 } : {}),
+          }}
+        >
+          {badge(check.status)}
+          <span style={{ flex: 1, fontSize: 13 }}>{check.detail}</span>
+          {check.action?.kind === "repin" ? (
+            <button
+              className="small"
+              onClick={async () => {
+                await post(`/admin/teams/${check.action!.team_id}/repin`, {});
+                reload();
+              }}
+            >
+              adopt latest role version
+            </button>
+          ) : check.where === "settings" && check.status !== "ok" ? (
+            <Link to={`/projects/${projectId}/settings`}>fix in Settings →</Link>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 /** Single-value budget meter: track + fill + threshold tick at the warn ratio.
     The fill wears warning past the tick and critical at/over the cap; the icon
@@ -120,6 +176,7 @@ export default function Overview({ projectId, dash }: { projectId: string; dash:
   const cons = dash.constitution as Record<string, string | number | boolean>;
   return (
     <>
+      <HealthCard projectId={projectId} />
       <div className="tiles">
         <div className="tile">
           <div className="label">Open tasks</div>
