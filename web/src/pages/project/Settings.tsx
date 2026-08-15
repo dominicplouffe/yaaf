@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { AmendmentRow, Dashboard, get, patch, post, RoleSummary } from "../../api";
+import { AmendmentRow, Dashboard, get, OrgView, patch, post, RoleSummary } from "../../api";
 import { fmtWhen, usePoll } from "../../hooks";
 
 interface SecretRow {
@@ -60,6 +60,160 @@ function RoleChecks({
         </label>
       ))}
     </div>
+  );
+}
+
+interface SlackConfig {
+  bot_token_secret: string;
+  signing_secret: string;
+  chairman_slack_user: string;
+  channel_map: Record<string, string>;
+}
+
+function SlackBridge({
+  projectId,
+  dash,
+  act,
+  busy,
+}: {
+  projectId: string;
+  dash: Dashboard;
+  act: (fn: () => Promise<unknown>, ok: string) => Promise<void>;
+  busy: boolean;
+}) {
+  const existing = (dash.config["slack"] as SlackConfig | null | undefined) ?? null;
+  const [org, setOrg] = useState<OrgView | null>(null);
+  const [botToken, setBotToken] = useState("");
+  const [signingSecret, setSigningSecret] = useState("");
+  const [chairmanUser, setChairmanUser] = useState(existing?.chairman_slack_user ?? "");
+  const [channels, setChannels] = useState<Record<string, string>>(existing?.channel_map ?? {});
+
+  useEffect(() => {
+    get<OrgView>(`/observe/projects/${projectId}/org`).then(setOrg).catch(() => {});
+  }, [projectId]);
+
+  function setChannel(key: string, value: string) {
+    setChannels((prev) => ({ ...prev, [key]: value }));
+  }
+
+  const mapped = Object.entries(channels).filter(([, v]) => v.trim());
+  const canSave = mapped.length > 0 && (existing !== null || botToken.trim().length > 0);
+  const eventsUrl = `${location.origin}/webhooks/slack/${projectId}`;
+
+  function channelInput(key: string, label: string) {
+    return (
+      <div key={key}>
+        <label className="field">{label}</label>
+        <input
+          value={channels[key] ?? ""}
+          onChange={(e) => setChannel(key, e.target.value)}
+          placeholder="C… (blank = not mirrored)"
+        />
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <p className="subtitle">
+        The bus in Postgres stays the source of truth; Slack is a mirror plus an inbound path
+        for you alone. Mapped channels mirror outward within ~15s. A Slack outage never blocks
+        the company — messages queue and retry.
+      </p>
+      {existing ? (
+        <p className="help">
+          <span className="badge good">connected</span> mirroring{" "}
+          {Object.keys(existing.channel_map).length} channel(s)
+          {existing.chairman_slack_user ? "; inbound enabled for your Slack user" : ""}.
+          Token and signing secret are stored write-only — paste again only to rotate.
+        </p>
+      ) : (
+        <p className="help">Not connected. You need a Slack app with the `chat:write` bot
+          scope, installed to your workspace, and the bot invited to each channel you map.</p>
+      )}
+      <div className="row">
+        <div>
+          <label className="field">Bot token (xoxb-…){existing ? " — blank keeps current" : ""}</label>
+          <input type="password" value={botToken} placeholder="xoxb-…"
+                 onChange={(e) => setBotToken(e.target.value)} />
+        </div>
+        <div>
+          <label className="field">Signing secret{existing ? " — blank keeps current" : ""}</label>
+          <input type="password" value={signingSecret} placeholder="from Basic Information"
+                 onChange={(e) => setSigningSecret(e.target.value)} />
+        </div>
+      </div>
+      <div className="row">
+        <div>
+          <label className="field">
+            Your Slack member ID (U…) — only this user's boardroom-channel messages reach the CEO
+          </label>
+          <input value={chairmanUser} placeholder="U… (blank = outbound mirror only)"
+                 onChange={(e) => setChairmanUser(e.target.value)} />
+        </div>
+      </div>
+      <label className="field">Channel map — Slack channel IDs, bot invited to each</label>
+      <div className="row">
+        {channelInput("boardroom", "Boardroom (chairman ↔ CEO)")}
+        {channelInput("leadership", "Leadership (CEO + leads)")}
+      </div>
+      <div className="row">
+        {(org?.teams ?? []).map((team) => channelInput(`team:${team.id}`, `Team room: ${team.name}`))}
+      </div>
+      <div className="actions">
+        <button
+          className="primary"
+          disabled={busy || !canSave}
+          onClick={() =>
+            act(async () => {
+              // Credentials are stored as ungranted service secrets: the bridge
+              // decrypts them server-side; no agent sandbox ever receives them.
+              if (botToken.trim()) {
+                await post("/admin/secrets", { project_id: projectId, name: "slack-bot",
+                  value: botToken.trim(), role_scopes: [], kind: "service" });
+              }
+              if (signingSecret.trim()) {
+                await post("/admin/secrets", { project_id: projectId, name: "slack-signing",
+                  value: signingSecret.trim(), role_scopes: [], kind: "service" });
+              }
+              await patch(`/admin/projects/${projectId}`, {
+                config: { slack: {
+                  bot_token_secret: "slack-bot",
+                  signing_secret: "slack-signing",
+                  chairman_slack_user: chairmanUser.trim(),
+                  channel_map: Object.fromEntries(mapped.map(([k, v]) => [k, v.trim()])),
+                }},
+              });
+              setBotToken("");
+              setSigningSecret("");
+            }, "Slack connected. Mapped channels start mirroring within one janitor tick (~15s).")
+          }
+        >
+          {existing ? "Update bridge" : "Connect Slack"}
+        </button>
+        {existing && (
+          <button
+            disabled={busy}
+            onClick={() => {
+              if (!confirm("Disconnect Slack? The bus keeps everything; mirroring just stops."))
+                return;
+              act(
+                () => patch(`/admin/projects/${projectId}`, { config: { slack: null } }),
+                "Slack disconnected. The bus is unaffected.",
+              );
+            }}
+          >
+            Disconnect
+          </button>
+        )}
+      </div>
+      <p className="help">
+        Inbound (optional): in the Slack app, enable Event Subscriptions for the bot event
+        `message.channels` with request URL <code>{eventsUrl}</code> — Slack requires this to be
+        reachable over public HTTPS (a tunnel like cloudflared works). Skip it and the mirror
+        still runs; you just reply from the boardroom here instead.
+      </p>
+    </>
   );
 }
 
@@ -422,6 +576,11 @@ export default function Settings({
           act={act}
           busy={busy}
         />
+      </div>
+
+      <h2>Slack bridge</h2>
+      <div className="card">
+        <SlackBridge projectId={projectId} dash={dash} act={act} busy={busy} />
       </div>
 
       <h2>Advanced</h2>

@@ -165,21 +165,18 @@ recover), then point senders at:
   For anything you can teach to send a signed POST: mail routes, Stripe
   forwarders, analytics jobs.
 
-**Slack bridge** (optional, per project; the bus stays canonical). Store the
-bot token and signing secret as project-level secrets (no role grants — agents
-never hold them), then set:
-
-```json
-"config": {"slack": {"bot_token_secret": "slack-bot", "signing_secret": "slack-signing",
-  "chairman_slack_user": "U…",
-  "channel_map": {"boardroom": "C…", "leadership": "C…", "team:<team_id>": "C…"}}}
-```
+**Slack bridge** (optional, per project; the bus stays canonical). Configure it
+in **Settings → Slack bridge**: paste the app's bot token + signing secret
+(stored as ungranted secrets — agents never hold them), your Slack member ID,
+and the channel map (boardroom / leadership / per-team). Under the hood this is
+`config.slack = {bot_token_secret, signing_secret, chairman_slack_user,
+channel_map}`, settable by PATCH for scripting.
 
 The janitor mirrors mapped channels outward each tick (best-effort; an outage
-never fails an enforcement tick). Point the Slack app's events URL at
-`POST /webhooks/slack/{project_id}`: only the chairman's Slack user posting in
-the mapped boardroom channel becomes a boardroom message — everything else is
-ignored and audited.
+never fails an enforcement tick). For inbound, point the Slack app's events URL
+(shown in the card) at `POST /webhooks/slack/{project_id}` over public HTTPS:
+only the chairman's Slack user posting in the mapped boardroom channel becomes
+a boardroom message — everything else is ignored and audited.
 
 **GitHub workspaces.** Store a platform-level secret named `github` (a PAT),
 then `POST /admin/projects/{id}/github {"repo": "name-or-owner/name"}` creates
