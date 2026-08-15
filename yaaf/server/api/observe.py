@@ -345,15 +345,35 @@ def channel_messages(channel_id: str, limit: int = 100, session: Session = Depen
 
 @router.get("/projects/{project_id}/runs")
 def runs(project_id: str, limit: int = 50, session: Session = Depends(db)) -> list[dict]:
-    rows = session.execute(
-        select(Run)
-        .where(Run.project_id == project_id)
-        .order_by(Run.created_at.desc())
-        .limit(min(limit, 200))
-    ).scalars()
+    rows = list(
+        session.execute(
+            select(Run)
+            .where(Run.project_id == project_id)
+            .order_by(Run.created_at.desc())
+            .limit(min(limit, 200))
+        ).scalars()
+    )
+    agent_ids = {r.agent_id for r in rows if r.agent_id}
+    agents = {
+        a.id: a
+        for a in session.execute(select(Agent).where(Agent.id.in_(agent_ids))).scalars()
+    } if agent_ids else {}
+    team_ids = {a.team_id for a in agents.values() if a.team_id}
+    team_names = {
+        t.id: t.name
+        for t in session.execute(select(Team).where(Team.id.in_(team_ids))).scalars()
+    } if team_ids else {}
+
+    def who(r: Run) -> dict:
+        agent = agents.get(r.agent_id) if r.agent_id else None
+        return {
+            "agent_name": agent.name if agent else None,
+            "team_name": team_names.get(agent.team_id) if agent and agent.team_id else None,
+        }
+
     return [
         {
-            "id": r.id, "agent_id": r.agent_id, "kind": r.kind, "status": r.status,
+            "id": r.id, "agent_id": r.agent_id, **who(r), "kind": r.kind, "status": r.status,
             "trigger": r.trigger, "attempt": r.attempt,
             "tokens_in": r.tokens_in, "tokens_out": r.tokens_out, "cost_usd": r.cost_usd,
             "refusals": r.refusal_count, "summary": r.summary,

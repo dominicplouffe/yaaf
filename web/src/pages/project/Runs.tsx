@@ -60,6 +60,7 @@ export default function Runs({ projectId }: { projectId: string }) {
         <thead>
           <tr>
             <th>Started</th>
+            <th>Agent</th>
             <th>Kind</th>
             <th>Status</th>
             <th>Woken because</th>
@@ -74,6 +75,10 @@ export default function Runs({ projectId }: { projectId: string }) {
             <Fragment key={run.id}>
               <tr>
                 <td className="mono">{fmtWhen(run.started_at)}</td>
+                <td>
+                  {run.agent_name ?? <span className="help">—</span>}
+                  {run.team_name && <div className="help">{run.team_name}</div>}
+                </td>
                 <td className="mono">{run.kind === "success_check" ? "check" : "agent"}</td>
                 <td>
                   {runBadge(run.status)}
@@ -104,7 +109,7 @@ export default function Runs({ projectId }: { projectId: string }) {
               </tr>
               {openTraces[run.id] && (
                 <tr>
-                  <td colSpan={8}>
+                  <td colSpan={9}>
                     <pre
                       className="block mono"
                       style={{ maxHeight: 320, overflow: "auto", margin: 0 }}
@@ -118,7 +123,7 @@ export default function Runs({ projectId }: { projectId: string }) {
           ))}
           {runs && runs.length === 0 && (
             <tr>
-              <td colSpan={8} className="help">
+              <td colSpan={9} className="help">
                 No runs yet. An idle project costs exactly nothing — that's the point.
               </td>
             </tr>

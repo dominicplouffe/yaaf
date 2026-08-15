@@ -183,6 +183,8 @@ export interface ChannelRow {
 export interface RunRow {
   id: string;
   agent_id: string | null;
+  agent_name: string | null;
+  team_name: string | null;
   kind: string;
   status: string;
   trigger: Record<string, unknown>;
