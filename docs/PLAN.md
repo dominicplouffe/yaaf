@@ -217,6 +217,17 @@ building M3+ machinery ahead of the M2 result; the kill condition is
 unchanged — if the org arm loses, the org-framework parts are shelved and the
 salvage path (governance harness for single agents) proceeds.
 
+**Also (2026-08-15, later): role-level MCP servers REMOVED (chairman's call).**
+Data sources are project-owned and assigned to roles — a role template can no
+longer freeze a server line that silently follows every project pinning it
+(the live "ghost ppc" failure). The API refuses the shape, a migration
+scrubbed stored role versions, and the runner drops any stale key cold. Two
+egress-proxy bugs fixed in the same pass: reloads now exec `squid -k
+reconfigure` in the proxy container (a container HUP dies unforwarded in the
+squid image's bash entrypoint — no reload ever landed), and scoped role ports
+now keep the global-allowlist floor (without it a scoped role was cut off
+from the model API itself).
+
 **M6 (Proxmox fleet): NOT STARTED** — still demoted, on demonstrated need.
 
 **Open items:** golden-transcript evals before role editing counts as safe; M2

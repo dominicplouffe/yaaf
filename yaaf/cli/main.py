@@ -312,11 +312,11 @@ def audit_evidence(evidence_id: str, ok: bool = typer.Option(..., "--ok/--bad"),
 @app.command()
 def egress_sync(
     out: Path = typer.Option(Path("deploy/proxy/generated"), "--out"),
-    hup_container: str = typer.Option(None, "--hup-container",
-                                      help="Proxy container to HUP after writing"),
+    proxy_container: str = typer.Option(None, "--proxy-container", "--hup-container",
+                                        help="Proxy container to reload after writing"),
 ) -> None:
     """Fetch per-role squid config from the API and write it to deploy/proxy/
-    (run on the box that hosts deploy/), then HUP the proxy to load it."""
+    (run on the box that hosts deploy/), then reload the proxy to load it."""
     with _client() as client:
         payload = _json_or_die(client.get("/admin/egress/config"))
     out.mkdir(parents=True, exist_ok=True)
@@ -327,15 +327,18 @@ def egress_sync(
         typer.echo("no roles define egress_allow; global allowlist covers everything")
     for slug, port in sorted(assignments.items()):
         typer.echo(f"{slug}: proxy port {port}")
-    if hup_container:
+    if proxy_container:
         import subprocess
 
-        result = subprocess.run(["docker", "kill", "--signal=HUP", hup_container],
+        # Ask squid itself to re-read its config: a container HUP lands on the
+        # squid image's bash entrypoint, which never forwards it.
+        result = subprocess.run(["docker", "exec", proxy_container,
+                                 "squid", "-k", "reconfigure"],
                                 capture_output=True, text=True)
         typer.echo("proxy reloaded" if result.returncode == 0
-                   else f"HUP failed: {result.stderr.strip()} — reload the proxy manually")
+                   else f"reload failed: {result.stderr.strip()} — reload the proxy manually")
     else:
-        typer.echo("Reload with: docker kill --signal=HUP <proxy container>")
+        typer.echo("Reload with: docker exec <proxy container> squid -k reconfigure")
 
 
 _register_experiment()

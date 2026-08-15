@@ -48,9 +48,10 @@ class Settings(BaseSettings):
     artifact_s3_secret_key: str = ""
 
     # Egress auto-apply: when set, the runner watches the generated proxy
-    # config for changes, writes it here, and HUPs the named container —
-    # config edits in the UI reach squid without any CLI step. Empty = manual
-    # `yaaf egress-sync` (multi-box setups).
+    # config for changes, writes it here, and reloads squid in the named
+    # container (exec `squid -k reconfigure`) — config edits in the UI reach
+    # squid without any CLI step. Empty = manual `yaaf egress-sync`
+    # (multi-box setups).
     proxy_generated_dir: str = ""
     proxy_container: str = ""
 

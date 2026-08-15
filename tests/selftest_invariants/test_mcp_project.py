@@ -9,10 +9,11 @@ import pytest
 from tests.conftest import ADMIN, make_project
 from yaaf.core import ids
 from yaaf.core.db import db_session
-from yaaf.core.models import Project, RunKind, RunQueue, Secret
+from yaaf.core.models import Agent, Project, RunKind, RunQueue, Secret
 from yaaf.runner import daemon
 from yaaf.server import egress
 from yaaf.server.api import admin as admin_module
+from yaaf.server.contextpack import role_version_for
 
 
 @pytest.fixture(autouse=True)
@@ -82,6 +83,35 @@ def test_egress_derives_hosts_and_ports(client):
     assert "worker" in assignments
     assert ".data.example.com" in files["allowlist_worker.txt"].splitlines()
     assert "acl ok_ports_worker port 80 443 3845" in files["roles.conf"]
+    # The scoped port keeps the platform floor: without the global allowlist
+    # (where the model API lives) a scoped role's sandbox cannot run at all.
+    rules = files["roles.conf"].splitlines()
+    assert 'acl dst_floor dstdomain "/etc/squid/allowlist.txt"' in rules
+    assert rules.index("http_access allow port_worker dst_floor") \
+        < rules.index("http_access deny port_worker")
+
+
+def test_stale_role_declared_servers_are_never_mounted(client):
+    """Role versions minted before data sources became project-owned may still
+    freeze a legacy tool_permissions.mcp_servers key (the API refuses new
+    ones; the migration scrubs stored ones). Belt and braces: even a version
+    that somehow kept the key mounts nothing — no ghost sources."""
+    project = make_project(client)
+    employee = project["teams"][0]["agents"][0]["id"]
+    with db_session() as session:
+        pinned = role_version_for(session, session.get(Agent, employee))
+        pinned.tool_permissions = {
+            **(pinned.tool_permissions or {}),
+            "mcp_servers": [{"name": "ppc", "url_env": "MCP_SERVER"}],
+        }
+    with db_session() as session:
+        session.add(RunQueue(id=ids.new_id(ids.RUN), project_id=project["id"],
+                             agent_id=employee, kind=RunKind.AGENT_RUN,
+                             trigger={"reasons": []}, attempt=1))
+    jobs = daemon.lease_and_prepare(limit=1)
+    assert len(jobs) == 1
+    assert "mcp_servers" not in jobs[0].tool_permissions
+    assert "DATA SOURCES" not in jobs[0].system_prompt
 
 
 def test_delete_cleans_up_completely(client):
@@ -99,7 +129,7 @@ def test_delete_cleans_up_completely(client):
 
 def test_egress_watch_applies_only_on_change(client, tmp_path, monkeypatch):
     hups: list[bool] = []
-    monkeypatch.setattr(daemon, "_hup_proxy", lambda: hups.append(True))
+    monkeypatch.setattr(daemon, "_reload_proxy", lambda: hups.append(True))
     project = make_project(client, start=False)
     _save(client, project["id"])
 

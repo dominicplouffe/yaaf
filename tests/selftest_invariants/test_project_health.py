@@ -42,45 +42,25 @@ def test_billing_check_goes_green_when_attached(client):
     assert health["all_ok"] is True  # nothing else configured => nothing else checked
 
 
-def test_legacy_role_source_failures_are_named(client):
-    """The exact failure that stopped the live PPC project: a role-declared
-    data source whose credential is missing, ungranted, or not a URL — each
-    gets its own plain-language finding instead of a generic dead end."""
-    project = make_project(client)
-    _attach_billing(client, project["id"])
-    team = project["teams"][0]
-    # Publish v2 declaring a data source, adopt it.
-    seed_role(client, "worker", tool_permissions={
-        "mcp_servers": [{"name": "ppc", "url_env": "MCP_SERVER"}]})
-    assert client.post(f"/admin/teams/{team['id']}/repin",
-                       headers=ADMIN).json()["changed"] is True
-    key = f"role-source:{team['name']}:ppc"
+def test_roles_cannot_declare_their_own_data_sources(client):
+    """Data sources are project-owned. The ghost this kills: a server line
+    frozen into a role template follows every project that pins the role —
+    the live failure where a fresh project inherited a source named 'ppc' it
+    had never heard of. The API refuses the shape, with directions to the
+    right place."""
+    from tests.conftest import ROLE_MIN
 
-    # 1. No credential at all.
-    finding = _by_key(_health(client, project["id"]), key)
-    assert finding["status"] == "fail" and "no credential produces" in finding["detail"]
+    refused = client.post("/admin/roles", json={
+        "slug": "worker", "name": "Worker", **ROLE_MIN,
+        "tool_permissions": {
+            "mcp_servers": [{"name": "ppc", "url_env": "MCP_SERVER"}]},
+    }, headers=ADMIN)
+    assert refused.status_code == 422
+    assert "Data Source" in refused.json()["detail"]
+    assert "Settings" in refused.json()["detail"]
 
-    # 2. Credential exists but isn't granted to the role.
-    client.post("/admin/secrets",
-                json={"project_id": project["id"], "name": "MCP_SERVER",
-                      "value": "wrath1q2w!", "role_scopes": []}, headers=ADMIN)
-    finding = _by_key(_health(client, project["id"]), key)
-    assert finding["status"] == "fail" and "not granted" in finding["detail"]
-
-    # 3. Granted, but the value is not a URL — today's live failure, named.
-    client.post("/admin/secrets",
-                json={"project_id": project["id"], "name": "MCP_SERVER",
-                      "role_scopes": ["worker"]}, headers=ADMIN)
-    finding = _by_key(_health(client, project["id"]), key)
-    assert finding["status"] == "fail" and "should be a URL" in finding["detail"]
-    assert "wrath1" in finding["detail"]  # shows just enough to recognize it
-
-    # 4. Fixed value: green.
-    client.post("/admin/secrets",
-                json={"project_id": project["id"], "name": "MCP_SERVER",
-                      "value": "http://data.example.com:3845/mcp",
-                      "role_scopes": ["worker"]}, headers=ADMIN)
-    assert _by_key(_health(client, project["id"]), key)["status"] == "ok"
+    # No orphan role or version slipped in alongside the refusal.
+    assert client.get("/admin/roles/worker", headers=ADMIN).status_code == 404
 
 
 def test_role_drift_warns_with_one_click_action(client):

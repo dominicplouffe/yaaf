@@ -1,5 +1,6 @@
-"""Invariant selftests: external MCP servers mount from role permissions plus
-role-scoped secret env vars — and never from garbage."""
+"""Invariant selftests: external MCP servers mount from the lease-time-merged
+permissions (project data sources assigned to the role) plus role-scoped
+secret env vars — and never from garbage."""
 
 from __future__ import annotations
 
@@ -20,7 +21,7 @@ def sandbox_entry(monkeypatch):
     return importlib.reload(mod)
 
 
-def test_external_mcp_servers_mount_from_role_and_env(sandbox_entry, monkeypatch):
+def test_external_mcp_servers_mount_from_permissions_and_env(sandbox_entry, monkeypatch):
     sandbox_entry.PERMS = {
         "mcp_servers": [
             {"name": "ppc", "url_env": "MCP_SERVER_URL", "bearer_env": "MCP_SERVER_TOKEN"},
@@ -59,7 +60,8 @@ def test_no_declaration_means_yaaf_only(sandbox_entry):
     sandbox_entry.PERMS = {}
     os.environ["MCP_SERVER"] = "https://data.example.com/mcp"
     try:
-        # An env var alone mounts nothing: the ROLE must declare the server.
+        # An env var alone mounts nothing: a project data source must be
+        # assigned to this role for a server to exist.
         assert sandbox_entry._external_mcp_servers() == {}
     finally:
         del os.environ["MCP_SERVER"]

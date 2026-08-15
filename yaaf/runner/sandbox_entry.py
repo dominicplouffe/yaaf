@@ -324,7 +324,9 @@ def _allowed_tools() -> list[str]:
 
 
 def _external_mcp_servers(env: dict[str, str] | None = None) -> dict[str, dict]:
-    """External MCP servers this ROLE declares (tool_permissions.mcp_servers).
+    """The project data sources assigned to this role, merged into
+    tool_permissions.mcp_servers at lease time — roles never declare servers
+    of their own.
 
     Each entry: {"name": str, "url_env": str, optional "transport": "http"|"sse",
     optional "bearer_env": str}. The URL (and any bearer token) come from role-

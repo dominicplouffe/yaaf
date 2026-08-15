@@ -68,8 +68,8 @@ def main() -> None:  # pragma: no cover - process entrypoint
 
 def egress_watch_once(session: Session, out_dir: Path, last_hash: str | None) -> str:
     """One tick of egress auto-apply: regenerate, and only on change write the
-    files and HUP the proxy. A config edit in the UI reaches squid within one
-    tick — no CLI, no manual reload."""
+    files and reload the proxy. A config edit in the UI reaches squid within
+    one tick — no CLI, no manual reload."""
     import hashlib
     import json
 
@@ -82,21 +82,28 @@ def egress_watch_once(session: Session, out_dir: Path, last_hash: str | None) ->
     out_dir.mkdir(parents=True, exist_ok=True)
     for name, content in files.items():
         (out_dir / name).write_text(content)
-    _hup_proxy()
+    _reload_proxy()
     log.info("egress config applied; proxy reload requested")
     return digest
 
 
-def _hup_proxy() -> None:
+def _reload_proxy() -> None:
     container = settings().proxy_container
     if not container:
         return
     try:
         import docker
 
-        docker.from_env().containers.get(container).kill(signal="SIGHUP")
+        proxy = docker.from_env().containers.get(container)
+        # `squid -k reconfigure` signals the squid master directly. A container
+        # HUP goes to PID 1, which in the stock ubuntu/squid image is a bash
+        # entrypoint that never forwards signals — the reload silently dies
+        # there (found live: role ports stayed closed for hours).
+        code, output = proxy.exec_run(["squid", "-k", "reconfigure"])
+        if code != 0:
+            raise RuntimeError(f"squid -k reconfigure exited {code}: {output[:200]!r}")
     except Exception:
-        log.warning("could not HUP proxy container %r", container, exc_info=True)
+        log.warning("could not reload proxy container %r", container, exc_info=True)
 
 
 def _egress_watch_loop() -> None:  # pragma: no cover - thin loop
@@ -224,12 +231,15 @@ def _materialize(session: Session, queued: RunQueue, project: Project) -> RunJob
 
 def _merge_project_data_sources(session: Session, project: Project, role_version,
                                 job: RunJob) -> list[str]:
-    """Project-declared data sources (config.mcp_servers) for this agent's
-    role, merged into the job's tool permissions. This is why connecting a
-    data source needs no role-library edit and no team repin: the mapping
-    lives on the project and is applied at lease time. Returns all mounted
-    source names (role-declared legacy entries included)."""
-    specs = list(job.tool_permissions.get("mcp_servers", []))
+    """Data sources are project-owned (config.mcp_servers), mounted for the
+    roles they are assigned to — roles never declare their own servers. The
+    mapping lives on the project and is applied at lease time, which is why
+    connecting a source needs no role-library edit and no team repin. Returns
+    the mounted source names."""
+    # Pinned versions minted before data sources became project-owned may still
+    # freeze a legacy mcp_servers key; it is dead weight, never mounted.
+    job.tool_permissions.pop("mcp_servers", None)
+    specs: list[dict] = []
     if role_version is not None:
         from yaaf.core.models import Role
 
@@ -238,12 +248,11 @@ def _merge_project_data_sources(session: Session, project: Project, role_version
         for source in (project.config or {}).get("mcp_servers", []):
             if role is None or role.slug not in source.get("roles", []):
                 continue
-            if source["name"] not in [s.get("name") for s in specs]:
-                spec = {"name": source["name"],
-                        "url_env": _env_var_name(source["url_secret"])}
-                if source.get("bearer_secret"):
-                    spec["bearer_env"] = _env_var_name(source["bearer_secret"])
-                specs.append(spec)
+            spec = {"name": source["name"],
+                    "url_env": _env_var_name(source["url_secret"])}
+            if source.get("bearer_secret"):
+                spec["bearer_env"] = _env_var_name(source["bearer_secret"])
+            specs.append(spec)
             host = source.get("url_host")
             if host and host not in hosts:
                 hosts.append(host)  # routes this role via its scoped proxy port

@@ -66,7 +66,8 @@ services:
       YAAF_WORKSPACES_ROOT: /var/lib/yaaf/workspaces
       YAAF_ARTIFACTS_ROOT: /var/lib/yaaf/artifacts
       # Egress auto-apply: the runner regenerates the per-role squid config on
-      # change and HUPs the proxy — UI edits reach squid with no CLI step.
+      # change and reloads squid (exec `squid -k reconfigure`; a container HUP
+      # dies in the image's bash entrypoint) — UI edits reach squid, no CLI.
       YAAF_PROXY_GENERATED_DIR: /var/lib/yaaf/proxy-generated
       YAAF_PROXY_CONTAINER: deploy-proxy-1
       # S3 artifact store (optional): keep in lockstep with the api service above.
@@ -120,7 +121,8 @@ services:
       - ./proxy/squid.conf:/etc/squid/squid.conf:ro
       - ./proxy/allowlist.txt:/etc/squid/allowlist.txt:ro
       # Per-role ports + allowlists, written by `yaaf egress sync`; reload with
-      # `docker kill --signal=HUP <this container>` after a sync.
+      # `docker exec <this container> squid -k reconfigure` after a sync
+      # (NOT a container HUP — PID 1 is a bash entrypoint that swallows it).
       - ./proxy/generated:/etc/squid/generated:ro
     networks: [default, sandbox]
 

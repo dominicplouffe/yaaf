@@ -21,40 +21,6 @@ function egressLines(perms: Record<string, unknown>): string {
   return Array.isArray(list) ? list.join("\n") : "";
 }
 
-interface McpSpec {
-  name: string;
-  url_env: string;
-  bearer_env?: string;
-  transport?: string;
-}
-
-// One server per line: "name URL_ENV_VAR [bearer TOKEN_ENV_VAR] [sse]".
-// Friendlier than raw JSON, loses nothing we support.
-function mcpLines(perms: Record<string, unknown>): string {
-  const list = perms["mcp_servers"];
-  if (!Array.isArray(list)) return "";
-  return (list as McpSpec[])
-    .map((s) =>
-      [s.name, s.url_env, s.bearer_env ? `bearer ${s.bearer_env}` : "",
-       s.transport === "sse" ? "sse" : ""].filter(Boolean).join(" "))
-    .join("\n");
-}
-
-function parseMcpLines(text: string): McpSpec[] {
-  const specs: McpSpec[] = [];
-  for (const line of text.split("\n")) {
-    const words = line.trim().split(/\s+/).filter(Boolean);
-    if (words.length < 2) continue;
-    const spec: McpSpec = { name: words[0], url_env: words[1] };
-    for (let i = 2; i < words.length; i++) {
-      if (words[i] === "bearer" && words[i + 1]) spec.bearer_env = words[++i];
-      else if (words[i] === "sse") spec.transport = "sse";
-    }
-    specs.push(spec);
-  }
-  return specs;
-}
-
 const EMPTY: RoleDetail = {
   slug: "",
   name: "",
@@ -76,7 +42,6 @@ export default function Roles() {
   // Raw textarea text for the egress list — kept separate so blank lines
   // survive typing; the parsed domains live in tool_permissions.egress_allow.
   const [egressText, setEgressText] = useState("");
-  const [mcpText, setMcpText] = useState("");
   const [portsText, setPortsText] = useState("");
 
   function refresh() {
@@ -88,9 +53,11 @@ export default function Roles() {
     setSaved(null);
     try {
       const detail = await get<RoleDetail>(`/admin/roles/${slug}`);
+      // Roles never own MCP servers (data sources are per-project); a stale
+      // key from imported data must not round-trip into a save refusal.
+      delete detail.tool_permissions["mcp_servers"];
       setEditing(detail);
       setEgressText(egressLines(detail.tool_permissions));
-      setMcpText(mcpLines(detail.tool_permissions));
       const ports = detail.tool_permissions["egress_ports"];
       setPortsText(Array.isArray(ports) ? ports.join(", ") : "");
     } catch (e) {
@@ -161,7 +128,7 @@ export default function Roles() {
             </tbody>
           </table>
           <div className="actions">
-            <button onClick={() => { setSaved(null); setEditing({ ...EMPTY }); setEgressText(""); setMcpText(""); setPortsText(""); }}>+ New role</button>
+            <button onClick={() => { setSaved(null); setEditing({ ...EMPTY }); setEgressText(""); setPortsText(""); }}>+ New role</button>
           </div>
         </div>
 
@@ -278,35 +245,13 @@ export default function Roles() {
               sandboxes can reach only these hosts, whatever the global list allows. Ports
               beyond 80/443 need an entry in egress ports below.
             </p>
-            <label className="field">
-              External MCP servers (advanced/legacy — prefer Settings → Data sources per project)
-              — one per line: name URL_ENV_VAR [bearer TOKEN_ENV_VAR] [sse]
-            </label>
-            <textarea
-              className="mono"
-              style={{ minHeight: 54 }}
-              value={mcpText}
-              placeholder={"ppc MCP_SERVER_URL bearer MCP_SERVER_TOKEN"}
-              onChange={(e) => {
-                setMcpText(e.target.value);
-                const specs = parseMcpLines(e.target.value);
-                const next = { ...perms };
-                if (specs.length) next["mcp_servers"] = specs;
-                else delete next["mcp_servers"];
-                setEditing({ ...editing, tool_permissions: next });
-              }}
-            />
             <p className="help" style={{ margin: "4px 0 0" }}>
-              Prefer each project's Settings → Data sources card: one form there wires the URL,
-              secrets, grants, egress, and proxy together. This field is the advanced/legacy
-              path where you assemble those pieces by hand — the URL (and optional bearer token)
-              come from service credentials granted to this role — store the server's full URL
-              (https://host:port/path) as a credential, grant it here, and the sandbox mounts it
-              as real MCP tools. The env var alone mounts nothing; the host must be on this
-              role's egress allowlist (plus its port below).
+              Looking for MCP servers? Data sources live on each project (Settings → Data
+              sources) and are assigned to roles there — one form wires the URL, secrets,
+              grants, egress, and proxy together. Roles never carry their own servers.
             </p>
             <label className="field">
-              Egress ports beyond 80/443 (comma-separated — e.g. an MCP server's port)
+              Egress ports beyond 80/443 (comma-separated — e.g. an internal API's port)
             </label>
             <input
               className="mono"

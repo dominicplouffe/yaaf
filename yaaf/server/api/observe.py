@@ -123,12 +123,6 @@ def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
     }
 
 
-def _env_name(secret_name: str) -> str:
-    import re
-
-    return re.sub(r"[^A-Za-z0-9]+", "_", secret_name).strip("_").upper()
-
-
 @router.get("/projects/{project_id}/health")
 def project_health(project_id: str, session: Session = Depends(db)) -> dict:
     """Every way this project's configuration can be silently wrong, checked
@@ -169,7 +163,6 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
         select(Secret).where(or_(Secret.project_id == project.id,
                                  Secret.project_id.is_(None)))
     ).scalars().all()
-    secrets_by_env = {_env_name(s.name): s for s in secrets}
     secrets_by_name = {s.name: s for s in secrets}
 
     # Project data sources: secrets present, granted, and last check green.
@@ -200,7 +193,8 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
                 f"data source '{name}': last check failed — {last.get('detail', '')}",
                 "settings")
 
-    # Teams: legacy role-declared sources actually resolvable, and no version drift.
+    # Teams: no role-version drift. (Roles never own data sources — the whole
+    # role-source failure class was removed with the concept.)
     for team in session.execute(
         select(Team).where(Team.project_id == project.id)
     ).scalars():
@@ -208,32 +202,6 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
         role = session.get(Role, pinned.role_id) if pinned else None
         if pinned is None or role is None:
             continue
-        for spec in (pinned.tool_permissions or {}).get("mcp_servers", []):
-            env_var = spec.get("url_env", "")
-            source_name = spec.get("name", "?")
-            row = secrets_by_env.get(env_var)
-            key = f"role-source:{team.name}:{source_name}"
-            if row is None:
-                add(key, "fail",
-                    f"team '{team.name}': role declares data source '{source_name}' "
-                    f"expecting ${env_var}, but no credential produces that variable",
-                    "settings")
-            elif role.slug not in (row.role_scopes or []):
-                add(key, "fail",
-                    f"team '{team.name}': credential '{row.name}' exists but is not "
-                    f"granted to role '{role.slug}' — tick it in Service credentials",
-                    "settings")
-            else:
-                value = decrypt(row.ciphertext)
-                if not value.startswith(("http://", "https://")):
-                    add(key, "fail",
-                        f"team '{team.name}': credential '{row.name}' should be a URL "
-                        f"but starts with '{value[:6]}…' — store the server's full "
-                        "http(s):// address", "settings")
-                else:
-                    add(key, "ok",
-                        f"team '{team.name}': data source '{source_name}' resolves",
-                        None)
         latest = session.execute(
             select(RoleVersion).where(RoleVersion.role_id == role.id)
             .order_by(RoleVersion.version.desc()).limit(1)

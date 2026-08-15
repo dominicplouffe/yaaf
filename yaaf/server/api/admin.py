@@ -106,6 +106,16 @@ class RoleIn(BaseModel):
 
 @router.post("/roles")
 def create_role(body: RoleIn, session: Session = Depends(db)) -> dict:
+    # Roles never own MCP servers. A server line frozen into a role template
+    # follows every project that pins the role — the ghost that broke a live
+    # project which had never heard of the source it "declared". Data sources
+    # are project-owned and assigned to roles (Settings → Data sources).
+    if "mcp_servers" in body.tool_permissions:
+        raise HTTPException(
+            status_code=422,
+            detail="roles do not own MCP servers — add a Data Source on the "
+                   "project (Settings → Data sources) and assign it to this role",
+        )
     role = session.execute(select(Role).where(Role.slug == body.slug)).scalar_one_or_none()
     if role is None:
         role = Role(
