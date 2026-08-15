@@ -629,7 +629,8 @@ def audit_evidence(
 class SecretIn(BaseModel):
     project_id: str | None = None
     name: str = Field(min_length=2, max_length=120)
-    value: str = Field(min_length=1)
+    # Omit value to update role grants only — no re-pasting to change access.
+    value: str | None = Field(default=None, min_length=1)
     role_scopes: list[str] = Field(default_factory=list)
 
 
@@ -654,10 +655,16 @@ def put_secret(body: SecretIn, session: Session = Depends(db)) -> dict:
         select(Secret).where(Secret.project_id == body.project_id, Secret.name == body.name)
     ).scalar_one_or_none()
     if existing:
-        existing.ciphertext = encrypt(body.value)
+        rotated = False
+        if body.value is not None:
+            existing.ciphertext = encrypt(body.value)
+            rotated = True
         existing.role_scopes = body.role_scopes
-        _audit(session, body.project_id, "secret.rotate", "secret", existing.id)
-        return {"id": existing.id, "rotated": True}
+        _audit(session, body.project_id, "secret.rotate" if rotated else "secret.rescope",
+               "secret", existing.id, {"role_scopes": body.role_scopes})
+        return {"id": existing.id, "rotated": rotated, "role_scopes": existing.role_scopes}
+    if body.value is None:
+        raise HTTPException(status_code=422, detail="a new secret needs a value")
     row = Secret(
         id=ids.new_id(ids.SECRET),
         project_id=body.project_id,
@@ -666,5 +673,6 @@ def put_secret(body: SecretIn, session: Session = Depends(db)) -> dict:
         role_scopes=body.role_scopes,
     )
     session.add(row)
-    _audit(session, body.project_id, "secret.create", "secret", row.id)
-    return {"id": row.id, "rotated": False}
+    _audit(session, body.project_id, "secret.create", "secret", row.id,
+           {"role_scopes": body.role_scopes})
+    return {"id": row.id, "rotated": False, "role_scopes": row.role_scopes}

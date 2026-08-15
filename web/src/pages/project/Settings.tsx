@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Dashboard, get, patch, post } from "../../api";
+import { Dashboard, get, patch, post, RoleSummary } from "../../api";
 
 interface SecretRow {
   id: string;
@@ -8,36 +8,104 @@ interface SecretRow {
   role_scopes: string[];
 }
 
-function OtherCredential({
+function envVarName(name: string): string {
+  return name.replace(/[^A-Za-z0-9]+/g, "_").replace(/^_+|_+$/g, "").toUpperCase();
+}
+
+interface StoredSecret {
+  id: string;
+  name: string;
+  project_id: string | null;
+  role_scopes: string[];
+}
+
+function RoleChecks({
+  roles,
+  selected,
+  onChange,
+}: {
+  roles: RoleSummary[];
+  selected: string[];
+  onChange: (slugs: string[]) => void;
+}) {
+  return (
+    <div className="pill-row">
+      {roles.map((role) => (
+        <label key={role.slug} style={{ display: "flex", gap: 5, alignItems: "center" }}>
+          <input
+            type="checkbox"
+            style={{ width: "auto" }}
+            checked={selected.includes(role.slug)}
+            onChange={(e) =>
+              onChange(
+                e.target.checked
+                  ? [...selected, role.slug]
+                  : selected.filter((slug) => slug !== role.slug),
+              )
+            }
+          />
+          {role.name}
+        </label>
+      ))}
+    </div>
+  );
+}
+
+function CredentialsManager({
   projectId,
   act,
   busy,
+  billingSecretId,
 }: {
   projectId: string;
   act: (fn: () => Promise<unknown>, ok: string) => Promise<void>;
   busy: boolean;
+  billingSecretId: string | null;
 }) {
-  const [name, setName] = useState("wordpress");
+  const [roles, setRoles] = useState<RoleSummary[]>([]);
+  const [stored, setStored] = useState<StoredSecret[]>([]);
+  const [name, setName] = useState("");
   const [value, setValue] = useState("");
+  const [grants, setGrants] = useState<string[]>([]);
+
+  function refresh() {
+    get<StoredSecret[]>(`/admin/secrets?project_id=${projectId}`).then(setStored).catch(() => {});
+  }
+  useEffect(() => {
+    get<RoleSummary[]>("/admin/roles")
+      .then((all) => setRoles(all.filter((r) => !r.is_ceo_role)))
+      .catch(() => {});
+    refresh();
+  }, [projectId]);
+
   return (
     <>
       <div className="row">
         <div>
-          <label className="field">Name (what roles reference in their secret scopes)</label>
-          <input value={name} onChange={(e) => setName(e.target.value)} />
+          <label className="field">Name</label>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="wordpress, github-token, stripe-key…"
+          />
+          {name.trim() && (
+            <div className="help" style={{ marginTop: 4 }}>
+              agents will see it as <code>${envVarName(name)}</code>
+            </div>
+          )}
         </div>
         <div>
-          <label className="field">
-            Value {name === "wordpress" && "— format: username:application-password"}
-          </label>
+          <label className="field">Value</label>
           <input
             type="password"
             value={value}
             onChange={(e) => setValue(e.target.value)}
-            placeholder={name === "wordpress" ? "dominic:xxxx xxxx xxxx xxxx" : ""}
+            placeholder={name.trim() === "wordpress" ? "username:xxxx xxxx xxxx xxxx" : "the key itself"}
           />
         </div>
       </div>
+      <label className="field">Which roles receive it (nobody, until you grant)</label>
+      <RoleChecks roles={roles} selected={grants} onChange={setGrants} />
       <div className="actions">
         <button
           className="small primary"
@@ -48,15 +116,66 @@ function OtherCredential({
                 project_id: projectId,
                 name: name.trim(),
                 value,
-                role_scopes: [],
+                role_scopes: grants,
               });
+              setName("");
               setValue("");
-            }, `Credential "${name.trim()}" stored (encrypted, write-only).`)
+              setGrants([]);
+              refresh();
+            }, "Stored. Effective on the very next run of any granted role — no restart needed.")
           }
         >
-          Store
+          Store credential
         </button>
       </div>
+
+      {stored.length > 0 && (
+        <table style={{ marginTop: 14 }}>
+          <thead>
+            <tr>
+              <th>Credential</th>
+              <th>Injected as</th>
+              <th style={{ width: "45%" }}>Roles that receive it</th>
+            </tr>
+          </thead>
+          <tbody>
+            {stored.map((secret) => (
+              <tr key={secret.id}>
+                <td className="mono">
+                  {secret.name}
+                  {secret.id === billingSecretId && (
+                    <div>
+                      <span className="badge good">billing</span>
+                    </div>
+                  )}
+                </td>
+                <td className="mono">
+                  {secret.role_scopes.length ? `$${envVarName(secret.name)}` : "—"}
+                </td>
+                <td>
+                  <RoleChecks
+                    roles={roles}
+                    selected={secret.role_scopes}
+                    onChange={(slugs) =>
+                      act(async () => {
+                        await post("/admin/secrets", {
+                          project_id: projectId,
+                          name: secret.name,
+                          role_scopes: slugs,
+                        });
+                        refresh();
+                      }, `Access to "${secret.name}" updated.`)
+                    }
+                  />
+                  {secret.role_scopes.length === 0 && (
+                    <span className="help">no roles — not injected anywhere</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </>
   );
 }
@@ -272,15 +391,22 @@ export default function Settings({
         )}
       </div>
 
-      <h2>Other credentials agents may need</h2>
+      <h2>Service credentials</h2>
       <div className="card">
         <p className="help" style={{ marginTop: 0 }}>
-          Non-billing credentials (a WordPress application password, a GitHub token…). A credential
-          reaches an agent's sandbox only when its role's <em>secret scopes</em> name it — e.g. the
-          Marketing Blog Writer role asks for <code>wordpress</code>, injected as the{" "}
-          <code>WORDPRESS</code> environment variable.
+          API keys and passwords your agents need for outside services. <strong>Never paste a key
+          into the boardroom</strong> — messages become model context and leave the box. Stored
+          here, a credential is encrypted at rest and injected only into the sandboxes of roles you
+          tick, as an environment variable. Its value never appears in any prompt, message, or the
+          UI again; agents are told the variable's <em>name</em> only. Changing grants takes effect
+          on the next run.
         </p>
-        <OtherCredential projectId={projectId} act={act} busy={busy} />
+        <CredentialsManager
+          projectId={projectId}
+          act={act}
+          busy={busy}
+          billingSecretId={dash.billing_secret_id}
+        />
       </div>
 
       <h2>Advanced</h2>

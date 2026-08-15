@@ -173,10 +173,12 @@ def _env_var_name(secret_name: str) -> str:
 
 
 def _role_secret_env(session: Session, project: Project, role_version) -> dict:
-    """Secrets a role is scoped for, decrypted and named as env vars. A secret
-    reaches a sandbox only when the role's secret_scopes name it AND the
-    secret's own role_scopes (if any) allow the role."""
-    if role_version is None or not role_version.secret_scopes:
+    """Secrets whose role_scopes name this agent's role, decrypted and named as
+    env vars. The grant lives on the SECRET (chairman-editable, effective on
+    the next run) — never on the role version, which teams pin at creation.
+    Empty role_scopes means injected nowhere: billing credentials and
+    not-yet-granted secrets stay out of every sandbox."""
+    if role_version is None:
         return {}
     from sqlalchemy import or_
 
@@ -184,26 +186,22 @@ def _role_secret_env(session: Session, project: Project, role_version) -> dict:
     from yaaf.core.models import Role
 
     role = session.get(Role, role_version.role_id)
+    if role is None:
+        return {}
+    candidates = session.execute(
+        select(Secret)
+        .where(or_(Secret.project_id == project.id, Secret.project_id.is_(None)))
+        .order_by(Secret.project_id.is_(None))  # project-scoped wins over platform
+    ).scalars()
     env: dict = {}
-    for name in role_version.secret_scopes:
-        secret = (
-            session.execute(
-                select(Secret)
-                .where(
-                    Secret.name == name,
-                    or_(Secret.project_id == project.id, Secret.project_id.is_(None)),
-                )
-                .order_by(Secret.project_id.is_(None))  # project-scoped wins
-            )
-            .scalars()
-            .first()
-        )
-        if secret is None:
+    for secret in candidates:
+        if not secret.role_scopes or role.slug not in secret.role_scopes:
             continue
-        if secret.role_scopes and (role is None or role.slug not in secret.role_scopes):
-            continue
+        var = _env_var_name(secret.name)
+        if var in env:
+            continue  # project-scoped already claimed this name
         try:
-            env[_env_var_name(name)] = decrypt(secret.ciphertext)
+            env[var] = decrypt(secret.ciphertext)
         except Exception:
             log.warning("could not decrypt secret %s for role scope", secret.id)
     return env

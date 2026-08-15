@@ -16,11 +16,11 @@ from yaaf.runner.types import RunJob, RunResult
 from yaaf.server.dispatcher import dispatch_once
 
 
-def test_role_scoped_secrets_reach_the_sandbox_env(client):
+def test_secret_grants_live_on_the_secret_and_apply_immediately(client):
     client.post("/admin/users", json={"email": "chair@example.com", "display_name": "Chair"},
                 headers=ADMIN)
     seed_role(client, "ceo", is_ceo=True)
-    seed_role(client, "publisher", secret_scopes=["wordpress"], model="claude-sonnet-5")
+    seed_role(client, "publisher", model="claude-sonnet-5")
     body = {
         "slug": "secretproj", "name": "Secretproj", "goal": "test secret injection end to end",
         "chairman_email": "chair@example.com", "ceo_role_slug": "ceo",
@@ -28,29 +28,38 @@ def test_role_scoped_secrets_reach_the_sandbox_env(client):
     }
     project = client.post("/admin/projects", json=body, headers=ADMIN).json()
     client.post(f"/admin/projects/{project['id']}/start", headers=ADMIN)
+
+    # Stored with no grants: reaches nobody.
     client.post("/admin/secrets", json={
         "project_id": project["id"], "name": "wordpress",
         "value": "dominic:app-pass-1234", "role_scopes": [],
     }, headers=ADMIN)
-
     poster = project["teams"][0]["agents"][0]["id"]
-    with db_session() as session:
-        session.add(RunQueue(id=ids.new_id(ids.RUN), project_id=project["id"],
-                             agent_id=poster, kind="agent_run",
-                             trigger={"type": "wake", "reasons": []}))
-    jobs = lease_and_prepare(limit=5)
-    job = next(j for j in jobs if j.agent_id == poster)
+
+    def lease_for(agent_id: str):
+        with db_session() as session:
+            session.add(RunQueue(id=ids.new_id(ids.RUN), project_id=project["id"],
+                                 agent_id=agent_id, kind="agent_run",
+                                 trigger={"type": "wake", "reasons": []}))
+        return next(j for j in lease_and_prepare(limit=5) if j.agent_id == agent_id)
+
+    job = lease_for(poster)
+    assert "WORDPRESS" not in job.billing_env, "ungranted secrets reach no sandbox"
+
+    # Granting is a scopes-only update — no value re-pasted, no role version
+    # churn, effective on the very next run.
+    rescope = client.post("/admin/secrets", json={
+        "project_id": project["id"], "name": "wordpress", "role_scopes": ["publisher"],
+    }, headers=ADMIN)
+    assert rescope.status_code == 200 and rescope.json()["rotated"] is False
+
+    job = lease_for(poster)
     assert job.billing_env.get("WORDPRESS") == "dominic:app-pass-1234"
     assert "WORDPRESS" in job.system_prompt  # the agent is told the var exists
     assert "app-pass-1234" not in job.system_prompt  # ...but never the value
 
-    # The CEO's role has no scopes: nothing leaks to it.
-    with db_session() as session:
-        session.add(RunQueue(id=ids.new_id(ids.RUN), project_id=project["id"],
-                             agent_id=project["ceo_agent_id"], kind="agent_run",
-                             trigger={"type": "wake", "reasons": []}))
-    ceo_job = next(j for j in lease_and_prepare(limit=5)
-                   if j.agent_id == project["ceo_agent_id"])
+    # A role outside the grant gets nothing.
+    ceo_job = lease_for(project["ceo_agent_id"])
     assert "WORDPRESS" not in ceo_job.billing_env
 
 
