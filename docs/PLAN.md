@@ -155,3 +155,37 @@ yaaf/
 ## Out of scope for v1
 
 Migrating the live lana company; multi-tenant orgs; k8s; multi-provider models (runner interface leaves room); embeddings memory search (FTS first); auto-scaling workers.
+
+---
+
+## Status appendix (2026-08-15 — maintained, unlike the frozen plan above)
+
+**M1 — the experiment rig: DONE.** Schema, policy engine (all forcing functions
+as refusals), agent/admin/observe APIs, dispatcher (cheap-exit wakes, wake caps,
+pair circuit-breaker), janitor (reaping, expiries, budget auto-pause,
+amendments), evidence verifier, MockModel + Agent SDK runners, Docker sandbox
+behind the squid egress allowlist, seed role library, CLI, invariant selftest
+suite (34 tests, green on SQLite and Postgres). Validated with real model runs.
+
+**Pulled forward from M3 (chairman's call, 2026-08-14): the web UI — DONE.**
+Login, project wizard, role library editor, per-project cockpit (overview,
+boardroom, board, channels, runs, approvals inbox, evidence + spot audit,
+settings), credentials manager with per-role grants.
+
+**Built beyond the plan (driven by the first production project):** daily
+wall-clock wakes (`ceo_daily_at` + timezone), role-scoped secret injection,
+failed-run retries that return their triggers, add-team-to-existing-project,
+WordPress draft-first publishing in the blog-writer role, subscription-mode
+token-only ledger.
+
+**M2 — the baseline experiment: NOT STARTED.** The gate still stands: protocol
+and rubric written before any runs; org arm vs single-agent arm under identical
+governance, goal, and budget; decided by **2026-09-30** (one chairman extension
+allowed). Nothing in M3+ beyond the pulled-forward UI may proceed past it.
+
+**M4 (GitHub workspaces, Slack, evidence connectors), M5 (chaos/hardening
+pilot), M6 (Proxmox fleet): NOT STARTED.**
+
+**Open items:** subscription-auth ToS verification for multi-agent use (running
+personal-project-only meanwhile); golden-transcript evals before role editing
+counts as safe; M2 goal selection needs chairman approval.
