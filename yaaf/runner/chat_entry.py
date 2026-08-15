@@ -54,8 +54,8 @@ def _boardroom_channel() -> str | None:
 
 
 def _read_messages(channel_id: str, limit: int = 50) -> list[dict] | None:
-    result = base._call("GET", f"/agent/channels/{channel_id}/messages",
-                        params={"limit": limit})
+    result = base._call("GET", "/agent/messages",
+                        params={"channel_id": channel_id, "limit": limit})
     if result["status"] != 200:
         return None
     return list(result["body"])

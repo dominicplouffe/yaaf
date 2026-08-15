@@ -236,6 +236,42 @@ def test_supervisor_lifecycle(client, monkeypatch):
     assert len(started) == starts_now  # held: too many starts in the window
 
 
+def test_chat_harness_speaks_real_api_paths(client, monkeypatch):
+    """The harness's hardcoded paths must be routes the app actually serves —
+    the live failure this pins down: a plausible-looking path 404ing and being
+    misread as a revoked token."""
+    import importlib
+    import sys
+
+    monkeypatch.setenv("YAAF_API_BASE_URL", "http://api:8080")
+    monkeypatch.setenv("YAAF_API_TOKEN", "test-token")
+    monkeypatch.setenv("YAAF_RUN_ID", "run_test")
+    monkeypatch.setenv("YAAF_TOOL_PERMISSIONS", "{}")
+    import yaaf.runner.sandbox_entry as sandbox_entry_module
+
+    # In the image both entrypoints sit in one directory; mirror that layout.
+    sys.modules["sandbox_entry"] = importlib.reload(sandbox_entry_module)
+    chat_entry = importlib.import_module("yaaf.runner.chat_entry")
+
+    calls: list[tuple[str, str]] = []
+
+    def record(method, path, payload=None, params=None):
+        calls.append((method, path))
+        return {"status": 200, "body": []}
+
+    monkeypatch.setattr(chat_entry.base, "_call", record)
+    chat_entry._boardroom_channel()
+    chat_entry._read_messages("chan_x")
+    chat_entry._set_typing("chan_x", 5)
+    chat_entry._post_reply("chan_x", "hi")
+    chat_entry._book_usage(1, 2, None)
+
+    for method, path in calls:
+        response = client.request(method, path)
+        assert response.status_code != 404, \
+            f"chat harness calls {method} {path}, which the app does not serve"
+
+
 def test_socket_mode_trusts_exactly_one_human():
     cfg = {"channel": "C123", "chairman": "U777"}
 
