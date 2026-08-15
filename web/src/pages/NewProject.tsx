@@ -9,6 +9,16 @@ interface TeamDraft {
   lead: string;
 }
 
+interface CredentialDraft {
+  name: string;
+  value: string;
+  grants: string[]; // role slugs
+}
+
+function envVarName(name: string): string {
+  return name.replace(/[^A-Za-z0-9]+/g, "_").replace(/^_+|_+$/g, "").toUpperCase();
+}
+
 export default function NewProject() {
   const navigate = useNavigate();
   const [roles, setRoles] = useState<RoleSummary[]>([]);
@@ -26,6 +36,7 @@ export default function NewProject() {
   const [teams, setTeams] = useState<TeamDraft[]>([
     { role_slug: "", name: "", employees: "", lead: "" },
   ]);
+  const [credentials, setCredentials] = useState<CredentialDraft[]>([]);
 
   // Constitution knobs surfaced in the wizard (frozen at creation).
   const [queueCeiling, setQueueCeiling] = useState(8);
@@ -43,6 +54,28 @@ export default function NewProject() {
 
   function setTeam(i: number, patch: Partial<TeamDraft>) {
     setTeams((prev) => prev.map((t, j) => (j === i ? { ...t, ...patch } : t)));
+  }
+
+  // Roles actually used by the drafted teams — the only sensible grant targets.
+  const usedRoleSlugs = [...new Set(teams.map((t) => t.role_slug).filter(Boolean))];
+
+  function setCredential(i: number, patch: Partial<CredentialDraft>) {
+    setCredentials((prev) => prev.map((c, j) => (j === i ? { ...c, ...patch } : c)));
+  }
+
+  function toggleGrant(i: number, slug: string) {
+    setCredentials((prev) =>
+      prev.map((c, j) =>
+        j === i
+          ? {
+              ...c,
+              grants: c.grants.includes(slug)
+                ? c.grants.filter((g) => g !== slug)
+                : [...c.grants, slug],
+            }
+          : c,
+      ),
+    );
   }
 
   async function submit(e: React.FormEvent) {
@@ -86,6 +119,22 @@ export default function NewProject() {
           }),
       };
       const created = await post<{ id: string }>("/admin/projects", body);
+      try {
+        for (const cred of credentials) {
+          if (!cred.name.trim() || !cred.value) continue;
+          await post("/admin/secrets", {
+            project_id: created.id,
+            name: cred.name.trim(),
+            value: cred.value,
+            role_scopes: cred.grants.filter((g) => usedRoleSlugs.includes(g)),
+            kind: "service",
+          });
+        }
+      } catch (err) {
+        // The project exists either way — send them to Settings to finish.
+        alert(`Project created, but storing a credential failed: ${(err as Error).message}. ` +
+              "Add it in Settings → Service credentials.");
+      }
       if (startNow) await post(`/admin/projects/${created.id}/start`);
       navigate(`/projects/${created.id}`);
     } catch (err) {
@@ -217,6 +266,74 @@ export default function NewProject() {
           onClick={() => setTeams((prev) => [...prev, { role_slug: "", name: "", employees: "", lead: "" }])}
         >
           + Add team
+        </button>
+
+        <h2>Service credentials (optional)</h2>
+        <p className="subtitle">
+          Keys your agents will need for outside services (WordPress, GitHub, Stripe…). Encrypted at
+          rest, write-only, and injected only into the sandboxes of roles you tick — agents are told
+          the variable's name, never shown the value. You can also add these later in Settings.
+        </p>
+        {credentials.map((cred, i) => (
+          <div className="card" key={i} style={{ marginBottom: 10 }}>
+            <div className="row">
+              <div>
+                <label className="field">Name</label>
+                <input
+                  value={cred.name}
+                  onChange={(e) => setCredential(i, { name: e.target.value })}
+                  placeholder="wordpress, github-token…"
+                />
+                {cred.name.trim() && (
+                  <div className="help" style={{ marginTop: 4 }}>
+                    injected as <code>${envVarName(cred.name)}</code>
+                  </div>
+                )}
+              </div>
+              <div>
+                <label className="field">Value</label>
+                <input
+                  type="password"
+                  value={cred.value}
+                  onChange={(e) => setCredential(i, { value: e.target.value })}
+                  placeholder="the key itself"
+                />
+              </div>
+            </div>
+            <label className="field">Which roles receive it (nobody, until you grant)</label>
+            {usedRoleSlugs.length === 0 ? (
+              <p className="help">Pick your teams' roles above first.</p>
+            ) : (
+              <div className="pill-row">
+                {usedRoleSlugs.map((slug) => (
+                  <label key={slug} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <input
+                      type="checkbox"
+                      style={{ width: "auto" }}
+                      checked={cred.grants.includes(slug)}
+                      onChange={() => toggleGrant(i, slug)}
+                    />
+                    {workerRoles.find((r) => r.slug === slug)?.name ?? slug}
+                  </label>
+                ))}
+              </div>
+            )}
+            <div className="actions">
+              <button
+                type="button"
+                className="small danger"
+                onClick={() => setCredentials((prev) => prev.filter((_, j) => j !== i))}
+              >
+                Remove credential
+              </button>
+            </div>
+          </div>
+        ))}
+        <button
+          type="button"
+          onClick={() => setCredentials((prev) => [...prev, { name: "", value: "", grants: [] }])}
+        >
+          + Add credential
         </button>
 
         <h2>Constitution (frozen at creation)</h2>
