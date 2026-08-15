@@ -326,6 +326,44 @@ def _revoke_running(session: Session, project_id: str) -> int:
     return n
 
 
+@router.post("/projects/{project_id}/teams")
+def add_team(project_id: str, body: TeamSpec, session: Session = Depends(db)) -> dict:
+    """Add a team to an existing project: agents, derived lead, team channel."""
+    project = _get_project(session, project_id)
+    role_version = _latest_role_version(session, body.role_slug)
+    team = Team(
+        id=ids.new_id(ids.TEAM),
+        project_id=project.id,
+        role_version_id=role_version.id,
+        name=body.name,
+    )
+    session.add(team)
+    session.flush()
+    agents = []
+    for employee_name in body.employees:
+        agent = Agent(
+            id=ids.new_id(ids.AGENT),
+            project_id=project.id,
+            team_id=team.id,
+            kind=AgentKind.EMPLOYEE,
+            name=employee_name,
+        )
+        session.add(agent)
+        agents.append(agent)
+    session.flush()
+    if len(agents) > 1:
+        lead_name = body.lead or body.employees[0]
+        lead = next((a for a in agents if a.name == lead_name), agents[0])
+        team.lead_agent_id = lead.id
+    session.add(Channel(id=ids.new_id(ids.CHANNEL), project_id=project.id,
+                        kind=ChannelKind.TEAM, team_id=team.id))
+    _audit(session, project.id, "team.add", "team", team.id,
+           {"role_slug": body.role_slug, "employees": body.employees})
+    notify(session, WAKE_CHANNEL, project.id)
+    return {"id": team.id, "name": team.name,
+            "agents": [{"id": a.id, "name": a.name} for a in agents]}
+
+
 class ProjectPatch(BaseModel):
     billing_mode: str | None = Field(default=None, pattern="^(api_key|subscription)$")
     billing_secret_id: str | None = None

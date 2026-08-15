@@ -1,4 +1,5 @@
-import { Dashboard, get, OrgView } from "../../api";
+import { useEffect, useState } from "react";
+import { Dashboard, get, OrgView, post, RoleSummary } from "../../api";
 import { usePoll } from "../../hooks";
 
 /** Single-value budget meter: track + fill + threshold tick at the warn ratio.
@@ -46,8 +47,75 @@ function BudgetMeter({ dash }: { dash: Dashboard }) {
   );
 }
 
+function AddTeam({ projectId, onAdded }: { projectId: string; onAdded: () => void }) {
+  const [roles, setRoles] = useState<RoleSummary[]>([]);
+  const [roleSlug, setRoleSlug] = useState("");
+  const [teamName, setTeamName] = useState("");
+  const [employees, setEmployees] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    get<RoleSummary[]>("/admin/roles")
+      .then((all) => setRoles(all.filter((r) => !r.is_ceo_role)))
+      .catch(() => {});
+  }, []);
+
+  async function submit() {
+    setBusy(true);
+    setError(null);
+    try {
+      await post(`/admin/projects/${projectId}/teams`, {
+        role_slug: roleSlug,
+        name: teamName.trim(),
+        employees: employees.split(",").map((s) => s.trim()).filter(Boolean),
+      });
+      setTeamName("");
+      setEmployees("");
+      onAdded();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <details className="card">
+      <summary>＋ Add a team</summary>
+      {error && <div className="error">{error}</div>}
+      <label className="field">Role (from the library)</label>
+      <select value={roleSlug} onChange={(e) => setRoleSlug(e.target.value)}>
+        <option value="">— pick a role —</option>
+        {roles.map((role) => (
+          <option key={role.slug} value={role.slug}>
+            {role.name} ({role.model ?? "default"})
+          </option>
+        ))}
+      </select>
+      <label className="field">Team name</label>
+      <input value={teamName} onChange={(e) => setTeamName(e.target.value)} placeholder="Content" />
+      <label className="field">Employees (comma-separated names; first is lead if several)</label>
+      <input value={employees} onChange={(e) => setEmployees(e.target.value)} placeholder="Blogger" />
+      <div className="actions">
+        <button
+          className="primary small"
+          disabled={busy || !roleSlug || !teamName.trim() || !employees.trim()}
+          onClick={submit}
+        >
+          Add team
+        </button>
+        <span className="help">The CEO sees the new team in its next context and can plan for it.</span>
+      </div>
+    </details>
+  );
+}
+
 export default function Overview({ projectId, dash }: { projectId: string; dash: Dashboard }) {
-  const { data: org } = usePoll(() => get<OrgView>(`/observe/projects/${projectId}/org`), 15000);
+  const { data: org, reload: reloadOrg } = usePoll(
+    () => get<OrgView>(`/observe/projects/${projectId}/org`),
+    15000,
+  );
 
   const cons = dash.constitution as Record<string, string | number | boolean>;
   return (
@@ -108,6 +176,7 @@ export default function Overview({ projectId, dash }: { projectId: string; dash:
             </div>
           </div>
         ))}
+        <AddTeam projectId={projectId} onAdded={reloadOrg} />
       </div>
 
       <h2>Constitution in force</h2>

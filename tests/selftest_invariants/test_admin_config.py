@@ -55,6 +55,36 @@ def test_patch_project_config_and_billing(client):
         assert decrypt(row.ciphertext) == "sk-ant-test-not-real"
 
 
+def test_add_team_to_existing_project(client):
+    from tests.conftest import seed_role
+
+    project = make_project(client)
+    seed_role(client, "blogger")
+    added = client.post(
+        f"/admin/projects/{project['id']}/teams",
+        json={"role_slug": "blogger", "name": "Content", "employees": ["Blogger"]},
+        headers=ADMIN,
+    )
+    assert added.status_code == 200, added.text
+    team = added.json()
+    assert [a["name"] for a in team["agents"]] == ["Blogger"]
+
+    org = client.get(f"/observe/projects/{project['id']}/org", headers=ADMIN).json()
+    content = next(t for t in org["teams"] if t["name"] == "Content")
+    # Sole employee is the de-facto lead (derived, not stored).
+    assert content["lead_agent_id"] == team["agents"][0]["id"]
+
+    channels = client.get(f"/observe/projects/{project['id']}/channels", headers=ADMIN).json()
+    assert any(c["kind"] == "team" and c["team_id"] == team["id"] for c in channels)
+
+    unknown_role = client.post(
+        f"/admin/projects/{project['id']}/teams",
+        json={"role_slug": "does-not-exist", "name": "X", "employees": ["Y"]},
+        headers=ADMIN,
+    )
+    assert unknown_role.status_code == 422
+
+
 def test_patch_cannot_touch_constitution(client):
     """The PATCH surface has no constitution field at all — governance changes
     only through amendments with their cooling-off."""
