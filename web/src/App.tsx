@@ -23,7 +23,7 @@ function Shell({ children }: { children: React.ReactNode }) {
           + New project
         </NavLink>
         <div className="foot">
-          governance-as-refusals
+          ui build {__BUILD_TIME__}
           <br />
           <a href="/docs" target="_blank" rel="noreferrer">
             API docs ↗

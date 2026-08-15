@@ -1,5 +1,12 @@
-import { useState } from "react";
-import { Dashboard, patch, post } from "../../api";
+import { useEffect, useState } from "react";
+import { Dashboard, get, patch, post } from "../../api";
+
+interface SecretRow {
+  id: string;
+  name: string;
+  project_id: string | null;
+  role_scopes: string[];
+}
 
 /** One decision, one button: pick how this project pays for models, paste the
     credential, Connect does everything (store encrypted secret + attach it +
@@ -29,6 +36,11 @@ export default function Settings({
 
   const [amendReason, setAmendReason] = useState("");
   const [amendChanges, setAmendChanges] = useState('{\n  "queue_ceiling": 8\n}');
+
+  const [secrets, setSecrets] = useState<SecretRow[]>([]);
+  useEffect(() => {
+    get<SecretRow[]>(`/admin/secrets?project_id=${projectId}`).then(setSecrets).catch(() => {});
+  }, [projectId, dash.billing_secret_id]);
 
   async function act(fn: () => Promise<unknown>, okMessage: string) {
     setError(null);
@@ -154,6 +166,56 @@ export default function Settings({
             Subscription runs share your personal Claude rate limits and are for personal projects;
             use an API key for anything beyond that.
           </p>
+        )}
+
+        {secrets.length > 0 && (
+          <>
+            <label className="field">Stored credentials for this project</label>
+            <table>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Status</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {secrets.map((secret) => {
+                  const active = secret.id === dash.billing_secret_id;
+                  return (
+                    <tr key={secret.id}>
+                      <td className="mono">{secret.name}</td>
+                      <td>
+                        {active ? (
+                          <span className="badge good">✓ ACTIVE — agents pay with this one</span>
+                        ) : (
+                          <span className="help">stored, not in use</span>
+                        )}
+                      </td>
+                      <td>
+                        {!active && (
+                          <button
+                            className="small"
+                            onClick={() =>
+                              act(
+                                () =>
+                                  patch(`/admin/projects/${projectId}`, {
+                                    billing_secret_id: secret.id,
+                                  }),
+                                `Agents now pay with "${secret.name}".`,
+                              )
+                            }
+                          >
+                            switch to this one
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </>
         )}
       </div>
 

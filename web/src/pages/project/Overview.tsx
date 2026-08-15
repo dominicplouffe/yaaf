@@ -34,6 +34,13 @@ function BudgetMeter({ dash }: { dash: Dashboard }) {
           <span>{state}</span>
           <span>warn at {Math.round(warnRatio * 100)}%</span>
         </div>
+        <div className="legend" style={{ marginTop: 2 }}>
+          <span>
+            {dash.billing_secret_name
+              ? `paying with: ${dash.billing_secret_name} (${usdMode ? "API key" : "Claude subscription"})`
+              : "⚠ no payment credential connected — real runs will fail (Settings)"}
+          </span>
+        </div>
       </div>
     </div>
   );
