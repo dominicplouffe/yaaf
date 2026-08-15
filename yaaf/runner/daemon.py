@@ -234,11 +234,17 @@ def finalize(job: RunJob, result: RunResult, was_revoked: bool = False) -> None:
         run.finished_at = utcnow()
         run.tokens_in = result.tokens_in
         run.tokens_out = result.tokens_out
-        run.cost_usd = result.cost_usd
+        # Tokens always; dollars only when dollars move. Subscription runs are
+        # a rate limit, not a bill — booking the SDK's list-price figure would
+        # distort every budget decision (the budget gate for subscription
+        # projects runs on monthly_token_cap instead).
+        project = session.get(Project, job.project_id)
+        subscription = project is not None and project.billing_mode == "subscription"
+        run.cost_usd = None if subscription else result.cost_usd
         run.trace_path = result.trace_path
         run.summary = (result.summary or "")[:4000]
 
-        if result.tokens_in or result.tokens_out or result.cost_usd:
+        if result.tokens_in or result.tokens_out or run.cost_usd:
             session.add(
                 LedgerEntry(
                     id=ids.new_id(ids.LEDGER),
@@ -246,9 +252,10 @@ def finalize(job: RunJob, result: RunResult, was_revoked: bool = False) -> None:
                     kind="model_usage",
                     tokens_in=result.tokens_in,
                     tokens_out=result.tokens_out,
-                    usd=result.cost_usd,
+                    usd=run.cost_usd,
                     run_id=run.id,
-                    note=f"{run.kind} {run.status}",
+                    note=f"{run.kind} {run.status}"
+                    + (" (subscription: tokens only)" if subscription else ""),
                 )
             )
 
