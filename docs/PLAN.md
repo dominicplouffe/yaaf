@@ -2,7 +2,7 @@
 
 ## Context
 
-`dominicplouffe/lana-project` runs a 3-agent AI company (CEO, engineering, GTM) as cron-fired `claude -p` cycles on one box, with the human as chairman. Its value is **discipline encoded in code, not prose**: work is pulled never invented (empty queue = $0 exit before a token is spent), forcing functions are refusals not guidelines, external evidence is the only progress, everything is recorded, and operational scar tissue (claim reaping, cost booked on killed runs, kill switches) is built in.
+The predecessor project (lana) runs a 3-agent AI company (CEO, engineering, GTM) as cron-fired `claude -p` cycles on one box, with the human as chairman. Its value is **discipline encoded in code, not prose**: work is pulled never invented (empty queue = $0 exit before a token is spent), forcing functions are refusals not guidelines, external evidence is the only progress, everything is recorded, and operational scar tissue (claim reaping, cost booked on killed runs, kill switches) is built in.
 
 yaaf generalizes this into a multi-project platform: projects with an LLM CEO, teams of role-based agents (role library, N employees per role with a lead), a human chairman, strict hierarchical comms, a UI, scoped memory, optional Slack, budgets, and audit — **without letting generalization corrode the discipline being generalized**, and **without building six milestones of plumbing before testing whether the org structure beats one agent**.
 
@@ -31,7 +31,7 @@ yaaf generalizes this into a multi-project platform: projects with an LLM CEO, t
 ## Kill condition for yaaf itself
 
 - **Baseline experiment concluded by 2026-09-30.** If the org arm does not beat the single-agent arm on the predefined rubric (blind-judged quality, verified external evidence, cost, wall-clock), yaaf-as-org-framework is killed. Salvage path: yaaf as a **governance harness for single agents** (queues, evidence verification, budgets, approvals, audit for one agent per project) — independently valuable.
-- The chairman (Dominic) may extend this date **once**, with a written reason, recorded in the plan repo.
+- The chairman may extend this date **once**, with a written reason, recorded in the plan repo.
 - **External evidence that yaaf works** (self-use doesn't count): by 2026-12-31, a yaaf project produces platform-attested external evidence that survives spot-audit, or an unaffiliated user runs yaaf.
 
 ---

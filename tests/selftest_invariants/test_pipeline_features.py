@@ -32,7 +32,7 @@ def test_secret_grants_live_on_the_secret_and_apply_immediately(client):
     # Stored with no grants: reaches nobody.
     client.post("/admin/secrets", json={
         "project_id": project["id"], "name": "wordpress",
-        "value": "dominic:app-pass-1234", "role_scopes": [],
+        "value": "editor:app-pass-1234", "role_scopes": [],
     }, headers=ADMIN)
     poster = project["teams"][0]["agents"][0]["id"]
 
@@ -54,7 +54,7 @@ def test_secret_grants_live_on_the_secret_and_apply_immediately(client):
     assert rescope.status_code == 200 and rescope.json()["rotated"] is False
 
     job = lease_for(poster)
-    assert job.billing_env.get("WORDPRESS") == "dominic:app-pass-1234"
+    assert job.billing_env.get("WORDPRESS") == "editor:app-pass-1234"
     assert "WORDPRESS" in job.system_prompt  # the agent is told the var exists
     assert "app-pass-1234" not in job.system_prompt  # ...but never the value
 

@@ -1,6 +1,6 @@
 {
   "experiment": "m2",
-  "chairman_email": "dplouffe@gmail.com",
+  "chairman_email": "you@example.com",
   "billing_mode": "api_key",
   "judge_model": "claude-opus-5",
   "weights": {"evidence": 0.35, "quality": 0.35, "cost": 0.15, "time": 0.15},

@@ -3,8 +3,8 @@
 .anthropic.com
 .claude.ai
 .claude.com
-# Add per-project/role domains below and HUP the proxy container:
+# Site-specific domains do NOT belong in this (committed) file. Give the role
+# an egress allowlist instead (Roles editor or tool_permissions.egress_allow),
+# run `yaaf egress-sync`, and HUP the proxy:
 #   docker kill --signal=HUP <proxy-container>
-# ai-blog-writer: research sources are fetched via the model's web tools;
-# publishing goes to the chairman's WordPress site:
-.dplouffe.ca
+# Anything added below is global — every role on the default port can reach it.
