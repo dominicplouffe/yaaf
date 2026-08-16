@@ -18,21 +18,28 @@ Rules enforced here (constitution reference in parentheses):
 - completion requires evidence; command tests are platform-executed
 - channel membership is hierarchy: boardroom (chairman<->CEO), leadership
   (CEO+leads), team rooms (lead+employees); frozen threads refuse posts
+- the chairman's reporting cadence: unprompted boardroom statuses are refused
+  between slots, replies to him never are
 - memory caps refuse adds; only the scope's curator supersedes/forgets
 """
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
+from typing import NamedTuple
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from yaaf.core import ids
-from yaaf.core.constitution import ConstitutionDoc
+from yaaf.core.constitution import ConstitutionDoc, effective
 from yaaf.core.models import (
     Agent,
     AgentKind,
+    Approval,
+    ApprovalStatus,
+    AuditLog,
     Channel,
     ChannelKind,
     Evidence,
@@ -44,6 +51,8 @@ from yaaf.core.models import (
     Message,
     Project,
     ProjectStatus,
+    Run,
+    RunKind,
     SuccessTestKind,
     Task,
     TaskEvent,
@@ -477,6 +486,217 @@ def check_thread_not_frozen(session: Session, thread_id: str | None) -> None:
             "or ask the chairman to unfreeze the thread.",
             status_code=409,
         )
+
+
+# ── chairman report cadence ─────────────────────────────────────────────────────
+#
+# A CEO run is stateless and cannot see its own last message, so "report every
+# N hours" is the one rule the platform used to leave to the model's memory —
+# and a rule an agent must remember is a suggestion. On 16 Aug 2026 that cost
+# thirteen unprompted statuses in 2h20m, at Opus prices, three of them after
+# the chairman had already said stop. So it is a refusal now, like every other
+# limit here.
+
+DEFAULT_REPORT_INTERVAL_HOURS = 0.0  # off unless the chairman sets a cadence
+REPORT_OVERRIDES = ("blocker", "budget", "approval")
+
+
+class ReportCadence(NamedTuple):
+    interval_hours: float
+    window: tuple[time, time] | None
+    tz: ZoneInfo
+
+    @property
+    def enforced(self) -> bool:
+        return self.interval_hours > 0
+
+
+def report_cadence(project: Project) -> ReportCadence:
+    """The chairman's standing reporting rule, read live from project config.
+
+    Deliberately config and not constitution: a cadence is a cost control, and
+    the chairman changes it mid-conversation ("stop, every 4 hours") expecting
+    it to bind the next run — not to clear a 72-hour cooling-off. Same argument
+    the budget fields already won in :mod:`yaaf.core.constitution`.
+
+    - ``chairman_report_interval_hours``: float; 0 (default) disables the rule
+    - ``chairman_report_window_local``: ``"09:00-20:00"``, or absent for all day
+    - ``timezone``: IANA name, shared with ``ceo_daily_at``
+    """
+    config = project.config or {}
+    try:
+        interval = float(config.get("chairman_report_interval_hours",
+                                    DEFAULT_REPORT_INTERVAL_HOURS))
+    except (TypeError, ValueError):
+        interval = DEFAULT_REPORT_INTERVAL_HOURS
+    try:
+        tz = ZoneInfo(str(config.get("timezone", "UTC")))
+    except Exception:
+        tz = ZoneInfo("UTC")
+    return ReportCadence(max(interval, 0.0),
+                         _parse_window(config.get("chairman_report_window_local")), tz)
+
+
+def _parse_window(raw: object) -> tuple[time, time] | None:
+    """``"09:00-20:00"`` → (09:00, 20:00). Anything unparseable, or a window
+    that wraps midnight, reads as "no window" — a malformed config must not
+    silently gag the CEO."""
+    if not raw:
+        return None
+    try:
+        start_s, end_s = str(raw).split("-", 1)
+        start = time(*(int(part) for part in start_s.strip().split(":", 1)))
+        end = time(*(int(part) for part in end_s.strip().split(":", 1)))
+    except (TypeError, ValueError):
+        return None
+    return (start, end) if start < end else None
+
+
+def boardroom_turns(
+    session: Session, channel_id: str, ceo_agent_id: str
+) -> tuple[datetime | None, datetime | None]:
+    """(CEO's last boardroom post, chairman's last). The chairman is the only
+    non-agent sender in there, so a null sender_agent_id identifies him."""
+    last_ceo = session.execute(
+        select(func.max(Message.created_at)).where(
+            Message.channel_id == channel_id, Message.sender_agent_id == ceo_agent_id)
+    ).scalar_one()
+    last_chairman = session.execute(
+        select(func.max(Message.created_at)).where(
+            Message.channel_id == channel_id, Message.sender_agent_id.is_(None))
+    ).scalar_one()
+    return last_ceo, last_chairman
+
+
+def next_report_slot(cadence: ReportCadence, last_report_at: datetime | None) -> datetime | None:
+    """When an unprompted status may next be posted. None = unrestricted."""
+    if not cadence.enforced or last_report_at is None:
+        return None
+    return _into_window(last_report_at + timedelta(hours=cadence.interval_hours), cadence)
+
+
+def _into_window(moment: datetime, cadence: ReportCadence) -> datetime:
+    """Push a moment forward to the next instant inside the chairman's waking
+    hours — that is what "nothing overnight" means in wall-clock terms."""
+    if cadence.window is None:
+        return moment
+    start, end = cadence.window
+    local = moment.astimezone(cadence.tz)
+    if local.time() < start:
+        local = local.replace(hour=start.hour, minute=start.minute, second=0, microsecond=0)
+    elif local.time() > end:
+        local = (local + timedelta(days=1)).replace(
+            hour=start.hour, minute=start.minute, second=0, microsecond=0)
+    return local.astimezone(UTC)
+
+
+def check_chairman_report(
+    session: Session,
+    project: Project,
+    agent: Agent,
+    channel: Channel,
+    run: Run,
+    override: str | None = None,
+) -> None:
+    """Three ways past the cadence, in the order the CEO should consider them:
+    it is a reply to something the chairman actually said; the slot is open; or
+    it declares a break-glass reason. Everything else folds into the next slot.
+    """
+    if agent.kind != AgentKind.CEO or channel.kind != ChannelKind.BOARDROOM:
+        return
+    # The chat lane is the conversation, not the report: it speaks only when
+    # the chairman does, and its replies are delivered by the harness rather
+    # than through this endpoint at all.
+    if run.kind == RunKind.CHAT_SESSION:
+        return
+    cadence = report_cadence(project)
+    if not cadence.enforced:
+        return
+    last_ceo, last_chairman = boardroom_turns(session, channel.id, agent.id)
+    # A turn the chairman opened and the CEO has not answered. Allowed exactly
+    # once: this reply becomes the newest message, so the next post is a status
+    # again and faces the cadence.
+    if last_chairman is not None and (last_ceo is None or last_chairman > last_ceo):
+        return
+    if override is not None:
+        _check_report_override(session, project, agent, override)
+        return
+    if last_ceo is None:
+        return  # nothing has ever been reported; the first status always lands
+    now = utcnow()
+    slot = next_report_slot(cadence, last_ceo)
+    if slot is None or now >= slot:
+        return
+    raise Refusal(
+        f"Not yet. You posted to the boardroom {_ago(now - last_ceo)} ago, and the chairman's "
+        f"cadence is every {cadence.interval_hours:g}h{_window_prose(cadence)}. The next slot "
+        f"opens {slot.isoformat(timespec='minutes')}. Fold this into that post rather than "
+        "sending it now — status posts cost real money, and silence between slots is what he "
+        "asked for, not a failure to report. This outranks your standing instruction to report "
+        "unprompted on bets, milestones and first evidence. If it genuinely cannot wait, "
+        f"re-post with override set to one of {', '.join(REPORT_OVERRIDES)} — overrides are "
+        "recorded and the chairman sees them.",
+        status_code=429,
+    )
+
+
+def _check_report_override(
+    session: Session, project: Project, agent: Agent, override: str
+) -> None:
+    if override not in REPORT_OVERRIDES:
+        raise Refusal(
+            f"'{override}' is not a break-glass reason. The cadence breaks for exactly three "
+            f"things: {', '.join(REPORT_OVERRIDES)}.")
+    if override == "approval":
+        pending = session.execute(
+            select(func.count(Approval.id)).where(
+                Approval.project_id == project.id, Approval.status == ApprovalStatus.PENDING)
+        ).scalar_one()
+        if not pending:
+            raise Refusal(
+                "override='approval' but this project has no pending approval. File the "
+                "approval itself — that reaches the chairman on its own, without a status.")
+    if override == "budget":
+        # Local import: janitor imports this module, and budget arithmetic
+        # lives there with the enforcement that uses it.
+        from yaaf.server.janitor import month_to_date
+
+        cons = effective(session, project.id)
+        usd, tokens = month_to_date(session, project.id)
+        spent, cap = ((usd, cons.monthly_usd_cap) if project.billing_mode == "api_key"
+                      else (tokens, cons.monthly_token_cap))
+        if not cap or spent < cap * cons.budget_warn_ratio:
+            raise Refusal(
+                f"override='budget' but spend is not at the warning line yet ({spent:,.0f} of "
+                f"{cap:,.0f}). The platform raises the budget warning itself when it lands.")
+    # 'blocker' is a judgment call the platform cannot check. It passes — and
+    # it is recorded, so a CEO that cries blocker four times a day is visible
+    # to the chairman rather than merely irritating.
+    session.add(
+        AuditLog(
+            id=ids.new_id(ids.AUDIT),
+            project_id=project.id,
+            actor=f"agent:{agent.id}",
+            action="boardroom.cadence_override",
+            entity="agent",
+            entity_id=agent.id,
+            detail={"reason": override},
+        )
+    )
+
+
+def _ago(delta: timedelta) -> str:
+    minutes = int(delta.total_seconds() // 60)
+    if minutes < 60:
+        return f"{minutes} minute{'s' if minutes != 1 else ''}"
+    return f"{minutes / 60:.1f} hours"
+
+
+def _window_prose(cadence: ReportCadence) -> str:
+    if cadence.window is None:
+        return ""
+    start, end = cadence.window
+    return f", and only between {start.strftime('%H:%M')} and {end.strftime('%H:%M')} {cadence.tz.key}"
 
 
 # ── memory rules ────────────────────────────────────────────────────────────────

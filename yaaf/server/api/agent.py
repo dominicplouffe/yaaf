@@ -419,6 +419,9 @@ class MessagePost(BaseModel):
     channel_id: str
     body: str = Field(min_length=1, max_length=20_000)
     thread_id: str | None = None
+    # Break-glass on the chairman's reporting cadence, named rather than
+    # implied. Verified where verifiable, recorded either way.
+    override: str | None = None
 
 
 @router.post("/messages")
@@ -430,6 +433,8 @@ def post_message(
         raise Refusal("Unknown channel.", status_code=404)
     policy.check_agent_post(session, ctx.project, ctx.agent, channel)
     policy.check_thread_not_frozen(session, body.thread_id)
+    policy.check_chairman_report(
+        session, ctx.project, ctx.agent, channel, ctx.run, body.override)
     message = Message(
         id=ids.new_id(ids.MESSAGE),
         project_id=ctx.project.id,

@@ -23,6 +23,7 @@ from yaaf.core.models import (
     Approval,
     ApprovalStatus,
     Channel,
+    ChannelKind,
     ChannelRead,
     Hypothesis,
     HypothesisStatus,
@@ -73,9 +74,30 @@ def constitution_prose(cons: ConstitutionDoc, project: Project) -> str:
         "Curate, don't accumulate.\n"
         f"- Each run may hit at most {cons.refusal_cap_per_run} policy refusals before its "
         "token is revoked. A refusal is the system working; do not rephrase and retry.\n"
+        f"{_cadence_clause(project)}"
         "- Do not ask the chairman questions. Decide and report, or file an approval as a "
-        "recommendation you would defend. When in doubt about telling, tell; about asking, "
-        "decide."
+        "recommendation you would defend. When in doubt about WHAT to tell him, tell; about "
+        "asking, decide. That is about candour, never about frequency — it is not licence to "
+        "post more often than the cadence allows."
+    )
+
+
+def _cadence_clause(project: Project) -> str:
+    """The reporting cadence, stated where every other enforced limit is
+    stated. Silent when the chairman has not set one."""
+    cadence = policy.report_cadence(project)
+    if not cadence.enforced:
+        return ""
+    window = ""
+    if cadence.window is not None:
+        start, end = cadence.window
+        window = (f", and only between {start.strftime('%H:%M')} and "
+                  f"{end.strftime('%H:%M')} {cadence.tz.key}")
+    return (
+        f"- Unprompted boardroom status: at most every {cadence.interval_hours:g}h{window}. "
+        "Posting between slots is refused. Replying to something the chairman actually said is "
+        "always allowed and is not a status. See the `chairman` block in your context for when "
+        "your next slot opens.\n"
     )
 
 
@@ -132,6 +154,54 @@ def _clip(text: str, limit: int, hint: str) -> str:
     if len(text) <= limit:
         return text
     return text[:limit] + f" …[truncated; {hint}]"
+
+
+def _chairman_state(session: Session, project: Project, agent: Agent, now) -> dict:
+    """What the CEO cannot otherwise know about its own relationship with the
+    chairman.
+
+    A run is stateless and :func:`_unread_messages` filters out the agent's own
+    posts, so without this the CEO cannot see when it last reported — which is
+    how it ends up drafting a full status, at Opus prices, that the cadence
+    then refuses. Telling it up front is strictly cheaper than refusing it
+    after the tokens are spent.
+    """
+    boardroom = session.execute(
+        select(Channel).where(Channel.project_id == project.id,
+                              Channel.kind == ChannelKind.BOARDROOM)
+    ).scalars().first()
+    if boardroom is None:
+        return {"boardroom": None}
+    cadence = policy.report_cadence(project)
+    last_report, last_chairman = policy.boardroom_turns(session, boardroom.id, agent.id)
+    # An open turn: he spoke last and you have not answered. Answer it — that
+    # reply is always allowed, and it is the one post that is never a status.
+    unanswered = last_chairman is not None and (last_report is None or last_chairman > last_report)
+    slot = policy.next_report_slot(cadence, last_report)
+    may_report = unanswered or slot is None or now >= slot
+    state = {
+        "boardroom_channel_id": boardroom.id,
+        "your_last_report_at": last_report.isoformat() if last_report else None,
+        "chairman_last_spoke_at": last_chairman.isoformat() if last_chairman else None,
+        "unanswered_chairman_message": unanswered,
+        "cadence_hours": cadence.interval_hours if cadence.enforced else None,
+        "next_slot_at": slot.isoformat() if slot else None,
+        "may_post_status_now": may_report,
+    }
+    if cadence.window is not None:
+        start, end = cadence.window
+        state["window_local"] = (f"{start.strftime('%H:%M')}-{end.strftime('%H:%M')} "
+                                 f"{cadence.tz.key}")
+    if cadence.enforced:
+        state["note"] = (
+            "The platform enforces this: an unprompted boardroom status posted before "
+            "next_slot_at is REFUSED. Replying to an unanswered message from him is always "
+            "allowed. If may_post_status_now is false, do not write a status this run — "
+            "fold what you have into the next slot."
+            if not may_report else
+            "The slot is open — if you have something worth his time, this is the run to say it."
+        )
+    return state
 
 
 def _unread_messages(session: Session, agent: Agent, include_recent: bool = False) -> list[dict]:
@@ -275,6 +345,7 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
             pack["task"] = _task_context(session, task)
 
     if agent.kind == AgentKind.CEO:
+        pack["chairman"] = _chairman_state(session, project, agent, now)
         open_tasks = policy.open_top_level_tasks(session, project.id)
         pack["board"] = {
             "open": [
