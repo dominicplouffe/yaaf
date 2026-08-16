@@ -103,6 +103,7 @@ export default function EvidenceTab({ projectId }: { projectId: string }) {
   );
   const [audit, setAudit] = useState<SpotAudit | null>(null);
   const [proofFilter, setProofFilter] = useState<(typeof PROOF_FILTERS)[number]["key"]>("all");
+  const [showAll, setShowAll] = useState(false);
 
   async function auditEvidence(id: string, ok: boolean, note: string) {
     await post(`/admin/evidence/${id}/audit`, { ok, note });
@@ -125,7 +126,10 @@ export default function EvidenceTab({ projectId }: { projectId: string }) {
 
   const rows = (evidence ?? []);
   const activeFilter = PROOF_FILTERS.find((f) => f.key === proofFilter)!;
-  const shown = rows.filter(activeFilter.match);
+  const matching = rows.filter(activeFilter.match);
+  // Active projects accumulate hundreds of rows; the latest 50 answer the
+  // question, the rest stay one click (or one CSV) away.
+  const shown = showAll ? matching : matching.slice(0, 50);
 
   return (
     <>
@@ -377,6 +381,13 @@ export default function EvidenceTab({ projectId }: { projectId: string }) {
           )}
         </tbody>
       </table>
+      {matching.length > shown.length && (
+        <div style={{ marginTop: 8 }}>
+          <button className="small" onClick={() => setShowAll(true)}>
+            show all {matching.length} rows
+          </button>
+        </div>
+      )}
     </>
   );
 }

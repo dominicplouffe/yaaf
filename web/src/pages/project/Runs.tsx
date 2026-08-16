@@ -2,7 +2,7 @@ import { Fragment, useState } from "react";
 import { Link } from "react-router-dom";
 import { Dashboard, get, getText, RunRow } from "../../api";
 import { fmtUsd, fmtWhen, usePoll } from "../../hooks";
-import { downloadCsv, ExportCsv } from "../../ui";
+import { downloadCsv, ExportCsv, fmtUnit } from "../../ui";
 
 interface LedgerRow {
   id: string;
@@ -116,6 +116,7 @@ export default function Runs({ projectId, dash }: { projectId: string; dash: Das
     (r) => r.started_at && new Date(r.started_at).toDateString() === today,
   );
   const todayUsd = todayRuns.reduce((sum, r) => sum + (r.cost_usd ?? 0), 0);
+  const todayTokens = todayRuns.reduce((sum, r) => sum + r.tokens_in + r.tokens_out, 0);
   const todayFailures = todayRuns.filter((r) =>
     ["failed", "reaped", "killed", "terminated_refusals"].includes(r.status),
   ).length;
@@ -140,7 +141,9 @@ export default function Runs({ projectId, dash }: { projectId: string; dash: Das
         <div className="tile" style={{ border: "none", padding: 0, background: "none" }}>
           <div className="label">Today</div>
           <div className="value">
-            ${todayUsd.toLocaleString(undefined, { maximumFractionDigits: 2 })}{" "}
+            {usdMode || todayUsd > 0
+              ? `$${todayUsd.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+              : `${fmtUnit(todayTokens, "tokens")} tokens`}{" "}
             <span style={{ fontSize: 14, color: "var(--muted)" }}>
               · {todayRuns.length} run{todayRuns.length === 1 ? "" : "s"} · {todayFailures} failure
               {todayFailures === 1 ? "" : "s"}
