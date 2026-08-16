@@ -107,12 +107,12 @@ this is the example where the spend report earns its keep:
 yaaf spend-report api-maintenance --days 7
 ```
 
-It breaks spend down by team, agent, role, and run kind — including the runs
-that failed, were killed, or got reaped. That waste column is the one to read:
-if a third of your spend is failed runs, something in the environment is broken
-and the crew is politely retrying into a wall. Note it opens the server's
-database directly, so run it on the host (it wants `YAAF_DATABASE_URL`, not
-`YAAF_API`).
+It breaks spend down by team, agent, role, and run kind, and it counts the runs
+that failed, were killed, or got reaped rather than quietly dropping them. That
+waste column is a free environment check: when it's near zero the sandbox is
+healthy, and when it spikes it tells you where to look. Note the report opens
+the server's database directly, so run it on the host (it wants
+`YAAF_DATABASE_URL`, not `YAAF_API`).
 
 The other guardrail runs itself: if a run fails on a bad credential three times
 in a row, the project pauses rather than burning money against the wall, and
@@ -129,17 +129,3 @@ you get an email.
   want to. `yaaf say api-maintenance "Priority for this week: the flaky
   scheduler test in tests/test_scheduler.py — it fails maybe 1 in 30 on CI.
   Pin the cause before anything else."`
-
-## What will actually go wrong
-
-**A dependency bump that passes tests and breaks production.** Your test suite
-is the crew's entire model of correctness. If coverage is thin, this project
-inherits that thinness — and it will feel more confident about it than you do.
-
-**Flaky tests "fixed" by making them less strict.** Watch for `--count` tests
-quietly replaced by a sleep or a retry decorator. This is the most common way
-the crew games a green check.
-
-**Issues that needed a decision, decided.** The goal says to stop and open an
-issue. Sometimes it won't. When you see it, say so specifically once; the
-correction sticks better than any prompt edit you'd make.

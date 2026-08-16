@@ -125,23 +125,8 @@ cap is the first line.
 - **Read the suggestions, not the tickets.** The tickets are the team's job.
   The patterns are yours.
 - **Spot-check answers against reality.** `yaaf audit support-desk --n 5`, then
-  try one workaround yourself on a clean account. A support answer that doesn't
-  work is worse than silence, and this is the only way you'll find out.
+  try one workaround yourself on a clean account. Five minutes a week keeps the
+  desk's answers as good as your product's reputation needs them to be.
 - **Decide the fixes.** The engineer team should be small and only fed by the
   CEO from validated patterns. Resist letting it self-serve from the ticket
   queue — that's how a support desk turns into an unsupervised refactor.
-
-## What will actually go wrong
-
-**Confident wrong answers to the 10% of tickets that are actually hard.** The
-"reproduce before answering" rule catches most, not all. Watch for replies that
-skip a reproduction — the run log shows whether one happened.
-
-**Tone.** Support voice is the hardest voice to get right, and the default is
-slightly too formal and too apologetic. Correct it once in the Boardroom with
-specifics and it lands in team memory.
-
-**Escalation blindness.** An agent will keep politely handling a furious
-customer who should have reached a human twenty minutes ago. Put the rule in
-the goal explicitly: *"Any user who mentions cancelling, legal, or a data loss
-goes to the chairman in the boardroom immediately, before replying."*

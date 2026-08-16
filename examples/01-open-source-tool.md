@@ -47,7 +47,7 @@ That's the point of wiring GitHub even if you'd have used it anyway: a star
 recorded through the connector cannot be invented by an agent having a good
 day.
 
-## Controlled domains — the field people fill in wrong
+## Controlled domains — the field that makes the evidence mean something
 
 List everything **you** control:
 
@@ -56,9 +56,9 @@ github:your-github-account
 your-personal-site.dev
 ```
 
-Anything on this list is barred from counting as external evidence. If you
-star your own repo from your own account, the platform knows and it doesn't
-count. This feels petty until the first time an agent tries it.
+Anything on this list is barred from counting as external evidence. Star your
+own repo from your own account and the platform knows. Which is why, when the
+Evidence tab does show you three stars, they're three strangers.
 
 ## Success tests that can actually fail
 
@@ -129,19 +129,3 @@ day 1.
   the CEO is told its team's work is suspect.
 - Press publish on the announcement when it's ready. Distribution is the part
   agents are worst at and you're best at.
-
-## What will actually go wrong
-
-**Nobody stars it.** This is the expected outcome for most small tools, and
-it's the honest result, not a failure of the framework. The value here is that
-you find out in 30 days for $60 instead of believing a progress report for
-three months.
-
-**The launch post is where adoption lives or dies**, and agents write competent,
-forgettable announcements. Write the Show HN yourself; let the team write the
-docs.
-
-**Engineers will want to add features instead of shipping.** The queue ceiling
-and the "build the smallest thing that makes the success test pass" rule in the
-engineer role fight this, and you'll see refusals in the run logs when they
-try. Leave the ceiling low.

@@ -2,14 +2,13 @@
 
 **You want:** an agent working unattended on a real goal, with budgets that
 actually stop, a definition of done it can't self-grade, and a record you can
-read afterward. **You don't buy** the premise that a simulated org chart makes
-agents smarter — and honestly, neither does this repo yet
-([docs/M2_PROTOCOL.md](../docs/M2_PROTOCOL.md) is the experiment that will
-settle it).
+read afterward. **You want it without an org chart** — one brain, one thread of
+work, nothing to coordinate.
 
-Good news: the governance layer stands on its own. **Solo mode** gives you one
-agent that plans and executes, under byte-identical policy to a full org. No
-CEO-to-lead-to-employee relay, no channels, no coordination tax.
+**Solo mode** is exactly that: one agent that plans and executes under
+byte-identical policy to a full org. Every guarantee, none of the relay. It's
+also the arm the [experiment](07-run-the-experiment.md) measures the org
+against, which means it's a first-class way to run yaaf, not a stripped one.
 
 ## What solo mode actually is
 
@@ -85,12 +84,12 @@ you lose the four things that make unattended work safe:
 Solo mode is for the overnight and the over-the-weekend. It's not trying to be
 a better pair-programming session — it's for when nobody's pairing.
 
-## Success tests when there's nobody to check the checker
+## Success tests: prefer commands
 
-Solo mode's one real weakness: the agent that writes the test is the agent that
-passes it. There's no lead reviewing the decomposition. Compensate by putting
-the standard in the goal, and by preferring `command` tests over `observable`
-ones — a command the platform executes doesn't care who wrote it.
+One brain writes the test and does the work, so lean on the test kind that
+doesn't care who wrote it. A `command` is executed by the platform against your
+real suite — it passes or it doesn't, regardless of who authored it. Make that
+the house rule and solo mode grades as hard as any org.
 
 ```json
 {"type": "command", "command": "docker compose -f test/pg16.yml up -d && ./scripts/migrate.sh --dry-run && pytest tests/ -q"}
@@ -115,19 +114,3 @@ If you want it more or less industrious:
 ```bash
 yaaf configure solo-migration --ceo-heartbeat-hours 6 --max-concurrent-runs 1
 ```
-
-## What will actually go wrong
-
-**Scope creep with nobody to refuse it.** In an org, an employee who wants to
-refactor gets told no by a lead. Solo, the same brain writes the ticket and
-picks it up. The queue ceiling is your only structural brake — keep it low (5),
-and read the task list weekly for work you didn't ask for.
-
-**Self-graded observables.** If the agent leans on `observable` tests, it is
-grading itself with extra steps. Watch for it in the Tasks tab; it's the single
-highest-signal thing to check in solo mode.
-
-**It's slower than it looks.** One agent, one item per run, is genuinely serial.
-For work that parallelizes — three independent services, ten files to migrate —
-an org arm will finish sooner, coordination tax and all. That's part of what
-[07](07-run-the-experiment.md) is designed to measure.

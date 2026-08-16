@@ -82,10 +82,3 @@ From [roles/](../roles/), seeded with `yaaf seed-roles roles/`:
 Roles are versioned. Edit the JSON, re-seed, and existing teams keep running
 their pinned version until you adopt the new one — so a prompt edit can't
 silently change a project that's mid-flight.
-
-## A note on honesty
-
-These examples describe what the platform enforces, not what the agents will
-achieve. yaaf makes it hard for an agent to *lie to you* about progress. It
-does not make the agent good at your business. Read the "What will actually go
-wrong" section at the bottom of each example — it's the most useful part.

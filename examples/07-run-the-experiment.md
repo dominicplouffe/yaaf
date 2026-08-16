@@ -94,9 +94,10 @@ yaaf experiment status my-test.spec.json
 judgment metric. The interesting column is usually `C`, and it usually isn't
 close.
 
-## The chairman protocol — the part that ruins experiments
+## The chairman protocol — what makes the result count
 
-You are a confound. Discipline yourself in writing before day one:
+Write your own rules down before day one, so the answer you get is about the
+arms and not about you:
 
 - **Answer both arms identically.** Approve anything within budget and law.
   Same response time, same detail, both arms.
@@ -107,8 +108,8 @@ You are a confound. Discipline yourself in writing before day one:
 - **Answer within 24 hours**, or the arm you're slower with loses time it
   should have had.
 
-The honest failure mode of a home-run A/B is that you unconsciously nurse the
-arm you want to win. Writing the rules down first is the only defense.
+Four rules, written down once. That's the whole cost of a result you can
+actually act on.
 
 ## Judge it blind
 
@@ -162,19 +163,3 @@ Two arms × 15M tokens is real money — the frozen M2 spec budgets $300 per pai
 Before committing, run one pair, not three. And run the pair on a goal you
 actually want the output of; a throwaway goal costs the same and leaves you
 with nothing but a number.
-
-## What will actually go wrong
-
-**Your goal isn't parallelizable, and you learn nothing about orgs.** If the
-work is one serial thread, the org arm is a soloist with a project manager and
-a coordination bill. Pick a goal with genuinely independent parts if you want
-the org thesis tested rather than dismissed by construction.
-
-**One arm hits an external blocker** — an API outage, a suspended account — and
-the comparison is ruined. Note it and rerun that pair; don't let a confound into
-the result because you'd rather not spend the tokens again.
-
-**The result is a tie and you're disappointed.** Read the token column anyway.
-"Same output, 2.4× the cost" is a decision, and it's the one this repo is most
-prepared to act on: if the org doesn't win, yaaf-as-org-framework gets shelved
-and the governance layer stands on its own.

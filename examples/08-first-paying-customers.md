@@ -5,25 +5,22 @@ at least one of them paying. **You don't want:** 400 automated emails sent in
 your name to people who never asked, or a pipeline report full of "warm leads"
 that are a spreadsheet an agent typed.
 
-This is the most consequential example in the folder, because it's the one
-where an agent's mistakes land in a real human's inbox with your name on them.
-Read the guardrails section before the goal.
+Outreach is the part of company-building that rewards research and punishes
+volume, which makes it a natural fit here: the platform is very good at knowing
+who to talk to and why, and structurally incapable of messaging the same person
+twice.
 
-## Read this first
+## Ground rules
 
-Outbound done badly is spam, and spam sent by an agent is still spam sent by
-you. Before you start:
+Three decisions to make once, up front:
 
-- **Know your obligations.** CAN-SPAM, GDPR/PECR, CASL — whichever applies to
-  the people you're contacting. An agent will not check this for you.
-- **Keep volume low on purpose.** The `gtm` role is written for one-to-one,
-  researched outreach — "you know who the person is and why this is for them,
-  or it does not go out." Cap it hard and keep it capped.
-- **You are the sender of record.** Use a real mailbox you read, with replies
-  coming back to you.
-
-Used this way, the platform is genuinely good at the part humans hate: finding
-who to talk to and why, and never sending the same person the same thing twice.
+- **Your legal footing.** CAN-SPAM, GDPR/PECR, CASL — whichever applies where
+  your recipients are. Decide it yourself; it's your name on the mail.
+- **Volume, deliberately low.** The `gtm` role is built for one-to-one,
+  researched outreach: "you know who the person is and why this is for them, or
+  it does not go out." Ten a week beats two hundred, and the goal below says so.
+- **A real mailbox you read.** You're the sender of record, and replies should
+  land somewhere you'll see them.
 
 ## The org
 
@@ -33,7 +30,8 @@ who to talk to and why, and never sending the same person the same thing twice.
 | Sales | `sales` | Nadia | Follow-ups, objections, proposals, payment links |
 | Research | `researcher` | Iris | Who these people are, what they've said publicly, why now |
 
-Keep it to three. Outbound scales badly and quietly.
+Three is the right size. Outreach quality comes from research depth, not
+headcount.
 
 ## The goal
 
@@ -123,17 +121,3 @@ verifier is built for.
   that can't make a decision about price.
 - **Spot-audit the claims weekly.** `yaaf audit gtm-launch --n 5`. Check that a
   "reply" is a real reply and a "booking" is on your real calendar.
-
-## What will actually go wrong
-
-**The research will be shallower than it reads.** "I saw your post about your
-restore incident" where the post is tangentially related is worse than not
-writing. Check three of them against the actual sources.
-
-**Follow-up cadence will drift toward pushy.** Put the limit in the goal: at
-most two follow-ups, then stop, ever.
-
-**The channel will probably be dead**, and the honest result of this project is
-often "cold outbound doesn't work for this product; the 30 touches produced two
-replies and no calls." That's a $200 answer to a question most founders spend
-three months on. Take it and go test the next channel.

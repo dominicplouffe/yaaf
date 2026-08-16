@@ -121,17 +121,3 @@ team that's doing exactly the right thing to go find a stranger.
 - **Answer the ambiguity.** Halfway in, the CEO will ask something like "three
   campaigns have negative margin but drive the top-selling SKU's rank — do we
   recommend killing them?" That question is why you're in the loop.
-
-## What will actually go wrong
-
-**The date-range trap.** Analysis over a window that includes a promotion, an
-outage, or a seasonal spike will produce confidently wrong recommendations. Say
-the window in the goal and check the data source honors it.
-
-**The deck will be too long.** Agents produce thorough; clients buy decisive.
-Ask the CEO for "the same deck at 8 slides" and watch what survives — that's
-usually the actual deliverable.
-
-**Clone drift.** After five clones you'll have improved the fifth and left the
-first four behind. Improve the *source* project, then clone forward; treat one
-project as the template and never run client work in it.

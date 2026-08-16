@@ -160,18 +160,3 @@ yaaf configure my-project --runtime agent_sdk
 ```
 
 That one flag is the whole difference between the rehearsal and the show.
-
-## What will actually go wrong
-
-**You'll conclude the agents are dumb.** They are — they're scripted stand-ins,
-about forty lines of Python each. Mock mode tells you nothing about output
-quality. It tells you everything about whether your rules hold.
-
-**SQLite hides concurrency problems.** Fine for a rehearsal; the real thing
-runs Postgres, and CI runs the suite on both. Don't tune
-`max_concurrent_runs` based on what SQLite tolerated.
-
-**Costs won't rehearse.** The meter records zero because nothing was spent.
-Your first week on the real runtime is the only honest budget signal —
-`yaaf spend-report <project> --days 7` after seven real days, then set the cap
-from what you learn.

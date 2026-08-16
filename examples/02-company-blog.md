@@ -75,11 +75,10 @@ a link from a domain not on your list, referral traffic with a named source, a
 share you can point to. The role prompt says it plainly — "report observed
 numbers or say 'not measured'; never estimate."
 
-This is why blogs are a hard mode for evidence discipline, and it's the honest
-shape of content marketing: you'll have four weeks of internal evidence before
-the first external signal. Set `drought_hours` accordingly (below) or the
-system will spend that month pushing back on a team that's doing the right
-thing.
+**Tuning note:** organic response builds over weeks, so set `drought_hours` to
+168 (below) and let the team build the engine before the signal arrives. When
+it does arrive, it's a real reader — which is the number you actually wanted
+all along.
 
 ## Success tests for writing
 
@@ -110,9 +109,10 @@ weak test — pair it with the reader-facing claim, as above.
   referrals by day 45"), and creates a voice-definition task first.
 - **Day 2** — Jules proposes the voice, records it as a team memory, and drafts
   post one. It lands in WordPress as a draft.
-- **Day 2, evening** — you read it. It's decent and slightly generic. You say so
-  in the Boardroom: *"Voice is close. Cut the throat-clearing intro — start on
-  the answer. Nothing goes live with a sentence that begins 'In today's fast-paced'."*
+- **Day 2, evening** — you read it. The bones are right, the intro wanders. You
+  say so in the Boardroom: *"Voice is close. Cut the throat-clearing intro —
+  start on the answer. Nothing ships with a sentence that begins 'In today's
+  fast-paced'."*
 - **Day 3 onward** — the correction is in team memory, and post two is better.
 
 That loop — read the draft, say one specific thing to the CEO — is the entire
@@ -128,17 +128,3 @@ job. It's worth more than any prompt edit you could make.
 - **Spot-check the sources.** `yaaf audit acme-blog --n 5`, then open two cited
   URLs and check they say what the post claims. This is the single highest-value
   five minutes you'll spend on the project.
-
-## What will actually go wrong
-
-**The first four posts will be competent and unmemorable.** Voice arrives
-through correction, not prompt. Budget three rounds of specific feedback before
-you judge the output.
-
-**The researcher will find sources that support the post rather than test it.**
-Ask the CEO, once, for a post that argues against something you sell. What
-comes back tells you whether there's judgment in the loop or just fluency.
-
-**Traffic may never come**, and the kill date will arrive with nothing to show.
-That's a real answer about a channel, delivered for the price of a nice dinner
-instead of a content hire's first quarter.

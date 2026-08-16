@@ -5,10 +5,10 @@ waiting Monday morning. **You don't want:** four confident paragraphs of
 synthesis with no citations, where two of the claims are inventions and you
 can't tell which two.
 
-Research is the use case where agents are genuinely strong and genuinely
-dangerous, for the same reason: fluency. yaaf's contribution is that a claim
-without a source doesn't ship, and that you get dealt random samples of the
-work to check.
+Research is where agents are at their strongest, and yaaf is what makes that
+strength bankable: a claim without a source doesn't ship, findings compound in
+curated memory instead of evaporating, and you get dealt random samples of the
+work so the quality bar is yours, not the model's.
 
 ## The org
 
@@ -85,12 +85,12 @@ CEO to curate and it will.
 | `memory_cap_team` | 40 | 80 | This is a memory-heavy job; give it room, keep curation mandatory |
 | `wakes_per_agent_per_hour` | 6 | 6 | Default is fine; three researchers at 6 wakes is plenty of throughput |
 
-**The honest friction:** yaaf's evidence discipline was designed for projects
-that touch the outside world, and a pure internal research desk barely does.
-Almost everything it produces is internal evidence. Set `drought_hours` high
-and treat the evidence machinery as bookkeeping here rather than as the
-enforcement it is in [01](01-open-source-tool.md) or [08](08-first-paying-customers.md).
-Your real quality gate on this project is the spot audit.
+**Tuning note:** an internal desk delivers to you, not to the world, so its
+output is internal evidence by design. Set `drought_hours` to 14 days and the
+evidence machinery does bookkeeping here instead of enforcement — the job it
+does in [01](01-open-source-tool.md) or [08](08-first-paying-customers.md),
+where the outside world is the point. Your quality gate on this project is the
+spot audit below, and it's a strong one.
 
 ## Your job — and here it's the whole job
 
@@ -111,19 +111,3 @@ yaaf audit-evidence evid_… --bad --note "Source 3 is a vendor blog post from 2
 The CEO is told its team's work is suspect and adjusts. You are the one
 reviewer in this system that doesn't approve everything put in front of it —
 AI reviewers approve nearly everything, which is exactly why the sample exists.
-
-## What will actually go wrong
-
-**Sources that exist but don't support the claim.** The most common failure by
-a wide margin. It survives every automated check. Only the spot audit catches
-it.
-
-**Confident answers to unanswerable questions.** Ask "is this a product or a
-feature" and you'll get an answer even when the honest response is "nobody has
-tried it publicly, here's the closest adjacent evidence." Reward the honest
-version out loud in the Boardroom the first time you see it — it's a behavior
-you're training into the memory, not just a nice thing to say.
-
-**Landscape files rot quietly.** A competitive file updated in June and read in
-September is worse than none. Ask for retrieval dates on every figure and check
-them.
