@@ -66,6 +66,26 @@ break a rule, it doesn't get a stern reminder — it gets a 403.
 
 <img src="docs/screenshots/evidence-spot-audit.png" alt="The Work tab: the CEO's bets with kill dates and the proof each one has earned, the tasks serving them, and the human spot-audit sample">
 
+## The feature map
+
+Everything yaaf does, and where it's documented. Full reference:
+**[docs/FEATURES.md](docs/FEATURES.md)**.
+
+| Area | What you get |
+|---|---|
+| **The org** | Versioned role library, teams with leads, CEO-only planning, solo mode. Editing a role never silently changes a running company — you repin. → [DASHBOARD](docs/DASHBOARD.md) |
+| **Work discipline** | Queue and subtask ceilings, one-item-at-a-time claims, falsifiable success tests, suggestions instead of self-assigned work, bets with kill dates. → [GOVERNANCE](docs/GOVERNANCE.md) |
+| **Verification** | Platform-run success tests, server-side evidence fetching + hashing + snapshotting, unforgeable webhook evidence, human spot-audit, a CEO-judgment metric. |
+| **Money** | Per-run metering (killed runs and cache traffic included), USD or token budgets, warn-then-auto-pause, approval thresholds, `yaaf spend-report`. |
+| **Loop brakes** | Wake and run ceilings, pair circuit breaker that freezes ping-pong threads, refusal caps, an enforced reporting cadence, suppressed idle wakes. |
+| **Containment** | Fresh container per run, internal-only network behind a per-role allowlist proxy, encrypted role-scoped secrets, an idempotency ledger so retries never double-fire. |
+| **Memory** | Project and team scopes with a curator, caps as refusals rather than silent eviction, explicit supersede/compact/forget. |
+| **Audit** | Every message, task transition, run, dollar, decision, amendment, and refusal — queryable and on screen. |
+| **Chat** | A resident CEO session per project: the Boardroom answers in seconds, and so does Slack. Chatting never consumes the work queue's caps. |
+| **Integrations** | Slack (Socket Mode — no public URL), GitHub repo-per-project, external MCP servers as one-form data sources, signed webhooks, S3-compatible artifacts, email/webhook alerts. → [INTEGRATIONS](docs/INTEGRATIONS.md) |
+| **Setup safety** | A health checklist that names anything misconfigured with a fix link, data sources that prove themselves by speaking MCP, project export and clone. |
+| **Proof it works** | 194 offline tests, chaos tests, golden-transcript evals, a $0 mock runtime, and `yaaf experiment`. → [M2_PROTOCOL](docs/M2_PROTOCOL.md) |
+
 ## How is this different from a standalone agent?
 
 A standalone agent (a chat assistant, a CLI coding agent) is a brilliant
@@ -131,15 +151,6 @@ export YAAF_API=http://localhost:8080
 .venv/bin/yaaf seed-roles roles/
 ```
 
-Then open **http://localhost:8080/app**, log in with the admin token, and
-create a project from the wizard — **[docs/CREATING_A_PROJECT.md](docs/CREATING_A_PROJECT.md)
-walks through your first project in plain English**, from writing a goal the
-CEO can actually plan from to connecting billing, credentials, and data
-sources. For worked setups — an open-source launch, a client deliverable you
-can clone per customer, a support desk, an overnight maintenance crew — see
-**[examples/](examples/)**, ten of them with goal text, teams, constitution
-numbers, and what counts as done.
-
 **The real thing — Docker Compose** (real Claude agents, sandboxed):
 
 ```bash
@@ -149,13 +160,39 @@ cd deploy && YAAF_ADMIN_TOKEN=… YAAF_MASTER_KEY=… docker compose up --build
 ```
 
 That starts Postgres, the API + web dashboard, the runner, and the egress
-proxy. Open the dashboard, create a project, connect billing in Settings (an
-Anthropic API key), give your teams their credentials, and press start.
-Migrations apply themselves; `--profile s3` adds a MinIO artifact store.
+proxy. Migrations apply themselves; `--profile s3` adds a MinIO artifact store.
+Full options in **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**.
+
+Either way, open **http://localhost:8080/app**, log in with the admin token,
+and create a project from the wizard.
+**[docs/CREATING_A_PROJECT.md](docs/CREATING_A_PROJECT.md) walks through your
+first project in plain English** — from writing a goal the CEO can actually
+plan from to connecting billing, credentials, and data sources. For worked
+setups — an open-source launch, a client deliverable you can clone per
+customer, a support desk, an overnight maintenance crew — see
+**[examples/](examples/)**, ten of them with goal text, teams, constitution
+numbers, and what counts as done.
 
 > **Billing note:** agents pay with an API key you attach per project.
 > Anthropic's consumer terms don't permit running fleets on a personal Claude
 > subscription — subscription mode exists for single-user tinkering only.
+
+## Documentation
+
+| | |
+|---|---|
+| [Creating a project](docs/CREATING_A_PROJECT.md) | Your first project, in plain English |
+| [Examples](examples/) | Ten worked setups you can copy |
+| [Features](docs/FEATURES.md) | The complete feature reference |
+| [Dashboard](docs/DASHBOARD.md) | Every screen and what you do there |
+| [Governance](docs/GOVERNANCE.md) | All 24 rules, their defaults, and how to change one |
+| [Integrations](docs/INTEGRATIONS.md) | Slack, GitHub, MCP, webhooks, billing, storage |
+| [Deployment](docs/DEPLOYMENT.md) | Install, configure, back up, upgrade, scale |
+| [CLI](docs/CLI.md) | Every `yaaf` command |
+| [Agent API](docs/AGENT_API.md) | What agents can do, and how to write a role |
+| [Plan](docs/PLAN.md) | Where this is going, and what would kill it |
+
+Index: **[docs/](docs/)**.
 
 ## What's in the box
 
@@ -169,28 +206,7 @@ roles/          starter role library (CEO, engineer, researcher, writer…)
 evals/          golden-transcript evals — regression-gate for prompt edits
 tests/          invariant suite that attacks every rule over HTTP, chaos
                 tests, and the eval checks; CI runs it all on SQLite + Postgres
-docs/PLAN.md    the founding plan, kill conditions included
 ```
-
-Talking to your CEO is a **chat, not a ticket queue**: every running project
-keeps a resident CEO conversation session, so the Boardroom answers in
-seconds — typing indicator and all — and the same session answers you in
-Slack. Background work still runs through the governed queue; chatting never
-consumes its caps.
-
-Integrations, all optional, all configured from the dashboard: **Slack**
-(chat with your CEO from Slack via Socket Mode — no public URL needed — and
-mirror your company's channels), **GitHub**
-(private repo per project as the agents' workspace; repo events become
-verified evidence), **external MCP servers** as one-form data sources —
-name, URL, roles, Save; the URL is validated at the door, egress and the
-proxy update themselves, and the granted roles' sandboxes mount the server
-as real tools — plus **WordPress** or any HTTP service via scoped
-credentials, **email/webhook notifications**, and **S3-compatible artifact
-storage**. A **setup & health checklist** on each project's Overview names
-anything misconfigured (dead billing, a credential that isn't a URL, a team
-running an outdated role version) with a fix link — a healthy project shows
-nothing at all.
 
 ## Project status
 

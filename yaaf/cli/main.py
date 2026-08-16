@@ -112,7 +112,7 @@ def create_user(email: str, name: str) -> None:
 
 @app.command()
 def create_project(spec_file: Path) -> None:
-    """Create a project from a JSON spec (see README for the shape)."""
+    """Create a project from a JSON spec (see docs/CLI.md for the shape)."""
     with _client() as client:
         _show(client.post("/admin/projects", json=json.loads(spec_file.read_text())))
 
