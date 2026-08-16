@@ -65,8 +65,12 @@ DEFAULT_MAX_CONCURRENT_RUNS = 3
 # out the window or enough have piled up.
 NOTICE_COALESCE_MINUTES = 10.0
 NOTICE_COALESCE_COUNT = 3
+# MEMORY_FULL is urgent because the scope has stopped accepting writes and only
+# this agent can restart it; MEMORY_PRESSURE deliberately is not — a nearly-full
+# store is not worth a full-price wake, so it coalesces and rides the next one.
 URGENT_NOTICE_KINDS = {NoticeKind.BUDGET_WARNING, NoticeKind.BUDGET_EXHAUSTED,
-                       NoticeKind.APPROVAL_DECIDED, NoticeKind.AUDIT_FAILED}
+                       NoticeKind.APPROVAL_DECIDED, NoticeKind.AUDIT_FAILED,
+                       NoticeKind.MEMORY_FULL}
 
 
 def dispatcher_loop() -> None:  # pragma: no cover - thin loop around dispatch_once

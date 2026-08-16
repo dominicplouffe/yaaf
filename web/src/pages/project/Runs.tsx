@@ -278,12 +278,28 @@ export default function Runs({ projectId, dash }: { projectId: string; dash: Das
                 </div>
               ),
             )}
-            <div className="sb">
-              Agents cannot lift these rules themselves. Tell the CEO what should change —
-              finish, reassign, or kill the task in question — and it will redirect the agent.
-            </div>
+            {/* "Tell the CEO" is the right move for a work rule and the wrong
+                one for a full memory: the CEO cannot free a team's slot either.
+                Point at the thing that actually ends this wall. */}
+            {storms.some((r) => (r.last_refusal ?? "").startsWith("Memory cap")) ? (
+              <div className="sb">
+                A full memory refuses every write in that scope, and only its curator can fold
+                entries to make room — which it has been woken to do. If the job genuinely needs
+                to remember more than the cap allows, give it more room; that applies to the
+                very next run.
+              </div>
+            ) : (
+              <div className="sb">
+                Agents cannot lift these rules themselves. Tell the CEO what should change —
+                finish, reassign, or kill the task in question — and it will redirect the agent.
+              </div>
+            )}
           </div>
-          <Link to={`/projects/${projectId}/boardroom`}>give direction →</Link>
+          {storms.some((r) => (r.last_refusal ?? "").startsWith("Memory cap")) ? (
+            <Link to={`/projects/${projectId}/settings`}>give it more room →</Link>
+          ) : (
+            <Link to={`/projects/${projectId}/boardroom`}>give direction →</Link>
+          )}
         </div>
       )}
 

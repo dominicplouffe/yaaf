@@ -18,21 +18,35 @@ Rules enforced here (constitution reference in parentheses):
 - completion requires evidence; command tests are platform-executed
 - channel membership is hierarchy: boardroom (chairman<->CEO), leadership
   (CEO+leads), team rooms (lead+employees); frozen threads refuse posts
+- the chairman's reporting cadence: unprompted boardroom statuses are refused
+  between slots, replies to him never are
 - memory caps refuse adds; only the scope's curator supersedes/forgets
 """
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+import logging
+from datetime import UTC, datetime, time, timedelta
+from typing import NamedTuple
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from yaaf.core import ids
-from yaaf.core.constitution import ConstitutionDoc
+from yaaf.core.constitution import (
+    CADENCE_FIELDS,
+    ConstitutionDoc,
+    effective,
+    parse_report_window,
+)
 from yaaf.core.models import (
     Agent,
     AgentKind,
+    Amendment,
+    Approval,
+    ApprovalStatus,
+    AuditLog,
     Channel,
     ChannelKind,
     Evidence,
@@ -44,6 +58,8 @@ from yaaf.core.models import (
     Message,
     Project,
     ProjectStatus,
+    Run,
+    RunKind,
     SuccessTestKind,
     Task,
     TaskEvent,
@@ -52,6 +68,8 @@ from yaaf.core.models import (
     VerificationStatus,
     utcnow,
 )
+
+log = logging.getLogger("yaaf.policy")
 
 OPEN_TASK_STATUSES = (TaskStatus.READY, TaskStatus.CLAIMED, TaskStatus.CHECKING, TaskStatus.BLOCKED)
 
@@ -479,6 +497,284 @@ def check_thread_not_frozen(session: Session, thread_id: str | None) -> None:
         )
 
 
+# ── chairman report cadence ─────────────────────────────────────────────────────
+#
+# A CEO run is stateless and cannot see its own last message, so "report every
+# N hours" is the one rule the platform used to leave to the model's memory —
+# and a rule an agent must remember is a suggestion. On 16 Aug 2026 that cost
+# thirteen unprompted statuses in 2h20m, at Opus prices, three of them after
+# the chairman had already said stop. So it is a refusal now, like every other
+# limit here.
+
+DEFAULT_REPORT_INTERVAL_HOURS = 0.0  # off unless the chairman sets a cadence
+REPORT_OVERRIDES = ("blocker", "budget", "approval")
+
+
+class ReportCadence(NamedTuple):
+    interval_hours: float
+    window: tuple[time, time] | None
+    tz: ZoneInfo
+
+    @property
+    def enforced(self) -> bool:
+        return self.interval_hours > 0
+
+
+def cadence_of(cons: ConstitutionDoc) -> ReportCadence:
+    """The chairman's standing reporting rule, as the constitution states it.
+
+    It lives there rather than in project config because it is enforced as a
+    refusal, like everything else in that document — and because amending it
+    is disclosed to the CEO in its next context pack. The CEO not *learning*
+    the rule had changed is half of what went wrong on 16 Aug; a silent config
+    write would have reproduced exactly that.
+    """
+    try:
+        tz = ZoneInfo(cons.chairman_report_timezone)
+    except Exception:  # a body written before the field was validated
+        tz = ZoneInfo("UTC")
+    return ReportCadence(max(cons.chairman_report_interval_hours, 0.0),
+                         parse_report_window(cons.chairman_report_window_local), tz)
+
+
+def report_cadence(session: Session, project: Project) -> ReportCadence:
+    return cadence_of(effective(session, project.id))
+
+
+def boardroom_turns(
+    session: Session, channel_id: str, ceo_agent_id: str
+) -> tuple[datetime | None, datetime | None]:
+    """(CEO's last boardroom post, chairman's last). The chairman is the only
+    non-agent sender in there, so a null sender_agent_id identifies him."""
+    last_ceo = session.execute(
+        select(func.max(Message.created_at)).where(
+            Message.channel_id == channel_id, Message.sender_agent_id == ceo_agent_id)
+    ).scalar_one()
+    last_chairman = session.execute(
+        select(func.max(Message.created_at)).where(
+            Message.channel_id == channel_id, Message.sender_agent_id.is_(None))
+    ).scalar_one()
+    return last_ceo, last_chairman
+
+
+def next_report_slot(cadence: ReportCadence, last_report_at: datetime | None) -> datetime | None:
+    """When an unprompted status may next be posted. None = unrestricted."""
+    if not cadence.enforced or last_report_at is None:
+        return None
+    return _into_window(last_report_at + timedelta(hours=cadence.interval_hours), cadence)
+
+
+def _into_window(moment: datetime, cadence: ReportCadence) -> datetime:
+    """Push a moment forward to the next instant inside the chairman's waking
+    hours — that is what "nothing overnight" means in wall-clock terms."""
+    if cadence.window is None:
+        return moment
+    start, end = cadence.window
+    local = moment.astimezone(cadence.tz)
+    if local.time() < start:
+        local = local.replace(hour=start.hour, minute=start.minute, second=0, microsecond=0)
+    elif local.time() > end:
+        local = (local + timedelta(days=1)).replace(
+            hour=start.hour, minute=start.minute, second=0, microsecond=0)
+    return local.astimezone(UTC)
+
+
+def check_chairman_report(
+    session: Session,
+    project: Project,
+    agent: Agent,
+    channel: Channel,
+    run: Run,
+    override: str | None = None,
+) -> None:
+    """Three ways past the cadence, in the order the CEO should consider them:
+    it is a reply to something the chairman actually said; the slot is open; or
+    it declares a break-glass reason. Everything else folds into the next slot.
+    """
+    if agent.kind != AgentKind.CEO or channel.kind != ChannelKind.BOARDROOM:
+        return
+    # The chat lane is the conversation, not the report: it speaks only when
+    # the chairman does, and its replies are delivered by the harness rather
+    # than through this endpoint at all.
+    if run.kind == RunKind.CHAT_SESSION:
+        return
+    cadence = report_cadence(session, project)
+    if not cadence.enforced:
+        return
+    last_ceo, last_chairman = boardroom_turns(session, channel.id, agent.id)
+    # A turn the chairman opened and the CEO has not answered. Allowed exactly
+    # once: this reply becomes the newest message, so the next post is a status
+    # again and faces the cadence.
+    if last_chairman is not None and (last_ceo is None or last_chairman > last_ceo):
+        return
+    if override is not None:
+        _check_report_override(session, project, agent, override)
+        return
+    if last_ceo is None:
+        return  # nothing has ever been reported; the first status always lands
+    now = utcnow()
+    slot = next_report_slot(cadence, last_ceo)
+    if slot is None or now >= slot:
+        return
+    raise Refusal(
+        f"Not yet. You posted to the boardroom {_ago(now - last_ceo)} ago, and the chairman's "
+        f"cadence is every {cadence.interval_hours:g}h{_window_prose(cadence)}. The next slot "
+        f"opens {slot.isoformat(timespec='minutes')}. Fold this into that post rather than "
+        "sending it now — status posts cost real money, and silence between slots is what he "
+        "asked for, not a failure to report. This outranks your standing instruction to report "
+        "unprompted on bets, milestones and first evidence. If it genuinely cannot wait, "
+        f"re-post with override set to one of {', '.join(REPORT_OVERRIDES)} — overrides are "
+        "recorded and the chairman sees them.",
+        status_code=429,
+    )
+
+
+def _check_report_override(
+    session: Session, project: Project, agent: Agent, override: str
+) -> None:
+    if override not in REPORT_OVERRIDES:
+        raise Refusal(
+            f"'{override}' is not a break-glass reason. The cadence breaks for exactly three "
+            f"things: {', '.join(REPORT_OVERRIDES)}.")
+    if override == "approval":
+        pending = session.execute(
+            select(func.count(Approval.id)).where(
+                Approval.project_id == project.id, Approval.status == ApprovalStatus.PENDING)
+        ).scalar_one()
+        if not pending:
+            raise Refusal(
+                "override='approval' but this project has no pending approval. File the "
+                "approval itself — that reaches the chairman on its own, without a status.")
+    if override == "budget":
+        # Local import: janitor imports this module, and budget arithmetic
+        # lives there with the enforcement that uses it.
+        from yaaf.server.janitor import month_to_date
+
+        cons = effective(session, project.id)
+        usd, tokens = month_to_date(session, project.id)
+        spent, cap = ((usd, cons.monthly_usd_cap) if project.billing_mode == "api_key"
+                      else (tokens, cons.monthly_token_cap))
+        if not cap or spent < cap * cons.budget_warn_ratio:
+            raise Refusal(
+                f"override='budget' but spend is not at the warning line yet ({spent:,.0f} of "
+                f"{cap:,.0f}). The platform raises the budget warning itself when it lands.")
+    # 'blocker' is a judgment call the platform cannot check. It passes — and
+    # it is recorded, so a CEO that cries blocker four times a day is visible
+    # to the chairman rather than merely irritating.
+    session.add(
+        AuditLog(
+            id=ids.new_id(ids.AUDIT),
+            project_id=project.id,
+            actor=f"agent:{agent.id}",
+            action="boardroom.cadence_override",
+            entity="agent",
+            entity_id=agent.id,
+            detail={"reason": override},
+        )
+    )
+
+
+# ── chairman directives ─────────────────────────────────────────────────────────
+#
+# The CEO may turn something the chairman said into enforced policy. Two things
+# keep that from being a hole: it may only touch rules that constrain what the
+# company asks of *him* (there is nobody such a rule could be used against),
+# and it must cite a real, recent message he actually wrote.
+
+DIRECTIVE_FIELDS = CADENCE_FIELDS
+DIRECTIVE_MAX_AGE_HOURS = 24
+
+
+def check_directive_scope(changes: dict) -> None:
+    if not changes:
+        raise Refusal("A directive has to change something.")
+    outside = sorted(set(changes) - DIRECTIVE_FIELDS)
+    if outside:
+        raise Refusal(
+            f"You may not set {', '.join(outside)} from a directive. An agent filing its own "
+            f"constitution is how a company votes itself a bigger budget; the only rules you "
+            f"may file are the ones that limit what you ask of the chairman "
+            f"({', '.join(sorted(DIRECTIVE_FIELDS))}). Everything else is his amendment to "
+            "make, and yours to recommend.",
+            status_code=403,
+        )
+
+
+def check_directive_citation(session: Session, project: Project, message_id: str) -> Message:
+    """The cited message must be the chairman's own words, in the boardroom,
+    recent, and newer than the rule it replaces — otherwise a stale message
+    could be re-cited to undo a fresher instruction."""
+    message = session.get(Message, message_id)
+    if message is None or message.project_id != project.id:
+        raise Refusal(f"No message {message_id} in this project to cite.", status_code=404)
+    channel = session.get(Channel, message.channel_id)
+    if channel is None or channel.kind != ChannelKind.BOARDROOM:
+        raise Refusal(
+            "Cite something the chairman said in the BOARDROOM. Instructions relayed through "
+            "leadership are not his, however confidently they are repeated.")
+    if message.sender_agent_id is not None:
+        raise Refusal("That message is an agent's, not the chairman's. You cannot cite yourself.")
+    age = utcnow() - message.created_at
+    if age > timedelta(hours=DIRECTIVE_MAX_AGE_HOURS):
+        raise Refusal(
+            f"That message is {age.days}d old. File a directive when he gives it, not from "
+            f"history — anything older than {DIRECTIVE_MAX_AGE_HOURS}h is his to restate.")
+    newest = session.execute(
+        select(func.max(Amendment.effective_at)).where(
+            Amendment.project_id == project.id,
+            Amendment.cancelled_at.is_(None),
+            Amendment.applied_constitution_id.is_not(None))
+    ).scalar_one()
+    if newest is not None and message.created_at < newest:
+        raise Refusal(
+            "That message predates the rule currently in force, so filing it would undo a "
+            "newer instruction with an older one. If he has changed his mind again, cite the "
+            "message where he said so.")
+    return message
+
+
+def confirm_directive(
+    session: Session, project: Project, agent: Agent, cited: Message, changes: dict
+) -> None:
+    """Say it back to him. The platform can verify that he spoke and when, but
+    never what he meant — so the safeguard against a misread directive is that
+    he sees it land, in his own channel, threaded to the words it came from."""
+    readable = ", ".join(f"{key.removeprefix('chairman_report_')} = {value}"
+                         for key, value in sorted(changes.items()))
+    body = (f"Recorded as policy, effective now: **{readable}**. I took this from your message "
+            f"above and the platform enforces it from here — it is no longer something I have "
+            f"to remember between runs. Say so if I read you wrong.")
+    session.add(
+        Message(
+            id=ids.new_id(ids.MESSAGE),
+            project_id=project.id,
+            channel_id=cited.channel_id,
+            sender_agent_id=agent.id,
+            thread_id=cited.thread_id or cited.id,
+            body=body,
+        )
+    )
+    # Best-effort out-of-band: a rule change he did not ask for is exactly the
+    # thing he should not have to be watching Slack to catch.
+    from yaaf.server.notify import chairman_notify
+
+    chairman_notify(session, project, "Reporting cadence changed", body)
+
+
+def _ago(delta: timedelta) -> str:
+    minutes = int(delta.total_seconds() // 60)
+    if minutes < 60:
+        return f"{minutes} minute{'s' if minutes != 1 else ''}"
+    return f"{minutes / 60:.1f} hours"
+
+
+def _window_prose(cadence: ReportCadence) -> str:
+    if cadence.window is None:
+        return ""
+    start, end = cadence.window
+    return f", and only between {start.strftime('%H:%M')} and {end.strftime('%H:%M')} {cadence.tz.key}"
+
+
 # ── memory rules ────────────────────────────────────────────────────────────────
 
 
@@ -494,32 +790,108 @@ def memory_curator_ok(session: Session, agent: Agent, memory: Memory) -> bool:
     return False
 
 
+def _memory_filter(scope: str, project_id: str, team_id: str | None) -> list:
+    """The one definition of "which rows count against a cap". Project scope is
+    counted per project, team scope per team — four call sites read this (the
+    refusal, the context pack, the janitor's warning, the chairman's dashboard)
+    and a number that disagreed with the refusal would be worse than no number.
+    """
+    if scope == MemoryScope.PROJECT:
+        return [Memory.project_id == project_id, Memory.scope == scope]
+    return [Memory.team_id == team_id, Memory.scope == scope]
+
+
+def live_memory_count(
+    session: Session, scope: str, project_id: str, team_id: str | None = None
+) -> int:
+    """Entries occupying a slot: superseded and forgotten rows survive in the
+    table (that is what makes compaction reversible) but stop being counted."""
+    return session.execute(
+        select(func.count(Memory.id)).where(
+            *_memory_filter(scope, project_id, team_id), Memory.superseded_at.is_(None)
+        )
+    ).scalar_one()
+
+
+def memory_cap_for(cons: ConstitutionDoc, scope: str) -> int:
+    return cons.memory_cap_project if scope == MemoryScope.PROJECT else cons.memory_cap_team
+
+
+def compaction_candidates(
+    session: Session, scope: str, project_id: str, team_id: str | None = None, limit: int = 5
+) -> list[Memory]:
+    """The oldest live entries in a scope — what a curator should look at first
+    when it needs room. Carried in the refusal itself so the curator can act in
+    the same run instead of spending one of five refusals learning to search."""
+    return list(
+        session.execute(
+            select(Memory)
+            .where(*_memory_filter(scope, project_id, team_id), Memory.superseded_at.is_(None))
+            .order_by(Memory.created_at)
+            .limit(limit)
+        ).scalars()
+    )
+
+
 def check_memory_add(
     session: Session, cons: ConstitutionDoc, agent: Agent, scope: str, team_id: str | None
 ) -> None:
     if scope == MemoryScope.PROJECT:
         if agent.kind != AgentKind.CEO:
             raise Refusal("Project-scope memory is the CEO's; write team-scope memory.", 403)
-        cap = cons.memory_cap_project
-        count_filter = [Memory.project_id == agent.project_id, Memory.scope == scope]
     elif scope == MemoryScope.TEAM:
         if agent.team_id is None or team_id != agent.team_id:
             raise Refusal("Team-scope memory belongs to your own team only.", status_code=403)
-        cap = cons.memory_cap_team
-        count_filter = [Memory.team_id == team_id, Memory.scope == scope]
     else:
         raise Refusal("scope must be 'project' or 'team'.")
 
-    live = session.execute(
-        select(func.count(Memory.id)).where(*count_filter, Memory.superseded_at.is_(None))
-    ).scalar_one()
-    if live >= cap:
+    cap = memory_cap_for(cons, scope)
+    live = live_memory_count(session, scope, agent.project_id, team_id)
+    if live < cap:
+        return
+
+    log.warning(
+        "memory cap reached: project=%s scope=%s team=%s %d/%d agent=%s",
+        agent.project_id, scope, team_id, live, cap, agent.name,
+    )
+    # The old text said "supersede or forget". Supersede is 1→1 and frees
+    # nothing, so an agent that followed it exactly was still at the cap — and
+    # if it was not the curator, both calls were 403 anyway. Say what is true
+    # for the agent actually reading this.
+    head = (
+        f"Memory cap reached ({live}/{cap}). A memory store that only grows becomes a "
+        "journal, and a journal read every cycle is how the last project drowned."
+    )
+    curator = _curator_of(session, agent, scope)
+    if curator is None or curator.id != agent.id:
+        who = curator.name if curator else "this team's lead (none is set — ask the CEO)"
+        # "is being woken", not "has been told": the janitor sends that notice on
+        # its next tick, and a refusal cannot send one itself (the request's
+        # session is rolled back by the very exception carrying this message).
+        # Promise the thing that is actually true a few seconds from now.
         raise Refusal(
-            f"Memory cap reached ({live}/{cap}). The cap is real: supersede or forget "
-            "something first. A memory store that only grows becomes a journal, and a "
-            "journal read every cycle is how the last project drowned.",
+            f"{head} You are not this scope's curator, so there is nothing for you to "
+            f"free: only {who} may compact or forget here, and {who} is being woken to "
+            "make room. Put what you learned in a message to them instead — do not retry "
+            "this write.",
             status_code=409,
         )
+    oldest = compaction_candidates(session, scope, agent.project_id, team_id)
+    listing = "; ".join(f"{m.id} — {m.subject}" for m in oldest)
+    raise Refusal(
+        f"{head} You curate this scope, so you can clear it in this run: memory_compact "
+        f"folds several entries into one (freeing all but one slot), memory_forget drops "
+        f"one. Note that memory_supersede replaces 1 with 1 and frees nothing. Your oldest "
+        f"entries: {listing}",
+        status_code=409,
+    )
+
+
+def _curator_of(session: Session, agent: Agent, scope: str) -> Agent | None:
+    if scope == MemoryScope.PROJECT:
+        return ceo_of(session, agent.project_id)
+    team = session.get(Team, agent.team_id) if agent.team_id else None
+    return effective_lead(session, team) if team else None
 
 
 # ── evidence rules ──────────────────────────────────────────────────────────────

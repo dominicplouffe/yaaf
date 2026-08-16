@@ -132,7 +132,7 @@ function ProjectCard({ p }: { p: DeskProject }) {
       <div style={{ display: "flex", gap: 16, marginTop: 10, fontSize: 12.5 }}>
         <Link to={`/projects/${p.id}`}>Today →</Link>
         <Link to={`/projects/${p.id}/boardroom`}>Boardroom →</Link>
-        <Link to={`/projects/${p.id}/evidence`}>Evidence →</Link>
+        <Link to={`/projects/${p.id}/work`}>Work →</Link>
         <Link to={`/projects/${p.id}/settings`}>Settings →</Link>
       </div>
     </div>

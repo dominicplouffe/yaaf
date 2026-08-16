@@ -27,6 +27,7 @@ from yaaf.core.models import (
     Hypothesis,
     LedgerEntry,
     Memory,
+    MemoryScope,
     Message,
     Project,
     Role,
@@ -64,6 +65,32 @@ def _project(session: Session, project_id: str) -> Project:
     if project is None:
         raise HTTPException(status_code=404, detail="unknown project")
     return project
+
+
+def _memory_usage(session: Session, project: Project, cons) -> dict:
+    """Occupancy per curated scope, counted exactly the way the refusal counts
+    it — a number here that disagreed with the one an agent hits would be worse
+    than showing none at all."""
+    scopes = [{
+        "scope": "project",
+        "team_id": None,
+        "name": "Project memory",
+        "live": policy.live_memory_count(session, MemoryScope.PROJECT, project.id),
+        "cap": cons.memory_cap_project,
+    }]
+    for team in session.execute(
+        select(Team).where(Team.project_id == project.id).order_by(Team.name)
+    ).scalars():
+        lead = policy.effective_lead(session, team)
+        scopes.append({
+            "scope": "team",
+            "team_id": team.id,
+            "name": team.name,
+            "live": policy.live_memory_count(session, MemoryScope.TEAM, project.id, team.id),
+            "cap": cons.memory_cap_team,
+            "curator": lead.name if lead else None,
+        })
+    return {"warn_ratio": cons.memory_warn_ratio, "scopes": scopes}
 
 
 def _last_countable_evidence_at(session: Session, project_id: str) -> datetime | None:
@@ -310,6 +337,7 @@ def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
         "queue_ceiling": cons.queue_ceiling,
         "external_evidence_in_window": evidence_count,
         "drought_active": policy.drought_active(session, project.id, cons),
+        "memory": _memory_usage(session, project, cons),
         "runs": {"running": running, "queued": queued},
         "chat_live": chat_session_live(session, project),
         "pending_approvals": pending_approvals,

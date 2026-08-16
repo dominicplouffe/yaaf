@@ -1,34 +1,61 @@
 import { useState } from "react";
 import { Navigate, NavLink, Route, Routes, useParams } from "react-router-dom";
-import { Dashboard, get, post } from "../api";
+import {
+  ApprovalRow,
+  Dashboard,
+  get,
+  HypothesisRow,
+  OrgView,
+  post,
+  ProjectHealth,
+} from "../api";
 import { usePoll } from "../hooks";
 import { useProjectLive } from "../ws";
 import { statusBadge } from "./Projects";
-import Today from "./project/Today";
+import {
+  budgetOf,
+  clip,
+  clockClass,
+  DecideButtons,
+  fmtLeft,
+  fmtUnit,
+} from "../ui";
+import Overview from "./project/Overview";
 import Boardroom from "./project/Boardroom";
-import Tasks from "./project/Tasks";
-import Channels from "./project/Channels";
-import Files from "./project/Files";
-import Memory from "./project/Memory";
-import Runs from "./project/Runs";
-import Approvals from "./project/Approvals";
-import EvidenceTab from "./project/Evidence";
+import Work from "./project/Work";
+import Deliverables from "./project/Deliverables";
+import Records from "./project/Records";
 import Settings from "./project/Settings";
 
-// Ordered by how often the chairman needs them: triage, the conversation, the
-// work, the decisions, the proof — then the records, then configuration.
+// Two groups, not one list of ten. Left is the daily job in the order it gets
+// done — triage, talk, the work, the output. Right is what you open when
+// something looks wrong or needs configuring, and it reads quieter because it is.
 const TABS = [
-  ["", "Today"],
+  ["", "Overview"],
   ["boardroom", "Boardroom"],
-  ["tasks", "Tasks"],
-  ["approvals", "Approvals"],
-  ["evidence", "Evidence"],
-  ["runs", "Runs"],
-  ["files", "Files"],
-  ["channels", "Channels"],
-  ["memory", "Memory"],
+  ["work", "Work"],
+  ["deliverables", "Deliverables"],
+] as const;
+
+const UTILITY_TABS = [
+  ["records", "Records"],
   ["settings", "Settings"],
 ] as const;
+
+/** Everything a project tab needs, polled once in the shell. Before this, four
+    tabs each polled /org on their own schedule and disagreed with each other. */
+export interface ProjectCtx {
+  projectId: string;
+  dash: Dashboard;
+  approvals: ApprovalRow[];
+  hypotheses: HypothesisRow[];
+  org: OrgView | null;
+  health: ProjectHealth | null;
+  reload: () => void;
+  reloadApprovals: () => void;
+  reloadOrg: () => void;
+  reloadHealth: () => void;
+}
 
 /** Pause wants a recorded reason; stop is terminal and requires typing the
     project's name. In-context confirmation, never a browser dialog. */
@@ -95,9 +122,186 @@ function LifecycleConfirm({
   );
 }
 
+/** The first sentence of the goal, as an identity line. The full brief used to
+    render in full above every tab — 400-odd pixels of prose the reader had
+    already read, repainted on every navigation. It is one click away now. */
+function goalLead(goal: string): string {
+  const firstSentence = goal.split(/(?<=\.)\s/)[0] ?? goal;
+  return clip(firstSentence.replace(/\s+/g, " ").trim(), 120);
+}
+
+/** One strip of facts that are true on every tab: is it alive, is anyone
+    working, what has it cost, is it configured — plus the two lifecycle acts. */
+function ProjectBar({
+  dash,
+  health,
+  onPause,
+  onStop,
+  onStart,
+}: {
+  dash: Dashboard;
+  health: ProjectHealth | null;
+  onPause: () => void;
+  onStop: () => void;
+  onStart: () => void;
+}) {
+  const [brief, setBrief] = useState(false);
+  const { unit, spent, cap, warnRatio, frac } = budgetOf(dash);
+  const meterCls = frac >= 1 ? "over" : frac >= warnRatio ? "warn" : "";
+  const failing = (health?.checks ?? []).filter((c) => c.status !== "ok").length;
+
+  return (
+    <>
+      <div className="pbar">
+        <div className="id">
+          <div className="t">
+            <h1>{dash.name}</h1>
+            {statusBadge(dash.status)}
+            {dash.drought_active && <span className="badge serious">☂ evidence drought</span>}
+          </div>
+          <div className="kicker">
+            {goalLead(dash.goal)}{" "}
+            <button onClick={() => setBrief(!brief)} aria-expanded={brief}>
+              {brief ? "hide the brief" : "the full brief ▾"}
+            </button>
+          </div>
+        </div>
+
+        <div className="vitals">
+          <div className="vital">
+            <span className="l">Working</span>
+            <span className="v">
+              {dash.runs.running > 0 ? (
+                <>
+                  <span className="working-dot" aria-hidden="true" />
+                  {dash.runs.running} agent{dash.runs.running === 1 ? "" : "s"}
+                </>
+              ) : (
+                <span className="help">idle{dash.runs.queued > 0 ? ` · ${dash.runs.queued} queued` : ""}</span>
+              )}
+            </span>
+          </div>
+
+          <div className="vital">
+            <span className="l">This month</span>
+            <span className="v">
+              {fmtUnit(spent, unit)} <span className="help">/ {fmtUnit(cap, unit)}</span>
+              <span className={`mini-meter ${meterCls}`}>
+                <i style={{ width: `${Math.min(frac, 1) * 100}%` }} />
+              </span>
+            </span>
+          </div>
+
+          <div className="vital">
+            <span className="l">Setup</span>
+            <span className="v">
+              {!health ? (
+                <span className="help">checking…</span>
+              ) : health.all_ok ? (
+                <span className="badge good">healthy</span>
+              ) : (
+                <span className="badge critical">{failing} to fix</span>
+              )}
+            </span>
+          </div>
+
+          <div className="vital">
+            <span className="l">&nbsp;</span>
+            <span className="v">
+              {dash.status !== "running" && dash.status !== "stopped" && (
+                <button className="small primary" onClick={onStart}>▶ start</button>
+              )}
+              {dash.status === "running" && (
+                <button className="small" onClick={onPause} title="Pause this project">⏸</button>
+              )}
+              {dash.status !== "stopped" && (
+                <button className="small danger" onClick={onStop} title="Stop this project">■</button>
+              )}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {brief && (
+        <div className="briefbox">
+          <strong style={{ color: "var(--ink)" }}>The brief every agent reads</strong>
+          <p style={{ whiteSpace: "pre-wrap", margin: "6px 0 0" }}>{dash.goal}</p>
+        </div>
+      )}
+    </>
+  );
+}
+
+/** What a tab cannot do: be seen from the other five. Approvals expire to DENY,
+    so the one thing that must never depend on the chairman opening the right
+    tab is the decision that runs out of time on its own. */
+function ActionStrip({
+  projectId,
+  approvals,
+  hypotheses,
+  onDecided,
+}: {
+  projectId: string;
+  approvals: ApprovalRow[];
+  hypotheses: HypothesisRow[];
+  onDecided: () => void;
+}) {
+  const pending = approvals
+    .filter((a) => a.status === "pending")
+    .sort((a, b) => a.expires_at.localeCompare(b.expires_at));
+  const expiredBets = hypotheses.filter((h) => h.status === "expired" && !h.extended_once);
+
+  if (pending.length === 0 && expiredBets.length === 0) return null;
+
+  const rest = pending.length - 1 + expiredBets.length;
+
+  if (pending.length > 0) {
+    const a = pending[0];
+    return (
+      <div className="strip">
+        <span className="chip warn">{a.kind.replaceAll("_", " ")}</span>
+        <div className="grow">
+          <div>
+            <strong>{clip(a.title, 90)}</strong>
+            {a.amount_usd !== null && a.amount_usd > 0 && (
+              <span className="mono"> — ${a.amount_usd.toLocaleString()}</span>
+            )}
+          </div>
+          <div className="sb">
+            Nobody else can decide this. It auto-denies in{" "}
+            <span className={`clock ${clockClass(a.expires_at)}`}>
+              {fmtLeft(a.expires_at).replace(" left", "")}
+            </span>
+            {rest > 0 && ` · ${rest} more waiting on you`}
+          </div>
+        </div>
+        <DecideButtons approvalId={a.id} onDone={onDecided} />
+        <NavLink to={`/projects/${projectId}/records/decisions`}>the full case →</NavLink>
+      </div>
+    );
+  }
+
+  const h = expiredBets[0];
+  return (
+    <div className="strip serious">
+      <span className="chip serious">bet expired</span>
+      <div className="grow">
+        <div>
+          <strong>“{clip(h.statement, 90)}”</strong> reached its kill date
+        </div>
+        <div className="sb">
+          You hold the one extension — or let it stand and the CEO pivots
+          {rest > 0 && ` · ${rest} more waiting on you`}
+        </div>
+      </div>
+      <NavLink to={`/projects/${projectId}/work`}>decide →</NavLink>
+    </div>
+  );
+}
+
 export default function ProjectPage() {
   const { projectId = "" } = useParams();
-  const { data: dash, error, reload } = usePoll(
+  const { data: dash, error, at, reload } = usePoll(
     () => get<Dashboard>(`/observe/projects/${projectId}`),
     6000,
   );
@@ -105,44 +309,74 @@ export default function ProjectPage() {
   // the same reload forward. The poll stays — it is the source of truth, and
   // the UI works identically (just staler) if the socket never connects.
   useProjectLive(projectId, reload);
+
+  // Polled once here, handed down. The strip needs approvals and bets on every
+  // tab anyway, so the tabs stop fetching them a second time on their own clock.
+  const { data: approvals, reload: reloadApprovals } = usePoll(
+    () => get<ApprovalRow[]>(`/observe/projects/${projectId}/approvals`),
+    6000,
+  );
+  const { data: hypotheses } = usePoll(
+    () => get<HypothesisRow[]>(`/observe/projects/${projectId}/hypotheses`),
+    15000,
+  );
+  const { data: org, reload: reloadOrg } = usePoll(
+    () => get<OrgView>(`/observe/projects/${projectId}/org`),
+    15000,
+  );
+  const { data: health, reload: reloadHealth } = usePoll(
+    () => get<ProjectHealth>(`/observe/projects/${projectId}/health`),
+    10000,
+  );
+
   const [confirming, setConfirming] = useState<"pause" | "stop" | null>(null);
 
-  if (error) return <div className="error">{error}</div>;
-  if (!dash) return <p className="subtitle">Loading…</p>;
+  // A failed poll must not blank the page. The last good numbers stay on screen
+  // with their timestamp; the banner says they've stopped refreshing.
+  if (!dash) {
+    return error ? <div className="error">{error}</div> : <p className="subtitle">Loading…</p>;
+  }
+
+  const ctx: ProjectCtx = {
+    projectId,
+    dash,
+    approvals: approvals ?? [],
+    hypotheses: hypotheses ?? [],
+    org,
+    health,
+    reload,
+    reloadApprovals,
+    reloadOrg,
+    reloadHealth,
+  };
+
+  const tabClass = ({ isActive }: { isActive: boolean }) => "tab" + (isActive ? " active" : "");
+  const utilClass = ({ isActive }: { isActive: boolean }) =>
+    "tab util" + (isActive ? " active" : "");
 
   return (
     <>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
-        <h1>{dash.name}</h1>
-        {statusBadge(dash.status)}
-        {dash.pending_approvals > 0 && (
-          <span className="badge warn">⚠ {dash.pending_approvals} approval(s) waiting on you</span>
-        )}
-        {dash.drought_active && <span className="badge serious">☂ evidence drought</span>}
-        <div className="spacer" />
-        {dash.status !== "running" && dash.status !== "stopped" && (
-          <button
-            className="small primary"
-            onClick={async () => {
-              await post(`/admin/projects/${projectId}/start`);
-              reload();
-            }}
-          >
-            ▶ start
-          </button>
-        )}
-        {dash.status === "running" && (
-          <button className="small" onClick={() => setConfirming("pause")}>
-            ⏸ pause
-          </button>
-        )}
-        {dash.status !== "stopped" && (
-          <button className="small danger" onClick={() => setConfirming("stop")}>
-            ■ stop
-          </button>
-        )}
-      </div>
-      <p className="subtitle">{dash.goal}</p>
+      <ProjectBar
+        dash={dash}
+        health={health}
+        onStart={async () => {
+          await post(`/admin/projects/${projectId}/start`);
+          reload();
+        }}
+        onPause={() => setConfirming("pause")}
+        onStop={() => setConfirming("stop")}
+      />
+
+      <ActionStrip
+        projectId={projectId}
+        approvals={ctx.approvals}
+        hypotheses={ctx.hypotheses}
+        onDecided={() => {
+          reloadApprovals();
+          reload();
+        }}
+      />
+
       {confirming && (
         <LifecycleConfirm
           action={confirming}
@@ -158,6 +392,11 @@ export default function ProjectPage() {
       {dash.status_reason && dash.status !== "running" && (
         <div className="notice-box">Status reason: {dash.status_reason}</div>
       )}
+      {error && (
+        <div className="error">
+          Not refreshing — {error}. The numbers below are the last that landed.
+        </div>
+      )}
 
       <nav className="tabs">
         {TABS.map(([path, label]) => (
@@ -165,26 +404,38 @@ export default function ProjectPage() {
             key={path}
             to={path === "" ? `/projects/${projectId}` : `/projects/${projectId}/${path}`}
             end={path === ""}
-            className={({ isActive }) => "tab" + (isActive ? " active" : "")}
+            className={tabClass}
           >
+            {label}
+          </NavLink>
+        ))}
+        <span className="sp" />
+        <span className="div" />
+        {UTILITY_TABS.map(([path, label]) => (
+          <NavLink key={path} to={`/projects/${projectId}/${path}`} className={utilClass}>
             {label}
           </NavLink>
         ))}
       </nav>
 
       <Routes>
-        <Route index element={<Today projectId={projectId} dash={dash} />} />
+        <Route index element={<Overview ctx={ctx} asOf={at} error={error} />} />
         <Route path="boardroom" element={<Boardroom projectId={projectId} dash={dash} />} />
-        <Route path="tasks" element={<Tasks projectId={projectId} />} />
-        {/* Old bookmarks: this tab was "Board" before the rename. */}
-        <Route path="board" element={<Navigate to={`/projects/${projectId}/tasks`} replace />} />
-        <Route path="channels" element={<Channels projectId={projectId} />} />
-        <Route path="memory" element={<Memory projectId={projectId} dash={dash} />} />
-        <Route path="files" element={<Files projectId={projectId} />} />
-        <Route path="runs" element={<Runs projectId={projectId} dash={dash} />} />
-        <Route path="approvals" element={<Approvals projectId={projectId} dash={dash} />} />
-        <Route path="evidence" element={<EvidenceTab projectId={projectId} />} />
+        <Route path="work" element={<Work ctx={ctx} />} />
+        <Route path="deliverables" element={<Deliverables projectId={projectId} />} />
+        <Route path="records/*" element={<Records ctx={ctx} />} />
         <Route path="settings" element={<Settings projectId={projectId} dash={dash} reload={reload} />} />
+
+        {/* Old bookmarks and links from outside the app. Every tab that moved
+            keeps working; nobody has to relearn a URL they had written down. */}
+        <Route path="board" element={<Navigate to={`/projects/${projectId}/work`} replace />} />
+        <Route path="tasks" element={<Navigate to={`/projects/${projectId}/work`} replace />} />
+        <Route path="evidence" element={<Navigate to={`/projects/${projectId}/work`} replace />} />
+        <Route path="files" element={<Navigate to={`/projects/${projectId}/deliverables`} replace />} />
+        <Route path="approvals" element={<Navigate to={`/projects/${projectId}/records/decisions`} replace />} />
+        <Route path="runs" element={<Navigate to={`/projects/${projectId}/records/runs`} replace />} />
+        <Route path="channels" element={<Navigate to={`/projects/${projectId}/records/messages`} replace />} />
+        <Route path="memory" element={<Navigate to={`/projects/${projectId}/records/memory`} replace />} />
       </Routes>
     </>
   );

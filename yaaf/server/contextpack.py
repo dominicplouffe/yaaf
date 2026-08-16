@@ -23,10 +23,12 @@ from yaaf.core.models import (
     Approval,
     ApprovalStatus,
     Channel,
+    ChannelKind,
     ChannelRead,
     Hypothesis,
     HypothesisStatus,
     Memory,
+    MemoryScope,
     Message,
     Notice,
     Project,
@@ -70,12 +72,35 @@ def constitution_prose(cons: ConstitutionDoc, project: Project) -> str:
         f"{cons.approval_timeout_days} days, so re-plan rather than wait.\n"
         f"- Budget: {budget}. At 100% the project auto-pauses.\n"
         f"- Memory caps: {cons.memory_cap_project} project / {cons.memory_cap_team} team. "
-        "Curate, don't accumulate.\n"
+        "Curate, don't accumulate: memory_compact folds several entries into one and frees "
+        "all but one of their slots, memory_forget drops one, and memory_supersede replaces "
+        "one with one and frees none. Only a scope's curator may do any of the three.\n"
         f"- Each run may hit at most {cons.refusal_cap_per_run} policy refusals before its "
         "token is revoked. A refusal is the system working; do not rephrase and retry.\n"
+        f"{_cadence_clause(cons)}"
         "- Do not ask the chairman questions. Decide and report, or file an approval as a "
-        "recommendation you would defend. When in doubt about telling, tell; about asking, "
-        "decide."
+        "recommendation you would defend. When in doubt about WHAT to tell him, tell; about "
+        "asking, decide. That is about candour, never about frequency — it is not licence to "
+        "post more often than the cadence allows."
+    )
+
+
+def _cadence_clause(cons: ConstitutionDoc) -> str:
+    """The reporting cadence, stated where every other enforced limit is
+    stated. Silent when the chairman has not set one."""
+    cadence = policy.cadence_of(cons)
+    if not cadence.enforced:
+        return ""
+    window = ""
+    if cadence.window is not None:
+        start, end = cadence.window
+        window = (f", and only between {start.strftime('%H:%M')} and "
+                  f"{end.strftime('%H:%M')} {cadence.tz.key}")
+    return (
+        f"- Unprompted boardroom status: at most every {cadence.interval_hours:g}h{window}. "
+        "Posting between slots is refused. Replying to something the chairman actually said is "
+        "always allowed and is not a status. See the `chairman` block in your context for when "
+        "your next slot opens.\n"
     )
 
 
@@ -132,6 +157,54 @@ def _clip(text: str, limit: int, hint: str) -> str:
     if len(text) <= limit:
         return text
     return text[:limit] + f" …[truncated; {hint}]"
+
+
+def _chairman_state(session: Session, project: Project, agent: Agent, now) -> dict:
+    """What the CEO cannot otherwise know about its own relationship with the
+    chairman.
+
+    A run is stateless and :func:`_unread_messages` filters out the agent's own
+    posts, so without this the CEO cannot see when it last reported — which is
+    how it ends up drafting a full status, at Opus prices, that the cadence
+    then refuses. Telling it up front is strictly cheaper than refusing it
+    after the tokens are spent.
+    """
+    boardroom = session.execute(
+        select(Channel).where(Channel.project_id == project.id,
+                              Channel.kind == ChannelKind.BOARDROOM)
+    ).scalars().first()
+    if boardroom is None:
+        return {"boardroom": None}
+    cadence = policy.report_cadence(session, project)
+    last_report, last_chairman = policy.boardroom_turns(session, boardroom.id, agent.id)
+    # An open turn: he spoke last and you have not answered. Answer it — that
+    # reply is always allowed, and it is the one post that is never a status.
+    unanswered = last_chairman is not None and (last_report is None or last_chairman > last_report)
+    slot = policy.next_report_slot(cadence, last_report)
+    may_report = unanswered or slot is None or now >= slot
+    state = {
+        "boardroom_channel_id": boardroom.id,
+        "your_last_report_at": last_report.isoformat() if last_report else None,
+        "chairman_last_spoke_at": last_chairman.isoformat() if last_chairman else None,
+        "unanswered_chairman_message": unanswered,
+        "cadence_hours": cadence.interval_hours if cadence.enforced else None,
+        "next_slot_at": slot.isoformat() if slot else None,
+        "may_post_status_now": may_report,
+    }
+    if cadence.window is not None:
+        start, end = cadence.window
+        state["window_local"] = (f"{start.strftime('%H:%M')}-{end.strftime('%H:%M')} "
+                                 f"{cadence.tz.key}")
+    if cadence.enforced:
+        state["note"] = (
+            "The platform enforces this: an unprompted boardroom status posted before "
+            "next_slot_at is REFUSED. Replying to an unanswered message from him is always "
+            "allowed. If may_post_status_now is false, do not write a status this run — "
+            "fold what you have into the next slot."
+            if not may_report else
+            "The slot is open — if you have something worth his time, this is the run to say it."
+        )
+    return state
 
 
 def _unread_messages(session: Session, agent: Agent, include_recent: bool = False) -> list[dict]:
@@ -221,6 +294,50 @@ def _task_context(session: Session, task: Task) -> dict:
     }
 
 
+def _memory_usage(session: Session, agent: Agent, cons: ConstitutionDoc) -> dict:
+    """How full each scope this agent can write to is, and which of them it may
+    curate. Both halves matter: the count stops it walking into the cap, and
+    `you_curate` stops a non-lead planning a compaction the platform will 403 —
+    any team member may write team memory, but only the lead may clear it."""
+    live_project = policy.live_memory_count(session, MemoryScope.PROJECT, agent.project_id)
+    usage: dict = {
+        "project": f"{live_project}/{cons.memory_cap_project}",
+        "you_curate": [],
+    }
+    tight = live_project >= cons.memory_cap_project * cons.memory_warn_ratio
+    if agent.kind == AgentKind.CEO:
+        usage["you_curate"].append("project")
+    curator: Agent | None = None
+    if agent.team_id:
+        live_team = policy.live_memory_count(
+            session, MemoryScope.TEAM, agent.project_id, agent.team_id
+        )
+        usage["team"] = f"{live_team}/{cons.memory_cap_team}"
+        tight = tight or live_team >= cons.memory_cap_team * cons.memory_warn_ratio
+        team = session.get(Team, agent.team_id)
+        curator = policy.effective_lead(session, team) if team else None
+        if curator is not None and curator.id == agent.id:
+            usage["you_curate"].append("team")
+    if not tight:
+        return usage
+    # Near the cap the useful advice diverges sharply by who is reading. A
+    # curator needs the verb; anyone else needs to know that writing is about to
+    # be refused and that the fix is not theirs to make.
+    if usage["you_curate"]:
+        usage["pressure"] = (
+            "Nearly full — compact on this wake rather than being refused mid-write. "
+            "memory_compact folds several entries into one and frees all but one slot."
+        )
+    else:
+        who = curator.name if curator else "nobody (this team has no lead)"
+        usage["pressure"] = (
+            f"Nearly full, and {who} curates it, not you — your writes here are about to "
+            "be refused and you cannot free a slot. Send anything durable to them as a "
+            "message instead."
+        )
+    return usage
+
+
 def build_context_pack(session: Session, run: Run, agent: Agent, project: Project) -> dict:
     cons = effective(session, project.id)
 
@@ -250,6 +367,10 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
         "unread": _unread_messages(session, agent, include_recent=run.attempt > 1),
         "memory_hint": {
             "note": "Query memory, do not recite it: GET /agent/memory/search?q=...",
+            # Occupancy, not just the cap. The cap alone is a number an agent
+            # cannot act on; "38/40" is. Roughly thirty tokens against a run
+            # that would otherwise discover the wall mid-write and die of it.
+            "usage": _memory_usage(session, agent, cons),
             "recent_subjects": [
                 m.subject
                 for m in session.execute(
@@ -275,6 +396,7 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
             pack["task"] = _task_context(session, task)
 
     if agent.kind == AgentKind.CEO:
+        pack["chairman"] = _chairman_state(session, project, agent, now)
         open_tasks = policy.open_top_level_tasks(session, project.id)
         pack["board"] = {
             "open": [

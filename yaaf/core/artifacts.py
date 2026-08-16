@@ -159,6 +159,31 @@ def is_store_uri(value: str) -> bool:
     return value.startswith(("file://", "s3://"))
 
 
+def key_for_uri(uri: str) -> str | None:
+    """The store key a uri addresses, or None when it addresses something this
+    store does not hold.
+
+    A uri is what agents cite — in evidence, task completions, messages — and a
+    citation nobody can resolve is not a citation. Reading one back means going
+    from the recorded uri to a key the store can serve, across a backend switch
+    and from inside a sandbox, where the ``file://`` path does not exist.
+    """
+    if uri.startswith("file://"):
+        root = Path(settings().artifacts_root).resolve()
+        try:
+            return str(Path(uri[len("file://"):]).resolve().relative_to(root))
+        except ValueError:
+            return None
+    if uri.startswith("s3://"):
+        bucket, _, key = uri[len("s3://"):].partition("/")
+        # A key from another bucket would resolve against ours and serve the
+        # wrong bytes under the right name. Refuse rather than guess.
+        if not key or bucket != settings().artifact_s3_bucket:
+            return None
+        return key
+    return None
+
+
 def read_uri(uri: str) -> bytes:
     """Fetch a store uri's bytes regardless of which backend wrote it — old
     ``file://`` rows must stay readable after a switch to S3, and vice versa.

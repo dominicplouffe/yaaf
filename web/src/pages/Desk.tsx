@@ -57,7 +57,7 @@ export default function Desk() {
             expires in {fmtLeft(a.expires_at).replace(" left", "")} → auto-deny
           </span>
           <DecideButtons approvalId={a.id} onDone={reload} />
-          <Link to={`/projects/${p.id}/approvals`}>context →</Link>
+          <Link to={`/projects/${p.id}/records/decisions`}>context →</Link>
         </div>,
       );
     }
@@ -73,20 +73,7 @@ export default function Desk() {
               stand and the CEO pivots
             </div>
           </div>
-          <Link to={`/projects/${p.id}/evidence`}>decide →</Link>
-        </div>,
-      );
-    }
-    if (p.audit.unaudited >= 3 && p.status !== "stopped") {
-      waiting.push(
-        <div className="arow" key={`${p.id}-audit`}>
-          <span className="pj">{p.name}</span>
-          <span className="chip warn">audit due</span>
-          <div className="grow">
-            <div className="tt">{p.audit.unaudited} completions have never been audited</div>
-            <div className="sb">the platform picks the sample — you're the reviewer that doesn't approve everything</div>
-          </div>
-          <Link to={`/projects/${p.id}/evidence`}>deal a sample →</Link>
+          <Link to={`/projects/${p.id}/work`}>decide →</Link>
         </div>,
       );
     }
@@ -94,6 +81,29 @@ export default function Desk() {
 
   // ── worth watching: the system will handle these, but you'd rather know now ──
   const watch: React.ReactNode[] = [];
+  // Spot-checking is deliberately not in "Waiting on you": nothing expires and
+  // no agent is blocked on it, so listing it beside an approval that auto-denies
+  // would pad the one count the chairman has to be able to trust.
+  for (const p of projects) {
+    if (p.audit.unaudited >= 3 && p.status !== "stopped") {
+      watch.push(
+        <div className="wrow" key={`${p.id}-audit`}>
+          <span className="pj">{p.name}</span>
+          <span className="badge">spot-check</span>
+          <div className="grow">
+            <b>
+              {p.audit.unaudited} finished {p.audit.unaudited === 1 ? "task" : "tasks"} nobody
+              has checked.
+            </b>{" "}
+            The agents marked these done and wrote their own evidence for it. Two minutes on
+            five at random: you see what each task had to prove and what the agent claimed, and
+            you say whether you believe it.
+          </div>
+          <Link to={`/projects/${p.id}/work?audit=1`}>check 5 now →</Link>
+        </div>,
+      );
+    }
+  }
   for (const p of projects) {
     const b = p.budget;
     const frac = b.cap > 0 ? b.spent / b.cap : 0;
@@ -129,7 +139,7 @@ export default function Desk() {
             No verified external evidence in {d.window_hours}h — the platform is refusing new
             internal work until proof lands
           </div>
-          <Link to={`/projects/${p.id}/evidence`}>see evidence →</Link>
+          <Link to={`/projects/${p.id}/work`}>see the proof →</Link>
         </div>,
       );
     } else if (d.applies && d.last_countable_at) {
@@ -143,7 +153,7 @@ export default function Desk() {
               {Math.floor(elapsed)} hours without verified external evidence — at {d.window_hours}h
               the platform starts refusing internal work
             </div>
-            <Link to={`/projects/${p.id}/evidence`}>see evidence →</Link>
+            <Link to={`/projects/${p.id}/work`}>see the proof →</Link>
           </div>,
         );
       }
@@ -154,7 +164,7 @@ export default function Desk() {
           <span className="pj">{p.name}</span>
           <span className="badge warn">kill date {fmtLeft(bet.kill_date).replace(" left", "")}</span>
           <div className="grow">“{clip(bet.statement)}” — {fmtWhenShort(bet.kill_date)}</div>
-          <Link to={`/projects/${p.id}/evidence`}>see the bet →</Link>
+          <Link to={`/projects/${p.id}/work`}>see the bet →</Link>
         </div>,
       );
     }
@@ -167,7 +177,7 @@ export default function Desk() {
             {p.frozen_threads} frozen thread(s) — the pair breaker tripped; those agents are stuck
             until you unfreeze
           </div>
-          <Link to={`/projects/${p.id}/channels`}>review thread →</Link>
+          <Link to={`/projects/${p.id}/records/messages`}>review thread →</Link>
         </div>,
       );
     }

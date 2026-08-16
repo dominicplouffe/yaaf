@@ -145,6 +145,21 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .actions { display: flex; gap: 8px; margin-top: 16px; align-items: center; flex-wrap: wrap; }
 
+/* Masked value + its eye. The input flexes; the buttons never shrink, so the
+   eye stays put whether it sits in a full-width form or a table cell. */
+.secret-field { display: flex; gap: 6px; align-items: center; }
+.secret-field input { flex: 1; min-width: 0; }
+.secret-field button { flex: none; }
+.secret-field-stack { display: flex; flex-direction: column; gap: 4px; }
+button.eye { display: inline-flex; align-items: center; padding: 6px 8px; color: var(--ink-2); }
+button.eye:hover { color: var(--ink); }
+
+/* A row editing itself, opened under the row it belongs to. */
+.source-editor {
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 4px 14px 14px;
+}
+
 .error {
   background: rgba(208, 59, 59, 0.12); border: 1px solid var(--critical);
   border-radius: 6px; padding: 8px 12px; margin: 12px 0; font-size: 13px;
@@ -250,9 +265,14 @@ pre.block {
   background: var(--surface-2); border: 1px solid var(--grid); border-radius: 999px;
   padding: 0 8px; color: var(--ink-2); letter-spacing: 0;
 }
-.zone.hot .cnt {
+.zone.hot .cnt, .zone .cnt.warn {
   background: rgba(250, 178, 25, 0.14); border-color: rgba(250, 178, 25, 0.4);
   color: var(--warning);
+}
+/* A counter at its ceiling is not a statistic — writes are being refused. */
+.zone .cnt.over {
+  background: rgba(224, 49, 49, 0.14); border-color: rgba(224, 49, 49, 0.45);
+  color: var(--critical);
 }
 .arows { display: flex; flex-direction: column; gap: 8px; }
 .arow {
@@ -330,12 +350,16 @@ pre.block {
 
 /* filter pills with counts — the counts are information on their own */
 .pills { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin: 0 0 10px; }
-.pills button {
+/* Anchors too: inside Records these pills are real navigation, so they must be
+   links a reader can middle-click and bookmark — and still look identical. */
+.pills button, .pills a {
   font-family: var(--mono); font-size: 11px; font-weight: 600; padding: 3px 10px;
   border-radius: 999px; background: var(--surface-2); border: 1px solid var(--grid);
   color: var(--ink-2);
 }
-.pills button.active {
+.pills a { text-decoration: none; display: inline-block; line-height: 1.5; }
+.pills a:hover { text-decoration: none; border-color: var(--muted); }
+.pills button.active, .pills a.active {
   color: var(--accent); border-color: rgba(57, 135, 229, 0.5);
   background: rgba(57, 135, 229, 0.1);
 }
@@ -384,6 +408,131 @@ pre.block {
   text-transform: uppercase; color: var(--muted); font-weight: 600; margin-bottom: 2px;
 }
 
+/* ── the project bar: one strip of facts true on every tab ──
+   It replaces a full-height goal dump. The brief is still one click away, but
+   it no longer costs the reader half a screen on every navigation. */
+.pbar {
+  display: flex; align-items: center; gap: 20px; flex-wrap: wrap;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 10px 16px;
+}
+.pbar .id { display: flex; flex-direction: column; gap: 2px; min-width: 210px; }
+.pbar .id .t { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.pbar h1 { font-size: 17px; margin: 0; }
+.pbar .kicker { font-size: 12px; color: var(--muted); }
+.pbar .kicker button {
+  background: none; border: 0; padding: 0; color: var(--accent); font-size: 12px;
+}
+.pbar .kicker button:hover { text-decoration: underline; }
+.pbar .vitals { display: flex; gap: 22px; align-items: center; margin-left: auto; flex-wrap: wrap; }
+.vital { display: flex; flex-direction: column; gap: 3px; }
+.vital .l {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 1px;
+  text-transform: uppercase; color: var(--muted);
+}
+.vital .v { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+.briefbox {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 14px 16px; margin-top: 10px;
+  max-height: 320px; overflow-y: auto; color: var(--ink-2); font-size: 13px;
+}
+
+/* The action strip: what a tab cannot do — be seen from everywhere else. */
+.strip {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 10px;
+  background: rgba(250, 178, 25, 0.07); border: 1px solid rgba(250, 178, 25, 0.3);
+  border-left: 3px solid var(--warning);
+  border-radius: var(--radius); padding: 10px 14px; font-size: 13px;
+}
+.strip.serious {
+  background: rgba(236, 131, 90, 0.07); border-color: rgba(236, 131, 90, 0.35);
+  border-left-color: var(--serious);
+}
+.strip .grow { flex: 1; min-width: 260px; }
+.strip .sb { color: var(--muted); font-size: 12px; margin-top: 1px; }
+
+/* Two tab groups: the daily job, then the utilities. */
+.tabs .sp { flex: 1; }
+.tabs .div { width: 1px; background: var(--grid); margin: 7px 10px; }
+.tab.util { color: var(--muted); }
+.tab.util:hover, .tab.util.active { color: var(--ink); }
+
+/* ── horizontal bars: comparing a handful of named things ── */
+.hbars { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.hbar { display: grid; grid-template-columns: 110px 1fr 130px; gap: 12px; align-items: center; font-size: 13px; }
+.hbar .track { height: 16px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+.hbar .track i { display: block; height: 100%; border-radius: 3px; background: #2b517e; }
+.hbar .track i.hi { background: var(--accent); }
+.hbar .v { font-family: var(--mono); font-size: 11.5px; color: var(--ink-2);
+  text-align: right; font-variant-numeric: tabular-nums; }
+@media (max-width: 620px) { .hbar { grid-template-columns: 90px 1fr; } .hbar .v { grid-column: 2; text-align: left; } }
+
+/* A tile whose number is the bad news. */
+.tile.alert { border-color: rgba(208, 59, 59, 0.45); background: rgba(208, 59, 59, 0.06); }
+.tile.alert .value { color: var(--critical); }
+
+/* ── bets, as cards that carry their own verdict ── */
+.bet { border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface); overflow: hidden; margin-bottom: 14px; }
+.bet .bh { padding: 12px 14px; background: var(--surface-2); border-bottom: 1px solid var(--grid); }
+.bet .bh .top { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; margin-bottom: 6px; }
+.bet .bh .st { font-weight: 600; font-size: 13.5px; line-height: 1.45; }
+.bet .bh .conseq { color: var(--muted); font-size: 12.5px; margin-top: 5px; }
+.bet .empty { padding: 12px 14px; color: var(--muted); font-size: 13px; }
+tr.subtask td:first-child { padding-left: 28px; color: var(--ink-2); }
+
+/* ── deliverables: the thing the project exists to produce ── */
+.deliv { display: flex; gap: 14px; align-items: flex-start;
+  padding: 14px; border-bottom: 1px solid var(--grid); }
+.deliv:last-child { border-bottom: 0; }
+.deliv .meta { flex: 1; min-width: 0; }
+.deliv .fname { font-family: var(--mono); font-size: 13px; font-weight: 500; }
+.deliv .icon {
+  width: 96px; height: 64px; flex: none; border-radius: 6px; border: 1px solid var(--grid);
+  background: var(--surface-2); display: grid; place-items: center;
+  font-family: var(--mono); font-size: 10px; letter-spacing: 1px; color: var(--muted);
+}
+/* Published HTML renders as itself. Source is a toggle, not the only option. */
+.preview-frame {
+  width: 100%; height: 70vh; border: 1px solid var(--border);
+  border-radius: var(--radius); background: #fff;
+}
+
+/* ── settings: a rail, because eleven headings is not navigation ── */
+.settings-lay { display: grid; grid-template-columns: 190px 1fr; gap: 24px; margin-top: 4px; }
+.srail { display: flex; flex-direction: column; gap: 2px; align-self: start; position: sticky; top: 16px; }
+.srail button {
+  text-align: left; background: none; border: 0; border-radius: 6px;
+  padding: 7px 11px; color: var(--ink-2); font-size: 13.5px;
+}
+.srail button:hover { background: var(--surface); }
+.srail button.active { background: var(--surface-2); color: var(--ink); font-weight: 500; }
+.srail .grp {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 1.1px; text-transform: uppercase;
+  color: var(--muted); padding: 12px 11px 3px;
+}
+@media (max-width: 860px) {
+  .settings-lay { grid-template-columns: 1fr; }
+  .srail { position: static; flex-direction: row; flex-wrap: wrap; }
+  .srail .grp { display: none; }
+}
+
+/* Agent prose is unbounded; a table cell is not. */
+.clamp { display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3;
+  -webkit-box-orient: vertical; overflow: hidden; }
+
+/* Skeletons keep the layout still while the first poll lands. */
+.skel { background: var(--surface-2); border-radius: 5px; height: 13px;
+  animation: skel-pulse 1.4s ease-in-out infinite; }
+@keyframes skel-pulse { 0%, 100% { opacity: 0.5; } 50% { opacity: 0.9; } }
+.skel-rows { display: flex; flex-direction: column; gap: 10px; padding: 14px; }
+
+/* Every screen says when its numbers are from. */
+.asof-foot {
+  display: flex; align-items: center; gap: 8px; margin-top: 28px;
+  padding-top: 12px; border-top: 1px solid var(--grid);
+}
+
 /* responsive floor: the "approve from the kitchen" moment */
 @media (max-width: 900px) {
   .shell { flex-direction: column; }
@@ -396,3 +545,22 @@ pre.block {
   .main { padding: 16px; }
   .note-action input { width: 160px; }
 }
+
+/* ── modal: for decisions that take effect the moment you confirm ────────── */
+.modal-back {
+  position: fixed; inset: 0; z-index: 50;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px; overflow-y: auto;
+  animation: modal-in 0.12s ease-out;
+}
+.modal {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  padding: 20px 22px; max-width: 620px; width: 100%;
+  max-height: calc(100vh - 48px); overflow-y: auto;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.4);
+}
+.modal h3 { margin: 0 0 10px; font-size: 16px; }
+.modal-body { font-size: 13px; color: var(--ink-2); line-height: 1.55; }
+.modal-body table { margin: 10px 0; }
+@keyframes modal-in { from { opacity: 0; } to { opacity: 1; } }

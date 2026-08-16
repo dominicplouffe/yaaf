@@ -90,6 +90,119 @@ def test_agent_artifact_put_stores_deliverables(client):
     assert store().get_bytes(f"projects/{project['id']}/{run_id}/report.md") == content
 
 
+def test_key_for_uri_resolves_a_citation_back_to_the_store(tmp_path):
+    from yaaf.core.artifacts import key_for_uri
+
+    uri = store().put_bytes("projects/p1/r1/deck.html", b"<html>charts</html>")
+    assert key_for_uri(uri) == "projects/p1/r1/deck.html"
+    # A path outside the store root is not a key, however file-like it looks.
+    assert key_for_uri(f"file://{tmp_path / 'elsewhere.html'}") is None
+    assert key_for_uri("s3://not-our-bucket/projects/p1/r1/deck.html") is None
+    assert key_for_uri("https://example.org/deck.html") is None
+
+
+def test_a_non_author_can_read_the_shipped_bytes(client):
+    """The independent-check invariant: an agent that did not write a deliverable
+    can read what was actually shipped, addressing it by the uri it was cited
+    under. Without this a shipped artifact is unfalsifiable — the sandbox mounts
+    only the workspace, so the uri's path resolves to nothing."""
+    project = make_project(client)
+    _, author_token = live_token(project["id"], project["ceo_agent_id"])
+
+    content = b"<html><!-- revenue: $4.2M --><svg id='chart'/></html>"
+    put = client.post(
+        "/agent/artifacts",
+        json={"filename": "deck.html", "content_base64": base64.b64encode(content).decode()},
+        headers=bearer(author_token),
+    ).json()
+    assert put["sha256"] == hashlib.sha256(content).hexdigest()
+
+    # A different run, holding only the uri the author published.
+    _, checker_token = live_token(project["id"], project["ceo_agent_id"])
+    read = client.get("/agent/artifacts/content", params={"ref": put["uri"]},
+                      headers=bearer(checker_token))
+    assert read.status_code == 200, read.text
+    body = read.json()
+    assert body["text"] == content.decode()
+    assert body["sha256"] == put["sha256"] and body["size"] == len(content)
+    assert body["truncated"] is False
+
+    # The key from artifact_list addresses the same bytes as the uri.
+    listed = client.get("/agent/artifacts", headers=bearer(checker_token)).json()["artifacts"]
+    assert [row["name"] for row in listed] == ["deck.html"]
+    assert listed[0]["key"] == put["key"]
+    by_key = client.get("/agent/artifacts/content", params={"ref": put["key"]},
+                        headers=bearer(checker_token)).json()
+    assert by_key["sha256"] == put["sha256"]
+
+
+def test_artifact_get_pages_a_large_file_and_keeps_the_whole_file_digest(client):
+    project = make_project(client)
+    _, token = live_token(project["id"], project["ceo_agent_id"])
+    content = ("line\n" * 40_000).encode()  # 200 KB, past the 64 KB read cap
+    client.post(
+        "/agent/artifacts",
+        json={"filename": "report.md", "content_base64": base64.b64encode(content).decode()},
+        headers=bearer(token),
+    )
+
+    # A bare filename is not a key; the store is addressed, not browsed.
+    assert client.get("/agent/artifacts/content", params={"ref": "report.md"},
+                      headers=bearer(token)).status_code == 404
+
+    key = client.get("/agent/artifacts", headers=bearer(token)).json()["artifacts"][0]["key"]
+    pages, offset = [], 0
+    while True:
+        body = client.get("/agent/artifacts/content",
+                          params={"ref": key, "offset": offset},
+                          headers=bearer(token)).json()
+        assert body["sha256"] == hashlib.sha256(content).hexdigest()  # whole file, every page
+        assert body["returned"] <= 64 * 1024
+        pages.append(body["text"])
+        if not body["truncated"]:
+            break
+        offset += body["returned"]
+    assert "".join(pages) == content.decode()
+
+
+def test_artifact_get_refuses_other_projects_and_missing_bytes(client):
+    """A run token reads its own project's store, and a uri that was cited is not
+    evidence the bytes exist."""
+    mine = make_project(client)
+    theirs = make_project(client, slug="neighbour")
+    _, their_token = live_token(theirs["id"], theirs["ceo_agent_id"])
+    my_run, my_token = live_token(mine["id"], mine["ceo_agent_id"])
+
+    put = client.post(
+        "/agent/artifacts",
+        json={"filename": "secret.md", "content_base64": base64.b64encode(b"theirs").decode()},
+        headers=bearer(their_token),
+    ).json()
+
+    for ref in (put["uri"], put["key"],
+                f"projects/{mine['id']}/../{theirs['id']}/r/secret.md"):
+        blocked = client.get("/agent/artifacts/content", params={"ref": ref},
+                             headers=bearer(my_token))
+        assert blocked.status_code == 404, ref
+        assert "artifact_list" in blocked.json()["error"]
+
+    # A well-formed key for this project whose bytes were never written is an
+    # ANSWER, not a wall: "it isn't there" is the finding a verifier is sent to
+    # produce, and refusals are capped and revoke the token at the cap.
+    with db_session() as session:
+        before = session.get(Run, my_run).refusal_count
+    absent = client.get(
+        "/agent/artifacts/content",
+        params={"ref": f"projects/{mine['id']}/run_ghost/never-shipped.html"},
+        headers=bearer(my_token),
+    )
+    assert absent.status_code == 200
+    assert absent.json()["exists"] is False
+    assert "not proof" in absent.json()["detail"]
+    with db_session() as session:
+        assert session.get(Run, my_run).refusal_count == before
+
+
 def test_agent_artifact_put_refuses_traversal_and_oversize(client):
     project = make_project(client)
     _, ceo_token = live_token(project["id"], project["ceo_agent_id"])

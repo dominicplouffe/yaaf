@@ -130,6 +130,37 @@ export interface Dashboard {
   /** Drought-clock anchors: the UI counts toward the refusal. */
   created_at: string;
   last_countable_evidence_at: string | null;
+  memory: MemoryUsage;
+}
+
+/** How full each curated memory scope is, counted the same way the refusal
+    counts it. A full scope refuses every member's writes and only its curator
+    can clear it, so the curator's name travels with the number. */
+export interface MemoryScopeUsage {
+  scope: "project" | "team";
+  team_id: string | null;
+  name: string;
+  live: number;
+  cap: number;
+  curator?: string | null;
+}
+
+export interface MemoryUsage {
+  warn_ratio: number;
+  scopes: MemoryScopeUsage[];
+}
+
+/** One rule from GET /admin/constitution/schema — enough to render an editor
+    for it. Generated from the pydantic model, so a new rule is editable the
+    moment it exists rather than when someone remembers to list it here. */
+export interface ConstitutionField {
+  key: string;
+  label: string;
+  help: string;
+  group: string;
+  type: "integer" | "number" | "boolean" | "string";
+  minimum: number | null;
+  maximum: number | null;
 }
 
 /** One row of GET /observe/projects/{id}/health — a way the configuration can

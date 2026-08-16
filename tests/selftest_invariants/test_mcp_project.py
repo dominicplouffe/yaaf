@@ -152,6 +152,61 @@ def test_a_source_address_stays_a_url_through_the_secrets_door(client):
         assert decrypt(row.ciphertext) == "https://data.example.com:3845/mcp"
 
 
+def test_editing_the_url_alone_keeps_the_token(client, monkeypatch):
+    """The edit path saves under the same name. Changing only the address must
+    not disarm the auth header — a source that silently loses its token fails
+    hours later inside an agent run, which is the failure this form exists to
+    prevent. Omitted = keep, "" = remove, a value = rotate."""
+    from yaaf.core.crypto import decrypt
+
+    project = make_project(client, start=False)
+    _save(client, project["id"], bearer="tok-123")
+
+    # Omitted: the token survives, and the preflight still sees it.
+    seen: list[str | None] = []
+
+    def watching_check(url, bearer):
+        seen.append(bearer)
+        return {"ok": True, "detail": "reachable (HTTP 200)"}
+
+    monkeypatch.setattr(admin_module, "_check_data_source", watching_check)
+    moved = _save(client, project["id"], url="http://data.example.com:9999/mcp")
+    assert moved.status_code == 200, moved.text
+    assert seen == ["tok-123"], "the carried token must be used to preflight"
+    with db_session() as session:
+        entry = session.get(Project, project["id"]).config["mcp_servers"][0]
+        assert entry["url_port"] == 9999
+        assert entry["bearer_secret"] == "mcp-ppc-token"
+        token = session.query(Secret).filter_by(name="mcp-ppc-token").one()
+        assert decrypt(token.ciphertext) == "tok-123"
+
+    # A value rotates it.
+    _save(client, project["id"], bearer="tok-456")
+    with db_session() as session:
+        token = session.query(Secret).filter_by(name="mcp-ppc-token").one()
+        assert decrypt(token.ciphertext) == "tok-456"
+
+    # Empty string is the explicit removal, and leaves no orphan row behind.
+    _save(client, project["id"], bearer="")
+    with db_session() as session:
+        entry = session.get(Project, project["id"]).config["mcp_servers"][0]
+        assert "bearer_secret" not in entry
+        assert session.query(Secret).filter_by(name="mcp-ppc-token").count() == 0
+
+
+def test_editing_roles_rescopes_both_halves(client):
+    """Grants live on the secrets, so an edit that changes who gets the source
+    has to move the token with the address — otherwise the role mounts nothing
+    and only finds out mid-run."""
+    project = make_project(client, start=False)
+    _save(client, project["id"], bearer="tok-123", roles=["worker"])
+    _save(client, project["id"], roles=["ceo"])
+
+    with db_session() as session:
+        for name in ("mcp-ppc-url", "mcp-ppc-token"):
+            assert session.query(Secret).filter_by(name=name).one().role_scopes == ["ceo"]
+
+
 def test_delete_cleans_up_completely(client):
     project = make_project(client, start=False)
     _save(client, project["id"], bearer="tok-123")
