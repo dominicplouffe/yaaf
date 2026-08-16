@@ -133,7 +133,10 @@ Then open **http://localhost:8080/app**, log in with the admin token, and
 create a project from the wizard — **[docs/CREATING_A_PROJECT.md](docs/CREATING_A_PROJECT.md)
 walks through your first project in plain English**, from writing a goal the
 CEO can actually plan from to connecting billing, credentials, and data
-sources.
+sources. For worked setups — an open-source launch, a client deliverable you
+can clone per customer, a support desk, an overnight maintenance crew — see
+**[examples/](examples/)**, ten of them with goal text, teams, constitution
+numbers, and what counts as done.
 
 **The real thing — Docker Compose** (real Claude agents, sandboxed):
 
