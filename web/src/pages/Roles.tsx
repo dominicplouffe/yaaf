@@ -124,7 +124,8 @@ export default function Roles() {
       <p className="subtitle">
         Versioned role templates — a role is a craft: its instructions, its brain, and the sandbox
         walls around it. Saving creates a new version; teams keep the version they pinned until you
-        adopt the newer one (Today → adopt latest).
+        adopt the newer one (the project's Overview flags the drift and offers “adopt latest
+        role version”).
       </p>
       {error && <div className="error">{error}</div>}
 
@@ -380,7 +381,7 @@ export default function Roles() {
               </table>
               <p className="help" style={{ margin: "6px 0 0" }}>
                 Saving never touches these teams — each keeps its pinned version until you adopt
-                the new one from that project's Today tab.
+                the new one from that project's Overview.
               </p>
             </div>
           )}

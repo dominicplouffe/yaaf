@@ -334,7 +334,7 @@ function RoleTicks({ options, selected, onChange }: {
   onChange: (slugs: string[]) => void;
 }) {
   if (options.length === 0)
-    return <p className="help">No teams yet — add a team on the Today tab first.</p>;
+    return <p className="help">No teams yet — add a team on the Overview tab first.</p>;
   return (
     <div className="pill-row">
       {options.map((option) => (

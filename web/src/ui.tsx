@@ -425,8 +425,9 @@ export function NoteAction({
   );
 }
 
-/** The approve/deny pair, identical wherever an approval appears (Desk, Today,
-    Boardroom rail, Approvals tab) — a view of one decision, not a second system. */
+/** The approve/deny pair, identical wherever an approval appears (Desk,
+    Overview, Boardroom rail, Records → Decisions) — a view of one decision,
+    not a second system. */
 export function DecideButtons({ approvalId, onDone }: { approvalId: string; onDone: () => void }) {
   return (
     <>
