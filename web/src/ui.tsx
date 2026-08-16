@@ -74,7 +74,21 @@ export function paceDate(spent: number, cap: number): Date | null {
 
 export function fmtUnit(n: number, unit: "usd" | "tokens"): string {
   if (unit === "usd") return `$${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+  // Token budgets run to hundreds of millions — compact or they're unreadable.
+  if (n >= 10_000) {
+    return new Intl.NumberFormat(undefined, {
+      notation: "compact",
+      maximumFractionDigits: 1,
+    }).format(n);
+  }
   return n.toLocaleString();
+}
+
+/** CEOs write paragraph-long bet statements; attention rows get the first
+    clause, the full text lives where the bet does. */
+export function clip(s: string, max = 150): string {
+  if (s.length <= max) return s;
+  return s.slice(0, max).replace(/\s+\S*$/, "") + "…";
 }
 
 // ── inline note capture (this app never window.prompt()s) ───────────────────────

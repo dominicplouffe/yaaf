@@ -12,7 +12,7 @@ import {
 } from "../../api";
 import { fmtWhen, usePoll } from "../../hooks";
 import Markdown from "../../Markdown";
-import { DecideButtons, clockClass, fmtLeft, killChip } from "../../ui";
+import { clip, DecideButtons, clockClass, fmtLeft, fmtUnit, killChip } from "../../ui";
 
 /** The chat stays sacred — the only speaking channel. The rail beside it is
     read-only context: what the CEO is doing, what needs a decision, and the
@@ -85,6 +85,7 @@ export default function Boardroom({ projectId, dash }: { projectId: string; dash
     (r) => r.started_at && new Date(r.started_at).toDateString() === today,
   );
   const todayUsd = todayRuns.reduce((sum, r) => sum + (r.cost_usd ?? 0), 0);
+  const todayTokens = todayRuns.reduce((sum, r) => sum + r.tokens_out + r.tokens_in, 0);
   const pending = (approvals ?? []).filter((a) => a.status === "pending");
   const bets = (hypotheses ?? [])
     .filter((h) => h.status === "active")
@@ -174,8 +175,10 @@ export default function Boardroom({ projectId, dash }: { projectId: string; dash
                 <span className="badge">idle</span>
               )}
               <div className="help" style={{ marginTop: 6 }}>
-                today: ${todayUsd.toLocaleString(undefined, { maximumFractionDigits: 2 })} across{" "}
-                {todayRuns.length} run{todayRuns.length === 1 ? "" : "s"}
+                today: {todayUsd > 0
+                  ? `$${todayUsd.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+                  : `${fmtUnit(todayTokens, "tokens")} tokens`}{" "}
+                across {todayRuns.length} run{todayRuns.length === 1 ? "" : "s"}
               </div>
             </div>
           </div>
@@ -208,7 +211,7 @@ export default function Boardroom({ projectId, dash }: { projectId: string; dash
               <div className="h">The bets</div>
               {bets.map((h) => (
                 <div key={h.id} style={{ marginBottom: 8, fontSize: 13 }}>
-                  {h.statement}
+                  {clip(h.statement, 120)}
                   <div style={{ marginTop: 3 }}>{killChip(h.kill_date, h.status)}</div>
                 </div>
               ))}

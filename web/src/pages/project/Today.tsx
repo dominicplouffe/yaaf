@@ -15,6 +15,7 @@ import {
 } from "../../api";
 import { usePoll } from "../../hooks";
 import {
+  clip,
   DecideButtons,
   clockClass,
   fmtLeft,
@@ -272,7 +273,7 @@ export default function Today({ projectId, dash }: { projectId: string; dash: Da
       <div className="arow" key={h.id}>
         <span className="chip serious">bet expired</span>
         <div className="grow">
-          <div className="tt">“{h.statement}” hit its kill date {fmtWhenShort(h.kill_date)}</div>
+          <div className="tt">“{clip(h.statement)}” hit its kill date {fmtWhenShort(h.kill_date)}</div>
           <div className="sb">you hold the one extension — or let it stand and the CEO pivots</div>
         </div>
         <Link to={`/projects/${projectId}/evidence`}>decide →</Link>
@@ -353,7 +354,7 @@ export default function Today({ projectId, dash }: { projectId: string; dash: Da
       watch.push(
         <div className="wrow" key={h.id}>
           <span className="badge warn">kill date {fmtLeft(h.kill_date).replace(" left", "")}</span>
-          <div className="grow">“{h.statement}” — {fmtWhenShort(h.kill_date)}</div>
+          <div className="grow">“{clip(h.statement)}” — {fmtWhenShort(h.kill_date)}</div>
           <Link to={`/projects/${projectId}/evidence`}>see the bet →</Link>
         </div>,
       );

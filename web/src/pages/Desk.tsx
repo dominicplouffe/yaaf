@@ -3,6 +3,7 @@ import { DeskProject, DeskView, get } from "../api";
 import { usePoll } from "../hooks";
 import { statusBadge } from "./Projects";
 import {
+  clip,
   DecideButtons,
   clockClass,
   fmtAgo,
@@ -66,7 +67,7 @@ export default function Desk() {
           <span className="pj">{p.name}</span>
           <span className="chip serious">bet expired</span>
           <div className="grow">
-            <div className="tt">“{bet.statement}” hit its kill date {fmtWhenShort(bet.kill_date)}</div>
+            <div className="tt">“{clip(bet.statement)}” hit its kill date {fmtWhenShort(bet.kill_date)}</div>
             <div className="sb">
               {bet.blocked_tasks ?? 0} task(s) auto-blocked · you hold the one extension — or let it
               stand and the CEO pivots
@@ -76,7 +77,7 @@ export default function Desk() {
         </div>,
       );
     }
-    if (p.audit.unaudited >= 3) {
+    if (p.audit.unaudited >= 3 && p.status !== "stopped") {
       waiting.push(
         <div className="arow" key={`${p.id}-audit`}>
           <span className="pj">{p.name}</span>
@@ -152,7 +153,7 @@ export default function Desk() {
         <div className="wrow" key={bet.id}>
           <span className="pj">{p.name}</span>
           <span className="badge warn">kill date {fmtLeft(bet.kill_date).replace(" left", "")}</span>
-          <div className="grow">“{bet.statement}” — {fmtWhenShort(bet.kill_date)}</div>
+          <div className="grow">“{clip(bet.statement)}” — {fmtWhenShort(bet.kill_date)}</div>
           <Link to={`/projects/${p.id}/evidence`}>see the bet →</Link>
         </div>,
       );
