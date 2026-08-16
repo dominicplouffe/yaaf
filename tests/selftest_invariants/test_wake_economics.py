@@ -110,3 +110,81 @@ def test_urgent_notice_wakes_immediately(client):
     _add_notice(project, kind=NoticeKind.BUDGET_EXHAUSTED)
     with db_session() as session:
         assert dispatcher.dispatch_once(session) == 1
+
+
+def test_full_memory_wakes_now_but_pressure_rides_an_existing_wake(client):
+    """The whole token argument for warning about memory: a nearly-full store
+    is not worth buying a run for, but a full one has stopped every member of
+    the scope from writing and only this agent can restart it."""
+    project = make_project(client)
+    _drain()
+    _add_notice(project, kind=NoticeKind.MEMORY_PRESSURE)
+    with db_session() as session:
+        assert dispatcher.dispatch_once(session) == 0, "pressure must coalesce, not wake"
+
+    _add_notice(project, kind=NoticeKind.MEMORY_FULL)
+    with db_session() as session:
+        assert dispatcher.dispatch_once(session) == 1
+
+
+def _fill_team(client, project, count):
+    from tests.conftest import agent_by_name, bearer, live_token
+    _, lead_token = live_token(project["id"], agent_by_name(project, "Lead"))
+    for i in range(count):
+        assert client.post(
+            "/agent/memory",
+            json={"scope": "team", "kind": "lesson", "subject": f"lesson {i}",
+                  "body": "something durable we learned the hard way"},
+            headers=bearer(lead_token),
+        ).status_code == 200
+
+
+def test_memory_pressure_warns_the_curator_once(client):
+    """Warned early, warned once, and warned to the agent that can actually act
+    — not to whichever employee happened to hit the wall."""
+    from yaaf.core.constitution import effective
+    from yaaf.core.models import Agent, Project
+    from yaaf.server import janitor
+
+    project = make_project(client, constitution={"memory_cap_team": 4})
+    _fill_team(client, project, 3)  # 3/4 = 75%… under the 0.85 ratio
+    with db_session() as session:
+        row = session.get(Project, project["id"])
+        janitor.warn_memory_pressure(session, row, effective(session, row.id))
+        assert session.query(Notice).filter_by(kind=NoticeKind.MEMORY_PRESSURE).count() == 0
+
+    _fill_team(client, project, 1)  # 4/4 — full
+    for _ in range(3):  # the janitor ticks every 15s; it must not notice thrice
+        with db_session() as session:
+            row = session.get(Project, project["id"])
+            janitor.warn_memory_pressure(session, row, effective(session, row.id))
+
+    with db_session() as session:
+        notices = session.query(Notice).filter_by(kind=NoticeKind.MEMORY_FULL).all()
+        assert len(notices) == 1
+        lead = session.get(Agent, notices[0].agent_id)
+        assert lead.name == "Lead", "the curator is told, not the employee that was refused"
+        assert "memory_compact" in notices[0].body
+
+
+def test_leaderless_team_escalates_to_the_ceo(client):
+    """A team with no lead has no curator at all: nobody on the platform may
+    free a slot. Silence there would be a company quietly unable to remember."""
+    from yaaf.core.constitution import effective
+    from yaaf.core.models import Project, Team
+    from yaaf.server import janitor
+
+    project = make_project(client, constitution={"memory_cap_team": 2})
+    _fill_team(client, project, 2)
+    with db_session() as session:
+        session.get(Team, project["teams"][0]["id"]).lead_agent_id = None
+
+    with db_session() as session:
+        row = session.get(Project, project["id"])
+        janitor.warn_memory_pressure(session, row, effective(session, row.id))
+
+    with db_session() as session:
+        notices = session.query(Notice).filter_by(kind=NoticeKind.MEMORY_FULL).all()
+        assert len(notices) == 1
+        assert notices[0].agent_id == project["ceo_agent_id"]
+        assert "no lead" in notices[0].body

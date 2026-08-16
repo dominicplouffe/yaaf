@@ -1,7 +1,16 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
+import { Link } from "react-router-dom";
 import { EvidenceRow, get, HypothesisRow, post, TaskRow } from "../../api";
 import { fmtWhen, usePoll } from "../../hooks";
-import { downloadCsv, ExportCsv, fmtWhenShort, killChip, NoteAction } from "../../ui";
+import {
+  downloadCsv,
+  ExportCsv,
+  fmtWhenShort,
+  killChip,
+  NoteAction,
+  Skeleton,
+} from "../../ui";
+import type { ProjectCtx } from "../Project";
 
 interface SpotAudit {
   evidence: { id: string; kind: string; provenance: string; verification: string;
@@ -10,6 +19,20 @@ interface SpotAudit {
     success_test: { type: string; command?: string; target?: string };
     evidence: string | null; check_output: string | null;
     audit_status: string | null; audit_note: string | null }[];
+}
+
+function taskBadge(status: string) {
+  const cls =
+    status === "done"
+      ? "good"
+      : status === "blocked"
+        ? "serious"
+        : status === "killed"
+          ? "critical"
+          : status === "checking"
+            ? "warn"
+            : "accent";
+  return <span className={`badge ${cls}`}>{status}</span>;
 }
 
 function verifyBadge(verification: string) {
@@ -22,6 +45,14 @@ function verifyBadge(verification: string) {
   const label = verification === "not_applicable" ? "attested/internal" : verification;
   return <span className={`badge ${cls}`}>{label}</span>;
 }
+
+const FILTERS = [
+  { key: "open", label: "Open", match: (s: string) => ["ready", "claimed", "checking"].includes(s) },
+  { key: "blocked", label: "Blocked", match: (s: string) => s === "blocked" },
+  { key: "done", label: "Done", match: (s: string) => s === "done" },
+  { key: "killed", label: "Killed", match: (s: string) => s === "killed" },
+  { key: "all", label: "All", match: () => true },
+] as const;
 
 const PROOF_FILTERS = [
   { key: "all", label: "All", match: (_r: EvidenceRow) => true },
@@ -88,53 +119,280 @@ function ExtendOnce({ hypothesis, onDone }: { hypothesis: HypothesisRow; onDone:
   );
 }
 
-export default function EvidenceTab({ projectId }: { projectId: string }) {
+/** The plan and its proof, as one page. A bet owns tasks; a task produces
+    evidence. These were two tabs, so answering "has this bet been proven?"
+    meant holding the join in your head and switching back and forth. */
+export default function Work({ ctx }: { ctx: ProjectCtx }) {
+  const { projectId, hypotheses } = ctx;
+  const { data: tasks, error } = usePoll(
+    () => get<TaskRow[]>(`/observe/projects/${projectId}/board`),
+    6000,
+  );
   const { data: evidence, reload: reloadEvidence } = usePoll(
-    () => get<EvidenceRow[]>(`/observe/projects/${projectId}/evidence`),
+    () => get<EvidenceRow[]>(`/observe/projects/${projectId}/evidence?limit=500`),
     8000,
   );
-  const { data: hypotheses, reload: reloadHypotheses } = usePoll(
-    () => get<HypothesisRow[]>(`/observe/projects/${projectId}/hypotheses`),
-    10000,
-  );
-  const { data: tasks } = usePoll(
-    () => get<TaskRow[]>(`/observe/projects/${projectId}/board`),
-    10000,
-  );
-  const [audit, setAudit] = useState<SpotAudit | null>(null);
+  const [filter, setFilter] = useState<(typeof FILTERS)[number]["key"]>("all");
   const [proofFilter, setProofFilter] = useState<(typeof PROOF_FILTERS)[number]["key"]>("all");
   const [showAll, setShowAll] = useState(false);
+  const [audit, setAudit] = useState<SpotAudit | null>(null);
 
   async function auditEvidence(id: string, ok: boolean, note: string) {
     await post(`/admin/evidence/${id}/audit`, { ok, note });
     reloadEvidence();
     if (audit) runSpotAudit();
   }
-
   async function auditTask(id: string, ok: boolean, note: string) {
     await post(`/admin/tasks/${id}/audit`, { ok, note });
     if (audit) runSpotAudit();
   }
-
   async function runSpotAudit() {
     setAudit(await get<SpotAudit>(`/observe/projects/${projectId}/spot_audit?n=5`));
   }
 
-  const completed = (tasks ?? []).filter((t) => t.status === "done");
+  const all = tasks ?? [];
+  const rows = evidence ?? [];
+  const active = FILTERS.find((f) => f.key === filter)!;
+  const top = all.filter((t) => !t.parent_task_id);
+  const subtasksOf = (id: string) => all.filter((t) => t.parent_task_id === id);
+  // A group survives the filter if the bet's top task or any subtask matches —
+  // a blocked subtask should never hide under a filtered-out parent.
+  const visible = top.filter(
+    (t) => active.match(t.status) || subtasksOf(t.id).some((s) => active.match(s.status)),
+  );
+
+  // evidence -> task -> hypothesis. The chip this produces is the whole reason
+  // these two tabs became one: it answers the question the bet asks.
+  const betOfTask = new Map(all.map((t) => [t.id, t.hypothesis_id]));
+  const proofByBet = new Map<string, { verified: number; failed: number; pending: number }>();
+  for (const e of rows) {
+    if (!e.task_id) continue;
+    const betId = betOfTask.get(e.task_id);
+    if (!betId) continue;
+    const tally = proofByBet.get(betId) ?? { verified: 0, failed: 0, pending: 0 };
+    if (e.verification === "verified" || e.verification === "not_applicable") tally.verified += 1;
+    else if (e.verification === "failed") tally.failed += 1;
+    else tally.pending += 1;
+    proofByBet.set(betId, tally);
+  }
+
+  const byHypothesis = new Map<string | null, TaskRow[]>();
+  for (const t of visible) {
+    byHypothesis.set(t.hypothesis_id, [...(byHypothesis.get(t.hypothesis_id) ?? []), t]);
+  }
+  // Every live bet gets a card even with no tasks on it — a bet nobody is
+  // working, with a kill date approaching, is exactly what must not be silent.
+  for (const h of hypotheses) {
+    if (h.status === "active" && !byHypothesis.has(h.id)) byHypothesis.set(h.id, []);
+  }
+  const hypothesisById = new Map(hypotheses.map((h) => [h.id, h]));
+  const groups = [...byHypothesis.entries()].sort(([a], [b]) => {
+    if (!a) return 1;
+    if (!b) return -1;
+    const ha = hypothesisById.get(a);
+    const hb = hypothesisById.get(b);
+    const rank = (h?: HypothesisRow) => (h?.status === "active" ? 0 : 1);
+    if (rank(ha) !== rank(hb)) return rank(ha) - rank(hb);
+    return (ha?.kill_date ?? "").localeCompare(hb?.kill_date ?? "");
+  });
+
+  const completed = all.filter((t) => t.status === "done");
   const audited = completed.filter((t) => t.audit_status).length;
   const coveragePct = completed.length > 0 ? Math.round((audited / completed.length) * 100) : null;
 
-  const rows = (evidence ?? []);
-  const activeFilter = PROOF_FILTERS.find((f) => f.key === proofFilter)!;
-  const matching = rows.filter(activeFilter.match);
-  // Active projects accumulate hundreds of rows; the latest 50 answer the
-  // question, the rest stay one click (or one CSV) away.
+  const activeProofFilter = PROOF_FILTERS.find((f) => f.key === proofFilter)!;
+  const matching = rows.filter(activeProofFilter.match);
   const shown = showAll ? matching : matching.slice(0, 50);
+  const failedCount = rows.filter((r) => r.verification === "failed").length;
+
+  function TaskDetails({ task }: { task: TaskRow }) {
+    return (
+      <details>
+        <summary className="help">details</summary>
+        <dl className="kv" style={{ margin: "8px 0" }}>
+          <dt>success test</dt>
+          <dd className="mono">
+            [{task.success_test.type}] {task.success_test.command ?? task.success_test.target}
+          </dd>
+          {task.evidence && (
+            <>
+              <dt>completion evidence</dt>
+              <dd>{task.evidence}</dd>
+            </>
+          )}
+          {task.check_output && (
+            <>
+              <dt>platform check output</dt>
+              <dd>
+                <pre className="block">{task.check_output}</pre>
+              </dd>
+            </>
+          )}
+          {task.audit_status && (
+            <>
+              <dt>your audit</dt>
+              <dd>{task.audit_status}</dd>
+            </>
+          )}
+        </dl>
+      </details>
+    );
+  }
+
+  function row(task: TaskRow, sub: boolean) {
+    return (
+      <tr key={task.id} className={sub ? "subtask" : undefined}>
+        <td>
+          {sub ? <>↳ {task.title}</> : <strong>{task.title}</strong>}
+          <TaskDetails task={task} />
+        </td>
+        <td>{sub ? "" : task.team_name ?? "—"}</td>
+        <td>
+          {taskBadge(task.status)}
+          {/* Blocked reasons on the row, in plain words — a blocked task is
+              precisely the row that must be understood without clicking. */}
+          {task.blocked_reason && (
+            <div className="help" style={{ marginTop: 2 }}>{task.blocked_reason}</div>
+          )}
+        </td>
+        <td>{sub ? "" : task.external ? "✓ external" : "internal"}</td>
+        <td>{task.holder_name ?? "—"}</td>
+      </tr>
+    );
+  }
+
+  function proofChips(betId: string) {
+    const tally = proofByBet.get(betId);
+    if (!tally || tally.verified + tally.failed + tally.pending === 0) {
+      return <span className="chip">no proof yet</span>;
+    }
+    return (
+      <>
+        {tally.verified > 0 && <span className="chip ok">{tally.verified} verified</span>}
+        {tally.failed > 0 && <span className="chip critical">{tally.failed} failed</span>}
+        {tally.pending > 0 && <span className="chip warn">{tally.pending} pending</span>}
+      </>
+    );
+  }
+
+  if (error && !tasks) return <div className="error">{error}</div>;
 
   return (
     <>
+      <p className="subtitle">
+        The plan and whether it has been proven. Bets set the direction, tasks do the work, and
+        evidence decides whether any of it counted.
+      </p>
+
+      <div className="pills">
+        {FILTERS.map((f) => {
+          const count = all.filter((t) => f.match(t.status)).length;
+          return (
+            <button
+              key={f.key}
+              className={filter === f.key ? "active" : ""}
+              onClick={() => setFilter(f.key)}
+            >
+              {f.label} {count}
+            </button>
+          );
+        })}
+        <ExportCsv
+          onClick={() =>
+            downloadCsv(
+              "tasks.csv",
+              ["title", "parent", "team", "status", "external", "holder", "success_test", "blocked_reason", "audit"],
+              all.map((t) => [
+                t.title,
+                t.parent_task_id ?? "",
+                t.team_name,
+                t.status,
+                t.external ? "external" : "internal",
+                t.holder_name,
+                `[${t.success_test.type}] ${t.success_test.command ?? t.success_test.target ?? ""}`,
+                t.blocked_reason,
+                t.audit_status,
+              ]),
+            )
+          }
+        />
+      </div>
+
+      {!tasks ? (
+        <Skeleton rows={4} />
+      ) : (
+        groups.map(([hypothesisId, groupTasks]) => {
+          const h = hypothesisId ? hypothesisById.get(hypothesisId) : null;
+          return (
+            <div className="bet" key={hypothesisId ?? "standing"}>
+              <div className="bh">
+                <div className="top">
+                  <span className="tag">{h ? "BET" : "STANDING WORK"}</span>
+                  {h && killChip(h.kill_date, h.status)}
+                  <div className="spacer" />
+                  {h && proofChips(h.id)}
+                </div>
+                {h ? (
+                  <>
+                    <div className="st">{h.statement}</div>
+                    <div className="conseq">
+                      If it dies: {h.kill_condition}
+                      {h.status === "expired" && !h.extended_once && (
+                        <> <ExtendOnce hypothesis={h} onDone={ctx.reload} /></>
+                      )}
+                      {h.extended_once && <span className="help"> · extension used</span>}
+                    </div>
+                  </>
+                ) : (
+                  <div className="st">Work that serves no stated bet</div>
+                )}
+              </div>
+              {groupTasks.length === 0 ? (
+                <div className="empty">
+                  Nothing is assigned to this bet
+                  {h && h.status === "active" && <> — and it dies {fmtWhenShort(h.kill_date)}</>}.{" "}
+                  <Link to={`/projects/${projectId}/boardroom`}>ask the CEO why →</Link>
+                </div>
+              ) : (
+                <table>
+                  <thead>
+                    <tr>
+                      <th style={{ width: "44%" }}>Task</th>
+                      <th>Team</th>
+                      <th>Status</th>
+                      <th>Proof type</th>
+                      <th>Holder</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {groupTasks.map((task) => (
+                      <Fragment key={task.id}>
+                        {row(task, false)}
+                        {subtasksOf(task.id).map((subtask) => row(subtask, true))}
+                      </Fragment>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          );
+        })
+      )}
+      {tasks && visible.length === 0 && groups.length === 0 && (
+        <p className="help">
+          {all.length === 0
+            ? "No tasks yet — the CEO plans on its heartbeat, or immediately after you speak in the boardroom."
+            : "Nothing matches this filter."}
+        </p>
+      )}
+      <p className="help" style={{ marginTop: 12 }}>
+        Read-only by design: only the CEO creates tasks, only leads decompose, only the platform
+        marks command-tested work done. Redirect the plan from the{" "}
+        <Link to={`/projects/${projectId}/boardroom`}>Boardroom →</Link>
+      </p>
+
       {/* ── the human layer: prompted, measured, still random ── */}
-      <h2 className="zone" style={{ marginTop: 6 }}>Your audit</h2>
+      <h2 className="zone">Your audit</h2>
       <div className="arow">
         <div className="grow">
           <div className="tt">
@@ -240,51 +498,21 @@ export default function EvidenceTab({ projectId }: { projectId: string }) {
         </div>
       )}
 
-      <h2 className="zone">Hypotheses — the CEO's bets</h2>
-      <p className="subtitle" style={{ marginBottom: 8 }}>
-        Falsifiable bets with kill dates. Expiry is automatic; only you can extend, exactly once.
-      </p>
-      <table>
-        <thead>
-          <tr>
-            <th style={{ width: "36%" }}>Statement</th>
-            <th>Kill condition</th>
-            <th>Kill date</th>
-            <th>Status</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {(hypotheses ?? []).map((hypothesis) => (
-            <tr key={hypothesis.id}>
-              <td><strong>{hypothesis.statement}</strong></td>
-              <td>{hypothesis.kill_condition}</td>
-              <td className="mono">{fmtWhenShort(hypothesis.kill_date)}</td>
-              <td>{killChip(hypothesis.kill_date, hypothesis.status)}</td>
-              <td>
-                {hypothesis.status === "expired" && !hypothesis.extended_once && (
-                  <ExtendOnce hypothesis={hypothesis} onDone={reloadHypotheses} />
-                )}
-                {hypothesis.extended_once && <span className="help">extension used</span>}
-              </td>
-            </tr>
-          ))}
-          {hypotheses && hypotheses.length === 0 && (
-            <tr>
-              <td colSpan={5} className="help">
-                None yet — the CEO states bets before spending effort on them.
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-
-      <h2 className="zone">Evidence — the outside world acting</h2>
+      <h2 className="zone">All proof <span className="cnt">{rows.length}</span></h2>
       <p className="subtitle" style={{ marginBottom: 8 }}>
         Only verified or platform-attested external evidence counts toward the drought and the
         external floor. Agent claims are fetched, hashed, and checked by the platform, never taken
         at their word.
       </p>
+      {/* Failed proof is not a footnote: the platform fetched what an agent
+          cited and did not find it. That work counted for nothing. */}
+      {failedCount > 0 && failedCount >= rows.length / 4 && (
+        <div className="error">
+          <strong>{failedCount} of {rows.length} pieces of evidence failed verification.</strong>{" "}
+          The platform fetched the source an agent cited and got a 404 or a mismatch. Failed proof
+          counts for nothing — which is why the drought clock keeps running while work looks busy.
+        </div>
+      )}
       <div className="pills">
         {PROOF_FILTERS.map((f) => {
           const count = rows.filter(f.match).length;

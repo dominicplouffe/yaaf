@@ -57,7 +57,7 @@ export default function Desk() {
             expires in {fmtLeft(a.expires_at).replace(" left", "")} → auto-deny
           </span>
           <DecideButtons approvalId={a.id} onDone={reload} />
-          <Link to={`/projects/${p.id}/approvals`}>context →</Link>
+          <Link to={`/projects/${p.id}/records/decisions`}>context →</Link>
         </div>,
       );
     }
@@ -73,7 +73,7 @@ export default function Desk() {
               stand and the CEO pivots
             </div>
           </div>
-          <Link to={`/projects/${p.id}/evidence`}>decide →</Link>
+          <Link to={`/projects/${p.id}/work`}>decide →</Link>
         </div>,
       );
     }
@@ -86,7 +86,7 @@ export default function Desk() {
             <div className="tt">{p.audit.unaudited} completions have never been audited</div>
             <div className="sb">the platform picks the sample — you're the reviewer that doesn't approve everything</div>
           </div>
-          <Link to={`/projects/${p.id}/evidence`}>deal a sample →</Link>
+          <Link to={`/projects/${p.id}/work`}>deal a sample →</Link>
         </div>,
       );
     }
@@ -129,7 +129,7 @@ export default function Desk() {
             No verified external evidence in {d.window_hours}h — the platform is refusing new
             internal work until proof lands
           </div>
-          <Link to={`/projects/${p.id}/evidence`}>see evidence →</Link>
+          <Link to={`/projects/${p.id}/work`}>see the proof →</Link>
         </div>,
       );
     } else if (d.applies && d.last_countable_at) {
@@ -143,7 +143,7 @@ export default function Desk() {
               {Math.floor(elapsed)} hours without verified external evidence — at {d.window_hours}h
               the platform starts refusing internal work
             </div>
-            <Link to={`/projects/${p.id}/evidence`}>see evidence →</Link>
+            <Link to={`/projects/${p.id}/work`}>see the proof →</Link>
           </div>,
         );
       }
@@ -154,7 +154,7 @@ export default function Desk() {
           <span className="pj">{p.name}</span>
           <span className="badge warn">kill date {fmtLeft(bet.kill_date).replace(" left", "")}</span>
           <div className="grow">“{clip(bet.statement)}” — {fmtWhenShort(bet.kill_date)}</div>
-          <Link to={`/projects/${p.id}/evidence`}>see the bet →</Link>
+          <Link to={`/projects/${p.id}/work`}>see the bet →</Link>
         </div>,
       );
     }
@@ -167,7 +167,7 @@ export default function Desk() {
             {p.frozen_threads} frozen thread(s) — the pair breaker tripped; those agents are stuck
             until you unfreeze
           </div>
-          <Link to={`/projects/${p.id}/channels`}>review thread →</Link>
+          <Link to={`/projects/${p.id}/records/messages`}>review thread →</Link>
         </div>,
       );
     }

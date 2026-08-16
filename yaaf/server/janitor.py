@@ -7,7 +7,8 @@ Everything here is enforcement-by-state-change, not notification:
 - hypotheses expire AT their kill date; their open tasks are blocked
 - pending approvals expire to DENIED, and the requester is woken to re-plan
 - budgets: 80% warns, 100% auto-pauses the project and revokes live runs
-- amendments past cooling-off are applied and queued for CEO disclosure
+- any amendment still waiting from before the cooling-off was removed is applied
+  and queued for CEO disclosure (new ones land the instant they are saved)
 - long-dead claims (no run, no subtasks) are released back to ready
 - pending external evidence is verified
 
@@ -29,11 +30,13 @@ from yaaf.core.config import settings
 from yaaf.core.constitution import ConstitutionDoc, apply_due_amendments, effective
 from yaaf.core.db import db_session
 from yaaf.core.models import (
+    Agent,
     Approval,
     ApprovalStatus,
     Hypothesis,
     HypothesisStatus,
     LedgerEntry,
+    MemoryScope,
     Notice,
     NoticeKind,
     Project,
@@ -44,6 +47,7 @@ from yaaf.core.models import (
     RunStatus,
     Task,
     TaskStatus,
+    Team,
     utcnow,
 )
 from yaaf.server import policy
@@ -86,6 +90,7 @@ def janitor_once(session: Session) -> None:
         enforce_budget(session, project, cons)
         release_dead_claims(session, project, cons)
         warn_drought(session, project, cons)
+        warn_memory_pressure(session, project, cons)
     verify_pending_evidence(session)
     # Slack mirroring moved to its own 2s loop (slack.socket.fast_mirror_loop):
     # chat-grade latency, and no double-post race with an enforcement tick.
@@ -375,6 +380,93 @@ def enforce_budget(session: Session, project: Project, cons: ConstitutionDoc) ->
                 f"({spent:,.0f}/{cap:,.0f} {unit}). Decide what you are cutting and tell "
                 "the chairman the number — before the platform pauses the project for you.",
             )
+
+
+# ── memory pressure (informational; enforcement is at memory add) ──────────────
+
+# One notice per pressure episode. Long enough that a curator that is choosing
+# not to compact is not nagged every wake; short enough that a store which
+# fills, gets curated, and fills again is warned about the second time too.
+# A *full* scope is an outage, not a nag — every member's writes are being
+# refused — so it re-asks far sooner.
+MEMORY_PRESSURE_WINDOW_HOURS = 12
+MEMORY_FULL_WINDOW_HOURS = 1
+
+
+def warn_memory_pressure(session: Session, project: Project, cons: ConstitutionDoc) -> None:
+    """Tell the *curator* — not whoever hit the wall — before the wall.
+
+    A full store refuses writes from every member of the scope, but only the
+    curator can clear it, so the agent that discovers the problem is routinely
+    the one agent that cannot fix it. Warning early turns a terminated run into
+    a compaction the curator does on a wake it was having anyway.
+    """
+    scopes: list[tuple[str, str | None, Agent | None, str]] = [
+        (MemoryScope.PROJECT, None, policy.ceo_of(session, project.id), project.name)
+    ]
+    for team in session.execute(
+        select(Team).where(Team.project_id == project.id)
+    ).scalars():
+        scopes.append(
+            (MemoryScope.TEAM, team.id, policy.effective_lead(session, team), team.name)
+        )
+
+    for scope, team_id, curator, team_name in scopes:
+        cap = policy.memory_cap_for(cons, scope)
+        live = policy.live_memory_count(session, scope, project.id, team_id)
+        if live < cap * cons.memory_warn_ratio:
+            continue
+        full = live >= cap
+        kind = NoticeKind.MEMORY_FULL if full else NoticeKind.MEMORY_PRESSURE
+        window = MEMORY_FULL_WINDOW_HOURS if full else MEMORY_PRESSURE_WINDOW_HOURS
+
+        # A team with two or more members and no named lead has no curator at
+        # all: its memory fills, every member is refused, and there is nobody
+        # the platform could ask to fix it. Only the chairman can name a lead,
+        # so this goes to the CEO to escalate — silence here would be a company
+        # quietly unable to remember anything.
+        target = curator.id if curator is not None else None
+        if target is None:
+            ceo = policy.ceo_of(session, project.id)
+            if ceo is None or not full:
+                continue
+            target = ceo.id
+            body = (
+                f"Team \"{team_name}\" has filled its memory ({live}/{cap}) and has no "
+                "lead, so no agent on the platform may compact or forget there — every "
+                "member's writes are refused. Ask the chairman to name a lead for that "
+                "team, or to raise its memory cap."
+            )
+        else:
+            where = "Project memory" if scope == MemoryScope.PROJECT else "Your team's memory"
+            body = (
+                f"{where} is full ({live}/{cap}). Every member's writes are being refused "
+                "and only you can clear it: memory_compact folds several overlapping "
+                "entries into one and frees all but one slot. Nothing is lost — folded "
+                "entries stay readable with memory_search include_superseded=true."
+                if full else
+                f"{where} is nearly full ({live}/{cap}). Compact now, on this wake, rather "
+                "than discovering the cap mid-write later: memory_compact folds "
+                "overlapping entries into one and frees all but one slot."
+            )
+
+        window_start = utcnow() - timedelta(hours=window)
+        already = session.execute(
+            select(func.count(Notice.id)).where(
+                Notice.project_id == project.id,
+                Notice.agent_id == target,
+                Notice.kind == kind,
+                Notice.created_at >= window_start,
+            )
+        ).scalar_one()
+        if already:
+            continue
+        _notice_agent(session, project, target, kind, body)
+        log.warning(
+            "memory %s: project=%s scope=%s team=%s %d/%d curator=%s",
+            "full" if full else "pressure", project.slug, scope, team_id, live, cap,
+            curator.name if curator else "NONE (leaderless)",
+        )
 
 
 # ── drought (informational; enforcement is at task creation) ───────────────────

@@ -3,13 +3,14 @@
 Everything here is authenticated with the admin token (full user auth is the
 UI milestone). Chairman powers are deliberately narrow at runtime: speak in the
 boardroom, decide approvals, extend a hypothesis once, amend the constitution
-through the cooling-off, pause/stop things, unfreeze threads, spot-audit. The
+(recorded and disclosed), pause/stop things, unfreeze threads, spot-audit. The
 chairman never edits tasks, posts to team rooms, or touches memory — that
 discipline is the product.
 """
 
 from __future__ import annotations
 
+import logging
 import secrets as pysecrets
 from datetime import datetime
 
@@ -19,7 +20,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from yaaf.core import ids
-from yaaf.core.constitution import ConstitutionDoc, create_initial, effective, propose_amendment
+from yaaf.core.constitution import (
+    ConstitutionDoc,
+    create_initial,
+    effective,
+    propose_amendment,
+)
 from yaaf.core.db import notify
 from yaaf.core.models import (
     Agent,
@@ -55,6 +61,8 @@ from yaaf.core.models import (
 from yaaf.server import policy
 from yaaf.server.api.agent import WAKE_CHANNEL
 from yaaf.server.deps import admin_auth, db
+
+log = logging.getLogger("yaaf.admin")
 
 router = APIRouter(dependencies=[Depends(admin_auth)])
 
@@ -1017,7 +1025,7 @@ def repin_team(team_id: str, session: Session = Depends(db)) -> dict:
 class ProjectPatch(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
     # The chairman's mandate, not a constitutional rule: it redirects the
-    # company rather than constraining it, so it moves without a cooling-off.
+    # company rather than constraining it, and needs no written reason.
     goal: str | None = Field(default=None, min_length=10)
     billing_mode: str | None = Field(default=None, pattern="^(api_key|subscription)$")
     billing_secret_id: str | None = None
@@ -1325,6 +1333,32 @@ class AmendmentIn(BaseModel):
     changes: dict
 
 
+
+@router.get("/constitution/schema")
+def constitution_schema() -> list[dict]:
+    """Every rule the constitution holds, described well enough to render an
+    editor from. Derived from the model itself, so a field added to
+    ConstitutionDoc is editable the moment it exists — the settings page used to
+    carry its own list of six, and the rules a stuck company actually needs to
+    change were not on it."""
+    schema = ConstitutionDoc.model_json_schema()
+    fields = []
+    for key, spec in schema["properties"].items():
+        # `str | None` fields arrive as anyOf; the real type is the non-null arm.
+        arms = spec.get("anyOf") or [spec]
+        typed = next((a for a in arms if a.get("type") != "null"), arms[0])
+        fields.append({
+            "key": key,
+            "label": spec.get("title") or key.replace("_", " "),
+            "help": spec.get("description", ""),
+            "group": spec.get("group", "Other"),
+            "type": typed.get("type", "string"),
+            "minimum": typed.get("minimum", typed.get("exclusiveMinimum")),
+            "maximum": typed.get("maximum", typed.get("exclusiveMaximum")),
+        })
+    return fields
+
+
 @router.post("/projects/{project_id}/amendments")
 def amend_constitution(
     project_id: str, body: AmendmentIn, session: Session = Depends(db)
@@ -1332,21 +1366,23 @@ def amend_constitution(
     project = _get_project(session, project_id)
     try:
         amendments = propose_amendment(
-            session, project.id, project.chairman_user_id, body.reason, body.changes
+            session, project.id, project.chairman_user_id, body.reason, body.changes,
         )
     except Exception as exc:  # invalid overlay
         raise HTTPException(status_code=422, detail=f"invalid amendment: {exc}") from exc
     if not amendments:
         raise HTTPException(status_code=422, detail="the amendment changes nothing")
-    applied_now = [a for a in amendments if a.applied_constitution_id is not None]
-    pending = [a for a in amendments if a.applied_constitution_id is None]
+    applied_now = amendments  # nothing waits; the split existed for the cooling-off
     for amendment in amendments:
         _audit(session, project.id, "constitution.amend", "amendment", amendment.id,
                {"changes": amendment.changes,
                 "effective_at": amendment.effective_at.isoformat(),
-                "applied_now": amendment in applied_now})
-    # Budget amendments applied in this call are disclosed in this call too —
-    # the janitor only discloses what its own apply pass lands.
+                "applied_now": True})
+        # The audit row is now the whole accountability story, so it is also
+        # worth an operator log line: the rulebook moving is not a routine edit.
+        log.warning("constitution amended: project=%s changes=%s reason=%s",
+                    project.slug, amendment.changes, amendment.reason)
+    # Disclosed in this call, since it is in force in this call.
     ceo = policy.ceo_of(session, project.id)
     for amendment in applied_now:
         if ceo is not None:
@@ -1356,15 +1392,13 @@ def amend_constitution(
                 body=(f"The chairman amended the constitution (reason: {amendment.reason}). "
                       f"Changes now in force: {amendment.changes}. Plan accordingly."),
             ))
-    note_parts = []
-    if applied_now:
-        note_parts.append("Budget and reporting-cadence changes are in force NOW.")
-    if pending:
-        note_parts.append("The other changes take effect after the 72h cooling-off.")
+    # Name the fields rather than a category: a note that lists what you just
+    # changed cannot go stale the way a note about which bucket it fell in did.
+    changed_now = sorted({k for a in applied_now for k in a.changes})
+    note_parts = [f"In force NOW: {', '.join(changed_now)}."]
     return {
         "amendments": [
-            {"id": a.id, "effective_at": a.effective_at.isoformat(),
-             "applied_now": a in applied_now}
+            {"id": a.id, "effective_at": a.effective_at.isoformat(), "applied_now": True}
             for a in amendments
         ],
         "note": " ".join(note_parts) + " Everything is disclosed to the CEO.",
@@ -1403,7 +1437,11 @@ def list_amendments(project_id: str, session: Session = Depends(db)) -> list[dic
 
 @router.post("/amendments/{amendment_id}/cancel")
 def cancel_amendment(amendment_id: str, session: Session = Depends(db)) -> dict:
-    """The cooling-off period is for reconsidering; this is the reconsidering."""
+    """Cancels an amendment that has not landed yet. New amendments take effect
+    the moment they are saved, so nothing reaches this any more — it stays for
+    the ones written while the cooling-off still existed, which are the only
+    rows that can still be pending. To undo a change that is already in force,
+    amend it back."""
     row = session.get(Amendment, amendment_id)
     if row is None:
         raise HTTPException(status_code=404, detail="unknown amendment")

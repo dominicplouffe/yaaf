@@ -8,29 +8,46 @@ from datetime import timedelta
 from tests.conftest import ADMIN, agent_by_name, bearer, live_token, make_project
 from yaaf.core import ids
 from yaaf.core.db import db_session
-from yaaf.core.models import Amendment, Approval, Evidence, Notice, Task, utcnow
+from yaaf.core.models import (
+    Amendment,
+    Approval,
+    Evidence,
+    Notice,
+    Project,
+    Task,
+    utcnow,
+)
 from yaaf.server.janitor import janitor_once
 
 OBS_TEST = {"type": "observable", "target": "https://example.org/thing exists and loads"}
 
 
-def test_amendment_cancel_during_cooling_off(client):
+def test_a_still_pending_amendment_can_be_cancelled(client):
+    """Amendments now land the instant they are saved, so nothing new is ever
+    pending. Rows written while the old cooling-off existed can still be sitting
+    with a future effective_at, and they must stay both applicable and
+    cancellable rather than becoming stranded by the change."""
     project = make_project(client)
-    proposed = client.post(
-        f"/admin/projects/{project['id']}/amendments",
-        json={"reason": "loosen the queue for the launch push", "changes": {"queue_ceiling": 20}},
-        headers=ADMIN,
-    ).json()["amendments"][0]
+    # A pre-removal amendment, exactly as one would have been written: dated
+    # into the future, waiting for the janitor.
+    legacy = ids.new_id(ids.AMENDMENT)
+    with db_session() as session:
+        chairman = session.get(Project, project["id"]).chairman_user_id
+        session.add(Amendment(
+            id=legacy, project_id=project["id"], proposed_by_user_id=chairman,
+            reason="loosen the queue for the launch push", changes={"queue_ceiling": 20},
+            effective_at=utcnow() + timedelta(hours=72),
+        ))
 
     listed = client.get(f"/admin/projects/{project['id']}/amendments", headers=ADMIN).json()
     assert [a["status"] for a in listed] == ["pending"]
 
-    cancelled = client.post(f"/admin/amendments/{proposed['id']}/cancel", headers=ADMIN)
+    cancelled = client.post(f"/admin/amendments/{legacy}/cancel", headers=ADMIN)
     assert cancelled.status_code == 200
 
-    # Even past the cooling-off date, a cancelled amendment never applies.
+    # Even once its date arrives, a cancelled amendment never applies.
     with db_session() as session:
-        session.get(Amendment, proposed["id"]).effective_at = utcnow() - timedelta(minutes=1)
+        session.get(Amendment, legacy).effective_at = utcnow() - timedelta(minutes=1)
     with db_session() as session:
         janitor_once(session)
     dash = client.get(f"/observe/projects/{project['id']}", headers=ADMIN).json()
@@ -39,7 +56,24 @@ def test_amendment_cancel_during_cooling_off(client):
     assert listed[0]["status"] == "cancelled"
 
     # Cancelling twice — or cancelling an applied amendment — is refused.
-    assert client.post(f"/admin/amendments/{proposed['id']}/cancel", headers=ADMIN).status_code == 409
+    assert client.post(f"/admin/amendments/{legacy}/cancel", headers=ADMIN).status_code == 409
+
+
+def test_a_pending_legacy_amendment_still_lands(client):
+    """The other half of the same promise: not cancelled, so the janitor applies
+    it on its original schedule instead of leaving it in limbo forever."""
+    project = make_project(client)
+    with db_session() as session:
+        chairman = session.get(Project, project["id"]).chairman_user_id
+        session.add(Amendment(
+            id=ids.new_id(ids.AMENDMENT), project_id=project["id"],
+            proposed_by_user_id=chairman, reason="written before the delay was removed",
+            changes={"queue_ceiling": 20}, effective_at=utcnow() - timedelta(minutes=1),
+        ))
+    with db_session() as session:
+        janitor_once(session)
+    dash = client.get(f"/observe/projects/{project['id']}", headers=ADMIN).json()
+    assert dash["constitution"]["queue_ceiling"] == 20
 
 
 def test_approval_nag_fires_once_before_expiry(client):

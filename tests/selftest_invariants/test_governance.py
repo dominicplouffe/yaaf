@@ -231,79 +231,103 @@ def test_drought_refuses_internal_tasks(client):
     assert ok_again.status_code == 200
 
 
-def test_amendment_cooling_off(client):
+def test_amendments_are_in_force_immediately(client):
+    """Chairman's ruling (2026-08-16): no rule waits. What binds the agents is
+    that they cannot change these values themselves and are told when he does —
+    not a delay he could always wait out or work around anyway."""
     from yaaf.core.constitution import effective
-    from yaaf.core.models import Amendment
 
     project = make_project(client, constitution={"queue_ceiling": 5})
-    amendment = client.post(
-        f"/admin/projects/{project['id']}/amendments",
-        json={"reason": "the team is drowning, raise the ceiling",
-              "changes": {"queue_ceiling": 12}},
-        headers=ADMIN,
-    ).json()["amendments"][0]
-
-    # Not in force during the cooling-off.
-    with db_session() as session:
-        janitor_once(session)
-        assert effective(session, project["id"]).queue_ceiling == 5
-
-    # Time passes.
-    with db_session() as session:
-        session.get(Amendment, amendment["id"]).effective_at = utcnow() - timedelta(minutes=1)
-    with db_session() as session:
-        janitor_once(session)
-    with db_session() as session:
-        assert effective(session, project["id"]).queue_ceiling == 12
-        disclosure = session.query(Notice).filter(
-            Notice.project_id == project["id"],
-            Notice.kind == "constitution_amended",
-        ).all()
-        assert disclosure, "the CEO must be told the rules changed"
-
-    # An invalid amendment is refused up front.
-    bad = client.post(
-        f"/admin/projects/{project['id']}/amendments",
-        json={"reason": "break the schema", "changes": {"queue_ceiling": -1}},
-        headers=ADMIN,
-    )
-    assert bad.status_code == 422
-
-
-def test_budget_amendments_apply_immediately(client):
-    """Chairman's ruling (2026-08-15): budgets are business reality — a
-    customer changes their mind, a mistake needs correcting NOW. Budget fields
-    skip the cooling-off entirely; behavioral guardrails never do. Both halves
-    are still recorded as amendments and disclosed to the CEO."""
-    from yaaf.core.constitution import effective
-
-    project = make_project(client)
     response = client.post(
         f"/admin/projects/{project['id']}/amendments",
-        json={"reason": "customer doubled the retainer for Q4",
-              "changes": {"monthly_usd_cap": 2500.0, "queue_ceiling": 12}},
+        json={"reason": "the team is drowning, raise the ceiling",
+              "changes": {"queue_ceiling": 12, "monthly_usd_cap": 2500.0}},
         headers=ADMIN,
     ).json()
-    assert {a["applied_now"] for a in response["amendments"]} == {True, False}
+
+    # One amendment, applied in the request that proposed it — no janitor, no
+    # split into an immediate half and a cooled half.
+    assert len(response["amendments"]) == 1
+    assert response["amendments"][0]["applied_now"] is True
     assert "NOW" in response["note"]
 
-    # The budget is in force in the very same request — no janitor involved;
-    # the guardrail half of the same save still waits out its cooling-off.
     with db_session() as session:
         cons = effective(session, project["id"])
+        assert cons.queue_ceiling == 12
         assert cons.monthly_usd_cap == 2500.0
-        assert cons.queue_ceiling != 12
 
-    # Disclosure of the immediate half is immediate too.
-    with db_session() as session:
+        # Disclosure rides along, naming both fields in the one notice.
         notices = session.query(Notice).filter(
             Notice.project_id == project["id"],
             Notice.kind == "constitution_amended",
         ).all()
-        assert len(notices) == 1 and "monthly_usd_cap" in notices[0].body
+        assert len(notices) == 1
+        assert "queue_ceiling" in notices[0].body and "monthly_usd_cap" in notices[0].body
+        assert "the team is drowning" in notices[0].body, "the reason travels with the change"
 
     listed = client.get(f"/admin/projects/{project['id']}/amendments", headers=ADMIN).json()
-    assert sorted(a["status"] for a in listed) == ["applied", "pending"]
+    assert [a["status"] for a in listed] == ["applied"], "nothing is ever left pending"
+
+    # A janitor pass changes nothing — there is no second half waiting for it.
+    with db_session() as session:
+        janitor_once(session)
+    with db_session() as session:
+        assert effective(session, project["id"]).queue_ceiling == 12
+
+    # An invalid amendment is still refused up front, whole — a bad overlay
+    # must not land half-applied now that landing is instant.
+    bad = client.post(
+        f"/admin/projects/{project['id']}/amendments",
+        json={"reason": "break the schema", "changes": {"queue_ceiling": -1, "drought_hours": 1}},
+        headers=ADMIN,
+    )
+    assert bad.status_code == 422
+    with db_session() as session:
+        cons = effective(session, project["id"])
+        assert cons.queue_ceiling == 12 and cons.drought_hours != 1
+
+
+def test_amendment_is_audited_and_logged(client):
+    """The delay is gone, so the record is the whole accountability story: who
+    changed which rule, when, and why — recoverable long after the fact."""
+    from yaaf.core.models import AuditLog
+
+    project = make_project(client)
+    client.post(
+        f"/admin/projects/{project['id']}/amendments",
+        json={"reason": "this is a memory-heavy research desk; forty facts is not enough",
+              "changes": {"memory_cap_team": 80, "wakes_per_agent_per_hour": 12}},
+        headers=ADMIN,
+    )
+    with db_session() as session:
+        rows = session.query(AuditLog).filter_by(action="constitution.amend").all()
+        assert len(rows) == 1
+        assert rows[0].detail["changes"] == {"memory_cap_team": 80,
+                                             "wakes_per_agent_per_hour": 12}
+        assert rows[0].detail["applied_now"] is True
+
+    listed = client.get(f"/admin/projects/{project['id']}/amendments", headers=ADMIN).json()
+    assert listed[0]["reason"].startswith("this is a memory-heavy")
+
+
+def test_every_rule_describes_itself(client):
+    """The settings page is generated from this schema. It used to carry its own
+    list of six fields instead, which is why the memory caps — the ones a stuck
+    company needs — were unreachable. A rule with no label cannot be rendered,
+    so a new rule that forgets one fails here rather than going quietly missing."""
+    fields = client.get("/admin/constitution/schema", headers=ADMIN).json()
+
+    from yaaf.core.constitution import ConstitutionDoc
+    assert {f["key"] for f in fields} == set(ConstitutionDoc().model_dump())
+
+    for field in fields:
+        assert field["label"] and field["label"] != field["key"], field["key"]
+        assert len(field["help"]) > 20, f"{field['key']} needs help a chairman can read"
+        assert field["group"] != "Other", f"{field['key']} belongs in a named group"
+        assert field["type"] in ("integer", "number", "boolean", "string"), field["key"]
+
+    assert {f["key"] for f in fields if f["group"] == "Memory"} == {
+        "memory_cap_project", "memory_cap_team", "memory_warn_ratio"}
 
 
 def test_evidence_verifier_rules(client):

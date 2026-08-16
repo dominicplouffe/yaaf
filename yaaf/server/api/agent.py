@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 from datetime import datetime
 
 from fastapi import APIRouter, Depends
@@ -503,7 +504,7 @@ def file_directive(
         "amendments": [{"id": a.id, "effective_at": a.effective_at.isoformat()}
                        for a in amendments],
         "in_force": True,
-        "note": ("Filed and in force now — no cooling-off for cadence. It is recorded, and "
+        "note": ("Filed and in force now. It is recorded, and "
                  "the chairman has been told in the boardroom so he can correct you if you "
                  "read him wrong. Stop carrying this rule in memory; it is policy."),
     }
@@ -628,12 +629,17 @@ def memory_search(
     q: str = "",
     scope: str | None = None,
     limit: int = 15,
+    include_superseded: bool = False,
     ctx: RunContext = Depends(run_auth),
     session: Session = Depends(db),
 ) -> list[dict]:
-    stmt = select(Memory).where(
-        Memory.project_id == ctx.project.id, Memory.superseded_at.is_(None)
-    )
+    # Compaction is only safe because it is reversible: folded-in entries stay
+    # in the table and stay findable. `include_superseded` is how a curator
+    # fetches back something it folded too eagerly — without it, "nothing is
+    # ever deleted" would be a claim the agent has no way to act on.
+    stmt = select(Memory).where(Memory.project_id == ctx.project.id)
+    if not include_superseded:
+        stmt = stmt.where(Memory.superseded_at.is_(None))
     if scope == "project":
         stmt = stmt.where(Memory.scope == "project")
     elif scope == "team":
@@ -660,7 +666,9 @@ def memory_search(
         {"id": m.id, "scope": m.scope, "kind": m.kind, "subject": m.subject,
          "body": m.body if len(m.body) <= MEMORY_BODY_CHARS
          else m.body[:MEMORY_BODY_CHARS] + " …[truncated; search a narrower q for the rest]",
-         "at": m.created_at.isoformat()}
+         "at": m.created_at.isoformat(),
+         **({"superseded_by": m.superseded_by_id, "superseded_at": m.superseded_at.isoformat()}
+            if m.superseded_at is not None else {})}
         for m in rows
     ]
 
@@ -703,6 +711,92 @@ def memory_supersede(
     old.superseded_by_id = new.id
     old.superseded_at = utcnow()
     return {"id": new.id, "superseded": old.id}
+
+
+class MemoryCompact(BaseModel):
+    # Capped below every default cap on purpose: folding a theme into one entry
+    # is curation, folding the entire store into one entry is the auto-eviction
+    # this subsystem refuses to do — just performed by hand.
+    replaces: list[str] = Field(min_length=2, max_length=20)
+    subject: str = Field(min_length=3, max_length=300)
+    body: str = Field(min_length=10, max_length=20_000)
+    kind: str = Field(pattern="^(fact|lesson|preference|contact)$")
+
+
+@router.post("/memory/compact")
+def memory_compact(
+    body: MemoryCompact, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
+) -> dict:
+    """Fold several entries into one. The compaction verb: supersede is 1→1 and
+    frees no slot, forget drops one and keeps nothing. This keeps what the
+    entries *meant* while giving back all but one of their slots — and because
+    every folded-in row still points at its replacement, the fold is auditable
+    and can be read back with ?include_superseded=true."""
+    ids_wanted = list(dict.fromkeys(body.replaces))  # order-preserving dedup
+    if len(ids_wanted) < 2:
+        raise Refusal(
+            "Compaction folds two or more entries into one. To replace a single entry "
+            "use memory_supersede; to drop one use memory_forget.",
+        )
+    # Scoped to this project in the query, not checked afterwards: two different
+    # answers for "no such id" and "another project's id" would tell an agent
+    # whether a row exists in a company it cannot see.
+    rows = list(
+        session.execute(
+            select(Memory).where(
+                Memory.id.in_(ids_wanted), Memory.project_id == ctx.project.id
+            )
+        ).scalars()
+    )
+    found = {m.id: m for m in rows}
+    missing = [mid for mid in ids_wanted if mid not in found]
+    if missing:
+        raise Refusal(f"Unknown memory: {', '.join(missing)}.", status_code=404)
+    stale = [m.id for m in rows if m.superseded_at is not None]
+    if stale:
+        raise Refusal(
+            f"Already superseded: {', '.join(stale)}. "
+            "Search again — another run may have curated since you read them.",
+            status_code=404,
+        )
+    scopes = {(m.scope, m.team_id) for m in rows}
+    if len(scopes) > 1:
+        raise Refusal(
+            "Every entry in one compaction must share a scope — project memory and a "
+            "team's memory are curated by different agents and capped separately.",
+        )
+    scope, team_id = scopes.pop()
+    if not policy.memory_curator_ok(session, ctx.agent, rows[0]):
+        raise Refusal(
+            "Only the scope's curator compacts memory: the CEO for project scope, the "
+            "team lead for team scope. The janitor never auto-evicts — losing the wrong "
+            "memory is worse than a full cap.",
+            status_code=403,
+        )
+    new = Memory(
+        id=ids.new_id(ids.MEMORY),
+        project_id=ctx.project.id,
+        scope=scope,
+        team_id=team_id,
+        kind=body.kind,
+        subject=body.subject,
+        body=body.body,
+        created_by_agent_id=ctx.agent.id,
+    )
+    session.add(new)
+    session.flush()
+    now = utcnow()
+    for row in rows:
+        row.superseded_by_id = new.id
+        row.superseded_at = now
+    cons = effective(session, ctx.project.id)
+    return {
+        "id": new.id,
+        "folded": [m.id for m in rows],
+        "freed": len(rows) - 1,
+        "live": policy.live_memory_count(session, scope, ctx.project.id, team_id),
+        "cap": policy.memory_cap_for(cons, scope),
+    }
 
 
 @router.post("/memory/{memory_id}/forget")
@@ -1002,11 +1096,37 @@ def side_effect_finish(
 
 
 MAX_ARTIFACT_BYTES = 5 * 1024 * 1024
+# One read returns a slice, not the file. A deliverable can be 5 MB; a run's
+# context cannot. offset pages through the rest, and the sha256 on every
+# response is of the WHOLE file — so a verifier reading one page can still
+# state exactly which bytes it read a page of.
+MAX_ARTIFACT_READ_BYTES = 64 * 1024
 
 
 class ArtifactPut(BaseModel):
     filename: str = Field(min_length=1, max_length=200)
     content_base64: str
+
+
+def _artifact_key(ctx: RunContext, ref: str) -> str:
+    """Resolve what an agent hands us — a key from ``artifact_list``, or a uri it
+    read off a message, an evidence row, or a task completion — to a key inside
+    THIS project. The store holds every project's deliverables; a run token is
+    not a passport to all of them."""
+    from yaaf.core.artifacts import is_store_uri, key_for_uri
+
+    ref = (ref or "").strip()
+    if not ref:
+        raise Refusal("pass ref — an artifact key or the uri that was cited.", 422)
+    key = key_for_uri(ref) if is_store_uri(ref) else ref
+    # ".." satisfies a prefix check and still resolves out of the project.
+    if not key or not key.startswith(f"projects/{ctx.project.id}/") or ".." in key.split("/"):
+        raise Refusal(
+            f"{ref!r} is not one of this project's artifacts. artifact_list shows "
+            "the ones that are.",
+            status_code=404,
+        )
+    return key
 
 
 @router.post("/artifacts")
@@ -1034,5 +1154,76 @@ def artifact_put(body: ArtifactPut, ctx: RunContext = Depends(run_auth)) -> dict
             "somewhere addressable and record the URL as evidence instead.",
             status_code=413,
         )
-    uri = store().put_bytes(f"projects/{ctx.project.id}/{ctx.run.id}/{filename}", data)
-    return {"uri": uri}
+    key = f"projects/{ctx.project.id}/{ctx.run.id}/{filename}"
+    uri = store().put_bytes(key, data)
+    # The digest is returned at write time so the author can record what it
+    # shipped and a later reader can prove the store still holds those bytes.
+    return {"uri": uri, "key": key, "size": len(data),
+            "sha256": hashlib.sha256(data).hexdigest()}
+
+
+@router.get("/artifacts")
+def artifact_list(ctx: RunContext = Depends(run_auth)) -> dict:
+    """Every deliverable this project has actually shipped. A workspace file is
+    what someone was working on; this is what shipped, and the two can differ —
+    ``artifact_put`` takes bytes an agent hands it, not a copy of a file."""
+    from yaaf.core.artifacts import store
+
+    rows = []
+    for entry in store().list_keys(f"projects/{ctx.project.id}/"):
+        parts = entry["key"].split("/")
+        rows.append({**entry,
+                     "run_id": parts[2] if len(parts) > 3 else None,
+                     "name": parts[-1]})
+    return {"artifacts": rows}
+
+
+@router.get("/artifacts/content")
+def artifact_get(
+    ref: str = "", offset: int = 0, limit: int = MAX_ARTIFACT_READ_BYTES,
+    ctx: RunContext = Depends(run_auth),
+) -> dict:
+    """A shipped artifact's bytes, read back out of the store.
+
+    Without this an artifact uri is unfalsifiable: the sandbox mounts only the
+    workspace, so the ``file://`` path in a citation resolves to nothing and a
+    non-author has no way to check what a deliverable contains.
+    """
+    from yaaf.core.artifacts import store
+
+    if offset < 0 or limit < 1:
+        raise Refusal("offset must be 0 or more and limit at least 1.", status_code=422)
+    key = _artifact_key(ctx, ref)
+    try:
+        data = store().get_bytes(key)
+    except (FileNotFoundError, ValueError, OSError):
+        # Deliberately an answer, not a Refusal. Every Refusal counts against
+        # the run's refusal cap and revokes the token at it — so refusing here
+        # would spend a verifier's budget on precisely the finding it was sent
+        # to produce, and kill the run that checked most carefully.
+        return {
+            "key": key, "exists": False, "size": 0,
+            "detail": "nothing is stored under this key. A uri cited in a message, "
+                      "an evidence row, or a task completion is a claim that bytes "
+                      "were shipped — not proof that they were.",
+        }
+
+    chunk = data[offset:offset + min(limit, MAX_ARTIFACT_READ_BYTES)]
+    out = {
+        "key": key,
+        "exists": True,
+        "size": len(data),
+        "sha256": hashlib.sha256(data).hexdigest(),  # of the whole file, not the slice
+        "offset": offset,
+        "returned": len(chunk),
+        "truncated": offset + len(chunk) < len(data),
+    }
+    try:
+        data.decode()
+    except UnicodeDecodeError:
+        out["content_base64"] = base64.b64encode(chunk).decode()
+    else:
+        # Text stays text even when the slice lands mid-character: one
+        # replacement char at the seam beats base64-ing a readable file.
+        out["text"] = chunk.decode(errors="replace")
+    return out

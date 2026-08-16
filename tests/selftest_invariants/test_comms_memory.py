@@ -152,6 +152,173 @@ def test_memory_caps_and_curation(client):
     ).status_code == 200
 
 
+def _fill_team_memory(client, token, n):
+    """n team-scope entries, returning their ids."""
+    ids = []
+    for i in range(n):
+        ok = client.post(
+            "/agent/memory",
+            json={"scope": "team", "kind": "lesson", "subject": f"lesson {i}",
+                  "body": f"something durable we learned the hard way, number {i}"},
+            headers=bearer(token),
+        )
+        assert ok.status_code == 200, ok.json()
+        ids.append(ok.json()["id"])
+    return ids
+
+
+def test_compaction_frees_slots_at_the_cap(client):
+    """The deadlock regression: compaction has to work *at* the cap, which is
+    the only moment anyone needs it. Gating it on the cap would make the one
+    verb that creates room refuse for lack of room."""
+    project = make_project(client, constitution={"memory_cap_team": 3})
+    _, lead_token = live_token(project["id"], agent_by_name(project, "Lead"))
+
+    ids = _fill_team_memory(client, lead_token, 3)
+    assert client.post(
+        "/agent/memory",
+        json={"scope": "team", "kind": "lesson", "subject": "one too many",
+              "body": "the cap should refuse this one"},
+        headers=bearer(lead_token),
+    ).status_code == 409
+
+    folded = client.post(
+        "/agent/memory/compact",
+        json={"replaces": ids, "kind": "lesson", "subject": "what we learned the hard way",
+              "body": "three overlapping lessons, folded into the one that matters"},
+        headers=bearer(lead_token),
+    )
+    assert folded.status_code == 200, folded.json()
+    assert folded.json()["freed"] == 2
+    assert folded.json()["live"] == 1
+    assert folded.json()["cap"] == 3
+
+    # Room again, in the same run that hit the wall.
+    assert client.post(
+        "/agent/memory",
+        json={"scope": "team", "kind": "lesson", "subject": "now there is room",
+              "body": "the write that was refused a moment ago"},
+        headers=bearer(lead_token),
+    ).status_code == 200
+
+
+def test_compaction_is_reversible(client):
+    """Folding is only safe because nothing is destroyed — the tool tells the
+    model exactly that, so the read path has to back the claim up."""
+    project = make_project(client, constitution={"memory_cap_team": 5})
+    _, lead_token = live_token(project["id"], agent_by_name(project, "Lead"))
+    ids = _fill_team_memory(client, lead_token, 3)
+
+    new_id = client.post(
+        "/agent/memory/compact",
+        json={"replaces": ids, "kind": "lesson", "subject": "folded",
+              "body": "the three lessons above, said once"},
+        headers=bearer(lead_token),
+    ).json()["id"]
+
+    live = client.get("/agent/memory/search?q=lesson", headers=bearer(lead_token)).json()
+    assert [m["id"] for m in live] == [new_id]
+
+    archived = client.get(
+        "/agent/memory/search?q=lesson&include_superseded=true", headers=bearer(lead_token)
+    ).json()
+    by_id = {m["id"]: m for m in archived}
+    for old in ids:
+        assert old in by_id, "a folded memory must still be findable"
+        assert by_id[old]["superseded_by"] == new_id
+
+
+def test_only_the_curator_compacts(client):
+    project = make_project(client, constitution={"memory_cap_team": 5})
+    _, lead_token = live_token(project["id"], agent_by_name(project, "Lead"))
+    _, emp_token = live_token(project["id"], agent_by_name(project, "Emp2"))
+    ids = _fill_team_memory(client, lead_token, 2)
+
+    denied = client.post(
+        "/agent/memory/compact",
+        json={"replaces": ids, "kind": "lesson", "subject": "employee tidying up",
+              "body": "an employee folding its team's memory"},
+        headers=bearer(emp_token),
+    )
+    assert denied.status_code == 403
+
+
+def test_compact_refuses_degenerate_and_cross_scope_folds(client):
+    project = make_project(client, constitution={"memory_cap_team": 5})
+    _, ceo_token = live_token(project["id"], project["ceo_agent_id"])
+    _, lead_token = live_token(project["id"], agent_by_name(project, "Lead"))
+    team_ids = _fill_team_memory(client, lead_token, 2)
+
+    # One entry (even spelled twice) is a supersede, not a compaction.
+    single = client.post(
+        "/agent/memory/compact",
+        json={"replaces": [team_ids[0], team_ids[0]], "kind": "lesson",
+              "subject": "folding one thing", "body": "this is just a supersede"},
+        headers=bearer(lead_token),
+    )
+    assert single.status_code == 422
+    assert "memory_supersede" in single.json()["error"]
+
+    project_id = client.post(
+        "/agent/memory",
+        json={"scope": "project", "kind": "fact", "subject": "a project fact",
+              "body": "curated by the CEO, capped separately"},
+        headers=bearer(ceo_token),
+    ).json()["id"]
+    mixed = client.post(
+        "/agent/memory/compact",
+        json={"replaces": [team_ids[0], project_id], "kind": "fact",
+              "subject": "across scopes", "body": "folding a team fact into a project one"},
+        headers=bearer(ceo_token),
+    )
+    assert mixed.status_code == 422
+    assert "scope" in mixed.json()["error"]
+
+    # An id from another company is "unknown", never "not yours" — the refusal
+    # must not confirm that a row exists somewhere the agent cannot see.
+    other = make_project(client, slug="other-co", constitution={"memory_cap_team": 5})
+    _, other_lead = live_token(other["id"], agent_by_name(other, "Lead"))
+    stranger = _fill_team_memory(client, other_lead, 2)
+    leaked = client.post(
+        "/agent/memory/compact",
+        json={"replaces": stranger, "kind": "lesson", "subject": "someone else's memory",
+              "body": "folding another company's entries"},
+        headers=bearer(lead_token),
+    )
+    assert leaked.status_code == 404
+    assert "Unknown memory" in leaked.json()["error"]
+
+
+def test_cap_refusal_is_addressed_to_whoever_can_act(client):
+    """The message that started all this. An employee was told to 'supersede or
+    forget' — a verb that frees nothing, and a call it would be refused anyway."""
+    project = make_project(client, constitution={"memory_cap_team": 2})
+    _, lead_token = live_token(project["id"], agent_by_name(project, "Lead"))
+    _, emp_token = live_token(project["id"], agent_by_name(project, "Emp2"))
+    ids = _fill_team_memory(client, lead_token, 2)
+
+    lead_wall = client.post(
+        "/agent/memory",
+        json={"scope": "team", "kind": "lesson", "subject": "one too many",
+              "body": "the lead hits its own cap"},
+        headers=bearer(lead_token),
+    ).json()["error"]
+    assert "Memory cap" in lead_wall  # the operator-greppable prefix
+    assert "memory_compact" in lead_wall
+    assert any(mid in lead_wall for mid in ids), "the curator gets candidates to act on"
+
+    emp_wall = client.post(
+        "/agent/memory",
+        json={"scope": "team", "kind": "lesson", "subject": "one too many",
+              "body": "an employee hits a cap only its lead can clear"},
+        headers=bearer(emp_token),
+    ).json()["error"]
+    assert "Memory cap" in emp_wall
+    assert "Lead" in emp_wall, "name the agent that can actually free a slot"
+    assert "do not retry" in emp_wall
+    assert "memory_supersede" not in emp_wall, "never offer a verb that frees no slot"
+
+
 def test_spend_needs_approval_above_threshold(client):
     project = make_project(client, constitution={"approval_threshold_usd": 100})
     _, ceo_token = live_token(project["id"], project["ceo_agent_id"])

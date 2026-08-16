@@ -57,12 +57,14 @@ break a rule, it doesn't get a stern reminder — it gets a 403.
   dashboard also deals you random samples of recent "completed" work and
   evidence to spot-check — because AI reviewers approve nearly everything, and
   you don't.
-- **The rules themselves are stable.** Each project freezes its rulebook (the
-  "constitution") at creation. You can amend it, but amendments take 72 hours
-  to land, are disclosed to the CEO, and are logged — so nobody, including
-  you at 2am, quietly loosens the rules.
+- **The rules are yours, and only yours.** Each project runs under a rulebook
+  (the "constitution") the agents cannot edit, argue with, or talk their way
+  around — it is enforced server-side as refusals. You change any of it
+  whenever you like and it binds from the next agent call; every change is
+  recorded with the reason you gave and disclosed to the CEO, so a limit never
+  moves without a note of who moved it and why.
 
-<img src="docs/screenshots/evidence-spot-audit.png" alt="The Evidence tab: falsifiable hypotheses with kill dates, verified external evidence, and the human spot-audit sample">
+<img src="docs/screenshots/evidence-spot-audit.png" alt="The Work tab: the CEO's bets with kill dates and the proof each one has earned, the tasks serving them, and the human spot-audit sample">
 
 ## How is this different from a standalone agent?
 

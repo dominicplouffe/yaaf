@@ -184,6 +184,11 @@ class NoticeKind(enum.StrEnum):
     TASK_BLOCKED = "task_blocked"
     AGENT_RUN_REAPED = "agent_run_reaped"
     AUDIT_FAILED = "audit_failed"  # chairman spot-audit failed an evidence row or completion
+    # Memory pressure warns the scope's curator early enough to curate on a wake
+    # it was having anyway; MEMORY_FULL is urgent because the scope has stopped
+    # accepting writes and only the curator can restart it.
+    MEMORY_PRESSURE = "memory_pressure"
+    MEMORY_FULL = "memory_full"
 
 
 # ── people & projects ───────────────────────────────────────────────────────────
@@ -235,10 +240,10 @@ class ProjectMember(Base):
 
 
 class Constitution(Base):
-    """The frozen policy document. Version 1 is written at project start; later
-    versions only ever appear via a chairman amendment that has cleared its
-    cooling-off period. The *effective* constitution is the highest version with
-    effective_at <= now."""
+    """The policy document, versioned. Version 1 is written at project start;
+    later versions only ever appear via a recorded chairman amendment. Append-
+    only, so the rulebook has a history rather than a current value. The
+    *effective* constitution is the highest version with effective_at <= now."""
 
     __tablename__ = "constitutions"
     __table_args__ = (UniqueConstraint("project_id", "version"),)
@@ -259,10 +264,11 @@ class Amendment(Base):
     proposed_by_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
     reason: Mapped[str] = mapped_column(Text)
     changes: Mapped[dict] = mapped_column(JSONVariant)  # partial constitution overlay
-    effective_at: Mapped[datetime] = mapped_column(UTCDateTime)  # now + cooling-off
+    effective_at: Mapped[datetime] = mapped_column(UTCDateTime)  # always now
     applied_constitution_id: Mapped[str | None] = mapped_column(String(40))
-    # The cooling-off period exists so the chairman can reconsider; a pending
-    # amendment may be cancelled until it is applied.
+    # Amendments now take effect when saved, so nothing is ever pending. Kept
+    # for rows written while the cooling-off existed, which can still be
+    # cancelled before their old effective_at passes.
     cancelled_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     # Set once the CEO has seen it in a context pack — disclosure is mandatory.
     disclosed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)

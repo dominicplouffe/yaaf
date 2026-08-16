@@ -183,12 +183,15 @@ async def t_directive_file(args):
     }))
 
 
-@tool("memory_search", "Search durable memory. Query it before repeating work.",
-      {"q": str, "scope": str})
+@tool("memory_search", "Search durable memory. Query it before repeating work. "
+      "include_superseded=true also returns entries folded away by compaction.",
+      {"q": str, "scope": str, "include_superseded": bool})
 async def t_memory_search(args):
     params = {"q": args.get("q", "")}
     if args.get("scope"):
         params["scope"] = args["scope"]
+    if args.get("include_superseded"):
+        params["include_superseded"] = "true"
     return _text(_call("GET", "/agent/memory/search", params=params))
 
 
@@ -202,11 +205,23 @@ async def t_memory_add(args):
     return _text(_call("POST", "/agent/memory", dict(args)))
 
 
-@tool("memory_supersede", "Replace an outdated memory (curators only).",
+@tool("memory_supersede", "Replace ONE outdated memory with ONE new one (curators only). "
+      "Frees no slot — use memory_compact or memory_forget for room.",
       {"memory_id": str, "kind": str, "subject": str, "body": str})
 async def t_memory_supersede(args):
     memory_id = args.pop("memory_id")
     return _text(_call("POST", f"/agent/memory/{memory_id}/supersede", dict(args)))
+
+
+@tool(
+    "memory_compact",
+    "Fold several overlapping memories into one (curators only) — the way to make room. "
+    "Frees all but one of their slots; the originals stay readable via "
+    "memory_search include_superseded=true, so folding is safe.",
+    {"replaces": list[str], "kind": str, "subject": str, "body": str},
+)
+async def t_memory_compact(args):
+    return _text(_call("POST", "/agent/memory/compact", dict(args)))
 
 
 @tool("memory_forget", "Forget a wrong/dead memory (curators only).", {"memory_id": str})
@@ -303,7 +318,9 @@ async def t_side_effect_finish(args):
     "artifact store — the durable home for finished work; your workspace is ephemeral "
     "and vanishes after the run. filename is a plain file name (no paths), "
     "content_base64 is the file's bytes base64-encoded, max 5 MB decoded. Returns the "
-    "artifact's uri — cite it in evidence, task completions, and messages.",
+    "artifact's uri, key, size and sha256 — cite the uri in evidence, task completions "
+    "and messages. The uri is NOT a path in your sandbox: read it back with "
+    "artifact_get, never with a file tool.",
     {"filename": str, "content_base64": str},
 )
 async def t_artifact_put(args):
@@ -311,6 +328,38 @@ async def t_artifact_put(args):
         _call("POST", "/agent/artifacts",
               {"filename": args["filename"], "content_base64": args["content_base64"]})
     )
+
+
+@tool(
+    "artifact_list",
+    "List the deliverables this project has shipped to the artifact store: key, name, "
+    "run_id, size, modified. Start here when checking anyone's work, including your "
+    "own — the store is what shipped, the workspace is only what someone was working "
+    "on, and the two can differ.",
+    {},
+)
+async def t_artifact_list(args):
+    return _text(_call("GET", "/agent/artifacts"))
+
+
+@tool(
+    "artifact_get",
+    "Read a shipped artifact's bytes back. ref is either a key from artifact_list or "
+    "the uri cited in a message, evidence row, or task completion. Returns the whole "
+    "file's size and sha256 plus a slice of its content (text when the file is text) — "
+    "page a large file with offset, default 64 KB per read. An artifact uri is NOT a "
+    "path in your sandbox; opening one with a file tool always fails. This is the only "
+    "way to read what was actually shipped. exists:false means the uri was cited but "
+    "no bytes are stored — that is a finding worth reporting, not an error on your "
+    "part, and it costs you nothing to check.",
+    {"ref": str, "offset": int, "limit": int},
+)
+async def t_artifact_get(args):
+    params = {"ref": args.get("ref") or ""}
+    for name in ("offset", "limit"):
+        if args.get(name) is not None:
+            params[name] = args[name]
+    return _text(_call("GET", "/agent/artifacts/content", params=params))
 
 
 @tool(
@@ -326,10 +375,11 @@ async def t_env_list(args):
 ALL_TOOLS = [
     t_board, t_task_create, t_task_claim, t_task_complete, t_task_block, t_task_kill,
     t_suggest, t_channels, t_messages_read, t_message_post, t_directive_file,
-    t_memory_search, t_memory_add, t_memory_supersede, t_memory_forget,
+    t_memory_search, t_memory_add, t_memory_supersede, t_memory_compact, t_memory_forget,
     t_evidence_add, t_hypothesis_add, t_hypothesis_kill, t_decision_add,
     t_approval_request, t_approvals_list, t_spend_book,
-    t_side_effect_begin, t_side_effect_finish, t_artifact_put, t_env_list,
+    t_side_effect_begin, t_side_effect_finish,
+    t_artifact_put, t_artifact_list, t_artifact_get, t_env_list,
 ]
 
 

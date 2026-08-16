@@ -93,9 +93,12 @@ lead. Use two or three per team when there's genuinely parallel work.
 caps, how many tasks can be open at once, how long the CEO can go without
 real evidence before the system pushes back. The defaults are sensible;
 set the **monthly budget cap** to what you're actually willing to spend.
-Everything here freezes at creation: changing it later requires a formal
-amendment with a 72-hour cooling-off. That's a feature — nobody (including
-2am-you) quietly loosens the rules.
+Everything here freezes at creation: changing it later is a formal amendment,
+made in Settings → Rules in force, with a written reason the CEO is shown. Most
+rules then wait out a 72-hour cooling-off — that's a feature, since nobody
+(including 2am-you) quietly loosens a forcing function. The exceptions are the
+ones where waiting is itself the hazard: budgets, your reporting cadence, and
+the memory caps take effect the moment you save.
 
 **Service credentials (optional).** If you already know the keys the agents
 will need, add them here: a name, the value, and tick which roles receive
@@ -114,10 +117,11 @@ next to the active credential any time you want to re-check.
 
 ## Step 3 — Connect the data (if the work needs it)
 
-Settings → **Data sources — MCP servers**. This is one form:
+Settings → **Data sources — MCP servers**. A data source *is* an MCP server:
+a URL that offers tools. This is one form:
 
 - **Name**: a short label, like `ppc`. Agents will see the source's tools
-  under this name.
+  under this name (`mcp__ppc__*`).
 - **URL**: the full address of the MCP server. The form refuses anything
   that isn't a real URL.
 - **Token**: only if the server requires one.
@@ -129,6 +133,42 @@ the network firewall opens exactly that host for exactly those roles, the
 proxy reloads itself within about fifteen seconds, and the next time an
 engineer runs, the source's tools are simply *there*. The save also tests
 that the server answers, and tells you if it doesn't.
+
+### Why a data source makes a variable
+
+An agent's sandbox is a locked box. The only thing that gets inside is an
+environment variable you granted to that role — there is no other channel.
+So the address travels as one: saving `ppc` hands the granted roles
+`$MCP_PPC_URL` (and `$MCP_PPC_TOKEN` if you gave a token), and at run time
+the sandbox rebuilds the connection from those. **The variable is the
+delivery mechanism, not a side effect.**
+
+You'll see those variable names listed under the source's name in the table.
+They don't appear in *Variables & credentials* — that card is for credentials
+you create by hand. One data source is one thing, edited in one place.
+
+### Changing one
+
+Press **edit** on its row. The stored address is fetched and shown in full —
+an address is not a password, and you can't fix a port you can't see. Change
+what you need and save; leaving the token box blank keeps the current token,
+so a URL-only edit never disarms the auth header. There's a tickbox to remove
+a token outright when a server stops needing one.
+
+## A note on secrets and who can see them
+
+You are the chairman, and you are the only human on this system. Every stored
+value — service credentials, a data source's address and token, the Slack
+tokens, the billing key, the webhook signing secrets — is masked in the UI
+and one press of the **eye** from being readable, with a copy button and an
+inline edit to rotate it. Debugging a connection shouldn't require a database
+client.
+
+That is a *display* choice for you, and it changes nothing about the agents.
+A role still receives only the credentials you granted it, still as
+environment variables in its own sandbox, and is still told the variable's
+*name* and never its value. The two are different doors: the eye lives behind
+your admin token, and no agent can reach it.
 
 ## Step 4 — Follow the checklist
 
@@ -152,16 +192,17 @@ need:
 Then let it work. The CEO will state its plan as a falsifiable bet with a
 kill date, create tasks with real success tests, and the teams will start
 claiming them within a couple of minutes. You can watch it all happen in the
-Board, Channels, and Runs tabs.
+**Work** tab, and in **Records** when you want the receipts.
 
 ## Your job from here (it's small, on purpose)
 
 - **Answer the boardroom.** The CEO escalates real blockers there. A blocked
   company that's waiting on you says so.
-- **Decide approvals.** Any spend over the threshold you set lands in the
-  Approvals tab. Undecided approvals expire to "no" after a week — the
+- **Decide approvals.** Any spend over the threshold you set lands in a
+  banner across the top of every tab, so you cannot miss it by being on the
+  wrong page. Undecided approvals expire to "no" after a week — the
   company degrades gracefully while you're on vacation; it never deadlocks.
-- **Spot-check.** The Evidence tab deals you a random sample of recent
+- **Spot-check.** The **Work** tab deals you a random sample of recent
   completed work and evidence claims. Fail anything that doesn't hold up —
   the CEO is told its team's work is suspect. You are the one reviewer that
   doesn't approve everything put in front of it.

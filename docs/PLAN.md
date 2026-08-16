@@ -38,9 +38,9 @@ yaaf generalizes this into a multi-project platform: projects with an LLM CEO, t
 
 ## Constitution vs. configuration
 
-A forcing function you can edit in a settings page is a default, not a forcing function. Policy splits into two classes:
+A rule the agents can talk their way out of is a suggestion. Policy splits into two classes:
 
-**Constitution — frozen at project start.** Changeable only by the chairman, via a formal amendment with: a written reason, a **72-hour cooling-off delay** before taking effect, an audit entry, and automatic disclosure to the CEO agent in its next context pack. Contains: queue ceiling, external-evidence floor, drought rule, kill-date semantics, approval thresholds and approval-timeout default, budget caps, wake-loop limits, evidence-verification rules.
+**Constitution — the limits the agents cannot move.** Enforced server-side as refusals, and changeable only by the chairman, via a formal amendment carrying a written reason, an audit entry, and automatic disclosure to the CEO agent in its next context pack. Amendments are in force from the next agent call — the constraint is that the company cannot move its own goalposts, not that the owner has to wait to move them. Contains: queue ceiling, external-evidence floor, drought rule, kill-date semantics, approval thresholds and approval-timeout default, budget caps, wake-loop limits, evidence-verification rules.
 
 **Configuration — tunable anytime.** Heartbeat cadences, model tiers per role, concurrency limits, Slack mappings, team names/sizes (within budget).
 
@@ -54,7 +54,7 @@ A forcing function you can edit in a settings page is a default, not a forcing f
 | Drought (no verified external evidence for N hours) | API **refuses** creation of `produces_external_evidence: false` tasks while active; CEO also notified |
 | Hypothesis kill date | **Automatic expiry** — platform expires the hypothesis at the date; linked open tasks auto-move to `blocked(hypothesis_expired)`; CEO must pivot or kill; only the **chairman** may extend, **once**, with reason |
 | Budget caps | 80% → warning event; 100% → project auto-paused, chairman notified. Caps are in the billing mode's native unit (below) |
-| Memory cap | `add` refuses at cap; explicit supersede/forget by the scope's curator (CEO for project scope, lead for team scope); the janitor never auto-evicts |
+| Memory cap | `add` refuses at cap; the curator (CEO for project scope, lead for team scope) makes room with `compact` (folds N entries into 1, frees N−1) or `forget` (frees 1) — `supersede` is 1→1 and frees nothing. Curation is always explicit: the janitor never auto-evicts, and folded entries stay readable via `search?include_superseded=true`, so compaction is reversible. The curator is warned at `memory_warn_ratio` and woken when full |
 | Approval timeout | Approvals carry an expiry (constitution default: 7 days, decision on timeout = **deny**); chairman is nagged via email/Slack before expiry; on timeout the CEO is woken with the denial and must re-plan — a vacationing chairman degrades the project, never deadlocks it |
 | Refusal storms | An agent that hits N policy refusals in one run (default 5) has the run terminated and logged — refuse-rephrase-retry loops die fast |
 
@@ -190,7 +190,7 @@ freeze. The gate still decides by **2026-09-30** (one extension allowed).
 
 **M3 remainder (2026-08-15): DONE.** Per-CEO judgment metric (API + Overview
 tile), approval nags via a chairman notifier (SMTP/webhook, best-effort),
-constitution amendments listable/cancellable during cooling-off, completed-task
+constitution amendments listable and cancellable, completed-task
 spot-audit verdicts (failed audits wake the CEO), Postgres FTS memory search,
 and the golden-transcript eval harness (evals/, goldens enforced in CI) — the
 gate on role editing is now real.
@@ -245,12 +245,9 @@ Web Boardroom is a real chat: typing indicator, chat-aware banners,
 on large MCP results (now 16MB in both entrypoints).
 
 **Also (2026-08-15, night): budget amendments apply immediately (chairman's
-ruling — "budgets change; I can't compromise on this").** `monthly_usd_cap`,
-`monthly_token_cap`, and `budget_warn_ratio` are exempt from the 72h
-cooling-off: a save splits into an immediate budget amendment (applied and
-disclosed to the CEO in the same request) and a cooled one for any behavioral
-guardrails in the same save. The delay stays for everything else — forcing
-functions remain forcing functions. Also that evening: Boards/Channels show
+ruling — "budgets change; I can't compromise on this").** The first of three
+such exemptions; by 2026-08-16 the cooling-off was removed outright — see the
+bottom of this file. Also that evening: Boards/Channels show
 team and agent names (server-side name join in the observe API), a Memory tab
 (project memory curated by the CEO, per-team memory by leads, slots vs caps),
 and the Budgets & guardrails form replacing the raw-JSON amendment card.
@@ -269,3 +266,38 @@ required mode for yaaf agents (subscription mode remains in the codebase for
 single-user personal experimentation only, at the operator's own judgment).
 Sources: anthropic.com/legal/consumer-terms, code.claude.com/docs/en/legal-and-compliance,
 support.claude.com article 15036540.
+
+**Memory becomes curatable, and the rulebook becomes editable (2026-08-16).**
+Two problems behind one refusal-storm banner ("Memory cap reached (40/40)").
+
+*The harness.* `supersede` was 1→1 and freed no slot, so the refusal's own
+advice did not work; and only a scope's curator may supersede or forget, so an
+ordinary employee that hit a team cap had no legal move and burned its run on
+the refusal cap. Added `memory_compact` (N→1: folds several entries into one,
+frees N−1) as the verb that actually makes room; `memory_search
+?include_superseded=true` so folding is reversible — the research is emphatic
+that reversibility beats any scoring heuristic, and yaaf's supersede chain
+already kept the originals. The refusal now tells the truth and names candidate
+ids for a curator, or names the lead for anyone else. The context pack carries
+occupancy, not just the cap. The janitor warns the curator at
+`memory_warn_ratio` (coalescing — it rides a wake the curator was having) and
+escalates to an urgent `MEMORY_FULL` wake only when the scope has actually
+stopped; a leaderless team escalates to the CEO, since nobody else can clear
+it. Every refusal is now logged (nothing was, before).
+
+*The rulebook.* The settings page carried its own hand-kept list of six
+editable fields out of twenty-four, so the memory caps — the ones a stuck
+company needs — were unreachable except through a raw-JSON box hidden under
+"Money". Every `ConstitutionDoc` field now carries its own label, help text and
+group; `GET /admin/constitution/schema` publishes them; "Rules in force"
+generates the editor from that, so a new rule is editable the moment it exists.
+A selftest fails if a rule lacks a label or a group.
+
+*And the cooling-off is gone (chairman's ruling).* It had been exempted three
+times in two days (budgets, cadence, memory) before he removed it outright:
+what binds the agents is that they cannot change these values and are told when
+he does — not a delay he could always wait out or work around. Amendments are
+in force from the next agent call, behind a confirmation modal that states the
+consequences, and the written reason + audit entry + CEO disclosure are now the
+whole accountability story. `apply_due_amendments` stays so amendments written
+before the removal still land on their original schedule.

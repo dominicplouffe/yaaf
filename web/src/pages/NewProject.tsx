@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { get, McpServerEntry, post, ProjectBundle, RoleSummary } from "../api";
+import { SecretInput } from "../ui";
 
 interface TeamDraft {
   role_slug: string;
@@ -281,8 +282,8 @@ export default function NewProject() {
     <>
       <h1>New project</h1>
       <p className="subtitle">
-        The constitution freezes at creation — after that, changes need a chairman amendment with a
-        72-hour cooling-off.
+        These are the limits your agents will run under. Set them here, and change any of them
+        later in Settings → Rules in force — every change is recorded and takes effect at once.
       </p>
       {error && <div className="error">{error}</div>}
       <form onSubmit={submit} style={{ maxWidth: 760 }}>
@@ -435,9 +436,9 @@ export default function NewProject() {
 
         <h2>Service credentials (optional)</h2>
         <p className="subtitle">
-          Keys your agents will need for outside services (WordPress, GitHub, Stripe…). Encrypted at
-          rest, write-only, and injected only into the sandboxes of roles you tick — agents are told
-          the variable's name, never shown the value. You can also add these later in Settings.
+          Keys your agents will need for outside services (WordPress, GitHub, Stripe…). Encrypted
+          at rest and injected only into the sandboxes of roles you tick — agents are told the
+          variable's name, never shown the value. You can also add these later in Settings.
         </p>
         {credentials.map((cred, i) => {
           const source = dataSourceUrls.get(cred.name.trim());
@@ -462,12 +463,12 @@ export default function NewProject() {
                 <label className="field">
                   {source ? `Address of data source "${source}"` : "Value"}
                 </label>
-                <input
+                <SecretInput
                   // An address is not a password: showing it is how a typo gets
                   // seen, and it is the one credential the server can judge.
-                  type={source ? "text" : "password"}
+                  defaultShown={!!source}
                   value={cred.value}
-                  onChange={(e) => setCredential(i, { value: e.target.value })}
+                  onChange={(value) => setCredential(i, { value })}
                   placeholder={source ? "https://host:3845/mcp" : "the key itself"}
                 />
                 {source && (
@@ -562,9 +563,9 @@ export default function NewProject() {
           <p className="help">
             {bundle
               ? "Everything else (external-evidence floor, wake caps, memory caps, refusal caps…) " +
-                "comes from the setup file; amend later if you must — with the cooling-off."
+                "comes from the setup file, and every rule is editable later in Settings."
               : "Everything else (external-evidence floor, wake caps, memory caps, refusal caps…) " +
-                "takes the lana-derived defaults; amend later if you must — with the cooling-off."}
+                "takes the lana-derived defaults, and every rule is editable later in Settings."}
           </p>
         </div>
 

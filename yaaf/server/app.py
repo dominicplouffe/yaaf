@@ -9,6 +9,7 @@ retry loops die in five calls, not five hundred.
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 
@@ -20,6 +21,8 @@ from yaaf.core.constitution import effective
 from yaaf.core.db import db_session
 from yaaf.core.models import Run
 from yaaf.server.policy import Refusal
+
+log = logging.getLogger("yaaf.api")
 
 
 def _web_dist() -> Path | None:
@@ -58,6 +61,13 @@ def create_app() -> FastAPI:
                     remaining = max(0, cap - run.refusal_count)
                     if run.refusal_count >= cap:
                         run.token_revoked = True
+        # Every wall an agent hits, in the operator's log. Until this line, a
+        # refusal existed only inside the run that died of it — the platform
+        # could refuse the same agent the same way for a week and the only
+        # trace was a banner that needs three terminated runs to appear.
+        log.warning("refusal %s on %s %s (run=%s, %s left): %s",
+                    exc.status_code, request.method, request.url.path, run_id,
+                    "?" if remaining is None else remaining, exc.message)
         body = {"error": exc.message}
         if remaining is not None:
             body["refusals_remaining"] = remaining

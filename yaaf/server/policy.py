@@ -25,6 +25,7 @@ Rules enforced here (constitution reference in parentheses):
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, time, timedelta
 from typing import NamedTuple
 from zoneinfo import ZoneInfo
@@ -67,6 +68,8 @@ from yaaf.core.models import (
     VerificationStatus,
     utcnow,
 )
+
+log = logging.getLogger("yaaf.policy")
 
 OPEN_TASK_STATUSES = (TaskStatus.READY, TaskStatus.CLAIMED, TaskStatus.CHECKING, TaskStatus.BLOCKED)
 
@@ -787,32 +790,108 @@ def memory_curator_ok(session: Session, agent: Agent, memory: Memory) -> bool:
     return False
 
 
+def _memory_filter(scope: str, project_id: str, team_id: str | None) -> list:
+    """The one definition of "which rows count against a cap". Project scope is
+    counted per project, team scope per team — four call sites read this (the
+    refusal, the context pack, the janitor's warning, the chairman's dashboard)
+    and a number that disagreed with the refusal would be worse than no number.
+    """
+    if scope == MemoryScope.PROJECT:
+        return [Memory.project_id == project_id, Memory.scope == scope]
+    return [Memory.team_id == team_id, Memory.scope == scope]
+
+
+def live_memory_count(
+    session: Session, scope: str, project_id: str, team_id: str | None = None
+) -> int:
+    """Entries occupying a slot: superseded and forgotten rows survive in the
+    table (that is what makes compaction reversible) but stop being counted."""
+    return session.execute(
+        select(func.count(Memory.id)).where(
+            *_memory_filter(scope, project_id, team_id), Memory.superseded_at.is_(None)
+        )
+    ).scalar_one()
+
+
+def memory_cap_for(cons: ConstitutionDoc, scope: str) -> int:
+    return cons.memory_cap_project if scope == MemoryScope.PROJECT else cons.memory_cap_team
+
+
+def compaction_candidates(
+    session: Session, scope: str, project_id: str, team_id: str | None = None, limit: int = 5
+) -> list[Memory]:
+    """The oldest live entries in a scope — what a curator should look at first
+    when it needs room. Carried in the refusal itself so the curator can act in
+    the same run instead of spending one of five refusals learning to search."""
+    return list(
+        session.execute(
+            select(Memory)
+            .where(*_memory_filter(scope, project_id, team_id), Memory.superseded_at.is_(None))
+            .order_by(Memory.created_at)
+            .limit(limit)
+        ).scalars()
+    )
+
+
 def check_memory_add(
     session: Session, cons: ConstitutionDoc, agent: Agent, scope: str, team_id: str | None
 ) -> None:
     if scope == MemoryScope.PROJECT:
         if agent.kind != AgentKind.CEO:
             raise Refusal("Project-scope memory is the CEO's; write team-scope memory.", 403)
-        cap = cons.memory_cap_project
-        count_filter = [Memory.project_id == agent.project_id, Memory.scope == scope]
     elif scope == MemoryScope.TEAM:
         if agent.team_id is None or team_id != agent.team_id:
             raise Refusal("Team-scope memory belongs to your own team only.", status_code=403)
-        cap = cons.memory_cap_team
-        count_filter = [Memory.team_id == team_id, Memory.scope == scope]
     else:
         raise Refusal("scope must be 'project' or 'team'.")
 
-    live = session.execute(
-        select(func.count(Memory.id)).where(*count_filter, Memory.superseded_at.is_(None))
-    ).scalar_one()
-    if live >= cap:
+    cap = memory_cap_for(cons, scope)
+    live = live_memory_count(session, scope, agent.project_id, team_id)
+    if live < cap:
+        return
+
+    log.warning(
+        "memory cap reached: project=%s scope=%s team=%s %d/%d agent=%s",
+        agent.project_id, scope, team_id, live, cap, agent.name,
+    )
+    # The old text said "supersede or forget". Supersede is 1→1 and frees
+    # nothing, so an agent that followed it exactly was still at the cap — and
+    # if it was not the curator, both calls were 403 anyway. Say what is true
+    # for the agent actually reading this.
+    head = (
+        f"Memory cap reached ({live}/{cap}). A memory store that only grows becomes a "
+        "journal, and a journal read every cycle is how the last project drowned."
+    )
+    curator = _curator_of(session, agent, scope)
+    if curator is None or curator.id != agent.id:
+        who = curator.name if curator else "this team's lead (none is set — ask the CEO)"
+        # "is being woken", not "has been told": the janitor sends that notice on
+        # its next tick, and a refusal cannot send one itself (the request's
+        # session is rolled back by the very exception carrying this message).
+        # Promise the thing that is actually true a few seconds from now.
         raise Refusal(
-            f"Memory cap reached ({live}/{cap}). The cap is real: supersede or forget "
-            "something first. A memory store that only grows becomes a journal, and a "
-            "journal read every cycle is how the last project drowned.",
+            f"{head} You are not this scope's curator, so there is nothing for you to "
+            f"free: only {who} may compact or forget here, and {who} is being woken to "
+            "make room. Put what you learned in a message to them instead — do not retry "
+            "this write.",
             status_code=409,
         )
+    oldest = compaction_candidates(session, scope, agent.project_id, team_id)
+    listing = "; ".join(f"{m.id} — {m.subject}" for m in oldest)
+    raise Refusal(
+        f"{head} You curate this scope, so you can clear it in this run: memory_compact "
+        f"folds several entries into one (freeing all but one slot), memory_forget drops "
+        f"one. Note that memory_supersede replaces 1 with 1 and frees nothing. Your oldest "
+        f"entries: {listing}",
+        status_code=409,
+    )
+
+
+def _curator_of(session: Session, agent: Agent, scope: str) -> Agent | None:
+    if scope == MemoryScope.PROJECT:
+        return ceo_of(session, agent.project_id)
+    team = session.get(Team, agent.team_id) if agent.team_id else None
+    return effective_lead(session, team) if team else None
 
 
 # ── evidence rules ──────────────────────────────────────────────────────────────

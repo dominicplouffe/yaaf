@@ -28,6 +28,7 @@ from yaaf.core.models import (
     Hypothesis,
     HypothesisStatus,
     Memory,
+    MemoryScope,
     Message,
     Notice,
     Project,
@@ -71,7 +72,9 @@ def constitution_prose(cons: ConstitutionDoc, project: Project) -> str:
         f"{cons.approval_timeout_days} days, so re-plan rather than wait.\n"
         f"- Budget: {budget}. At 100% the project auto-pauses.\n"
         f"- Memory caps: {cons.memory_cap_project} project / {cons.memory_cap_team} team. "
-        "Curate, don't accumulate.\n"
+        "Curate, don't accumulate: memory_compact folds several entries into one and frees "
+        "all but one of their slots, memory_forget drops one, and memory_supersede replaces "
+        "one with one and frees none. Only a scope's curator may do any of the three.\n"
         f"- Each run may hit at most {cons.refusal_cap_per_run} policy refusals before its "
         "token is revoked. A refusal is the system working; do not rephrase and retry.\n"
         f"{_cadence_clause(cons)}"
@@ -291,6 +294,50 @@ def _task_context(session: Session, task: Task) -> dict:
     }
 
 
+def _memory_usage(session: Session, agent: Agent, cons: ConstitutionDoc) -> dict:
+    """How full each scope this agent can write to is, and which of them it may
+    curate. Both halves matter: the count stops it walking into the cap, and
+    `you_curate` stops a non-lead planning a compaction the platform will 403 —
+    any team member may write team memory, but only the lead may clear it."""
+    live_project = policy.live_memory_count(session, MemoryScope.PROJECT, agent.project_id)
+    usage: dict = {
+        "project": f"{live_project}/{cons.memory_cap_project}",
+        "you_curate": [],
+    }
+    tight = live_project >= cons.memory_cap_project * cons.memory_warn_ratio
+    if agent.kind == AgentKind.CEO:
+        usage["you_curate"].append("project")
+    curator: Agent | None = None
+    if agent.team_id:
+        live_team = policy.live_memory_count(
+            session, MemoryScope.TEAM, agent.project_id, agent.team_id
+        )
+        usage["team"] = f"{live_team}/{cons.memory_cap_team}"
+        tight = tight or live_team >= cons.memory_cap_team * cons.memory_warn_ratio
+        team = session.get(Team, agent.team_id)
+        curator = policy.effective_lead(session, team) if team else None
+        if curator is not None and curator.id == agent.id:
+            usage["you_curate"].append("team")
+    if not tight:
+        return usage
+    # Near the cap the useful advice diverges sharply by who is reading. A
+    # curator needs the verb; anyone else needs to know that writing is about to
+    # be refused and that the fix is not theirs to make.
+    if usage["you_curate"]:
+        usage["pressure"] = (
+            "Nearly full — compact on this wake rather than being refused mid-write. "
+            "memory_compact folds several entries into one and frees all but one slot."
+        )
+    else:
+        who = curator.name if curator else "nobody (this team has no lead)"
+        usage["pressure"] = (
+            f"Nearly full, and {who} curates it, not you — your writes here are about to "
+            "be refused and you cannot free a slot. Send anything durable to them as a "
+            "message instead."
+        )
+    return usage
+
+
 def build_context_pack(session: Session, run: Run, agent: Agent, project: Project) -> dict:
     cons = effective(session, project.id)
 
@@ -320,6 +367,10 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
         "unread": _unread_messages(session, agent, include_recent=run.attempt > 1),
         "memory_hint": {
             "note": "Query memory, do not recite it: GET /agent/memory/search?q=...",
+            # Occupancy, not just the cap. The cap alone is a number an agent
+            # cannot act on; "38/40" is. Roughly thirty tokens against a run
+            # that would otherwise discover the wall mid-write and die of it.
+            "usage": _memory_usage(session, agent, cons),
             "recent_subjects": [
                 m.subject
                 for m in session.execute(

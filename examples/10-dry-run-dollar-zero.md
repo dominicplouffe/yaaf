@@ -108,9 +108,9 @@ numbers produce a company that works or one that spends its life being refused â
 and it costs nothing to find out.
 
 Then create it for real with the numbers you learned. Remember the constitution
-freezes at creation: budget fields you can change immediately, but behavioral
-knobs take a 72-hour cooling-off amendment. Getting them right the first time is
-worth an afternoon of rehearsal.
+freezes at creation: budgets, reporting cadence and memory caps you can change
+immediately, but behavioral knobs take a 72-hour cooling-off amendment. Getting
+them right the first time is worth an afternoon of rehearsal.
 
 ## The scripted casts you can borrow
 
