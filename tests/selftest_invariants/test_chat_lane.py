@@ -115,12 +115,15 @@ def test_chat_usage_is_metered_immediately_and_only_for_chat(client):
         assert (run.cache_creation_tokens, run.cache_read_tokens) == (30_000, 400_000)
 
     # An ordinary run must keep metering at finalize — the refusal names it.
-    _, run_token = live_token(project["id"], _ceo_id(project))
+    work_run_id, run_token = live_token(project["id"], _ceo_id(project))
     refused = client.post("/agent/chat_usage",
                           json={"tokens_in": 1, "tokens_out": 1},
                           headers=bearer(run_token))
     assert refused.status_code == 403
     assert "finalize" in refused.json()["error"]
+    with db_session() as session:
+        # The wall is kept on the run, so a storm banner can name it.
+        assert "finalize" in (session.get(Run, work_run_id).last_refusal or "")
 
 
 def test_typing_is_scoped_and_expires(client):

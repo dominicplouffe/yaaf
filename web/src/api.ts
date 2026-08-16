@@ -228,6 +228,8 @@ export interface RunRow {
   effort: string | null;
   cost_usd: number | null;
   refusals: number;
+  /** The last wall this run hit — set whenever the platform refused a call. */
+  last_refusal: string | null;
   summary: string | null;
   has_trace: boolean;
   started_at: string | null;
@@ -345,6 +347,8 @@ export interface EvidenceRow {
   description: string;
   source_url: string | null;
   verifier_notes: string | null;
+  /** The task this proves — the link that lets a bet report its own proof. */
+  task_id: string | null;
   at: string;
 }
 

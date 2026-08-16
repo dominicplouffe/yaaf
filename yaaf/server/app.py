@@ -50,6 +50,7 @@ def create_app() -> FastAPI:
                 run = session.get(Run, run_id)
                 if run is not None:
                     run.refusal_count += 1
+                    run.last_refusal = exc.message[:500]
                     try:
                         cap = effective(session, run.project_id).refusal_cap_per_run
                     except LookupError:

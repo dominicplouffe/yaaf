@@ -600,7 +600,8 @@ def runs(project_id: str, limit: int = 50, session: Session = Depends(db)) -> li
             "tokens_in": r.tokens_in, "tokens_out": r.tokens_out,
             "cache_creation": r.cache_creation_tokens, "cache_read": r.cache_read_tokens,
             "model": r.model, "effort": r.effort, "cost_usd": r.cost_usd,
-            "refusals": r.refusal_count, "summary": r.summary,
+            "refusals": r.refusal_count, "last_refusal": r.last_refusal,
+            "summary": r.summary,
             "has_trace": r.trace_path is not None,
             "started_at": r.started_at.isoformat() if r.started_at else None,
             "finished_at": r.finished_at.isoformat() if r.finished_at else None,
@@ -739,6 +740,10 @@ def evidence(project_id: str, limit: int = 100, session: Session = Depends(db)) 
             "id": e.id, "kind": e.kind, "provenance": e.provenance,
             "verification": e.verification, "description": e.description,
             "source_url": e.source_url, "verifier_notes": e.verifier_notes,
+            # The task this proves. The dashboard walks evidence -> task ->
+            # hypothesis to answer "has this bet been proven?" — a question that
+            # otherwise needs the reader to hold the join in their head.
+            "task_id": e.task_id,
             "at": e.created_at.isoformat(),
         }
         for e in rows

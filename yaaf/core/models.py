@@ -593,6 +593,9 @@ class Run(Base):
     token_hash: Mapped[str | None] = mapped_column(String(64))
     token_revoked: Mapped[bool] = mapped_column(Boolean, default=False)
     refusal_count: Mapped[int] = mapped_column(Integer, default=0)
+    # The most recent Refusal message — a storm banner that can't say which
+    # wall was hit isn't actionable.
+    last_refusal: Mapped[str | None] = mapped_column(Text)
     heartbeat_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     started_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime)

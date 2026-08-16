@@ -2,7 +2,7 @@ import { Fragment, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Dashboard, get, getText, RunRow, SpendReport } from "../../api";
 import { fmtUsd, fmtWhen, usePoll } from "../../hooks";
-import { downloadCsv, ExportCsv, fmtUnit } from "../../ui";
+import { AsOf, downloadCsv, ExportCsv, fmtUnit, runHealth } from "../../ui";
 
 interface LedgerRow {
   id: string;
@@ -142,7 +142,7 @@ function SpendBreakdown({ projectId, usdMode }: { projectId: string; usdMode: bo
 }
 
 export default function Runs({ projectId, dash }: { projectId: string; dash: Dashboard }) {
-  const { data: runs, error } = usePoll(
+  const { data: runs, error, at } = usePoll(
     () => get<RunRow[]>(`/observe/projects/${projectId}/runs?limit=50`),
     5000,
   );
@@ -171,21 +171,18 @@ export default function Runs({ projectId, dash }: { projectId: string; dash: Das
     }
   }
 
-  if (error) return <div className="error">{error}</div>;
+  if (error && !runs) return <div className="error">{error}</div>;
 
   const usdMode = dash.billing_mode === "api_key";
-  const today = new Date().toDateString();
-  const todayRuns = (runs ?? []).filter(
-    (r) => r.started_at && new Date(r.started_at).toDateString() === today,
-  );
-  const todayUsd = todayRuns.reduce((sum, r) => sum + (r.cost_usd ?? 0), 0);
-  const todayTokens = todayRuns.reduce(
-    (sum, r) => sum + r.tokens_in + r.tokens_out + r.cache_creation + r.cache_read,
-    0,
-  );
-  const todayFailures = todayRuns.filter((r) =>
-    ["failed", "reaped", "killed", "terminated_refusals"].includes(r.status),
-  ).length;
+  const health = runHealth(runs ?? []);
+  const todayRuns = health.todays;
+  const todayUsd = health.usd;
+  const todayTokens = health.tokens;
+  // The 14-day chart is 13 empty bars on a project a day old — it reads as
+  // "nothing is happening" when the truth is "there is no history yet".
+  const daysOfHistory = new Set(
+    (ledger ?? []).map((row) => new Date(row.at).toDateString()),
+  ).size;
   const weekAgo = Date.now() - 7 * 86_400_000;
   const storms = (runs ?? []).filter(
     (r) =>
@@ -201,27 +198,62 @@ export default function Runs({ projectId, dash }: { projectId: string; dash: Das
         the company itself.
       </p>
 
-      {/* Totals before receipts: the first number answers the question that
-          brought the chairman here. */}
-      <div style={{ display: "flex", gap: 24, alignItems: "flex-end", flexWrap: "wrap", margin: "0 0 14px" }}>
-        <div className="tile" style={{ border: "none", padding: 0, background: "none" }}>
-          <div className="label">Today</div>
-          <div className="value">
+      {/* Outcomes before receipts. "12 failures" in the same weight as
+          everything else is not a report — a run that ended early was paid for
+          and produced nothing, and the reasons are what tell you what to fix. */}
+      <div className="tiles" style={{ marginTop: 0 }}>
+        <div className="tile">
+          <div className="label">Runs today</div>
+          <div className="value">{todayRuns.length}</div>
+          <div className="sub">
             {usdMode || todayUsd > 0
               ? `$${todayUsd.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
               : `${fmtUnit(todayTokens, "tokens")} tokens`}{" "}
-            <span style={{ fontSize: 14, color: "var(--muted)" }}>
-              · {todayRuns.length} run{todayRuns.length === 1 ? "" : "s"} · {todayFailures} failure
-              {todayFailures === 1 ? "" : "s"}
-            </span>
+            spent
           </div>
         </div>
-        {(ledger ?? []).length > 0 && <SpendBars ledger={ledger ?? []} usdMode={usdMode} />}
+        <div className="tile">
+          <div className="label">Finished cleanly</div>
+          <div className="value">{health.clean}</div>
+          <div className="sub">
+            {todayRuns.length > 0 ? `${Math.round((health.clean / todayRuns.length) * 100)}%` : "—"}
+          </div>
+        </div>
+        <div className={`tile${health.ratio >= 0.2 ? " alert" : ""}`}>
+          <div className="label">Ended early</div>
+          <div className="value">{health.early.length}</div>
+          <div className="sub">
+            {health.byReason.length > 0
+              ? health.byReason.map((r) => `${r.count} ${r.phrase}`).join(" · ")
+              : "none"}
+          </div>
+        </div>
+        <div className="tile">
+          <div className="label">Still running</div>
+          <div className="value">{health.running}</div>
+          <div className="sub">
+            {dash.runs.queued > 0 ? `${dash.runs.queued} queued behind them` : "nothing queued"}
+          </div>
+        </div>
       </div>
+
+      {daysOfHistory >= 3 ? (
+        <div style={{ margin: "16px 0" }}>
+          <SpendBars ledger={ledger ?? []} usdMode={usdMode} />
+        </div>
+      ) : (
+        (ledger ?? []).length > 0 && (
+          <p className="help" style={{ margin: "12px 0" }}>
+            Spend over time appears once this project has three days of history — there is nothing
+            for a trend line to say yet.
+          </p>
+        )
+      )}
 
       <SpendBreakdown projectId={projectId} usdMode={usdMode} />
 
-      {/* Patterns become sentences: the platform knows these share a cause. */}
+      {/* Patterns become sentences: the platform knows these share a cause —
+          and names the wall, so "give direction" means something to type. */}
       {storms.length >= 3 && (
         <div className="arow" style={{ borderColor: "rgba(236,131,90,.4)", marginBottom: 14 }}>
           <span className="badge serious">pattern</span>
@@ -230,8 +262,25 @@ export default function Runs({ projectId, dash }: { projectId: string; dash: Das
               {storms.length} runs this week ended in refusal storms
             </div>
             <div className="sb">
-              The rules held — but an agent keeps arguing with a wall, at full API price. Consider
-              redirecting it in the Boardroom.
+              The rules held — but at full API price. The walls being hit:
+            </div>
+            {[...storms.reduce((byAgent, r) => {
+              const name = r.agent_name ?? "unknown agent";
+              const entry = byAgent.get(name) ?? { count: 0, wall: null as string | null };
+              entry.count += 1;
+              entry.wall = entry.wall ?? r.last_refusal; // runs are newest-first
+              return byAgent.set(name, entry);
+            }, new Map<string, { count: number; wall: string | null }>())].map(
+              ([name, { count, wall }]) => (
+                <div className="sb" key={name}>
+                  <b>{name}</b> ×{count}
+                  {wall && <> — “{wall.length > 160 ? `${wall.slice(0, 160)}…` : wall}”</>}
+                </div>
+              ),
+            )}
+            <div className="sb">
+              Agents cannot lift these rules themselves. Tell the CEO what should change —
+              finish, reassign, or kill the task in question — and it will redirect the agent.
             </div>
           </div>
           <Link to={`/projects/${projectId}/boardroom`}>give direction →</Link>
@@ -340,6 +389,7 @@ export default function Runs({ projectId, dash }: { projectId: string; dash: Das
           />
         </div>
       )}
+      <AsOf at={at} error={error} />
     </>
   );
 }
