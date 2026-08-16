@@ -158,7 +158,9 @@ export default function Roles() {
                 ))}
               </div>
               <div className="help" style={{ marginTop: 8 }}>
-                {role.usage.length === 0 ? (
+                {role.is_ceo_role ? (
+                  "assigned at project creation — every project runs one CEO"
+                ) : role.usage.length === 0 ? (
                   "not running on any team yet"
                 ) : (
                   <>
