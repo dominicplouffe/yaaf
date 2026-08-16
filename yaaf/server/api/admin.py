@@ -19,7 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from yaaf.core import ids
-from yaaf.core.constitution import ConstitutionDoc, create_initial, propose_amendment
+from yaaf.core.constitution import ConstitutionDoc, create_initial, effective, propose_amendment
 from yaaf.core.db import notify
 from yaaf.core.models import (
     Agent,
@@ -328,6 +328,114 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
     _audit(session, project.id, "project.create", "project", project.id)
     return {"id": project.id, "ceo_agent_id": ceo.id, "teams": team_out,
             "constitution": doc.model_dump(), "status": project.status}
+
+
+# Config keys that are this install's plumbing, not the project's design:
+# Slack wiring, webhook signing secrets, experiment bookkeeping. Everything
+# else in config (runtime, cadences, data sources…) travels with the bundle.
+_NON_PORTABLE_CONFIG_KEYS = frozenset(
+    {"slack", "github_webhook_secret", "webhook_secret", "experiment"}
+)
+
+
+@router.get("/projects/{project_id}/export")
+def export_project(project_id: str, session: Session = Depends(db)) -> dict:
+    """The project's design as a portable setup file. The `project` section is
+    a ready ProjectCreate body (the importer supplies slug and chairman); the
+    role definitions and credential *names* ride along so another install can
+    rebuild the org. Secret values never leave — they are encrypted with this
+    deployment's master key — so an import asks for them again. The New
+    Project page accepts this file."""
+    project = _get_project(session, project_id)
+    ceo = session.execute(
+        select(Agent).where(Agent.project_id == project.id, Agent.kind == AgentKind.CEO)
+    ).scalar_one()
+
+    roles: dict[str, dict] = {}
+
+    def record_role(role_version_id: str) -> str:
+        """Capture the pinned version's content — what this project actually
+        runs, not whatever the library has moved on to — and return the slug."""
+        version = session.get(RoleVersion, role_version_id)
+        role = session.get(Role, version.role_id)
+        roles.setdefault(role.slug, {
+            "slug": role.slug,
+            "name": role.name,
+            "is_ceo_role": role.is_ceo_role,
+            "description": version.description,
+            "system_prompt": version.system_prompt,
+            "model": version.model,
+            "effort": version.effort,
+            # Roles no longer own MCP servers; strip the key from any old
+            # pinned version so importing the role never 422s.
+            "tool_permissions": {
+                k: v for k, v in (version.tool_permissions or {}).items()
+                if k != "mcp_servers"
+            },
+            "secret_scopes": version.secret_scopes,
+        })
+        return role.slug
+
+    ceo_role_slug = record_role(ceo.role_version_id)
+
+    teams = []
+    for team in session.execute(
+        select(Team).where(Team.project_id == project.id).order_by(Team.created_at)
+    ).scalars():
+        role_slug = record_role(team.role_version_id)
+        members = list(session.execute(
+            select(Agent)
+            .where(Agent.team_id == team.id, Agent.kind == AgentKind.EMPLOYEE)
+            .order_by(Agent.created_at)
+        ).scalars())
+        teams.append({
+            "role_slug": role_slug,
+            "name": team.name,
+            "employees": [a.name for a in members],
+            "lead": next((a.name for a in members if a.id == team.lead_agent_id), None),
+        })
+
+    config = {k: v for k, v in (project.config or {}).items()
+              if k not in _NON_PORTABLE_CONFIG_KEYS}
+    if "mcp_servers" in config:
+        config["mcp_servers"] = [
+            {k: v for k, v in entry.items() if k != "last_check"}
+            for entry in config["mcp_servers"]
+        ]
+
+    # Billing credentials stay out entirely: their values cannot travel, and
+    # the twin connects its own in Settings (the page already insists).
+    secret_names = [
+        {"name": s.name, "role_scopes": s.role_scopes, "kind": s.kind}
+        for s in session.execute(
+            select(Secret)
+            .where(Secret.project_id == project.id, Secret.kind == "service")
+            .order_by(Secret.created_at)
+        ).scalars()
+    ]
+
+    _audit(session, project.id, "project.export", "project", project.id)
+    return {
+        "yaaf_bundle": 1,
+        "kind": "project_setup",
+        "source_slug": project.slug,
+        "exported_at": utcnow().isoformat(),
+        "project": {
+            "slug": project.slug,
+            "name": project.name,
+            "goal": project.goal,
+            "billing_mode": project.billing_mode,
+            "controlled_domains": project.controlled_domains,
+            "constitution": effective(session, project.id).model_dump(),
+            "config": config,
+            "ceo_role_slug": ceo_role_slug,
+            "ceo_name": ceo.name,
+            "teams": teams,
+            "solo": ceo.team_id is not None,
+        },
+        "roles": list(roles.values()),
+        "secrets": secret_names,
+    }
 
 
 # ── lifecycle: the kill switches ────────────────────────────────────────────────

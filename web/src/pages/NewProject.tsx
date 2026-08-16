@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { get, post, RoleSummary } from "../api";
+import { get, post, ProjectBundle, RoleSummary } from "../api";
 
 interface TeamDraft {
   role_slug: string;
@@ -45,6 +45,12 @@ export default function NewProject() {
   const [approvalThreshold, setApprovalThreshold] = useState(250);
   const [startNow, setStartNow] = useState(true);
 
+  // A setup file downloaded from a project's Settings. Loading one prefills
+  // the whole form; the file's full constitution/config and any role
+  // definitions the library lacks ride along at submit time.
+  const [bundle, setBundle] = useState<ProjectBundle | null>(null);
+  const [solo, setSolo] = useState(false);
+
   useEffect(() => {
     get<RoleSummary[]>("/admin/roles").then(setRoles).catch((e: Error) => setError(e.message));
   }, []);
@@ -62,6 +68,60 @@ export default function NewProject() {
   function setCredential(i: number, patch: Partial<CredentialDraft>) {
     setCredentials((prev) => prev.map((c, j) => (j === i ? { ...c, ...patch } : c)));
   }
+
+  async function loadBundle(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setError(null);
+    try {
+      const parsed = JSON.parse(await file.text()) as ProjectBundle;
+      if (parsed.yaaf_bundle !== 1 || !parsed.project) {
+        throw new Error(
+          "that file is not a project setup file — download one from a project's Settings",
+        );
+      }
+      const p = parsed.project;
+      setBundle(parsed);
+      setName(p.name);
+      setSlug(p.slug);
+      setGoal(p.goal);
+      setBillingMode(p.billing_mode);
+      setRuntime(String(p.config["runtime"] ?? "agent_sdk"));
+      setControlledDomains((p.controlled_domains ?? []).join(", "));
+      setSolo(Boolean(p.solo));
+      setTeams(
+        p.teams.length
+          ? p.teams.map((t) => ({
+              role_slug: t.role_slug,
+              name: t.name,
+              employees: t.employees.join(", "),
+              lead: t.lead ?? "",
+            }))
+          : [{ role_slug: "", name: "", employees: "", lead: "" }],
+      );
+      setCredentials(
+        parsed.secrets
+          .filter((s) => s.kind === "service")
+          .map((s) => ({ name: s.name, value: "", grants: s.role_scopes })),
+      );
+      const cons = p.constitution as Record<string, number>;
+      if (cons.queue_ceiling !== undefined) setQueueCeiling(cons.queue_ceiling);
+      if (cons.drought_hours !== undefined) setDroughtHours(cons.drought_hours);
+      if (cons.monthly_usd_cap !== undefined) setUsdCap(cons.monthly_usd_cap);
+      if (cons.approval_threshold_usd !== undefined) {
+        setApprovalThreshold(cons.approval_threshold_usd);
+      }
+    } catch (err) {
+      setBundle(null);
+      setError((err as Error).message);
+    }
+  }
+
+  // Bundle roles the library doesn't have yet — offered in the pickers now,
+  // created for real (POST /admin/roles) at submit time.
+  const newBundleRoles = (bundle?.roles ?? []).filter(
+    (br) => !roles.some((r) => r.slug === br.slug),
+  );
 
   function toggleGrant(i: number, slug: string) {
     setCredentials((prev) =>
@@ -83,7 +143,18 @@ export default function NewProject() {
     setBusy(true);
     setError(null);
     try {
-      if (!ceoRole) throw new Error("No CEO role in the library — create one on the Roles page first.");
+      // Role definitions travel with a setup file — seed any the library
+      // lacks before the server resolves slugs. Re-check against a fresh
+      // list so a retried submit never stamps duplicate versions.
+      if (newBundleRoles.length) {
+        const library = await get<RoleSummary[]>("/admin/roles");
+        for (const role of newBundleRoles) {
+          if (!library.some((r) => r.slug === role.slug)) await post("/admin/roles", role);
+        }
+        setRoles(await get<RoleSummary[]>("/admin/roles"));
+      }
+      const ceoSlug = bundle?.project.ceo_role_slug ?? ceoRole?.slug;
+      if (!ceoSlug) throw new Error("No CEO role in the library — create one on the Roles page first.");
       await post("/admin/users", {
         email: chairmanEmail.trim(),
         display_name: chairmanName.trim() || chairmanEmail.trim(),
@@ -99,15 +170,20 @@ export default function NewProject() {
           .map((d) => d.trim())
           .filter(Boolean),
         constitution: {
+          // A setup file carries the source's full rulebook; the four knobs
+          // below override whatever you edited on this page.
+          ...(bundle?.project.constitution ?? {}),
           queue_ceiling: queueCeiling,
           drought_hours: droughtHours,
           monthly_usd_cap: usdCap,
           approval_threshold_usd: approvalThreshold,
         },
-        config: { runtime },
-        ceo_role_slug: ceoRole.slug,
+        config: { ...(bundle?.project.config ?? {}), runtime },
+        ceo_role_slug: ceoSlug,
+        ceo_name: bundle?.project.ceo_name ?? "CEO",
+        solo,
         teams: teams
-          .filter((t) => t.role_slug && t.name && t.employees.trim())
+          .filter((t) => t.role_slug && t.name && (solo || t.employees.trim()))
           .map((t) => {
             const employees = t.employees.split(",").map((s) => s.trim()).filter(Boolean);
             return {
@@ -126,7 +202,7 @@ export default function NewProject() {
             project_id: created.id,
             name: cred.name.trim(),
             value: cred.value,
-            role_scopes: cred.grants.filter((g) => usedRoleSlugs.includes(g)),
+            role_scopes: cred.grants.filter((g) => usedRoleSlugs.includes(g) || g === ceoSlug),
             kind: "service",
           });
         }
@@ -153,6 +229,22 @@ export default function NewProject() {
       </p>
       {error && <div className="error">{error}</div>}
       <form onSubmit={submit} style={{ maxWidth: 760 }}>
+        <div className="card" style={{ marginBottom: 10 }}>
+          <label className="field">Start from a setup file (optional)</label>
+          <p className="help" style={{ marginTop: 0 }}>
+            Downloaded from a project's Settings → Setup file. Everything below prefills — review
+            it, pick a slug, enter credential values, then create.
+          </p>
+          <input type="file" accept=".json,application/json" onChange={loadBundle} />
+          {bundle && (
+            <p className="help">
+              Loaded "{bundle.project.name}" (exported from {bundle.source_slug}).
+              {bundle.secrets.length > 0 &&
+                " Credential names came along without their values — fill them in below, or skip and add them later in Settings."}
+              {" "}Billing is connected afterwards in Settings.
+            </p>
+          )}
+        </div>
         <div className="card">
           <div className="row">
             <div>
@@ -213,6 +305,12 @@ export default function NewProject() {
         </div>
 
         <h2>Teams</h2>
+        {solo && (
+          <p className="subtitle">
+            This setup file is a solo project: the CEO is the only team's sole member, so the
+            employee fields stay empty.
+          </p>
+        )}
         {teams.map((team, i) => (
           <div className="card" key={i} style={{ marginBottom: 10 }}>
             <div className="row">
@@ -228,6 +326,13 @@ export default function NewProject() {
                       {r.name} ({r.model ?? "default"})
                     </option>
                   ))}
+                  {newBundleRoles
+                    .filter((r) => !r.is_ceo_role)
+                    .map((r) => (
+                      <option key={r.slug} value={r.slug}>
+                        {r.name} — new, from the setup file
+                      </option>
+                    ))}
                 </select>
               </div>
               <div>
@@ -313,7 +418,9 @@ export default function NewProject() {
                       checked={cred.grants.includes(slug)}
                       onChange={() => toggleGrant(i, slug)}
                     />
-                    {workerRoles.find((r) => r.slug === slug)?.name ?? slug}
+                    {workerRoles.find((r) => r.slug === slug)?.name ??
+                      newBundleRoles.find((r) => r.slug === slug)?.name ??
+                      slug}
                   </label>
                 ))}
               </div>
@@ -374,8 +481,11 @@ export default function NewProject() {
             </div>
           </div>
           <p className="help">
-            Everything else (external-evidence floor, wake caps, memory caps, refusal caps…) takes the
-            lana-derived defaults; amend later if you must — with the cooling-off.
+            {bundle
+              ? "Everything else (external-evidence floor, wake caps, memory caps, refusal caps…) " +
+                "comes from the setup file; amend later if you must — with the cooling-off."
+              : "Everything else (external-evidence floor, wake caps, memory caps, refusal caps…) " +
+                "takes the lana-derived defaults; amend later if you must — with the cooling-off."}
           </p>
         </div>
 

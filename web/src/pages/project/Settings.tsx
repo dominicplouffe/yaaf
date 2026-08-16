@@ -8,6 +8,7 @@ import {
   OrgView,
   patch,
   post,
+  ProjectBundle,
   RoleSummary,
 } from "../../api";
 import { fmtWhen, usePoll } from "../../hooks";
@@ -805,6 +806,22 @@ export default function Settings({
   const billingReady = dash.billing_secret_id !== null;
   const runtimeNow = String(dash.config["runtime"] ?? "agent_sdk");
 
+  async function downloadSetup() {
+    setError(null);
+    try {
+      const bundle = await get<ProjectBundle>(`/admin/projects/${projectId}/export`);
+      const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `${bundle.source_slug}-setup.json`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
   return (
     <>
       {message && <div className="notice-box">{message}</div>}
@@ -985,6 +1002,19 @@ export default function Settings({
       <h2>GitHub workspace</h2>
       <div className="card">
         <GithubWorkspace projectId={projectId} dash={dash} act={act} busy={busy} />
+      </div>
+
+      <h2>Setup file</h2>
+      <div className="card">
+        <p className="help" style={{ marginTop: 0 }}>
+          Download this project's design as one file: teams, role definitions, the constitution,
+          configuration, and the <i>names</i> of its credentials — never their values. Upload it on
+          the New Project page (here or on another install) to start a twin; you'll re-enter
+          credential values there and connect billing afterwards.
+        </p>
+        <div className="actions">
+          <button onClick={downloadSetup}>Download setup file</button>
+        </div>
       </div>
 
       <h2>Advanced</h2>
