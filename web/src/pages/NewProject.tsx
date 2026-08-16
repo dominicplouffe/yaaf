@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { get, post, ProjectBundle, RoleSummary } from "../api";
+import { get, McpServerEntry, post, ProjectBundle, RoleSummary } from "../api";
 
 interface TeamDraft {
   role_slug: string;
@@ -17,6 +17,17 @@ interface CredentialDraft {
 
 function envVarName(name: string): string {
   return name.replace(/[^A-Za-z0-9]+/g, "_").replace(/^_+|_+$/g, "").toUpperCase();
+}
+
+/** The same rule the server applies to a data source's address: a full
+    http(s) address, not a bare host and not a token pasted into the wrong box. */
+function isFullUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value.trim());
+    return (parsed.protocol === "http:" || parsed.protocol === "https:") && !!parsed.hostname;
+  } catch {
+    return false;
+  }
 }
 
 export default function NewProject() {
@@ -123,6 +134,17 @@ export default function NewProject() {
     (br) => !roles.some((r) => r.slug === br.slug),
   );
 
+  // A setup file carries its data sources' wiring but not their addresses —
+  // those are secrets, and secrets stay behind. So some rows in the credential
+  // list below are not opaque keys at all: they are URLs the sandbox hands
+  // straight to an MCP client. Knowing which lets this page check them here,
+  // rather than let an agent discover it three runs later. Secret name → source.
+  const dataSourceUrls = new Map<string, string>(
+    ((bundle?.project.config["mcp_servers"] as McpServerEntry[] | undefined) ?? []).map(
+      (source) => [source.url_secret, source.name] as [string, string],
+    ),
+  );
+
   function toggleGrant(i: number, slug: string) {
     setCredentials((prev) =>
       prev.map((c, j) =>
@@ -143,6 +165,19 @@ export default function NewProject() {
     setBusy(true);
     setError(null);
     try {
+      // A mistyped data source address costs nothing to catch here and a great
+      // deal to catch later: the runner refuses to mount it, and says so only
+      // inside the run summary of whichever agent went looking for the tools.
+      const malformed = credentials.find(
+        (c) => dataSourceUrls.has(c.name.trim()) && c.value.trim() && !isFullUrl(c.value),
+      );
+      if (malformed) {
+        throw new Error(
+          `"${malformed.name}" is the address of data source ` +
+            `"${dataSourceUrls.get(malformed.name.trim())}" — it needs a full URL like ` +
+            "https://host:3845/mcp, not a bare hostname or a token.",
+        );
+      }
       // Role definitions travel with a setup file — seed any the library
       // lacks before the server resolves slugs. Re-check against a fresh
       // list so a retried submit never stamps duplicate versions.
@@ -211,6 +246,28 @@ export default function NewProject() {
         alert(`Project created, but storing a credential failed: ${(err as Error).message}. ` +
               "Add it in Settings → Service credentials.");
       }
+      // Shape was checked above; this asks the harder question — does anything
+      // answer at that address? A source that cannot answer is a project whose
+      // agents will burn runs hunting for absent tools, so it does not start.
+      const unreachable: string[] = [];
+      for (const source of new Set(dataSourceUrls.values())) {
+        try {
+          const check = await post<{ ok: boolean; detail: string }>(
+            `/admin/projects/${created.id}/mcp_servers/${source}/check`, {});
+          if (!check.ok) unreachable.push(`"${source}": ${check.detail}`);
+        } catch (err) {
+          unreachable.push(`"${source}": ${(err as Error).message}`);
+        }
+      }
+      if (unreachable.length) {
+        alert(
+          `Project created, but its data source${unreachable.length > 1 ? "s are" : " is"} not ` +
+            `answering:\n\n${unreachable.join("\n")}\n\nThe project was NOT started. Fix the ` +
+            "address in Settings → Data sources — that form tests it — then start the project.",
+        );
+        navigate(`/projects/${created.id}`);
+        return;
+      }
       if (startNow) await post(`/admin/projects/${created.id}/start`);
       navigate(`/projects/${created.id}`);
     } catch (err) {
@@ -241,6 +298,9 @@ export default function NewProject() {
               Loaded "{bundle.project.name}" (exported from {bundle.source_slug}).
               {bundle.secrets.length > 0 &&
                 " Credential names came along without their values — fill them in below, or skip and add them later in Settings."}
+              {dataSourceUrls.size > 0 &&
+                ` ${dataSourceUrls.size === 1 ? "One of them is a data source's" : "Some of them are data sources'"} ` +
+                  "address: a full URL, tested before this project starts."}
               {" "}Billing is connected afterwards in Settings.
             </p>
           )}
@@ -379,7 +439,10 @@ export default function NewProject() {
           rest, write-only, and injected only into the sandboxes of roles you tick — agents are told
           the variable's name, never shown the value. You can also add these later in Settings.
         </p>
-        {credentials.map((cred, i) => (
+        {credentials.map((cred, i) => {
+          const source = dataSourceUrls.get(cred.name.trim());
+          const badUrl = source !== undefined && !!cred.value.trim() && !isFullUrl(cred.value);
+          return (
           <div className="card" key={i} style={{ marginBottom: 10 }}>
             <div className="row">
               <div>
@@ -396,13 +459,28 @@ export default function NewProject() {
                 )}
               </div>
               <div>
-                <label className="field">Value</label>
+                <label className="field">
+                  {source ? `Address of data source "${source}"` : "Value"}
+                </label>
                 <input
-                  type="password"
+                  // An address is not a password: showing it is how a typo gets
+                  // seen, and it is the one credential the server can judge.
+                  type={source ? "text" : "password"}
                   value={cred.value}
                   onChange={(e) => setCredential(i, { value: e.target.value })}
-                  placeholder="the key itself"
+                  placeholder={source ? "https://host:3845/mcp" : "the key itself"}
                 />
+                {source && (
+                  <div className={badUrl ? "error" : "help"} style={{ marginTop: 4 }}>
+                    {badUrl
+                      ? "That is not a full address — scheme included, like " +
+                        "https://host:3845/mcp. A bare hostname or a token mounts nothing."
+                      : cred.value.trim()
+                        ? "Tested for real before the project starts."
+                        : `Left blank, "${source}" mounts no tools — and the roles granted it ` +
+                          "only find out mid-run."}
+                  </div>
+                )}
               </div>
             </div>
             <label className="field">Which roles receive it (nobody, until you grant)</label>
@@ -435,7 +513,8 @@ export default function NewProject() {
               </button>
             </div>
           </div>
-        ))}
+          );
+        })}
         <button
           type="button"
           onClick={() => setCredentials((prev) => [...prev, { name: "", value: "", grants: [] }])}

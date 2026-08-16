@@ -530,6 +530,34 @@ def _upsert_project_secret(session: Session, project_id: str, name: str, value: 
     return row
 
 
+def _parse_source_url(raw: str, detail: str):
+    """One rule for what counts as a data source address, wherever the address
+    arrives from — the Data Sources form or a bare secret write. 422s with the
+    caller's own wording, because the two doors read very differently."""
+    from urllib.parse import urlparse
+
+    parsed = urlparse((raw or "").strip())
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise HTTPException(status_code=422, detail=detail)
+    return parsed
+
+
+def _data_source_using(session: Session, project_id: str | None, secret_name: str) -> str | None:
+    """The data source that treats this secret as its address, if any. The
+    sandbox hands that value to the MCP client verbatim, so a bare hostname or
+    a mispasted token is not a secret with a typo — it is a data source that
+    will never mount. Returns the source's name so the refusal can say which."""
+    if not project_id:
+        return None
+    project = session.get(Project, project_id)
+    if project is None:
+        return None
+    for source in (project.config or {}).get("mcp_servers", []):
+        if source.get("url_secret") == secret_name:
+            return source.get("name")
+    return None
+
+
 def _check_data_source(url: str, bearer: str | None) -> dict:
     """Reachability, not correctness: any HTTP answer means the address is
     real; a connection failure gets a plain-language reason."""
@@ -552,16 +580,12 @@ def add_data_source(project_id: str, body: DataSourceIn, session: Session = Depe
     (and any token) as role-granted secrets, records the mapping in project
     config, and preflights reachability. Egress and the proxy follow
     automatically; no role edit, no repin, no CLI."""
-    from urllib.parse import urlparse
-
     project = _get_project(session, project_id)
-    parsed = urlparse(body.url.strip())
-    if parsed.scheme not in ("http", "https") or not parsed.hostname:
-        raise HTTPException(
-            status_code=422,
-            detail="that is not a URL — a data source needs a full address like "
-                   "https://host:1234/path (schemes http/https only)",
-        )
+    parsed = _parse_source_url(
+        body.url,
+        "that is not a URL — a data source needs a full address like "
+        "https://host:1234/path (schemes http/https only)",
+    )
     for slug in body.roles:
         _latest_role_version(session, slug)  # 422s on unknown role
 
@@ -1210,6 +1234,21 @@ def attach_github(project_id: str, body: GithubAttach, session: Session = Depend
 def put_secret(body: SecretIn, session: Session = Depends(db)) -> dict:
     from yaaf.core.crypto import encrypt
 
+    # Most secrets are opaque strings nobody here can judge. A data source's
+    # address is the exception: the runner refuses to mount anything that is
+    # not a full URL, and that refusal only reaches the chairman inside an
+    # agent's run summary, hours later. Judge it at the door instead — this is
+    # the door an imported setup file comes through, credential by credential.
+    value = body.value
+    source = _data_source_using(session, body.project_id, body.name)
+    if source is not None and value is not None:
+        _parse_source_url(
+            value,
+            f"'{body.name}' is the address of data source '{source}' — it needs a full URL "
+            "like https://host:3845/mcp, not a bare hostname or a token",
+        )
+        value = value.strip()  # a pasted trailing newline breaks the mount too
+
     existing = session.execute(
         select(Secret).where(Secret.project_id == body.project_id, Secret.name == body.name)
     ).scalar_one_or_none()
@@ -1227,14 +1266,14 @@ def put_secret(body: SecretIn, session: Session = Depends(db)) -> dict:
                        "the raw model credential",
             )
         rotated = False
-        if body.value is not None:
-            existing.ciphertext = encrypt(body.value)
+        if value is not None:
+            existing.ciphertext = encrypt(value)
             rotated = True
         existing.role_scopes = body.role_scopes
         _audit(session, body.project_id, "secret.rotate" if rotated else "secret.rescope",
                "secret", existing.id, {"role_scopes": body.role_scopes})
         return {"id": existing.id, "rotated": rotated, "role_scopes": existing.role_scopes}
-    if body.value is None:
+    if value is None:
         raise HTTPException(status_code=422, detail="a new secret needs a value")
     kind = body.kind or "service"
     if kind == "billing" and body.role_scopes:
@@ -1247,7 +1286,7 @@ def put_secret(body: SecretIn, session: Session = Depends(db)) -> dict:
         id=ids.new_id(ids.SECRET),
         project_id=body.project_id,
         name=body.name,
-        ciphertext=encrypt(body.value),
+        ciphertext=encrypt(value),
         role_scopes=body.role_scopes,
         kind=kind,
     )

@@ -114,6 +114,44 @@ def test_stale_role_declared_servers_are_never_mounted(client):
     assert "DATA SOURCES" not in jobs[0].system_prompt
 
 
+def test_a_source_address_stays_a_url_through_the_secrets_door(client):
+    """An imported setup file rebuilds a data source's wiring, then re-asks for
+    its address one plain credential at a time — POST /admin/secrets, not the
+    Data Sources form. That door must apply the same rule, or the project is
+    born with a source that mounts nothing and only says so mid-run."""
+    project = make_project(client, start=False)
+    _save(client, project["id"])  # config now names mcp-ppc-url as ppc's address
+
+    for garbage in ("data.example.com:3845", "wrath1q2w!", "Bearer tok-123"):
+        refused = client.post("/admin/secrets", json={
+            "project_id": project["id"], "name": "mcp-ppc-url",
+            "value": garbage, "role_scopes": ["worker"], "kind": "service",
+        }, headers=ADMIN)
+        assert refused.status_code == 422, garbage
+        detail = refused.json()["detail"]
+        assert "data source 'ppc'" in detail and "full URL" in detail
+
+    # Ordinary credentials stay opaque — the rule is about addresses, not names.
+    opaque = client.post("/admin/secrets", json={
+        "project_id": project["id"], "name": "wordpress",
+        "value": "not-a-url-and-never-will-be", "role_scopes": ["worker"], "kind": "service",
+    }, headers=ADMIN)
+    assert opaque.status_code == 200, opaque.text
+
+    # A real address goes through, trailing paste whitespace and all.
+    stored = client.post("/admin/secrets", json={
+        "project_id": project["id"], "name": "mcp-ppc-url",
+        "value": "  https://data.example.com:3845/mcp\n", "role_scopes": ["worker"],
+    }, headers=ADMIN)
+    assert stored.status_code == 200, stored.text
+    with db_session() as session:
+        from yaaf.core.crypto import decrypt
+
+        row = session.query(Secret).filter_by(project_id=project["id"],
+                                              name="mcp-ppc-url").one()
+        assert decrypt(row.ciphertext) == "https://data.example.com:3845/mcp"
+
+
 def test_delete_cleans_up_completely(client):
     project = make_project(client, start=False)
     _save(client, project["id"], bearer="tok-123")
