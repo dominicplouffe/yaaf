@@ -736,6 +736,10 @@ export default function Settings({
   const navigate = useNavigate();
   const [cloneSlug, setCloneSlug] = useState(() => nextInSeries(dash.slug, "-2"));
   const [cloneName, setCloneName] = useState(() => nextInSeries(dash.name, " (clone)"));
+  // The usual reason to duplicate a company is to aim it at the next thing —
+  // so the mandate is a field on the form, not something to fix afterwards.
+  const [cloneGoal, setCloneGoal] = useState(dash.goal);
+  const [goal, setGoal] = useState(dash.goal);
 
   const [amendReason, setAmendReason] = useState("");
   const [amendChanges, setAmendChanges] = useState("{}");
@@ -826,6 +830,7 @@ export default function Settings({
       const twin = await post<CloneResult>(`/admin/projects/${projectId}/clone`, {
         slug: cloneSlug.trim(),
         name: cloneName.trim() || null,
+        goal: cloneGoal.trim() || null,
       });
       // The twin's own data sources were tested with its own copied
       // credentials — a failure here is news worth stopping for, not a badge
@@ -886,6 +891,36 @@ export default function Settings({
             : "⚠ This project runs FAKE test agents (mock runtime) — nothing real will happen. Switch it under Advanced below."}
         </div>
       )}
+
+      <h2>Goal</h2>
+      <div className="card">
+        <p className="help" style={{ marginTop: 0 }}>
+          The mandate every agent reads at the top of its context. Unlike the constitution — which
+          constrains the company, and moves only by amendment after a cooling-off — this one
+          redirects it, so it takes effect on each agent's next run. The CEO is told what changed
+          and asked to re-aim the backlog against it.
+        </p>
+        <textarea value={goal} onChange={(e) => setGoal(e.target.value)} minLength={10} />
+        <div className="actions">
+          <button
+            className="primary"
+            disabled={busy || goal.trim().length < 10 || goal.trim() === dash.goal}
+            onClick={() =>
+              act(
+                () => patch(`/admin/projects/${projectId}`, { goal: goal.trim() }),
+                "Goal changed. Agents read it on their next run; the CEO has been told to re-aim the backlog.",
+              )
+            }
+          >
+            Save goal
+          </button>
+          {goal.trim() !== dash.goal && (
+            <button type="button" className="small" onClick={() => setGoal(dash.goal)}>
+              Revert
+            </button>
+          )}
+        </div>
+      </div>
 
       <h2>How agents pay for Claude</h2>
       <div className="card">
@@ -1072,6 +1107,10 @@ export default function Settings({
             <input value={cloneName} onChange={(e) => setCloneName(e.target.value)} />
           </div>
         </div>
+        <label className="field">
+          Twin's goal — the machinery is what you're reusing; point it wherever you like
+        </label>
+        <textarea value={cloneGoal} onChange={(e) => setCloneGoal(e.target.value)} minLength={10} />
         <div className="actions">
           <button
             className="primary"

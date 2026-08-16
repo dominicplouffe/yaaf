@@ -447,6 +447,9 @@ _NON_CLONABLE_CONFIG_KEYS = frozenset({"github_webhook_secret", "webhook_secret"
 class ProjectCloneIn(BaseModel):
     slug: str = Field(pattern="^[a-z0-9-]{2,64}$")
     name: str | None = None  # defaults to the source's name plus " (clone)"
+    # The usual reason to duplicate a company is to point it at the next thing.
+    # Omit to keep the source's mandate; the machinery is what's being reused.
+    goal: str | None = Field(default=None, min_length=10)
 
 
 @router.post("/projects/{project_id}/clone")
@@ -481,7 +484,7 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
         id=ids.new_id(ids.PROJECT),
         slug=body.slug,
         name=body.name or f"{source.name} (clone)",
-        goal=source.goal,
+        goal=body.goal or source.goal,
         chairman_user_id=source.chairman_user_id,
         billing_mode=source.billing_mode,
         controlled_domains=list(source.controlled_domains or []),
@@ -720,20 +723,96 @@ def _data_source_using(session: Session, project_id: str | None, secret_name: st
     return None
 
 
-def _check_data_source(url: str, bearer: str | None) -> dict:
-    """Reachability, not correctness: any HTTP answer means the address is
-    real; a connection failure gets a plain-language reason."""
+def _sse_or_json(response) -> dict | None:
+    """An MCP server answers a POST with either JSON or a one-event SSE
+    stream, depending on what it felt like negotiating. Both carry the same
+    JSON-RPC envelope."""
+    import json as jsonlib
+
+    body = response.text or ""
+    if "text/event-stream" in response.headers.get("content-type", ""):
+        for line in body.splitlines():
+            if line.startswith("data:"):
+                return jsonlib.loads(line[5:].strip())
+        return None
+    return jsonlib.loads(body) if body.strip() else None
+
+
+def _check_data_source(url: str, bearer: str | None, transport=None) -> dict:
+    """Would an agent actually get tools here? The old answer to that was a GET
+    and a shrug: any HTTP status counted as success, so a healthy MCP endpoint
+    — which answers GET with 405, because it wants POST — reported "reachable
+    (HTTP 405)" and taught chairmen to read a passing check as noise. It also
+    proved nothing. A wrong path, a rejected token and a server that is not MCP
+    at all all sailed through it identically.
+
+    So speak MCP instead: initialize, then tools/list, and say which tools came
+    back. `transport` is a seam for tests; production passes nothing.
+    """
     import httpx
 
-    headers = {"Authorization": f"Bearer {bearer}"} if bearer else {}
+    headers = {"Content-Type": "application/json",
+               "Accept": "application/json, text/event-stream"}
+    if bearer:
+        headers["Authorization"] = f"Bearer {bearer}"
+
+    def rpc(client, payload: dict, session_id: str | None):
+        sent = {**headers, **({"Mcp-Session-Id": session_id} if session_id else {})}
+        return client.post(url, json=payload, headers=sent)
+
     try:
-        response = httpx.get(url, headers=headers, timeout=10, follow_redirects=True)
-        return {"ok": True, "detail": f"reachable (HTTP {response.status_code})"}
+        with httpx.Client(timeout=10, follow_redirects=True, transport=transport) as client:
+            opened = rpc(client, {
+                "jsonrpc": "2.0", "id": 1, "method": "initialize",
+                "params": {"protocolVersion": "2025-06-18", "capabilities": {},
+                           "clientInfo": {"name": "yaaf", "version": "1.0"}},
+            }, None)
+            if opened.status_code in (401, 403):
+                return {"ok": False, "detail": f"the server refused the credential (HTTP "
+                                               f"{opened.status_code}) — check the bearer token"}
+            if opened.status_code == 404:
+                return {"ok": False, "detail": "no MCP endpoint at that path (HTTP 404) — the "
+                                               "address needs the server's own path, often /mcp"}
+            if opened.status_code >= 400:
+                return {"ok": False, "detail": f"something is listening, but it did not accept an "
+                                               f"MCP handshake (HTTP {opened.status_code})"}
+            try:
+                envelope = _sse_or_json(opened) or {}
+            except ValueError:
+                return {"ok": False, "detail": "that address answered, but not with MCP — it "
+                                               "looks like an ordinary web page or API"}
+            if "error" in envelope:
+                message = (envelope["error"] or {}).get("message", "unknown error")
+                return {"ok": False, "detail": f"the server refused the handshake: {message}"}
+
+            info = (envelope.get("result") or {}).get("serverInfo") or {}
+            named = " ".join(str(p) for p in (info.get("name"), info.get("version")) if p)
+            session_id = opened.headers.get("mcp-session-id")
+            rpc(client, {"jsonrpc": "2.0", "method": "notifications/initialized"}, session_id)
+
+            listed = rpc(client, {"jsonrpc": "2.0", "id": 2, "method": "tools/list",
+                                  "params": {}}, session_id)
+            tools = []
+            if listed.status_code < 400:
+                try:
+                    tools = ((_sse_or_json(listed) or {}).get("result") or {}).get("tools") or []
+                except ValueError:
+                    tools = []
     except httpx.ConnectError:
         return {"ok": False, "detail": "nothing is listening at that address — check "
                                        "host and port, and that the server is running"}
     except httpx.HTTPError as exc:
         return {"ok": False, "detail": f"could not connect: {exc.__class__.__name__}"}
+
+    who = f"MCP server{f' {named}' if named else ''}"
+    if not tools:
+        # The handshake is real, so the address and credential are right — but
+        # a source that offers an agent nothing is not a working data source.
+        return {"ok": False, "detail": f"{who} answered the handshake but offers no tools — "
+                                       "agents would mount it and find nothing to call"}
+    shown = ", ".join(t.get("name", "?") for t in tools[:4])
+    more = f", +{len(tools) - 4} more" if len(tools) > 4 else ""
+    return {"ok": True, "detail": f"{who} ready — {len(tools)} tool(s): {shown}{more}"}
 
 
 @router.post("/projects/{project_id}/mcp_servers")
@@ -866,6 +945,10 @@ def repin_team(team_id: str, session: Session = Depends(db)) -> dict:
 
 
 class ProjectPatch(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    # The chairman's mandate, not a constitutional rule: it redirects the
+    # company rather than constraining it, so it moves without a cooling-off.
+    goal: str | None = Field(default=None, min_length=10)
     billing_mode: str | None = Field(default=None, pattern="^(api_key|subscription)$")
     billing_secret_id: str | None = None
     controlled_domains: list[str] | None = None
@@ -893,6 +976,22 @@ def _billing_shape_error(mode: str, plaintext: str) -> str | None:
 def patch_project(project_id: str, body: ProjectPatch, session: Session = Depends(db)) -> dict:
     project = _get_project(session, project_id)
     changed: dict = {}
+    if body.name is not None:
+        project.name = body.name.strip()
+        changed["name"] = project.name
+    if body.goal is not None and body.goal.strip() != project.goal:
+        # The mandate moved. Agents read it live from the next context pack, so
+        # the change lands on its own — but landing silently is how a CEO ends
+        # up defending a plan built for the old one. Tell it, in its own words.
+        was, project.goal = project.goal, body.goal.strip()
+        changed["goal"] = project.goal
+        _notice_ceo(
+            session, project.id, NoticeKind.GOAL_CHANGED,
+            f"The chairman changed this company's goal.\n\nIT IS NOW: {project.goal}\n\n"
+            f"IT WAS: {was}\n\nEverything already in flight — open tasks, bets, deliverables "
+            "— was planned against the old goal. Re-read the backlog against this one before "
+            "continuing, and close or re-aim whatever no longer serves it.",
+        )
     if body.billing_mode is not None:
         project.billing_mode = body.billing_mode
         changed["billing_mode"] = body.billing_mode
@@ -925,9 +1024,11 @@ def patch_project(project_id: str, body: ProjectPatch, session: Session = Depend
         project.config = {**(project.config or {}), **body.config}
         changed["config"] = body.config
     _audit(session, project.id, "project.patch", "project", project.id, changed)
-    return {"id": project.id, "billing_mode": project.billing_mode,
+    return {"id": project.id, "name": project.name, "goal": project.goal,
+            "billing_mode": project.billing_mode,
             "billing_secret_id": project.billing_secret_id,
-            "controlled_domains": project.controlled_domains, "config": project.config}
+            "controlled_domains": project.controlled_domains, "config": project.config,
+            "changed": changed}
 
 
 @router.post("/projects/{project_id}/billing_check")

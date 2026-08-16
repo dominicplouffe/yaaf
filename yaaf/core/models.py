@@ -179,6 +179,7 @@ class NoticeKind(enum.StrEnum):
     APPROVAL_EXPIRED = "approval_expired"
     THREAD_FROZEN = "thread_frozen"
     CONSTITUTION_AMENDED = "constitution_amended"
+    GOAL_CHANGED = "goal_changed"
     TASK_CHECK_FAILED = "task_check_failed"
     TASK_BLOCKED = "task_blocked"
     AGENT_RUN_REAPED = "agent_run_reaped"

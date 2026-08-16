@@ -14,7 +14,16 @@ import pytest
 from tests.conftest import ADMIN, make_project, seed_role
 from yaaf.core.crypto import decrypt
 from yaaf.core.db import db_session
-from yaaf.core.models import Agent, AgentKind, Channel, Project, Secret, Team
+from yaaf.core.models import (
+    Agent,
+    AgentKind,
+    Channel,
+    Notice,
+    NoticeKind,
+    Project,
+    Secret,
+    Team,
+)
 from yaaf.server.api import admin as admin_module
 
 
@@ -162,6 +171,53 @@ def test_a_taken_slug_is_refused_before_anything_is_written(client):
     with db_session() as session:
         assert session.query(Project).count() == 1
         assert session.query(Secret).filter_by(project_id=project["id"]).count() == 0
+
+
+def test_the_twin_can_be_aimed_somewhere_new(client):
+    """Reusing the machinery is the point; reusing the mandate usually isn't.
+    A twin stuck on its source's goal would make the whole feature pointless."""
+    project = make_project(client, start=False)
+    twin = _clone(client, project["id"], goal="Audit the 2027 catalogue instead.").json()
+
+    with db_session() as session:
+        assert session.get(Project, twin["id"]).goal == "Audit the 2027 catalogue instead."
+        assert session.get(Project, project["id"]).goal != "Audit the 2027 catalogue instead."
+
+    # Omitting it keeps the source's mandate — duplicating to run the same
+    # company again is just as valid a reason to clone.
+    same = _clone(client, project["id"], slug="acme-third").json()
+    with db_session() as session:
+        assert session.get(Project, same["id"]).goal == session.get(
+            Project, project["id"]).goal
+
+    # A goal too short to mean anything is refused, as it is at creation.
+    assert _clone(client, project["id"], slug="acme-4th", goal="nope").status_code == 422
+
+
+def test_a_changed_goal_reaches_the_ceo(client):
+    """Agents read the goal live, so the change lands on its own — but landing
+    silently is how a CEO ends up defending a plan built for the old one."""
+    project = make_project(client, start=False)
+    patched = client.patch(f"/admin/projects/{project['id']}", json={
+        "goal": "Pivot: win the enterprise segment by Q3.",
+    }, headers=ADMIN)
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["changed"]["goal"] == "Pivot: win the enterprise segment by Q3."
+
+    with db_session() as session:
+        assert session.get(Project, project["id"]).goal == "Pivot: win the enterprise segment by Q3."
+        notice = session.query(Notice).filter_by(project_id=project["id"],
+                                                 kind=NoticeKind.GOAL_CHANGED).one()
+        assert notice.agent_id == project["ceo_agent_id"]
+        assert "Pivot: win the enterprise segment by Q3." in notice.body
+        assert "Prove the framework works end to end." in notice.body  # what it was
+
+    # Saving the same text again is not a change, and must not nag the CEO.
+    client.patch(f"/admin/projects/{project['id']}",
+                 json={"goal": "Pivot: win the enterprise segment by Q3."}, headers=ADMIN)
+    with db_session() as session:
+        assert session.query(Notice).filter_by(project_id=project["id"],
+                                               kind=NoticeKind.GOAL_CHANGED).count() == 1
 
 
 def test_solo_twin_keeps_the_ceo_inside_its_team(client):
