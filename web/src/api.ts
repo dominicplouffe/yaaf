@@ -368,6 +368,13 @@ export interface OrgView {
   }[];
 }
 
+/** One team pinned to (any version of) a role — the edit's blast radius. */
+export interface RoleUsage {
+  project_name: string;
+  team_name: string;
+  pinned_version: number;
+}
+
 export interface RoleSummary {
   id: string;
   slug: string;
@@ -375,6 +382,10 @@ export interface RoleSummary {
   is_ceo_role: boolean;
   latest_version: number;
   model: string | null;
+  effort: string | null;
+  description: string;
+  tools: string[];
+  usage: RoleUsage[];
 }
 
 /** A role definition as it travels inside a setup file — the POST /admin/roles body. */

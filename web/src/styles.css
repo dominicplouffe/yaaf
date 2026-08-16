@@ -364,6 +364,26 @@ pre.block {
   font-size: 10px; color: var(--muted); margin-top: 3px;
 }
 
+/* portfolio cards (Projects) & role library */
+.list-grid.wide { grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); }
+.pcard-vitals {
+  display: flex; gap: 16px; flex-wrap: wrap; align-items: center;
+  border-top: 1px solid var(--grid); margin-top: 12px; padding-top: 10px;
+  font-size: 12.5px; color: var(--ink-2);
+}
+.pcard-vitals b { color: var(--ink); font-variant-numeric: tabular-nums; }
+.card.clickable { cursor: pointer; transition: border-color 0.12s; }
+.card.clickable:hover { border-color: var(--accent); }
+.role-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+  gap: 14px; margin-top: 16px;
+}
+.fs { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--grid); }
+.fs-h {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: 1.1px;
+  text-transform: uppercase; color: var(--muted); font-weight: 600; margin-bottom: 2px;
+}
+
 /* responsive floor: the "approve from the kitchen" moment */
 @media (max-width: 900px) {
   .shell { flex-direction: column; }

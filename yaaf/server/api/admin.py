@@ -183,14 +183,38 @@ def list_roles(session: Session = Depends(db)) -> list[dict]:
                 .order_by(RoleVersion.version.desc())
             ).scalars()
         )
+        latest = versions[0] if versions else None
+        # Blast radius: every team pinned to any version of this role. Editing
+        # a role is only scary when you can't see who runs it.
+        usage = [
+            {
+                "project_name": project_name,
+                "team_name": team_name,
+                "pinned_version": pinned,
+            }
+            for team_name, project_name, pinned in session.execute(
+                select(Team.name, Project.name, RoleVersion.version)
+                .join(RoleVersion, RoleVersion.id == Team.role_version_id)
+                .join(Project, Project.id == Team.project_id)
+                .where(RoleVersion.role_id == role.id)
+                .order_by(Project.name, Team.name)
+            )
+        ]
         out.append(
             {
                 "id": role.id,
                 "slug": role.slug,
                 "name": role.name,
                 "is_ceo_role": role.is_ceo_role,
-                "latest_version": versions[0].version if versions else 0,
-                "model": versions[0].model if versions else None,
+                "latest_version": latest.version if latest else 0,
+                "model": latest.model if latest else None,
+                "effort": latest.effort if latest else None,
+                "description": latest.description if latest else "",
+                "tools": sorted(
+                    k for k, v in (latest.tool_permissions or {}).items()
+                    if v is True
+                ) if latest else [],
+                "usage": usage,
             }
         )
     return out
