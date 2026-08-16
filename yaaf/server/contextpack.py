@@ -74,7 +74,7 @@ def constitution_prose(cons: ConstitutionDoc, project: Project) -> str:
         "Curate, don't accumulate.\n"
         f"- Each run may hit at most {cons.refusal_cap_per_run} policy refusals before its "
         "token is revoked. A refusal is the system working; do not rephrase and retry.\n"
-        f"{_cadence_clause(project)}"
+        f"{_cadence_clause(cons)}"
         "- Do not ask the chairman questions. Decide and report, or file an approval as a "
         "recommendation you would defend. When in doubt about WHAT to tell him, tell; about "
         "asking, decide. That is about candour, never about frequency — it is not licence to "
@@ -82,10 +82,10 @@ def constitution_prose(cons: ConstitutionDoc, project: Project) -> str:
     )
 
 
-def _cadence_clause(project: Project) -> str:
+def _cadence_clause(cons: ConstitutionDoc) -> str:
     """The reporting cadence, stated where every other enforced limit is
     stated. Silent when the chairman has not set one."""
-    cadence = policy.report_cadence(project)
+    cadence = policy.cadence_of(cons)
     if not cadence.enforced:
         return ""
     window = ""
@@ -172,7 +172,7 @@ def _chairman_state(session: Session, project: Project, agent: Agent, now) -> di
     ).scalars().first()
     if boardroom is None:
         return {"boardroom": None}
-    cadence = policy.report_cadence(project)
+    cadence = policy.report_cadence(session, project)
     last_report, last_chairman = policy.boardroom_turns(session, boardroom.id, agent.id)
     # An open turn: he spoke last and you have not answered. Answer it — that
     # reply is always allowed, and it is the one post that is never a status.

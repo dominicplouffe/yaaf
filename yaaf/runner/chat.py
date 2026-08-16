@@ -70,7 +70,12 @@ CHAT SESSION: You are in a live boardroom conversation with the chairman.
 - You have your full toolset. When the chairman asks for action, act —
   create the task, check the board, record the memory — then say plainly
   what you did.
-- Directives come only from the chairman, only here."""
+- Directives come only from the chairman, only here.
+- When he sets a STANDING rule about how or how often he wants reporting,
+  file it with `directive_file`, citing the message id shown in brackets
+  beside his words. Do not merely remember it: you run as separate
+  stateless runs, and the next one will not read your memory before it
+  posts. Filing makes the platform enforce it and tells him it landed."""
 
 
 def chat_enabled(project: Project) -> bool:
@@ -141,11 +146,22 @@ def _supervise_project(session: Session, project: Project) -> None:
         if running_ids:
             log.warning("chat container mismatch for %s (have %s, want %s); rebuilding",
                         project.slug, running_ids, live_run.id)
-            sandbox.stop_chat_container(project.id)
+        # Unconditionally, even when nothing is RUNNING: the usual case is a
+        # container that exited on its own, and stop_chat_container lists with
+        # all=True — so this is the one chance to read *why* before Docker's
+        # record of it goes away. Discarding those logs is why a chat session
+        # that quietly dies every few minutes has been undiagnosable: the run
+        # is marked failed with a summary that only restates the symptom, and
+        # each gap silently converts the chairman's own boardroom messages into
+        # full-price CEO work runs (see dispatcher.chat_session_live).
+        logs = sandbox.stop_chat_container(project.id)
+        why = ("chat session container lost or mismatched; supervisor restarts it"
+               + ("\n" + logs[-2000:] if logs else "\n(no container logs available)"))
         live_run.status = RunStatus.FAILED
         live_run.finished_at = utcnow()
-        live_run.summary = "chat session container lost or mismatched; supervisor restarts it"
-        log.warning("chat session for %s lost its container; restarting", project.slug)
+        live_run.summary = why[:4000]
+        log.warning("chat session for %s lost its container; restarting. Last logs:\n%s",
+                    project.slug, logs[-2000:] or "(none)")
     elif running_ids:
         # Containers with no live run at all: zombies from a reaped session.
         log.warning("clearing orphaned chat container(s) for %s: %s",

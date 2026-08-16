@@ -150,14 +150,37 @@ async def t_messages_read(args):
 @tool(
     "message_post",
     "Post to one of your channels. Boardroom: CEO<->chairman. Leadership: CEO+leads. "
-    "Team room: your team. Use thread_id to reply in a thread.",
-    {"channel_id": str, "body": str, "thread_id": str},
+    "Team room: your team. Use thread_id to reply in a thread. An unprompted boardroom "
+    "status is refused between the chairman's cadence slots (see the `chairman` block in "
+    "your context); set override to 'blocker', 'budget' or 'approval' only when it truly "
+    "cannot wait — overrides are recorded and he sees them.",
+    {"channel_id": str, "body": str, "thread_id": str, "override": str},
 )
 async def t_message_post(args):
     payload = {"channel_id": args["channel_id"], "body": args["body"]}
     if args.get("thread_id"):
         payload["thread_id"] = args["thread_id"]
+    if args.get("override"):
+        payload["override"] = args["override"]
     return _text(_call("POST", "/agent/messages", payload))
+
+
+@tool(
+    "directive_file",
+    "CEO: turn a standing instruction the chairman gave you in the boardroom into enforced "
+    "policy, instead of a memory you have to remember. Cite the message he wrote it in. Use "
+    "this the moment he changes how or how often he wants to be reported to — a rule kept in "
+    "memory does not survive into the next run. Settable: "
+    "chairman_report_interval_hours (0 disables), chairman_report_window_local ('09:00-20:00'), "
+    "chairman_report_timezone (IANA name).",
+    {"from_message_id": str, "changes": dict, "reason": str},
+)
+async def t_directive_file(args):
+    return _text(_call("POST", "/agent/directives", {
+        "from_message_id": args["from_message_id"],
+        "changes": args["changes"],
+        "reason": args["reason"],
+    }))
 
 
 @tool("memory_search", "Search durable memory. Query it before repeating work.",
@@ -302,7 +325,7 @@ async def t_env_list(args):
 
 ALL_TOOLS = [
     t_board, t_task_create, t_task_claim, t_task_complete, t_task_block, t_task_kill,
-    t_suggest, t_channels, t_messages_read, t_message_post,
+    t_suggest, t_channels, t_messages_read, t_message_post, t_directive_file,
     t_memory_search, t_memory_add, t_memory_supersede, t_memory_forget,
     t_evidence_add, t_hypothesis_add, t_hypothesis_kill, t_decision_add,
     t_approval_request, t_approvals_list, t_spend_book,

@@ -216,7 +216,10 @@ async def main() -> int:
                     continue
 
             _set_typing(channel_id, 120)
-            prompt_lines = [f"Chairman: {m['body']}" for m in fresh]
+            # Carry the message id: a standing instruction he gives here has to
+            # be citable to `directive_file`, and without the id the CEO can
+            # only write it down and hope the next run reads the note.
+            prompt_lines = [f"Chairman [{m['id']}]: {m['body']}" for m in fresh]
             prompt = "\n".join(prompt_lines)
             if first_turn:
                 preamble = ""

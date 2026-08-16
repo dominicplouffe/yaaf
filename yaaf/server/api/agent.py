@@ -17,11 +17,13 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from yaaf.core import ids
-from yaaf.core.constitution import effective
+from yaaf.core.constitution import effective, propose_amendment
 from yaaf.core.db import notify
 from yaaf.core.models import (
+    AgentKind,
     Approval,
     ApprovalStatus,
+    AuditLog,
     Channel,
     ChannelRead,
     Decision,
@@ -446,6 +448,79 @@ def post_message(
     session.add(message)
     notify(session, WAKE_CHANNEL, ctx.project.id)
     return {"id": message.id, "at": message.created_at.isoformat() if message.created_at else None}
+
+
+# ── chairman directives ─────────────────────────────────────────────────────────
+
+
+class DirectiveIn(BaseModel):
+    """A standing instruction the chairman gave in the boardroom, filed by the
+    CEO as policy instead of as a memory."""
+
+    from_message_id: str
+    changes: dict
+    reason: str = Field(min_length=10)
+
+
+@router.post("/directives")
+def file_directive(
+    body: DirectiveIn, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
+) -> dict:
+    """Turn something the chairman said into something the platform enforces.
+
+    The gap this closes: on 16 Aug he wrote "change your updates to every 4
+    hours" in the boardroom, and *nothing structural happened*. The CEO wrote
+    itself a memory and hoped — so the next stateless run, which never read
+    that memory, carried on reporting. A directive that lives in prose is a
+    directive the company can forget.
+
+    The platform cannot check what a message *meant*, so it checks what it can
+    and makes the rest loud: the citation must be a real, recent boardroom
+    message from the chairman himself, newer than the rule it replaces; the
+    change may only touch fields that constrain the company's demands on him;
+    and every filing is audited, disclosed to the CEO, and echoed back to him
+    in the boardroom where a misreading is one sentence away from correction.
+    """
+    if ctx.agent.kind != AgentKind.CEO:
+        raise Refusal("Only the CEO files directives — nobody else speaks to the chairman.",
+                      status_code=403)
+    policy.check_directive_scope(body.changes)
+    cited = policy.check_directive_citation(session, ctx.project, body.from_message_id)
+    try:
+        amendments = propose_amendment(
+            session, ctx.project.id, ctx.project.chairman_user_id,
+            f"{body.reason} [filed by the CEO from the chairman's boardroom message "
+            f"{cited.id} at {cited.created_at.isoformat(timespec='minutes')}]",
+            body.changes,
+        )
+    except Exception as exc:
+        raise Refusal(f"That is not a valid change to the constitution: {exc}") from exc
+    if not amendments:
+        raise Refusal("That directive changes nothing — the rule already reads that way.")
+    _audit_directive(session, ctx, cited, body.changes)
+    policy.confirm_directive(session, ctx.project, ctx.agent, cited, body.changes)
+    return {
+        "amendments": [{"id": a.id, "effective_at": a.effective_at.isoformat()}
+                       for a in amendments],
+        "in_force": True,
+        "note": ("Filed and in force now — no cooling-off for cadence. It is recorded, and "
+                 "the chairman has been told in the boardroom so he can correct you if you "
+                 "read him wrong. Stop carrying this rule in memory; it is policy."),
+    }
+
+
+def _audit_directive(session: Session, ctx: RunContext, cited: Message, changes: dict) -> None:
+    session.add(
+        AuditLog(
+            id=ids.new_id(ids.AUDIT),
+            project_id=ctx.project.id,
+            actor=f"agent:{ctx.agent.id}",
+            action="constitution.directive",
+            entity="message",
+            entity_id=cited.id,
+            detail={"changes": changes, "cited_at": cited.created_at.isoformat()},
+        )
+    )
 
 
 # ── chat lane ───────────────────────────────────────────────────────────────────

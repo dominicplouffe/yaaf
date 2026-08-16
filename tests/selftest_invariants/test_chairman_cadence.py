@@ -17,22 +17,31 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from tests.conftest import ADMIN, bearer, channel_of, live_token, make_project
+import pytest
+from pydantic import ValidationError
+
+from tests.conftest import (
+    ADMIN,
+    agent_by_name,
+    bearer,
+    channel_of,
+    live_token,
+    make_project,
+)
 from yaaf.core import ids
+from yaaf.core.constitution import ConstitutionDoc, parse_report_window
 from yaaf.core.db import db_session
 from yaaf.core.models import AuditLog, Message, Project, utcnow
 from yaaf.server import contextpack, policy
 
 CADENCE = {"chairman_report_interval_hours": 4,
            "chairman_report_window_local": "09:00-20:00",
-           "timezone": "America/New_York"}
+           "chairman_report_timezone": "America/New_York"}
 
 
-def _with_cadence(client, config: dict | None = None) -> dict:
-    project = make_project(client, slug="cadence")
-    client.patch(f"/admin/projects/{project['id']}",
-                 json={"config": CADENCE if config is None else config}, headers=ADMIN)
-    return project
+def _with_cadence(client, constitution: dict | None = None) -> dict:
+    return make_project(client, slug="cadence",
+                        constitution=CADENCE if constitution is None else constitution)
 
 
 def _post(client, project: dict, body: str, kind: str = "agent_run", **extra):
@@ -45,12 +54,24 @@ def _post(client, project: dict, body: str, kind: str = "agent_run", **extra):
     )
 
 
-def _chairman_says(client, project: dict, body: str = "a word from the chairman") -> None:
-    channel_id = channel_of(client, project["id"], "boardroom")
+def _chairman_says(client, project: dict, body: str = "a word from the chairman",
+                   kind: str = "boardroom", age_hours: float = 0.0) -> str:
+    channel_id = channel_of(client, project["id"], kind)
+    message_id = ids.new_id(ids.MESSAGE)
     with db_session() as session:
         session.add(Message(
-            id=ids.new_id(ids.MESSAGE), project_id=project["id"], channel_id=channel_id,
-            sender_user_id=session.get(Project, project["id"]).chairman_user_id, body=body))
+            id=message_id, project_id=project["id"], channel_id=channel_id,
+            sender_user_id=session.get(Project, project["id"]).chairman_user_id, body=body,
+            created_at=utcnow() - timedelta(hours=age_hours)))
+    return message_id
+
+
+def _file_directive(client, project: dict, message_id: str, changes: dict,
+                    reason: str = "The chairman set a reporting cadence in the boardroom."):
+    _, token = live_token(project["id"], project["ceo_agent_id"])
+    return client.post("/agent/directives", headers=bearer(token),
+                       json={"from_message_id": message_id, "changes": changes,
+                             "reason": reason})
 
 
 def _backdate_ceo_posts(project: dict, hours: float) -> None:
@@ -94,7 +115,7 @@ def test_the_slot_opens_once_the_interval_has_passed(client):
 def test_no_cadence_configured_leaves_the_boardroom_wide_open(client):
     """The rule is opt-in: a project whose chairman never asked for one must
     behave exactly as it did before this existed."""
-    project = _with_cadence(client, config={})
+    project = _with_cadence(client, constitution={})
     for _ in range(3):
         assert _post(client, project, "chatter").status_code == 200
 
@@ -112,7 +133,7 @@ def test_a_slot_that_lands_out_of_hours_waits_for_the_morning(client):
     The interval alone is not enough: 18:00 + 4h is 22:00, and the chairman is
     asleep."""
     et = ZoneInfo("America/New_York")
-    cadence = policy.ReportCadence(4.0, policy._parse_window("09:00-20:00"), et)
+    cadence = policy.ReportCadence(4.0, parse_report_window("09:00-20:00"), et)
 
     def slot_after(hour: int, minute: int = 0) -> datetime:
         return policy.next_report_slot(
@@ -122,9 +143,15 @@ def test_a_slot_that_lands_out_of_hours_waits_for_the_morning(client):
     assert slot_after(18) == datetime(2026, 8, 17, 9, 0, tzinfo=et)        # +4h = 22:00
     assert slot_after(19, 59) == datetime(2026, 8, 17, 9, 0, tzinfo=et)    # +4h = 23:59
     assert slot_after(2) == datetime(2026, 8, 16, 9, 0, tzinfo=et)         # +4h = 06:00
-    # A malformed window must not silently gag the CEO — it reads as "no window".
-    assert policy._parse_window("20:00-09:00") is None
-    assert policy._parse_window("nonsense") is None
+    # A malformed window is refused at the door rather than silently gagging
+    # (or ungagging) the CEO — the constitution validates it on the way in.
+    assert parse_report_window("20:00-09:00") is None
+    assert parse_report_window("nonsense") is None
+    for bad in ({"chairman_report_window_local": "20:00-09:00"},
+                {"chairman_report_window_local": "nonsense"},
+                {"chairman_report_timezone": "Mars/Olympus"}):
+        with pytest.raises(ValidationError):
+            ConstitutionDoc.model_validate(bad)
 
 
 # ── break-glass ─────────────────────────────────────────────────────────────────
@@ -188,19 +215,153 @@ def test_context_pack_flags_an_unanswered_chairman_message(client):
     assert chairman["may_post_status_now"] is True
 
 
-def test_cadence_appears_in_the_system_prompt_only_when_set(client):
-    project = _with_cadence(client)
-    _, token = live_token(project["id"], project["ceo_agent_id"])
-    prompt = client.get("/agent/context", headers=bearer(token)).json()
-    assert prompt  # pack builds
+def _system_prompt(project: dict) -> str:
     with db_session() as session:
-        from yaaf.core.models import Agent, Project
+        from yaaf.core.models import Agent
 
-        agent = session.get(Agent, project["ceo_agent_id"])
-        row = session.get(Project, project["id"])
-        text = contextpack.build_system_prompt(session, agent, row)
-        assert "at most every 4h" in text
-        assert "never about frequency" in text
-        row.config = {}
-        session.flush()
-        assert "at most every" not in contextpack.build_system_prompt(session, agent, row)
+        return contextpack.build_system_prompt(
+            session, session.get(Agent, project["ceo_agent_id"]),
+            session.get(Project, project["id"]))
+
+
+def test_cadence_is_stated_in_the_system_prompt_only_when_set(client):
+    text = _system_prompt(_with_cadence(client))
+    assert "at most every 4h" in text
+    assert "09:00 and 20:00 America/New_York" in text
+    # ...and the line that used to read as blanket permission to post is now
+    # explicitly about candour instead of frequency.
+    assert "never about frequency" in text
+
+
+def test_a_project_with_no_cadence_says_nothing_about_one(client):
+    assert "at most every" not in _system_prompt(_with_cadence(client, constitution={}))
+
+
+# ── amending it ─────────────────────────────────────────────────────────────────
+
+
+def test_changing_the_cadence_skips_the_cooling_off_and_is_disclosed(client):
+    """A chairman who says "stop, this is costing me money" means the next run.
+    Three days of the old cadence is the hazard he is trying to end — the same
+    argument the budget fields already won."""
+    project = _with_cadence(client, constitution={})
+    response = client.post(
+        f"/admin/projects/{project['id']}/amendments",
+        json={"reason": "Chairman asked for four-hourly reporting inside his working day.",
+              "changes": CADENCE},
+        headers=ADMIN)
+    assert response.status_code == 200, response.text
+    assert response.json()["amendments"][0]["applied_now"] is True
+    # In force immediately: a second status is now refused...
+    assert _post(client, project, "**Status 1**").status_code == 200
+    assert _post(client, project, "**Status 2**").status_code == 429
+    # ...and the CEO is *told*, which is the half that was missing on 16 Aug:
+    # the rule changed and no run ever learned it had.
+    _, token = live_token(project["id"], project["ceo_agent_id"])
+    pack = client.get("/agent/context", headers=bearer(token)).json()
+    disclosed = pack["constitution_amendments"][0]["changes"]
+    assert disclosed["chairman_report_interval_hours"] == 4
+
+
+def test_a_cadence_that_does_not_parse_is_refused_at_the_door(client):
+    project = _with_cadence(client, constitution={})
+    response = client.post(
+        f"/admin/projects/{project['id']}/amendments",
+        json={"reason": "Trying to set a nonsense window.",
+              "changes": {"chairman_report_window_local": "whenever"}},
+        headers=ADMIN)
+    assert response.status_code == 422
+    assert "HH:MM-HH:MM" in response.text
+
+
+# ── directives: what he says becomes what the platform enforces ─────────────────
+
+
+def test_a_directive_turns_his_words_into_an_enforced_rule(client):
+    """The 12:40 failure: he wrote "change your updates to every 4 hours" and
+    nothing structural happened. Now it does."""
+    project = _with_cadence(client, constitution={})
+    for _ in range(3):  # no cadence yet: the old, expensive behaviour
+        assert _post(client, project, "chatter").status_code == 200
+    said = _chairman_says(client, project,
+                          "change your updates to every 4 hours between 9am to 8pm Eastern")
+    filed = _file_directive(client, project, said, CADENCE)
+    assert filed.status_code == 200, filed.text
+    assert filed.json()["in_force"] is True
+    # Enforced from the very next post, with no cooling-off and no run needing
+    # to have remembered anything.
+    assert _post(client, project, "**Status**").status_code == 429
+
+
+def test_a_directive_is_said_back_to_him_in_his_own_channel(client):
+    """The platform can verify that he spoke, never what he meant — so the
+    safeguard against a misread directive is that he watches it land."""
+    project = _with_cadence(client, constitution={})
+    said = _chairman_says(client, project, "every 4 hours please")
+    assert _file_directive(client, project, said, CADENCE).status_code == 200
+    with db_session() as session:
+        confirmation = session.query(Message).filter(
+            Message.project_id == project["id"],
+            Message.sender_agent_id == project["ceo_agent_id"]).one()
+        assert "Recorded as policy" in confirmation.body
+        assert "interval_hours = 4" in confirmation.body
+        assert confirmation.thread_id == said  # threaded to the words it came from
+
+
+def test_a_directive_may_not_touch_anything_but_his_own_cadence(client):
+    """An agent filing its own constitution is how a company votes itself a
+    bigger budget. The only rules the CEO may file are the ones that limit what
+    it asks of the chairman."""
+    project = _with_cadence(client, constitution={})
+    said = _chairman_says(client, project, "spend whatever you need")
+    for grab in ({"monthly_usd_cap": 10_000.0},
+                 {"queue_ceiling": 99},
+                 {"chairman_report_interval_hours": 4, "approval_threshold_usd": 0.0}):
+        refused = _file_directive(client, project, said, grab)
+        assert refused.status_code == 403, refused.text
+        assert "may not set" in refused.text
+
+
+def test_a_directive_must_cite_the_chairman_himself_in_the_boardroom(client):
+    project = _with_cadence(client, constitution={})
+    # An agent's own message is not a directive, however confident it sounds.
+    _post(client, project, "I have decided to report less often")
+    with db_session() as session:
+        mine = session.query(Message).filter(
+            Message.sender_agent_id == project["ceo_agent_id"]).one().id
+    assert _file_directive(client, project, mine, CADENCE).status_code == 422
+    # Nor is something relayed through leadership.
+    relayed = _chairman_says(client, project, "he told me four hours", kind="leadership")
+    assert _file_directive(client, project, relayed, CADENCE).status_code == 422
+    # Nor a message that does not exist.
+    assert _file_directive(client, project, "msg_nope", CADENCE).status_code == 404
+
+
+def test_a_stale_message_cannot_undo_a_fresher_instruction(client):
+    """Re-citing yesterday's "hourly is fine" to escape today's "every four
+    hours" is the obvious way to game this."""
+    project = _with_cadence(client, constitution={})
+    old = _chairman_says(client, project, "hourly is fine", age_hours=2)
+    new = _chairman_says(client, project, "no — every 4 hours", age_hours=0)
+    assert _file_directive(client, project, new, CADENCE).status_code == 200
+    back = _file_directive(client, project, old, {"chairman_report_interval_hours": 1})
+    assert back.status_code == 422
+    assert "predates the rule currently in force" in back.text
+
+
+def test_a_directive_from_history_is_refused(client):
+    project = _with_cadence(client, constitution={})
+    ancient = _chairman_says(client, project, "every 4 hours", age_hours=72)
+    refused = _file_directive(client, project, ancient, CADENCE)
+    assert refused.status_code == 422
+    assert "his to restate" in refused.text
+
+
+def test_only_the_ceo_files_directives(client):
+    project = _with_cadence(client, constitution={})
+    said = _chairman_says(client, project, "every 4 hours")
+    _, token = live_token(project["id"], agent_by_name(project, "Lead"))
+    refused = client.post("/agent/directives", headers=bearer(token),
+                          json={"from_message_id": said, "changes": CADENCE,
+                                "reason": "I heard this second-hand and acted on it."})
+    assert refused.status_code == 403

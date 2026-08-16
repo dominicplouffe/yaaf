@@ -719,6 +719,25 @@ def _upsert_project_secret(session: Session, project_id: str, name: str, value: 
     return row
 
 
+def _project_secret(session: Session, project_id: str, name: str) -> Secret | None:
+    return session.execute(
+        select(Secret).where(Secret.project_id == project_id, Secret.name == name)
+    ).scalar_one_or_none()
+
+
+def _project_secret_value(session: Session, project_id: str, name: str) -> str | None:
+    from yaaf.core.crypto import decrypt
+
+    row = _project_secret(session, project_id, name)
+    return decrypt(row.ciphertext) if row is not None else None
+
+
+def _delete_project_secret(session: Session, project_id: str, name: str) -> None:
+    row = _project_secret(session, project_id, name)
+    if row is not None:
+        session.delete(row)
+
+
 def _parse_source_url(raw: str, detail: str):
     """One rule for what counts as a data source address, wherever the address
     arrives from — the Data Sources form or a bare secret write. 422s with the
@@ -743,6 +762,22 @@ def _data_source_using(session: Session, project_id: str | None, secret_name: st
         return None
     for source in (project.config or {}).get("mcp_servers", []):
         if source.get("url_secret") == secret_name:
+            return source.get("name")
+    return None
+
+
+def _data_source_owning(session: Session, project_id: str | None, secret_name: str) -> str | None:
+    """The data source this secret belongs to, address *or* token. Wider than
+    `_data_source_using`, which asks the narrower question 'is this an address
+    that must parse as a URL'. Deleting either half orphans the source, so both
+    are refused."""
+    if not project_id:
+        return None
+    project = session.get(Project, project_id)
+    if project is None:
+        return None
+    for source in (project.config or {}).get("mcp_servers", []):
+        if secret_name in (source.get("url_secret"), source.get("bearer_secret")):
             return source.get("name")
     return None
 
@@ -844,7 +879,13 @@ def add_data_source(project_id: str, body: DataSourceIn, session: Session = Depe
     """One form, everything wired: validates the URL at the door, stores it
     (and any token) as role-granted secrets, records the mapping in project
     config, and preflights reachability. Egress and the proxy follow
-    automatically; no role edit, no repin, no CLI."""
+    automatically; no role edit, no repin, no CLI.
+
+    Saving under an existing name is the edit path, so `bearer` reads as:
+    omitted = keep the current token, `""` = remove it, anything else = rotate.
+    A URL-only edit that dropped the auth header would fail hours later inside
+    an agent run, which is exactly the class of failure this form exists to
+    prevent."""
     project = _get_project(session, project_id)
     parsed = _parse_source_url(
         body.url,
@@ -853,6 +894,9 @@ def add_data_source(project_id: str, body: DataSourceIn, session: Session = Depe
     )
     for slug in body.roles:
         _latest_role_version(session, slug)  # 422s on unknown role
+
+    servers = (project.config or {}).get("mcp_servers", [])
+    prior = next((s for s in servers if s.get("name") == body.name), None)
 
     url_secret = _upsert_project_secret(
         session, project.id, f"mcp-{body.name}-url", body.url.strip(), body.roles)
@@ -865,16 +909,29 @@ def add_data_source(project_id: str, body: DataSourceIn, session: Session = Depe
         "url_host": parsed.hostname,
         "url_port": parsed.port or (443 if parsed.scheme == "https" else 80),
     }
+    # Three cases, because an edit that changes only the URL must not silently
+    # disarm the auth header. Absent (None) keeps whatever the source already
+    # had; empty string is the explicit "drop the token"; anything else rotates.
+    token = body.bearer or None
+    held = prior.get("bearer_secret") if prior else None
     if body.bearer:
         token_secret = _upsert_project_secret(
             session, project.id, f"mcp-{body.name}-token", body.bearer, body.roles)
         entry["bearer_secret"] = token_secret.name
+    elif body.bearer == "" and held:
+        _delete_project_secret(session, project.id, held)
+    elif body.bearer is None and held:
+        carried = _project_secret_value(session, project.id, held)
+        if carried is not None:
+            # Re-store it so the carried token tracks this save's role grants.
+            _upsert_project_secret(session, project.id, held, carried, body.roles)
+            entry["bearer_secret"] = held
+            token = carried
 
-    check = _check_data_source(body.url.strip(), body.bearer)
+    check = _check_data_source(body.url.strip(), token)
     entry["last_check"] = {**check, "at": utcnow().isoformat()}
 
-    servers = [s for s in (project.config or {}).get("mcp_servers", [])
-               if s.get("name") != body.name]
+    servers = [s for s in servers if s.get("name") != body.name]
     project.config = {**(project.config or {}), "mcp_servers": [*servers, entry]}
     _audit(session, project.id, "mcp_server.save", "project", project.id,
            {"name": body.name, "roles": body.roles, "host": entry["url_host"],
@@ -893,12 +950,7 @@ def delete_data_source(project_id: str, name: str, session: Session = Depends(db
         raise HTTPException(status_code=404, detail="unknown data source")
     for secret_name in (entry.get("url_secret"), entry.get("bearer_secret")):
         if secret_name:
-            row = session.execute(
-                select(Secret).where(Secret.project_id == project.id,
-                                     Secret.name == secret_name)
-            ).scalar_one_or_none()
-            if row is not None:
-                session.delete(row)
+            _delete_project_secret(session, project.id, secret_name)
     project.config = {**project.config,
                       "mcp_servers": [s for s in servers if s.get("name") != name]}
     _audit(session, project.id, "mcp_server.delete", "project", project.id, {"name": name})
@@ -907,8 +959,6 @@ def delete_data_source(project_id: str, name: str, session: Session = Depends(db
 
 @router.post("/projects/{project_id}/mcp_servers/{name}/check")
 def check_data_source(project_id: str, name: str, session: Session = Depends(db)) -> dict:
-    from yaaf.core.crypto import decrypt
-
     project = _get_project(session, project_id)
     servers = (project.config or {}).get("mcp_servers", [])
     entry = next((s for s in servers if s.get("name") == name), None)
@@ -918,11 +968,7 @@ def check_data_source(project_id: str, name: str, session: Session = Depends(db)
     def value_of(secret_name: str | None) -> str | None:
         if not secret_name:
             return None
-        row = session.execute(
-            select(Secret).where(Secret.project_id == project.id,
-                                 Secret.name == secret_name)
-        ).scalar_one_or_none()
-        return decrypt(row.ciphertext) if row else None
+        return _project_secret_value(session, project.id, secret_name)
 
     url = value_of(entry.get("url_secret"))
     if not url:
@@ -1312,7 +1358,7 @@ def amend_constitution(
             ))
     note_parts = []
     if applied_now:
-        note_parts.append("Budget changes are in force NOW.")
+        note_parts.append("Budget and reporting-cadence changes are in force NOW.")
     if pending:
         note_parts.append("The other changes take effect after the 72h cooling-off.")
     return {
@@ -1459,8 +1505,8 @@ class SecretIn(BaseModel):
 
 @router.get("/secrets")
 def list_secrets(project_id: str | None = None, session: Session = Depends(db)) -> list[dict]:
-    """Names and scopes only — values are write-only, decrypted solely at
-    run-injection time."""
+    """Names and scopes only. The list is polled every few seconds, so values
+    never ride it — reading one is a deliberate act, and has its own endpoint."""
     stmt = select(Secret)
     if project_id is not None:
         stmt = stmt.where(Secret.project_id == project_id)
@@ -1469,6 +1515,58 @@ def list_secrets(project_id: str | None = None, session: Session = Depends(db)) 
          "role_scopes": s.role_scopes, "kind": s.kind}
         for s in session.execute(stmt.order_by(Secret.created_at)).scalars()
     ]
+
+
+@router.get("/secrets/{secret_id}/value")
+def reveal_secret(secret_id: str, session: Session = Depends(db)) -> dict:
+    """The chairman reads their own credential.
+
+    There is one human here, they hold the master admin token, and they can
+    already read any of this straight out of Postgres. Hiding a value from them
+    protects nothing and costs a debugging session every time a data source
+    will not mount. So values are *visually* masked in the UI and fetched only
+    when the eye is pressed — one press, one call, one audit row.
+
+    This is a `/admin` route. Agents authenticate against `/agent/*` with
+    per-run tokens and cannot reach it; what a role receives is still decided
+    solely by `Secret.role_scopes` at lease time, and a role is still told
+    variable names only. Nothing about the agent side changes here.
+    """
+    from yaaf.core.crypto import decrypt
+
+    row = session.get(Secret, secret_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="unknown secret")
+    _audit(session, row.project_id, "secret.reveal", "secret", row.id, {"name": row.name})
+    return {"id": row.id, "name": row.name, "value": decrypt(row.ciphertext)}
+
+
+@router.delete("/secrets/{secret_id}")
+def delete_secret(secret_id: str, session: Session = Depends(db)) -> dict:
+    """Remove a credential outright. Refused for the two kinds that something
+    else owns: the credential the project is actively paying with, and a data
+    source's address or token (delete the source and both go together)."""
+    row = session.get(Secret, secret_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="unknown secret")
+    if row.project_id:
+        project = session.get(Project, row.project_id)
+        if project is not None and project.billing_secret_id == row.id:
+            raise HTTPException(
+                status_code=422,
+                detail=f"'{row.name}' is how this project pays for Claude — connect a "
+                       "different billing credential first, then delete this one",
+            )
+    source = _data_source_owning(session, row.project_id, row.name)
+    if source is not None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"'{row.name}' belongs to data source '{source}' — delete the data "
+                   "source instead and its address and token go with it",
+        )
+    session.delete(row)
+    _audit(session, row.project_id, "secret.delete", "secret", row.id, {"name": row.name})
+    return {"deleted": row.name}
 
 
 @router.post("/projects/{project_id}/webhook_secrets")

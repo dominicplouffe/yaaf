@@ -12,10 +12,11 @@ that were paid for in burned cycles.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -23,6 +24,21 @@ from yaaf.core import ids
 from yaaf.core.models import Amendment, Constitution, utcnow
 
 COOLING_OFF_HOURS = 72
+
+
+def parse_report_window(raw: object) -> tuple[time, time] | None:
+    """``"09:00-20:00"`` → (09:00, 20:00). Returns None for absent, malformed,
+    or midnight-wrapping windows — the validator below turns None-from-a-value
+    into a refusal, while callers read None as "no window"."""
+    if not raw:
+        return None
+    try:
+        start_s, end_s = str(raw).split("-", 1)
+        start = time(*(int(part) for part in start_s.strip().split(":", 1)))
+        end = time(*(int(part) for part in end_s.strip().split(":", 1)))
+    except (TypeError, ValueError):
+        return None
+    return (start, end) if start < end else None
 
 
 class ConstitutionDoc(BaseModel):
@@ -59,8 +75,35 @@ class ConstitutionDoc(BaseModel):
     pair_breaker_messages: int = Field(default=10, ge=2)
     refusal_cap_per_run: int = Field(default=5, ge=1)
 
+    # The chairman's reporting cadence. A wake ceiling stops the company
+    # burning money on itself; this stops it burning money on *him* — the CEO
+    # reported thirteen times in 2h20m before it existed. Enforced by
+    # policy.check_chairman_report as a refusal on unprompted boardroom posts;
+    # 0 hours means the chairman never asked for one and nothing is refused.
+    chairman_report_interval_hours: float = Field(default=0.0, ge=0)
+    chairman_report_window_local: str | None = Field(default=None)  # "09:00-20:00"
+    chairman_report_timezone: str = Field(default="UTC")
+
     # Runs
     run_timeout_s: int = Field(default=1800, ge=60)
+
+    @field_validator("chairman_report_window_local")
+    @classmethod
+    def _window_is_readable(cls, raw: str | None) -> str | None:
+        if raw is not None and parse_report_window(raw) is None:
+            raise ValueError(
+                f"{raw!r} is not a reporting window: write it 'HH:MM-HH:MM' in the "
+                "chairman's local time, with the start before the end")
+        return raw
+
+    @field_validator("chairman_report_timezone")
+    @classmethod
+    def _timezone_exists(cls, raw: str) -> str:
+        try:
+            ZoneInfo(raw)
+        except Exception as exc:
+            raise ValueError(f"{raw!r} is not an IANA timezone (e.g. 'America/New_York')") from exc
+        return raw
 
     def overlay(self, changes: dict[str, Any]) -> ConstitutionDoc:
         """Apply a partial amendment overlay, re-validating the result."""
@@ -103,6 +146,17 @@ def create_initial(session: Session, project_id: str, doc: ConstitutionDoc) -> C
 # for behavioral rules, the delay is the point.
 BUDGET_FIELDS = frozenset({"monthly_usd_cap", "monthly_token_cap", "budget_warn_ratio"})
 
+# The reporting cadence is exempt on the same argument, earned the same way
+# (2026-08-16): a chairman who says "stop, every four hours, this is costing
+# me money" means the next run. Three days of the old cadence is precisely the
+# hazard he is trying to end, and unlike a queue ceiling this rule constrains
+# the company's demands on *him* — there is nobody it could be used against.
+CADENCE_FIELDS = frozenset({"chairman_report_interval_hours",
+                            "chairman_report_window_local",
+                            "chairman_report_timezone"})
+
+IMMEDIATE_FIELDS = BUDGET_FIELDS | CADENCE_FIELDS
+
 
 def propose_amendment(
     session: Session,
@@ -112,15 +166,15 @@ def propose_amendment(
     changes: dict[str, Any],
 ) -> list[Amendment]:
     """Chairman-only (checked by the caller). Validates the whole overlay now
-    so a bad amendment is refused immediately, then splits it: budget fields
-    take effect in this very call; everything else waits out the cooling-off
-    (applied by the janitor). Both halves are recorded and disclosed to the
-    CEO. Returns the recorded amendments (one or two)."""
+    so a bad amendment is refused immediately, then splits it: budget and
+    cadence fields take effect in this very call; everything else waits out the
+    cooling-off (applied by the janitor). Both halves are recorded and
+    disclosed to the CEO. Returns the recorded amendments (one or two)."""
     effective(session, project_id).overlay(changes)  # raises if the result is invalid
-    budget = {k: v for k, v in changes.items() if k in BUDGET_FIELDS}
-    cooled = {k: v for k, v in changes.items() if k not in BUDGET_FIELDS}
+    immediate = {k: v for k, v in changes.items() if k in IMMEDIATE_FIELDS}
+    cooled = {k: v for k, v in changes.items() if k not in IMMEDIATE_FIELDS}
     amendments = []
-    for subset, delay_hours in ((budget, 0), (cooled, COOLING_OFF_HOURS)):
+    for subset, delay_hours in ((immediate, 0), (cooled, COOLING_OFF_HOURS)):
         if not subset:
             continue
         amendment = Amendment(
@@ -133,9 +187,9 @@ def propose_amendment(
         )
         session.add(amendment)
         amendments.append(amendment)
-    if budget:
+    if immediate:
         session.flush()
-        apply_due_amendments(session, project_id)  # budgets are in force NOW
+        apply_due_amendments(session, project_id)  # these are in force NOW
     return amendments
 
 

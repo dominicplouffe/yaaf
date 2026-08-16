@@ -33,10 +33,16 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from yaaf.core import ids
-from yaaf.core.constitution import ConstitutionDoc, effective
+from yaaf.core.constitution import (
+    CADENCE_FIELDS,
+    ConstitutionDoc,
+    effective,
+    parse_report_window,
+)
 from yaaf.core.models import (
     Agent,
     AgentKind,
+    Amendment,
     Approval,
     ApprovalStatus,
     AuditLog,
@@ -511,45 +517,25 @@ class ReportCadence(NamedTuple):
         return self.interval_hours > 0
 
 
-def report_cadence(project: Project) -> ReportCadence:
-    """The chairman's standing reporting rule, read live from project config.
+def cadence_of(cons: ConstitutionDoc) -> ReportCadence:
+    """The chairman's standing reporting rule, as the constitution states it.
 
-    Deliberately config and not constitution: a cadence is a cost control, and
-    the chairman changes it mid-conversation ("stop, every 4 hours") expecting
-    it to bind the next run — not to clear a 72-hour cooling-off. Same argument
-    the budget fields already won in :mod:`yaaf.core.constitution`.
-
-    - ``chairman_report_interval_hours``: float; 0 (default) disables the rule
-    - ``chairman_report_window_local``: ``"09:00-20:00"``, or absent for all day
-    - ``timezone``: IANA name, shared with ``ceo_daily_at``
+    It lives there rather than in project config because it is enforced as a
+    refusal, like everything else in that document — and because amending it
+    is disclosed to the CEO in its next context pack. The CEO not *learning*
+    the rule had changed is half of what went wrong on 16 Aug; a silent config
+    write would have reproduced exactly that.
     """
-    config = project.config or {}
     try:
-        interval = float(config.get("chairman_report_interval_hours",
-                                    DEFAULT_REPORT_INTERVAL_HOURS))
-    except (TypeError, ValueError):
-        interval = DEFAULT_REPORT_INTERVAL_HOURS
-    try:
-        tz = ZoneInfo(str(config.get("timezone", "UTC")))
-    except Exception:
+        tz = ZoneInfo(cons.chairman_report_timezone)
+    except Exception:  # a body written before the field was validated
         tz = ZoneInfo("UTC")
-    return ReportCadence(max(interval, 0.0),
-                         _parse_window(config.get("chairman_report_window_local")), tz)
+    return ReportCadence(max(cons.chairman_report_interval_hours, 0.0),
+                         parse_report_window(cons.chairman_report_window_local), tz)
 
 
-def _parse_window(raw: object) -> tuple[time, time] | None:
-    """``"09:00-20:00"`` → (09:00, 20:00). Anything unparseable, or a window
-    that wraps midnight, reads as "no window" — a malformed config must not
-    silently gag the CEO."""
-    if not raw:
-        return None
-    try:
-        start_s, end_s = str(raw).split("-", 1)
-        start = time(*(int(part) for part in start_s.strip().split(":", 1)))
-        end = time(*(int(part) for part in end_s.strip().split(":", 1)))
-    except (TypeError, ValueError):
-        return None
-    return (start, end) if start < end else None
+def report_cadence(session: Session, project: Project) -> ReportCadence:
+    return cadence_of(effective(session, project.id))
 
 
 def boardroom_turns(
@@ -609,7 +595,7 @@ def check_chairman_report(
     # than through this endpoint at all.
     if run.kind == RunKind.CHAT_SESSION:
         return
-    cadence = report_cadence(project)
+    cadence = report_cadence(session, project)
     if not cadence.enforced:
         return
     last_ceo, last_chairman = boardroom_turns(session, channel.id, agent.id)
@@ -683,6 +669,93 @@ def _check_report_override(
             detail={"reason": override},
         )
     )
+
+
+# ── chairman directives ─────────────────────────────────────────────────────────
+#
+# The CEO may turn something the chairman said into enforced policy. Two things
+# keep that from being a hole: it may only touch rules that constrain what the
+# company asks of *him* (there is nobody such a rule could be used against),
+# and it must cite a real, recent message he actually wrote.
+
+DIRECTIVE_FIELDS = CADENCE_FIELDS
+DIRECTIVE_MAX_AGE_HOURS = 24
+
+
+def check_directive_scope(changes: dict) -> None:
+    if not changes:
+        raise Refusal("A directive has to change something.")
+    outside = sorted(set(changes) - DIRECTIVE_FIELDS)
+    if outside:
+        raise Refusal(
+            f"You may not set {', '.join(outside)} from a directive. An agent filing its own "
+            f"constitution is how a company votes itself a bigger budget; the only rules you "
+            f"may file are the ones that limit what you ask of the chairman "
+            f"({', '.join(sorted(DIRECTIVE_FIELDS))}). Everything else is his amendment to "
+            "make, and yours to recommend.",
+            status_code=403,
+        )
+
+
+def check_directive_citation(session: Session, project: Project, message_id: str) -> Message:
+    """The cited message must be the chairman's own words, in the boardroom,
+    recent, and newer than the rule it replaces — otherwise a stale message
+    could be re-cited to undo a fresher instruction."""
+    message = session.get(Message, message_id)
+    if message is None or message.project_id != project.id:
+        raise Refusal(f"No message {message_id} in this project to cite.", status_code=404)
+    channel = session.get(Channel, message.channel_id)
+    if channel is None or channel.kind != ChannelKind.BOARDROOM:
+        raise Refusal(
+            "Cite something the chairman said in the BOARDROOM. Instructions relayed through "
+            "leadership are not his, however confidently they are repeated.")
+    if message.sender_agent_id is not None:
+        raise Refusal("That message is an agent's, not the chairman's. You cannot cite yourself.")
+    age = utcnow() - message.created_at
+    if age > timedelta(hours=DIRECTIVE_MAX_AGE_HOURS):
+        raise Refusal(
+            f"That message is {age.days}d old. File a directive when he gives it, not from "
+            f"history — anything older than {DIRECTIVE_MAX_AGE_HOURS}h is his to restate.")
+    newest = session.execute(
+        select(func.max(Amendment.effective_at)).where(
+            Amendment.project_id == project.id,
+            Amendment.cancelled_at.is_(None),
+            Amendment.applied_constitution_id.is_not(None))
+    ).scalar_one()
+    if newest is not None and message.created_at < newest:
+        raise Refusal(
+            "That message predates the rule currently in force, so filing it would undo a "
+            "newer instruction with an older one. If he has changed his mind again, cite the "
+            "message where he said so.")
+    return message
+
+
+def confirm_directive(
+    session: Session, project: Project, agent: Agent, cited: Message, changes: dict
+) -> None:
+    """Say it back to him. The platform can verify that he spoke and when, but
+    never what he meant — so the safeguard against a misread directive is that
+    he sees it land, in his own channel, threaded to the words it came from."""
+    readable = ", ".join(f"{key.removeprefix('chairman_report_')} = {value}"
+                         for key, value in sorted(changes.items()))
+    body = (f"Recorded as policy, effective now: **{readable}**. I took this from your message "
+            f"above and the platform enforces it from here — it is no longer something I have "
+            f"to remember between runs. Say so if I read you wrong.")
+    session.add(
+        Message(
+            id=ids.new_id(ids.MESSAGE),
+            project_id=project.id,
+            channel_id=cited.channel_id,
+            sender_agent_id=agent.id,
+            thread_id=cited.thread_id or cited.id,
+            body=body,
+        )
+    )
+    # Best-effort out-of-band: a rule change he did not ask for is exactly the
+    # thing he should not have to be watching Slack to catch.
+    from yaaf.server.notify import chairman_notify
+
+    chairman_notify(session, project, "Reporting cadence changed", body)
 
 
 def _ago(delta: timedelta) -> str:
