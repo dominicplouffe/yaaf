@@ -136,7 +136,7 @@ def board(ctx: RunContext = Depends(run_auth), session: Session = Depends(db)) -
 class TaskCreate(BaseModel):
     team_id: str
     title: str = Field(min_length=4, max_length=300)
-    goal: str = Field(min_length=10)
+    goal: str = Field(min_length=10, max_length=10_000)
     success_test: dict
     produces_external_evidence: bool = False
     parent_task_id: str | None = None
@@ -467,6 +467,10 @@ def set_typing(
 class ChatUsage(BaseModel):
     tokens_in: int = Field(ge=0)
     tokens_out: int = Field(ge=0)
+    # Defaults are load-bearing: chat containers from an older image keep
+    # posting 3-field payloads for days after a deploy and must still book.
+    cache_creation_tokens: int = Field(default=0, ge=0)
+    cache_read_tokens: int = Field(default=0, ge=0)
     cost_usd: float | None = Field(default=None, ge=0)
 
 
@@ -482,18 +486,23 @@ def book_chat_usage(
                       "at finalize.", status_code=403)
     ctx.run.tokens_in += body.tokens_in
     ctx.run.tokens_out += body.tokens_out
+    ctx.run.cache_creation_tokens += body.cache_creation_tokens
+    ctx.run.cache_read_tokens += body.cache_read_tokens
     # Tokens always; dollars only when dollars move (see runner.finalize).
     subscription = ctx.project.billing_mode == "subscription"
     usd = None if subscription else body.cost_usd
     if usd is not None:
         ctx.run.cost_usd = (ctx.run.cost_usd or 0.0) + usd
-    if body.tokens_in or body.tokens_out or usd:
+    if (body.tokens_in or body.tokens_out or body.cache_creation_tokens
+            or body.cache_read_tokens or usd):
         session.add(LedgerEntry(
             id=ids.new_id(ids.LEDGER),
             project_id=ctx.project.id,
             kind="model_usage",
             tokens_in=body.tokens_in,
             tokens_out=body.tokens_out,
+            cache_creation_tokens=body.cache_creation_tokens,
+            cache_read_tokens=body.cache_read_tokens,
             usd=usd,
             run_id=ctx.run.id,
             note="chat_session turn" + (" (subscription: tokens only)" if subscription else ""),
@@ -503,12 +512,14 @@ def book_chat_usage(
 
 # ── memory ──────────────────────────────────────────────────────────────────────
 
+MEMORY_BODY_CHARS = 2_000
+
 
 class MemoryAdd(BaseModel):
     scope: str
     kind: str = Field(pattern="^(fact|lesson|preference|contact)$")
     subject: str = Field(min_length=3, max_length=300)
-    body: str = Field(min_length=10)
+    body: str = Field(min_length=10, max_length=20_000)
 
 
 @router.post("/memory")
@@ -563,8 +574,12 @@ def memory_search(
             like = f"%{q.strip()}%"
             stmt = stmt.where(or_(Memory.subject.ilike(like), Memory.body.ilike(like)))
     rows = session.execute(stmt.order_by(Memory.created_at.desc()).limit(min(limit, 50))).scalars()
+    # Up to 50 full bodies per search is an input-token bill, not a feature:
+    # clip each; narrow the query to read a long memory whole.
     return [
-        {"id": m.id, "scope": m.scope, "kind": m.kind, "subject": m.subject, "body": m.body,
+        {"id": m.id, "scope": m.scope, "kind": m.kind, "subject": m.subject,
+         "body": m.body if len(m.body) <= MEMORY_BODY_CHARS
+         else m.body[:MEMORY_BODY_CHARS] + " …[truncated; search a narrower q for the rest]",
          "at": m.created_at.isoformat()}
         for m in rows
     ]
@@ -572,7 +587,7 @@ def memory_search(
 
 class MemorySupersede(BaseModel):
     subject: str = Field(min_length=3, max_length=300)
-    body: str = Field(min_length=10)
+    body: str = Field(min_length=10, max_length=20_000)
     kind: str = Field(pattern="^(fact|lesson|preference|contact)$")
 
 

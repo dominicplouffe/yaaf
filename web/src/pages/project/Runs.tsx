@@ -1,6 +1,6 @@
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Dashboard, get, getText, RunRow } from "../../api";
+import { Dashboard, get, getText, RunRow, SpendReport } from "../../api";
 import { fmtUsd, fmtWhen, usePoll } from "../../hooks";
 import { downloadCsv, ExportCsv, fmtUnit } from "../../ui";
 
@@ -9,6 +9,8 @@ interface LedgerRow {
   kind: string;
   tokens_in: number;
   tokens_out: number;
+  cache_creation: number;
+  cache_read: number;
   usd: number | null;
   note: string | null;
   at: string;
@@ -51,7 +53,10 @@ function SpendBars({ ledger, usdMode }: { ledger: LedgerRow[]; usdMode: boolean 
   const byKey = new Map(days.map((d) => [d.key, d]));
   for (const row of ledger) {
     const day = byKey.get(new Date(row.at).toDateString());
-    if (day) day.value += usdMode ? (row.usd ?? 0) : row.tokens_in + row.tokens_out;
+    if (day)
+      day.value += usdMode
+        ? (row.usd ?? 0)
+        : row.tokens_in + row.tokens_out + row.cache_creation + row.cache_read;
   }
   const max = Math.max(...days.map((d) => d.value), 1e-9);
   const fmt = (v: number) =>
@@ -74,6 +79,64 @@ function SpendBars({ ledger, usdMode }: { ledger: LedgerRow[]; usdMode: boolean 
         <span>{days[0].label}</span>
         <span>{days[days.length - 1].label}</span>
       </div>
+    </div>
+  );
+}
+
+/** Where the money goes: a 30-day rollup by model, team, or agent. `Input` is
+    only the uncached remainder — the cache columns are the rest of the real
+    input bill. */
+function SpendBreakdown({ projectId, usdMode }: { projectId: string; usdMode: boolean }) {
+  const [groupBy, setGroupBy] = useState<"model" | "team" | "agent">("model");
+  const { data, reload } = usePoll(
+    () => get<SpendReport>(`/observe/projects/${projectId}/spend?group_by=${groupBy}&days=30`),
+    15000,
+  );
+  useEffect(() => reload(), [groupBy, reload]);
+  const rows = data?.rows ?? [];
+  if (rows.length === 0) return null;
+  const tok = (n: number) => fmtUnit(n, "tokens");
+  return (
+    <div style={{ margin: "0 0 14px" }}>
+      <div className="pills">
+        <span className="label" style={{ marginRight: 6 }}>Spend by</span>
+        {(["model", "team", "agent"] as const).map((g) => (
+          <button key={g} className={groupBy === g ? "active" : ""} onClick={() => setGroupBy(g)}>
+            {g}
+          </button>
+        ))}
+        <span className="help">last 30 days</span>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>{groupBy === "model" ? "Model" : groupBy === "team" ? "Team" : "Agent"}</th>
+            <th className="num">Runs</th>
+            <th className="num">Input</th>
+            <th className="num">Cache write</th>
+            <th className="num">Cache read</th>
+            <th className="num">Output</th>
+            <th className="num">{usdMode ? "Cost" : "Tokens"}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.key}>
+              <td>{row.label}</td>
+              <td className="num">{row.runs}</td>
+              <td className="num">{tok(row.tokens_in)}</td>
+              <td className="num">{tok(row.cache_creation)}</td>
+              <td className="num">{tok(row.cache_read)}</td>
+              <td className="num">{tok(row.tokens_out)}</td>
+              <td className="num">
+                {usdMode
+                  ? fmtUsd(row.usd)
+                  : tok(row.tokens_in + row.tokens_out + row.cache_creation + row.cache_read)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -116,7 +179,10 @@ export default function Runs({ projectId, dash }: { projectId: string; dash: Das
     (r) => r.started_at && new Date(r.started_at).toDateString() === today,
   );
   const todayUsd = todayRuns.reduce((sum, r) => sum + (r.cost_usd ?? 0), 0);
-  const todayTokens = todayRuns.reduce((sum, r) => sum + r.tokens_in + r.tokens_out, 0);
+  const todayTokens = todayRuns.reduce(
+    (sum, r) => sum + r.tokens_in + r.tokens_out + r.cache_creation + r.cache_read,
+    0,
+  );
   const todayFailures = todayRuns.filter((r) =>
     ["failed", "reaped", "killed", "terminated_refusals"].includes(r.status),
   ).length;
@@ -152,6 +218,8 @@ export default function Runs({ projectId, dash }: { projectId: string; dash: Das
         </div>
         {(ledger ?? []).length > 0 && <SpendBars ledger={ledger ?? []} usdMode={usdMode} />}
       </div>
+
+      <SpendBreakdown projectId={projectId} usdMode={usdMode} />
 
       {/* Patterns become sentences: the platform knows these share a cause. */}
       {storms.length >= 3 && (
@@ -250,16 +318,19 @@ export default function Runs({ projectId, dash }: { projectId: string; dash: Das
             onClick={() =>
               downloadCsv(
                 "runs.csv",
-                ["started", "agent", "team", "kind", "status", "trigger", "tokens_in", "tokens_out", "cost_usd", "refusals", "summary"],
+                ["started", "agent", "team", "model", "kind", "status", "trigger", "tokens_in", "tokens_out", "cache_creation", "cache_read", "cost_usd", "refusals", "summary"],
                 (runs ?? []).map((r) => [
                   r.started_at,
                   r.agent_name,
                   r.team_name,
+                  r.model,
                   r.kind,
                   r.status,
                   triggerText(r.trigger),
                   r.tokens_in,
                   r.tokens_out,
+                  r.cache_creation,
+                  r.cache_read,
                   r.cost_usd,
                   r.refusals,
                   r.summary,

@@ -33,6 +33,9 @@ from claude_agent_sdk import (
 POLL_S = 2.0
 MAX_REPLY_CHARS = 19_000
 HISTORY_BOOTSTRAP = 30
+# Bootstrap is context, not archive: message bodies run to 20k chars, and 30
+# uncut ones would put ~150k tokens into the first turn of every session.
+CHAT_HISTORY_MSG_CHARS = 1_000
 
 # Consecutive auth failures before concluding the token was revoked (project
 # paused, kill switch) and exiting for the supervisor to see.
@@ -84,27 +87,33 @@ def _post_reply(channel_id: str, text: str) -> bool:
     return result["status"] == 200
 
 
-def _book_usage(tokens_in: int, tokens_out: int, cost_usd) -> None:
+def _book_usage(tokens_in: int, tokens_out: int, cache_creation: int, cache_read: int,
+                cost_usd) -> None:
     base._call("POST", "/agent/chat_usage", {"tokens_in": tokens_in,
                                              "tokens_out": tokens_out,
+                                             "cache_creation_tokens": cache_creation,
+                                             "cache_read_tokens": cache_read,
                                              "cost_usd": cost_usd})
 
 
-def _usage_tokens(message: ResultMessage) -> tuple[int, int]:
+def _usage_tokens(message: ResultMessage) -> tuple[int, int, int, int]:
     usage = message.usage
     if usage is None:
-        return 0, 0
-    if isinstance(usage, dict):
-        return int(usage.get("input_tokens", 0) or 0), int(usage.get("output_tokens", 0) or 0)
-    return (int(getattr(usage, "input_tokens", 0) or 0),
-            int(getattr(usage, "output_tokens", 0) or 0))
+        return 0, 0, 0, 0
+    return (base._usage_int(usage, "input_tokens"),
+            base._usage_int(usage, "output_tokens"),
+            base._usage_int(usage, "cache_creation_input_tokens"),
+            base._usage_int(usage, "cache_read_input_tokens"))
 
 
 def _transcript_block(messages: list[dict]) -> str:
     lines = []
     for m in messages[-HISTORY_BOOTSTRAP:]:
         who = "Chairman" if m.get("from_user") else "You (CEO)"
-        lines.append(f"{who}: {m.get('body', '')}")
+        body = str(m.get("body", ""))
+        if len(body) > CHAT_HISTORY_MSG_CHARS:
+            body = body[:CHAT_HISTORY_MSG_CHARS] + " …[truncated; messages_read has the rest]"
+        lines.append(f"{who}: {body}")
     return "\n".join(lines)
 
 
@@ -126,12 +135,12 @@ async def _run_turn(client: ClaudeSDKClient, channel_id: str, prompt: str) -> st
                 if isinstance(block, TextBlock):
                     reply_parts.append(block.text)
         elif isinstance(message, ResultMessage):
-            tokens_in, tokens_out = _usage_tokens(message)
+            tokens_in, tokens_out, cache_creation, cache_read = _usage_tokens(message)
             cost_delta = None
             if message.total_cost_usd is not None:
                 cost_delta = max(0.0, message.total_cost_usd - _cost_booked)
                 _cost_booked = max(_cost_booked, message.total_cost_usd)
-            _book_usage(tokens_in, tokens_out, cost_delta)
+            _book_usage(tokens_in, tokens_out, cache_creation, cache_read, cost_delta)
     return "\n".join(part for part in reply_parts if part.strip())
 
 
@@ -142,6 +151,7 @@ async def main() -> int:
         model=base.MODEL,
         effort=base.EFFORT,
         mcp_servers={"yaaf": server, **base._external_mcp_servers()},
+        tools=base._builtin_tools(),
         allowed_tools=base._allowed_tools(),
         permission_mode="bypassPermissions",  # containment is the sandbox + proxy + API
         cwd="/workspace",

@@ -56,6 +56,22 @@ def test_ungranted_or_garbage_values_mount_nothing(sandbox_entry):
     assert "mcp__ppc" not in sandbox_entry._allowed_tools()
 
 
+def test_builtin_tools_mirror_permissions(sandbox_entry):
+    # Defaults: files on, bash and web off — and never Task/TodoWrite/etc.
+    sandbox_entry.PERMS = {}
+    assert sandbox_entry._builtin_tools() == ["Read", "Write", "Edit", "Glob", "Grep"]
+
+    sandbox_entry.PERMS = {"files": True, "bash": True, "web": True}
+    tools = sandbox_entry._builtin_tools()
+    assert "Bash" in tools and "WebFetch" in tools and "WebSearch" in tools
+
+    # Everything off → no built-in declarations at all: an undeclared schema
+    # is input tokens the role would otherwise pay on every call for nothing.
+    sandbox_entry.PERMS = {"files": False, "bash": False, "web": False}
+    assert sandbox_entry._builtin_tools() == []
+    assert all(t.startswith("mcp__yaaf__") for t in sandbox_entry._allowed_tools())
+
+
 def test_no_declaration_means_yaaf_only(sandbox_entry):
     sandbox_entry.PERMS = {}
     os.environ["MCP_SERVER"] = "https://data.example.com/mcp"

@@ -91,15 +91,28 @@ def test_chat_session_burns_no_work_caps(client):
 
 def test_chat_usage_is_metered_immediately_and_only_for_chat(client):
     project = make_project(client)
-    _, chat_token = live_token(project["id"], _ceo_id(project), kind="chat_session")
+    chat_run_id, chat_token = live_token(project["id"], _ceo_id(project), kind="chat_session")
+    # A 3-field payload (a chat container from an older image) must still book.
     booked = client.post("/agent/chat_usage",
                          json={"tokens_in": 1200, "tokens_out": 340, "cost_usd": 0.05},
                          headers=bearer(chat_token))
     assert booked.status_code == 200, booked.text
+    booked = client.post("/agent/chat_usage",
+                         json={"tokens_in": 10, "tokens_out": 20,
+                               "cache_creation_tokens": 30_000,
+                               "cache_read_tokens": 400_000, "cost_usd": 0.10},
+                         headers=bearer(chat_token))
+    assert booked.status_code == 200, booked.text
     with db_session() as session:
-        entry = session.query(LedgerEntry).filter_by(project_id=project["id"]).one()
-        assert (entry.tokens_in, entry.tokens_out) == (1200, 340)
-        assert entry.kind == "model_usage"
+        entries = session.query(LedgerEntry).filter_by(project_id=project["id"]).all()
+        assert len(entries) == 2
+        assert all(e.kind == "model_usage" for e in entries)
+        assert sum(e.tokens_in for e in entries) == 1210
+        assert sum(e.cache_creation_tokens for e in entries) == 30_000
+        assert sum(e.cache_read_tokens for e in entries) == 400_000
+        run = session.get(Run, chat_run_id)
+        assert (run.tokens_in, run.tokens_out) == (1210, 360)
+        assert (run.cache_creation_tokens, run.cache_read_tokens) == (30_000, 400_000)
 
     # An ordinary run must keep metering at finalize — the refusal names it.
     _, run_token = live_token(project["id"], _ceo_id(project))
@@ -351,7 +364,7 @@ def test_chat_harness_speaks_real_api_paths(client, monkeypatch):
     chat_entry._read_messages("chan_x")
     chat_entry._set_typing("chan_x", 5)
     chat_entry._post_reply("chan_x", "hi")
-    chat_entry._book_usage(1, 2, None)
+    chat_entry._book_usage(1, 2, 3, 4, None)
 
     for method, path in calls:
         response = client.request(method, path)

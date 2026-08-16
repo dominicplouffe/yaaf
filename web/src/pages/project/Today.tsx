@@ -102,7 +102,8 @@ function BudgetMeter({ dash }: { dash: Dashboard }) {
   const unit = usdMode ? ("usd" as const) : ("tokens" as const);
   const spent = usdMode
     ? dash.month_to_date.usd
-    : dash.month_to_date.tokens_in + dash.month_to_date.tokens_out;
+    : dash.month_to_date.tokens_in + dash.month_to_date.tokens_out +
+      dash.month_to_date.cache_creation + dash.month_to_date.cache_read;
   const cap = usdMode ? dash.caps.monthly_usd_cap : dash.caps.monthly_token_cap;
   const warnRatio = Number(dash.constitution["budget_warn_ratio"] ?? 0.8);
   const frac = cap > 0 ? Math.min(spent / cap, 1) : 0;
@@ -300,7 +301,8 @@ export default function Today({ projectId, dash }: { projectId: string; dash: Da
     const unit = usdMode ? ("usd" as const) : ("tokens" as const);
     const spent = usdMode
       ? dash.month_to_date.usd
-      : dash.month_to_date.tokens_in + dash.month_to_date.tokens_out;
+      : dash.month_to_date.tokens_in + dash.month_to_date.tokens_out +
+        dash.month_to_date.cache_creation + dash.month_to_date.cache_read;
     const cap = usdMode ? dash.caps.monthly_usd_cap : dash.caps.monthly_token_cap;
     const warnRatio = Number(dash.constitution["budget_warn_ratio"] ?? 0.8);
     const frac = cap > 0 ? spent / cap : 0;

@@ -63,6 +63,8 @@ class AgentSDKBackend:
                     summary=summary,
                     tokens_in=int(data.get("tokens_in", 0)),
                     tokens_out=int(data.get("tokens_out", 0)),
+                    cache_creation_tokens=int(data.get("cache_creation_tokens", 0)),
+                    cache_read_tokens=int(data.get("cache_read_tokens", 0)),
                     cost_usd=data.get("cost_usd"),
                     trace_path=data.get("trace_path"),
                 )

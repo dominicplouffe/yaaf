@@ -99,7 +99,13 @@ export interface Dashboard {
   status_reason: string | null;
   goal: string;
   billing_mode: string;
-  month_to_date: { usd: number; tokens_in: number; tokens_out: number };
+  month_to_date: {
+    usd: number;
+    tokens_in: number;
+    tokens_out: number;
+    cache_creation: number;
+    cache_read: number;
+  };
   caps: { monthly_usd_cap: number; monthly_token_cap: number };
   open_tasks: number;
   queue_ceiling: number;
@@ -215,12 +221,33 @@ export interface RunRow {
   attempt: number;
   tokens_in: number;
   tokens_out: number;
+  cache_creation: number;
+  cache_read: number;
+  model: string | null;
+  effort: string | null;
   cost_usd: number | null;
   refusals: number;
   summary: string | null;
   has_trace: boolean;
   started_at: string | null;
   finished_at: string | null;
+}
+
+export interface SpendBucket {
+  key: string;
+  label: string;
+  runs: number;
+  tokens_in: number;
+  tokens_out: number;
+  cache_creation: number;
+  cache_read: number;
+  usd: number;
+}
+
+export interface SpendReport {
+  group_by: string;
+  days: number;
+  rows: SpendBucket[];
 }
 
 export interface AmendmentRow {
@@ -347,4 +374,42 @@ export interface RoleSummary {
   is_ceo_role: boolean;
   latest_version: number;
   model: string | null;
+}
+
+/** A role definition as it travels inside a setup file — the POST /admin/roles body. */
+export interface BundleRole {
+  slug: string;
+  name: string;
+  is_ceo_role: boolean;
+  description: string;
+  system_prompt: string;
+  model: string;
+  effort: string;
+  tool_permissions: Record<string, unknown>;
+  secret_scopes: string[];
+}
+
+/** A portable project setup file (GET /admin/projects/{id}/export). The
+    `project` section is a ready create-project body minus slug collisions and
+    the chairman; credential values never travel — only their names. */
+export interface ProjectBundle {
+  yaaf_bundle: number;
+  kind: string;
+  source_slug: string;
+  exported_at: string;
+  project: {
+    slug: string;
+    name: string;
+    goal: string;
+    billing_mode: string;
+    controlled_domains: string[];
+    constitution: Record<string, unknown>;
+    config: Record<string, unknown>;
+    ceo_role_slug: string;
+    ceo_name: string;
+    teams: { role_slug: string; name: string; employees: string[]; lead: string | null }[];
+    solo: boolean;
+  };
+  roles: BundleRole[];
+  secrets: { name: string; role_scopes: string[]; kind: string }[];
 }

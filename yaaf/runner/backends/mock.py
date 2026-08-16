@@ -89,7 +89,8 @@ class MockBackend:
         api = AgentApi(job.api_base_url, job.api_token, client=self._client)
         try:
             summary = behavior(api, job)
-            return RunResult(ok=True, summary=summary, tokens_in=0, tokens_out=0)
+            return RunResult(ok=True, summary=summary, tokens_in=0, tokens_out=0,
+                             cache_creation_tokens=0, cache_read_tokens=0)
         except Exception as exc:
             return RunResult(ok=False, summary=f"mock behavior raised: {exc!r}")
         finally:

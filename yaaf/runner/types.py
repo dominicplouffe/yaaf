@@ -39,6 +39,8 @@ class RunResult:
     summary: str = ""
     tokens_in: int = 0
     tokens_out: int = 0
+    cache_creation_tokens: int = 0
+    cache_read_tokens: int = 0
     cost_usd: float | None = None
     trace_path: str | None = None
     # Success checks only:

@@ -27,6 +27,14 @@ def _register_experiment() -> None:
                   help="The M2 baseline-experiment harness (docs/M2_PROTOCOL.md).")
 
 
+def _register_spend() -> None:
+    # Same registration shape as the experiment harness: spend.py drags in
+    # SQLAlchemy and server-side helpers the HTTP commands never need.
+    from yaaf.cli.spend import spend_report
+
+    app.command(name="spend-report")(spend_report)
+
+
 def _env_file_token() -> str | None:
     """Fall back to deploy/.env (cwd or repo root) so the CLI works without
     exporting anything."""
@@ -342,6 +350,7 @@ def egress_sync(
 
 
 _register_experiment()
+_register_spend()
 
 if __name__ == "__main__":
     app()

@@ -213,6 +213,10 @@ def _materialize(session: Session, queued: RunQueue, project: Project) -> RunJob
     role_version = role_version_for(session, agent)
     job.model = agent.model_override or (role_version.model if role_version else "claude-sonnet-5")
     job.effort = role_version.effort if role_version else "high"
+    # Pinned on the run row at lease time, not finalize: reaped and killed runs
+    # stay attributed to the model that actually ran.
+    run.model = job.model
+    run.effort = job.effort
     job.tool_permissions = dict(role_version.tool_permissions) if role_version else {}
     source_names = _merge_project_data_sources(session, project, role_version, job)
     job.egress_proxy_url = _role_egress_url(session, role_version, job.tool_permissions)
@@ -478,6 +482,8 @@ def finalize(job: RunJob, result: RunResult, was_revoked: bool = False) -> None:
         run.finished_at = utcnow()
         run.tokens_in = result.tokens_in
         run.tokens_out = result.tokens_out
+        run.cache_creation_tokens = result.cache_creation_tokens
+        run.cache_read_tokens = result.cache_read_tokens
         # Tokens always; dollars only when dollars move. Subscription runs are
         # a rate limit, not a bill — booking the SDK's list-price figure would
         # distort every budget decision (the budget gate for subscription
@@ -488,7 +494,8 @@ def finalize(job: RunJob, result: RunResult, was_revoked: bool = False) -> None:
         run.trace_path = _stash_trace(job) or result.trace_path
         run.summary = (result.summary or "")[:4000]
 
-        if result.tokens_in or result.tokens_out or run.cost_usd:
+        if (result.tokens_in or result.tokens_out or result.cache_creation_tokens
+                or result.cache_read_tokens or run.cost_usd):
             session.add(
                 LedgerEntry(
                     id=ids.new_id(ids.LEDGER),
@@ -496,6 +503,8 @@ def finalize(job: RunJob, result: RunResult, was_revoked: bool = False) -> None:
                     kind="model_usage",
                     tokens_in=result.tokens_in,
                     tokens_out=result.tokens_out,
+                    cache_creation_tokens=result.cache_creation_tokens,
+                    cache_read_tokens=result.cache_read_tokens,
                     usd=run.cost_usd,
                     run_id=run.id,
                     note=f"{run.kind} {run.status}"

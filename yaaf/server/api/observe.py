@@ -113,11 +113,13 @@ def desk(session: Session = Depends(db)) -> dict:
     for project in session.execute(select(Project).order_by(Project.created_at)).scalars():
         cons = effective(session, project.id)
         month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        usd, tokens_in, tokens_out = session.execute(
+        usd, tokens_in, tokens_out, cache_creation, cache_read = session.execute(
             select(
                 func.coalesce(func.sum(LedgerEntry.usd), 0.0),
                 func.coalesce(func.sum(LedgerEntry.tokens_in), 0),
                 func.coalesce(func.sum(LedgerEntry.tokens_out), 0),
+                func.coalesce(func.sum(LedgerEntry.cache_creation_tokens), 0),
+                func.coalesce(func.sum(LedgerEntry.cache_read_tokens), 0),
             ).where(LedgerEntry.project_id == project.id, LedgerEntry.at >= month_start)
         ).one()
         usd_mode = project.billing_mode == "api_key"
@@ -186,7 +188,11 @@ def desk(session: Session = Depends(db)) -> dict:
             "goal": project.goal, "billing_mode": project.billing_mode,
             "budget": {
                 "unit": "usd" if usd_mode else "tokens",
-                "spent": float(usd) if usd_mode else int(tokens_in) + int(tokens_out),
+                # Token mode must match enforcement (janitor.month_to_date):
+                # cache tokens count.
+                "spent": (float(usd) if usd_mode
+                          else int(tokens_in) + int(tokens_out)
+                          + int(cache_creation) + int(cache_read)),
                 "cap": cons.monthly_usd_cap if usd_mode else cons.monthly_token_cap,
                 "warn_ratio": cons.budget_warn_ratio,
             },
@@ -258,11 +264,13 @@ def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
     project = _project(session, project_id)
     cons = effective(session, project.id)
     month_start = utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    usd, tokens_in, tokens_out = session.execute(
+    usd, tokens_in, tokens_out, cache_creation, cache_read = session.execute(
         select(
             func.coalesce(func.sum(LedgerEntry.usd), 0.0),
             func.coalesce(func.sum(LedgerEntry.tokens_in), 0),
             func.coalesce(func.sum(LedgerEntry.tokens_out), 0),
+            func.coalesce(func.sum(LedgerEntry.cache_creation_tokens), 0),
+            func.coalesce(func.sum(LedgerEntry.cache_read_tokens), 0),
         ).where(LedgerEntry.project_id == project.id, LedgerEntry.at >= month_start)
     ).one()
     open_tasks = policy.open_top_level_tasks(session, project.id)
@@ -292,7 +300,9 @@ def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
         "goal": project.goal,
         "billing_mode": project.billing_mode,
         "month_to_date": {"usd": float(usd), "tokens_in": int(tokens_in),
-                          "tokens_out": int(tokens_out)},
+                          "tokens_out": int(tokens_out),
+                          "cache_creation": int(cache_creation),
+                          "cache_read": int(cache_read)},
         "caps": {"monthly_usd_cap": cons.monthly_usd_cap,
                  "monthly_token_cap": cons.monthly_token_cap},
         "open_tasks": len(open_tasks),
@@ -586,7 +596,9 @@ def runs(project_id: str, limit: int = 50, session: Session = Depends(db)) -> li
         {
             "id": r.id, "agent_id": r.agent_id, **who(r), "kind": r.kind, "status": r.status,
             "trigger": r.trigger, "attempt": r.attempt,
-            "tokens_in": r.tokens_in, "tokens_out": r.tokens_out, "cost_usd": r.cost_usd,
+            "tokens_in": r.tokens_in, "tokens_out": r.tokens_out,
+            "cache_creation": r.cache_creation_tokens, "cache_read": r.cache_read_tokens,
+            "model": r.model, "effort": r.effort, "cost_usd": r.cost_usd,
             "refusals": r.refusal_count, "summary": r.summary,
             "has_trace": r.trace_path is not None,
             "started_at": r.started_at.isoformat() if r.started_at else None,
@@ -646,9 +658,71 @@ def ledger(project_id: str, limit: int = 100, session: Session = Depends(db)) ->
     ).scalars()
     return [
         {"id": e.id, "kind": e.kind, "tokens_in": e.tokens_in, "tokens_out": e.tokens_out,
-         "usd": e.usd, "note": e.note, "at": e.at.isoformat()}
+         "cache_creation": e.cache_creation_tokens, "cache_read": e.cache_read_tokens,
+         "usd": e.usd, "run_id": e.run_id, "note": e.note, "at": e.at.isoformat()}
         for e in rows
     ]
+
+
+@router.get("/projects/{project_id}/spend")
+def spend(project_id: str, group_by: str = "model", days: int = 30,
+          session: Session = Depends(db)) -> dict:
+    """Spend rollup over recent runs. Dollars sum non-null cost_usd, so a
+    subscription project contributes tokens only — clients switch display on
+    billing_mode exactly as the budget meter does."""
+    if group_by not in ("model", "team", "agent", "kind"):
+        raise HTTPException(status_code=400, detail="group_by must be model|team|agent|kind")
+    since = utcnow() - timedelta(days=max(1, min(days, 365)))
+    rows = list(
+        session.execute(
+            select(Run).where(Run.project_id == project_id, Run.created_at >= since)
+        ).scalars()
+    )
+    agent_ids = {r.agent_id for r in rows if r.agent_id}
+    agents = {
+        a.id: a
+        for a in session.execute(select(Agent).where(Agent.id.in_(agent_ids))).scalars()
+    } if agent_ids else {}
+    team_ids = {a.team_id for a in agents.values() if a.team_id}
+    team_names = {
+        t.id: t.name
+        for t in session.execute(select(Team).where(Team.id.in_(team_ids))).scalars()
+    } if team_ids else {}
+
+    def key_label(r: Run) -> tuple[str, str]:
+        if group_by == "model":
+            name = r.model or "unknown"
+            return name, name
+        if group_by == "kind":
+            return r.kind, r.kind
+        agent = agents.get(r.agent_id) if r.agent_id else None
+        if agent is None:
+            return "unknown", "unknown"
+        if group_by == "agent":
+            return agent.id, agent.name
+        # team: a teamless agent (the CEO) rolls up under its own name.
+        if agent.team_id is None:
+            return agent.id, agent.name
+        return agent.team_id, team_names.get(agent.team_id, "unknown")
+
+    buckets: dict[str, dict] = {}
+    for r in rows:
+        key, label = key_label(r)
+        b = buckets.setdefault(key, {"key": key, "label": label, "runs": 0,
+                                     "tokens_in": 0, "tokens_out": 0,
+                                     "cache_creation": 0, "cache_read": 0, "usd": 0.0})
+        b["runs"] += 1
+        b["tokens_in"] += r.tokens_in
+        b["tokens_out"] += r.tokens_out
+        b["cache_creation"] += r.cache_creation_tokens
+        b["cache_read"] += r.cache_read_tokens
+        b["usd"] += r.cost_usd or 0.0
+    out = sorted(
+        buckets.values(),
+        key=lambda b: (-b["usd"], -(b["tokens_in"] + b["tokens_out"]
+                                    + b["cache_creation"] + b["cache_read"])),
+    )
+    return {"group_by": group_by, "days": days, "rows": out}
 
 
 @router.get("/projects/{project_id}/evidence")

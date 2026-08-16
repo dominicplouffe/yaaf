@@ -121,6 +121,19 @@ def build_system_prompt(session: Session, agent: Agent, project: Project) -> str
     )
 
 
+# Context is a lease, not a library: packs carry enough to act and the tools
+# fetch the rest on demand — every char here is re-paid on every wake.
+UNREAD_PER_CHANNEL = 10
+UNREAD_BODY_CHARS = 2_000
+SUGGESTION_CHARS = 1_000
+
+
+def _clip(text: str, limit: int, hint: str) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit] + f" …[truncated; {hint}]"
+
+
 def _unread_messages(session: Session, agent: Agent, include_recent: bool = False) -> list[dict]:
     """Unread per cursor — or, on retry attempts, the recent tail regardless of
     cursor: a failed prior attempt advanced the cursor without any model ever
@@ -139,7 +152,7 @@ def _unread_messages(session: Session, agent: Agent, include_recent: bool = Fals
         rows = [
             m
             for m in session.execute(
-                stmt.order_by(Message.created_at.desc()).limit(30)
+                stmt.order_by(Message.created_at.desc()).limit(UNREAD_PER_CHANNEL)
             ).scalars()
         ][::-1]
         rows = [m for m in rows if m.sender_agent_id != agent.id]
@@ -154,7 +167,8 @@ def _unread_messages(session: Session, agent: Agent, include_recent: bool = Fals
                             "from_agent": m.sender_agent_id,
                             "from_user": m.sender_user_id,
                             "thread_id": m.thread_id,
-                            "body": m.body,
+                            "body": _clip(m.body, UNREAD_BODY_CHARS,
+                                          "messages_read has the full text"),
                             "at": m.created_at.isoformat(),
                         }
                         for m in rows
@@ -290,7 +304,11 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
         )
         for s in suggestions:
             s.consumed_at = now
-        pack["suggestions"] = [{"by": s.by_agent_id, "text": s.text} for s in suggestions]
+        pack["suggestions"] = [
+            {"by": s.by_agent_id,
+             "text": _clip(s.text, SUGGESTION_CHARS, "clipped at 1000 chars")}
+            for s in suggestions
+        ]
         pack["pending_approvals"] = [
             {"id": a.id, "title": a.title, "kind": a.kind, "status": a.status}
             for a in session.execute(

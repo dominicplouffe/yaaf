@@ -206,6 +206,8 @@ def _start_session(session: Session, project: Project, ceo: Agent) -> None:
     job.system_prompt = build_system_prompt(session, ceo, project) + CHAT_ADDENDUM
     job.model = ceo.model_override or (role_version.model if role_version else "claude-sonnet-5")
     job.effort = role_version.effort if role_version else "high"
+    run.model = job.model
+    run.effort = job.effort
     job.tool_permissions = dict(role_version.tool_permissions) if role_version else {}
     _merge_project_data_sources(session, project, role_version, job)
     job.egress_proxy_url = _role_egress_url(session, role_version, job.tool_permissions)

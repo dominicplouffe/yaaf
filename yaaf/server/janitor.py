@@ -314,7 +314,16 @@ def month_to_date(session: Session, project_id: str) -> tuple[float, int]:
     usd, tokens = session.execute(
         select(
             func.coalesce(func.sum(LedgerEntry.usd), 0.0),
-            func.coalesce(func.sum(LedgerEntry.tokens_in + LedgerEntry.tokens_out), 0),
+            # Raw unweighted sum, cache tokens included: subscription mode is a
+            # rate limit, not a bill, and rate accounting counts cache reads as
+            # input. Weighting them would smuggle price knowledge into a mode
+            # that deliberately has none.
+            func.coalesce(
+                func.sum(LedgerEntry.tokens_in + LedgerEntry.tokens_out
+                         + LedgerEntry.cache_creation_tokens
+                         + LedgerEntry.cache_read_tokens),
+                0,
+            ),
         ).where(LedgerEntry.project_id == project_id, LedgerEntry.at >= month_start)
     ).one()
     return float(usd), int(tokens)

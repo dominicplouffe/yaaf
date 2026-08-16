@@ -22,6 +22,7 @@ def _finalize_with_cost(project: dict, agent_id: str, run_id: str) -> None:
         attempt=1,
     )
     finalize(job, RunResult(ok=True, summary="test run", tokens_in=1000, tokens_out=2000,
+                            cache_creation_tokens=50_000, cache_read_tokens=250_000,
                             cost_usd=1.23))
 
 
@@ -33,11 +34,13 @@ def test_subscription_mode_books_tokens_not_dollars(client):
     with db_session() as session:
         run = session.get(Run, run_id)
         assert run.tokens_out == 2000
+        assert (run.cache_creation_tokens, run.cache_read_tokens) == (50_000, 250_000)
         assert run.cost_usd is None, "a subscription run must not carry a fictional dollar"
         entry = session.execute(
             select(LedgerEntry).where(LedgerEntry.run_id == run_id)
         ).scalar_one()
         assert entry.tokens_in == 1000 and entry.tokens_out == 2000
+        assert (entry.cache_creation_tokens, entry.cache_read_tokens) == (50_000, 250_000)
         assert entry.usd is None
         assert "subscription" in (entry.note or "")
 
@@ -54,3 +57,4 @@ def test_api_key_mode_books_real_dollars(client):
             select(LedgerEntry).where(LedgerEntry.run_id == run_id)
         ).scalar_one()
         assert entry.usd == 1.23
+        assert (entry.cache_creation_tokens, entry.cache_read_tokens) == (50_000, 250_000)

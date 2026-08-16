@@ -35,6 +35,8 @@ from yaaf.core.models import (
     ChannelKind,
     ChannelRead,
     Heartbeat,
+    Hypothesis,
+    HypothesisStatus,
     Message,
     Notice,
     NoticeKind,
@@ -56,6 +58,15 @@ log = logging.getLogger("yaaf.dispatcher")
 
 DEFAULT_CEO_HEARTBEAT_HOURS = 6.0
 DEFAULT_MAX_CONCURRENT_RUNS = 3
+
+# Notice coalescing: the janitor drips notices (a reaped run, a drought, an
+# expiry) and each alone is not worth a full-price run. Chairman-driven or
+# budget notices wake immediately; the rest batch until the oldest has waited
+# out the window or enough have piled up.
+NOTICE_COALESCE_MINUTES = 10.0
+NOTICE_COALESCE_COUNT = 3
+URGENT_NOTICE_KINDS = {NoticeKind.BUDGET_WARNING, NoticeKind.BUDGET_EXHAUSTED,
+                       NoticeKind.APPROVAL_DECIDED, NoticeKind.AUDIT_FAILED}
 
 
 def dispatcher_loop() -> None:  # pragma: no cover - thin loop around dispatch_once
@@ -241,18 +252,27 @@ def _wake_reasons(
         if actionable:
             reasons.append({"kind": "messages", "channel_id": channel_id, "count": actionable})
 
-    # 2. Unconsumed notices.
-    notices = session.execute(
-        select(func.count(Notice.id)).where(Notice.agent_id == agent.id,
-                                            Notice.consumed_at.is_(None))
-    ).scalar_one()
-    if notices:
-        reasons.append({"kind": "notices", "count": notices})
+    # 2. Unconsumed notices, coalesced (see URGENT_NOTICE_KINDS above).
+    pending = session.execute(
+        select(Notice.kind, Notice.created_at).where(Notice.agent_id == agent.id,
+                                                     Notice.consumed_at.is_(None))
+    ).all()
+    if pending:
+        urgent = any(kind in URGENT_NOTICE_KINDS for kind, _ in pending)
+        oldest = min(created_at for _, created_at in pending)
+        ripe = oldest <= now - timedelta(minutes=NOTICE_COALESCE_MINUTES)
+        if urgent or ripe or len(pending) >= NOTICE_COALESCE_COUNT:
+            reasons.append({"kind": "notices", "count": len(pending)})
 
     # 3. Work: ready tasks this agent could claim, or a claim to push forward.
     reasons.extend(_work_reasons(session, agent, now))
 
-    # 4. Heartbeats: the CEO plans on a cadence even in silence.
+    # 4. Heartbeats: the CEO plans on a cadence even in silence — but silence
+    #    with an empty board and no live bet leaves nothing to plan, and an
+    #    idle wake is a full-price run. The first-ever heartbeat always fires
+    #    (it bootstraps the project); after that the cadence still advances,
+    #    so a busy company keeps its rhythm and an idle one sleeps until
+    #    something happens (config ceo_heartbeat_always restores always-wake).
     if agent.kind == AgentKind.CEO:
         hours = float(project.config.get("ceo_heartbeat_hours", DEFAULT_CEO_HEARTBEAT_HOURS))
         beat = session.execute(
@@ -261,11 +281,16 @@ def _wake_reasons(
         ).scalar_one_or_none()
         due = beat is None or beat.last_fired_at <= now - timedelta(hours=hours)
         if due:
+            skip = (beat is not None
+                    and not reasons
+                    and not project.config.get("ceo_heartbeat_always")
+                    and not _ceo_has_planning_material(session, project))
             if beat is None:
                 session.add(Heartbeat(agent_id=agent.id, name="planning", last_fired_at=now))
             else:
                 beat.last_fired_at = now
-            reasons.append({"kind": "heartbeat", "name": "planning"})
+            if not skip:
+                reasons.append({"kind": "heartbeat", "name": "planning"})
 
         # 4b. Daily wake at a wall-clock time (config: ceo_daily_at "HH:MM" +
         #     timezone). Fires once per local day, at or after the target;
@@ -275,6 +300,21 @@ def _wake_reasons(
             reasons.append(daily)
 
     return reasons
+
+
+def _ceo_has_planning_material(session: Session, project: Project) -> bool:
+    """Anything the planning heartbeat could act on: an open top-level task or
+    a live (or expired-awaiting-decision) bet. With neither — and no other wake
+    reason — a heartbeat wake buys a full-price run to conclude "nothing to
+    do"."""
+    if policy.open_top_level_tasks(session, project.id):
+        return True
+    return session.execute(
+        select(func.count(Hypothesis.id)).where(
+            Hypothesis.project_id == project.id,
+            Hypothesis.status.in_([HypothesisStatus.ACTIVE, HypothesisStatus.EXPIRED]),
+        )
+    ).scalar_one() > 0
 
 
 def _daily_wake_due(session: Session, project: Project, agent: Agent, now) -> dict | None:

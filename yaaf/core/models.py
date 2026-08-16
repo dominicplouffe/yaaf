@@ -539,6 +539,10 @@ class LedgerEntry(Base):
     kind: Mapped[str] = mapped_column(String(24))  # model_usage|external_spend|infra
     tokens_in: Mapped[int] = mapped_column(Integer, default=0)
     tokens_out: Mapped[int] = mapped_column(Integer, default=0)
+    # The API's input_tokens is only the uncached remainder; the real prompt is
+    # tokens_in + cache_creation_tokens + cache_read_tokens.
+    cache_creation_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    cache_read_tokens: Mapped[int] = mapped_column(Integer, default=0)
     usd: Mapped[float | None] = mapped_column(Float)
     run_id: Mapped[str | None] = mapped_column(String(40))
     note: Mapped[str | None] = mapped_column(Text)
@@ -593,7 +597,13 @@ class Run(Base):
     finished_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     tokens_in: Mapped[int] = mapped_column(Integer, default=0)
     tokens_out: Mapped[int] = mapped_column(Integer, default=0)
+    cache_creation_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    cache_read_tokens: Mapped[int] = mapped_column(Integer, default=0)
     cost_usd: Mapped[float | None] = mapped_column(Float)
+    # Pinned at lease time, not resolved at read time: a role repin or model
+    # change must never silently re-attribute historical spend.
+    model: Mapped[str | None] = mapped_column(String(64))
+    effort: Mapped[str | None] = mapped_column(String(16))
     trace_path: Mapped[str | None] = mapped_column(Text)
     summary: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)

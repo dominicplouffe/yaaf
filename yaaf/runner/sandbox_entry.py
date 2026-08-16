@@ -310,14 +310,24 @@ ALL_TOOLS = [
 ]
 
 
+def _builtin_tools() -> list[str]:
+    """The base set of built-in tool declarations, not just permissions: a tool
+    absent here never reaches the model at all. Undeclared schemas (Task,
+    TodoWrite, a disabled Bash, ...) are otherwise pure input-token cost on
+    every single API call."""
+    tools: list[str] = []
+    if PERMS.get("files", True):
+        tools += ["Read", "Write", "Edit", "Glob", "Grep"]
+    if PERMS.get("bash", False):
+        tools.append("Bash")
+    if PERMS.get("web", False):
+        tools += ["WebFetch", "WebSearch"]
+    return tools
+
+
 def _allowed_tools() -> list[str]:
     allowed = [f"mcp__yaaf__{t.name}" for t in ALL_TOOLS]
-    if PERMS.get("files", True):
-        allowed += ["Read", "Write", "Edit", "Glob", "Grep"]
-    if PERMS.get("bash", False):
-        allowed.append("Bash")
-    if PERMS.get("web", False):
-        allowed += ["WebFetch", "WebSearch"]
+    allowed += _builtin_tools()
     # Server-level grant: every tool the external MCP server offers.
     allowed += [f"mcp__{name}" for name in _external_mcp_servers()]
     return allowed
@@ -367,6 +377,12 @@ def _external_mcp_servers(env: dict[str, str] | None = None) -> dict[str, dict]:
 MOUNT_PROBLEMS: list[str] = []
 
 
+def _usage_int(usage, key: str) -> int:
+    if isinstance(usage, dict):
+        return int(usage.get(key, 0) or 0)
+    return int(getattr(usage, key, 0) or 0)
+
+
 async def main() -> int:
     system_prompt = (STAGING / "system_prompt.txt").read_text()
     context = json.loads((STAGING / "context.json").read_text())
@@ -379,6 +395,7 @@ async def main() -> int:
         model=MODEL,
         effort=EFFORT,
         mcp_servers={"yaaf": server, **_external_mcp_servers()},
+        tools=_builtin_tools(),
         allowed_tools=_allowed_tools(),
         permission_mode="bypassPermissions",  # containment is the sandbox + proxy + API
         cwd="/workspace",
@@ -399,7 +416,7 @@ async def main() -> int:
 
     summary_parts: list[str] = list(MOUNT_PROBLEMS)
     cost_usd = None
-    tokens_in = tokens_out = 0
+    tokens_in = tokens_out = cache_creation = cache_read = 0
     ok = True
 
     def write_result(partial: bool) -> None:
@@ -416,6 +433,8 @@ async def main() -> int:
                     "cost_usd": cost_usd,
                     "tokens_in": tokens_in,
                     "tokens_out": tokens_out,
+                    "cache_creation_tokens": cache_creation,
+                    "cache_read_tokens": cache_read,
                     "trace_path": str(trace_path),
                 }
             )
@@ -437,12 +456,12 @@ async def main() -> int:
                     cost_usd = message.total_cost_usd
                     if message.usage is not None:
                         usage = message.usage
-                        tokens_in = getattr(usage, "input_tokens", 0) or (
-                            usage.get("input_tokens", 0) if isinstance(usage, dict) else 0
-                        )
-                        tokens_out = getattr(usage, "output_tokens", 0) or (
-                            usage.get("output_tokens", 0) if isinstance(usage, dict) else 0
-                        )
+                        # input_tokens is only the uncached remainder; the cache
+                        # fields carry the rest of the real prompt.
+                        tokens_in = _usage_int(usage, "input_tokens")
+                        tokens_out = _usage_int(usage, "output_tokens")
+                        cache_creation = _usage_int(usage, "cache_creation_input_tokens")
+                        cache_read = _usage_int(usage, "cache_read_input_tokens")
                     trace.write(json.dumps({"type": "result", "subtype": message.subtype,
                                             "cost_usd": cost_usd}) + "\n")
                 else:
