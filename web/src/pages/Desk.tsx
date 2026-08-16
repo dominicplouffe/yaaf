@@ -77,23 +77,33 @@ export default function Desk() {
         </div>,
       );
     }
-    if (p.audit.unaudited >= 3 && p.status !== "stopped") {
-      waiting.push(
-        <div className="arow" key={`${p.id}-audit`}>
-          <span className="pj">{p.name}</span>
-          <span className="chip warn">audit due</span>
-          <div className="grow">
-            <div className="tt">{p.audit.unaudited} completions have never been audited</div>
-            <div className="sb">the platform picks the sample — you're the reviewer that doesn't approve everything</div>
-          </div>
-          <Link to={`/projects/${p.id}/work`}>deal a sample →</Link>
-        </div>,
-      );
-    }
   }
 
   // ── worth watching: the system will handle these, but you'd rather know now ──
   const watch: React.ReactNode[] = [];
+  // Spot-checking is deliberately not in "Waiting on you": nothing expires and
+  // no agent is blocked on it, so listing it beside an approval that auto-denies
+  // would pad the one count the chairman has to be able to trust.
+  for (const p of projects) {
+    if (p.audit.unaudited >= 3 && p.status !== "stopped") {
+      watch.push(
+        <div className="wrow" key={`${p.id}-audit`}>
+          <span className="pj">{p.name}</span>
+          <span className="badge">spot-check</span>
+          <div className="grow">
+            <b>
+              {p.audit.unaudited} finished {p.audit.unaudited === 1 ? "task" : "tasks"} nobody
+              has checked.
+            </b>{" "}
+            The agents marked these done and wrote their own evidence for it. Two minutes on
+            five at random: you see what each task had to prove and what the agent claimed, and
+            you say whether you believe it.
+          </div>
+          <Link to={`/projects/${p.id}/work?audit=1`}>check 5 now →</Link>
+        </div>,
+      );
+    }
+  }
   for (const p of projects) {
     const b = p.budget;
     const frac = b.cap > 0 ? b.spent / b.cap : 0;
