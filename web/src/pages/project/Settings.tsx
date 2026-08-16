@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   AmendmentRow,
+  CloneResult,
   Dashboard,
   del,
   get,
@@ -12,6 +14,13 @@ import {
   RoleSummary,
 } from "../../api";
 import { fmtWhen, usePoll } from "../../hooks";
+
+/** "amazon-audit-v2" → "amazon-audit-v3"; "Acme" → "Acme (clone)". Twins come
+    in numbered runs far more often than they come in ones. */
+function nextInSeries(value: string, fallback: string): string {
+  const match = value.match(/^(.*?)(\d+)$/);
+  return match ? `${match[1]}${Number(match[2]) + 1}` : `${value}${fallback}`;
+}
 
 /** The shared after-action helper: run, show a message (fixed, or computed
     from the response when the server's answer is the news), reload the dash. */
@@ -724,6 +733,10 @@ export default function Settings({
     String(dash.config["ceo_heartbeat_hours"] ?? 6),
   );
 
+  const navigate = useNavigate();
+  const [cloneSlug, setCloneSlug] = useState(() => nextInSeries(dash.slug, "-2"));
+  const [cloneName, setCloneName] = useState(() => nextInSeries(dash.name, " (clone)"));
+
   const [amendReason, setAmendReason] = useState("");
   const [amendChanges, setAmendChanges] = useState("{}");
   // The primary limits, editable as a form. Values start at what the
@@ -805,6 +818,33 @@ export default function Settings({
 
   const billingReady = dash.billing_secret_id !== null;
   const runtimeNow = String(dash.config["runtime"] ?? "agent_sdk");
+
+  async function cloneProject() {
+    setError(null);
+    setBusy(true);
+    try {
+      const twin = await post<CloneResult>(`/admin/projects/${projectId}/clone`, {
+        slug: cloneSlug.trim(),
+        name: cloneName.trim() || null,
+      });
+      // The twin's own data sources were tested with its own copied
+      // credentials — a failure here is news worth stopping for, not a badge
+      // to discover later.
+      const broken = twin.copied.data_sources.filter((source) => !source.check.ok);
+      if (broken.length) {
+        alert(
+          `Twin "${twin.slug}" created, but ${broken.length === 1 ? "a data source is" : "its data sources are"} ` +
+            `not answering:\n\n${broken.map((s) => `"${s.name}": ${s.check.detail}`).join("\n")}\n\n` +
+            "Fix the address in the twin's Settings → Data sources before starting it.",
+        );
+      }
+      navigate(`/projects/${twin.id}`);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function downloadSetup() {
     setError(null);
@@ -1004,13 +1044,54 @@ export default function Settings({
         <GithubWorkspace projectId={projectId} dash={dash} act={act} busy={busy} />
       </div>
 
+      <h2>Duplicate this project</h2>
+      <div className="card">
+        <p className="help" style={{ marginTop: 0 }}>
+          A running twin, right here: same teams, same people, same constitution, and the{" "}
+          <i>exact</i> role versions this project runs — not whatever the role library has moved
+          on to. Every credential comes across with its value, billing included, so there is
+          nothing to re-paste; the twin's data sources are tested with its own copies before you
+          land on it.
+        </p>
+        <p className="help">
+          Left behind on purpose: this project's history — runs, tasks, messages, memory, files,
+          amendments — and its Slack channel map, since two companies posting into one room helps
+          nobody. The Slack tokens do come along, so you only re-map rooms.
+        </p>
+        <div className="row">
+          <div>
+            <label className="field">Twin's slug (a-z, 0-9, dashes)</label>
+            <input
+              value={cloneSlug}
+              onChange={(e) => setCloneSlug(e.target.value)}
+              pattern="[a-z0-9-]{2,64}"
+            />
+          </div>
+          <div>
+            <label className="field">Twin's name</label>
+            <input value={cloneName} onChange={(e) => setCloneName(e.target.value)} />
+          </div>
+        </div>
+        <div className="actions">
+          <button
+            className="primary"
+            disabled={busy || !/^[a-z0-9-]{2,64}$/.test(cloneSlug.trim())}
+            onClick={cloneProject}
+          >
+            {busy ? "Duplicating…" : "Create the twin"}
+          </button>
+          <span className="help">Starts stopped — review it, then press Start.</span>
+        </div>
+      </div>
+
       <h2>Setup file</h2>
       <div className="card">
         <p className="help" style={{ marginTop: 0 }}>
-          Download this project's design as one file: teams, role definitions, the constitution,
-          configuration, and the <i>names</i> of its credentials — never their values. Upload it on
-          the New Project page (here or on another install) to start a twin; you'll re-enter
-          credential values there and connect billing afterwards.
+          For <i>another</i> install. Downloads this project's design as one file: teams, role
+          definitions, the constitution, configuration, and the <i>names</i> of its credentials —
+          never their values, which cannot leave the deployment that encrypted them. Upload it on
+          the New Project page; you'll re-enter credential values there and connect billing
+          afterwards. Duplicating on this install needs none of that — use the twin above.
         </p>
         <div className="actions">
           <button onClick={downloadSetup}>Download setup file</button>

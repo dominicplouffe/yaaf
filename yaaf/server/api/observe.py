@@ -294,6 +294,7 @@ def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
     ).scalar_one()
     return {
         "id": project.id,
+        "slug": project.slug,
         "name": project.name,
         "status": project.status,
         "status_reason": project.status_reason,

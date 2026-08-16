@@ -94,6 +94,7 @@ export interface ProjectSummary {
 
 export interface Dashboard {
   id: string;
+  slug: string;
   name: string;
   status: string;
   status_reason: string | null;
@@ -412,4 +413,19 @@ export interface ProjectBundle {
   };
   roles: BundleRole[];
   secrets: { name: string; role_scopes: string[]; kind: string }[];
+}
+
+/** POST /admin/projects/{id}/clone — a running twin on this install. Unlike a
+    setup file it carries credential values, so `copied` reports what came
+    across and how the twin's own data sources answered. */
+export interface CloneResult {
+  id: string;
+  slug: string;
+  name: string;
+  status: string;
+  copied: {
+    secrets: number;
+    data_sources: { name: string; check: { ok: boolean; detail: string } }[];
+    slack_rooms_dropped: boolean;
+  };
 }

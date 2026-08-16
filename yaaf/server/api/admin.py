@@ -438,6 +438,168 @@ def export_project(project_id: str, session: Session = Depends(db)) -> dict:
     }
 
 
+# Config a twin must not inherit: this project's own webhook signing keys and
+# its experiment bookkeeping. Slack is handled separately below — its tokens
+# travel, its room bindings do not.
+_NON_CLONABLE_CONFIG_KEYS = frozenset({"github_webhook_secret", "webhook_secret", "experiment"})
+
+
+class ProjectCloneIn(BaseModel):
+    slug: str = Field(pattern="^[a-z0-9-]{2,64}$")
+    name: str | None = None  # defaults to the source's name plus " (clone)"
+
+
+@router.post("/projects/{project_id}/clone")
+def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depends(db)) -> dict:
+    """A running twin on this install — the counterpart to export, which makes
+    a portable *design*. An export cannot carry a secret off the deployment
+    that encrypted it, so it re-asks for every credential by hand, and a twin
+    is one mistyped address away from agents hunting for tools that never
+    mounted. A clone never leaves that deployment, so it copies what the export
+    could not: credential values verbatim (ciphertext, no round trip through
+    plaintext), and the exact role versions the source has pinned rather than
+    whatever the library has drifted to since.
+
+    What it deliberately does not copy is the source's *history* — runs, tasks,
+    bus, memory, artifacts, workspace, amendment log — and its claim on shared
+    outside rooms: Slack tokens come along, the channel map does not, because
+    two companies posting into one room is nobody's idea of a twin.
+    """
+    source = _get_project(session, project_id)
+    if session.execute(select(Project).where(Project.slug == body.slug)).scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="project slug already exists")
+
+    config = {k: v for k, v in (source.config or {}).items()
+              if k not in _NON_CLONABLE_CONFIG_KEYS}
+    slack_rooms_dropped = bool((config.get("slack") or {}).get("channel_map"))
+    if "slack" in config:
+        # The bridge is inert without a channel map, so the twin mirrors
+        # nowhere until the chairman maps rooms — with the tokens already there.
+        config["slack"] = {**config["slack"], "channel_map": {}}
+
+    project = Project(
+        id=ids.new_id(ids.PROJECT),
+        slug=body.slug,
+        name=body.name or f"{source.name} (clone)",
+        goal=source.goal,
+        chairman_user_id=source.chairman_user_id,
+        billing_mode=source.billing_mode,
+        controlled_domains=list(source.controlled_domains or []),
+        github_repo=source.github_repo,
+        config=config,
+    )
+    session.add(project)
+    session.flush()
+    for member in session.execute(
+        select(ProjectMember).where(ProjectMember.project_id == source.id)
+    ).scalars():
+        session.add(ProjectMember(project_id=project.id, user_id=member.user_id,
+                                  role=member.role))
+
+    # The rulebook the source is governed by *now*, frozen fresh at version 1:
+    # the twin inherits the rules, not the argument that produced them.
+    create_initial(session, project.id, effective(session, source.id))
+
+    # Ciphertext is copied as-is — same install, same master key, so nothing is
+    # ever decrypted to move it. This is the line an export cannot cross, and
+    # the reason a clone needs no credential re-entry at all.
+    ciphertexts: dict[str, str] = {}
+    secret_ids: dict[str, str] = {}
+    for row in session.execute(
+        select(Secret).where(Secret.project_id == source.id).order_by(Secret.created_at)
+    ).scalars():
+        copy = Secret(id=ids.new_id(ids.SECRET), project_id=project.id, name=row.name,
+                      ciphertext=row.ciphertext, role_scopes=list(row.role_scopes or []),
+                      kind=row.kind)
+        session.add(copy)
+        ciphertexts[row.name] = row.ciphertext
+        secret_ids[row.id] = copy.id
+    if source.billing_secret_id:
+        project.billing_secret_id = secret_ids.get(source.billing_secret_id)
+
+    source_ceo = session.execute(
+        select(Agent).where(Agent.project_id == source.id, Agent.kind == AgentKind.CEO)
+    ).scalar_one()
+    ceo = Agent(id=ids.new_id(ids.AGENT), project_id=project.id, team_id=None,
+                kind=AgentKind.CEO, name=source_ceo.name,
+                role_version_id=source_ceo.role_version_id,
+                model_override=source_ceo.model_override)
+    session.add(ceo)
+    session.add(Channel(id=ids.new_id(ids.CHANNEL), project_id=project.id,
+                        kind=ChannelKind.BOARDROOM))
+    session.add(Channel(id=ids.new_id(ids.CHANNEL), project_id=project.id,
+                        kind=ChannelKind.LEADERSHIP))
+
+    team_out = []
+    for source_team in session.execute(
+        select(Team).where(Team.project_id == source.id).order_by(Team.created_at)
+    ).scalars():
+        # The source's pinned version, not _latest_role_version: a twin that
+        # silently upgrades its roles is not running the same company.
+        team = Team(id=ids.new_id(ids.TEAM), project_id=project.id,
+                    role_version_id=source_team.role_version_id, name=source_team.name)
+        session.add(team)
+        agents = []
+        for source_agent in session.execute(
+            select(Agent)
+            .where(Agent.team_id == source_team.id, Agent.kind == AgentKind.EMPLOYEE)
+            .order_by(Agent.created_at)
+        ).scalars():
+            agent = Agent(id=ids.new_id(ids.AGENT), project_id=project.id, team_id=team.id,
+                          kind=AgentKind.EMPLOYEE, name=source_agent.name,
+                          role_version_id=source_agent.role_version_id,
+                          status=source_agent.status,
+                          model_override=source_agent.model_override)
+            session.add(agent)
+            agents.append(agent)
+            if source_agent.id == source_team.lead_agent_id:
+                team.lead_agent_id = agent.id
+        session.add(Channel(id=ids.new_id(ids.CHANNEL), project_id=project.id,
+                            kind=ChannelKind.TEAM, team_id=team.id))
+        if source_ceo.team_id == source_team.id:  # solo: the CEO is the team
+            ceo.team_id = team.id
+            agents.append(ceo)
+        team_out.append({"id": team.id, "name": team.name,
+                         "agents": [{"id": a.id, "name": a.name} for a in agents]})
+
+    # Prove the twin's data sources here, on its own copied credentials. A
+    # source that cannot answer is exactly what a clone exists to rule out —
+    # and the source project's stale verdict would be a lie about this one.
+    checked = []
+    for entry in config.get("mcp_servers") or []:
+        from yaaf.core.crypto import decrypt
+
+        entry = {k: v for k, v in entry.items() if k != "last_check"}
+        url_cipher = ciphertexts.get(entry.get("url_secret") or "")
+        if not url_cipher:
+            check = {"ok": False, "detail": "the data source's URL secret did not come across"}
+        else:
+            token_cipher = ciphertexts.get(entry.get("bearer_secret") or "")
+            check = _check_data_source(decrypt(url_cipher),
+                                       decrypt(token_cipher) if token_cipher else None)
+        entry["last_check"] = {**check, "at": utcnow().isoformat()}
+        checked.append(entry)
+    if checked:
+        project.config = {**config, "mcp_servers": checked}
+
+    _audit(session, source.id, "project.clone", "project", project.id, {"slug": body.slug})
+    _audit(session, project.id, "project.create", "project", project.id,
+           {"cloned_from": source.id, "cloned_from_slug": source.slug})
+    return {
+        "id": project.id,
+        "slug": project.slug,
+        "name": project.name,
+        "ceo_agent_id": ceo.id,
+        "teams": team_out,
+        "status": project.status,
+        "copied": {
+            "secrets": len(ciphertexts),
+            "data_sources": [{"name": e["name"], "check": e["last_check"]} for e in checked],
+            "slack_rooms_dropped": slack_rooms_dropped,
+        },
+    }
+
+
 # ── lifecycle: the kill switches ────────────────────────────────────────────────
 
 
