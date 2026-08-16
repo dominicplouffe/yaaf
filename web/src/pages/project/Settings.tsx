@@ -420,7 +420,7 @@ function DataSources({
       </div>
       <label className="field">Which roles get these tools (nobody, until you tick)</label>
       {roleOptions.length === 0 ? (
-        <p className="help">No teams yet — add a team on the Overview tab first.</p>
+        <p className="help">No teams yet — add a team on the Today tab first.</p>
       ) : (
         <div className="pill-row">
           {roleOptions.map((option) => (
@@ -1038,6 +1038,26 @@ export default function Settings({
           </button>
         </div>
       </details>
+
+      <h2>Constitution in force</h2>
+      <div className="card">
+        <dl className="kv">
+          {Object.entries(dash.constitution as Record<string, string | number | boolean>).map(
+            ([key, value]) => (
+              <span key={key} style={{ display: "contents" }}>
+                <dt>{key.replaceAll("_", " ")}</dt>
+                <dd className="mono">{String(value)}</dd>
+              </span>
+            ),
+          )}
+        </dl>
+        <p className="help">
+          Frozen at project creation; the rulebook and its editor live in this room. Change a
+          value under Budgets &amp; guardrails below — budget caps apply the moment you save,
+          behavioral guardrails take the 72-hour cooling-off, and every change is disclosed to
+          the CEO.
+        </p>
+      </div>
 
       <h2>Budgets &amp; guardrails</h2>
       <div className="card">

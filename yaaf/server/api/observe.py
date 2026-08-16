@@ -23,6 +23,7 @@ from yaaf.core.models import (
     ApprovalStatus,
     Channel,
     Evidence,
+    EvidenceKind,
     Hypothesis,
     LedgerEntry,
     Memory,
@@ -36,8 +37,10 @@ from yaaf.core.models import (
     Secret,
     Suggestion,
     Task,
+    TaskEvent,
     TaskStatus,
     Team,
+    VerificationStatus,
     utcnow,
 )
 from yaaf.server import policy, typing_state
@@ -63,12 +66,191 @@ def _project(session: Session, project_id: str) -> Project:
     return project
 
 
+def _last_countable_evidence_at(session: Session, project_id: str) -> datetime | None:
+    """When the outside world last verifiably acted — the drought clock's anchor.
+    Same countability rule as policy: external AND (verified or attested)."""
+    at = session.execute(
+        select(func.max(Evidence.created_at)).where(
+            Evidence.project_id == project_id,
+            Evidence.kind == EvidenceKind.EXTERNAL,
+            Evidence.verification.in_(
+                [VerificationStatus.VERIFIED, VerificationStatus.NOT_APPLICABLE]
+            ),
+        )
+    ).scalar_one()
+    if at is not None and at.tzinfo is None:
+        at = at.replace(tzinfo=UTC)
+    return at
+
+
 @router.get("/projects")
 def projects(session: Session = Depends(db)) -> list[dict]:
     return [
         {"id": p.id, "slug": p.slug, "name": p.name, "status": p.status, "goal": p.goal}
         for p in session.execute(select(Project).order_by(Project.created_at)).scalars()
     ]
+
+
+@router.get("/desk")
+def desk(session: Session = Depends(db)) -> dict:
+    """Cross-project attention for the landing page: decisions waiting on the
+    chairman, countdowns worth watching, what happened while they were away,
+    and one comparable row per project — in one request, so the Desk answers
+    "what needs me?" without the UI fanning out per project."""
+    now = utcnow()
+    day_ago = now - timedelta(hours=24)
+    week_ago = now - timedelta(days=7)
+    soon = now + timedelta(days=7)
+
+    def aware(dt: datetime | None) -> datetime | None:
+        if dt is None:
+            return None
+        return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+
+    away = {"since": day_ago.isoformat(), "tasks_completed": 0,
+            "evidence_verified": 0, "usd_spent": 0.0, "runs": 0, "refusal_storms": 0}
+    projects_out: list[dict] = []
+    for project in session.execute(select(Project).order_by(Project.created_at)).scalars():
+        cons = effective(session, project.id)
+        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        usd, tokens_in, tokens_out = session.execute(
+            select(
+                func.coalesce(func.sum(LedgerEntry.usd), 0.0),
+                func.coalesce(func.sum(LedgerEntry.tokens_in), 0),
+                func.coalesce(func.sum(LedgerEntry.tokens_out), 0),
+            ).where(LedgerEntry.project_id == project.id, LedgerEntry.at >= month_start)
+        ).one()
+        usd_mode = project.billing_mode == "api_key"
+        pending = [
+            {"id": a.id, "title": a.title, "kind": a.kind, "amount_usd": a.amount_usd,
+             "expires_at": aware(a.expires_at).isoformat()}
+            for a in session.execute(
+                select(Approval)
+                .where(Approval.project_id == project.id,
+                       Approval.status == ApprovalStatus.PENDING)
+                .order_by(Approval.expires_at)
+            ).scalars()
+        ]
+        hyps = list(
+            session.execute(
+                select(Hypothesis).where(Hypothesis.project_id == project.id)
+            ).scalars()
+        )
+        expired_bets = [
+            {"id": h.id, "statement": h.statement,
+             "kill_date": aware(h.kill_date).isoformat(),
+             "blocked_tasks": session.execute(
+                 select(func.count(Task.id)).where(
+                     Task.hypothesis_id == h.id, Task.status == TaskStatus.BLOCKED
+                 )
+             ).scalar_one()}
+            for h in hyps
+            if h.status == "expired" and not h.extended_once
+        ]
+        kill_dates_soon = [
+            {"id": h.id, "statement": h.statement,
+             "kill_date": aware(h.kill_date).isoformat()}
+            for h in hyps
+            if h.status == "active" and aware(h.kill_date) <= soon
+        ]
+        completed = session.execute(
+            select(func.count(Task.id)).where(
+                Task.project_id == project.id, Task.status == TaskStatus.DONE
+            )
+        ).scalar_one()
+        audited = session.execute(
+            select(func.count(Task.id)).where(
+                Task.project_id == project.id, Task.status == TaskStatus.DONE,
+                Task.audit_status.is_not(None),
+            )
+        ).scalar_one()
+        frozen_threads = session.execute(
+            select(func.count(Message.id))
+            .join(Channel, Channel.id == Message.channel_id)
+            .where(Channel.project_id == project.id, Message.frozen_at.is_not(None))
+        ).scalar_one()
+        running = session.execute(
+            select(func.count(Run.id)).where(
+                Run.project_id == project.id, Run.status == "running",
+                Run.kind != RunKind.CHAT_SESSION,
+            )
+        ).scalar_one()
+        last_run_at = aware(
+            session.execute(
+                select(func.max(Run.started_at)).where(Run.project_id == project.id)
+            ).scalar_one()
+        )
+        projects_out.append({
+            "id": project.id, "slug": project.slug, "name": project.name,
+            "status": project.status, "status_reason": project.status_reason,
+            "goal": project.goal, "billing_mode": project.billing_mode,
+            "budget": {
+                "unit": "usd" if usd_mode else "tokens",
+                "spent": float(usd) if usd_mode else int(tokens_in) + int(tokens_out),
+                "cap": cons.monthly_usd_cap if usd_mode else cons.monthly_token_cap,
+                "warn_ratio": cons.budget_warn_ratio,
+            },
+            "open_tasks": len(policy.open_top_level_tasks(session, project.id)),
+            "queue_ceiling": cons.queue_ceiling,
+            "evidence_7d": policy.countable_external_evidence(session, project.id, week_ago),
+            "ceo_judgment": policy.ceo_judgment(session, project.id),
+            "pending_approvals": pending,
+            "expired_bets": expired_bets,
+            "kill_dates_soon": kill_dates_soon,
+            "audit": {"completed": int(completed), "audited": int(audited),
+                      "unaudited": int(completed) - int(audited)},
+            "drought": {
+                "active": policy.drought_active(session, project.id, cons),
+                "window_hours": cons.drought_hours,
+                "applies": aware(project.created_at)
+                <= now - timedelta(hours=cons.drought_hours),
+                "last_countable_at": (
+                    at.isoformat()
+                    if (at := _last_countable_evidence_at(session, project.id))
+                    else None
+                ),
+            },
+            "frozen_threads": int(frozen_threads),
+            "runs_running": int(running),
+            "last_run_at": last_run_at.isoformat() if last_run_at else None,
+        })
+        away["tasks_completed"] += int(
+            session.execute(
+                select(func.count(TaskEvent.id)).where(
+                    TaskEvent.project_id == project.id,
+                    TaskEvent.to_status == TaskStatus.DONE,
+                    TaskEvent.at >= day_ago,
+                )
+            ).scalar_one()
+        )
+        away["evidence_verified"] += policy.countable_external_evidence(
+            session, project.id, day_ago
+        )
+        away["usd_spent"] += float(
+            session.execute(
+                select(func.coalesce(func.sum(LedgerEntry.usd), 0.0)).where(
+                    LedgerEntry.project_id == project.id, LedgerEntry.at >= day_ago
+                )
+            ).scalar_one()
+        )
+        away["runs"] += int(
+            session.execute(
+                select(func.count(Run.id)).where(
+                    Run.project_id == project.id, Run.started_at >= day_ago
+                )
+            ).scalar_one()
+        )
+        away["refusal_storms"] += int(
+            session.execute(
+                select(func.count(Run.id)).where(
+                    Run.project_id == project.id,
+                    Run.status == "terminated_refusals",
+                    Run.started_at >= day_ago,
+                )
+            ).scalar_one()
+        )
+    away["usd_spent"] = round(away["usd_spent"], 4)
+    return {"as_of": now.isoformat(), "away": away, "projects": projects_out}
 
 
 @router.get("/projects/{project_id}")
@@ -126,6 +308,15 @@ def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
         "github_repo": project.github_repo,
         "billing_secret_id": project.billing_secret_id,
         "billing_secret_name": _secret_name(session, project.billing_secret_id),
+        # Drought-clock anchors: the UI counts toward the refusal, not just
+        # reporting it after the fact.
+        "created_at": (
+            project.created_at if project.created_at.tzinfo
+            else project.created_at.replace(tzinfo=UTC)
+        ).isoformat(),
+        "last_countable_evidence_at": (
+            at.isoformat() if (at := _last_countable_evidence_at(session, project.id)) else None
+        ),
     }
 
 
@@ -312,6 +503,7 @@ def board(project_id: str, session: Session = Depends(db)) -> list[dict]:
             "external": t.produces_external_evidence,
             "success_test": t.success_test, "evidence": t.completion_evidence,
             "check_output": t.check_output, "blocked_reason": t.blocked_reason,
+            "hypothesis_id": t.hypothesis_id, "audit_status": t.audit_status,
         }
         for t in rows
     ]
@@ -503,7 +695,9 @@ def approvals(project_id: str, session: Session = Depends(db)) -> list[dict]:
         {"id": a.id, "kind": a.kind, "title": a.title, "body": a.body,
          "amount_usd": a.amount_usd, "status": a.status,
          "requested_by": a.requested_by_agent_id,
-         "expires_at": a.expires_at.isoformat()}
+         "expires_at": a.expires_at.isoformat(),
+         "decided_at": a.decided_at.isoformat() if a.decided_at else None,
+         "decision_note": a.decision_note}
         for a in rows
     ]
 

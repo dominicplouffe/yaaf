@@ -15,7 +15,7 @@ export default function Login() {
     setToken(token.trim());
     try {
       await get("/observe/projects");
-      navigate("/projects");
+      navigate("/desk");
     } catch (err) {
       setError(
         "That token was rejected. It is the YAAF_ADMIN_TOKEN value — on a compose deployment it lives in deploy/.env.",

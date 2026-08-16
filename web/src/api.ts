@@ -120,6 +120,9 @@ export interface Dashboard {
   github_repo: string | null;
   billing_secret_id: string | null;
   billing_secret_name: string | null;
+  /** Drought-clock anchors: the UI counts toward the refusal. */
+  created_at: string;
+  last_countable_evidence_at: string | null;
 }
 
 /** One row of GET /observe/projects/{id}/health — a way the configuration can
@@ -165,6 +168,10 @@ export interface TaskRow {
   evidence: string | null;
   check_output: string | null;
   blocked_reason: string | null;
+  /** The bet this work serves; tasks inherit meaning — and mortality — from it. */
+  hypothesis_id: string | null;
+  /** Chairman spot-audit verdict on the completion; null = never audited. */
+  audit_status: string | null;
 }
 
 export interface MessageRow {
@@ -235,6 +242,71 @@ export interface ApprovalRow {
   status: string;
   requested_by: string;
   expires_at: string;
+  decided_at: string | null;
+  /** The chairman's note — the agent reads it, so history shows it. */
+  decision_note: string | null;
+}
+
+// ── the Desk: cross-project attention, one request ─────────────────────────────
+
+export interface DeskApproval {
+  id: string;
+  title: string;
+  kind: string;
+  amount_usd: number | null;
+  expires_at: string;
+}
+
+export interface DeskBet {
+  id: string;
+  statement: string;
+  kill_date: string;
+  blocked_tasks?: number;
+}
+
+export interface DeskProject {
+  id: string;
+  slug: string;
+  name: string;
+  status: string;
+  status_reason: string | null;
+  goal: string;
+  billing_mode: string;
+  budget: { unit: "usd" | "tokens"; spent: number; cap: number; warn_ratio: number };
+  open_tasks: number;
+  queue_ceiling: number;
+  evidence_7d: number;
+  ceo_judgment: {
+    tasks_created: number;
+    tasks_with_verified_external: number;
+    conversion: number | null;
+  };
+  pending_approvals: DeskApproval[];
+  expired_bets: DeskBet[];
+  kill_dates_soon: DeskBet[];
+  audit: { completed: number; audited: number; unaudited: number };
+  drought: {
+    active: boolean;
+    window_hours: number;
+    applies: boolean;
+    last_countable_at: string | null;
+  };
+  frozen_threads: number;
+  runs_running: number;
+  last_run_at: string | null;
+}
+
+export interface DeskView {
+  as_of: string;
+  away: {
+    since: string;
+    tasks_completed: number;
+    evidence_verified: number;
+    usd_spent: number;
+    runs: number;
+    refusal_storms: number;
+  };
+  projects: DeskProject[];
 }
 
 export interface EvidenceRow {

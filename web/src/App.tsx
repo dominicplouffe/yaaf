@@ -1,6 +1,7 @@
 import { Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom";
 import { getToken } from "./api";
 import Login from "./pages/Login";
+import Desk from "./pages/Desk";
 import Projects from "./pages/Projects";
 import NewProject from "./pages/NewProject";
 import ProjectPage from "./pages/Project";
@@ -13,6 +14,9 @@ function Shell({ children }: { children: React.ReactNode }) {
         <div className="brand">
           y<span>aa</span>f
         </div>
+        <NavLink to="/desk" className={({ isActive }) => "navlink" + (isActive ? " active" : "")}>
+          Desk
+        </NavLink>
         <NavLink to="/projects" className={({ isActive }) => "navlink" + (isActive ? " active" : "")}>
           Projects
         </NavLink>
@@ -51,6 +55,14 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route
+        path="/desk"
+        element={
+          <Shell>
+            <Desk />
+          </Shell>
+        }
+      />
+      <Route
         path="/projects"
         element={
           <Shell>
@@ -82,7 +94,7 @@ export default function App() {
           </Shell>
         }
       />
-      <Route path="*" element={<Navigate to="/projects" replace />} />
+      <Route path="*" element={<Navigate to="/desk" replace />} />
     </Routes>
   );
 }

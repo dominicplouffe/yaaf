@@ -239,3 +239,140 @@ pre.block {
 .login-card { width: 380px; }
 .pill-row { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0; }
 .help { font-size: 12px; color: var(--muted); }
+
+/* ── attention zones (the Desk & Today): needs you → watch → the record ── */
+.zone {
+  font-family: var(--mono); font-size: 11px; letter-spacing: 1.2px;
+  text-transform: uppercase; color: var(--muted); font-weight: 600;
+  margin: 22px 0 8px; display: flex; align-items: center; gap: 8px;
+}
+.zone .cnt {
+  background: var(--surface-2); border: 1px solid var(--grid); border-radius: 999px;
+  padding: 0 8px; color: var(--ink-2); letter-spacing: 0;
+}
+.zone.hot .cnt {
+  background: rgba(250, 178, 25, 0.14); border-color: rgba(250, 178, 25, 0.4);
+  color: var(--warning);
+}
+.arows { display: flex; flex-direction: column; gap: 8px; }
+.arow {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 10px 14px;
+}
+.arow .grow { flex: 1; min-width: 220px; }
+.arow .tt { font-weight: 600; font-size: 13.5px; }
+.arow .sb { color: var(--muted); font-size: 12px; margin-top: 1px; }
+.pj {
+  font-family: var(--mono); font-size: 11px; color: var(--ink-2);
+  background: var(--surface-2); border: 1px solid var(--grid);
+  border-radius: 5px; padding: 2px 7px; flex: none;
+}
+.clock { font-family: var(--mono); font-size: 11px; font-weight: 600; white-space: nowrap; }
+.clock.warn { color: var(--warning); }
+.clock.serious { color: var(--serious); }
+.clock.muted { color: var(--muted); }
+.wbox { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+.wrow {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 9px 14px; border-bottom: 1px solid var(--grid); font-size: 13px;
+}
+.wrow:last-child { border-bottom: 0; }
+.wrow .grow { flex: 1; min-width: 220px; }
+
+/* mono chips: countdowns, kinds, filters-as-facts */
+.chip {
+  display: inline-block; font-family: var(--mono); font-size: 11px; font-weight: 600;
+  border: 1px solid var(--grid); background: var(--surface-2); color: var(--ink-2);
+  border-radius: 999px; padding: 2px 9px; white-space: nowrap;
+}
+.chip.ok { color: var(--good); border-color: rgba(12, 163, 12, 0.35); background: rgba(12, 163, 12, 0.08); }
+.chip.warn { color: var(--warning); border-color: rgba(250, 178, 25, 0.35); background: rgba(250, 178, 25, 0.08); }
+.chip.serious { color: var(--serious); border-color: rgba(236, 131, 90, 0.35); background: rgba(236, 131, 90, 0.08); }
+.chip.critical { color: var(--critical); border-color: rgba(208, 59, 59, 0.4); background: rgba(208, 59, 59, 0.1); }
+.chip.accent { color: var(--accent); border-color: rgba(57, 135, 229, 0.4); background: rgba(57, 135, 229, 0.1); }
+
+.stats-row { display: flex; gap: 10px; flex-wrap: wrap; }
+.stat {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 10px 14px; min-width: 170px; flex: 1;
+}
+.stat .v { font-size: 18px; font-weight: 650; }
+.stat .l { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+.mini-meter {
+  width: 88px; height: 5px; border-radius: 3px; background: var(--surface-2);
+  position: relative; display: inline-block; vertical-align: middle; margin-right: 6px;
+}
+.mini-meter i { position: absolute; inset: 0 auto 0 0; border-radius: 3px; background: var(--accent); }
+.mini-meter.warn i { background: var(--warning); }
+.mini-meter.over i { background: var(--critical); }
+.asof { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+
+/* inline note capture — this app never window.prompt()s */
+.note-action { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.note-action input { width: 260px; padding: 5px 9px; font-size: 12px; }
+
+/* boardroom: chat + read-only context rail */
+.board-flex { display: flex; gap: 18px; align-items: flex-start; }
+.board-chat { flex: 1; min-width: 0; }
+.rail { width: 264px; flex: none; display: flex; flex-direction: column; gap: 10px; }
+.rail .card { padding: 12px 14px; }
+.rail .h {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 1.1px;
+  text-transform: uppercase; color: var(--muted); font-weight: 600; margin-bottom: 7px;
+}
+@media (max-width: 1000px) {
+  .board-flex { flex-direction: column; }
+  .rail { width: 100%; }
+}
+.presence { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); margin: 8px 0 6px; }
+
+/* filter pills with counts — the counts are information on their own */
+.pills { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin: 0 0 10px; }
+.pills button {
+  font-family: var(--mono); font-size: 11px; font-weight: 600; padding: 3px 10px;
+  border-radius: 999px; background: var(--surface-2); border: 1px solid var(--grid);
+  color: var(--ink-2);
+}
+.pills button.active {
+  color: var(--accent); border-color: rgba(57, 135, 229, 0.5);
+  background: rgba(57, 135, 229, 0.1);
+}
+
+/* tasks grouped under the bet they serve */
+.bet-head {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 8px 12px; background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius) var(--radius) 0 0; font-size: 13px; margin-top: 14px;
+}
+.bet-head .tag { font-family: var(--mono); font-size: 10px; letter-spacing: 1px; color: var(--muted); }
+.bet-body { border: 1px solid var(--grid); border-top: 0; border-radius: 0 0 var(--radius) var(--radius); }
+
+/* spend-per-day bars: one series, no legend, today emphasized */
+.bars-wrap { max-width: 460px; flex: 1; min-width: 280px; }
+.bars-label {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 1px;
+  text-transform: uppercase; color: var(--muted); margin-bottom: 2px;
+}
+.bars { display: flex; align-items: flex-end; gap: 5px; height: 64px; }
+.bars i { flex: 1; max-width: 18px; background: #2b517e; border-radius: 3px 3px 0 0; display: block; min-height: 1px; }
+.bars i.hi { background: var(--accent); }
+.bars-base { height: 1px; background: var(--grid); }
+.bars-axis {
+  display: flex; justify-content: space-between; font-family: var(--mono);
+  font-size: 10px; color: var(--muted); margin-top: 3px;
+}
+
+/* responsive floor: the "approve from the kitchen" moment */
+@media (max-width: 900px) {
+  .shell { flex-direction: column; }
+  .sidebar {
+    width: 100%; flex-direction: row; align-items: center; flex-wrap: wrap;
+    border-right: 0; border-bottom: 1px solid var(--grid); padding: 8px 12px;
+  }
+  .sidebar .foot { display: none; }
+  .brand { padding: 0 10px 0 0; }
+  .main { padding: 16px; }
+  .note-action input { width: 160px; }
+}
