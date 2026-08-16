@@ -74,10 +74,13 @@ export default function Projects() {
 }
 
 function ProjectCard({ p }: { p: DeskProject }) {
+  // Only things with a consequence if ignored: an approval that auto-denies, a
+  // bet past its kill date, a project the platform paused. The optional
+  // spot-check used to be counted here too, which meant a card could shout
+  // "1 waiting on you" when the honest answer was "nothing is".
   const needsYou =
     p.pending_approvals.length +
     p.expired_bets.length +
-    (p.audit.unaudited >= 3 && p.status !== "stopped" ? 1 : 0) +
     (p.status === "paused" ? 1 : 0);
   const frac = p.budget.cap > 0 ? p.budget.spent / p.budget.cap : 0;
   const meterCls = frac >= 1 ? "over" : frac >= p.budget.warn_ratio ? "warn" : "";
@@ -130,7 +133,7 @@ function ProjectCard({ p }: { p: DeskProject }) {
       </div>
 
       <div style={{ display: "flex", gap: 16, marginTop: 10, fontSize: 12.5 }}>
-        <Link to={`/projects/${p.id}`}>Today →</Link>
+        <Link to={`/projects/${p.id}`}>Overview →</Link>
         <Link to={`/projects/${p.id}/boardroom`}>Boardroom →</Link>
         <Link to={`/projects/${p.id}/work`}>Work →</Link>
         <Link to={`/projects/${p.id}/settings`}>Settings →</Link>
