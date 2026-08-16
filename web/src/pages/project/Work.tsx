@@ -1,5 +1,5 @@
-import { Fragment, useState } from "react";
-import { Link } from "react-router-dom";
+import { Fragment, useEffect, useRef, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { EvidenceRow, get, HypothesisRow, post, TaskRow } from "../../api";
 import { fmtWhen, usePoll } from "../../hooks";
 import {
@@ -124,6 +124,12 @@ function ExtendOnce({ hypothesis, onDone }: { hypothesis: HypothesisRow; onDone:
     meant holding the join in your head and switching back and forth. */
 export default function Work({ ctx }: { ctx: ProjectCtx }) {
   const { projectId, hypotheses } = ctx;
+  // "?audit=1" arrives from the Overview attention row. Landing the chairman
+  // on this page and making him hunt for the section, then press a button, is
+  // two steps too many for something he was already told needed him — so the
+  // link does the scrolling and the dealing.
+  const [params, setParams] = useSearchParams();
+  const auditRef = useRef<HTMLHeadingElement>(null);
   const { data: tasks, error } = usePoll(
     () => get<TaskRow[]>(`/observe/projects/${projectId}/board`),
     6000,
@@ -149,6 +155,17 @@ export default function Work({ ctx }: { ctx: ProjectCtx }) {
   async function runSpotAudit() {
     setAudit(await get<SpotAudit>(`/observe/projects/${projectId}/spot_audit?n=5`));
   }
+
+  useEffect(() => {
+    if (params.get("audit") !== "1") return;
+    // Consume the parameter so a later reload doesn't silently re-deal a
+    // different sample under him while he is part-way through this one.
+    setParams({}, { replace: true });
+    runSpotAudit().then(() =>
+      auditRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params]);
 
   const all = tasks ?? [];
   const rows = evidence ?? [];
@@ -392,26 +409,34 @@ export default function Work({ ctx }: { ctx: ProjectCtx }) {
       </p>
 
       {/* ── the human layer: prompted, measured, still random ── */}
-      <h2 className="zone">Your audit</h2>
+      <h2 className="zone" ref={auditRef}>Spot-check the agents' work</h2>
       <div className="arow">
         <div className="grow">
           <div className="tt">
             {completed.length === 0
-              ? "No completions to audit yet"
-              : `Coverage: ${audited} of ${completed.length} completions ever audited${
+              ? "Nothing finished yet — there is nothing to check"
+              : `You have checked ${audited} of ${completed.length} finished tasks${
                   coveragePct !== null ? ` (${coveragePct}%)` : ""
                 }`}
           </div>
           <div className="sb">
-            {completed.length > audited
-              ? `${completed.length - audited} never audited · the platform draws the sample — you judge it`
-              : "the platform draws the sample — you're the reviewer that doesn't approve everything"}
+            Agents mark their own work finished and write their own evidence for it. This
+            picks {completed.length > 0 ? "5" : "a few"} at random and shows you what each task
+            had to prove next to what the agent claimed — you say whether you believe it. Two
+            minutes. Nothing breaks if you skip it.
           </div>
         </div>
         <button className="primary" onClick={runSpotAudit} disabled={completed.length === 0 && rows.length === 0}>
-          Deal 5 cards
+          Show me 5 to check
         </button>
       </div>
+      {audit && (
+        <p className="help" style={{ margin: "10px 0 0" }}>
+          For each one: <b>does the claim actually prove what the test asked for?</b> Passing
+          records that you looked. Failing needs one line saying why, and the CEO is woken with
+          it — that is the only one of the two that changes what the company does next.
+        </p>
+      )}
       {audit && (
         <div className="list-grid" style={{ marginTop: 12 }}>
           {audit.evidence.map((row) => (

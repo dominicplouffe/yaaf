@@ -283,21 +283,29 @@ export default function Overview({
       </div>,
     );
   }
+
+  // ── watch ──
+  // Auditing lives here and not under "Needs you" on purpose. Nothing expires,
+  // nothing breaks, and no agent is waiting on it — so putting it beside an
+  // approval that auto-denies in 6 hours teaches the chairman that the
+  // needs-you count is padded, and then he stops trusting the count that
+  // matters. It is the most valuable optional thing on the page; it is still
+  // optional.
+  const watch: React.ReactNode[] = [];
   if (unaudited >= 3) {
-    needs.push(
-      <div className="arow" key="audit">
-        <span className="chip warn">audit due</span>
+    watch.push(
+      <div className="wrow" key="audit">
+        <span className="badge">spot-check</span>
         <div className="grow">
-          <div className="tt">{unaudited} completions have never been audited</div>
-          <div className="sb">the platform picks the sample, you judge it</div>
+          <b>{unaudited} finished {unaudited === 1 ? "task" : "tasks"} nobody has checked.</b>{" "}
+          The agents marked these done and wrote their own evidence for it. Two minutes on five
+          of them at random: you see what each task had to prove and what the agent claimed,
+          and you say whether you believe it.
         </div>
-        <Link to={`/projects/${projectId}/work`}>deal a sample →</Link>
+        <Link to={`/projects/${projectId}/work?audit=1`}>check 5 now →</Link>
       </div>,
     );
   }
-
-  // ── watch ──
-  const watch: React.ReactNode[] = [];
   {
     const { unit, spent, cap, warnRatio, frac } = budgetOf(dash);
     const pace = usdMode ? paceDate(spent, cap) : null;

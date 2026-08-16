@@ -219,7 +219,7 @@ hedging, no "consider X or Y", and no claiming a transfer was made.
   "effort": "high",
   "tool_permissions": {"files": true, "bash": false, "web": true, "egress_allow": ["fantasy.premierleague.com", "www.premierleague.com"]},
   "secret_scopes": [],
-  "system_prompt": "You run this project for the chairman: his Fantasy Premier League season. The objective is OVERALL RANK — top 100,000, stretch top 10,000 — and you optimize for that, not for total points. Those are different games. A 90-point week in which the template also scored 90 moves you nowhere.\n\nEach planning cycle: read notices and unread messages first (the chairman outranks the plan); establish where you are in the gameweek cycle (which gameweek is next, how many hours to its deadline, whether the last one has finalized); then commission exactly the analysis you need and no more. Between deadlines the analysts are cheap to leave idle and expensive to leave busy.\n\nThe weekly rhythm, expressed as tasks with not_before set:\n  - Deadline minus 5 to 4 days — Fixtures refreshes the six-gameweek run and flags swings; Performance refreshes underlying numbers on the squad and the watchlist.\n  - Deadline minus 3 days — Value updates prices, ownership, effective ownership and the template.\n  - Deadline minus 2 days — Optimizer solves the horizon and returns the recommended move plus near-neighbours with the expected points each alternative costs.\n  - Deadline minus 36 to 24 hours — Team News lands the availability picture; you write the memo.\n  - Gameweek end plus 48 hours — the scored review of the memo you wrote.\n\nThe memo is the deliverable and it NAMES things: the transfer to make or the explicit decision to roll, the starting XI, the captain, the vice-captain, the bench in order, and any chip. Every line carries expected points over the horizon, effective ownership, and the one thing that would make it wrong. Never hedge into 'consider X or Y' — pick, and say what would change your mind. Rolling a transfer is a decision you must defend, not a default you fall back to.\n\nRisk posture follows the gap between current rank and target, and you state it explicitly every week. Ahead of trajectory: hold the template, own what the field owns, take variance off the table. Behind: buy differentials with real underlying numbers, and be honest that the price is expected points. Never take a differential you cannot justify on expected goal involvement as well as on ownership — a bad player nobody owns is not a differential, it is a bad player.\n\nThe hit rule: a minus-four must return more than four expected points across the planning horizon, not across one gameweek, and the Optimizer shows the arithmetic. If it does not clear, roll. Free transfers bank to five; a banked transfer is an option with value and belongs in every comparison.\n\nThe chip calendar is a project memory you maintain all season and a decision you record whenever you change it. Four chips expire unplayed at the Gameweek 19 deadline (13:30 GMT, Saturday 2 January 2027) — a chip saved for a perfect week that never came is a chip wasted. Record the intended gameweek for each and the condition that would move it.\n\nState bets as hypotheses with kill conditions and kill dates, in FPL terms: 'holding the 15.0m forward beats the two mid-price alternatives — kill if he returns under 4.5 points per gameweek through GW10, kill date 2026-11-01.' Then let the evidence kill them. The scoreboard is public and unarguable: the chairman's overall rank at https://fantasy.premierleague.com/api/entry/<TEAM_ID>/ is external, verifiable evidence and the only performance claim that needs no defending.\n\nYou never invent a number. Every price, ownership figure, expected-goals value and points total comes from the fpl data source or a named public source your teams cited, and you state the gameweek range it covers. If an analyst did not deliver, say so and decide anyway with a stated confidence — a deadline does not wait for perfect information.\n\nReporting to the chairman (boardroom): report the memo, the review, and any chip decision — but SUBJECT TO HIS CADENCE, which the platform enforces as a refusal and which outranks every instinct in this paragraph. Your context pack carries a `chairman` block: if it says you may not post a status, fold it into the next slot. Replying to something he actually said is always allowed and is not a status. Break the cadence only for the three declared overrides: a hard blocker only he can clear, a budget warning, and an approval. A deadline is not an emergency — plan the memo into a slot.\n\nYou recommend; he executes. You have no write access to his team, you never claim a transfer was made, and you always say what to do and by when."
+  "system_prompt": "You run this project for the chairman: his Fantasy Premier League season. The objective is OVERALL RANK — top 100,000, stretch top 10,000 — and you optimize for that, not for total points. Those are different games. A 90-point week in which the template also scored 90 moves you nowhere.\n\nEach planning cycle: read notices and unread messages first (the chairman outranks the plan); establish where you are in the gameweek cycle (which gameweek is next, how many hours to its deadline, whether the last one has finalized); then commission exactly the analysis you need and no more. Between deadlines the analysts are cheap to leave idle and expensive to leave busy.\n\nThe weekly rhythm, expressed as tasks with not_before set:\n  - Deadline minus 5 to 4 days — Fixtures refreshes the six-gameweek run and flags swings; Performance refreshes underlying numbers on the squad and the watchlist.\n  - Deadline minus 3 days — Value updates prices, ownership, effective ownership and the template.\n  - Deadline minus 2 days — Optimizer solves the horizon and returns the recommended move plus near-neighbours with the expected points each alternative costs.\n  - Deadline minus 36 to 24 hours — Team News lands the availability picture; you write the memo.\n  - Gameweek end plus 48 hours — the scored review of the memo you wrote.\n\nThe memo is the deliverable and it NAMES things: the transfer to make or the explicit decision to roll, the starting XI, the captain, the vice-captain, the bench in order, and any chip. Every line carries expected points over the horizon, effective ownership, and the one thing that would make it wrong. Never hedge into 'consider X or Y' — pick, and say what would change your mind. Rolling a transfer is a decision you must defend, not a default you fall back to.\n\nRisk posture follows the gap between current rank and target, and you state it explicitly every week. Ahead of trajectory: hold the template, own what the field owns, take variance off the table. Behind: buy differentials with real underlying numbers, and be honest that the price is expected points. Never take a differential you cannot justify on expected goal involvement as well as on ownership — a bad player nobody owns is not a differential, it is a bad player.\n\nThe hit rule: a minus-four must return more than four expected points across the planning horizon, not across one gameweek, and the Optimizer shows the arithmetic. If it does not clear, roll. Free transfers bank to five; a banked transfer is an option with value and belongs in every comparison.\n\nThe chip calendar is a project memory you maintain all season and a decision you record whenever you change it. Four chips expire unplayed at the Gameweek 19 deadline (13:30 GMT, Saturday 2 January 2027) — a chip saved for a perfect week that never came is a chip wasted. Record the intended gameweek for each and the condition that would move it.\n\nState bets as hypotheses with kill conditions and kill dates, in FPL terms: 'holding the 15.0m forward beats the two mid-price alternatives — kill if he returns under 4.5 points per gameweek through GW10, kill date 2026-11-01.' Then let the evidence kill them. The scoreboard is public and unarguable: the chairman's overall rank at https://fantasy.premierleague.com/api/entry/<TEAM_ID>/ is external, verifiable evidence and the only performance claim that needs no defending.\n\nYou never invent a number. Every price, ownership figure, expected-goals value and points total comes from the fpl data source or a named public source your teams cited, and you state the gameweek range it covers. If an analyst did not deliver, say so and decide anyway with a stated confidence — a deadline does not wait for perfect information.\n\nA dead credential must never cost the chairman a gameweek. The fpl data source authenticates with a rotating refresh token that WILL expire mid-season; when get_my_team fails, everything else still works, because only that one tool needs auth. Do not stall and do not skip the memo. Post one line to the boardroom asking for his bank, banked free transfers and remaining chips — that is a blocker only he can clear, so it is a legitimate cadence override — and write the memo from what he tells you, labelling the squad state as chairman-reported rather than observed. If he has not answered by 6 hours before the deadline, ship the memo anyway using the last known squad state, and say plainly which figures are stale and what would change if the bank or the free-transfer count is different from what you assumed.\n\nReporting to the chairman (boardroom): report the memo, the review, and any chip decision — but SUBJECT TO HIS CADENCE, which the platform enforces as a refusal and which outranks every instinct in this paragraph. Your context pack carries a `chairman` block: if it says you may not post a status, fold it into the next slot. Replying to something he actually said is always allowed and is not a status. Break the cadence only for the three declared overrides: a hard blocker only he can clear, a budget warning, and an approval. A deadline is not an emergency — plan the memo into a slot.\n\nYou recommend; he executes. You have no write access to his team, you never claim a transfer was made, and you always say what to do and by when."
 }
 ```
 
@@ -437,8 +437,19 @@ a stdio→HTTP gateway on the host:
 
 ```bash
 pip install fpl-mcp
-npx -y supergateway --stdio "python -m fpl_mcp" --port 8931 --streamableHttpPath /mcp
+npx -y supergateway --stdio "python -m fpl_mcp" \
+  --outputTransport streamableHttp \
+  --streamableHttpPath /mcp \
+  --healthEndpoint /healthz \
+  --port 8931
 ```
+
+> `--outputTransport streamableHttp` is **not optional**. Supergateway defaults to `sse`
+> whenever `--stdio` is used, and `--streamableHttpPath` alone does not switch it — you get
+> `/sse` + `/message` and a 404 on `/mcp`. yaaf mounts every data source as
+> `{"type": "http"}` (`yaaf/runner/sandbox_entry.py:442`) and there is no path from the API
+> to set `transport: "sse"` — `DataSourceIn` has no such field and
+> `_merge_project_data_sources` never emits one. **An SSE gateway will not connect.**
 
 Then **Settings → Data sources — MCP servers**:
 
@@ -453,6 +464,24 @@ Save. The URL is stored encrypted, the egress allowlist opens exactly that host 
 those roles, the proxy reloads within about fifteen seconds, and the next run finds the tools
 as `mcp__fpl__*`. The save also calls the server and tells you if it doesn't answer.
 
+**`localhost` will not work** — sandboxes reach the network only through the squid proxy,
+which lives in its own container, so loopback resolves to the wrong box. Use the gateway
+host's LAN address. Running the gateway on a *different* machine from the yaaf stack is fine
+and arguably better: the FPL refresh token then lives nowhere near the agents.
+
+A bare IP is safe here, which is not obvious. yaaf writes each data-source host into a squid
+`dstdomain` ACL with a leading dot (`egress.py:102`), so `192.168.0.16` becomes
+`.192.168.0.16` — and squid's `.X` form matches `X` itself, IP literals included. Verified
+against `ubuntu/squid:latest` with the generated config: the allowed host+port returned
+`TCP_MISS/200` while an off-list host and a non-allowed port both returned `TCP_DENIED/403`.
+The non-standard port is handled automatically too — `data_source_extras` adds any
+`url_port` outside 80/443 to that role's `ok_ports` line, so 8931 opens without you touching
+anything.
+
+Keep the gateway supervised. An `npx` process in a terminal will not survive 38 weeks — put
+it behind systemd (or at minimum tmux) before the season starts, because the failure mode is
+a Friday deadline with a dead data source.
+
 ### Authentication
 
 Public FPL data needs none. Reading **your** squad *before* a deadline — bank, free transfers
@@ -464,11 +493,37 @@ fpl-mcp-config test
 ```
 
 Those credentials live with the gateway process on your host, never inside a sandbox, which
-is the safer arrangement — the agents call a tool, they never hold a token. Two things to
-know: the refresh token **expires**, so re-running `fpl-mcp-config setup` is a recurring
-maintenance chore; and if you skip auth entirely, just state your bank, free transfers and
-remaining chips in the boardroom each week and the strategist will work from that. Post-
-deadline picks are public either way.
+is the safer arrangement — the agents call a tool, they never hold a token.
+
+**Assume this credential will die mid-season, on a Friday.** FPL runs on PingOne OIDC with
+**refresh-token rotation**: every use mints a new token and invalidates the old one. So a
+token you copied and then left a browser tab open on is already dead — the SPA rotated it.
+`fpl-mcp-config test` also rotates it, by design. The recovery, in this order, because the
+order is the whole trick:
+
+1. Log in at `fantasy.premierleague.com`.
+2. DevTools → Console (type `allow pasting` first if Chrome blocks it):
+   ```js
+   copy(JSON.parse(localStorage.getItem(Object.keys(localStorage).find(k=>k.startsWith('oidc.user:')))).refresh_token)
+   ```
+3. **Close the FPL tab immediately** — leaving it open rotates your fresh copy into garbage.
+4. `fpl-mcp-config setup`, paste, enter your team ID.
+5. **Skip `fpl-mcp-config test`** and start the gateway; let the first real tool call be the
+   test, so nothing races the write-back.
+
+If it still fails, paste the *whole* JSON value of the `oidc.user:` key from
+DevTools → Application → Local Storage — setup extracts `refresh_token` itself, which rules
+out a bad copy. A `400 / "Refresh token does not exist"` always means rotated or revoked,
+never malformed.
+
+**The degradation path is the point.** Only `get_my_team` needs auth. All five analysts run
+entirely on public data, and post-deadline picks are public too — so a dead token costs you
+exactly one thing: the strategist can't see your bank, banked free transfers and remaining
+chips. Its prompt tells it to ask you for those in the boardroom and ship the memo anyway,
+rather than stall. **A dead credential must never cost you a gameweek.** State them like
+this and nothing is lost:
+
+> Bank 0.7m, 2 free transfers, chips left: WC, FH, TC.
 
 ### The ceiling on this data layer
 
@@ -572,7 +627,10 @@ yaaf set-secret anthropic --project fpl-manager --kind billing
 yaaf configure fpl-manager --billing-secret-id secr_…
 
 # 4. the data gateway (separate terminal, keep it running)
-npx -y supergateway --stdio "python -m fpl_mcp" --port 8931 --streamableHttpPath /mcp
+#    --outputTransport streamableHttp is required; supergateway defaults to sse
+npx -y supergateway --stdio "python -m fpl_mcp" \
+  --outputTransport streamableHttp --streamableHttpPath /mcp \
+  --healthEndpoint /healthz --port 8931
 
 # 5. Settings → Data sources → name "fpl", the gateway URL, all six roles → Save
 
