@@ -116,6 +116,9 @@ export interface ProjectSummary {
 export interface Activity {
   blocked_by: "daily_runs" | "concurrency" | "agents_busy" | "wake_ceiling" | null;
   daily_runs: { used: number; cap: number; resets_at: string };
+  /** When the hourly ceiling next lets someone through. `frees_at` is null
+      when nothing is actually held behind it. */
+  wake_ceiling: { cap: number; frees_at: string | null; agents_held: number };
   concurrency: { in_flight: number; cap: number };
   waiting: {
     ready_tasks: number;
@@ -130,6 +133,7 @@ export interface Activity {
     busy: boolean;
     wakes_last_hour: number;
     wake_cap: number;
+    wake_slot_frees_at: string | null;
     pending: number;
   }[];
 }

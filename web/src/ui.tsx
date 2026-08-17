@@ -24,6 +24,19 @@ export function fmtLeft(iso: string): string {
   return `${Math.round(h / 24)}d left`;
 }
 
+/** "in 12 min" / "in under a minute" / "any moment now" — a minute-scale
+    countdown. fmtLeft rounds to whole hours, which turns every sub-hour wait
+    into "1h left" and makes a throttle that clears in four minutes look like a
+    wall. Anything the reader is expected to wait out needs a number that moves. */
+export function fmtSoon(iso: string | null): string {
+  if (!iso) return "shortly";
+  const m = (new Date(iso).getTime() - Date.now()) / 60_000;
+  if (m <= 0) return "any moment now";
+  if (m < 1) return "in under a minute";
+  if (m < 90) return `in ${Math.round(m)} min`;
+  return `in ${Math.round(m / 60)}h`;
+}
+
 /** "2m ago" / "3h ago" / "5d ago" for scanning; pair with fmtWhen for the record. */
 export function fmtAgo(iso: string | null): string {
   if (!iso) return "—";
@@ -178,7 +191,8 @@ export function idleSentence(a: Activity): string {
       return `out of runs for today (${a.daily_runs.used} of ${a.daily_runs.cap})` +
         `, resumes ${fmtLeft(a.daily_runs.resets_at).replace(" left", "")} from now${behind}`;
     case "wake_ceiling":
-      return `every agent with work has hit its hourly wake ceiling${behind}`;
+      return `every agent with work has hit its hourly wake ceiling, clearing ` +
+        `${fmtSoon(a.wake_ceiling.frees_at)}${behind}`;
     case "concurrency":
       return `at the concurrency cap (${a.concurrency.in_flight} of ${a.concurrency.cap}) — working`;
     case "agents_busy":
@@ -202,9 +216,22 @@ const UNSPOKEN = new Set(["paused by chairman", "stopped by chairman"]);
     chairman stopped it, it spent its budget, or its billing credential died —
     and until now each one surfaced somewhere different, or (for a cap) nowhere
     at all. One reader asking one question deserves one answer in one place. */
-export function statusBrief(
-  dash: Dashboard,
-): { tone: string; chip: string; headline: string; detail: string } | null {
+export interface StatusBrief {
+  tone: string;
+  chip: string;
+  headline: string;
+  detail: string;
+  /** Set on the briefs that are waiting out a clock, and only those. `sig`
+      names the condition and `clearsAt` is the moment the platform expects it
+      gone — together they let a reader put the banner away, and bring it back
+      by itself if the wait outlives its own promise. Paused and stopped carry
+      neither: those are not waits, and dismissing them would hide the reason
+      the company is not running. */
+  sig?: string;
+  clearsAt?: string | null;
+}
+
+export function statusBrief(dash: Dashboard): StatusBrief | null {
   const reason =
     dash.status_reason && !UNSPOKEN.has(dash.status_reason)
       ? dash.status_reason
@@ -251,14 +278,27 @@ export function statusBrief(
         `${fmtLeft(a.daily_runs.resets_at).replace(" left", "")} from now. ${behind} ` +
         "Runs that died still spent the allowance. Raise 'Runs per day, whole " +
         "project' in Settings if this is tighter than you meant it to be.",
+      sig: "daily_runs",
+      clearsAt: a.daily_runs.resets_at,
     };
 
+  // The ceiling is a trailing hour per agent, not a clock hour, so "resumes as
+  // the hour rolls forward" named no moment anyone could check — and a warning
+  // with nothing falsifiable in it reads as a fault that will never go away.
   if (a.blocked_by === "wake_ceiling")
     return {
       tone: "serious",
       chip: "throttled",
-      headline: "Every agent with work has hit its hourly wake ceiling.",
-      detail: `Work resumes as the hour rolls forward. ${behind}`,
+      headline:
+        `Every agent with work has hit its hourly wake ceiling ` +
+        `(${a.wake_ceiling.cap}/hour).`,
+      detail:
+        `The oldest wake ages out ${fmtSoon(a.wake_ceiling.frees_at)} and work ` +
+        `starts again on its own — nothing here needs you. ${behind} ` +
+        "Raise 'Wakes per agent per hour' in Settings only if the cap is tighter " +
+        "than you meant it to be.",
+      sig: "wake_ceiling",
+      clearsAt: a.wake_ceiling.frees_at,
     };
 
   // concurrency and agents_busy both mean the company is working. Saying

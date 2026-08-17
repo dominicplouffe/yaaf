@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Navigate, NavLink, Route, Routes, useParams } from "react-router-dom";
 import {
   ApprovalRow,
@@ -300,6 +300,73 @@ function ActionStrip({
   );
 }
 
+/** The "why is nothing happening?" brief, with a way to put it down.
+
+    Two of these briefs are waits on a clock — the daily run cap and the hourly
+    wake ceiling — and both clear themselves. That was already true and it did
+    not help: the banner had no falsifiable time in it, so a chairman who had
+    already dealt with the throttle had no way to tell a live warning from a
+    stuck one, and no way to say "I know". Dismissing now hides the brief only
+    until the moment the platform said it would clear. If the wait outlives its
+    own promise the brief comes back on its own, because at that point it has
+    become news again. Paused and stopped are not waits and have no dismiss.
+
+    Kept in sessionStorage, per project and per condition: a dismissal is a
+    reading of right now, not a preference worth surviving a browser restart. */
+function StatusBriefBox({ dash, projectId }: { dash: Dashboard; projectId: string }) {
+  const brief = statusBrief(dash);
+  const key = brief?.sig ? `yaaf.brief.${projectId}.${brief.sig}` : null;
+  const [, tick] = useState(0);
+
+  // The hide expires on a wall clock, so the box has to re-check itself even
+  // when no poll lands — otherwise a brief could stay hidden past its moment.
+  useEffect(() => {
+    const timer = setInterval(() => tick((n) => n + 1), 20_000);
+    return () => clearInterval(timer);
+  }, []);
+
+  if (!brief) return null;
+  if (key) {
+    const until = sessionStorage.getItem(key);
+    if (until && Date.now() < Number(until)) return null;
+  }
+
+  return (
+    <div className="notice-box">
+      <div className="brief-head">
+        <div>
+          <span className={`chip ${brief.tone}`}>{brief.chip}</span>{" "}
+          <b>{brief.headline}</b>
+        </div>
+        {key && (
+          <button
+            className="small"
+            title={
+              brief.clearsAt
+                ? `Hidden until ${new Date(brief.clearsAt).toLocaleTimeString()} — it returns if the wait outlives that.`
+                : "Hidden for an hour, then shown again if it is still true."
+            }
+            onClick={() => {
+              const until = brief.clearsAt
+                ? new Date(brief.clearsAt).getTime()
+                : Date.now() + 3_600_000;
+              // A clearsAt already in the past would hide nothing at all; give
+              // the dismissal a floor so the click always does something.
+              sessionStorage.setItem(key, String(Math.max(until, Date.now() + 60_000)));
+              tick((n) => n + 1);
+            }}
+          >
+            dismiss
+          </button>
+        )}
+      </div>
+      <div className="help" style={{ marginTop: 4 }}>
+        {brief.detail}
+      </div>
+    </div>
+  );
+}
+
 export default function ProjectPage() {
   const { projectId = "" } = useParams();
   const { data: dash, error, at, reload } = usePoll(
@@ -393,21 +460,7 @@ export default function ProjectPage() {
       {/* One answer to "why is nothing happening?", on every tab — a chairman
           who opens Work to see four tasks sitting still should not have to go
           to Overview to learn the company ran out of runs at 01:22. */}
-      {(() => {
-        const brief = statusBrief(dash);
-        if (!brief) return null;
-        return (
-          <div className="notice-box">
-            <div>
-              <span className={`chip ${brief.tone}`}>{brief.chip}</span>{" "}
-              <b>{brief.headline}</b>
-            </div>
-            <div className="help" style={{ marginTop: 4 }}>
-              {brief.detail}
-            </div>
-          </div>
-        );
-      })()}
+      <StatusBriefBox dash={dash} projectId={projectId} />
       {error && (
         <div className="error">
           Not refreshing — {error}. The numbers below are the last that landed.

@@ -518,10 +518,16 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
                 "tight, or leave it and the work resumes on its own.",
                 "settings")
         elif act["blocked_by"] == "wake_ceiling":
+            # Name the moment. "As the hour rolls forward" is unfalsifiable, so
+            # a throttle that clears on its own read as a permanent fault.
+            frees = act["wake_ceiling"]["frees_at"]
+            when = (f"the next agent is free to wake at {frees[11:16]} UTC"
+                    if frees else "slots free as the trailing hour advances")
             add("activity", "warn",
                 "every agent with work to do has hit its hourly wake ceiling "
-                f"({live_cons.wakes_per_agent_per_hour}/hour) — work resumes as the hour rolls "
-                f"forward. {held_up}.",
+                f"({live_cons.wakes_per_agent_per_hour}/hour) — {when}. {held_up}. "
+                "This clears itself; raise 'Wakes per agent per hour' only if the "
+                "cap is tighter than you meant it to be.",
                 "settings")
 
     # Connectors: controlled GitHub accounts registered but webhooks unprovisioned.

@@ -169,6 +169,12 @@ button.eye:hover { color: var(--ink); }
   border-radius: 6px; padding: 8px 12px; margin: 12px 0; font-size: 13px;
 }
 .notice-box.working { display: flex; align-items: center; gap: 8px; }
+/* Headline left, dismiss right — the button sits at the end of the line
+   it applies to, and never competes with the sentence for the eye. */
+.brief-head {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+}
+.brief-head > button { flex: none; }
 .working-dot {
   width: 8px; height: 8px; border-radius: 50%; background: var(--accent);
   flex: none; animation: working-pulse 1.6s ease-in-out infinite;

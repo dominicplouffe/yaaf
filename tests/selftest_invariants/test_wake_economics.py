@@ -366,3 +366,118 @@ def test_leadership_chatter_coalesces_for_the_ceo_too(client):
         assert dispatcher.dispatch_once(session) == 1
         queued = session.query(RunQueue).one()
         assert queued.agent_id == project["ceo_agent_id"]
+
+
+# ── when the throttle lifts ─────────────────────────────────────────────────────
+# The hourly ceiling is a trailing window per agent, not a clock hour, so the
+# banner that reported it ("work resumes as the hour rolls forward") named no
+# moment anyone could check. A warning with nothing falsifiable in it is
+# indistinguishable from a stuck one — which is how a self-clearing throttle got
+# reported as an error that would not go away. activity_state now names the
+# instant, and these tests hold that promise to the dispatcher that enforces it.
+
+
+def _burn_wakes(project: dict, agent_id: str, ages_minutes: list[float]) -> None:
+    """Finished runs at the given ages, all inside the trailing hour."""
+    from yaaf.core.models import Run, RunKind, RunStatus
+
+    with db_session() as session:
+        for age in ages_minutes:
+            at = utcnow() - timedelta(minutes=age)
+            session.add(Run(id=ids.new_id(ids.RUN), project_id=project["id"],
+                            agent_id=agent_id, kind=RunKind.AGENT_RUN,
+                            status=RunStatus.DONE, trigger={"type": "wake"},
+                            created_at=at, started_at=at, finished_at=at))
+
+
+def test_the_wake_ceiling_names_the_minute_it_lifts(client):
+    """A throttle that clears itself has to say when. The moment is the oldest
+    wake in the window plus an hour — the instant `_wakes_last_hour` drops back
+    under the cap — and it is reported to the minute, not as 'soon'."""
+    # Cap 3, three wakes in the window, the oldest 50 minutes old.
+    project = make_project(client, constitution={"wakes_per_agent_per_hour": 3})
+    _drain()
+    ceo = project["ceo_agent_id"]
+    _burn_wakes(project, ceo, [50.0, 20.0, 5.0])
+    _force_heartbeat_due(ceo)
+    _add_notice(project, kind=NoticeKind.BUDGET_WARNING)  # real work waiting
+
+    state = _activity(project)
+    assert state["blocked_by"] == "wake_ceiling"
+    assert state["wake_ceiling"]["cap"] == 3
+    assert state["wake_ceiling"]["agents_held"] >= 1
+
+    frees_at = state["wake_ceiling"]["frees_at"]
+    assert frees_at is not None, "a ceiling that cannot say when it lifts reads as permanent"
+    from datetime import datetime
+    minutes_out = (datetime.fromisoformat(frees_at) - utcnow()).total_seconds() / 60
+    assert 9 < minutes_out < 11, f"oldest wake was 50m ago under a 1h window: {minutes_out}"
+
+
+def test_the_moment_it_names_is_the_moment_the_dispatcher_agrees(client):
+    """The banner's promise and the enforcer's behaviour are the same fact. If
+    the stated moment arrives and nothing dispatches, the chairman has been
+    told to wait for something that was never going to happen."""
+    project = make_project(client, constitution={"wakes_per_agent_per_hour": 2})
+    _drain()
+    ceo = project["ceo_agent_id"]
+    _burn_wakes(project, ceo, [55.0, 30.0])
+    _force_heartbeat_due(ceo)
+    _add_notice(project, kind=NoticeKind.BUDGET_WARNING)
+
+    assert _activity(project)["blocked_by"] == "wake_ceiling"
+    with db_session() as session:
+        assert dispatcher.dispatch_once(session) == 0, "the ceiling must actually be shut"
+
+    # Travel to the stated moment by aging the wakes past it: the oldest falls
+    # out of the trailing hour and the slot the reading promised opens.
+    from yaaf.core.models import Run
+
+    with db_session() as session:
+        for run in session.query(Run).filter(Run.agent_id == ceo).all():
+            run.created_at = run.created_at - timedelta(minutes=6)
+
+    state = _activity(project)
+    assert state["blocked_by"] is None, "the reading must clear on its own"
+    with db_session() as session:
+        assert dispatcher.dispatch_once(session) == 1
+
+
+def test_an_idle_agent_parked_at_its_cap_is_not_reported_as_a_throttle(client):
+    """The ceiling only counts as the blocker when it is holding work back. An
+    agent that burned its wakes and now has nothing to do is not being
+    throttled, and a banner that said so would fire on a healthy company."""
+    project = make_project(client, constitution={"wakes_per_agent_per_hour": 2})
+    _drain()
+    ceo = project["ceo_agent_id"]
+    _burn_wakes(project, ceo, [40.0, 10.0])  # at the cap, nothing pending
+
+    state = _activity(project)
+    assert state["blocked_by"] is None
+    assert state["wake_ceiling"]["frees_at"] is None
+    assert state["wake_ceiling"]["agents_held"] == 0
+
+
+def test_the_resident_chat_session_never_counts_against_the_ceiling(client):
+    """A chat session is presence, not a wake — it is exempt from the timeout
+    and from the hourly brake alike. Counting it would throttle the company for
+    holding a conversation."""
+    from yaaf.core.models import Run, RunKind, RunStatus
+
+    project = make_project(client, constitution={"wakes_per_agent_per_hour": 1})
+    _drain()
+    ceo = project["ceo_agent_id"]
+    with db_session() as session:
+        at = utcnow() - timedelta(minutes=5)
+        session.add(Run(id=ids.new_id(ids.RUN), project_id=project["id"], agent_id=ceo,
+                        kind=RunKind.CHAT_SESSION, status=RunStatus.RUNNING,
+                        trigger={"type": "chat_session"}, created_at=at, started_at=at,
+                        heartbeat_at=utcnow()))
+    _force_heartbeat_due(ceo)
+    _add_notice(project, kind=NoticeKind.BUDGET_WARNING)
+
+    state = _activity(project)
+    assert state["blocked_by"] is None, "a live conversation is not a throttle"
+    assert state["wake_ceiling"]["frees_at"] is None
+    with db_session() as session:
+        assert dispatcher.dispatch_once(session) == 1

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import timedelta
+from datetime import UTC, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -269,6 +269,9 @@ def activity_state(session: Session, project: Project, cons: ConstitutionDoc) ->
                         or _ceo_has_planning_material(session, project)):
                 pending += 1
         wakes = _wakes_last_hour(session, agent)
+        at_ceiling = wakes >= cons.wakes_per_agent_per_hour
+        frees_at = (_wake_slot_frees_at(session, agent, cons.wakes_per_agent_per_hour)
+                    if at_ceiling and pending else None)
         rows.append({
             "id": agent.id,
             "name": agent.name,
@@ -276,6 +279,7 @@ def activity_state(session: Session, project: Project, cons: ConstitutionDoc) ->
             "busy": _agent_busy(session, agent),
             "wakes_last_hour": wakes,
             "wake_cap": cons.wakes_per_agent_per_hour,
+            "wake_slot_frees_at": frees_at.isoformat() if frees_at else None,
             "pending": pending,
         })
 
@@ -306,12 +310,27 @@ def activity_state(session: Session, project: Project, cons: ConstitutionDoc) ->
                                             Notice.consumed_at.is_(None))
     ).scalar_one()
 
+    # When the throttle lifts: the earliest slot among the agents it is
+    # actually holding back. Only meaningful when the ceiling is the gate —
+    # an agent parked at its cap with nothing to do is not blocking anything.
+    slots = [r["wake_slot_frees_at"] for r in with_work
+             if not r["busy"] and r["wake_slot_frees_at"]]
+    frees_at = min(slots) if slots else None
+
     return {
         "blocked_by": blocked_by,
         "daily_runs": {
             "used": used,
             "cap": cons.runs_per_project_per_day,
             "resets_at": (start + timedelta(days=1)).isoformat(),
+        },
+        "wake_ceiling": {
+            "cap": cons.wakes_per_agent_per_hour,
+            # The trailing hour never "rolls over" on a clock, so this is the
+            # only honest answer to "when does this clear?".
+            "frees_at": frees_at,
+            "agents_held": len([r for r in with_work
+                                if not r["busy"] and r["wake_slot_frees_at"]]),
         },
         "concurrency": {"in_flight": in_flight, "cap": max_concurrent},
         "waiting": {
@@ -352,6 +371,43 @@ def _wakes_last_hour(session: Session, agent: Agent) -> int:
                                               RunQueue.created_at >= hour_ago)
     ).scalar_one()
     return n
+
+
+def _wake_slot_frees_at(session: Session, agent: Agent, cap: int):
+    """When this agent's next wake slot opens — the instant `_wakes_last_hour`
+    drops below `cap`.
+
+    The ceiling is a trailing hour, not a clock hour, so "work resumes as the
+    hour rolls forward" named no moment a reader could check. A banner with no
+    falsifiable time in it reads as a permanent fault, which is exactly how a
+    self-clearing throttle got reported as a stuck error.
+
+    With n wakes in the window and a cap of C, the (n - C + 1)-th oldest has to
+    age out; that wake's timestamp plus an hour is the moment. Returns None when
+    the agent is not actually at its ceiling.
+    """
+    if cap <= 0:
+        return None
+    hour_ago = utcnow() - timedelta(hours=1)
+    stamps = [
+        row for (row,) in session.execute(
+            select(Run.created_at).where(Run.agent_id == agent.id,
+                                         Run.kind != RunKind.CHAT_SESSION,
+                                         Run.created_at >= hour_ago)
+        )
+    ] + [
+        row for (row,) in session.execute(
+            select(RunQueue.created_at).where(RunQueue.agent_id == agent.id,
+                                              RunQueue.created_at >= hour_ago)
+        )
+    ]
+    if len(stamps) < cap:
+        return None
+    stamps.sort()
+    oldest_that_must_go = stamps[len(stamps) - cap]
+    if oldest_that_must_go.tzinfo is None:
+        oldest_that_must_go = oldest_that_must_go.replace(tzinfo=UTC)
+    return oldest_that_must_go + timedelta(hours=1)
 
 
 def _primary_task(reasons: list[dict]) -> str | None:
