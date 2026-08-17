@@ -2,6 +2,13 @@
 # Node (for the Claude Code CLI the Agent SDK drives) + Python + the entry script.
 FROM node:22-slim
 
+# Same reasoning as the control-plane image: a 502 from a package CDN is not a
+# reason a deploy should fail. This image is built first by both deploy
+# scripts, so a flake here stops the run before it starts.
+ENV PIP_RETRIES=10 \
+    PIP_TIMEOUT=60 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 python3-pip python3-venv git curl bash ca-certificates \
     && rm -rf /var/lib/apt/lists/*
