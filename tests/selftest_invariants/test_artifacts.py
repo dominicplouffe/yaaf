@@ -251,6 +251,48 @@ def test_stash_trace_writes_store_uri_and_observe_serves_it(client, tmp_path):
     assert "thinking out loud" in served.text
 
 
+def test_finalize_stashes_context_and_observe_serves_it(client, tmp_path):
+    """Per-run context visibility: finalize stashes the staged system prompt and
+    context pack as one document, and the observe API serves it back."""
+    from yaaf.runner.daemon import finalize
+    from yaaf.runner.types import RunJob, RunResult
+
+    project = make_project(client)
+    run_id, _ = live_token(project["id"], project["ceo_agent_id"])
+    workspace = tmp_path / "ws"
+    (workspace / ".yaaf").mkdir(parents=True)
+    (workspace / ".yaaf" / "system_prompt.txt").write_text("You are the CEO of Acme.")
+    (workspace / ".yaaf" / "context.json").write_text('{"tasks": [{"id": "task_1"}]}')
+    job = RunJob(run_id=run_id, project_id=project["id"], agent_id=project["ceo_agent_id"],
+                 kind="agent_run", trigger={"type": "test"}, task_id=None, attempt=1,
+                 workspace_dir=str(workspace))
+
+    finalize(job, RunResult(ok=True, summary="did the thing"))
+
+    with db_session() as session:
+        run = session.get(Run, run_id)
+        assert run.context_path is not None and run.context_path.startswith("file://")
+    assert store().exists(f"contexts/{run_id}.json")
+
+    served = client.get(f"/observe/runs/{run_id}/context", headers=ADMIN)
+    assert served.status_code == 200
+    doc = served.json()
+    assert doc["system_prompt"] == "You are the CEO of Acme."
+    assert doc["context_pack"] == {"tasks": [{"id": "task_1"}]}
+
+    listed = client.get(f"/observe/projects/{project['id']}/runs", headers=ADMIN).json()
+    row = next(r for r in listed if r["id"] == run_id)
+    assert row["has_context"] is True
+
+    # A run that never staged context is a 404, not a stack trace — and its
+    # listing row says so.
+    bare_run, _ = live_token(project["id"], project["ceo_agent_id"])
+    assert client.get(f"/observe/runs/{bare_run}/context",
+                      headers=ADMIN).status_code == 404
+    listed = client.get(f"/observe/projects/{project['id']}/runs", headers=ADMIN).json()
+    assert next(r for r in listed if r["id"] == bare_run)["has_context"] is False
+
+
 def test_trace_endpoint_still_serves_plain_path_rows(client, tmp_path):
     """Rows from before the store hold a bare filesystem path; they must keep
     working without a migration."""

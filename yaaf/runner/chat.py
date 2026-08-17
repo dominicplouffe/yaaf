@@ -45,6 +45,7 @@ from yaaf.runner.daemon import (
     _merge_project_data_sources,
     _role_egress_url,
     _role_secret_env,
+    stash_context_doc,
 )
 from yaaf.runner.types import RunJob
 from yaaf.server.contextpack import build_system_prompt, role_version_for
@@ -238,6 +239,12 @@ def _start_session(session: Session, project: Project, ceo: Agent) -> None:
     workspace.chmod(0o777)
     staging.chmod(0o777)
     (staging / "system_prompt.txt").write_text(job.system_prompt)
+    # A resident session has no context.json — stash the prompt at start so the
+    # chairman can see what the session was primed with. Best-effort.
+    run.context_path = stash_context_doc(run.id, job.system_prompt, {
+        "note": "resident chat session — the context is the boardroom transcript, "
+                "bootstrapped from the last 30 messages (1k chars each)",
+    })
 
     env = {
         "YAAF_RUN_ID": run.id,

@@ -46,7 +46,7 @@ from yaaf.core.models import (
 )
 from yaaf.server import policy, typing_state
 from yaaf.server.deps import admin_auth, db
-from yaaf.server.dispatcher import chat_session_live
+from yaaf.server.dispatcher import activity_state, chat_session_live
 
 router = APIRouter(dependencies=[Depends(admin_auth)])
 
@@ -339,6 +339,10 @@ def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
         "drought_active": policy.drought_active(session, project.id, cons),
         "memory": _memory_usage(session, project, cons),
         "runs": {"running": running, "queued": queued},
+        # Why work is or isn't starting. Computed by the dispatcher's own
+        # helpers so the number that explains the silence cannot disagree with
+        # the number that caused it.
+        "activity": activity_state(session, project, cons),
         "chat_live": chat_session_live(session, project),
         "pending_approvals": pending_approvals,
         "ceo_judgment": policy.ceo_judgment(session, project.id),
@@ -631,6 +635,7 @@ def runs(project_id: str, limit: int = 50, session: Session = Depends(db)) -> li
             "refusals": r.refusal_count, "last_refusal": r.last_refusal,
             "summary": r.summary,
             "has_trace": r.trace_path is not None,
+            "has_context": r.context_path is not None,
             "started_at": r.started_at.isoformat() if r.started_at else None,
             "finished_at": r.finished_at.isoformat() if r.finished_at else None,
         }
@@ -662,6 +667,19 @@ def run_trace(run_id: str, session: Session = Depends(db)) -> PlainTextResponse:
         raise HTTPException(status_code=404, detail="no trace recorded for this run")
     text = _artifact_text(run.trace_path, missing="trace not present in the artifact store")
     return PlainTextResponse(text[-500_000:])
+
+
+@router.get("/runs/{run_id}/context")
+def run_context(run_id: str, session: Session = Depends(db)) -> PlainTextResponse:
+    """What the run actually sent to the model — the staged system prompt and
+    context pack, stashed in the artifact store as one JSON document."""
+    run = session.get(Run, run_id)
+    if run is None or not run.context_path:
+        raise HTTPException(status_code=404, detail="no context recorded for this run")
+    text = _artifact_text(
+        run.context_path, missing="context not present in the artifact store"
+    )
+    return PlainTextResponse(text, media_type="application/json")
 
 
 @router.get("/evidence/{evidence_id}/snapshot")

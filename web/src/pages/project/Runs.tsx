@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from "react";
+import { CSSProperties, Fragment, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Dashboard, get, getText, RunRow, SpendReport } from "../../api";
 import { fmtUsd, fmtWhen, usePoll } from "../../hooks";
@@ -35,6 +35,32 @@ function triggerText(trigger: Record<string, unknown>): string {
   const reasons = trigger["reasons"] as { kind: string }[] | undefined;
   if (reasons?.length) return reasons.map((r) => r.kind).join(", ");
   return String(trigger["type"] ?? "—");
+}
+
+/** The context document a run sent to the model: system prompt + context pack,
+    rendered as two blocks when it parses, raw text when it does not. */
+function ContextView({ text }: { text: string }) {
+  const block: CSSProperties = { maxHeight: 320, overflow: "auto", margin: 0 };
+  let doc: { system_prompt?: string | null; context_pack?: unknown } | null = null;
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && typeof parsed === "object") doc = parsed;
+  } catch {
+    doc = null;
+  }
+  if (!doc) {
+    return <pre className="block mono" style={block}>{text}</pre>;
+  }
+  return (
+    <>
+      <div className="label">System prompt</div>
+      <pre className="block mono" style={block}>{doc.system_prompt ?? "(none)"}</pre>
+      <div className="label" style={{ marginTop: 8 }}>Context pack</div>
+      <pre className="block mono" style={block}>
+        {doc.context_pack != null ? JSON.stringify(doc.context_pack, null, 2) : "(none)"}
+      </pre>
+    </>
+  );
 }
 
 /** Fourteen plain bars, one series, today emphasized — readable in five
@@ -167,6 +193,27 @@ export default function Runs({ projectId, dash }: { projectId: string; dash: Das
         setTraces((cached) => ({ ...cached, [runId]: text }));
       } catch (e) {
         setTraces((cached) => ({ ...cached, [runId]: `⚠ ${(e as Error).message}` }));
+      }
+    }
+  }
+
+  // The context document (system prompt + context pack) — same fetch-once
+  // cache and toggle as traces.
+  const [contexts, setContexts] = useState<Record<string, string>>({});
+  const [openContexts, setOpenContexts] = useState<Record<string, boolean>>({});
+
+  async function toggleContext(runId: string) {
+    if (openContexts[runId]) {
+      setOpenContexts((open) => ({ ...open, [runId]: false }));
+      return;
+    }
+    setOpenContexts((open) => ({ ...open, [runId]: true }));
+    if (contexts[runId] === undefined) {
+      try {
+        const text = await getText(`/observe/runs/${runId}/context`);
+        setContexts((cached) => ({ ...cached, [runId]: text }));
+      } catch (e) {
+        setContexts((cached) => ({ ...cached, [runId]: `⚠ ${(e as Error).message}` }));
       }
     }
   }
@@ -351,6 +398,11 @@ export default function Runs({ projectId, dash }: { projectId: string; dash: Das
                     <button className="small" onClick={() => toggleTrace(run.id)}>
                       {openTraces[run.id] ? "hide trace" : "trace"}
                     </button>
+                  )}{" "}
+                  {run.has_context && (
+                    <button className="small" onClick={() => toggleContext(run.id)}>
+                      {openContexts[run.id] ? "hide context" : "context"}
+                    </button>
                   )}
                 </td>
               </tr>
@@ -363,6 +415,22 @@ export default function Runs({ projectId, dash }: { projectId: string; dash: Das
                     >
                       {traces[run.id] ?? "loading…"}
                     </pre>
+                  </td>
+                </tr>
+              )}
+              {openContexts[run.id] && (
+                <tr>
+                  <td colSpan={9}>
+                    {contexts[run.id] === undefined ? (
+                      <pre
+                        className="block mono"
+                        style={{ maxHeight: 320, overflow: "auto", margin: 0 }}
+                      >
+                        loading…
+                      </pre>
+                    ) : (
+                      <ContextView text={contexts[run.id]} />
+                    )}
                   </td>
                 </tr>
               )}

@@ -263,6 +263,7 @@ export interface RunRow {
   last_refusal: string | null;
   summary: string | null;
   has_trace: boolean;
+  has_context: boolean;
   started_at: string | null;
   finished_at: string | null;
 }

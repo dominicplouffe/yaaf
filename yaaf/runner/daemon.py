@@ -492,6 +492,7 @@ def finalize(job: RunJob, result: RunResult, was_revoked: bool = False) -> None:
         subscription = project is not None and project.billing_mode == "subscription"
         run.cost_usd = None if subscription else result.cost_usd
         run.trace_path = _stash_trace(job) or result.trace_path
+        run.context_path = _stash_context(job)
         run.summary = (result.summary or "")[:4000]
 
         if (result.tokens_in or result.tokens_out or result.cache_creation_tokens
@@ -612,6 +613,44 @@ def _stash_trace(job: RunJob) -> str | None:
         return store().put_bytes(f"traces/{job.run_id}.jsonl", src.read_bytes())
     except Exception:
         log.warning("could not stash trace for %s", job.run_id, exc_info=True)
+        return None
+
+
+def _stash_context(job: RunJob) -> str | None:
+    """Stash what the run actually sent to the model — the staged system prompt
+    and context pack — so the chairman can audit a run's inputs, not just its
+    outputs. Best-effort, like _stash_trace: never fails a finalize."""
+    import json
+
+    try:
+        staging = Path(job.workspace_dir) / ".yaaf"
+        prompt_file = staging / "system_prompt.txt"
+        context_file = staging / "context.json"
+        system_prompt = prompt_file.read_text() if prompt_file.exists() else None
+        context_pack = (json.loads(context_file.read_text())
+                        if context_file.exists() else None)
+        if system_prompt is None and context_pack is None:
+            return None
+        return stash_context_doc(job.run_id, system_prompt, context_pack)
+    except Exception:
+        log.warning("could not stash context for %s", job.run_id, exc_info=True)
+        return None
+
+
+def stash_context_doc(run_id: str, system_prompt: str | None,
+                      context_pack: dict | None) -> str | None:
+    """Write the {"system_prompt", "context_pack"} document to the artifact
+    store as ``contexts/{run_id}.json``. Shared with the chat supervisor, whose
+    context is not a staged file. Returns the store uri, or None on failure."""
+    import json
+
+    from yaaf.core.artifacts import store
+
+    try:
+        doc = json.dumps({"system_prompt": system_prompt, "context_pack": context_pack})
+        return store().put_bytes(f"contexts/{run_id}.json", doc.encode())
+    except Exception:
+        log.warning("could not stash context for %s", run_id, exc_info=True)
         return None
 
 

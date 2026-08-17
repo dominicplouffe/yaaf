@@ -97,35 +97,53 @@ def dispatch_once(session: Session) -> int:
     return enqueued
 
 
-def _dispatch_project(session: Session, project: Project, cons: ConstitutionDoc) -> int:
-    now = utcnow()
+def _day_start(now):
+    """Midnight UTC. The daily ceiling is a fixed window, not a rolling one —
+    so it refills all at once, and the chairman deserves to be told when."""
+    return now.replace(hour=0, minute=0, second=0, microsecond=0)
 
-    # Per-project daily ceiling: runs created today, queued or historical.
-    # Chat sessions are the talk lane, not work — they never count against
-    # the ceilings this function enforces.
-    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    today = session.execute(
+
+def _daily_runs_used(session: Session, project: Project, day_start) -> int:
+    """Runs created today, queued or historical. Chat sessions are the talk
+    lane, not work — they never count against the ceilings enforced here."""
+    used = session.execute(
         select(func.count(Run.id)).where(Run.project_id == project.id,
                                          Run.kind != RunKind.CHAT_SESSION,
                                          Run.created_at >= day_start)
     ).scalar_one()
-    today += session.execute(
+    used += session.execute(
         select(func.count(RunQueue.id)).where(RunQueue.project_id == project.id,
                                               RunQueue.created_at >= day_start)
     ).scalar_one()
-    if today >= cons.runs_per_project_per_day:
-        return 0
+    return used
 
-    # Per-project concurrency cap (config, not constitution).
-    max_concurrent = int(project.config.get("max_concurrent_runs", DEFAULT_MAX_CONCURRENT_RUNS))
-    in_flight = session.execute(
+
+def _in_flight(session: Session, project: Project) -> int:
+    running = session.execute(
         select(func.count(Run.id)).where(Run.project_id == project.id,
                                          Run.kind != RunKind.CHAT_SESSION,
                                          Run.status == RunStatus.RUNNING)
     ).scalar_one()
-    in_flight += session.execute(
+    running += session.execute(
         select(func.count(RunQueue.id)).where(RunQueue.project_id == project.id)
     ).scalar_one()
+    return running
+
+
+def _max_concurrent(project: Project) -> int:
+    """Concurrency cap (project config, not constitution)."""
+    return int(project.config.get("max_concurrent_runs", DEFAULT_MAX_CONCURRENT_RUNS))
+
+
+def _dispatch_project(session: Session, project: Project, cons: ConstitutionDoc) -> int:
+    now = utcnow()
+
+    today = _daily_runs_used(session, project, _day_start(now))
+    if today >= cons.runs_per_project_per_day:
+        return 0
+
+    max_concurrent = _max_concurrent(project)
+    in_flight = _in_flight(session, project)
 
     enqueued = 0
     agents = list(
@@ -157,6 +175,148 @@ def _dispatch_project(session: Session, project: Project, cons: ConstitutionDoc)
         notify(session, "yaaf_run_queue", project.id)
         enqueued += 1
     return enqueued
+
+
+def _unread_for(session: Session, project: Project, agent: Agent) -> int:
+    """Messages this agent would wake for. Mirrors the filter in _wake_reasons
+    (not self-authored, not under a frozen root, boardroom skipped for a CEO
+    whose chat session is live) minus the pair-breaker, which is a trip
+    detector rather than a filter and cannot run from a read path."""
+    skip: set[str] = set()
+    if agent.kind == AgentKind.CEO and chat_session_live(session, project):
+        skip = {
+            c.id for c in session.execute(
+                select(Channel).where(Channel.project_id == project.id,
+                                      Channel.kind == ChannelKind.BOARDROOM)
+            ).scalars()
+        }
+    total = 0
+    for channel_id in policy.agent_channel_ids(session, agent):
+        if channel_id in skip:
+            continue
+        cursor = session.execute(
+            select(ChannelRead).where(ChannelRead.agent_id == agent.id,
+                                      ChannelRead.channel_id == channel_id)
+        ).scalar_one_or_none()
+        stmt = select(Message).where(Message.channel_id == channel_id)
+        if cursor is not None:
+            stmt = stmt.where(Message.created_at > cursor.last_read_at)
+        for message in session.execute(stmt).scalars():
+            if message.sender_agent_id == agent.id:
+                continue
+            root = session.get(Message, message.thread_id or message.id)
+            if root is not None and root.frozen_at is not None:
+                continue
+            total += 1
+    return total
+
+
+def activity_state(session: Session, project: Project, cons: ConstitutionDoc) -> dict:
+    """Why work is — or is not — starting right now.
+
+    `_dispatch_project` decides this roughly thirty times a minute and throws
+    it away, which is why "why is nothing happening?" had no answer anywhere in
+    the product: a project blocked on a cap and a project with nothing to do
+    both render as zero running runs. This is that decision, read-only.
+
+    It reuses the same helpers the dispatcher enforces with, so the number on
+    the screen cannot drift from the number that stopped the work. It
+    deliberately does NOT call `_wake_reasons`: that advances the planning
+    heartbeat and can freeze a thread, and loading a page must never move
+    governance state. Message wakes are counted by `_unread_for` instead, so a
+    reading can differ from a real wake by at most one tick.
+
+    `blocked_by` names the first gate that stops a run, and only when there is
+    work to stop — with nothing pending it stays None, because an idle project
+    with an empty board is working correctly, not stuck.
+    """
+    now = utcnow()
+    day_start = _day_start(now)
+    used = _daily_runs_used(session, project, day_start)
+    in_flight = _in_flight(session, project)
+    max_concurrent = _max_concurrent(project)
+
+    agents = list(
+        session.execute(
+            select(Agent).where(Agent.project_id == project.id,
+                                Agent.status == AgentStatus.ACTIVE)
+        ).scalars()
+    )
+
+    rows: list[dict] = []
+    for agent in agents:
+        notices = session.execute(
+            select(func.count(Notice.id)).where(Notice.agent_id == agent.id,
+                                                Notice.consumed_at.is_(None))
+        ).scalar_one()
+        pending = len(_work_reasons(session, agent, now)) + notices
+        pending += _unread_for(session, project, agent)
+        if agent.kind == AgentKind.CEO:
+            hours = float(project.config.get("ceo_heartbeat_hours",
+                                             DEFAULT_CEO_HEARTBEAT_HOURS))
+            beat = session.execute(
+                select(Heartbeat).where(Heartbeat.agent_id == agent.id,
+                                        Heartbeat.name == "planning")
+            ).scalar_one_or_none()
+            due = beat is None or beat.last_fired_at <= now - timedelta(hours=hours)
+            if due and (beat is None
+                        or project.config.get("ceo_heartbeat_always")
+                        or _ceo_has_planning_material(session, project)):
+                pending += 1
+        wakes = _wakes_last_hour(session, agent)
+        rows.append({
+            "id": agent.id,
+            "name": agent.name,
+            "kind": agent.kind,
+            "busy": _agent_busy(session, agent),
+            "wakes_last_hour": wakes,
+            "wake_cap": cons.wakes_per_agent_per_hour,
+            "pending": pending,
+        })
+
+    with_work = [r for r in rows if r["pending"]]
+    if used >= cons.runs_per_project_per_day:
+        blocked_by = "daily_runs"
+    elif in_flight >= max_concurrent:
+        blocked_by = "concurrency"
+    elif not with_work:
+        blocked_by = None  # nothing waiting: idle is the correct answer
+    elif all(r["busy"] for r in with_work):
+        blocked_by = "agents_busy"
+    elif all(r["busy"] or r["wakes_last_hour"] >= r["wake_cap"] for r in with_work):
+        blocked_by = "wake_ceiling"
+    else:
+        blocked_by = None  # a run should start on the next tick
+
+    ready = session.execute(
+        select(func.count(Task.id)).where(Task.project_id == project.id,
+                                          Task.status == TaskStatus.READY)
+    ).scalar_one()
+    claimed = session.execute(
+        select(func.count(Task.id)).where(Task.project_id == project.id,
+                                          Task.status == TaskStatus.CLAIMED)
+    ).scalar_one()
+    notices_total = session.execute(
+        select(func.count(Notice.id)).where(Notice.project_id == project.id,
+                                            Notice.consumed_at.is_(None))
+    ).scalar_one()
+
+    return {
+        "blocked_by": blocked_by,
+        "daily_runs": {
+            "used": used,
+            "cap": cons.runs_per_project_per_day,
+            "resets_at": (day_start + timedelta(days=1)).isoformat(),
+        },
+        "concurrency": {"in_flight": in_flight, "cap": max_concurrent},
+        "waiting": {
+            "ready_tasks": ready,
+            "claimed_tasks": claimed,
+            "notices": notices_total,
+            "agents_with_work": len(with_work),
+        },
+        "agents": rows,
+    }
 
 
 def _agent_busy(session: Session, agent: Agent) -> bool:

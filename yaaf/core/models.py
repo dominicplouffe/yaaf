@@ -615,6 +615,9 @@ class Run(Base):
     model: Mapped[str | None] = mapped_column(String(64))
     effort: Mapped[str | None] = mapped_column(String(16))
     trace_path: Mapped[str | None] = mapped_column(Text)
+    # Store uri of {"system_prompt", "context_pack"} — what the run actually
+    # sent to the model, stashed beside the trace.
+    context_path: Mapped[str | None] = mapped_column(Text)
     summary: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
