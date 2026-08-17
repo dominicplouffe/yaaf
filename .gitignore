@@ -23,3 +23,6 @@ deploy/proxy/generated/allowlist_*.txt
 
 # Session handoff notes for Claude — local only
 HANDOFF.md
+
+# Database dumps taken by update_single_server.sh
+backups/

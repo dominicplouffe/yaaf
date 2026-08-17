@@ -31,43 +31,12 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-say()  { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
-ok()   { printf '    \033[32m✓\033[0m %s\n' "$*"; }
-warn() { printf '    \033[33m!\033[0m %s\n' "$*"; }
-die()  { printf '\n\033[31mFAILED:\033[0m %s\n\n' "$*" >&2; exit 1; }
+. "$(dirname "$0")/deploy/_common.sh"
 
 # ── 1. preflight ──────────────────────────────────────────────────────────────
 say "Checking where we are and what we have"
-
-# Root of the checkout, judged by the things this script actually needs. A
-# wrong directory otherwise fails much later, halfway through a build.
-for marker in pyproject.toml deploy/docker-compose.yml deploy/Dockerfile \
-              deploy/sandbox/Dockerfile roles migrations; do
-  [ -e "$marker" ] || die "no ./$marker here — run this from the root of the yaaf checkout (you are in $PWD)"
-done
-ok "in the repository root ($PWD)"
-
-command -v docker >/dev/null 2>&1 || die "docker is not installed. Install it with:
-    curl -fsSL https://get.docker.com | sh
-    sudo usermod -aG docker \"\$USER\"   # then log out and back in"
-
-# Prefer running docker unprivileged, but fall back to sudo rather than dying:
-# a box where the usermod has not taken effect yet is the common case, not an
-# error worth stopping for.
-if docker info >/dev/null 2>&1; then
-  DOCKER="docker"
-elif sudo -n docker info >/dev/null 2>&1 || sudo docker info >/dev/null 2>&1; then
-  DOCKER="sudo docker"
-  warn "using 'sudo docker' — add yourself to the docker group to drop the sudo:"
-  warn "  sudo usermod -aG docker \"\$USER\"   (then log out and back in)"
-else
-  die "the docker daemon is not reachable. Is it running? Try: sudo systemctl start docker"
-fi
-ok "docker is usable ($DOCKER)"
-
-$DOCKER compose version >/dev/null 2>&1 \
-  || die "the docker compose plugin is missing. On Debian/Ubuntu:
-    sudo apt-get install -y docker-compose-plugin"
+require_repo_root; ok "in the repository root ($REPO)"
+resolve_docker;    ok "docker is usable ($DOCKER)"
 ok "docker compose plugin present"
 
 command -v openssl >/dev/null 2>&1 || die "openssl is missing (needed to generate secrets).
@@ -141,17 +110,12 @@ $DOCKER build -f deploy/sandbox/Dockerfile -t yaaf-sandbox:latest . \
   || die "sandbox image build failed"
 ok "yaaf-sandbox:latest built"
 
-( cd deploy && $DOCKER compose up -d --build ) || die "compose up failed"
+compose up -d --build || die "compose up failed"
 ok "control plane up"
 
 # ── 6. wait for the API ───────────────────────────────────────────────────────
 say "Waiting for the API"
-deadline=$((SECONDS + 180))
-until curl -fsS "http://127.0.0.1:${PORT}/healthz" >/dev/null 2>&1; do
-  [ $SECONDS -lt $deadline ] || die "the API never became healthy. Look at:
-    cd deploy && $DOCKER compose logs api --tail=50"
-  sleep 2
-done
+wait_for_api "$PORT"
 ok "API answering on 127.0.0.1:${PORT}"
 
 # ── 7. schema ─────────────────────────────────────────────────────────────────
@@ -159,16 +123,13 @@ ok "API answering on 127.0.0.1:${PORT}"
 # database — so a box with no schema looks healthy right up until the first
 # real request dies on `relation "projects" does not exist`. Check explicitly.
 say "Database schema"
-schema_at_head() {
-  ( cd deploy && $DOCKER compose exec -T api alembic current 2>/dev/null ) | grep -q '(head)'
-}
-if schema_at_head; then
+if wait_for_schema 300; then
   ok "migrations at head"
 else
-  warn "schema is not at head — applying migrations"
-  ( cd deploy && $DOCKER compose exec -T api alembic upgrade head ) \
+  warn "not at head after 5 minutes — applying migrations directly"
+  compose exec -T api alembic upgrade head \
     || die "alembic upgrade failed — the output above says why"
-  schema_at_head || die "migrations ran but the schema is still not at head"
+  schema_at_head 60 || die "migrations ran but the schema is still not at head"
   ok "migrations applied"
 fi
 
