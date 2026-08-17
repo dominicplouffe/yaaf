@@ -65,6 +65,11 @@ DEFAULT_MAX_CONCURRENT_RUNS = 3
 # out the window or enough have piled up.
 NOTICE_COALESCE_MINUTES = 10.0
 NOTICE_COALESCE_COUNT = 3
+# Agent-to-agent chatter batches like notices: half of all runs start within
+# five minutes of the same agent's prior run — reply ping-pong at full price.
+# The chairman's messages (and anything in the boardroom) still wake instantly.
+MESSAGE_COALESCE_MINUTES = 5.0
+MESSAGE_COALESCE_COUNT = 3
 # MEMORY_FULL is urgent because the scope has stopped accepting writes and only
 # this agent can restart it; MEMORY_PRESSURE deliberately is not — a nearly-full
 # store is not worth a full-price wake, so it coalesces and rides the next one.
@@ -97,23 +102,23 @@ def dispatch_once(session: Session) -> int:
     return enqueued
 
 
-def _day_start(now):
+def day_start(now):
     """Midnight UTC. The daily ceiling is a fixed window, not a rolling one —
     so it refills all at once, and the chairman deserves to be told when."""
     return now.replace(hour=0, minute=0, second=0, microsecond=0)
 
 
-def _daily_runs_used(session: Session, project: Project, day_start) -> int:
+def daily_runs_used(session: Session, project: Project, since) -> int:
     """Runs created today, queued or historical. Chat sessions are the talk
     lane, not work — they never count against the ceilings enforced here."""
     used = session.execute(
         select(func.count(Run.id)).where(Run.project_id == project.id,
                                          Run.kind != RunKind.CHAT_SESSION,
-                                         Run.created_at >= day_start)
+                                         Run.created_at >= since)
     ).scalar_one()
     used += session.execute(
         select(func.count(RunQueue.id)).where(RunQueue.project_id == project.id,
-                                              RunQueue.created_at >= day_start)
+                                              RunQueue.created_at >= since)
     ).scalar_one()
     return used
 
@@ -138,7 +143,7 @@ def _max_concurrent(project: Project) -> int:
 def _dispatch_project(session: Session, project: Project, cons: ConstitutionDoc) -> int:
     now = utcnow()
 
-    today = _daily_runs_used(session, project, _day_start(now))
+    today = daily_runs_used(session, project, day_start(now))
     if today >= cons.runs_per_project_per_day:
         return 0
 
@@ -231,8 +236,8 @@ def activity_state(session: Session, project: Project, cons: ConstitutionDoc) ->
     with an empty board is working correctly, not stuck.
     """
     now = utcnow()
-    day_start = _day_start(now)
-    used = _daily_runs_used(session, project, day_start)
+    start = day_start(now)
+    used = daily_runs_used(session, project, start)
     in_flight = _in_flight(session, project)
     max_concurrent = _max_concurrent(project)
 
@@ -306,7 +311,7 @@ def activity_state(session: Session, project: Project, cons: ConstitutionDoc) ->
         "daily_runs": {
             "used": used,
             "cap": cons.runs_per_project_per_day,
-            "resets_at": (day_start + timedelta(days=1)).isoformat(),
+            "resets_at": (start + timedelta(days=1)).isoformat(),
         },
         "concurrency": {"in_flight": in_flight, "cap": max_concurrent},
         "waiting": {
@@ -388,7 +393,19 @@ def _wake_reasons(
         }
 
     # 1. Unread messages — with the pair circuit-breaker standing between a
-    #    ping-pong thread and yet another wake.
+    #    ping-pong thread and yet another wake, and ordinary agent-to-agent
+    #    chatter coalescing like notices (see MESSAGE_COALESCE_* above). The
+    #    breaker still trips on every tick, before the coalescing gate.
+    channel_kinds = {
+        c.id: c.kind
+        for c in session.execute(
+            select(Channel).where(Channel.project_id == project.id)
+        ).scalars()
+    }
+    message_reasons: list[dict] = []
+    urgent = False
+    oldest_at = None
+    total = 0
     for channel_id in policy.agent_channel_ids(session, agent):
         if channel_id in skip_channels:
             continue
@@ -413,8 +430,19 @@ def _wake_reasons(
             if root is not None and root.frozen_at is not None:
                 continue
             actionable += 1
+            total += 1
+            if (message.sender_user_id is not None
+                    or channel_kinds.get(channel_id) == ChannelKind.BOARDROOM):
+                urgent = True
+            if oldest_at is None or message.created_at < oldest_at:
+                oldest_at = message.created_at
         if actionable:
-            reasons.append({"kind": "messages", "channel_id": channel_id, "count": actionable})
+            message_reasons.append(
+                {"kind": "messages", "channel_id": channel_id, "count": actionable})
+    if message_reasons:
+        ripe = oldest_at <= now - timedelta(minutes=MESSAGE_COALESCE_MINUTES)
+        if urgent or ripe or total >= MESSAGE_COALESCE_COUNT:
+            reasons.extend(message_reasons)
 
     # 2. Unconsumed notices, coalesced (see URGENT_NOTICE_KINDS above).
     pending = session.execute(

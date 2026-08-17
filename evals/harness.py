@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from sqlalchemy import select
 
 
 def _bootstrap_env() -> None:
@@ -61,10 +62,20 @@ settings.cache_clear()
 
 from yaaf.core.constitution import effective  # noqa: E402
 from yaaf.core.db import db_session, engine, reset_for_tests  # noqa: E402
-from yaaf.core.models import Base, Hypothesis, Project, RunKind, Task, utcnow  # noqa: E402
+from yaaf.core.models import (  # noqa: E402
+    Base,
+    Channel,
+    ChannelKind,
+    Hypothesis,
+    Message,
+    Project,
+    RunKind,
+    Task,
+    utcnow,
+)
 from yaaf.runner.backends import mock as mock_backend  # noqa: E402
 from yaaf.runner.daemon import execute_job, lease_and_prepare  # noqa: E402
-from yaaf.server.dispatcher import dispatch_once  # noqa: E402
+from yaaf.server.dispatcher import MESSAGE_COALESCE_MINUTES, dispatch_once  # noqa: E402
 from yaaf.server.janitor import janitor_once  # noqa: E402
 from yaaf.server.policy import (  # noqa: E402
     OPEN_TASK_STATUSES,
@@ -248,9 +259,31 @@ def _backdate(project_id: str, hours: float) -> None:
 # ── the tick loop ───────────────────────────────────────────────────────────────
 
 
+def _age_agent_chatter() -> None:
+    """Evals compress minutes into ticks: a team message posted last beat is,
+    in production time, minutes old by the next one. Without this shift the
+    dispatcher's message coalescing would keep scenario agents asleep for the
+    whole run. Boardroom and chairman messages are left alone — they wake
+    instantly in production too, and the cadence scenarios depend on their
+    real timestamps."""
+    shift = timedelta(minutes=MESSAGE_COALESCE_MINUTES + 1)
+    with db_session() as session:
+        boardrooms = {
+            c.id for c in session.execute(
+                select(Channel).where(Channel.kind == ChannelKind.BOARDROOM)
+            ).scalars()
+        }
+        for message in session.execute(
+            select(Message).where(Message.sender_agent_id.is_not(None))
+        ).scalars():
+            if message.channel_id not in boardrooms:
+                message.created_at = message.created_at - shift
+
+
 def _tick(client: TestClient, transcript: list[dict], tick_no: int) -> int:
     """One platform beat, exactly as tests/mockmodel/test_e2e.py drives it:
     dispatch wakes, execute leased jobs, run the janitor."""
+    _age_agent_chatter()
     with db_session() as session:
         dispatch_once(session)
     jobs = lease_and_prepare(limit=16)
