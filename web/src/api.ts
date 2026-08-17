@@ -9,6 +9,28 @@ export class ApiError extends Error {
   }
 }
 
+/** FastAPI reports validation failures as a list of {loc, msg} objects, which
+ *  String()s down to "[object Object]". Flatten it into something a human can
+ *  act on: "body.approve: Field required". */
+function errorText(data: unknown, status: number): string {
+  const detail = (data as { detail?: unknown; error?: unknown })?.detail;
+  if (Array.isArray(detail)) {
+    const lines = detail
+      .map((item) => {
+        const { loc, msg } = (item ?? {}) as { loc?: unknown[]; msg?: string };
+        if (!msg) return null;
+        const where = Array.isArray(loc) ? loc.join(".") : "";
+        return where ? `${where}: ${msg}` : msg;
+      })
+      .filter(Boolean);
+    if (lines.length) return lines.join("; ");
+  }
+  if (typeof detail === "string" && detail) return detail;
+  const error = (data as { error?: unknown })?.error;
+  if (typeof error === "string" && error) return error;
+  return `HTTP ${status}`;
+}
+
 const TOKEN_KEY = "yaaf_admin_token";
 
 export function getToken(): string | null {
@@ -47,11 +69,7 @@ export async function api<T = unknown>(
       clearToken();
       if (!location.hash.startsWith("#/login")) location.hash = "#/login";
     }
-    const detail =
-      (data as { detail?: string; error?: string })?.detail ??
-      (data as { error?: string })?.error ??
-      `HTTP ${response.status}`;
-    throw new ApiError(response.status, String(detail));
+    throw new ApiError(response.status, errorText(data, response.status));
   }
   return data as T;
 }
@@ -73,7 +91,7 @@ export async function getText(path: string): Promise<string> {
     }
     let detail = `HTTP ${response.status}`;
     try {
-      detail = String((JSON.parse(await response.text()) as { detail?: string }).detail ?? detail);
+      detail = errorText(JSON.parse(await response.text()), response.status);
     } catch {
       /* not a JSON error body */
     }

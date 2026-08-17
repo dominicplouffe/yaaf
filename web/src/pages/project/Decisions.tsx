@@ -61,7 +61,10 @@ function DecisionCard({
     setBusy(true);
     setError(null);
     try {
-      await post(`/admin/approvals/${approval.id}/decide`, { approved, note: note.trim() });
+      await post(`/admin/approvals/${approval.id}/decide`, {
+        approve: approved,
+        note: note.trim(),
+      });
       onDecided();
     } catch (e) {
       setError((e as Error).message);
