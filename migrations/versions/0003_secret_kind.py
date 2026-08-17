@@ -9,6 +9,8 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
+from yaaf.core.migration_ops import add_column_if_missing
+
 revision = "0003"
 down_revision = "0002"
 branch_labels = None
@@ -16,7 +18,7 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column(
+    add_column_if_missing(
         "secrets",
         sa.Column("kind", sa.String(16), nullable=False, server_default="service"),
     )
