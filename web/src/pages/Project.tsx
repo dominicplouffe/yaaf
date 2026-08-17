@@ -19,6 +19,7 @@ import {
   DecideButtons,
   fmtLeft,
   fmtUnit,
+  statusBrief,
 } from "../ui";
 import Overview from "./project/Overview";
 import Boardroom from "./project/Boardroom";
@@ -389,9 +390,24 @@ export default function ProjectPage() {
           }}
         />
       )}
-      {dash.status_reason && dash.status !== "running" && (
-        <div className="notice-box">Status reason: {dash.status_reason}</div>
-      )}
+      {/* One answer to "why is nothing happening?", on every tab — a chairman
+          who opens Work to see four tasks sitting still should not have to go
+          to Overview to learn the company ran out of runs at 01:22. */}
+      {(() => {
+        const brief = statusBrief(dash);
+        if (!brief) return null;
+        return (
+          <div className="notice-box">
+            <div>
+              <span className={`chip ${brief.tone}`}>{brief.chip}</span>{" "}
+              <b>{brief.headline}</b>
+            </div>
+            <div className="help" style={{ marginTop: 4 }}>
+              {brief.detail}
+            </div>
+          </div>
+        );
+      })()}
       {error && (
         <div className="error">
           Not refreshing — {error}. The numbers below are the last that landed.

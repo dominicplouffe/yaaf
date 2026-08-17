@@ -71,6 +71,19 @@ def constitution_prose(cons: ConstitutionDoc, project: Project) -> str:
         f"need chairman approval; approvals expire to DENIED after "
         f"{cons.approval_timeout_days} days, so re-plan rather than wait.\n"
         f"- Budget: {budget}. At 100% the project auto-pauses.\n"
+        # The wake-loop brakes were the one enforced group never stated here,
+        # so a company that had spent its daily runs by 01:22 had a CEO with no
+        # way to know why it went quiet — and a chairman who asked got an
+        # apology instead of an answer. Stating the limit is what lets it say
+        # "we are out of runs" instead of "I am sorry".
+        f"- Runs are rationed: at most {cons.runs_per_project_per_day} across the whole "
+        f"company per day (the count resets at 00:00 UTC), at most "
+        f"{cons.wakes_per_agent_per_hour} wakes per agent per hour, and one run per agent "
+        "at a time. Runs that die still spend the allowance. Spending a day's runs in an "
+        "hour leaves the company asleep until midnight with work stranded on the board, so "
+        "pace what you put there. If work has stopped because a cap is reached, that is the "
+        "platform doing its job and not a failure of yours — say so plainly rather than "
+        "apologising for it or inventing a cause.\n"
         f"- Memory caps: {cons.memory_cap_project} project / {cons.memory_cap_team} team. "
         "Curate, don't accumulate: memory_compact folds several entries into one and frees "
         "all but one of their slots, memory_forget drops one, and memory_supersede replaces "

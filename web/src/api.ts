@@ -92,6 +92,30 @@ export interface ProjectSummary {
   goal: string;
 }
 
+/** Why work is or isn't starting — the dispatcher's own gates, read-only.
+    `blocked_by` names the first gate stopping a run, and is null when nothing
+    is waiting (an idle project with an empty board is working correctly). */
+export interface Activity {
+  blocked_by: "daily_runs" | "concurrency" | "agents_busy" | "wake_ceiling" | null;
+  daily_runs: { used: number; cap: number; resets_at: string };
+  concurrency: { in_flight: number; cap: number };
+  waiting: {
+    ready_tasks: number;
+    claimed_tasks: number;
+    notices: number;
+    agents_with_work: number;
+  };
+  agents: {
+    id: string;
+    name: string;
+    kind: string;
+    busy: boolean;
+    wakes_last_hour: number;
+    wake_cap: number;
+    pending: number;
+  }[];
+}
+
 export interface Dashboard {
   id: string;
   slug: string;
@@ -113,6 +137,7 @@ export interface Dashboard {
   external_evidence_in_window: number;
   drought_active: boolean;
   runs: { running: number; queued: number };
+  activity: Activity;
   /** True while the resident CEO chat session is live — boardroom replies
       arrive in seconds instead of via queued runs. */
   chat_live: boolean;

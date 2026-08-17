@@ -4,7 +4,7 @@
 // primitives the redesign repeats everywhere so the pattern is learned once.
 
 import { useEffect, useState } from "react";
-import { Dashboard, get, post, RunRow } from "./api";
+import { Activity, Dashboard, get, post, RunRow } from "./api";
 
 // ── time ────────────────────────────────────────────────────────────────────────
 
@@ -158,6 +158,113 @@ export function earlyRunSentence(h: ReturnType<typeof runHealth>): string {
   const list =
     parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
   return `${h.early.length} of ${h.todays.length} runs ended before finishing — ${list}.`;
+}
+
+/** Why the company is quiet, in one sentence.
+
+    "Working now: 0" used to read "an idle project costs nothing" whatever the
+    cause, so a company that had spent its whole daily allowance by 01:22 and a
+    company with an empty board looked identical. They are not the same thing:
+    one needs nothing from you, the other has work piled up behind a wall and a
+    known time it comes down. */
+export function idleSentence(a: Activity): string {
+  const waiting: string[] = [];
+  if (a.waiting.ready_tasks) waiting.push(`${a.waiting.ready_tasks} task(s) ready`);
+  if (a.waiting.notices) waiting.push(`${a.waiting.notices} notice(s) undelivered`);
+  const behind = waiting.length ? ` — ${waiting.join(", ")}` : "";
+
+  switch (a.blocked_by) {
+    case "daily_runs":
+      return `out of runs for today (${a.daily_runs.used} of ${a.daily_runs.cap})` +
+        `, resumes ${fmtLeft(a.daily_runs.resets_at).replace(" left", "")} from now${behind}`;
+    case "wake_ceiling":
+      return `every agent with work has hit its hourly wake ceiling${behind}`;
+    case "concurrency":
+      return `at the concurrency cap (${a.concurrency.in_flight} of ${a.concurrency.cap}) — working`;
+    case "agents_busy":
+      return "every agent that has work is already running";
+    default:
+      return waiting.length
+        ? `nothing blocking — a run should start shortly${behind}`
+        : "nothing waiting; an idle project costs nothing";
+  }
+}
+
+/** The reasons the platform writes for itself when it pauses a project. A
+    chairman-typed reason is anything else — and the two defaults below mean
+    nobody typed one at all, which the brief says out loud rather than
+    presenting "paused by chairman" as an explanation. */
+const UNSPOKEN = new Set(["paused by chairman", "stopped by chairman"]);
+
+/** Why this company is not working, in one brief, whatever the cause.
+
+    A project stops for four different reasons — the chairman paused it, the
+    chairman stopped it, it spent its budget, or its billing credential died —
+    and until now each one surfaced somewhere different, or (for a cap) nowhere
+    at all. One reader asking one question deserves one answer in one place. */
+export function statusBrief(
+  dash: Dashboard,
+): { tone: string; chip: string; headline: string; detail: string } | null {
+  const reason =
+    dash.status_reason && !UNSPOKEN.has(dash.status_reason)
+      ? dash.status_reason
+      : "no reason was recorded";
+
+  if (dash.status === "stopped")
+    return {
+      tone: "critical",
+      chip: "stopped",
+      headline: `Stopped — ${reason}.`,
+      detail:
+        "This is terminal: the record stays readable, but the project can never " +
+        "run again. Duplicate it from Settings to carry the work forward.",
+    };
+
+  if (dash.status === "paused")
+    return {
+      tone: "serious",
+      chip: "paused",
+      headline: `Paused — ${reason}.`,
+      detail:
+        "Nothing new starts until you resume. Anything that was running was " +
+        "stopped when the project paused; the board and the record are intact.",
+    };
+
+  if (dash.status !== "running") return null;
+
+  const a = dash.activity;
+  const waiting: string[] = [];
+  if (a.waiting.ready_tasks) waiting.push(`${a.waiting.ready_tasks} ready task(s)`);
+  if (a.waiting.claimed_tasks) waiting.push(`${a.waiting.claimed_tasks} claimed task(s)`);
+  if (a.waiting.notices) waiting.push(`${a.waiting.notices} undelivered notice(s)`);
+  const behind = waiting.length
+    ? `${waiting.join(", ")} waiting behind it.`
+    : "Nothing is waiting behind it.";
+
+  if (a.blocked_by === "daily_runs")
+    return {
+      tone: "serious",
+      chip: "capped",
+      headline: `Out of runs for today — ${a.daily_runs.used} of ${a.daily_runs.cap} used.`,
+      detail:
+        `Nothing starts until the count resets at 00:00 UTC, ` +
+        `${fmtLeft(a.daily_runs.resets_at).replace(" left", "")} from now. ${behind} ` +
+        "Runs that died still spent the allowance. Raise 'Runs per day, whole " +
+        "project' in Settings if this is tighter than you meant it to be.",
+    };
+
+  if (a.blocked_by === "wake_ceiling")
+    return {
+      tone: "serious",
+      chip: "throttled",
+      headline: "Every agent with work has hit its hourly wake ceiling.",
+      detail: `Work resumes as the hour rolls forward. ${behind}`,
+    };
+
+  // concurrency and agents_busy both mean the company is working. Saying
+  // nothing is the correct answer; a brief that fires when things are fine is
+  // how a reader learns to stop reading it.
+  return null;
 }
 
 /** Where the money stands, in whichever unit this project actually bills in.

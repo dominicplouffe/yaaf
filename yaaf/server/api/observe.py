@@ -46,7 +46,12 @@ from yaaf.core.models import (
 )
 from yaaf.server import policy, typing_state
 from yaaf.server.deps import admin_auth, db
-from yaaf.server.dispatcher import activity_state, chat_session_live
+from yaaf.server.dispatcher import (
+    activity_state,
+    chat_session_live,
+    daily_runs_used,
+    day_start,
+)
 
 router = APIRouter(dependencies=[Depends(admin_auth)])
 
@@ -225,6 +230,15 @@ def desk(session: Session = Depends(db)) -> dict:
             },
             "open_tasks": len(policy.open_top_level_tasks(session, project.id)),
             "queue_ceiling": cons.queue_ceiling,
+            # Only the daily-run gate, not the full activity_state: this loop
+            # already runs a dozen aggregates per project, and walking every
+            # agent of every project would make the landing page the most
+            # expensive request we serve. It is also the gate that actually
+            # stops companies — the rest need the project page.
+            "runs_today": {
+                "used": daily_runs_used(session, project, day_start(now)),
+                "cap": cons.runs_per_project_per_day,
+            },
             "evidence_7d": policy.countable_external_evidence(session, project.id, week_ago),
             "ceo_judgment": policy.ceo_judgment(session, project.id),
             "pending_approvals": pending,
@@ -479,6 +493,36 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
                 "queued runs (minutes). It starts within seconds of the runner "
                 "seeing the project; if this persists, check the runner's logs.",
                 "runs")
+
+    # Liveness. Every other check on this page asks "is this project set up
+    # correctly?"; this one asks "is it working right now?" — the question that
+    # had no answer anywhere in the product. A company that has spent its daily
+    # runs looks exactly like one with nothing to do on every screen we ship,
+    # which is how a hard stop reads as a healthy quiet.
+    #
+    # Only the two gates that mean *stopped* warn here. Hitting the concurrency
+    # cap or finding every agent busy means the company is working, which is not
+    # a finding.
+    if project.status == "running":
+        live_cons = effective(session, project.id)
+        act = activity_state(session, project, live_cons)
+        waiting = act["waiting"]
+        held_up = (f"{waiting['ready_tasks']} task(s) and {waiting['notices']} "
+                   f"notice(s) are waiting behind it")
+        if act["blocked_by"] == "daily_runs":
+            daily = act["daily_runs"]
+            add("activity", "warn",
+                f"out of runs for today — {daily['used']} of {daily['cap']} used, "
+                f"and nothing will start until {daily['resets_at'][11:16]} UTC. "
+                f"{held_up}. Raise 'Runs per day, whole project' if this is too "
+                "tight, or leave it and the work resumes on its own.",
+                "settings")
+        elif act["blocked_by"] == "wake_ceiling":
+            add("activity", "warn",
+                "every agent with work to do has hit its hourly wake ceiling "
+                f"({live_cons.wakes_per_agent_per_hour}/hour) — work resumes as the hour rolls "
+                f"forward. {held_up}.",
+                "settings")
 
     # Connectors: controlled GitHub accounts registered but webhooks unprovisioned.
     if any(str(d).startswith("github:") for d in (project.controlled_domains or [])) \

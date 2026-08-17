@@ -21,6 +21,7 @@ import {
   fmtUnit,
   fmtWhenShort,
   hoursSince,
+  idleSentence,
   paceDate,
   runHealth,
   Skeleton,
@@ -421,7 +422,12 @@ export default function Overview({
                 {dash.runs.running === 0
                   ? dash.runs.queued > 0
                     ? `${dash.runs.queued} queued to start`
-                    : "an idle project costs nothing"
+                    : // A paused or stopped project is not idle, it is off. The
+                      // brief above the tabs carries the reason; repeating a
+                      // cap here would explain the wrong wall.
+                      dash.status !== "running"
+                      ? `project is ${dash.status}`
+                      : idleSentence(dash.activity)
                   : runningRuns.length === dash.runs.running
                     ? runningRuns.map((r) => r.agent_name ?? "—").join(" · ")
                     : // The roster comes from a slower poll than the count. Rather
@@ -430,11 +436,25 @@ export default function Overview({
                       "…"}
               </div>
             </div>
-            <div className="tile">
+            {/* The denominator is the whole point: 55 means nothing on its own,
+                and showing it without "of 55" is exactly how a company that had
+                spent its entire day's allowance read as a busy one. */}
+            <div
+              className={`tile${
+                dash.activity.blocked_by === "daily_runs" ? " alert" : ""
+              }`}
+            >
               <div className="label">Runs today</div>
-              <div className="value">{health.todays.length}</div>
+              <div className="value">
+                {dash.activity.daily_runs.used}
+                <span className="mono" style={{ fontSize: "0.6em", opacity: 0.7 }}>
+                  {" "}/ {dash.activity.daily_runs.cap}
+                </span>
+              </div>
               <div className="sub">
-                {health.clean} finished cleanly
+                {dash.activity.blocked_by === "daily_runs"
+                  ? `capped — resets at ${dash.activity.daily_runs.resets_at.slice(11, 16)} UTC`
+                  : `${health.clean} finished cleanly`}
                 {/* Never let a cap read as a total. */}
                 {(runs ?? []).length >= 200 && " · newest 200 runs"}
               </div>
