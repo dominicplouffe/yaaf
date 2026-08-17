@@ -146,10 +146,12 @@ prompt" is a claim nobody can check.
 ## When you're ready for the real thing
 
 ```bash
-sudo mkdir -p /var/lib/yaaf/workspaces /var/lib/yaaf/artifacts
-docker build -f deploy/sandbox/Dockerfile -t yaaf-sandbox:latest .
-cd deploy && YAAF_ADMIN_TOKEN=… YAAF_MASTER_KEY=… docker compose up --build
+./deploy_single_server.sh
 ```
+
+That generates both secrets, builds both images, migrates, seeds the roles and
+prints the token you log in with. Details in
+[docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md).
 
 Postgres, the API and dashboard, the runner, and the egress proxy. Migrations
 apply themselves. Attach an Anthropic API key per project in Settings, and flip

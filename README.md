@@ -151,32 +151,43 @@ export YAAF_API=http://localhost:8080
 .venv/bin/yaaf seed-roles roles/
 ```
 
-**The real thing — Docker Compose** (real Claude agents, sandboxed):
+**The real thing — your own server** (real Claude agents, sandboxed). One
+script takes a bare box to a running company:
 
 ```bash
-sudo mkdir -p /var/lib/yaaf/workspaces /var/lib/yaaf/artifacts
+curl -fsSL https://get.docker.com | sh          # if docker isn't there yet
+sudo usermod -aG docker "$USER"                 # then log out and back in
 
-# Two secrets, generated once and kept — compose reads deploy/.env every boot.
-# The admin token logs you into the dashboard; the master key encrypts every
-# stored secret, so losing or changing it loses all of them. Details and the
-# rules each one must satisfy: deploy/.env.example.
-{ echo "YAAF_ADMIN_TOKEN=$(openssl rand -base64 32)"
-  echo "YAAF_MASTER_KEY=$(openssl rand -base64 32)"; } > deploy/.env
-
-docker build -f deploy/sandbox/Dockerfile -t yaaf-sandbox:latest .
-cd deploy && docker compose up --build      # reads ./.env automatically
+git clone <your-yaaf-remote> yaaf && cd yaaf
+./deploy_single_server.sh
 ```
 
-That starts Postgres, the API + web dashboard, the runner, and the egress
-proxy. Migrations apply themselves; `--profile s3` adds a MinIO artifact store.
-Full options in **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**.
+It generates both secrets, builds both images, brings up Postgres + the API +
+the runner + the egress proxy, applies migrations, loads the role library, and
+finishes by printing the token you log in with. It is safe to re-run: it never
+overwrites secrets and never re-seeds a role library that already exists.
 
-Installing on a box you SSH into rather than your own machine? The dashboard
-needs binding to loopback and the role library needs loading over HTTP — see
-**[Installing on a server you SSH into](docs/DEPLOYMENT.md#installing-on-a-server-you-ssh-into)**.
+The dashboard binds to `127.0.0.1` by default, so reach it over SSH:
 
-Either way, open **http://localhost:8080/app**, log in with the admin token,
-and create a project from the wizard.
+```bash
+ssh -N -L 8080:localhost:8080 you@your-server   # then open localhost:8080/app
+```
+
+Use `--bind 0.0.0.0` to publish it instead — but the admin token is a static
+bearer, so put TLS in front of it first. Living with it afterwards:
+
+```bash
+./update_single_server.sh    # pull new code, back up, rebuild, migrate, verify
+./kill_single_server.sh      # stop everything, keep the data (--wipe destroys it)
+```
+
+Migrations need no step of their own — they apply at container start, and the
+update script verifies the schema really reached head rather than assuming.
+Full detail, and what to do when something goes sideways, in
+**[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**.
+
+Then open the dashboard, log in with the admin token, and create a project
+from the wizard.
 **[docs/CREATING_A_PROJECT.md](docs/CREATING_A_PROJECT.md) walks through your
 first project in plain English** — from writing a goal the CEO can actually
 plan from to connecting billing, credentials, and data sources. For worked

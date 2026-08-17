@@ -613,7 +613,8 @@ reporting cadence. The strategist is told why and re-plans.
 ## 10. Setup, start to finish
 
 ```bash
-export YAAF_API=http://localhost:8080 YAAF_ADMIN_TOKEN=…
+export YAAF_API=http://localhost:8080
+export YAAF_ADMIN_TOKEN=$(grep YAAF_ADMIN_TOKEN deploy/.env | cut -d= -f2-)
 
 # 1. seed the six roles (drop the JSON from §4 into roles/ first, or POST each)
 yaaf seed-roles roles/

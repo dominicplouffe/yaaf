@@ -49,7 +49,8 @@ Every example is doable entirely in the dashboard. If you'd rather script it,
 the shape is the same everywhere:
 
 ```bash
-export YAAF_API=http://localhost:8080 YAAF_ADMIN_TOKEN=…
+export YAAF_API=http://localhost:8080
+export YAAF_ADMIN_TOKEN=$(grep YAAF_ADMIN_TOKEN deploy/.env | cut -d= -f2-)
 
 yaaf seed-roles roles/                      # once per deployment
 yaaf create-user you@example.com "Your Name"
