@@ -1,0 +1,226 @@
+#!/usr/bin/env bash
+#
+# deploy_single_server.sh — take a bare box to a running yaaf, or bring an
+# existing one up to date. Safe to re-run: it never overwrites secrets, never
+# re-seeds a role library that already exists, and never widens an exposed
+# port you did not ask for.
+#
+# Everything runs here: Postgres, the API + dashboard, the runner, the egress
+# proxy. Splitting Postgres onto its own host is a later variant — the seam is
+# marked EXTERNAL-DB below.
+#
+# Usage:
+#   ./deploy_single_server.sh                  # dashboard on 127.0.0.1:8080
+#   ./deploy_single_server.sh --bind 0.0.0.0   # publish it (see the warning)
+#   ./deploy_single_server.sh --port 9090
+#   ./deploy_single_server.sh --skip-roles
+#
+set -euo pipefail
+
+BIND="127.0.0.1"
+PORT="8080"
+SKIP_ROLES="no"
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --bind)  BIND="${2:?--bind needs an address}"; shift 2 ;;
+    --port)  PORT="${2:?--port needs a port}"; shift 2 ;;
+    --skip-roles) SKIP_ROLES="yes"; shift ;;
+    -h|--help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "unknown argument: $1 (try --help)" >&2; exit 2 ;;
+  esac
+done
+
+say()  { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
+ok()   { printf '    \033[32m✓\033[0m %s\n' "$*"; }
+warn() { printf '    \033[33m!\033[0m %s\n' "$*"; }
+die()  { printf '\n\033[31mFAILED:\033[0m %s\n\n' "$*" >&2; exit 1; }
+
+# ── 1. preflight ──────────────────────────────────────────────────────────────
+say "Checking where we are and what we have"
+
+# Root of the checkout, judged by the things this script actually needs. A
+# wrong directory otherwise fails much later, halfway through a build.
+for marker in pyproject.toml deploy/docker-compose.yml deploy/Dockerfile \
+              deploy/sandbox/Dockerfile roles migrations; do
+  [ -e "$marker" ] || die "no ./$marker here — run this from the root of the yaaf checkout (you are in $PWD)"
+done
+ok "in the repository root ($PWD)"
+
+command -v docker >/dev/null 2>&1 || die "docker is not installed. Install it with:
+    curl -fsSL https://get.docker.com | sh
+    sudo usermod -aG docker \"\$USER\"   # then log out and back in"
+
+# Prefer running docker unprivileged, but fall back to sudo rather than dying:
+# a box where the usermod has not taken effect yet is the common case, not an
+# error worth stopping for.
+if docker info >/dev/null 2>&1; then
+  DOCKER="docker"
+elif sudo -n docker info >/dev/null 2>&1 || sudo docker info >/dev/null 2>&1; then
+  DOCKER="sudo docker"
+  warn "using 'sudo docker' — add yourself to the docker group to drop the sudo:"
+  warn "  sudo usermod -aG docker \"\$USER\"   (then log out and back in)"
+else
+  die "the docker daemon is not reachable. Is it running? Try: sudo systemctl start docker"
+fi
+ok "docker is usable ($DOCKER)"
+
+$DOCKER compose version >/dev/null 2>&1 \
+  || die "the docker compose plugin is missing. On Debian/Ubuntu:
+    sudo apt-get install -y docker-compose-plugin"
+ok "docker compose plugin present"
+
+command -v openssl >/dev/null 2>&1 || die "openssl is missing (needed to generate secrets).
+    sudo apt-get install -y openssl"
+command -v curl >/dev/null 2>&1 || die "curl is missing.
+    sudo apt-get install -y curl"
+
+# ── 2. host paths ─────────────────────────────────────────────────────────────
+# Sandboxes are sibling containers, so a workspace path must mean the same
+# thing on the host and inside the runner. Identical strings or nothing.
+say "Host directories"
+for d in /var/lib/yaaf/workspaces /var/lib/yaaf/artifacts; do
+  if [ -d "$d" ]; then
+    ok "$d exists"
+  else
+    sudo mkdir -p "$d" && ok "created $d"
+  fi
+done
+
+# ── 3. secrets ────────────────────────────────────────────────────────────────
+# YAAF_ADMIN_TOKEN is any opaque string. YAAF_MASTER_KEY must be a Fernet key
+# (32 url-safe base64 bytes, padded) — `openssl rand -base64 32` satisfies it;
+# secrets.token_urlsafe(32) does NOT, it strips the padding.
+say "Secrets (deploy/.env)"
+if [ -f deploy/.env ]; then
+  ok "deploy/.env already exists — leaving it alone"
+  # Changing YAAF_MASTER_KEY strands every secret already encrypted with it,
+  # so a half-populated file is worth stopping for rather than "fixing".
+  for key in YAAF_ADMIN_TOKEN YAAF_MASTER_KEY; do
+    grep -qE "^${key}=.+" deploy/.env \
+      || die "deploy/.env has no value for $key. Fill it in (see deploy/.env.example) and re-run."
+  done
+  ok "both secrets are set"
+else
+  { echo "YAAF_ADMIN_TOKEN=$(openssl rand -base64 32)"
+    echo "YAAF_MASTER_KEY=$(openssl rand -base64 32)"; } > deploy/.env
+  chmod 600 deploy/.env
+  ok "generated deploy/.env"
+  warn "back up YAAF_MASTER_KEY somewhere off this box — losing it makes every"
+  warn "stored secret unreadable, and there is no recovery path."
+fi
+
+set -a; . ./deploy/.env; set +a
+
+# ── 4. where the dashboard listens ────────────────────────────────────────────
+# Compose merges docker-compose.override.yml automatically. The !override tag
+# is load-bearing: without it compose APPENDS to ports and you keep the
+# original 0.0.0.0 binding alongside the one you asked for.
+say "Dashboard binding"
+cat > deploy/docker-compose.override.yml <<YML
+# Generated by deploy_single_server.sh — per-machine, not committed.
+services:
+  api:
+    ports: !override
+      - "${BIND}:${PORT}:8080"
+YML
+if [ "$BIND" = "127.0.0.1" ]; then
+  ok "bound to 127.0.0.1:${PORT} — reach it with: ssh -N -L ${PORT}:localhost:${PORT} $(whoami)@<this-host>"
+else
+  warn "bound to ${BIND}:${PORT} — the admin token is a static bearer sent in cleartext."
+  warn "Docker's iptables rules sit in front of ufw, so this really is reachable."
+  warn "Put TLS in front of it before using this over an untrusted network."
+fi
+
+# ── 5. images ─────────────────────────────────────────────────────────────────
+# Two images, and compose only knows about one of them. The sandbox image is
+# what agent runs execute inside; forgetting it leaves runs starting against a
+# missing or stale image.
+say "Building images (this is the slow part)"
+$DOCKER build -f deploy/sandbox/Dockerfile -t yaaf-sandbox:latest . \
+  || die "sandbox image build failed"
+ok "yaaf-sandbox:latest built"
+
+( cd deploy && $DOCKER compose up -d --build ) || die "compose up failed"
+ok "control plane up"
+
+# ── 6. wait for the API ───────────────────────────────────────────────────────
+say "Waiting for the API"
+deadline=$((SECONDS + 180))
+until curl -fsS "http://127.0.0.1:${PORT}/healthz" >/dev/null 2>&1; do
+  [ $SECONDS -lt $deadline ] || die "the API never became healthy. Look at:
+    cd deploy && $DOCKER compose logs api --tail=50"
+  sleep 2
+done
+ok "API answering on 127.0.0.1:${PORT}"
+
+# ── 7. schema ─────────────────────────────────────────────────────────────────
+# /healthz only proves the process is alive, and auth never touches the
+# database — so a box with no schema looks healthy right up until the first
+# real request dies on `relation "projects" does not exist`. Check explicitly.
+say "Database schema"
+schema_at_head() {
+  ( cd deploy && $DOCKER compose exec -T api alembic current 2>/dev/null ) | grep -q '(head)'
+}
+if schema_at_head; then
+  ok "migrations at head"
+else
+  warn "schema is not at head — applying migrations"
+  ( cd deploy && $DOCKER compose exec -T api alembic upgrade head ) \
+    || die "alembic upgrade failed — the output above says why"
+  schema_at_head || die "migrations ran but the schema is still not at head"
+  ok "migrations applied"
+fi
+
+# ── 8. role library ───────────────────────────────────────────────────────────
+# roles/ is deliberately not baked into the image, so this is an HTTP load from
+# the checkout. `docker compose exec api yaaf seed-roles roles/` would glob an
+# empty directory, print nothing, and exit 0.
+say "Role library"
+if [ "$SKIP_ROLES" = "yes" ]; then
+  warn "skipped (--skip-roles)"
+else
+  roles_json=$(curl -fsS -H "Authorization: Bearer ${YAAF_ADMIN_TOKEN}" \
+    "http://127.0.0.1:${PORT}/admin/roles") \
+    || die "could not read the role library — is YAAF_ADMIN_TOKEN in deploy/.env the one the API booted with?"
+  # Counted separately from the fetch on purpose: grep exits 1 when a fresh
+  # deployment has no roles yet, and under `set -euo pipefail` that would kill
+  # the script at exactly the moment it needs to seed them. `grep -o | wc -l`
+  # rather than `grep -c` because the payload is one long line and -c counts
+  # lines, which reports any populated library as "1".
+  existing=$(printf '%s' "$roles_json" | grep -o '"slug"' | wc -l | tr -d ' ' || true)
+  if [ "${existing:-0}" -gt 0 ]; then
+    ok "$existing role(s) already loaded — not re-seeding (each load makes a new version)"
+  else
+    seeded=0
+    for f in roles/*.json; do
+      curl -fsS -X POST "http://127.0.0.1:${PORT}/admin/roles" \
+        -H "Authorization: Bearer ${YAAF_ADMIN_TOKEN}" \
+        -H "Content-Type: application/json" \
+        --data-binary @"$f" >/dev/null || die "failed to seed ${f##*/}"
+      seeded=$((seeded + 1))
+    done
+    ok "seeded $seeded role(s)"
+  fi
+fi
+
+# ── EXTERNAL-DB ───────────────────────────────────────────────────────────────
+# To move Postgres off this box: drop the `db` service, point
+# YAAF_DATABASE_URL at the real host on both `api` and `runner`, and keep
+# YAAF_MASTER_KEY identical to whatever encrypted the secrets already there.
+# The runner needs the database and the proxy; it does not need the API.
+
+say "Done"
+cat <<EOF
+
+  Dashboard   http://127.0.0.1:${PORT}/app
+$( [ "$BIND" = "127.0.0.1" ] && echo "  Tunnel      ssh -N -L ${PORT}:localhost:${PORT} $(whoami)@<this-host>" )
+  Login       the admin token below
+
+  YAAF_ADMIN_TOKEN=${YAAF_ADMIN_TOKEN}
+
+  Next: create a project in the dashboard. You will need an Anthropic API key
+  — no agent can run until the project has one. See docs/CREATING_A_PROJECT.md
+
+  Re-run this script any time; it is idempotent.
+EOF

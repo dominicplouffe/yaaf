@@ -155,13 +155,25 @@ export YAAF_API=http://localhost:8080
 
 ```bash
 sudo mkdir -p /var/lib/yaaf/workspaces /var/lib/yaaf/artifacts
+
+# Two secrets, generated once and kept — compose reads deploy/.env every boot.
+# The admin token logs you into the dashboard; the master key encrypts every
+# stored secret, so losing or changing it loses all of them. Details and the
+# rules each one must satisfy: deploy/.env.example.
+{ echo "YAAF_ADMIN_TOKEN=$(openssl rand -base64 32)"
+  echo "YAAF_MASTER_KEY=$(openssl rand -base64 32)"; } > deploy/.env
+
 docker build -f deploy/sandbox/Dockerfile -t yaaf-sandbox:latest .
-cd deploy && YAAF_ADMIN_TOKEN=… YAAF_MASTER_KEY=… docker compose up --build
+cd deploy && docker compose up --build      # reads ./.env automatically
 ```
 
 That starts Postgres, the API + web dashboard, the runner, and the egress
 proxy. Migrations apply themselves; `--profile s3` adds a MinIO artifact store.
 Full options in **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**.
+
+Installing on a box you SSH into rather than your own machine? The dashboard
+needs binding to loopback and the role library needs loading over HTTP — see
+**[Installing on a server you SSH into](docs/DEPLOYMENT.md#installing-on-a-server-you-ssh-into)**.
 
 Either way, open **http://localhost:8080/app**, log in with the admin token,
 and create a project from the wizard.

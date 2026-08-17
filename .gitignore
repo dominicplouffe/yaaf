@@ -8,6 +8,8 @@ __pycache__/
 data/
 *.db
 deploy/.env
+# Per-machine compose tweaks (loopback port binding on remote boxes, etc.)
+deploy/docker-compose.override.yml
 notes.txt
 web/node_modules/
 web/dist/

@@ -38,16 +38,158 @@ Open **http://localhost:8080/app** and log in with the admin token.
 # host/container paths.
 sudo mkdir -p /var/lib/yaaf/workspaces /var/lib/yaaf/artifacts
 
-# Generate a master key for secret encryption — losing it loses every secret.
-python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+# Two secrets, generated once and kept — see "The two secrets" below.
+{ echo "YAAF_ADMIN_TOKEN=$(openssl rand -base64 32)"
+  echo "YAAF_MASTER_KEY=$(openssl rand -base64 32)"; } > deploy/.env
 
 docker build -f deploy/sandbox/Dockerfile -t yaaf-sandbox:latest .
-cd deploy && YAAF_ADMIN_TOKEN=… YAAF_MASTER_KEY=… docker compose up --build
+cd deploy && docker compose up --build      # reads ./.env automatically
 ```
 
 Then open the dashboard at **http://localhost:8080/app**, create a project,
 connect billing in Settings, give your teams their credentials, and press
 start. See [CREATING_A_PROJECT.md](CREATING_A_PROJECT.md).
+
+### The two secrets
+
+Compose reads `deploy/.env` from the directory you run it in, which is why
+they go in a file rather than on the command line: both values must be
+**identical on every boot**, and both fail quietly rather than loudly if they
+are not. `deploy/.env.example` is an annotated template if you would rather
+fill them in by hand; `deploy/.env` itself is gitignored.
+
+**`YAAF_ADMIN_TOKEN`** — the bearer token for the admin/chairman API and the
+dashboard login. Any opaque string; it is compared verbatim, so length and
+alphabet are yours to choose. Omit it and compose substitutes
+`dev-admin-token`, the value printed throughout these docs.
+
+**`YAAF_MASTER_KEY`** — envelope-encrypts every stored secret (API keys, MCP
+URLs, connector credentials). This one is not free-form: it must be a Fernet
+key, 32 url-safe base64 bytes *with* padding. `openssl rand -base64 32`
+satisfies that, and so does the canonical generator if you have the library:
+
+```bash
+python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+What does **not** work is `secrets.token_urlsafe(32)`, the obvious Python
+idiom — it strips the base64 padding, so it looks correct and then raises
+`Fernet key must be 32 url-safe base64-encoded bytes` at the first secret you
+store.
+
+Changing the master key strands every secret already stored; leaving it unset
+makes the server refuse to read or write secrets at all, because compose
+substitutes an empty value. Neither is recoverable — back it up.
+
+---
+
+## Installing on a server you SSH into
+
+The quickstart above assumes you are sitting at the machine. On a remote box
+two things change: the dashboard should not be published to the world, and
+the role library has to be loaded over HTTP because `roles/` is deliberately
+not baked into the image.
+
+Everything below runs **on the server**. The only prerequisites are Docker
+with the compose plugin, `git`, and `openssl` — no Python, no Node. The `api`
+image builds the web UI itself.
+
+```bash
+# 0. Docker, if it isn't there yet. Log out and back in after the usermod.
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker "$USER"
+
+# 1. The code.
+git clone <your-yaaf-remote> yaaf && cd yaaf
+
+# 2. Host paths. Sandboxes are sibling containers, so the host path and the
+#    container path must be the same string or the mounts resolve to nothing.
+sudo mkdir -p /var/lib/yaaf/workspaces /var/lib/yaaf/artifacts
+
+# 3. The two secrets. See "The two secrets" above — back the master key up
+#    somewhere other than this box before you go further.
+{ echo "YAAF_ADMIN_TOKEN=$(openssl rand -base64 32)"
+  echo "YAAF_MASTER_KEY=$(openssl rand -base64 32)"; } > deploy/.env
+
+# 4. Keep the dashboard off the network. Compose merges this file
+#    automatically; it rebinds 8080 to loopback so you reach it over SSH.
+#    The `!override` tag is load-bearing — see the note below. (Compose 2.24.4+)
+cat > deploy/docker-compose.override.yml <<'YML'
+services:
+  api:
+    ports: !override
+      - "127.0.0.1:8080:8080"
+YML
+
+# 5. Both images — the sandbox one is separate and is not built by compose.
+docker build -f deploy/sandbox/Dockerfile -t yaaf-sandbox:latest .
+cd deploy && docker compose up -d --build && cd ..
+
+# 5b. Check the schema exists before going further. `docker compose ps` and
+#     /healthz both look fine on a box whose migrations never applied, and
+#     the first symptom is otherwise a wall of 500s in step 6.
+(cd deploy && docker compose exec -T api alembic current) | grep -q '(head)' \
+  && echo "schema OK" \
+  || echo "NO SCHEMA — run: docker compose exec -T api alembic upgrade head"
+
+# 6. The role library. `roles/` is not in the image, so this is an HTTP load
+#    from the checkout, not a `docker compose exec`.
+set -a; . deploy/.env; set +a
+for f in roles/*.json; do
+  curl -fsS -X POST http://localhost:8080/admin/roles \
+    -H "Authorization: Bearer $YAAF_ADMIN_TOKEN" \
+    -H "Content-Type: application/json" \
+    --data-binary @"$f" > /dev/null && echo "seeded ${f##*/}"
+done
+```
+
+Then, **from your laptop**, forward the port and open the dashboard at
+`http://localhost:8080/app`:
+
+```bash
+ssh -N -L 8080:localhost:8080 you@your-server
+```
+
+Log in with the `YAAF_ADMIN_TOKEN` from step 3 — you never see it printed, so
+read it back on the server with:
+
+```bash
+grep YAAF_ADMIN_TOKEN deploy/.env
+```
+
+Then follow [CREATING_A_PROJECT.md](CREATING_A_PROJECT.md). Have an Anthropic
+API key ready: you give it to the project in Settings, and no agent can run
+until you do.
+
+### Things that bite on a remote box
+
+**Publishing 8080 is not firewalled by ufw.** Docker writes its own iptables
+rules ahead of ufw's, so `ports: "8080:8080"` is reachable from anywhere the
+box is, whatever `ufw status` claims. The override in step 4 is what actually
+keeps it private — binding to `127.0.0.1` means there is nothing to firewall.
+Drop the override only when a TLS-terminating reverse proxy is in front,
+because the admin token is a static bearer sent on every request.
+
+**Without `!override`, that step silently does nothing.** Compose *appends*
+list values when it merges, so an override without the tag leaves you with
+both bindings — the loopback one you wanted and the original `0.0.0.0` one
+you were trying to remove. `docker compose config | grep -E 'host_ip|published'`
+is the check: exactly one `published: "8080"`, carrying `host_ip: 127.0.0.1`.
+
+**`docker compose exec api yaaf seed-roles roles/` looks like it works and
+does nothing.** The image has no `roles/` directory, and the command globs an
+empty path, prints nothing, and exits 0. Load them over HTTP as in step 6, or
+from a checkout with the CLI installed:
+`YAAF_API=… YAAF_ADMIN_TOKEN=… yaaf seed-roles roles/`.
+
+**Skipping the role seed is survivable.** The project wizard creates any roles
+a bundle needs at submit time, so a bundle-based project works on an unseeded
+deployment — but the role pickers are empty and a from-scratch project has
+nothing to staff itself with.
+
+**The sandbox image is not rebuilt by `docker compose up --build`.** It is a
+separate `docker build`. Forgetting it on a new box means runs start against a
+missing or stale image.
 
 Migrations apply themselves on boot (the image entrypoint runs Alembic before
 the server).
@@ -84,8 +226,8 @@ in env vars. See [GOVERNANCE.md](GOVERNANCE.md).
 | Variable | Default | Notes |
 |---|---|---|
 | `YAAF_DATABASE_URL` | `postgresql+psycopg://yaaf:yaaf@localhost:5432/yaaf` | SQLite works for dev |
-| `YAAF_ADMIN_TOKEN` | `dev-admin-token` | Bearer token for the admin/chairman API and dashboard login. **Change it.** |
-| `YAAF_MASTER_KEY` | — | Fernet key (urlsafe base64, 32 bytes) for envelope-encrypting secrets |
+| `YAAF_ADMIN_TOKEN` | `dev-admin-token` | Bearer token for the admin/chairman API and dashboard login. Any opaque string. **Change it** — see [The two secrets](#the-two-secrets) |
+| `YAAF_MASTER_KEY` | — | Fernet key (url-safe base64, 32 bytes, padded) for envelope-encrypting secrets — see [The two secrets](#the-two-secrets) |
 | `YAAF_API_BASE_URL` | `http://localhost:8080` | How sandboxes reach the platform API |
 | `YAAF_API_HOST` / `YAAF_API_PORT` | `0.0.0.0` / `8080` | |
 
