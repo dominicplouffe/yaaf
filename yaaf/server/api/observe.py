@@ -686,6 +686,9 @@ def runs(project_id: str, limit: int = 50, session: Session = Depends(db)) -> li
             "summary": r.summary,
             "has_trace": r.trace_path is not None,
             "has_context": r.context_path is not None,
+            # A resident chat session is meant to run for hours, so "running"
+            # alone cannot tell alive from hung. The heartbeat can.
+            "heartbeat_at": r.heartbeat_at.isoformat() if r.heartbeat_at else None,
             "started_at": r.started_at.isoformat() if r.started_at else None,
             "finished_at": r.finished_at.isoformat() if r.finished_at else None,
         }

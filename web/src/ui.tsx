@@ -143,7 +143,12 @@ export function runHealth(runs: RunRow[]) {
     (r) => r.started_at && new Date(r.started_at).toDateString() === today,
   );
   const clean = todays.filter((r) => r.status === "done").length;
-  const running = todays.filter((r) => r.status === "running").length;
+  // The resident chat session is presence, not work — the project bar has
+  // excluded it from "Working" since day one, and a tile that disagreed was
+  // how one live session read as an agent stuck for four hours.
+  const running = todays.filter(
+    (r) => r.status === "running" && r.kind !== "chat_session",
+  ).length;
   const early = todays.filter((r) => r.status in ENDED_EARLY);
   const usd = todays.reduce((sum, r) => sum + (r.cost_usd ?? 0), 0);
   const tokens = todays.reduce(

@@ -2,7 +2,7 @@ import { CSSProperties, Fragment, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Dashboard, get, getText, RunRow, SpendReport } from "../../api";
 import { fmtUsd, fmtWhen, usePoll } from "../../hooks";
-import { AsOf, downloadCsv, ExportCsv, fmtUnit, runHealth } from "../../ui";
+import { AsOf, downloadCsv, ExportCsv, fmtAgo, fmtUnit, runHealth } from "../../ui";
 
 interface LedgerRow {
   id: string;
@@ -29,6 +29,37 @@ function runBadge(status: string) {
             : "warn";
   const label = status === "terminated_refusals" ? "terminated · refusals" : status;
   return <span className={`badge ${cls}`}>{label}</span>;
+}
+
+/** What kind of thing this run is, in the words the rest of the product uses.
+    "agent" for everything-but-checks hid the one kind that behaves differently
+    from all the others. */
+function kindText(kind: string): string {
+  if (kind === "success_check") return "check";
+  if (kind === "chat_session") return "chat";
+  return "agent";
+}
+
+/** A resident chat session is exempt from the run timeout on purpose: it is
+    meant to stay open for hours, and only a stopped heartbeat means it died
+    (yaaf/server/janitor.py, reap_stale_runs). Rendered as plain "running" it
+    was indistinguishable from a work run hung past its 1800s reap — the same
+    word, the same colour, a start time from this morning. So say which one it
+    is, and prove it with the heartbeat rather than asking anyone to trust it. */
+function ResidentNote({ run }: { run: RunRow }) {
+  if (run.kind !== "chat_session" || run.status !== "running") return null;
+  const beat = run.heartbeat_at;
+  // One lease TTL (90s) is the janitor's own patience; past that it reaps.
+  const stale = beat !== null && Date.now() - new Date(beat).getTime() > 90_000;
+  return (
+    <div className="help">
+      {!beat
+        ? "resident · no heartbeat yet"
+        : stale
+          ? `resident · last heartbeat ${fmtAgo(beat)} — the janitor reaps it`
+          : `resident · alive, heartbeat ${fmtAgo(beat)}`}
+    </div>
+  );
 }
 
 function triggerText(trigger: Record<string, unknown>): string {
@@ -280,6 +311,7 @@ export default function Runs({ projectId, dash }: { projectId: string; dash: Das
           <div className="value">{health.running}</div>
           <div className="sub">
             {dash.runs.queued > 0 ? `${dash.runs.queued} queued behind them` : "nothing queued"}
+            {dash.chat_live && " · chat session resident"}
           </div>
         </div>
       </div>
@@ -373,9 +405,10 @@ export default function Runs({ projectId, dash }: { projectId: string; dash: Das
                   {run.agent_name ?? <span className="help">—</span>}
                   {run.team_name && <div className="help">{run.team_name}</div>}
                 </td>
-                <td className="mono">{run.kind === "success_check" ? "check" : "agent"}</td>
+                <td className="mono">{kindText(run.kind)}</td>
                 <td>
                   {runBadge(run.status)}
+                  <ResidentNote run={run} />
                   {run.refusals > 0 && (
                     <div className="help">{run.refusals} refusal(s)</div>
                   )}

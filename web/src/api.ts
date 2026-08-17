@@ -311,6 +311,9 @@ export interface RunRow {
   summary: string | null;
   has_trace: boolean;
   has_context: boolean;
+  /** Last lease heartbeat. The only thing that separates a live resident chat
+      session from a hung run, since both read as "running" for hours. */
+  heartbeat_at: string | null;
   started_at: string | null;
   finished_at: string | null;
 }

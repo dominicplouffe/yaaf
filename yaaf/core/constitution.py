@@ -163,7 +163,9 @@ class ConstitutionDoc(BaseModel):
     # Runs
     run_timeout_s: int = _rule(
         1800, ge=60, group="Runs", label="Run timeout (seconds)",
-        help="A run past this is reaped and its task claim released.")
+        help="A run past this is reaped and its task claim released. The CEO's "
+             "resident chat session is exempt — it is meant to stay open for "
+             "hours and dies only when its heartbeat stops.")
 
     @field_validator("chairman_report_window_local")
     @classmethod
