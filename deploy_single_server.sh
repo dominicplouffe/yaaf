@@ -210,17 +210,58 @@ fi
 # YAAF_MASTER_KEY identical to whatever encrypted the secrets already there.
 # The runner needs the database and the proxy; it does not need the API.
 
-say "Done"
+say "Running"
+cat <<EOF
+  Postgres, the API + dashboard, the runner and the egress proxy, all in
+  Docker on this box. Postgres publishes no port — only the other containers
+  can reach it, and compose passes them YAAF_DATABASE_URL directly, so there
+  is nothing for you to set.
+EOF
+
+# The token is generated once and never printed again unless asked for, so
+# print it plainly here: it is the whole of the login, and a first install
+# that ends without it strands you at the sign-in screen.
+printf '\n\033[1m==> HOW TO LOG IN\033[0m\n'
+if [ "$BIND" = "127.0.0.1" ]; then
+  cat <<EOF
+
+  1. From your laptop, open the tunnel (leave it running):
+
+       ssh -N -L ${PORT}:localhost:${PORT} $(whoami)@<this-host>
+
+  2. Browse to:
+
+       http://localhost:${PORT}/app
+
+  3. Paste this admin token when it asks:
+
+       ${YAAF_ADMIN_TOKEN}
+EOF
+else
+  cat <<EOF
+
+  1. Browse to:
+
+       http://<this-host>:${PORT}/app
+
+  2. Paste this admin token when it asks:
+
+       ${YAAF_ADMIN_TOKEN}
+EOF
+fi
+
 cat <<EOF
 
-  Dashboard   http://127.0.0.1:${PORT}/app
-$( [ "$BIND" = "127.0.0.1" ] && echo "  Tunnel      ssh -N -L ${PORT}:localhost:${PORT} $(whoami)@<this-host>" )
-  Login       the admin token below
+  Lost it? It is not regenerated — read it back with:
 
-  YAAF_ADMIN_TOKEN=${YAAF_ADMIN_TOKEN}
+       grep YAAF_ADMIN_TOKEN deploy/.env
 
-  Next: create a project in the dashboard. You will need an Anthropic API key
-  — no agent can run until the project has one. See docs/CREATING_A_PROJECT.md
+  That token is also the bearer for the admin API and the yaaf CLI.
+
+  Next: create a project in the dashboard. That step needs an Anthropic API
+  key, which this script does NOT create — bring your own from
+  console.anthropic.com and give it to the project in Settings. No agent can
+  run until it has one. See docs/CREATING_A_PROJECT.md
 
   Re-run this script any time; it is idempotent.
 EOF
