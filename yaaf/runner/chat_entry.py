@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import time
 
 import sandbox_entry as base
 from claude_agent_sdk import (
@@ -37,26 +38,44 @@ HISTORY_BOOTSTRAP = 30
 # uncut ones would put ~150k tokens into the first turn of every session.
 CHAT_HISTORY_MSG_CHARS = 1_000
 
-# Consecutive auth failures before concluding the token was revoked (project
-# paused, kill switch) and exiting for the supervisor to see.
+# Only a genuine 401/403 means the token was revoked (project paused, kill
+# switch) — anything else is the API restarting, the proxy hiccuping, or a
+# timeout, and killing a healthy session over six bad seconds of network was
+# a top cause of the restart churn. Transients back off and only give up
+# after TRANSIENT_EXIT_S of continuous failure.
 AUTH_FAILURES_TO_EXIT = 3
+BOOT_AUTH_FAILURES_TO_EXIT = 10
+TRANSIENT_BACKOFF_START_S = 2.0
+TRANSIENT_BACKOFF_MAX_S = 30.0
+TRANSIENT_EXIT_S = 300.0
+# A failed turn no longer kills the process: the SDK client is rebuilt
+# in-process (the CLI under it is a subprocess that can legitimately die,
+# e.g. at the max_turns backstop). This caps the rebuilds per session so a
+# systematically broken SDK still surfaces to the supervisor.
+MAX_CLIENT_REBUILDS = 5
 
 
 def _log(text: str) -> None:
     print(f"[chat_entry] {text}", file=sys.stderr, flush=True)
 
 
-def _boardroom_channel() -> tuple[str, int] | None:
-    """(channel_id, unread_count) for the boardroom, or None on any failure —
-    the unread count is captured BEFORE the first read advances the cursor,
-    so a session that boots onto a waiting chairman message answers it."""
+def _failure_kind(status: int) -> str:
+    """401/403 = the token is genuinely dead; everything else (0 = transport
+    exception, 5xx, 429, 404) is transient until proven otherwise."""
+    return "auth" if status in (401, 403) else "transient"
+
+
+def _boardroom_channel() -> tuple[int, tuple[str, int] | None]:
+    """(status, (channel_id, unread_count)) for the boardroom — the unread
+    count is captured BEFORE the first read advances the cursor, so a session
+    that boots onto a waiting chairman message answers it."""
     result = base._call("GET", "/agent/channels")
     if result["status"] != 200:
-        return None
+        return result["status"], None
     for channel in result["body"]:
         if channel.get("kind") == "boardroom":
-            return str(channel["id"]), int(channel.get("unread", 0))
-    return None
+            return 200, (str(channel["id"]), int(channel.get("unread", 0)))
+    return 200, None
 
 
 def _split_backlog(messages: list[dict], unread: int) -> tuple[list[dict], list[dict]]:
@@ -69,12 +88,12 @@ def _split_backlog(messages: list[dict], unread: int) -> tuple[list[dict], list[
     return history, [m for m in tail if m.get("from_user")]
 
 
-def _read_messages(channel_id: str, limit: int = 50) -> list[dict] | None:
+def _read_messages(channel_id: str, limit: int = 50) -> tuple[int, list[dict] | None]:
     result = base._call("GET", "/agent/messages",
                         params={"channel_id": channel_id, "limit": limit})
     if result["status"] != 200:
-        return None
-    return list(result["body"])
+        return result["status"], None
+    return 200, list(result["body"])
 
 
 def _set_typing(channel_id: str, seconds: float) -> None:
@@ -117,8 +136,21 @@ def _transcript_block(messages: list[dict]) -> str:
     return "\n".join(lines)
 
 
+class TurnFailed(Exception):
+    """The CLI reported the turn as an error (error_max_turns,
+    error_during_execution, ...) — the reply text cannot be trusted."""
+
+
+def _turn_result_ok(result) -> bool:
+    if getattr(result, "is_error", False):
+        return False
+    subtype = getattr(result, "subtype", None)
+    return subtype in (None, "success")
+
+
 # total_cost_usd is cumulative across the SDK session; tokens in usage are per
 # response. Book the cost delta so a long-lived session never double-bills.
+# Reset whenever a new SDK client (= new CLI process) starts.
 _cost_booked = 0.0
 
 
@@ -127,6 +159,7 @@ async def _run_turn(client: ClaudeSDKClient, channel_id: str, prompt: str) -> st
     meter usage, return the reply text."""
     global _cost_booked
     reply_parts: list[str] = []
+    result = None
     await client.query(prompt)
     async for message in client.receive_response():
         if isinstance(message, AssistantMessage):
@@ -135,16 +168,134 @@ async def _run_turn(client: ClaudeSDKClient, channel_id: str, prompt: str) -> st
                 if isinstance(block, TextBlock):
                     reply_parts.append(block.text)
         elif isinstance(message, ResultMessage):
+            result = message
             tokens_in, tokens_out, cache_creation, cache_read = _usage_tokens(message)
             cost_delta = None
             if message.total_cost_usd is not None:
                 cost_delta = max(0.0, message.total_cost_usd - _cost_booked)
                 _cost_booked = max(_cost_booked, message.total_cost_usd)
             _book_usage(tokens_in, tokens_out, cache_creation, cache_read, cost_delta)
+    if result is not None and not _turn_result_ok(result):
+        raise TurnFailed(getattr(result, "subtype", "unknown"))
     return "\n".join(part for part in reply_parts if part.strip())
 
 
+async def _resolve_boardroom() -> tuple[str, int] | None:
+    auth_failures = 0
+    transient_since = None
+    delay = TRANSIENT_BACKOFF_START_S
+    while True:
+        status, resolved = _boardroom_channel()
+        if resolved is not None:
+            return resolved
+        if _failure_kind(status) == "auth":
+            auth_failures += 1
+            if auth_failures >= BOOT_AUTH_FAILURES_TO_EXIT:
+                _log(f"boardroom auth-refused {auth_failures}x (status {status}); "
+                     "exiting for the supervisor")
+                return None
+            _log(f"boardroom auth failure (status {status}); retrying")
+            await asyncio.sleep(POLL_S)
+        else:
+            now = time.monotonic()
+            transient_since = transient_since if transient_since is not None else now
+            if now - transient_since >= TRANSIENT_EXIT_S:
+                _log(f"boardroom unreachable for {TRANSIENT_EXIT_S:.0f}s "
+                     f"(last status {status}); exiting for the supervisor")
+                return None
+            _log(f"boardroom not resolvable yet (status {status}); retrying")
+            await asyncio.sleep(delay)
+            delay = min(TRANSIENT_BACKOFF_MAX_S, delay * 2)
+
+
+async def _serve(client: ClaudeSDKClient, channel_id: str, state: dict) -> int | None:
+    """The poll/compose loop on one SDK client. Returns an exit code to end
+    the process, or None to have the caller rebuild the client and carry on."""
+    auth_failures = 0
+    transient_since = None
+    delay = TRANSIENT_BACKOFF_START_S
+    first_turn = True
+    while True:
+        if state["backlog"]:
+            fresh, state["backlog"] = state["backlog"], []
+        else:
+            status, messages = _read_messages(channel_id)
+            if messages is None:
+                if _failure_kind(status) == "auth":
+                    auth_failures += 1
+                    if auth_failures >= AUTH_FAILURES_TO_EXIT:
+                        _log(f"token revoked (status {status}); exiting for the supervisor")
+                        return 0
+                    await asyncio.sleep(POLL_S)
+                else:
+                    now = time.monotonic()
+                    transient_since = transient_since if transient_since is not None else now
+                    if now - transient_since >= TRANSIENT_EXIT_S:
+                        _log(f"API unreachable for {TRANSIENT_EXIT_S:.0f}s "
+                             f"(last status {status}); exiting for the supervisor")
+                        return 1
+                    await asyncio.sleep(delay)
+                    delay = min(TRANSIENT_BACKOFF_MAX_S, delay * 2)
+                continue
+            auth_failures = 0
+            transient_since = None
+            delay = TRANSIENT_BACKOFF_START_S
+
+            seen_ids = [m["id"] for m in messages]
+            start = seen_ids.index(state["last_seen"]) + 1 \
+                if state["last_seen"] in seen_ids else 0
+            fresh = [m for m in messages[start:] if m.get("from_user")]
+            if messages:
+                state["last_seen"] = messages[-1]["id"]
+            if not fresh:
+                await asyncio.sleep(POLL_S)
+                continue
+
+        _set_typing(channel_id, 120)
+        # Carry the message id: a standing instruction he gives here has to
+        # be citable to `directive_file`, and without the id the CEO can
+        # only write it down and hope the next run reads the note.
+        prompt_lines = [f"Chairman [{m['id']}]: {m['body']}" for m in fresh]
+        prompt = "\n".join(prompt_lines)
+        if first_turn:
+            preamble = ""
+            if state["history"]:
+                preamble += ("Boardroom conversation so far (you may have replied via "
+                             "earlier runs — do not re-answer it):\n"
+                             f"{_transcript_block(state['history'])}\n\n")
+            if base.MOUNT_PROBLEMS:
+                preamble += "Data source problems this session:\n" + \
+                    "\n".join(base.MOUNT_PROBLEMS) + "\n\n"
+            prompt = preamble + "The chairman just said:\n" + prompt
+            first_turn = False
+
+        try:
+            reply = await _run_turn(client, channel_id, prompt)
+        except Exception as exc:
+            _log(f"turn failed: {exc!r}; rebuilding the SDK client")
+            _set_typing(channel_id, 0)
+            ids_ = {m["id"] for m in fresh}
+            if ids_ and not state["retried"].intersection(ids_):
+                # Retry the failed message exactly once on the fresh client;
+                # a message that kills two clients is poison — apologize and
+                # move on rather than crash-loop on it.
+                state["retried"].update(ids_)
+                state["backlog"] = fresh + state["backlog"]
+            else:
+                _post_reply(channel_id,
+                            "I hit an internal error composing that reply — the platform "
+                            f"will surface it in my session logs. ({type(exc).__name__})")
+            return None
+
+        _set_typing(channel_id, 0)
+        if reply and not _post_reply(channel_id, reply):
+            _log("reply post refused or failed; leaving it in the logs:\n" + reply[:500])
+        # Anything the chairman sent while we were composing is picked up
+        # on the next poll — immediately, not next tick.
+
+
 async def main() -> int:
+    global _cost_booked
     server = create_sdk_mcp_server(name="yaaf", version="1.0.0", tools=base.ALL_TOOLS)
     options = ClaudeAgentOptions(
         system_prompt=(base.STAGING / "system_prompt.txt").read_text(),
@@ -156,100 +307,56 @@ async def main() -> int:
         permission_mode="bypassPermissions",  # containment is the sandbox + proxy + API
         cwd="/workspace",
         setting_sources=[],
-        max_turns=30,
+        # A runaway backstop, not a lifetime budget: the old value (30) was
+        # cumulative across the CLI process and quietly killed every busy
+        # session — tool calls count as turns.
+        max_turns=1000,
         # Same live lesson as sandbox_entry: a real data pull can exceed the
         # SDK's default 1MB transport buffer.
         max_buffer_size=16 * 1024 * 1024,
     )
 
-    resolved = None
-    boot_failures = 0
-    while resolved is None:
-        resolved = _boardroom_channel()
-        if resolved is None:
-            boot_failures += 1
-            # A dead token 401s here forever; a booting API recovers in a few
-            # ticks. Persistent failure means exit and let the supervisor
-            # start a clean session — a zombie that retries forever also
-            # silently suppresses the fallback wake path (seen live).
-            if boot_failures >= 10:
-                _log("boardroom unresolvable after repeated attempts; exiting for the supervisor")
-                return 1
-            _log("boardroom not resolvable yet; retrying")
-            await asyncio.sleep(POLL_S)
+    resolved = await _resolve_boardroom()
+    if resolved is None:
+        return 1
     channel_id, unread = resolved
 
     # Baseline read advances the cursor. What some earlier run already read is
     # history; the unread tail is a backlog this session answers immediately —
     # a chairman must never be silently skipped because a session restarted.
-    messages = _read_messages(channel_id) or []
+    _, messages = _read_messages(channel_id)
+    messages = messages or []
     history, backlog = _split_backlog(messages, unread)
-    last_seen = messages[-1]["id"] if messages else None
-    first_turn = True
-    auth_failures = 0
+    state = {
+        "last_seen": messages[-1]["id"] if messages else None,
+        "history": history,
+        "backlog": backlog,
+        "retried": set(),
+    }
 
     _log(f"chat session live on {channel_id}; {len(history)} message(s) of history, "
          f"{len(backlog)} awaiting an answer")
 
-    async with ClaudeSDKClient(options) as client:
-        while True:
-            if backlog:
-                fresh, backlog = backlog, []
-            else:
-                messages = _read_messages(channel_id)
-                if messages is None:
-                    auth_failures += 1
-                    if auth_failures >= AUTH_FAILURES_TO_EXIT:
-                        _log("token appears revoked; exiting for the supervisor")
-                        return 0
-                    await asyncio.sleep(POLL_S)
-                    continue
-                auth_failures = 0
-
-                seen_ids = [m["id"] for m in messages]
-                start = seen_ids.index(last_seen) + 1 if last_seen in seen_ids else 0
-                fresh = [m for m in messages[start:] if m.get("from_user")]
-                if messages:
-                    last_seen = messages[-1]["id"]
-                if not fresh:
-                    await asyncio.sleep(POLL_S)
-                    continue
-
-            _set_typing(channel_id, 120)
-            # Carry the message id: a standing instruction he gives here has to
-            # be citable to `directive_file`, and without the id the CEO can
-            # only write it down and hope the next run reads the note.
-            prompt_lines = [f"Chairman [{m['id']}]: {m['body']}" for m in fresh]
-            prompt = "\n".join(prompt_lines)
-            if first_turn:
-                preamble = ""
-                if history:
-                    preamble += ("Boardroom conversation so far (you may have replied via "
-                                 "earlier runs — do not re-answer it):\n"
-                                 f"{_transcript_block(history)}\n\n")
-                if base.MOUNT_PROBLEMS:
-                    preamble += "Data source problems this session:\n" + \
-                        "\n".join(base.MOUNT_PROBLEMS) + "\n\n"
-                prompt = preamble + "The chairman just said:\n" + prompt
-                first_turn = False
-
-            try:
-                reply = await _run_turn(client, channel_id, prompt)
-            except Exception as exc:
-                _log(f"turn failed: {exc!r}")
-                _set_typing(channel_id, 0)
-                _post_reply(channel_id,
-                            "I hit an internal error composing that reply — the platform "
-                            f"will surface it in my session logs. ({type(exc).__name__})")
-                # A broken SDK session cannot be trusted for the next turn;
-                # exit and let the supervisor start a clean one.
-                return 1
-
-            _set_typing(channel_id, 0)
-            if reply and not _post_reply(channel_id, reply):
-                _log("reply post refused or failed; leaving it in the logs:\n" + reply[:500])
-            # Anything the chairman sent while we were composing is picked up
-            # on the next poll — immediately, not next tick.
+    rebuilds = 0
+    while True:
+        _cost_booked = 0.0  # new CLI process: its cumulative total_cost_usd restarts at 0
+        try:
+            async with ClaudeSDKClient(options) as client:
+                code = await _serve(client, channel_id, state)
+                if code is not None:
+                    return code
+        except Exception as exc:
+            _log(f"sdk client failed: {exc!r}")
+        rebuilds += 1
+        if rebuilds > MAX_CLIENT_REBUILDS:
+            _log("sdk client rebuilt too many times; exiting for the supervisor")
+            return 1
+        # The new client has no model context: refresh history so its first
+        # turn re-primes with the transcript.
+        _, messages = _read_messages(channel_id)
+        if messages:
+            state["history"] = messages
+        await asyncio.sleep(POLL_S)
 
 
 if __name__ == "__main__":

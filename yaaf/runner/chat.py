@@ -96,14 +96,42 @@ def chat_supervisor_loop() -> None:  # pragma: no cover - thin loop
 
 def chat_supervisor_once() -> None:
     with db_session() as session:
-        for project in session.execute(select(Project)).scalars():
-            try:
-                _supervise_project(session, project)
-            except Exception:
-                log.warning("chat supervision failed for %s", project.slug, exc_info=True)
+        project_ids = [p.id for p in session.execute(select(Project)).scalars()]
+    for project_id in project_ids:
+        try:
+            _supervise_one(project_id)
+        except Exception:
+            log.warning("chat supervision failed for %s", project_id, exc_info=True)
 
 
-def _supervise_project(session: Session, project: Project) -> None:
+def _supervise_one(project_id: str) -> None:
+    """One project per transaction — and the container starts only AFTER the
+    transaction commits. The container's first authenticated call must find
+    the run row and token_hash already visible; starting it mid-transaction
+    made every boot 401 until the whole supervisor loop committed, which was
+    the root cause of the "lost or mismatched" restart churn."""
+    launch: dict | None = None
+    run_id: str | None = None
+    with db_session() as session:
+        project = session.get(Project, project_id)
+        if project is not None:
+            launch, run_id = _supervise_project(session, project)
+    if launch is None:
+        return
+    try:
+        sandbox.start_chat_container(**launch)
+        log.info("chat session started (%s)", run_id)
+    except Exception as exc:
+        log.warning("chat container failed to start for run %s", run_id, exc_info=True)
+        with db_session() as session:
+            run = session.get(Run, run_id)
+            if run is not None and run.status == RunStatus.RUNNING:
+                run.status = RunStatus.FAILED
+                run.finished_at = utcnow()
+                run.summary = f"chat container failed to start: {exc!r}"[:4000]
+
+
+def _supervise_project(session: Session, project: Project) -> tuple[dict | None, str | None]:
     should_be_live = (
         project.status == ProjectStatus.RUNNING
         and chat_enabled(project)
@@ -123,7 +151,7 @@ def _supervise_project(session: Session, project: Project) -> None:
                          f"chat session ended: project is {project.status}"
                          if project.status != ProjectStatus.RUNNING
                          else "chat session ended: chat disabled or billing detached")
-        return
+        return None, None
 
     ceo = session.execute(
         select(Agent).where(Agent.project_id == project.id,
@@ -131,19 +159,23 @@ def _supervise_project(session: Session, project: Project) -> None:
                             Agent.status == AgentStatus.ACTIVE)
     ).scalars().first()
     if ceo is None:
-        return
+        # A bare return here used to leak a heartbeating run + live container
+        # until the janitor reaped them.
+        if live_run is not None or running_ids:
+            _end_session(session, project, live_run, "chat session ended: no active CEO")
+        return None, None
 
     if live_run is not None:
         if live_run.token_revoked:
             _end_session(session, project, live_run, "chat session ended: token revoked")
-            return
+            return None, None
         # Liveness means THE container for THIS run — a running container whose
         # run died (deploy-time reap race) is a zombie polling with a dead
         # token, and adopting it mutes the boardroom entirely: the run row
         # heartbeat suppresses the fallback wakes while nobody actually reads.
         if running_ids == {live_run.id}:
             live_run.heartbeat_at = utcnow()  # the supervisor tick is the lease heartbeat
-            return
+            return None, None
         if running_ids:
             log.warning("chat container mismatch for %s (have %s, want %s); rebuilding",
                         project.slug, running_ids, live_run.id)
@@ -170,14 +202,19 @@ def _supervise_project(session: Session, project: Project) -> None:
         sandbox.stop_chat_container(project.id)
 
     window_start = utcnow() - RESTART_WINDOW
+    # Only this worker's involuntary starts count: KILLED runs are deliberate
+    # ends (pause/resume, billing detach) and other workers own their own
+    # windows — neither should be able to lock this box out of the chat lane.
     recent_starts = session.execute(
         select(func.count(Run.id)).where(Run.project_id == project.id,
                                          Run.kind == RunKind.CHAT_SESSION,
+                                         Run.worker == settings().worker_name,
+                                         Run.status != RunStatus.KILLED,
                                          Run.created_at >= window_start)
     ).scalar_one()
     if recent_starts >= MAX_STARTS_IN_WINDOW:
-        return  # boot-looping; hold until the window drains
-    _start_session(session, project, ceo)
+        return None, None  # boot-looping; hold until the window drains
+    return _prepare_session(session, project, ceo)
 
 
 def _end_session(session: Session, project: Project, live_run: Run | None,
@@ -191,7 +228,10 @@ def _end_session(session: Session, project: Project, live_run: Run | None,
     log.info("chat session for %s ended: %s", project.slug, why)
 
 
-def _start_session(session: Session, project: Project, ceo: Agent) -> None:
+def _prepare_session(session: Session, project: Project, ceo: Agent) -> tuple[dict, str]:
+    """Everything a session start needs EXCEPT the container start: the run
+    row, token, staged prompt, and launch kwargs. The caller starts the
+    container after this transaction commits."""
     role_version = role_version_for(session, ceo)
     run = Run(
         id=ids.new_id(ids.RUN),
@@ -255,7 +295,7 @@ def _start_session(session: Session, project: Project, ceo: Agent) -> None:
         "YAAF_TOOL_PERMISSIONS": json.dumps(job.tool_permissions),
         **job.billing_env,
     }
-    sandbox.start_chat_container(
+    launch = dict(
         project_id=project.id,
         run_id=run.id,
         name=f"yaaf-chat-{project.slug}",
@@ -263,4 +303,5 @@ def _start_session(session: Session, project: Project, ceo: Agent) -> None:
         env=env,
         proxy_url=job.egress_proxy_url,
     )
-    log.info("chat session started for %s (%s)", project.slug, run.id)
+    log.info("chat session prepared for %s (%s)", project.slug, run.id)
+    return launch, run.id

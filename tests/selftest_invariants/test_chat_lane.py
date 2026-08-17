@@ -375,6 +375,183 @@ def test_chat_harness_speaks_real_api_paths(client, monkeypatch):
             f"chat harness calls {method} {path}, which the app does not serve"
 
 
+def test_container_starts_only_after_the_run_is_visible(client, monkeypatch):
+    """H1 of the restart churn: the container's first authenticated call must
+    find the run row and token already committed. A probe standing in for the
+    container checks visibility from its own DB connection at launch time."""
+    from yaaf.runner import chat, sandbox
+
+    seen = {}
+
+    def probing_start(*, project_id, run_id, **kw):
+        with db_session() as session:  # the container's-eye view
+            run = session.get(Run, run_id)
+            seen["visible"] = run is not None
+            seen["running"] = run is not None and run.status == RunStatus.RUNNING
+            seen["token"] = bool(run.token_hash) if run is not None else False
+        return "cid"
+
+    monkeypatch.setattr(sandbox, "start_chat_container", probing_start)
+    monkeypatch.setattr(sandbox, "chat_container_run_ids", lambda pid: set())
+    monkeypatch.setattr(sandbox, "stop_chat_container", lambda pid: "")
+    project = make_project(client)
+    _attach_billing(client, project["id"])
+    chat.chat_supervisor_once()
+    assert seen == {"visible": True, "running": True, "token": True}
+
+
+def test_failed_container_start_fails_the_run(client, monkeypatch):
+    from yaaf.runner import chat, sandbox
+
+    monkeypatch.setattr(sandbox, "chat_container_run_ids", lambda pid: set())
+    monkeypatch.setattr(sandbox, "stop_chat_container", lambda pid: "")
+
+    def boom(**kw):
+        raise RuntimeError("no docker today")
+
+    monkeypatch.setattr(sandbox, "start_chat_container", boom)
+    project = make_project(client)
+    _attach_billing(client, project["id"])
+    chat.chat_supervisor_once()
+    with db_session() as session:
+        run = session.query(Run).filter_by(kind="chat_session").one()
+        assert run.status == RunStatus.FAILED
+        assert "failed to start" in (run.summary or "")
+
+
+def test_restart_backstop_ignores_kills_and_other_workers(client, monkeypatch):
+    """Deliberate ends (pause/resume churn) and other workers' failures must
+    not lock this box out of the chat lane."""
+    from yaaf.runner import chat
+
+    state = _fake_sandbox(monkeypatch)
+    project = make_project(client)
+    _attach_billing(client, project["id"])
+    with db_session() as session:
+        for worker, status in [(settings().worker_name, RunStatus.KILLED),
+                               (settings().worker_name, RunStatus.KILLED),
+                               ("elsewhere", RunStatus.FAILED),
+                               ("elsewhere", RunStatus.FAILED),
+                               ("elsewhere", RunStatus.FAILED)]:
+            session.add(Run(id=ids.new_id(ids.RUN), project_id=project["id"],
+                            agent_id=_ceo_id(project), kind="chat_session",
+                            trigger={"type": "chat_session"}, status=status,
+                            worker=worker))
+    chat.chat_supervisor_once()
+    assert state["started"] == [project["id"]]
+
+
+def test_inactive_ceo_ends_the_session(client, monkeypatch):
+    """A paused CEO used to leave a heartbeating run and a live container for
+    the janitor to reap; now the supervisor ends the session itself."""
+    from yaaf.core.models import Agent
+    from yaaf.runner import chat
+
+    state = _fake_sandbox(monkeypatch)
+    project = make_project(client)
+    _attach_billing(client, project["id"])
+    chat.chat_supervisor_once()
+    with db_session() as session:
+        run_id = session.query(Run).filter_by(kind="chat_session",
+                                              status=RunStatus.RUNNING).one().id
+        session.get(Agent, _ceo_id(project)).status = "paused"
+    chat.chat_supervisor_once()
+    assert state["stopped"] == [project["id"]]
+    with db_session() as session:
+        ended = session.get(Run, run_id)
+        assert ended.status == RunStatus.KILLED
+        assert "no active CEO" in (ended.summary or "")
+
+
+def test_chat_forensics_name_the_cause_of_death():
+    """Exit code, OOM flag, and uptime turn four indistinguishable deaths into
+    four different lines in the run summary."""
+    from yaaf.runner import sandbox
+
+    class FakeContainer:
+        def __init__(self, exit_code, oom, log):
+            self.attrs = {"State": {"ExitCode": exit_code, "OOMKilled": oom,
+                                    "Error": "", "StartedAt": "2026-08-17T00:00:00Z",
+                                    "FinishedAt": "2026-08-17T00:00:05Z"}}
+            self._log = log
+
+        def reload(self):
+            pass
+
+        def logs(self, **kw):
+            return self._log.encode()
+
+    oom = sandbox._chat_forensics(FakeContainer(137, True, "boom"))
+    assert "exit=137" in oom and "oom=True" in oom and "boom" in oom
+    clean = sandbox._chat_forensics(FakeContainer(0, False, "bye"))
+    assert "exit=0" in clean and "bye" in clean
+
+
+def test_stop_chat_container_keeps_every_containers_logs(monkeypatch):
+    """The mismatch case has two corpses; discarding all but the last one's
+    logs was hiding exactly the evidence that mattered."""
+    import sys
+    import types
+
+    from yaaf.runner import sandbox
+
+    class FakeContainer:
+        def __init__(self, log):
+            self.attrs = {"State": {"ExitCode": 1, "OOMKilled": False, "Error": "",
+                                    "StartedAt": "s", "FinishedAt": "f"}}
+            self._log = log
+
+        def reload(self):
+            pass
+
+        def logs(self, **kw):
+            return self._log.encode()
+
+        def stop(self, timeout=None):
+            pass
+
+        def remove(self, force=False):
+            pass
+
+    fake_docker = types.SimpleNamespace()
+    containers = types.SimpleNamespace(
+        list=lambda all=False, filters=None: [FakeContainer("first corpse"),
+                                              FakeContainer("second corpse")])
+    fake_docker.from_env = lambda: types.SimpleNamespace(containers=containers)
+    monkeypatch.setitem(sys.modules, "docker", fake_docker)
+    combined = sandbox.stop_chat_container("proj_x")
+    assert "first corpse" in combined and "second corpse" in combined
+
+
+def test_chat_entry_failure_taxonomy(client, monkeypatch):
+    """401/403 mean the token is dead; everything else is weather. And a turn
+    whose ResultMessage says error must raise, not return a broken reply."""
+    import importlib
+    import sys
+
+    monkeypatch.setenv("YAAF_API_BASE_URL", "http://api:8080")
+    monkeypatch.setenv("YAAF_API_TOKEN", "test-token")
+    monkeypatch.setenv("YAAF_RUN_ID", "run_test")
+    monkeypatch.setenv("YAAF_TOOL_PERMISSIONS", "{}")
+    import yaaf.runner.sandbox_entry as sandbox_entry_module
+
+    sys.modules["sandbox_entry"] = importlib.reload(sandbox_entry_module)
+    chat_entry = importlib.import_module("yaaf.runner.chat_entry")
+
+    assert chat_entry._failure_kind(401) == "auth"
+    assert chat_entry._failure_kind(403) == "auth"
+    for status in (0, 404, 429, 500, 502):
+        assert chat_entry._failure_kind(status) == "transient", status
+
+    def result(is_error, subtype):
+        return type("R", (), {"is_error": is_error, "subtype": subtype})()
+
+    assert chat_entry._turn_result_ok(result(False, "success"))
+    assert not chat_entry._turn_result_ok(result(True, "success"))
+    assert not chat_entry._turn_result_ok(result(False, "error_max_turns"))
+    assert not chat_entry._turn_result_ok(result(False, "error_during_execution"))
+
+
 def test_socket_mode_trusts_exactly_one_human():
     cfg = {"channel": "C123", "chairman": "U777"}
 

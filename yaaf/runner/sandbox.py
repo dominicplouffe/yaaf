@@ -191,21 +191,39 @@ def chat_container_run_ids(project_id: str) -> set[str]:
 
 
 def stop_chat_container(project_id: str) -> str:
-    """Stop and remove the project's chat container(s); returns the last logs
-    for the session run's summary."""
+    """Stop and remove the project's chat container(s); returns forensics +
+    logs for every container found — the corpse is removed here, so this is
+    the only chance to record why it died."""
     import docker
 
     client = docker.from_env()
-    logs = ""
+    sections = []
     for container in client.containers.list(
         all=True, filters={"label": f"{CHAT_LABEL}={project_id}"}
     ):
-        logs = _container_logs(container)
+        sections.append(_chat_forensics(container))
         with contextlib.suppress(Exception):
             container.stop(timeout=5)
         with contextlib.suppress(Exception):
             container.remove(force=True)
-    return logs
+    return "\n---\n".join(sections)
+
+
+def _chat_forensics(container) -> str:
+    """One header line of death-cause facts (exit code, OOM, uptime) + the logs.
+    Distinguishes a 401 boot-loop (exit 1, seconds of uptime) from a clean
+    poll-loop exit (0), a failed turn (1, long uptime), and an OOM kill
+    (137, OOMKilled=True) — previously all identical 'lost' deaths."""
+    header = ""
+    with contextlib.suppress(Exception):
+        container.reload()
+        state = container.attrs.get("State", {})
+        header = ("exit={exit} oom={oom} error={err!r} started={start} finished={fin}".format(
+            exit=state.get("ExitCode"), oom=state.get("OOMKilled"),
+            err=state.get("Error") or "", start=state.get("StartedAt"),
+            fin=state.get("FinishedAt")))
+    logs = _container_logs(container)
+    return (header + "\n" + logs).strip() or "(no container state or logs available)"
 
 
 def _container_logs(container) -> str:
