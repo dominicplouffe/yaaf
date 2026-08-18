@@ -77,7 +77,10 @@ async def t_board(args):
     "Create a task. CEO only for team tasks; team leads create subtasks (assignments) "
     "under a team task they claimed. success_test must be "
     '{"type":"command","command":...} (platform-executed) or '
-    '{"type":"observable","target":...}.',
+    '{"type":"observable","target":...}. '
+    "not_before is an ISO 8601 datetime before which the task cannot be claimed and "
+    "wakes nobody — use it to lay work out in time (a weekly rhythm, a step that only "
+    "makes sense after another lands) instead of creating it all at once.",
     {
         "team_id": str,
         "title": str,
@@ -87,6 +90,7 @@ async def t_board(args):
         "parent_task_id": str,
         "assignee_agent_id": str,
         "hypothesis_id": str,
+        "not_before": str,
     },
 )
 async def t_task_create(args):

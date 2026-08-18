@@ -549,3 +549,86 @@ def test_janitor_still_releases_a_genuinely_abandoned_claim(client):
         row = session.get(Task, task_id)
         assert row.status == "ready"
         assert row.claimed_by_agent_id is None
+# ── the pacing brake ────────────────────────────────────────────────────────
+#
+# The daily ceiling is a fixed window with no rate limit, which is how a live
+# project spent 55 of 55 runs in 82 minutes and then sat dead for 22 hours.
+# Max burn is wakes_per_agent_per_hour x agent count, so org size silently
+# multiplies one brake against the other. These pin the brake that relates them.
+
+
+def test_the_hourly_brake_stops_a_burst_the_daily_ceiling_would_allow(client):
+    """The whole point: runs left in the day, and still nothing starts."""
+    project = make_project(client, constitution={"runs_per_project_per_day": 100,
+                                                 "runs_per_project_per_hour": 1})
+    with db_session() as session:
+        assert dispatcher.dispatch_once(session) == 1
+    _force_heartbeat_due(project["ceo_agent_id"])
+    _add_notice(project, kind=NoticeKind.BUDGET_WARNING)
+
+    state = _activity(project)
+    assert state["blocked_by"] == "pacing", "the day is nowhere near spent"
+    assert state["daily_runs"]["used"] < state["daily_runs"]["cap"]
+    with db_session() as session:
+        assert dispatcher.dispatch_once(session) == 0
+
+
+def test_the_daily_ceiling_still_outranks_pacing(client):
+    """Both gates shut at once: the reading names the one that needs the
+    chairman, not the one that clears itself in an hour."""
+    project = make_project(client, constitution={"runs_per_project_per_day": 1,
+                                                 "runs_per_project_per_hour": 1})
+    with db_session() as session:
+        assert dispatcher.dispatch_once(session) == 1
+    _force_heartbeat_due(project["ceo_agent_id"])
+    _add_notice(project, kind=NoticeKind.BUDGET_WARNING)
+    assert _activity(project)["blocked_by"] == "daily_runs"
+
+
+def test_pacing_names_the_minute_it_lifts(client):
+    """A trailing window names no clock moment on its own, and a throttle that
+    cannot say when it clears gets read as a stuck error — the same reason
+    _wake_slot_frees_at exists."""
+    project = make_project(client, constitution={"runs_per_project_per_day": 100,
+                                                 "runs_per_project_per_hour": 1})
+    with db_session() as session:
+        assert dispatcher.dispatch_once(session) == 1
+    _force_heartbeat_due(project["ceo_agent_id"])
+    _add_notice(project, kind=NoticeKind.BUDGET_WARNING)
+
+    pacing = _activity(project)["pacing"]
+    assert pacing["used"] >= pacing["cap"]
+    assert pacing["frees_at"], "must name the moment, not 'as the hour advances'"
+
+
+def test_pacing_is_a_trailing_window_not_a_clock_hour(client):
+    """Backdate the run past the hour and the brake lifts without anything
+    resetting — that is the difference from the daily ceiling."""
+    project = make_project(client, constitution={"runs_per_project_per_day": 100,
+                                                 "runs_per_project_per_hour": 1})
+    with db_session() as session:
+        assert dispatcher.dispatch_once(session) == 1
+    assert _activity(project)["blocked_by"] == "pacing"
+
+    with db_session() as session:
+        for row in session.query(RunQueue).filter(RunQueue.project_id == project["id"]):
+            row.created_at = utcnow() - timedelta(hours=2)
+    _force_heartbeat_due(project["ceo_agent_id"])
+    _add_notice(project, kind=NoticeKind.BUDGET_WARNING)
+
+    state = _activity(project)
+    assert state["pacing"]["used"] == 0
+    assert state["blocked_by"] != "pacing"
+
+
+def test_the_ceo_is_told_the_hourly_ration(client):
+    """It cannot explain a stop it was never told about — the same gap that
+    had a CEO apologising for a cap instead of naming it."""
+    from yaaf.core.constitution import effective
+    from yaaf.server.contextpack import constitution_prose
+
+    project = make_project(client, constitution={"runs_per_project_per_hour": 9})
+    with db_session() as session:
+        row = session.get(Project, project["id"])
+        prose = constitution_prose(effective(session, row.id), row)
+    assert "9 in any trailing hour" in prose

@@ -135,6 +135,12 @@ class ConstitutionDoc(BaseModel):
     runs_per_project_per_day: int = _rule(
         150, ge=1, group="Wake-loop brakes", label="Runs per day, whole project",
         help="The daily activity ceiling across every agent.")
+    runs_per_project_per_hour: int = _rule(
+        15, ge=1, group="Wake-loop brakes", label="Runs per hour, whole project",
+        help="The pacing brake. The daily ceiling refills all at once, so without this a "
+             "company can spend a whole day's allowance in the first hour and then sit "
+             "dead until midnight with work stranded on the board. This is a trailing "
+             "hour, not a clock hour, so it clears continuously rather than in a lump.")
     pair_breaker_messages: int = _rule(
         10, ge=2, group="Wake-loop brakes", label="Messages before a thread freezes",
         help="Two agents talking this many times in one thread with nothing landing are "

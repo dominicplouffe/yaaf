@@ -517,6 +517,20 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
                 f"{held_up}. Raise 'Runs per day, whole project' if this is too "
                 "tight, or leave it and the work resumes on its own.",
                 "settings")
+        elif act["blocked_by"] == "pacing":
+            # Distinct from the daily ceiling on purpose: this one clears
+            # within the hour on its own, and telling the two apart is the
+            # difference between "wait" and "raise a limit".
+            pace = act["pacing"]
+            frees = pace["frees_at"]
+            when = (f"the next run may start at {frees[11:16]} UTC"
+                    if frees else "runs free up as the trailing hour advances")
+            add("activity", "warn",
+                f"pacing itself — {pace['used']} of {pace['cap']} runs used in the last "
+                f"hour, so {when}. {held_up}. This is the brake that stops a whole day's "
+                "runs going before lunch; it clears on its own and usually needs nothing "
+                "from you.",
+                "settings")
         elif act["blocked_by"] == "wake_ceiling":
             # Name the moment. "As the hour rolls forward" is unfalsifiable, so
             # a throttle that clears on its own read as a permanent fault.

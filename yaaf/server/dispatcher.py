@@ -123,6 +123,13 @@ def daily_runs_used(session: Session, project: Project, since) -> int:
     return used
 
 
+def hourly_runs_used(session: Session, project: Project, now) -> int:
+    """Runs in the TRAILING hour. The daily ceiling is a fixed window that
+    refills in a lump, which is how a project spends its whole day before
+    lunch; this is the same count over a window that clears continuously."""
+    return daily_runs_used(session, project, now - timedelta(hours=1))
+
+
 def _in_flight(session: Session, project: Project) -> int:
     running = session.execute(
         select(func.count(Run.id)).where(Run.project_id == project.id,
@@ -145,6 +152,13 @@ def _dispatch_project(session: Session, project: Project, cons: ConstitutionDoc)
 
     today = daily_runs_used(session, project, day_start(now))
     if today >= cons.runs_per_project_per_day:
+        return 0
+
+    # Pacing. Without this the daily ceiling is the only brake, and it is a
+    # fixed window with no rate limit: six agents at six wakes an hour is
+    # thirty-six an hour, so a hundred-run day is gone in under three hours and
+    # the company sleeps until midnight with tasks still on the board.
+    if hourly_runs_used(session, project, now) >= cons.runs_per_project_per_hour:
         return 0
 
     max_concurrent = _max_concurrent(project)
@@ -238,6 +252,7 @@ def activity_state(session: Session, project: Project, cons: ConstitutionDoc) ->
     now = utcnow()
     start = day_start(now)
     used = daily_runs_used(session, project, start)
+    used_hour = hourly_runs_used(session, project, now)
     in_flight = _in_flight(session, project)
     max_concurrent = _max_concurrent(project)
 
@@ -286,6 +301,8 @@ def activity_state(session: Session, project: Project, cons: ConstitutionDoc) ->
     with_work = [r for r in rows if r["pending"]]
     if used >= cons.runs_per_project_per_day:
         blocked_by = "daily_runs"
+    elif used_hour >= cons.runs_per_project_per_hour:
+        blocked_by = "pacing"
     elif in_flight >= max_concurrent:
         blocked_by = "concurrency"
     elif not with_work:
@@ -323,6 +340,12 @@ def activity_state(session: Session, project: Project, cons: ConstitutionDoc) ->
             "used": used,
             "cap": cons.runs_per_project_per_day,
             "resets_at": (start + timedelta(days=1)).isoformat(),
+        },
+        "pacing": {
+            "used": used_hour,
+            "cap": cons.runs_per_project_per_hour,
+            # A trailing window, so it thaws run by run rather than resetting.
+            "frees_at": _pacing_frees_at(session, project, cons, now),
         },
         "wake_ceiling": {
             "cap": cons.wakes_per_agent_per_hour,
@@ -408,6 +431,38 @@ def _wake_slot_frees_at(session: Session, agent: Agent, cap: int):
     if oldest_that_must_go.tzinfo is None:
         oldest_that_must_go = oldest_that_must_go.replace(tzinfo=UTC)
     return oldest_that_must_go + timedelta(hours=1)
+
+
+def _pacing_frees_at(session: Session, project: Project, cons: ConstitutionDoc, now):
+    """When the next run may start under the hourly brake — the project-wide
+    twin of `_wake_slot_frees_at`, and for the same reason: a trailing window
+    names no clock moment on its own, and a throttle that cannot say when it
+    lifts gets read as a stuck error. Returns None when the brake is not the
+    thing holding work back.
+    """
+    cap = cons.runs_per_project_per_hour
+    if cap <= 0:
+        return None
+    hour_ago = now - timedelta(hours=1)
+    stamps = [
+        row for (row,) in session.execute(
+            select(Run.created_at).where(Run.project_id == project.id,
+                                         Run.kind != RunKind.CHAT_SESSION,
+                                         Run.created_at >= hour_ago)
+        )
+    ] + [
+        row for (row,) in session.execute(
+            select(RunQueue.created_at).where(RunQueue.project_id == project.id,
+                                              RunQueue.created_at >= hour_ago)
+        )
+    ]
+    if len(stamps) < cap:
+        return None
+    stamps.sort()
+    oldest_that_must_go = stamps[len(stamps) - cap]
+    if oldest_that_must_go.tzinfo is None:
+        oldest_that_must_go = oldest_that_must_go.replace(tzinfo=UTC)
+    return (oldest_that_must_go + timedelta(hours=1)).isoformat()
 
 
 def _primary_task(reasons: list[dict]) -> str | None:
