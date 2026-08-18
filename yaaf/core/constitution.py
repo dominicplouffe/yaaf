@@ -143,6 +143,12 @@ class ConstitutionDoc(BaseModel):
         5, ge=1, group="Wake-loop brakes", label="Refusals a run may hit",
         help="Past this the run's token is revoked. Rephrasing a refused request is not a "
              "strategy.")
+    task_check_failures_before_block: int = _rule(
+        3, ge=1, group="Wake-loop brakes", label="Failed checks before a task blocks",
+        help="A task whose success test fails this many times is not one the claimant can "
+             "finish. It blocks and becomes a question for whoever planned it, instead of "
+             "buying another wake to fail the same way. Counts across re-claims; only a "
+             "passing check resets it.")
 
     # The chairman's reporting cadence. A wake ceiling stops the company
     # burning money on itself; this stops it burning money on *him* — the CEO

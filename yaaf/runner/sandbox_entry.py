@@ -457,8 +457,10 @@ def _usage_int(usage, key: str) -> int:
 
 
 async def main() -> int:
-    system_prompt = (STAGING / "system_prompt.txt").read_text()
-    context = json.loads((STAGING / "context.json").read_text())
+    # Run-keyed: the workspace is shared by every agent on the project, so a
+    # fixed name is another run's file half the time.
+    system_prompt = (STAGING / f"system_prompt-{RUN_ID}.txt").read_text()
+    context = json.loads((STAGING / f"context-{RUN_ID}.json").read_text())
     trace_path = STAGING / f"trace-{RUN_ID}.jsonl"
     result_path = STAGING / f"result-{RUN_ID}.json"
 

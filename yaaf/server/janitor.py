@@ -176,15 +176,24 @@ def _release_claims_of_run(session: Session, run_id: str, note: str) -> None:
 
 
 def release_dead_claims(session: Session, project: Project, cons: ConstitutionDoc) -> int:
-    """A claim with no live run behind it and no open subtasks, held for more
-    than 2x the run timeout, goes back to ready."""
+    """A claim with no live run behind it and no open subtasks, *untouched* for
+    more than 2x the run timeout, goes back to ready.
+
+    Age off ``updated_at``, not ``claimed_at``. ``claimed_at`` records when the
+    claim was acquired and is never refreshed, so it measures nothing about
+    whether the claim is alive — and the wake throttle guarantees long gaps
+    with no run in flight, which this then reads as a crash. A claimant failing
+    its success test every twenty minutes had its task released back to READY
+    eight times on exactly the one-hour mark, each release re-opening the task
+    as fresh team work and zeroing any per-claim state. ``updated_at`` bumps on
+    every write to the row, so it is the liveness signal this always wanted."""
     cutoff = utcnow() - timedelta(seconds=2 * cons.run_timeout_s)
     released = 0
     for task in session.execute(
         select(Task).where(
             Task.project_id == project.id,
             Task.status == TaskStatus.CLAIMED,
-            Task.claimed_at <= cutoff,
+            Task.updated_at <= cutoff,
         )
     ).scalars():
         live = session.execute(

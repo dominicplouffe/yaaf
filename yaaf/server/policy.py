@@ -113,6 +113,16 @@ def ceo_of(session: Session, project_id: str) -> Agent | None:
     ).scalar_one_or_none()
 
 
+def planner_of(session: Session, task: Task) -> Agent | None:
+    """Whoever planned this task's level: the CEO for a top-level task, the
+    parent's claimant for a subtask. A block is a question addressed to them."""
+    if task.parent_task_id is None:
+        return ceo_of(session, task.project_id)
+    parent = session.get(Task, task.parent_task_id)
+    planner_id = parent.claimed_by_agent_id if parent else None
+    return session.get(Agent, planner_id) if planner_id else None
+
+
 def is_lead(session: Session, agent: Agent) -> bool:
     if agent.team_id is None:
         return False
@@ -250,6 +260,40 @@ def open_top_level_tasks(session: Session, project_id: str) -> list[Task]:
     )
 
 
+def success_test_key(success_test: dict | None) -> str | None:
+    """The identity of a check across re-issues. A blocked task can only be
+    killed and re-created, so the task id is worthless for spotting a checker
+    that keeps killing tasks — the command is what survives."""
+    if not success_test or success_test.get("type") != SuccessTestKind.COMMAND:
+        return None
+    command = (success_test.get("command") or "").strip()
+    return command or None
+
+
+def tasks_dead_on_check(
+    session: Session, project_id: str, success_test: dict | None,
+    exclude_task_id: str | None = None,
+) -> list[Task]:
+    """Tasks already killed or blocked *by* this exact success test.
+
+    ``check_failures > 0`` is what separates "died on the check" from "the CEO
+    changed its mind": a task that never failed a check never counted."""
+    key = success_test_key(success_test)
+    if key is None:
+        return []
+    rows = session.execute(
+        select(Task).where(
+            Task.project_id == project_id,
+            Task.status.in_([TaskStatus.BLOCKED, TaskStatus.KILLED]),
+            Task.check_failures > 0,
+        )
+    ).scalars()
+    return [
+        t for t in rows
+        if t.id != exclude_task_id and success_test_key(t.success_test) == key
+    ]
+
+
 def check_task_create(
     session: Session,
     cons: ConstitutionDoc,
@@ -264,6 +308,21 @@ def check_task_create(
 ) -> None:
     require_project_running(project)
     validate_success_test(cons, success_test)
+
+    # Two tasks have now died on this exact check. Re-issuing is the only lever
+    # a planner has over a blocked task, so without this the same broken
+    # checker can mint fresh tasks — and a fresh task carries a fresh failure
+    # counter — indefinitely.
+    dead = tasks_dead_on_check(session, project.id, success_test)
+    if len(dead) >= 2:
+        raise Refusal(
+            f"{len(dead)} tasks have already died on this exact success test and none "
+            "ever passed it. At that point the check is the suspect, not the deliverable "
+            "— re-issuing a third time buys another round of the same failure. The "
+            "chairman has been told. Fix the check itself, write a different one, or "
+            "wait for him. Tasks: " + ", ".join(t.id for t in dead[:5]),
+            status_code=409,
+        )
 
     team = session.get(Team, team_id)
     if team is None or team.project_id != project.id:
@@ -482,6 +541,21 @@ def check_agent_post(session: Session, project: Project, agent: Agent, channel: 
             "leadership and the boardroom. Cross-team needs go through leadership.",
             status_code=403,
         )
+    # A one-person team's room has exactly one member, and an agent never reads
+    # its own messages back — so posting there is writing to nobody. Said out
+    # loud at the moment of the attempt, because the alternative is silence: a
+    # claimant reported a stuck task into her own team room five times over 22
+    # hours and no one ever saw a word of it.
+    if channel.kind == ChannelKind.TEAM and channel.team_id is not None:
+        others = [a for a in team_agents(session, channel.team_id) if a.id != agent.id]
+        if not others:
+            raise Refusal(
+                "That channel has no other members — you are the only agent on your team, "
+                "so your team room is a diary and nobody will ever read this. If it needs "
+                "an answer, post it to leadership. If it is a note to yourself, write it to "
+                "memory.",
+                status_code=409,
+            )
 
 
 def check_thread_not_frozen(session: Session, thread_id: str | None) -> None:

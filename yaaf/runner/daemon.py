@@ -493,6 +493,7 @@ def finalize(job: RunJob, result: RunResult, was_revoked: bool = False) -> None:
         run.cost_usd = None if subscription else result.cost_usd
         run.trace_path = _stash_trace(job) or result.trace_path
         run.context_path = _stash_context(job)
+        _clear_staged_inputs(job)
         run.summary = (result.summary or "")[:4000]
 
         if (result.tokens_in or result.tokens_out or result.cache_creation_tokens
@@ -616,6 +617,19 @@ def _stash_trace(job: RunJob) -> str | None:
         return None
 
 
+def _clear_staged_inputs(job: RunJob) -> None:
+    """Drop this run's staged prompt and pack once they are stashed. Run-keyed
+    names mean they no longer overwrite each other — so without this they
+    accumulate one pair per run in a workspace that lives as long as the
+    project. Best-effort: never fails a finalize."""
+    staging = Path(job.workspace_dir) / ".yaaf"
+    for name in (f"system_prompt-{job.run_id}.txt", f"context-{job.run_id}.json"):
+        try:
+            (staging / name).unlink(missing_ok=True)
+        except Exception:
+            log.warning("could not clear staged input %s for %s", name, job.run_id)
+
+
 def _stash_context(job: RunJob) -> str | None:
     """Stash what the run actually sent to the model — the staged system prompt
     and context pack — so the chairman can audit a run's inputs, not just its
@@ -624,8 +638,17 @@ def _stash_context(job: RunJob) -> str | None:
 
     try:
         staging = Path(job.workspace_dir) / ".yaaf"
-        prompt_file = staging / "system_prompt.txt"
-        context_file = staging / "context.json"
+        # Run-keyed, with the legacy names as a fallback so a job staged by the
+        # previous runner still gets stashed. This is not only about crashes:
+        # reading a shared path *after* the run means the record of "what this
+        # run sent to the model" could be another run's pack, which makes the
+        # audit trail itself untrustworthy.
+        prompt_file = staging / f"system_prompt-{job.run_id}.txt"
+        context_file = staging / f"context-{job.run_id}.json"
+        if not prompt_file.exists() and (staging / "system_prompt.txt").exists():
+            prompt_file = staging / "system_prompt.txt"
+        if not context_file.exists() and (staging / "context.json").exists():
+            context_file = staging / "context.json"
         system_prompt = prompt_file.read_text() if prompt_file.exists() else None
         context_pack = (json.loads(context_file.read_text())
                         if context_file.exists() else None)
@@ -690,6 +713,30 @@ def _retry_failed_run(session: Session, run: Run) -> None:
     )
 
 
+# How many prior attempts an agent is shown, and how much of each. Enough to
+# see a pattern in what it has already tried; small enough that a task row
+# stays a task row.
+CHECK_HISTORY_KEEP = 5
+CHECK_HISTORY_EVIDENCE_CHARS = 300
+CHECK_HISTORY_OUTPUT_CHARS = 500
+
+
+def _record_check_attempt(task: Task, output: str) -> None:
+    """Append this failed attempt to the task's rolling history.
+
+    The *evidence* half is the point: it is the claimant's own account of what
+    it changed, and it is the only thing that tells a later run "you already
+    tried that". Without it an agent sees one failure at a time and can cycle
+    between two rejected fixes forever."""
+    history = list(task.check_history or [])
+    history.append({
+        "at": utcnow().isoformat(),
+        "evidence": (task.completion_evidence or "")[:CHECK_HISTORY_EVIDENCE_CHARS],
+        "output": output[:CHECK_HISTORY_OUTPUT_CHARS],
+    })
+    task.check_history = history[-CHECK_HISTORY_KEEP:]
+
+
 def _finalize_success_check(session: Session, job: RunJob, result: RunResult) -> None:
     task = session.get(Task, job.task_id)
     if task is None or task.status != TaskStatus.CHECKING:
@@ -699,30 +746,119 @@ def _finalize_success_check(session: Session, job: RunJob, result: RunResult) ->
     if result.check_exit_code == 0:
         from_status = task.status
         task.status = TaskStatus.DONE
+        task.check_failures = 0
+        task.check_history = None
         policy.record_task_event(session, task, TaskStatus.DONE, "checker",
                                  note="success test passed", from_status=from_status)
-    else:
-        from_status = task.status
-        task.status = TaskStatus.CLAIMED  # back to the claimant with the output
-        policy.record_task_event(
-            session, task, TaskStatus.CLAIMED, "checker",
-            note=f"success test FAILED (exit {result.check_exit_code})",
-            from_status=from_status,
-        )
-        if task.claimed_by_agent_id:
-            session.add(
-                Notice(
-                    id=ids.new_id(ids.NOTICE),
-                    project_id=task.project_id,
-                    agent_id=task.claimed_by_agent_id,
-                    kind=NoticeKind.TASK_CHECK_FAILED,
-                    body=(
-                        f"The platform ran your task's success test and it FAILED "
-                        f"(exit {result.check_exit_code}). The task is claimed by you again. "
-                        f"Output:\n{output[:1500]}"
-                    ),
-                )
+        return
+
+    task.check_failures = (task.check_failures or 0) + 1
+    _record_check_attempt(task, output)
+    try:
+        cap = effective(session, task.project_id).task_check_failures_before_block
+    except LookupError:  # no constitution: never worse than the old behaviour
+        cap = 0
+    from_status = task.status
+
+    if cap and task.check_failures >= cap:
+        _block_on_repeated_check_failure(session, task, result, output, from_status, cap)
+        return
+
+    task.status = TaskStatus.CLAIMED  # back to the claimant with the output
+    policy.record_task_event(
+        session, task, TaskStatus.CLAIMED, "checker",
+        note=f"success test FAILED (exit {result.check_exit_code}), "
+             f"attempt {task.check_failures}",
+        from_status=from_status,
+    )
+    if task.claimed_by_agent_id:
+        remaining = cap - task.check_failures if cap else None
+        session.add(
+            Notice(
+                id=ids.new_id(ids.NOTICE),
+                project_id=task.project_id,
+                agent_id=task.claimed_by_agent_id,
+                kind=NoticeKind.TASK_CHECK_FAILED,
+                body=(
+                    f"ATTEMPT {task.check_failures}"
+                    + (f" OF {cap}" if cap else "")
+                    + f": the platform ran your task's success test and it FAILED "
+                      f"(exit {result.check_exit_code}). The task is claimed by you again."
+                    + (f" {remaining} attempt(s) left before it blocks and goes back to "
+                       "whoever planned it." if remaining else "")
+                    + " Read `task.previous_attempts` in your context before changing "
+                      "anything: if you have already tried a fix and it failed, trying it "
+                      "again will fail again. If the same rule keeps rejecting materially "
+                      "different submissions, the check itself is the likely fault — block "
+                      "the task and say so rather than guessing another edit."
+                    + f"\nOutput:\n{output[:1500]}"
+                ),
             )
+        )
+
+
+def _block_on_repeated_check_failure(
+    session: Session, task: Task, result: RunResult, output: str,
+    from_status: str, cap: int,
+) -> None:
+    """The loop breaker. A task that cannot pass its own success test is not a
+    task the claimant can finish by trying harder — it is a question for
+    whoever planned it, and on a repeat, for the chairman."""
+    from yaaf.server.notify import chairman_notify
+
+    reason = (
+        f"Success test failed {task.check_failures} times running (exit "
+        f"{result.check_exit_code}); the platform stopped re-waking the claimant. "
+        f"Last output:\n{output[:1500]}"
+    )
+    task.status = TaskStatus.BLOCKED
+    task.blocked_reason = reason
+    claimant_id = task.claimed_by_agent_id
+    task.claimed_by_agent_id = None
+    task.claim_run_id = None
+    policy.record_task_event(
+        session, task, TaskStatus.BLOCKED, "checker",
+        note=f"blocked after {task.check_failures} failed checks (cap {cap})",
+        from_status=from_status,
+    )
+
+    # Has this exact check killed a task before? If so the checker is the
+    # suspect, and the planner is not the right person to hear it twice: its
+    # only lever is kill-and-re-issue, which mints a task with a fresh counter.
+    prior = policy.tasks_dead_on_check(session, task.project_id, task.success_test,
+                                       exclude_task_id=task.id)
+    planner = policy.planner_of(session, task)
+    if planner is not None and planner.id != claimant_id:
+        session.add(
+            Notice(
+                id=ids.new_id(ids.NOTICE),
+                project_id=task.project_id,
+                agent_id=planner.id,
+                kind=NoticeKind.TASK_BLOCKED,
+                body=(
+                    f"Task '{task.title}' ({task.id}) was BLOCKED by the platform: its "
+                    f"success test failed {task.check_failures} times running. Nobody is "
+                    "working it now. Re-plan it: change it, kill it, or fix the check. "
+                    + (f"NOTE: {len(prior)} earlier task(s) also died on this exact "
+                       "success test and none ever passed it — re-issuing it unchanged "
+                       "will produce this same message again. The check is the suspect, "
+                       "not the deliverable. The chairman has been told.\n"
+                       if prior else "")
+                    + f"\n{reason}"
+                ),
+            )
+        )
+    project = session.get(Project, task.project_id)
+    if prior and project is not None:
+        chairman_notify(
+            session, project,
+            "a success test has now killed two tasks",
+            f"Task {task.id} blocked after {task.check_failures} failed checks, and "
+            f"{len(prior)} earlier task(s) died on the same success test without ever "
+            f"passing it ({', '.join(t.id for t in prior[:5])}). Further tasks carrying "
+            f"this check are refused until you intervene.\n\n"
+            f"Check: {(task.success_test or {}).get('command', '')[:500]}\n\n{reason}",
+        )
 
 
 def _run_success_check(job: RunJob) -> RunResult:

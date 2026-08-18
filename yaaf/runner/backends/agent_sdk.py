@@ -29,8 +29,16 @@ class AgentSDKBackend:
         # container) stages these dirs, so open them up or nothing comes back.
         workspace.chmod(0o777)
         staging.chmod(0o777)
-        (staging / "system_prompt.txt").write_text(job.system_prompt)
-        (staging / "context.json").write_text(json.dumps(job.context_pack, default=str))
+        # Keyed by run, like the trace and result files beside them. The
+        # workspace is per-*project* and shared by every agent in it, so fixed
+        # names here are a race: three runs starting in the same second wrote
+        # over each other's context and all three died reading half a document.
+        # A crash is the lucky outcome — with kinder timing a run reads another
+        # agent's pack, complete with its task and its messages, and says
+        # nothing.
+        (staging / f"system_prompt-{job.run_id}.txt").write_text(job.system_prompt)
+        (staging / f"context-{job.run_id}.json").write_text(
+            json.dumps(job.context_pack, default=str))
         result_path = staging / f"result-{job.run_id}.json"
         if result_path.exists():
             result_path.unlink()

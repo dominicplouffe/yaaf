@@ -481,3 +481,71 @@ def test_the_resident_chat_session_never_counts_against_the_ceiling(client):
     assert state["wake_ceiling"]["frees_at"] is None
     with db_session() as session:
         assert dispatcher.dispatch_once(session) == 1
+
+
+def _release_claims(project) -> int:
+    """One janitor pass of release_dead_claims, at the project's own rules."""
+    from yaaf.core.constitution import effective
+    from yaaf.server.janitor import release_dead_claims
+
+    with db_session() as session:
+        row = session.get(Project, project["id"])
+        return release_dead_claims(session, row, effective(session, project["id"]))
+
+
+def _claimed_task(project, agent_id: str, claimed_ago, updated_ago):
+    """A task claimed `claimed_ago` back, last written to `updated_ago` back."""
+    from yaaf.core.models import Task, TaskStatus
+
+    with db_session() as session:
+        task = Task(
+            id=ids.new_id(ids.TASK), project_id=project["id"],
+            team_id=project["teams"][0]["id"], created_by_agent_id=project["ceo_agent_id"],
+            title="a task being actively worked",
+            goal="prove the janitor can tell work from a crash",
+            success_test={"type": "command", "command": "echo checking something real"},
+            status=TaskStatus.CLAIMED, claimed_by_agent_id=agent_id,
+            claimed_at=utcnow() - claimed_ago, updated_at=utcnow() - updated_ago,
+        )
+        session.add(task)
+        session.flush()
+        return task.id
+
+
+def test_janitor_does_not_release_a_claim_that_is_being_worked(client):
+    """The regression that cost 22 hours.
+
+    `release_dead_claims` exists to free a claim whose run died. It used to age
+    off `claimed_at`, which is stamped once at claim time and never refreshed —
+    so it measured nothing about liveness, and the wake throttle *guarantees*
+    long stretches with no run in flight. A claimant failing its success test
+    every twenty minutes had its task released to READY on the one-hour mark,
+    eight times, each release re-opening the task as fresh team work."""
+    from yaaf.core.models import Task
+
+    project = make_project(client, constitution={"run_timeout_s": 60})
+    lead = agent_by_name(project, "Lead")
+    # Claimed three hours ago — far past 2x the timeout — but written to
+    # seconds ago, and with no run RUNNING, exactly as the throttle leaves it.
+    task_id = _claimed_task(project, lead, claimed_ago=timedelta(hours=3),
+                            updated_ago=timedelta(seconds=5))
+
+    assert _release_claims(project) == 0, "an actively-worked claim is not a dead claim"
+    with db_session() as session:
+        assert session.get(Task, task_id).status == "claimed"
+
+
+def test_janitor_still_releases_a_genuinely_abandoned_claim(client):
+    """The other half: the original purpose must survive the fix."""
+    from yaaf.core.models import Task
+
+    project = make_project(client, constitution={"run_timeout_s": 60})
+    lead = agent_by_name(project, "Lead")
+    task_id = _claimed_task(project, lead, claimed_ago=timedelta(hours=3),
+                            updated_ago=timedelta(hours=3))
+
+    assert _release_claims(project) == 1
+    with db_session() as session:
+        row = session.get(Task, task_id)
+        assert row.status == "ready"
+        assert row.claimed_by_agent_id is None

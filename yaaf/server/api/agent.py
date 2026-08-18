@@ -284,12 +284,7 @@ def block_task(
     # re-plan now, not at the next heartbeat.
     from yaaf.core.models import Notice, NoticeKind
 
-    if task.parent_task_id is None:
-        planner = policy.ceo_of(session, ctx.project.id)
-    else:
-        parent = session.get(Task, task.parent_task_id)
-        planner_id = parent.claimed_by_agent_id if parent else None
-        planner = session.get(type(ctx.agent), planner_id) if planner_id else None
+    planner = policy.planner_of(session, task)
     if planner is not None and planner.id != ctx.agent.id:
         session.add(
             Notice(

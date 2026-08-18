@@ -9,8 +9,14 @@ ENV PIP_RETRIES=10 \
     PIP_TIMEOUT=60 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
+# gawk is not a convenience. Agents write success tests in awk, the base image
+# resolves awk to mawk, and mawk silently does not support POSIX interval
+# expressions ({2,5}) — so a checker using one rejects every input it is ever
+# given, with a message about the data. One did, for 22 hours, against a file
+# that was correct the whole time. Installing gawk moves the Debian alternative
+# so /usr/bin/awk is the awk everyone assumes they are writing for.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3 python3-pip python3-venv git curl bash ca-certificates \
+        python3 python3-pip python3-venv git curl bash ca-certificates gawk \
     && rm -rf /var/lib/apt/lists/*
 
 RUN npm install -g @anthropic-ai/claude-code

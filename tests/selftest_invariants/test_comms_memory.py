@@ -375,3 +375,47 @@ def test_side_effect_idempotency(client):
     assert again["duplicate"] is True
     assert again["status"] == "completed"
     assert "DO NOT" in again["note"]
+
+
+def test_a_solo_team_room_refuses_posts_because_nobody_reads_it(client):
+    """A one-person team's room has exactly one member, and an agent never
+    reads its own messages back — so posting there reaches nobody at all.
+
+    This is not pedantry. A sole team member reported a stuck task into her own
+    team room five times over 22 hours; every word went nowhere, while the same
+    agent had used leadership successfully the day before and been answered in
+    minutes. Silence was indistinguishable from having escalated."""
+    project = make_project(client, teams=[
+        {"role_slug": "worker", "name": "Solo", "employees": ["Onlyone"], "lead": "Onlyone"},
+        {"role_slug": "worker", "name": "Pair", "employees": ["Ann", "Bo"], "lead": "Ann"},
+    ])
+    solo_team, pair_team = project["teams"][0]["id"], project["teams"][1]["id"]
+    solo_room = channel_of(client, project["id"], "team", solo_team)
+    pair_room = channel_of(client, project["id"], "team", pair_team)
+
+    _, solo_token = live_token(project["id"], agent_by_name(project, "Onlyone"))
+    refused = client.post(
+        "/agent/messages",
+        json={"channel_id": solo_room, "body": "my task is stuck and I need help"},
+        headers=bearer(solo_token),
+    )
+    assert refused.status_code == 409, refused.text
+    assert "no other members" in refused.json()["error"]
+    assert "leadership" in refused.json()["error"], "the refusal must name the way out"
+
+    # A room with someone in it is untouched: this guards the dead letter, not
+    # team rooms in general.
+    _, ann_token = live_token(project["id"], agent_by_name(project, "Ann"))
+    assert client.post(
+        "/agent/messages",
+        json={"channel_id": pair_room, "body": "status: the overlay is rebuilt"},
+        headers=bearer(ann_token),
+    ).status_code == 200
+
+    # And the solo member can still reach leadership, which is the point.
+    leadership = channel_of(client, project["id"], "leadership")
+    assert client.post(
+        "/agent/messages",
+        json={"channel_id": leadership, "body": "my task is stuck and I need help"},
+        headers=bearer(solo_token),
+    ).status_code == 200

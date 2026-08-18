@@ -417,6 +417,15 @@ class Task(Base):
     claim_run_id: Mapped[str | None] = mapped_column(String(40))
     completion_evidence: Mapped[str | None] = mapped_column(Text)
     check_output: Mapped[str | None] = mapped_column(Text)  # platform-run success test output
+    # Consecutive failed success tests. Deliberately NOT reset by a claim, a
+    # janitor release or a re-claim: the janitor launders a stuck task back
+    # through READY, so a counter that lived on the claim would be zeroed by
+    # the very loop it exists to catch. Only a passing check clears it.
+    check_failures: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # Last few failed attempts: [{"at", "evidence", "output"}]. Without this an
+    # agent sees only the newest failure and cannot tell it is repeating itself
+    # — one claimant oscillated between two rejected fixes for 22 hours.
+    check_history: Mapped[list | None] = mapped_column(JSONVariant)
     # Chairman spot-audit verdict on the completion ("passed"/"failed"); null = unaudited.
     audit_status: Mapped[str | None] = mapped_column(String(16))
     audit_note: Mapped[str | None] = mapped_column(Text)

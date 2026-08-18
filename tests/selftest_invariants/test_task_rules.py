@@ -326,3 +326,229 @@ def test_paused_project_refuses_state_changes(client):
     # The pause revoked the run's token (401) — or, for a token minted after,
     # the policy layer refuses (409). Either way: no state change.
     assert response.status_code in (401, 409)
+
+
+# ── the loop breaker ────────────────────────────────────────────────────────────
+#
+# A checker that can never pass is not hypothetical: one used a GNU-awk interval
+# expression against an image whose awk is mawk, so it rejected every input it
+# was ever given with a message about the data. The claimant rewrote a correct
+# file 34 times over 22 hours. Nothing here counted, so nothing here stopped.
+
+
+def _fail_check_once(client, task_id: str, claimant_token: str, note: str) -> None:
+    """One claim → complete → platform-check cycle. Re-claims first if the task
+    was released, so a caller can drive several attempts in a row. ``note`` is
+    embedded in real-looking evidence — completions carrying less than ten
+    characters are refused, and this is not the rule under test."""
+    from yaaf.runner.daemon import execute_job, lease_and_prepare
+
+    completed = client.post(
+        f"/agent/tasks/{task_id}/complete",
+        json={"evidence": f"ran the success test locally and observed: {note}"},
+        headers=bearer(claimant_token),
+    )
+    if completed.status_code != 200:  # task was released; re-claim and retry
+        client.post(f"/agent/tasks/{task_id}/claim", headers=bearer(claimant_token))
+        completed = client.post(
+            f"/agent/tasks/{task_id}/complete",
+            json={"evidence": f"ran the success test locally and observed: {note}"},
+            headers=bearer(claimant_token),
+        )
+    assert completed.status_code == 200, completed.text
+    for job in lease_and_prepare(limit=5):
+        execute_job(job)
+
+
+def _row(client, project, task_id: str) -> dict:
+    from tests.conftest import ADMIN
+
+    board = client.get(f"/observe/projects/{project['id']}/board", headers=ADMIN).json()
+    return next(t for t in board if t["id"] == task_id)
+
+
+def _failing_task(client, ceo_token: str, project, title: str = "unsatisfiable",
+                  command: str = "echo nope && exit 3") -> dict:
+    return client.post(
+        "/agent/tasks",
+        json={"team_id": _team(project), "title": title,
+              "goal": "a check this task can never pass",
+              "success_test": {"type": "command", "command": command}},
+        headers=bearer(ceo_token),
+    ).json()
+
+
+def test_repeated_check_failures_block_the_task_and_tell_the_planner(client):
+    from yaaf.core.db import db_session
+    from yaaf.core.models import Notice, Task
+
+    project = make_project(client, constitution={"task_check_failures_before_block": 3})
+    _, ceo_token = live_token(project["id"], project["ceo_agent_id"])
+    lead_id = agent_by_name(project, "Lead")
+    _, lead_token = live_token(project["id"], lead_id)
+    task = _failing_task(client, ceo_token, project)
+
+    for attempt in range(2):
+        _fail_check_once(client, task["id"], lead_token, f"attempt {attempt}")
+        assert _row(client, project, task["id"])["status"] == "claimed"
+
+    _fail_check_once(client, task["id"], lead_token, "attempt 2")
+    assert _row(client, project, task["id"])["status"] == "blocked"
+
+    with db_session() as session:
+        row = session.get(Task, task["id"])
+        assert row.check_failures == 3
+        # The claim is released: nobody is working a blocked task.
+        assert row.claimed_by_agent_id is None
+        assert row.claim_run_id is None
+        assert "3 times running" in (row.blocked_reason or "")
+        blocked = session.query(Notice).filter(
+            Notice.agent_id == project["ceo_agent_id"],
+            Notice.kind == "task_blocked",
+        ).all()
+        assert len(blocked) == 1, "the planner is told, not just the claimant"
+
+
+def test_blocked_task_stops_producing_wakes(client):
+    """The whole point: a blocked task buys no more full-price runs."""
+    from yaaf.core.db import db_session
+    from yaaf.core.models import RunQueue
+    from yaaf.server import dispatcher
+
+    project = make_project(client, constitution={"task_check_failures_before_block": 2})
+    _, ceo_token = live_token(project["id"], project["ceo_agent_id"])
+    lead_id = agent_by_name(project, "Lead")
+    _, lead_token = live_token(project["id"], lead_id)
+    task = _failing_task(client, ceo_token, project)
+
+    for attempt in range(2):
+        _fail_check_once(client, task["id"], lead_token, f"attempt {attempt}")
+    assert _row(client, project, task["id"])["status"] == "blocked"
+
+    with db_session() as session:
+        session.query(RunQueue).delete()
+        dispatcher.dispatch_once(session)
+        session.flush()
+        queued = session.query(RunQueue).filter(RunQueue.agent_id == lead_id).count()
+        assert queued == 0, "a blocked task must not wake its former claimant"
+
+
+def test_check_failures_survive_a_release_back_to_ready(client):
+    """The counter lives on the task, not the claim.
+
+    The janitor releases a stuck claim to READY, which re-opens the task as
+    fresh team work. A counter hung off the claim would be zeroed by exactly
+    the loop it exists to catch — this happened eight times in one incident."""
+    from yaaf.core.db import db_session
+    from yaaf.core.models import Task, TaskStatus
+
+    project = make_project(client, constitution={"task_check_failures_before_block": 3})
+    _, ceo_token = live_token(project["id"], project["ceo_agent_id"])
+    _, lead_token = live_token(project["id"], agent_by_name(project, "Lead"))
+    task = _failing_task(client, ceo_token, project)
+
+    _fail_check_once(client, task["id"], lead_token, "first")
+    with db_session() as session:  # simulate the janitor's release
+        row = session.get(Task, task["id"])
+        assert row.check_failures == 1
+        row.status = TaskStatus.READY
+        row.claimed_by_agent_id = None
+        row.claim_run_id = None
+
+    _fail_check_once(client, task["id"], lead_token, "second, after a release")
+    with db_session() as session:
+        assert session.get(Task, task["id"]).check_failures == 2, "release must not zero it"
+
+
+def test_passing_check_resets_the_counter(client):
+    from pathlib import Path
+
+    from yaaf.core.config import settings
+    from yaaf.core.db import db_session
+    from yaaf.core.models import Project, Task
+
+    project = make_project(client, constitution={"task_check_failures_before_block": 5})
+    _, ceo_token = live_token(project["id"], project["ceo_agent_id"])
+    _, lead_token = live_token(project["id"], agent_by_name(project, "Lead"))
+    # Fails while the marker file is absent, passes once the evidence run makes it.
+    task = _failing_task(client, ceo_token, project, command="test -f ./done-marker")
+
+    _fail_check_once(client, task["id"], lead_token, "not yet")
+    with db_session() as session:
+        assert session.get(Task, task["id"]).check_failures == 1
+
+    with db_session() as session:
+        slug = session.get(Project, project["id"]).slug
+    (Path(settings().workspaces_root) / slug / "done-marker").write_text("")
+    _fail_check_once(client, task["id"], lead_token, "now it exists")
+    with db_session() as session:
+        row = session.get(Task, task["id"])
+        assert row.status == "done"
+        assert row.check_failures == 0
+        assert row.check_history is None
+
+
+def test_check_history_records_what_was_tried_and_is_capped(client):
+    """The record that lets a claimant notice it is repeating itself."""
+    from yaaf.core.db import db_session
+    from yaaf.core.models import Task
+
+    project = make_project(client, constitution={"task_check_failures_before_block": 99})
+    _, ceo_token = live_token(project["id"], project["ceo_agent_id"])
+    _, lead_token = live_token(project["id"], agent_by_name(project, "Lead"))
+    task = _failing_task(client, ceo_token, project)
+
+    for attempt in range(7):
+        _fail_check_once(client, task["id"], lead_token, f"distinct attempt {attempt}")
+
+    with db_session() as session:
+        row = session.get(Task, task["id"])
+        assert row.check_failures == 7
+        assert len(row.check_history) == 5, "capped, so a task row stays a task row"
+        # The evidence half is the point: it is what tells a later run "you
+        # already tried that".
+        assert "distinct attempt 6" in row.check_history[-1]["evidence"]
+        assert "distinct attempt 2" in row.check_history[0]["evidence"]
+        assert "nope" in row.check_history[-1]["output"]
+
+
+def test_a_check_that_kills_two_tasks_escalates_and_refuses_a_third(client):
+    """Re-issuing is a planner's only lever over a blocked task, and a re-issue
+    is a NEW task with a fresh counter. Without this the same broken checker
+    mints tasks forever — the CEO did exactly that once, in six minutes."""
+    from yaaf.core.db import db_session
+    from yaaf.core.models import Task
+
+    project = make_project(client, constitution={"task_check_failures_before_block": 1,
+                                                 "external_ratio_min": 0.0})
+    _, ceo_token = live_token(project["id"], project["ceo_agent_id"])
+    _, lead_token = live_token(project["id"], agent_by_name(project, "Lead"))
+    command = "echo the check itself is broken && exit 3"
+
+    first = _failing_task(client, ceo_token, project, "first issue", command)
+    _fail_check_once(client, first["id"], lead_token, "try one")
+    assert _row(client, project, first["id"])["status"] == "blocked"
+
+    # A planner may re-issue once: one dead task is not yet evidence.
+    second = _failing_task(client, ceo_token, project, "re-issued", command)
+    assert "id" in second, second
+    _fail_check_once(client, second["id"], lead_token, "try two")
+    assert _row(client, project, second["id"])["status"] == "blocked"
+
+    with db_session() as session:
+        dead = [t for t in session.query(Task).all() if t.check_failures > 0]
+        assert len(dead) == 2
+
+    third = client.post(
+        "/agent/tasks",
+        json={"team_id": _team(project), "title": "re-issued again", "goal": "third time",
+              "success_test": {"type": "command", "command": command}},
+        headers=bearer(ceo_token),
+    )
+    assert third.status_code == 409, third.text
+    assert "died on this exact success test" in third.json()["error"]
+
+    # A *different* check is unaffected — this guards the checker, not the CEO.
+    ok = _failing_task(client, ceo_token, project, "different check",
+                       "echo a completely different check && exit 0")
+    assert "id" in ok, ok

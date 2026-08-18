@@ -291,7 +291,7 @@ def _task_context(session: Session, task: Task) -> dict:
     effects = session.execute(
         select(SideEffect).where(SideEffect.task_id == task.id).order_by(SideEffect.created_at)
     ).scalars()
-    return {
+    pack = {
         "id": task.id,
         "title": task.title,
         "goal": task.goal,
@@ -305,6 +305,24 @@ def _task_context(session: Session, task: Task) -> dict:
             for e in effects
         ],
     }
+    # A run is stateless, so without this the claimant sees one failure at a
+    # time and cannot tell it is repeating itself. One oscillated between two
+    # rejected fixes for 22 hours, each run reading the newest rejection as if
+    # it were the first. `run.attempt` does not help: it counts crash-retries
+    # of a run, not attempts at a task, and stayed 1 for all 34 of them.
+    if task.check_failures:
+        pack["failed_checks"] = task.check_failures
+        pack["previous_attempts"] = list(task.check_history or [])
+        pack["attempts_note"] = (
+            f"You have failed this success test {task.check_failures} time(s). "
+            "previous_attempts lists what you submitted each time and what the checker "
+            "said. Read it before editing anything: a fix listed there has already been "
+            "refuted, and submitting it again will fail again. If the same rule keeps "
+            "rejecting materially different submissions, the success test itself is the "
+            "likely fault — block the task and say exactly that, rather than guessing "
+            "another edit."
+        )
+    return pack
 
 
 def _memory_usage(session: Session, agent: Agent, cons: ConstitutionDoc) -> dict:
@@ -412,9 +430,13 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
         pack["chairman"] = _chairman_state(session, project, agent, now)
         open_tasks = policy.open_top_level_tasks(session, project.id)
         pack["board"] = {
+            # failed_checks is here because "claimed" reads as healthy: a task
+            # failing its checker every twenty minutes looks exactly like one
+            # being worked, and the planner planned around it for a day.
             "open": [
                 {"id": t.id, "title": t.title, "status": t.status, "team_id": t.team_id,
-                 "external": t.produces_external_evidence}
+                 "external": t.produces_external_evidence,
+                 "failed_checks": t.check_failures}
                 for t in open_tasks
             ],
             "ceiling": cons.queue_ceiling,
@@ -481,7 +503,7 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
             "team_open": [
                 {"id": t.id, "title": t.title, "status": t.status,
                  "parent_task_id": t.parent_task_id, "assignee": t.assignee_agent_id,
-                 "claimed_by": t.claimed_by_agent_id}
+                 "claimed_by": t.claimed_by_agent_id, "failed_checks": t.check_failures}
                 for t in team_tasks
             ]
         }
