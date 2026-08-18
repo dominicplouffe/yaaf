@@ -109,7 +109,9 @@ else
   # Reaching here means the entrypoint failed and the container came back
   # anyway, or the api container is older than this script expects.
   warn "schema is not at head — applying now"
-  compose exec -T api alembic upgrade head || die "alembic upgrade failed — the output above says why.
+  apply_migrations 300 || die "alembic upgrade failed, or took longer than 300s — the output
+    above says which. If it timed out, something else is holding the schema; look at:
+      cd deploy && $DOCKER compose logs api --tail=50
     Your backup is in backups/ ; restore with:
       gunzip -c backups/<file>.sql.gz | $DOCKER compose exec -T db psql -U yaaf -d yaaf"
   schema_at_head 60 || die "migrations ran but the schema is still not at head"

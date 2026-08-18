@@ -8,6 +8,23 @@ ok()   { printf '    \033[32m✓\033[0m %s\n' "$*"; }
 warn() { printf '    \033[33m!\033[0m %s\n' "$*"; }
 die()  { printf '\n\033[31mFAILED:\033[0m %s\n\n' "$*" >&2; exit 1; }
 
+# Ctrl-C has to work. It did not, and the reason was two-fold: bash defers a
+# trap until the foreground command returns, and `timeout` without --foreground
+# puts its child in a separate process group where the terminal's SIGINT never
+# reaches it. Between them the script would sit through a docker command that
+# could not hear you, and closing the window was the only way out. Every long
+# docker call below now runs with --foreground; this gives the interrupt
+# somewhere to land.
+#
+# Re-running after an interrupt is safe: every step in these scripts is
+# idempotent, which is the property that makes stopping cheap.
+on_interrupt() {
+  printf '\n'
+  warn "interrupted — stopping here. Re-running is safe; every step is idempotent."
+  exit 130
+}
+trap on_interrupt INT TERM
+
 # The checkout root, judged by the things these scripts actually need. Being
 # in the wrong directory otherwise fails much later, halfway through a build.
 require_repo_root() {
@@ -76,17 +93,31 @@ wait_for_api() {
 # database, so a box with no schema looks healthy right up until the first real
 # request dies on `relation "projects" does not exist`. Ask explicitly.
 #
-# Wrapped in a timeout because this can block rather than answer: api and
-# runner both run `alembic upgrade head` from the entrypoint at start, the
-# whole chain runs in ONE transaction, and creating alembic_version takes an
-# ACCESS EXCLUSIVE lock on it. A concurrent `alembic current` then waits for
-# that transaction to commit — which on a first boot is the exact moment this
-# gets called. Treat "no answer in time" as "not at head" and let the caller
-# retry rather than hanging with no output.
+# Still wrapped in a timeout: migrations now serialize on an advisory lock
+# (migrations/env.py) rather than racing, but a concurrent migrator still holds
+# alembic_version while it works, so "no answer yet" remains a legitimate
+# answer on a first boot. Treat it as "not at head" and let the caller retry.
+#
+# timeout runs the docker client directly rather than through `sh -c`: with an
+# intervening shell, SIGTERM kills the shell and leaves the docker child
+# running with the pipe still open, which is a hang dressed up as a timeout.
 schema_at_head() {
-  timeout "${1:-60}" env COMPOSE_IGNORE_ORPHANS=1 sh -c \
-    "cd '$REPO/deploy' && $DOCKER compose exec -T api alembic current 2>/dev/null" \
-    | grep -q '(head)'
+  local out
+  out="$(cd "$REPO/deploy" && COMPOSE_IGNORE_ORPHANS=1 \
+         timeout --foreground "${1:-60}" $DOCKER compose exec -T api \
+         alembic current 2>/dev/null)" || return 1
+  printf '%s' "$out" | grep -q '(head)'
+}
+
+# The fallback for when the entrypoint's own upgrade did not get there. It used
+# to run unbounded and with its output swallowed, so a migration that blocked
+# left the deploy sitting on its last green line with nothing to read and
+# nothing to interrupt. This is the one step whose failure you most need to
+# see, so it is bounded and it prints.
+apply_migrations() {
+  ( cd "$REPO/deploy" && COMPOSE_IGNORE_ORPHANS=1 \
+    timeout --foreground "${1:-300}" $DOCKER compose exec -T api \
+    alembic upgrade head )
 }
 
 # Poll rather than ask once: on a first boot the answer is legitimately "wait",
