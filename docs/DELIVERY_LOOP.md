@@ -38,6 +38,7 @@ happened where a gate was missing or decorative.
 | 6 | Explore / Deliver / Operate | not started — needs 2 and 4 |
 | C | Memory as a namespace (the memory tool's shape, your governed store) | not started |
 | D | `task_budget`, `PreCompact` and `Stop` hooks | needs a live experiment |
+| E | Does the employee layer earn its keep? (measure the topology) | not started |
 
 Order is forced, not preferred: make "done" true (2), then measure it (3), then commit to
 it (4), then review it (5), then repeat it (6). A and B are independent of all of it.
@@ -56,6 +57,13 @@ it (4), then review it (5), then repeat it (6). A and B are independent of all o
   Phase C adopts the pattern, not the tool.
 - **Managed Agents is the wrong fit.** It would hand the loop and the sandbox to
   Anthropic; the containment model is the product.
+
+## Validating this plan
+
+`docs/PLAN_VALIDATION_PROMPT.md` is a self-contained brief for a fresh context window to
+adversarially check this plan against every request the chairman actually made, against
+yaaf's own architectural patterns, and against the live database. Use it before starting a
+phase, not after.
 
 ## Branches
 
