@@ -95,3 +95,27 @@ def test_backend_is_the_only_writer_of_staged_inputs():
     assert '"context.json"' not in backend
     assert '"system_prompt.txt"' not in backend
     assert AgentSDKBackend is not None
+
+
+def test_a_run_that_staged_nothing_stashes_nothing(tmp_path):
+    """A success check never stages a context pack, and the workspace it runs
+    in belongs to every agent on the project. So "no file for this run" must
+    mean an empty audit record, never the nearest file that happens to exist —
+    that is how a check run got recorded against another agent's context from
+    the previous day. A confident wrong record is worse than none."""
+    from yaaf.runner.daemon import _stash_context
+
+    workspace = tmp_path / "shared-project"
+    staging = workspace / ".yaaf"
+    staging.mkdir(parents=True)
+    # A neighbour's pack, and the legacy unkeyed names, both sitting right there.
+    _stage(_job("run_neighbour", str(workspace), "Cleo", size=32))
+    (staging / "context.json").write_text(json.dumps({"run_id": "run_ancient"}))
+    (staging / "system_prompt.txt").write_text("a prompt from another run")
+
+    check = RunJob(
+        run_id="run_check", project_id="proj_shared", agent_id=None,
+        kind="success_check", trigger={"type": "success_check"}, task_id="task_x",
+        attempt=1, workspace_dir=str(workspace), check_command="echo checking",
+    )
+    assert _stash_context(check) is None

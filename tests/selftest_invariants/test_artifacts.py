@@ -261,8 +261,10 @@ def test_finalize_stashes_context_and_observe_serves_it(client, tmp_path):
     run_id, _ = live_token(project["id"], project["ceo_agent_id"])
     workspace = tmp_path / "ws"
     (workspace / ".yaaf").mkdir(parents=True)
-    (workspace / ".yaaf" / "system_prompt.txt").write_text("You are the CEO of Acme.")
-    (workspace / ".yaaf" / "context.json").write_text('{"tasks": [{"id": "task_1"}]}')
+    # Run-keyed, matching what AgentSDKBackend stages: the workspace is shared
+    # by every agent on the project, so a fixed name is another run's file.
+    (workspace / ".yaaf" / f"system_prompt-{run_id}.txt").write_text("You are the CEO of Acme.")
+    (workspace / ".yaaf" / f"context-{run_id}.json").write_text('{"tasks": [{"id": "task_1"}]}')
     job = RunJob(run_id=run_id, project_id=project["id"], agent_id=project["ceo_agent_id"],
                  kind="agent_run", trigger={"type": "test"}, task_id=None, attempt=1,
                  workspace_dir=str(workspace))

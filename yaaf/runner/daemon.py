@@ -638,17 +638,15 @@ def _stash_context(job: RunJob) -> str | None:
 
     try:
         staging = Path(job.workspace_dir) / ".yaaf"
-        # Run-keyed, with the legacy names as a fallback so a job staged by the
-        # previous runner still gets stashed. This is not only about crashes:
-        # reading a shared path *after* the run means the record of "what this
-        # run sent to the model" could be another run's pack, which makes the
-        # audit trail itself untrustworthy.
+        # Run-keyed, and deliberately with NO fallback to the old shared names.
+        # A run that staged nothing must stash nothing: success checks never
+        # stage a pack at all, so any fallback hands them whichever file was
+        # lying in a workspace every agent on the project shares — which is how
+        # a check run came to be recorded against another agent's context from
+        # the day before. An empty audit record is honest; a confident wrong
+        # one is worse than none.
         prompt_file = staging / f"system_prompt-{job.run_id}.txt"
         context_file = staging / f"context-{job.run_id}.json"
-        if not prompt_file.exists() and (staging / "system_prompt.txt").exists():
-            prompt_file = staging / "system_prompt.txt"
-        if not context_file.exists() and (staging / "context.json").exists():
-            context_file = staging / "context.json"
         system_prompt = prompt_file.read_text() if prompt_file.exists() else None
         context_pack = (json.loads(context_file.read_text())
                         if context_file.exists() else None)
