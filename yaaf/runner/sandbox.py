@@ -21,6 +21,16 @@ log = logging.getLogger("yaaf.sandbox")
 
 CHECK_TIMEOUT_DEFAULT = 300
 
+# Stamped on every container this stack launches. Sandboxes are sibling
+# containers with Docker-random names and no other handle, so without this a
+# second stack on the same box has no way to tell its own containers from the
+# live one's — and the teardown sweep is box-wide by necessity.
+STACK_LABEL = "yaaf.stack"
+
+
+def _stack_labels(extra: dict | None = None) -> dict:
+    return {STACK_LABEL: settings().stack, **(extra or {})}
+
 
 def run_check_command(command: str, workspace_dir: str, timeout_s: int) -> tuple[int, str]:
     """Run a task's success-test command; return (exit_code, output)."""
@@ -60,6 +70,7 @@ def _docker_check(command: str, workspace_dir: str, timeout_s: int) -> tuple[int
         settings().sandbox_image,
         command=["bash", "-lc", command],
         environment=_proxy_env(),
+        labels=_stack_labels(),
         volumes={workspace_dir: {"bind": "/workspace", "mode": "rw"}},
         working_dir="/workspace",
         network=settings().sandbox_network,
@@ -106,6 +117,7 @@ def run_agent_container(
         settings().sandbox_image,
         command=["python3", "/opt/yaaf/sandbox_entry.py"],
         environment={**_proxy_env(proxy_url), **env},
+        labels=_stack_labels(),
         volumes={workspace_dir: {"bind": "/workspace", "mode": "rw"}},
         working_dir="/workspace",
         network=settings().sandbox_network,
@@ -149,6 +161,26 @@ CHAT_LABEL = "yaaf.chat.project"
 CHAT_RUN_LABEL = "yaaf.chat.run"
 
 
+def chat_container_name(slug: str) -> str:
+    """The chat container's name. Unchanged on the default stack, so a running
+    session keeps its name across this upgrade and is still adopted; suffixed
+    elsewhere, because Docker names are unique per daemon and two stacks
+    running the same project slug would otherwise fight over one name."""
+    stack = settings().stack
+    return f"yaaf-chat-{slug}" if stack == "deploy" else f"yaaf-chat-{stack}-{slug}"
+
+
+def _chat_filters(project_id: str) -> dict:
+    """Find this stack's chat containers for a project, and only this stack's.
+
+    The stack label is load-bearing rather than tidy: a test stack restored
+    from a dump of the live database carries the SAME project ids, so a filter
+    on project id alone matches the live stack's session. Its run id will not
+    match, the supervisor will read it as a zombie, and stop_chat_container
+    will remove a live session out from under the box next door."""
+    return {"label": [f"{CHAT_LABEL}={project_id}", f"{STACK_LABEL}={settings().stack}"]}
+
+
 def start_chat_container(*, project_id: str, run_id: str, name: str,
                          workspace_dir: str, env: dict[str, str],
                          proxy_url: str | None = None, memory: str = "2g") -> str:
@@ -158,14 +190,19 @@ def start_chat_container(*, project_id: str, run_id: str, name: str,
     import docker
 
     client = docker.from_env()
+    # Names are stack-scoped upstream, so this sweep cannot reach another
+    # stack's session — but check the label anyway rather than trusting a
+    # naming convention to be a boundary.
     for stale in client.containers.list(all=True, filters={"name": name}):
+        if (stale.labels or {}).get(STACK_LABEL, settings().stack) != settings().stack:
+            continue
         with contextlib.suppress(Exception):
             stale.remove(force=True)
     container = client.containers.run(
         settings().sandbox_image,
         command=["python3", "/opt/yaaf/chat_entry.py"],
         name=name,
-        labels={CHAT_LABEL: project_id, CHAT_RUN_LABEL: run_id},
+        labels=_stack_labels({CHAT_LABEL: project_id, CHAT_RUN_LABEL: run_id}),
         environment={**_proxy_env(proxy_url), **env},
         volumes={workspace_dir: {"bind": "/workspace", "mode": "rw"}},
         working_dir="/workspace",
@@ -186,7 +223,7 @@ def chat_container_run_ids(project_id: str) -> set[str]:
     client = docker.from_env()
     return {
         (c.labels or {}).get(CHAT_RUN_LABEL, "")
-        for c in client.containers.list(filters={"label": f"{CHAT_LABEL}={project_id}"})
+        for c in client.containers.list(filters=_chat_filters(project_id))
     }
 
 
@@ -198,9 +235,7 @@ def stop_chat_container(project_id: str) -> str:
 
     client = docker.from_env()
     sections = []
-    for container in client.containers.list(
-        all=True, filters={"label": f"{CHAT_LABEL}={project_id}"}
-    ):
+    for container in client.containers.list(all=True, filters=_chat_filters(project_id)):
         sections.append(_chat_forensics(container))
         with contextlib.suppress(Exception):
             container.stop(timeout=5)

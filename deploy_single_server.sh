@@ -48,7 +48,9 @@ command -v curl >/dev/null 2>&1 || die "curl is missing.
 # Sandboxes are sibling containers, so a workspace path must mean the same
 # thing on the host and inside the runner. Identical strings or nothing.
 say "Host directories"
-for d in /var/lib/yaaf/workspaces /var/lib/yaaf/artifacts; do
+load_stack_env
+[ "$YAAF_STACK" = "deploy" ] || ok "stack '$YAAF_STACK' — state under $YAAF_STATE_ROOT"
+for d in "$YAAF_STATE_ROOT/workspaces" "$YAAF_STATE_ROOT/artifacts"; do
   if [ -d "$d" ]; then
     ok "$d exists"
   else

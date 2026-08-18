@@ -6,6 +6,25 @@
 # Host prerequisite (sibling-container workspace mounts need identical
 # host/container paths):
 #   sudo mkdir -p /var/lib/yaaf/workspaces /var/lib/yaaf/artifacts
+#
+# ── running a second stack on one box ────────────────────────────────────────
+# Everything this stack owns is named from YAAF_STACK, which defaults to
+# "deploy" — the implicit compose project name, so an existing box sees no
+# change at all. Set the four variables below in deploy/.env to stand a second
+# stack beside a live one (a worktree testing a branch, or a staging box):
+#
+#   YAAF_STACK=modes                        # containers, volumes, network suffix
+#   YAAF_STATE_ROOT=/var/lib/yaaf-modes     # workspaces, artifacts, proxy config
+#   YAAF_SANDBOX_NETWORK=yaaf_sandbox_modes # sandboxes must not share a network
+#   YAAF_SANDBOX_IMAGE=yaaf-sandbox:modes   # or the live stack's next run uses
+#                                           # this branch's code, silently
+#
+# Each one is a real collision, not belt-and-braces: the network is declared
+# with an explicit name so compose does NOT prefix it; the state root is bind
+# mounted from fixed host paths that two runners would both write; and the
+# sandbox image tag is read per-run, so rebuilding it under the shared tag
+# changes the other stack's behaviour with no restart and no signal.
+name: ${YAAF_STACK:-deploy}
 
 services:
   db:
@@ -34,7 +53,10 @@ services:
       YAAF_ADMIN_TOKEN: ${YAAF_ADMIN_TOKEN:-dev-admin-token}
       YAAF_MASTER_KEY: ${YAAF_MASTER_KEY:-}
       YAAF_API_BASE_URL: http://api:8080
-      YAAF_ARTIFACTS_ROOT: /var/lib/yaaf/artifacts
+      # Host path == container path, here as well as on the runner: the two
+      # services share these directories and store absolute paths in the
+      # database, so they have to agree on what a path means.
+      YAAF_ARTIFACTS_ROOT: ${YAAF_STATE_ROOT:-/var/lib/yaaf}/artifacts
       # S3 artifact store (optional): start minio with `docker compose --profile s3 up`
       # and uncomment these on BOTH api and runner. Local files stay the default.
       # YAAF_ARTIFACT_S3_ENDPOINT: http://minio:9000
@@ -42,10 +64,10 @@ services:
       # YAAF_ARTIFACT_S3_ACCESS_KEY: ${MINIO_ROOT_USER:-yaaf}
       # YAAF_ARTIFACT_S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-yaaf-minio-dev}
     volumes:
-      - /var/lib/yaaf/artifacts:/var/lib/yaaf/artifacts
+      - ${YAAF_STATE_ROOT:-/var/lib/yaaf}/artifacts:${YAAF_STATE_ROOT:-/var/lib/yaaf}/artifacts
       # Read-only: the Files view lists and serves agents' work in progress;
       # only the runner (which owns the sandboxes) ever writes here.
-      - /var/lib/yaaf/workspaces:/var/lib/yaaf/workspaces:ro
+      - ${YAAF_STATE_ROOT:-/var/lib/yaaf}/workspaces:${YAAF_STATE_ROOT:-/var/lib/yaaf}/workspaces:ro
     ports:
       - "8080:8080"
     depends_on:
@@ -63,16 +85,19 @@ services:
       YAAF_DATABASE_URL: postgresql+psycopg://yaaf:yaaf@db:5432/yaaf
       YAAF_API_BASE_URL: http://api:8080
       YAAF_MASTER_KEY: ${YAAF_MASTER_KEY:-}
-      YAAF_SANDBOX_IMAGE: yaaf-sandbox:latest
-      YAAF_SANDBOX_NETWORK: yaaf_sandbox
+      # Labels every sandbox and chat container this stack launches, so a
+      # second stack never adopts, renames or reaps containers it does not own.
+      YAAF_STACK: ${YAAF_STACK:-deploy}
+      YAAF_SANDBOX_IMAGE: ${YAAF_SANDBOX_IMAGE:-yaaf-sandbox:latest}
+      YAAF_SANDBOX_NETWORK: ${YAAF_SANDBOX_NETWORK:-yaaf_sandbox}
       YAAF_EGRESS_PROXY_URL: http://proxy:3128
-      YAAF_WORKSPACES_ROOT: /var/lib/yaaf/workspaces
-      YAAF_ARTIFACTS_ROOT: /var/lib/yaaf/artifacts
+      YAAF_WORKSPACES_ROOT: ${YAAF_STATE_ROOT:-/var/lib/yaaf}/workspaces
+      YAAF_ARTIFACTS_ROOT: ${YAAF_STATE_ROOT:-/var/lib/yaaf}/artifacts
       # Egress auto-apply: the runner regenerates the per-role squid config on
       # change and reloads squid (exec `squid -k reconfigure`; a container HUP
       # dies in the image's bash entrypoint) — UI edits reach squid, no CLI.
-      YAAF_PROXY_GENERATED_DIR: /var/lib/yaaf/proxy-generated
-      YAAF_PROXY_CONTAINER: deploy-proxy-1
+      YAAF_PROXY_GENERATED_DIR: ${YAAF_STATE_ROOT:-/var/lib/yaaf}/proxy-generated
+      YAAF_PROXY_CONTAINER: ${YAAF_STACK:-deploy}-proxy-1
       # S3 artifact store (optional): keep in lockstep with the api service above.
       # YAAF_ARTIFACT_S3_ENDPOINT: http://minio:9000
       # YAAF_ARTIFACT_S3_BUCKET: yaaf-artifacts
@@ -82,13 +107,17 @@ services:
       # The runner launches sibling sandbox containers.
       - /var/run/docker.sock:/var/run/docker.sock
       # Host path == container path, so sibling mounts resolve identically.
-      - /var/lib/yaaf/workspaces:/var/lib/yaaf/workspaces
+      # Both sides move together under YAAF_STATE_ROOT for exactly that reason:
+      # the runner hands these paths to the Docker daemon, which reads them as
+      # HOST paths — a container path that differs would silently mount the
+      # other stack's workspace.
+      - ${YAAF_STATE_ROOT:-/var/lib/yaaf}/workspaces:${YAAF_STATE_ROOT:-/var/lib/yaaf}/workspaces
       # Shared with the api service: run traces are stashed here at finalize.
-      - /var/lib/yaaf/artifacts:/var/lib/yaaf/artifacts
+      - ${YAAF_STATE_ROOT:-/var/lib/yaaf}/artifacts:${YAAF_STATE_ROOT:-/var/lib/yaaf}/artifacts
       # Egress auto-apply writes here; the proxy reads the same dir read-only.
       # Outside the checkout on purpose: this is regenerated machine state, and
       # a running container must never dirty the working tree it was built from.
-      - /var/lib/yaaf/proxy-generated:/var/lib/yaaf/proxy-generated
+      - ${YAAF_STATE_ROOT:-/var/lib/yaaf}/proxy-generated:${YAAF_STATE_ROOT:-/var/lib/yaaf}/proxy-generated
     depends_on:
       db:
         condition: service_healthy
@@ -128,13 +157,18 @@ services:
       # Per-role ports + allowlists, written by `yaaf egress sync`; reload with
       # `docker exec <this container> squid -k reconfigure` after a sync
       # (NOT a container HUP — PID 1 is a bash entrypoint that swallows it).
-      - /var/lib/yaaf/proxy-generated:/etc/squid/generated:ro
+      - ${YAAF_STATE_ROOT:-/var/lib/yaaf}/proxy-generated:/etc/squid/generated:ro
     networks: [default, sandbox]
 
 networks:
   default: {}
   sandbox:
-    name: yaaf_sandbox
+    # An explicit name, so compose does NOT prefix it with the project — which
+    # means two stacks would otherwise share one network, and `compose down`
+    # from either would pull it out from under the other. Worse, sandboxes
+    # resolve the API by the hostname `api`: on a shared network a run from one
+    # stack can reach the other stack's server.
+    name: ${YAAF_SANDBOX_NETWORK:-yaaf_sandbox}
     internal: true   # sandbox containers reach the world ONLY through the proxy
 
 volumes:

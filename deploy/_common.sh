@@ -70,14 +70,23 @@ load_env() {
 }
 
 # Sandboxes are sibling containers the runner launches directly, not compose
-# services — `compose down` does not touch them. Agent runs carry no labels and
-# get Docker-random names, so the entrypoint command is the only reliable
-# handle; chat containers also carry yaaf.chat.project but are matched the same
-# way for consistency. Old ones reference untagged image IDs after a rebuild,
-# which is why matching on the image tag misses almost all of them.
+# services — `compose down` does not touch them. Agent runs get Docker-random
+# names, so the entrypoint command is the only reliable handle; chat containers
+# also carry yaaf.chat.project but are matched the same way for consistency.
+# Old ones reference untagged image IDs after a rebuild, which is why matching
+# on the image tag misses almost all of them.
+#
+# The sweep is BOX-WIDE, so it needs a stack boundary or a teardown here kills
+# the containers of any other stack on the box — the live one, mid-run. A
+# container is ours when its yaaf.stack label matches; unlabelled containers
+# predate the label and belong to the default stack, which is the only one that
+# existed when they were started.
 yaaf_sandbox_ids() {
-  $DOCKER ps -a --no-trunc --format '{{.ID}}	{{.Command}}' \
-    | grep -E 'sandbox_entry\.py|chat_entry\.py' | cut -f1 || true
+  load_stack_env
+  $DOCKER ps -a --no-trunc --format '{{.ID}}	{{.Command}}	{{.Label "yaaf.stack"}}' \
+    | grep -E 'sandbox_entry\.py|chat_entry\.py' \
+    | awk -F'\t' -v stack="$YAAF_STACK" \
+        '$3 == stack || ($3 == "" && stack == "deploy") { print $1 }' || true
 }
 
 # The runner regenerates the per-role squid config every 15 seconds, and it
@@ -90,9 +99,23 @@ yaaf_sandbox_ids() {
 # Squid's `include` is FATAL when the target is missing, so the directory has to
 # carry a roles.conf before the proxy container ever starts. A comment-only file
 # parses cleanly, and the runner replaces it within one tick.
-PROXY_GENERATED_DIR="/var/lib/yaaf/proxy-generated"
+#
+# The directory moves with YAAF_STATE_ROOT so a second stack on the same box
+# does not have both runners regenerating squid config into one directory.
+#
+# Read here rather than in load_env because the host directories are created
+# before deploy/.env is written on a first run — and on every run after that,
+# the file is the authority.
+load_stack_env() {
+  if [ -f "$REPO/deploy/.env" ]; then set -a; . "$REPO/deploy/.env"; set +a; fi
+  YAAF_STACK="${YAAF_STACK:-deploy}"
+  YAAF_STATE_ROOT="${YAAF_STATE_ROOT:-/var/lib/yaaf}"
+  export YAAF_STACK YAAF_STATE_ROOT
+  PROXY_GENERATED_DIR="$YAAF_STATE_ROOT/proxy-generated"
+}
 
 ensure_proxy_generated() {
+  load_stack_env
   local legacy="$REPO/deploy/proxy/generated"
   [ -d "$PROXY_GENERATED_DIR" ] \
     || mkdir -p "$PROXY_GENERATED_DIR" 2>/dev/null \

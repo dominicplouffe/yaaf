@@ -298,7 +298,7 @@ def _prepare_session(session: Session, project: Project, ceo: Agent) -> tuple[di
     launch = dict(
         project_id=project.id,
         run_id=run.id,
-        name=f"yaaf-chat-{project.slug}",
+        name=sandbox.chat_container_name(project.slug),
         workspace_dir=str(workspace),
         env=env,
         proxy_url=job.egress_proxy_url,

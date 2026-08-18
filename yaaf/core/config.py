@@ -31,6 +31,17 @@ class Settings(BaseSettings):
 
     # Runner
     worker_name: str = "worker-1"
+    # Which stack on this box owns the containers we launch. Every sandbox and
+    # chat container is labelled with it, and every lookup filters on it, so a
+    # second stack (a worktree testing a branch beside the live one) can never
+    # adopt, rename or reap containers it does not own. The default matches the
+    # implicit compose project name, so a single-stack box sees no change.
+    #
+    # This is not belt-and-braces: chat containers are found by project id, and
+    # a test stack restored from a dump of the live database has the SAME
+    # project ids. Without this label its supervisor reads the live session as
+    # a zombie and removes it.
+    stack: str = "deploy"
     # "docker" (isolation; default) or "subprocess" (dev/CI only — NO isolation)
     sandbox_mode: str = "docker"
     sandbox_image: str = "yaaf-sandbox:latest"
