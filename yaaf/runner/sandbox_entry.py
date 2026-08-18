@@ -34,6 +34,10 @@ TOKEN = os.environ["YAAF_API_TOKEN"]
 RUN_ID = os.environ["YAAF_RUN_ID"]
 MODEL = os.environ.get("YAAF_MODEL", "claude-sonnet-5")
 EFFORT = os.environ.get("YAAF_EFFORT", "high")
+# A run that spends this much has stopped working and started looping. The SDK
+# tells the model as it approaches and stops it at the line, so the run ends
+# having said something rather than being cut off silently. 0 = unbounded.
+MAX_USD = float(os.environ.get("YAAF_MAX_USD", "0") or 0)
 PERMS = json.loads(os.environ.get("YAAF_TOOL_PERMISSIONS", "{}"))
 
 STAGING = Path("/workspace/.yaaf")
@@ -480,6 +484,7 @@ async def main() -> int:
         cwd="/workspace",
         setting_sources=[],
         max_turns=100,
+        **({"max_budget_usd": MAX_USD} if MAX_USD > 0 else {}),
         # A big MCP tool result (a real data pull) overflows the SDK's default
         # 1MB transport buffer and kills the run; seen live on audit data.
         max_buffer_size=16 * 1024 * 1024,

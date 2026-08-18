@@ -211,6 +211,7 @@ def _materialize(session: Session, queued: RunQueue, project: Project) -> RunJob
     job.context_pack = build_context_pack(session, run, agent, project)
 
     role_version = role_version_for(session, agent)
+    job.max_usd = cons.max_usd_per_run
     job.model = agent.model_override or (role_version.model if role_version else "claude-sonnet-5")
     job.effort = role_version.effort if role_version else "high"
     # Pinned on the run row at lease time, not finalize: reaped and killed runs
@@ -679,19 +680,30 @@ MAX_RUN_ATTEMPTS = 3
 
 
 def _retry_failed_run(session: Session, run: Run) -> None:
-    """A failed run consumed its trigger (notices marked read, message cursors
-    advanced) without a model ever acting on it. Give the notices back and
-    requeue the wake with backoff; the retry's context pack re-includes recent
-    messages (see contextpack) so nothing said gets silently eaten."""
+    """A failed run consumed its trigger (notices marked read, suggestions
+    marked read, message cursors advanced) without a model ever acting on it.
+    Give them back and requeue the wake with backoff; the retry's context pack
+    re-includes recent messages (see contextpack) so nothing said gets silently
+    eaten."""
     from datetime import timedelta
 
-    from yaaf.core.models import Notice
+    from yaaf.core.models import Notice, Suggestion
 
     for notice in session.execute(
         select(Notice).where(Notice.consumed_by_run_id == run.id)
     ).scalars():
         notice.consumed_at = None
         notice.consumed_by_run_id = None
+
+    # Suggestions are consumed by pack construction the same way notices are,
+    # and are an employee's ONLY authority over the backlog. Losing one to a
+    # crash silently deletes the single thing a non-CEO agent may say about
+    # what should be worked on.
+    for suggestion in session.execute(
+        select(Suggestion).where(Suggestion.consumed_by_run_id == run.id)
+    ).scalars():
+        suggestion.consumed_at = None
+        suggestion.consumed_by_run_id = None
 
     if run.attempt >= MAX_RUN_ATTEMPTS:
         log.warning("run %s failed at attempt %s; giving up", run.id, run.attempt)

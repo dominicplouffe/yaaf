@@ -632,3 +632,38 @@ def test_the_ceo_is_told_the_hourly_ration(client):
         row = session.get(Project, project["id"])
         prose = constitution_prose(effective(session, row.id), row)
     assert "9 in any trailing hour" in prose
+
+
+# ── the per-run spend ceiling ───────────────────────────────────────────────
+
+
+def test_a_run_carries_the_projects_per_run_spend_ceiling(client):
+    """Nothing bounded a single run's cost. One task spent $8.05 across 53 of
+    them and every individual run looked ordinary — the ceiling has to reach
+    the sandbox, or it is a number in a table."""
+    from yaaf.core.constitution import effective
+    from yaaf.runner import daemon
+
+    project = make_project(client, constitution={"max_usd_per_run": 1.25})
+    with db_session() as session:
+        row = session.get(Project, project["id"])
+        assert effective(session, row.id).max_usd_per_run == 1.25
+
+    with db_session() as session:
+        dispatcher.dispatch_once(session)
+    jobs = daemon.lease_and_prepare(limit=1)
+    assert jobs, "the bootstrap heartbeat should have queued a run"
+    assert jobs[0].max_usd == 1.25
+
+
+def test_zero_means_unbounded_and_is_not_passed_as_a_ceiling(client):
+    """0 has to mean off rather than 'may spend nothing', or setting it to zero
+    would stop every run instead of removing the limit."""
+    from yaaf.runner import daemon
+
+    make_project(client, constitution={"max_usd_per_run": 0})
+    with db_session() as session:
+        dispatcher.dispatch_once(session)
+    jobs = daemon.lease_and_prepare(limit=1)
+    assert jobs
+    assert jobs[0].max_usd == 0

@@ -145,6 +145,12 @@ class ConstitutionDoc(BaseModel):
         10, ge=2, group="Wake-loop brakes", label="Messages before a thread freezes",
         help="Two agents talking this many times in one thread with nothing landing are "
              "talking, not working; the thread freezes.")
+    max_usd_per_run: float = _rule(
+        2.0, ge=0, group="Wake-loop brakes", label="Most one run may spend",
+        help="USD. A single run that spends this much has stopped working and started "
+             "looping; it is told as it approaches and stopped at the line. 0 turns it "
+             "off. One task once cost $8.05 across 53 runs, and nothing bounded any of "
+             "them individually.")
     refusal_cap_per_run: int = _rule(
         5, ge=1, group="Wake-loop brakes", label="Refusals a run may hit",
         help="Past this the run's token is revoked. Rephrasing a refused request is not a "

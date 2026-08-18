@@ -271,6 +271,41 @@ def _unread_messages(session: Session, agent: Agent, include_recent: bool = Fals
     return out
 
 
+def _you(session: Session, agent: Agent) -> dict:
+    """Who this agent is, and the two things it kept guessing about.
+
+    655 refusals landed across 28% of runs and almost none were safety
+    refusals — they were agents not knowing the org chart. "Unknown channel"
+    33 times, and "Project-scope memory is the CEO's" 20 times. Both are
+    answerable from the pack for a handful of tokens, and every one of them
+    otherwise costs a full model turn to discover.
+    """
+    channels = []
+    for channel_id in policy.agent_channel_ids(session, agent):
+        channel = session.get(Channel, channel_id)
+        if channel is None:
+            continue
+        others = 0
+        if channel.kind == ChannelKind.TEAM and channel.team_id:
+            others = max(0, len(policy.team_agents(session, channel.team_id)) - 1)
+        channels.append({
+            "channel_id": channel.id,
+            "kind": channel.kind,
+            # A solo team room reads exactly like a real one and is a diary.
+            # Say so here rather than letting the post get refused later.
+            **({"note": "you are the only member — nobody will read this"}
+               if channel.kind == ChannelKind.TEAM and not others else {}),
+        })
+    return {
+        "agent_id": agent.id,
+        "name": agent.name,
+        "kind": agent.kind,
+        "team_id": agent.team_id,
+        "channels": channels,
+        "memory_scope": ("project" if agent.kind == AgentKind.CEO else "team"),
+    }
+
+
 def _roster(session: Session, project: Project) -> list[dict]:
     teams = []
     for team in session.execute(select(Team).where(Team.project_id == project.id)).scalars():
@@ -392,8 +427,7 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
         "trigger": run.trigger,
         "attempt": run.attempt,
         "project": {"name": project.name, "goal": project.goal, "status": project.status},
-        "you": {"agent_id": agent.id, "name": agent.name, "kind": agent.kind,
-                "team_id": agent.team_id},
+        "you": _you(session, agent),
         "roster": _roster(session, project),
         "notices": [{"kind": n.kind, "body": n.body, "at": n.created_at.isoformat()}
                     for n in notices],
@@ -463,6 +497,7 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
         )
         for s in suggestions:
             s.consumed_at = now
+            s.consumed_by_run_id = run.id
         pack["suggestions"] = [
             {"by": s.by_agent_id,
              "text": _clip(s.text, SUGGESTION_CHARS, "clipped at 1000 chars")}

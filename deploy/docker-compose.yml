@@ -57,6 +57,10 @@ services:
       # services share these directories and store absolute paths in the
       # database, so they have to agree on what a path means.
       YAAF_ARTIFACTS_ROOT: ${YAAF_STATE_ROOT:-/var/lib/yaaf}/artifacts
+      # The Files view and the janitor's reaped-run metering both read the
+      # workspace from here. It used to be left to the default, which agreed
+      # with the mount only because both were hardcoded to the same path.
+      YAAF_WORKSPACES_ROOT: ${YAAF_STATE_ROOT:-/var/lib/yaaf}/workspaces
       # S3 artifact store (optional): start minio with `docker compose --profile s3 up`
       # and uncomment these on BOTH api and runner. Local files stay the default.
       # YAAF_ARTIFACT_S3_ENDPOINT: http://minio:9000

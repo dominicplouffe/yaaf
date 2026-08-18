@@ -463,6 +463,11 @@ class Suggestion(Base):
     by_agent_id: Mapped[str] = mapped_column(String(40))
     text: Mapped[str] = mapped_column(Text)
     consumed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # Which run ate it — so a run that dies after building its pack gives it
+    # back, exactly as notices are given back. Without this a failed CEO run
+    # destroyed every suggestion it was handed, permanently: an employee's
+    # only channel to the backlog, lost to a crash it had no part in.
+    consumed_by_run_id: Mapped[str | None] = mapped_column(String(40))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 

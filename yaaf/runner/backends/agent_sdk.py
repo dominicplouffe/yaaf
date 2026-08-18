@@ -49,6 +49,7 @@ class AgentSDKBackend:
             "YAAF_API_TOKEN": job.api_token,
             "YAAF_MODEL": job.model,
             "YAAF_EFFORT": job.effort,
+            "YAAF_MAX_USD": str(job.max_usd or 0),
             "YAAF_TOOL_PERMISSIONS": json.dumps(job.tool_permissions),
             **job.billing_env,
         }

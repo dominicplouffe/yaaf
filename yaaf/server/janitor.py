@@ -18,9 +18,11 @@ happened — never the mechanism itself.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from datetime import timedelta
+from pathlib import Path
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -142,6 +144,7 @@ def reap_stale_runs(session: Session, project: Project, cons: ConstitutionDoc) -
         run.status = RunStatus.REAPED
         run.token_revoked = True
         run.finished_at = now
+        _harvest_reaped_usage(session, project, run)
         _release_claims_of_run(session, run.id, "run reaped: lease expired")
         if run.agent_id is not None and run.kind != RunKind.CHAT_SESSION:
             # A dead chat session is restarted quietly by its supervisor — a
@@ -154,6 +157,62 @@ def reap_stale_runs(session: Session, project: Project, cons: ConstitutionDoc) -
             )
         log.warning("reaped run %s (project %s)", run.id, project.slug)
     return len(stale)
+
+
+def _harvest_reaped_usage(session: Session, project: Project, run: Run) -> bool:
+    """Book what a reaped run actually spent, from the checkpoint it left behind.
+
+    The sandbox writes usage to result-<run>.json after every message precisely
+    so that a hard kill is metered rather than free — but only `finalize` ever
+    read it, and a reaped run never reaches finalize. The lease expiring means
+    the *runner* died or lost the row, not that the model did no work.
+
+    So 244 runs across the fleet — 22% of them, burning ~86 wall-hours — were
+    booked at $0.00 and zero tokens. "Non-DONE runs are only 7% of spend" was a
+    metering artefact, and every budget decision made on it was wrong by an
+    unknown margin. Recovering it here makes failure cost what it costs.
+    """
+    slug = f"{project.slug}-chat" if run.kind == RunKind.CHAT_SESSION else project.slug
+    path = Path(settings().workspaces_root) / slug / ".yaaf" / f"result-{run.id}.json"
+    try:
+        data = json.loads(path.read_text())
+    except FileNotFoundError:
+        return False  # died before its first checkpoint, or the workspace is gone
+    except Exception:
+        log.warning("unreadable usage checkpoint for reaped run %s", run.id)
+        return False
+
+    run.tokens_in = int(data.get("tokens_in", 0) or 0)
+    run.tokens_out = int(data.get("tokens_out", 0) or 0)
+    run.cache_creation_tokens = int(data.get("cache_creation_tokens", 0) or 0)
+    run.cache_read_tokens = int(data.get("cache_read_tokens", 0) or 0)
+    # Subscription projects meter in tokens; booking the SDK's list price there
+    # would distort a budget that is not denominated in dollars. Same rule the
+    # runner applies at finalize.
+    subscription = project.billing_mode == "subscription"
+    run.cost_usd = None if subscription else data.get("cost_usd")
+
+    total = (run.tokens_in + run.tokens_out
+             + run.cache_creation_tokens + run.cache_read_tokens)
+    if not total and not run.cost_usd:
+        return False
+
+    session.add(
+        LedgerEntry(
+            id=ids.new_id(ids.LEDGER),
+            project_id=project.id,
+            kind="model_usage",
+            tokens_in=run.tokens_in,
+            tokens_out=run.tokens_out,
+            cache_creation_tokens=run.cache_creation_tokens,
+            cache_read_tokens=run.cache_read_tokens,
+            usd=run.cost_usd,
+            run_id=run.id,
+            note=f"{run.kind} reaped (usage recovered from checkpoint)",
+        )
+    )
+    log.info("recovered %s tokens from reaped run %s", total, run.id)
+    return True
 
 
 def _release_claims_of_run(session: Session, run_id: str, note: str) -> None:
