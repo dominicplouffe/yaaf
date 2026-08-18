@@ -105,7 +105,13 @@ def test_reply_to_the_chairman_is_always_allowed(client):
 
 
 def test_the_slot_opens_once_the_interval_has_passed(client):
-    project = _with_cadence(client)
+    # No window: this is the INTERVAL's test, and the shared CADENCE's
+    # 09:00-20:00 makes it a test of what time it is where the suite runs. With
+    # the window on, a slot backdated past the interval still lands outside the
+    # chairman's waking hours after 20:00 New York, _into_window correctly
+    # pushes it to 09:00 tomorrow, and this fails every evening. The window has
+    # its own tests below, against explicit datetimes rather than the clock.
+    project = _with_cadence(client, {**CADENCE, "chairman_report_window_local": None})
     assert _post(client, project, "**Status 1**").status_code == 200
     assert _post(client, project, "**Status 2**").status_code == 429
     _backdate_ceo_posts(project, hours=5)
