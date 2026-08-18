@@ -108,6 +108,11 @@ h2 { font-size: 15px; margin: 24px 0 10px; color: var(--ink-2); }
 .badge.serious::before { color: var(--serious); }
 .badge.critical::before { color: var(--critical); }
 .badge.accent::before { color: var(--accent); }
+/* A badge that is also a link keeps the pill's own ink rather than the link
+   accent (the dot already carries the status), and shows it is clickable by
+   lifting its border — an underline inside a pill reads as damage. */
+a.badge { color: var(--ink-2); cursor: pointer; }
+a.badge:hover { text-decoration: none; border-color: var(--ink-2); }
 
 /* ── tables ── */
 table { width: 100%; border-collapse: collapse; font-size: 13px; }

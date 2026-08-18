@@ -4,6 +4,7 @@ import {
   ApprovalRow,
   Dashboard,
   get,
+  HealthCheck,
   HypothesisRow,
   OrgView,
   post,
@@ -131,6 +132,55 @@ function goalLead(goal: string): string {
   return clip(firstSentence.replace(/\s+/g, " ").trim(), 120);
 }
 
+// A warning is not a failure, and the setup badge must not say it is. It used
+// to count every check that was not "ok" and paint the total in critical red:
+// a project whose five warnings were all "a newer role version exists, adopt
+// it when ready" read as "5 to fix", identical to five hard outages, with
+// nothing in the badge to tell them apart and nothing actually to fix. The API
+// already draws the line — `ok` is false only on a real failure — so the badge
+// respects it, and names the thing rather than counting it. "5 role updates"
+// tells you what you are looking at; "5 to fix" tells you that you are late.
+const WARN_LABELS: Record<string, [one: string, many: string]> = {
+  "role-drift": ["role update", "role updates"],
+  "data-source": ["data source to check", "data sources to check"],
+  connectors: ["connector to finish", "connectors to finish"],
+  activity: ["activity notice", "activity notices"],
+  chat: ["chat notice", "chat notices"],
+  slack: ["Slack notice", "Slack notices"],
+  billing: ["billing notice", "billing notices"],
+};
+
+function warnLabel(warned: HealthCheck[]): string {
+  // Every check key is either "kind" or "kind:instance"; a single kind can be
+  // named, a mixture cannot honestly be.
+  const kinds = new Set(warned.map((c) => c.key.split(":")[0]));
+  const named = kinds.size === 1 ? WARN_LABELS[[...kinds][0]] : undefined;
+  if (!named) return "to review";
+  return warned.length === 1 ? named[0] : named[1];
+}
+
+/** The header's verdict on setup: red only when something is actually broken,
+    and always a link to the list that explains it. */
+function setupBadge(dash: Dashboard, health: ProjectHealth | null) {
+  if (!health) return <span className="help">checking…</span>;
+  const failed = health.checks.filter((c) => c.status === "fail");
+  const warned = health.checks.filter((c) => c.status === "warn");
+  if (!failed.length && !warned.length) {
+    return <span className="badge good">healthy</span>;
+  }
+  const critical = failed.length > 0;
+  const shown = critical ? failed : warned;
+  return (
+    <NavLink
+      to={`/projects/${dash.id}`}
+      className={`badge ${critical ? "critical" : "warn"}`}
+      title={shown.map((c) => c.detail).join("\n")}
+    >
+      {shown.length} {critical ? "to fix" : warnLabel(warned)}
+    </NavLink>
+  );
+}
+
 /** One strip of facts that are true on every tab: is it alive, is anyone
     working, what has it cost, is it configured — plus the two lifecycle acts. */
 function ProjectBar({
@@ -149,7 +199,6 @@ function ProjectBar({
   const [brief, setBrief] = useState(false);
   const { unit, spent, cap, warnRatio, frac } = budgetOf(dash);
   const meterCls = frac >= 1 ? "over" : frac >= warnRatio ? "warn" : "";
-  const failing = (health?.checks ?? []).filter((c) => c.status !== "ok").length;
 
   return (
     <>
@@ -195,15 +244,7 @@ function ProjectBar({
 
           <div className="vital">
             <span className="l">Setup</span>
-            <span className="v">
-              {!health ? (
-                <span className="help">checking…</span>
-              ) : health.all_ok ? (
-                <span className="badge good">healthy</span>
-              ) : (
-                <span className="badge critical">{failing} to fix</span>
-              )}
-            </span>
+            <span className="v">{setupBadge(dash, health)}</span>
           </div>
 
           <div className="vital">
