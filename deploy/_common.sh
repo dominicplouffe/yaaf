@@ -80,6 +80,41 @@ yaaf_sandbox_ids() {
     | grep -E 'sandbox_entry\.py|chat_entry\.py' | cut -f1 || true
 }
 
+# The runner regenerates the per-role squid config every 15 seconds, and it
+# used to write into ./proxy/generated — inside the git checkout. A tracked file
+# that the running application rewrites is a permanent local modification: noise
+# at best, and since this script refuses to run on a dirty tree, a deploy that
+# blocks itself at worst. Two of that file's commits exist only to absorb the
+# churn. Machine state now lives beside the other machine state.
+#
+# Squid's `include` is FATAL when the target is missing, so the directory has to
+# carry a roles.conf before the proxy container ever starts. A comment-only file
+# parses cleanly, and the runner replaces it within one tick.
+PROXY_GENERATED_DIR="/var/lib/yaaf/proxy-generated"
+
+ensure_proxy_generated() {
+  local legacy="$REPO/deploy/proxy/generated"
+  [ -d "$PROXY_GENERATED_DIR" ] \
+    || mkdir -p "$PROXY_GENERATED_DIR" 2>/dev/null \
+    || sudo mkdir -p "$PROXY_GENERATED_DIR" \
+    || die "could not create $PROXY_GENERATED_DIR"
+
+  # One-time carry-over for a box upgrading from the in-checkout location: it
+  # keeps its role ports instead of losing egress until the next regeneration.
+  if [ ! -f "$PROXY_GENERATED_DIR/roles.conf" ] && [ -f "$legacy/roles.conf" ]; then
+    cp -a "$legacy"/. "$PROXY_GENERATED_DIR"/ 2>/dev/null \
+      || sudo cp -a "$legacy"/. "$PROXY_GENERATED_DIR"/ 2>/dev/null || true
+  fi
+
+  if [ ! -f "$PROXY_GENERATED_DIR/roles.conf" ]; then
+    local seed="# Seeded before first boot — the runner rewrites this within 15s.
+# Squid refuses to start when this include target does not exist."
+    printf '%s\n' "$seed" > "$PROXY_GENERATED_DIR/roles.conf" 2>/dev/null \
+      || printf '%s\n' "$seed" | sudo tee "$PROXY_GENERATED_DIR/roles.conf" >/dev/null \
+      || die "could not seed $PROXY_GENERATED_DIR/roles.conf"
+  fi
+}
+
 wait_for_api() {
   local port="$1" deadline=$((SECONDS + 180))
   until curl -fsS "http://127.0.0.1:${port}/healthz" >/dev/null 2>&1; do

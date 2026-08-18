@@ -86,7 +86,9 @@ services:
       # Shared with the api service: run traces are stashed here at finalize.
       - /var/lib/yaaf/artifacts:/var/lib/yaaf/artifacts
       # Egress auto-apply writes here; the proxy reads the same dir read-only.
-      - ./proxy/generated:/var/lib/yaaf/proxy-generated
+      # Outside the checkout on purpose: this is regenerated machine state, and
+      # a running container must never dirty the working tree it was built from.
+      - /var/lib/yaaf/proxy-generated:/var/lib/yaaf/proxy-generated
     depends_on:
       db:
         condition: service_healthy
@@ -126,7 +128,7 @@ services:
       # Per-role ports + allowlists, written by `yaaf egress sync`; reload with
       # `docker exec <this container> squid -k reconfigure` after a sync
       # (NOT a container HUP — PID 1 is a bash entrypoint that swallows it).
-      - ./proxy/generated:/etc/squid/generated:ro
+      - /var/lib/yaaf/proxy-generated:/etc/squid/generated:ro
     networks: [default, sandbox]
 
 networks:

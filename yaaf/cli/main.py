@@ -319,12 +319,12 @@ def audit_evidence(evidence_id: str, ok: bool = typer.Option(..., "--ok/--bad"),
 
 @app.command()
 def egress_sync(
-    out: Path = typer.Option(Path("deploy/proxy/generated"), "--out"),
+    out: Path = typer.Option(Path("/var/lib/yaaf/proxy-generated"), "--out"),
     proxy_container: str = typer.Option(None, "--proxy-container", "--hup-container",
                                         help="Proxy container to reload after writing"),
 ) -> None:
-    """Fetch per-role squid config from the API and write it to deploy/proxy/
-    (run on the box that hosts deploy/), then reload the proxy to load it."""
+    """Fetch per-role squid config from the API and write it where the proxy
+    reads it (run on the box that hosts deploy/), then reload the proxy."""
     with _client() as client:
         payload = _json_or_die(client.get("/admin/egress/config"))
     out.mkdir(parents=True, exist_ok=True)

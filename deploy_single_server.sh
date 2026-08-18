@@ -55,6 +55,9 @@ for d in /var/lib/yaaf/workspaces /var/lib/yaaf/artifacts; do
     sudo mkdir -p "$d" && ok "created $d"
   fi
 done
+# The proxy's generated config lives out here too, and needs a seed file before
+# squid's first start — its `include` is fatal when the target is missing.
+ensure_proxy_generated; ok "$PROXY_GENERATED_DIR seeded"
 
 # ── 3. secrets ────────────────────────────────────────────────────────────────
 # YAAF_ADMIN_TOKEN is any opaque string. YAAF_MASTER_KEY must be a Fernet key

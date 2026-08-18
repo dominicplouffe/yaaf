@@ -17,9 +17,13 @@ web/dist/
 # M2 experiment blind-judging bundles (contain sealed mappings)
 m2-bundles/
 
-# Per-role egress allowlists are generated from the live role library — site
-# domains stay out of the repo. (generated/roles.conf stays tracked: ports only.)
-deploy/proxy/generated/allowlist_*.txt
+# Per-role egress config, regenerated from the live role library every 15s by
+# the runner. All of it is machine state — the allowlists carry site domains,
+# and roles.conf carries one port block per role in THAT box's database. It
+# used to be tracked, on the theory that it was "ports only"; what that bought
+# was a file permanently showing as modified and an update script that refused
+# to run because of it. It now lives in /var/lib/yaaf/proxy-generated.
+deploy/proxy/generated/
 
 # Session handoff notes for Claude — local only
 HANDOFF.md
