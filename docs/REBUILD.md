@@ -55,7 +55,7 @@ session preferred, twice over, which is why this table names objects.
 | 3 | The plan screen — stage board and dependency graph | **done** |
 | 4 | Velocity, cost attribution, error load | **done** |
 | 5 | Commitment, and a forecast that refuses things | **done** — migration 0003 |
-| 6 | Deliverables, attestation, the sampled audit | not started |
+| 6 | Deliverables, attestation, the sampled audit | **done** — migration 0004 |
 | 7 | The status meeting, and six levers | not started |
 | 8 | Explore / Deliver / Operate, and the learning loop | not started |
 | 9 | The topology experiment | not started |
@@ -225,6 +225,39 @@ twice, and dropped both times.
   token (no route), add scope past a breach (refused, arithmetic shown, task
   creation still allowed), amend the constitution out from under the freeze
   (re-validated and disclosed; the frozen version untouched).
+
+## Stage 6, as built
+
+- **`artifacts` is the receipt** (migration 0004): name, platform-incremented
+  version, sha256, size, a real publish time, the author, and the requirement
+  ids it claims to satisfy — validated against the project's scope, a claim
+  and never a verdict. A run stamped with a requirement publishes against it
+  by default. The Deliverables screen shows the hash and the "satisfies" keys.
+- **`evidence.task_id` is a real FK.** The design said NOT NULL; what shipped
+  is a refusal instead, because two taskless authors are legitimate — webhook
+  connectors and Explore-mode agents. In Deliver/Operate, agent evidence
+  naming no task (or a fake one) is refused with the reason spelled out.
+- **Webhook secrets exist from birth.** `create_project` provisions both
+  signing secrets and shows them exactly once, endpoint URL beside each (New
+  project screen + a Settings card with regenerate). The `platform_attested`
+  path itself was never the missing piece — provisioning was.
+- **The sampled audit**: `audit_sample_rate` + `audit_response_hours` as
+  constitution rules; the janitor rolls the dice server-side AFTER an
+  observable close (command-checked closes are never sampled — the platform
+  already ran those). Every considered close gets an `audit_samples` row,
+  drawn or skipped, so nothing is re-rolled and the review's coverage line
+  has a denominator. Pending samples land on the Work screen with two
+  buttons; a failed one hits the task's audit fields and the CEO's next pack;
+  expiry records "not reviewed" and blocks nothing. No agent route serves any
+  of it — proven by a test that reads the audited claimant's own pack.
+- **Anthropic tooling**: a memory-tool-shaped `memory` MCP tool (view/create/
+  str_replace/rename/delete) over the governed store — same caps, same
+  curator rules, because it IS the same store; `PreCompact` + `Stop` hooks
+  that are record-only by construction (their return carries no decision key,
+  so there is nothing for an agent's output to learn to pull); role-defined
+  skills staged into a platform-owned `.claude/skills` with an explicit SDK
+  allowlist — `[]` when none granted, so an agent-authored skill file stays
+  dark; and `run_token_budget` handed to the SDK as an API-side task budget.
 
 ## The reset — done, 18 Aug
 
