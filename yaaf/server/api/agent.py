@@ -41,6 +41,8 @@ from yaaf.core.models import (
     Requirement,
     RequirementEdge,
     RequirementStatus,
+    Review,
+    ReviewStatus,
     RunKind,
     RunQueue,
     SideEffect,
@@ -981,6 +983,62 @@ def propose_commitment(
                  "— you did not write it and cannot. He accepts it (with this date or "
                  "his own), or declines; nothing binds until he does."),
     }
+
+
+# ── the review: the CEO's half of the meeting ───────────────────────────────────
+
+
+class ReviewNarrativeIn(BaseModel):
+    narrative: str = Field(min_length=50, max_length=20_000)
+    recommended: str | None = Field(default=None, max_length=10_000)
+
+
+@router.post("/review_narrative")
+def file_review_narrative(
+    body: ReviewNarrativeIn, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
+) -> dict:
+    """The variance narrative, into the open review. Note the shape of the
+    verb: the CEO explains the numbers, it does not produce them — the
+    platform's snapshot was frozen when the janitor opened the meeting, so
+    there is nothing here for a narrative to massage."""
+    if ctx.agent.kind != AgentKind.CEO:
+        raise Refusal(
+            "The review narrative is the CEO's. If you have variance to explain, "
+            "tell the CEO — your channel for that is a message or a suggestion.",
+            status_code=403,
+        )
+    review = session.execute(
+        select(Review).where(Review.project_id == ctx.project.id,
+                             Review.status == ReviewStatus.OPEN)
+    ).scalar_one_or_none()
+    if review is None:
+        raise Refusal(
+            "No review is open. The janitor opens them on the constitution's "
+            "cadence; you will be woken when one is.",
+            status_code=409,
+        )
+    if review.narrative is not None:
+        raise Refusal(
+            f"Review #{review.number} already has your narrative. The meeting is "
+            "with the chairman now — his decisions arrive as notices.",
+            status_code=409,
+        )
+    review.narrative = body.narrative.strip()
+    review.recommended = (body.recommended or "").strip() or None
+    review.narrative_run_id = ctx.run.id
+    review.narrative_filed_at = utcnow()
+    from yaaf.server.notify import chairman_notify
+
+    chairman_notify(
+        session, ctx.project, f"review #{review.number}: the CEO's narrative is in",
+        body.narrative[:2000]
+        + (f"\n\nRecommends: {review.recommended[:1000]}" if review.recommended else "")
+        + "\n\nTake the meeting on the Review tab.",
+    )
+    return {"review_number": review.number,
+            "note": ("Filed. The chairman decides from here — cut, add, reword, "
+                     "move the date, raise the budget, or accept the slip. Each "
+                     "decision reaches you as a notice with his reason.")}
 
 
 # ── evidence, hypotheses, decisions ─────────────────────────────────────────────

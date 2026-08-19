@@ -201,6 +201,11 @@ class AuditSampleStatus(enum.StrEnum):
     SKIPPED = "skipped"
 
 
+class ReviewStatus(enum.StrEnum):
+    OPEN = "open"      # the janitor opened it; the meeting is in progress
+    CLOSED = "closed"  # the chairman closed it, with his decisions on it
+
+
 class HypothesisStatus(enum.StrEnum):
     ACTIVE = "active"
     EXPIRED = "expired"    # kill date arrived; auto-set by the janitor
@@ -280,6 +285,7 @@ class NoticeKind(enum.StrEnum):
     # The commitment's transitions and re-validations, each disclosed to the
     # CEO exactly once. AT_RISK and BREACHED also freeze new scope — the
     # notice is the explanation, the refusal in policy is the enforcement.
+    REVIEW_OPENED = "review_opened"
     COMMITMENT_ACCEPTED = "commitment_accepted"
     COMMITMENT_AT_RISK = "commitment_at_risk"
     COMMITMENT_BREACHED = "commitment_breached"
@@ -833,6 +839,53 @@ class Artifact(Base):
     # written by the platform.
     requirement_ids: Mapped[list] = mapped_column(JSONVariant, default=list)
     published_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class Review(Base):
+    """The status meeting, owned by the janitor.
+
+    The chairman described it: "status meetings to discuss the goal and
+    hypothesis, alter requirements, and judge whether the deadline will be
+    met" — all three clauses. The janitor opens, numbers and emails it with
+    ZERO tokens, which is why it happens on exactly the days a busy company
+    most needs it. The CEO's variance narrative arrives on a reserved
+    governance run (wake reason kind ``review``). The chairman's six levers —
+    cut, add, reword, move the date, raise the budget, accept the slip — are
+    each recorded here with his reason, disclosed to the CEO, and shown at
+    the NEXT review beside what they bought.
+
+    A review with an empty board still fires: that is the one he most needs.
+    """
+
+    __tablename__ = "reviews"
+    __table_args__ = (
+        UniqueConstraint("project_id", "number"),
+        Index("ix_reviews_project_status", "project_id", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    number: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(16), default=ReviewStatus.OPEN)
+    scheduled_for: Mapped[datetime] = mapped_column(UTCDateTime)
+    opened_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    # The platform's snapshot at open: pace, commitment, budget, scope counts,
+    # audit coverage since the last review, and the prior review's decisions
+    # beside what they bought. Numbers come from the same producers every
+    # screen reads; this is a frozen copy so the meeting's record cannot
+    # drift as the week moves on.
+    numbers: Mapped[dict] = mapped_column(JSONVariant, default=dict)
+    narrative: Mapped[str | None] = mapped_column(Text)
+    recommended: Mapped[str | None] = mapped_column(Text)
+    narrative_run_id: Mapped[str | None] = mapped_column(String(40))
+    narrative_filed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # [{"kind", "reason", "detail", "at"}] — the levers pulled, in order.
+    decisions: Mapped[list] = mapped_column(JSONVariant, default=list)
+    closed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    closed_by_user_id: Mapped[str | None] = mapped_column(String(40))
+    nag_sent_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    escalated_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 
 class AuditSample(Base):

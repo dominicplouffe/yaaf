@@ -240,6 +240,17 @@ class ConstitutionDoc(BaseModel):
         help="IANA name, e.g. 'America/New_York'. Every local time in these rules — the "
              "reporting window, the daily wake, a recurring rhythm — is read in this zone.")
 
+    # The review. Opened, numbered and emailed by the janitor with zero
+    # tokens; the CEO's narrative rides the governance reserve.
+    review_interval_days: int = _rule(
+        7, ge=1, group="The review", label="Days between status reviews",
+        help="The standing meeting: the janitor opens it on schedule regardless of "
+             "budgets or an empty board, emails you the numbers, and the CEO files its "
+             "variance narrative on a reserved governance run. Your six levers — cut, "
+             "add, reword, move the date, raise the budget, accept the slip — are "
+             "recorded with your reasons and shown at the next review beside what "
+             "they bought.")
+
     # The commitment. The projection itself refreshes every janitor tick; this
     # governs the third re-validation trigger — the "errors" one.
     commitment_failure_reforecast: int = _rule(

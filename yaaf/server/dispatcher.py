@@ -669,6 +669,22 @@ def _wake_reasons(
         if daily:
             reasons.append(daily)
 
+        # 4c. An open review missing its variance narrative. Governance-
+        #     classed, so it can spend the reserved slice — the narrative is
+        #     the run the reserve exists for, and the day the allowance is
+        #     gone by lunch is exactly the day the meeting matters.
+        from yaaf.core.models import Review, ReviewStatus
+
+        unfiled = session.execute(
+            select(Review.id).where(
+                Review.project_id == project.id,
+                Review.status == ReviewStatus.OPEN,
+                Review.narrative.is_(None),
+            )
+        ).scalar_one_or_none()
+        if unfiled is not None:
+            reasons.append({"kind": "review", "review_id": unfiled})
+
     return reasons
 
 

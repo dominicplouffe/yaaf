@@ -36,6 +36,8 @@ from yaaf.core.models import (
     Project,
     RequirementEvent,
     RequirementStatus,
+    Review,
+    ReviewStatus,
     Role,
     RoleVersion,
     Run,
@@ -1172,6 +1174,38 @@ def suggestions(project_id: str, session: Session = Depends(db)) -> list[dict]:
     ).scalars()
     return [{"id": s.id, "by": s.by_agent_id, "text": s.text,
              "consumed": s.consumed_at is not None} for s in rows]
+
+
+@router.get("/projects/{project_id}/reviews")
+def reviews(project_id: str, session: Session = Depends(db)) -> dict:
+    """The standing meeting's record: the open one (if any) and the history,
+    newest first. The numbers on each are the janitor's frozen snapshot from
+    the moment it opened — the meeting's record does not drift."""
+    project = _project(session, project_id)
+    rows = list(session.execute(
+        select(Review).where(Review.project_id == project.id)
+        .order_by(Review.number.desc()).limit(50)
+    ).scalars())
+
+    def view(r: Review) -> dict:
+        return {
+            "id": r.id, "number": r.number, "status": r.status,
+            "scheduled_for": r.scheduled_for.isoformat(),
+            "opened_at": r.opened_at.isoformat(),
+            "numbers": r.numbers,
+            "narrative": r.narrative,
+            "recommended": r.recommended,
+            "narrative_filed_at": (r.narrative_filed_at.isoformat()
+                                   if r.narrative_filed_at else None),
+            "decisions": r.decisions or [],
+            "closed_at": r.closed_at.isoformat() if r.closed_at else None,
+        }
+
+    open_review = next((view(r) for r in rows if r.status == ReviewStatus.OPEN), None)
+    return {
+        "open": open_review,
+        "history": [view(r) for r in rows if r.status != ReviewStatus.OPEN],
+    }
 
 
 @router.get("/projects/{project_id}/audit_samples")

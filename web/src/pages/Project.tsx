@@ -28,6 +28,7 @@ import Boardroom from "./project/Boardroom";
 import Work from "./project/Work";
 import Deliverables from "./project/Deliverables";
 import Records from "./project/Records";
+import Review from "./project/Review";
 import Settings from "./project/Settings";
 
 // Two groups, not one list of ten. Left is the daily job in the order it gets
@@ -38,6 +39,7 @@ const TABS = [
   ["boardroom", "Boardroom"],
   ["plan", "Plan"],
   ["work", "Work"],
+  ["review", "Review"],
   ["deliverables", "Deliverables"],
 ] as const;
 
@@ -538,6 +540,7 @@ export default function ProjectPage() {
         <Route path="boardroom" element={<Boardroom projectId={projectId} dash={dash} />} />
         <Route path="plan" element={<Plan ctx={ctx} />} />
         <Route path="work" element={<Work ctx={ctx} />} />
+        <Route path="review" element={<Review ctx={ctx} />} />
         <Route path="deliverables" element={<Deliverables projectId={projectId} />} />
         <Route path="records/*" element={<Records ctx={ctx} />} />
         <Route path="settings" element={<Settings projectId={projectId} dash={dash} reload={reload} />} />

@@ -296,6 +296,23 @@ async def t_evidence_add(args):
 
 
 @tool(
+    "review_narrative",
+    "CEO only, when a review is open (see the `review` block in your context). File your "
+    "variance narrative for the standing status meeting: what moved against the plan since "
+    "the last review, the SINGLE largest cause named (a requirement key, a dead bet, a "
+    "failure storm — something with a handle), and in `recommended`, what you would cut or "
+    "move. The platform's numbers are already on the review — explain them, do not restate "
+    "them. The chairman's decisions come back to you as notices with his reasons.",
+    {"narrative": str, "recommended": str},
+)
+async def t_review_narrative(args):
+    payload = {"narrative": args.get("narrative", "")}
+    if args.get("recommended"):
+        payload["recommended"] = args["recommended"]
+    return _text(_call("POST", "/agent/review_narrative", payload))
+
+
+@tool(
     "hypothesis_add",
     "CEO: state a falsifiable bet with a dated kill condition (ISO datetime), "
     "written BEFORE the work starts.",
@@ -526,7 +543,7 @@ ALL_TOOLS = [
     t_suggest, t_channels, t_messages_read, t_message_post, t_directive_file,
     t_memory_search, t_memory_add, t_memory_supersede, t_memory_compact, t_memory_forget,
     t_memory_tool,
-    t_evidence_add, t_hypothesis_add, t_hypothesis_kill, t_decision_add,
+    t_evidence_add, t_review_narrative, t_hypothesis_add, t_hypothesis_kill, t_decision_add,
     t_approval_request, t_approvals_list, t_spend_book,
     t_side_effect_begin, t_side_effect_finish,
     t_artifact_put, t_artifact_list, t_artifact_get, t_env_list,

@@ -503,6 +503,31 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
                          "nobody here can."),
                 "arithmetic": policy.plan_arithmetic(session, project, cons),
             }
+        # The open review, if one is waiting on this CEO's narrative. The
+        # numbers are the janitor's frozen snapshot — the CEO explains them,
+        # it does not produce them.
+        from yaaf.core.models import Review, ReviewStatus
+
+        review = session.execute(
+            select(Review).where(Review.project_id == project.id,
+                                 Review.status == ReviewStatus.OPEN)
+        ).scalar_one_or_none()
+        if review is not None:
+            pack["review"] = {
+                "number": review.number,
+                "opened_at": review.opened_at.isoformat(),
+                "numbers": review.numbers,
+                "narrative_filed": review.narrative is not None,
+                "note": (
+                    "The meeting is with the chairman now; his decisions arrive "
+                    "as notices." if review.narrative is not None else
+                    "File your variance narrative with review_narrative: what "
+                    "moved against the plan, the SINGLE largest cause by name, "
+                    "and what you recommend cutting or moving. Explain the "
+                    "numbers above — do not restate them."
+                ),
+            }
+
         # The promise, if one exists. The projection and status are read-only
         # facts here — the enforcement (scope freeze) lives in policy, and the
         # transitions in the janitor.

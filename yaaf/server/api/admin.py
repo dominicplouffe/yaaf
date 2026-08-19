@@ -53,6 +53,8 @@ from yaaf.core.models import (
     Requirement,
     RequirementEdge,
     RequirementStatus,
+    Review,
+    ReviewStatus,
     Role,
     RoleVersion,
     Run,
@@ -1792,6 +1794,244 @@ def requirement_verdict(
     _audit(session, row.project_id, "requirement.verdict", "requirement", row.id,
            {"key": row.key, "ok": body.ok})
     return {"id": row.id, "key": row.key, "status": row.status}
+
+
+# ── the review: six levers, each recorded with a reason ─────────────────────────
+
+
+class ChairmanRequirementIn(BaseModel):
+    statement: str = Field(min_length=10, max_length=2000)
+    acceptance_test: dict
+    stage: int = Field(default=1, ge=1, le=50)
+    est_runs: int = Field(ge=1, le=10_000)
+    note: str = Field(default="", max_length=4000)
+
+
+@router.post("/projects/{project_id}/requirements")
+def add_requirement(
+    project_id: str, body: ChairmanRequirementIn, session: Session = Depends(db)
+) -> dict:
+    """The ADD lever, also usable outside a review: chairman-authored scope,
+    accepted at birth because acceptance is his act and this is him acting.
+    The last design only let him delete — 'alter requirements' includes
+    adding one. His adds carry est_runs like everyone else's: the feasibility
+    arithmetic does not care whose idea the work was."""
+    project = _get_project(session, project_id)
+    if not policy.requires_requirements(project):
+        raise HTTPException(
+            status_code=422,
+            detail="An Explore project has no requirements, by design — its shape is "
+                   "bets and evidence.",
+        )
+    try:
+        policy.validate_success_test(effective(session, project.id), body.acceptance_test)
+    except policy.Refusal as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    requirement = Requirement(
+        id=ids.new_id(ids.REQUIREMENT),
+        project_id=project.id,
+        key=policy.next_requirement_key(session, project.id),
+        statement=body.statement.strip(),
+        acceptance_test=body.acceptance_test,
+        status=RequirementStatus.PENDING,
+        stage=body.stage,
+        est_runs=body.est_runs,
+        accepted_by_user_id=project.chairman_user_id,
+        accepted_at=utcnow(),
+    )
+    session.add(requirement)
+    session.flush()
+    policy.record_requirement_event(session, requirement, RequirementStatus.PENDING,
+                                    f"user:{project.chairman_user_id}",
+                                    note=body.note or "chairman-authored",
+                                    from_status=None)
+    _audit(session, project.id, "requirement.add", "requirement", requirement.id,
+           {"key": requirement.key, "stage": requirement.stage,
+            "est_runs": requirement.est_runs})
+    _notice_ceo(
+        session, project.id, NoticeKind.GOAL_CHANGED,
+        f"The chairman ADDED {requirement.key} to scope himself: "
+        f"{requirement.statement[:400]}\nStage {requirement.stage}, estimated "
+        f"{requirement.est_runs} runs. It is accepted — plan for it. If it breaks the "
+        "arithmetic, the plan gate will say so and that conversation is his to have "
+        "with himself; yours is to sequence it honestly.",
+    )
+    return {"id": requirement.id, "key": requirement.key,
+            "status": requirement.status, "stage": requirement.stage}
+
+
+class RequirementReword(BaseModel):
+    statement: str = Field(min_length=10, max_length=2000)
+    reason: str = Field(min_length=5, max_length=4000)
+
+
+@router.post("/requirements/{requirement_id}/reword")
+def reword_requirement(
+    requirement_id: str, body: RequirementReword, session: Session = Depends(db)
+) -> dict:
+    """The REWORD lever: the statement moves, the identity does not — key,
+    estimate, history and failure load stay put, so a reword can never be
+    used to launder a struggling requirement into a fresh-looking one."""
+    row = session.get(Requirement, requirement_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="unknown requirement")
+    if row.status in policy.CLOSED_REQUIREMENT_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail=f"{row.key} is {row.status}; settled scope is history. Add a new "
+                   "requirement instead of editing what already happened.",
+        )
+    project = _get_project(session, row.project_id)
+    old = row.statement
+    row.statement = body.statement.strip()
+    policy.record_requirement_event(
+        session, row, row.status, f"user:{project.chairman_user_id}",
+        note=f"reworded: {body.reason[:500]}", from_status=row.status)
+    _audit(session, project.id, "requirement.reword", "requirement", row.id,
+           {"key": row.key, "reason": body.reason})
+    _notice_ceo(
+        session, project.id, NoticeKind.GOAL_CHANGED,
+        f"The chairman REWORDED {row.key}.\nWas: {old[:300]}\nIs now: "
+        f"{row.statement[:300]}\nHis reason: {body.reason[:500]}\nThe key, estimate "
+        "and history are unchanged — read the new wording before working it.",
+    )
+    return {"id": row.id, "key": row.key, "statement": row.statement}
+
+
+class ReviewLeverIn(BaseModel):
+    kind: str = Field(pattern="^(cut|add|reword|move_date|raise_budget|accept_slip)$")
+    reason: str = Field(min_length=5, max_length=4000)
+    requirement_id: str | None = None
+    statement: str | None = None
+    acceptance_test: dict | None = None
+    stage: int = Field(default=1, ge=1, le=50)
+    est_runs: int | None = Field(default=None, ge=1, le=10_000)
+    deliver_by: datetime | None = None
+    amount: float | None = Field(default=None, gt=0)
+
+
+def _lever_needs(body: ReviewLeverIn, *fields: str) -> None:
+    missing = [f for f in fields if getattr(body, f) in (None, "")]
+    if missing:
+        raise HTTPException(
+            status_code=422,
+            detail=f"the {body.kind} lever needs {', '.join(missing)}",
+        )
+
+
+@router.post("/reviews/{review_id}/lever")
+def pull_review_lever(
+    review_id: str, body: ReviewLeverIn, session: Session = Depends(db)
+) -> dict:
+    """One lever, pulled: the action happens through the SAME routes it would
+    outside a review — cut, add, reword, move, amend — and the pull is
+    recorded on the review with the chairman's reason, so acting and
+    accounting cannot drift apart. accept_slip is the sixth: an explicit
+    'the date stands and I know it will slip', which is a decision, not an
+    absence of one."""
+    review = session.get(Review, review_id)
+    if review is None:
+        raise HTTPException(status_code=404, detail="unknown review")
+    if review.status != ReviewStatus.OPEN:
+        raise HTTPException(
+            status_code=409,
+            detail=f"review #{review.number} is {review.status}; the next meeting is "
+                   "the place for new decisions.",
+        )
+    project = _get_project(session, review.project_id)
+
+    if body.kind == "cut":
+        _lever_needs(body, "requirement_id")
+        result = cut_requirement(body.requirement_id,
+                                 RequirementCut(reason=body.reason), session)
+        detail = f"cut {result['key']}"
+    elif body.kind == "add":
+        _lever_needs(body, "statement", "acceptance_test", "est_runs")
+        result = add_requirement(
+            project.id,
+            ChairmanRequirementIn(statement=body.statement,
+                                  acceptance_test=body.acceptance_test,
+                                  stage=body.stage, est_runs=body.est_runs,
+                                  note=body.reason),
+            session)
+        detail = f"added {result['key']} (stage {body.stage}, {body.est_runs} runs)"
+    elif body.kind == "reword":
+        _lever_needs(body, "requirement_id", "statement")
+        result = reword_requirement(
+            body.requirement_id,
+            RequirementReword(statement=body.statement, reason=body.reason), session)
+        detail = f"reworded {result['key']}"
+    elif body.kind == "move_date":
+        _lever_needs(body, "deliver_by")
+        commitment = policy.live_commitment(session, project.id)
+        if commitment is None:
+            raise HTTPException(status_code=409,
+                                detail="no live commitment — there is no date to move")
+        result = move_commitment(
+            commitment.id,
+            CommitmentMove(deliver_by=body.deliver_by, reason=body.reason), session)
+        detail = f"moved the date to {result['deliver_by'][:10]}"
+    elif body.kind == "raise_budget":
+        _lever_needs(body, "amount")
+        changes = ({"monthly_usd_cap": body.amount}
+                   if project.billing_mode == "api_key"
+                   else {"monthly_token_cap": int(body.amount)})
+        amend_constitution(project.id,
+                           AmendmentIn(reason=body.reason, changes=changes), session)
+        detail = f"raised the monthly cap to {body.amount:,.0f}"
+    else:  # accept_slip
+        detail = "accepted the slip"
+        _notice_ceo(
+            session, project.id, NoticeKind.GOAL_CHANGED,
+            f"At review #{review.number} the chairman ACCEPTED THE SLIP: "
+            f"{body.reason[:800]}\nThe date stands; if scope is frozen it stays "
+            "frozen. This is him choosing lateness over churn — deliver.",
+        )
+
+    review.decisions = [*(review.decisions or []),
+                        {"kind": body.kind, "reason": body.reason,
+                         "detail": detail, "at": utcnow().isoformat()}]
+    _audit(session, project.id, "review.lever", "review", review.id,
+           {"number": review.number, "kind": body.kind, "detail": detail})
+    return {"review": review.number, "recorded": detail,
+            "decisions": len(review.decisions)}
+
+
+class ReviewClose(BaseModel):
+    note: str = Field(default="", max_length=4000)
+
+
+@router.post("/reviews/{review_id}/close")
+def close_review(
+    review_id: str, body: ReviewClose, session: Session = Depends(db)
+) -> dict:
+    """The meeting ends. Closing with zero decisions is itself a decision —
+    'no change' on the record beats an open meeting aging into a hole — and
+    everything decided is disclosed to the CEO in one summary notice."""
+    review = session.get(Review, review_id)
+    if review is None:
+        raise HTTPException(status_code=404, detail="unknown review")
+    if review.status != ReviewStatus.OPEN:
+        raise HTTPException(status_code=409,
+                            detail=f"review #{review.number} is already {review.status}")
+    project = _get_project(session, review.project_id)
+    review.status = ReviewStatus.CLOSED
+    review.closed_at = utcnow()
+    review.closed_by_user_id = project.chairman_user_id
+    decisions = review.decisions or []
+    summary = ("; ".join(f"{d['kind']}: {d['detail']} — {d['reason'][:120]}"
+                         for d in decisions)
+               if decisions else "no changes — the plan stands as it is")
+    _notice_ceo(
+        session, project.id, NoticeKind.GOAL_CHANGED,
+        f"Review #{review.number} is closed. Decisions: {summary}."
+        + (f" His closing note: {body.note[:500]}" if body.note else "")
+        + " Each will be shown at the next review beside what it bought.",
+    )
+    _audit(session, project.id, "review.close", "review", review.id,
+           {"number": review.number, "decisions": len(decisions)})
+    return {"id": review.id, "number": review.number, "status": review.status,
+            "decisions": decisions}
 
 
 # ── the commitment: the chairman owns the date ──────────────────────────────────

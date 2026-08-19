@@ -41,6 +41,7 @@ from yaaf.core.models import (
     Agent,
     Approval,
     ApprovalStatus,
+    AuditLog,
     AuditSample,
     AuditSampleStatus,
     CommitmentStatus,
@@ -53,7 +54,10 @@ from yaaf.core.models import (
     Project,
     ProjectStatus,
     Requirement,
+    RequirementEvent,
     RequirementStatus,
+    Review,
+    ReviewStatus,
     Run,
     RunKind,
     RunQueue,
@@ -108,6 +112,8 @@ def janitor_once(session: Session) -> None:
         check_commitments(session, project, cons)
         draw_audit_samples(session, project, cons)
         expire_audit_samples(session, project)
+        open_reviews(session, project, cons)
+        nag_reviews(session, project)
         warn_drought(session, project, cons)
         warn_memory_pressure(session, project, cons)
     verify_pending_evidence(session)
@@ -445,6 +451,226 @@ def check_finished_requirements(session: Session, project: Project) -> int:
     if moved:
         notify(session, "yaaf_run_queue", project.id)
     return moved
+
+
+# ── the review: opened, numbered and emailed with zero tokens ───────────────────
+
+REVIEW_NAG_HOURS = 24       # an open review the chairman has not closed is chased once
+REVIEW_ESCALATE_HOURS = 72  # and chased harder here — but the work never stops for it
+
+
+def review_numbers(session: Session, project: Project, cons: ConstitutionDoc,
+                   prior: Review | None) -> dict:
+    """The platform's half of the meeting, from the same producers every
+    screen reads — velocity, the commitment projection, month-to-date spend,
+    audit coverage — frozen into the review row so the record cannot drift as
+    the week moves on. The prior review's decisions ride along beside what
+    they bought, which is what makes a lever accountable next time."""
+    from yaaf.server.velocity import commitment_projection, project_velocity
+
+    now = utcnow()
+    velocity = project_velocity(session, project.id)
+    usd, tokens = month_to_date(session, project.id)
+    scope = policy.scope_requirements(session, project.id)
+    since = prior.opened_at if prior is not None else project.created_at
+
+    commitment = policy.live_commitment(session, project.id)
+    commitment_block = None
+    if commitment is not None:
+        projection = commitment_projection(session, project, cons)
+        commitment_block = {
+            "status": commitment.status,
+            "deliver_by": commitment.deliver_by.isoformat(),
+            "projected_done_at": (projection["projected_done_at"].isoformat()
+                                  if projection["known"] else None),
+            "basis": projection.get("basis") or projection.get("why"),
+        }
+
+    samples = session.execute(
+        select(AuditSample).where(AuditSample.project_id == project.id,
+                                  AuditSample.drawn_at >= since)
+    ).scalars().all()
+    met_since = session.execute(
+        select(func.count(RequirementEvent.id)).where(
+            RequirementEvent.project_id == project.id,
+            RequirementEvent.to_status == RequirementStatus.MET,
+            RequirementEvent.at >= since,
+        )
+    ).scalar_one()
+
+    numbers = {
+        "as_of": now.isoformat(),
+        "goal": project.goal[:2000],
+        "velocity": velocity,
+        "commitment": commitment_block,
+        "budget": {
+            "unit": "USD" if project.billing_mode == "api_key" else "tokens",
+            "spent_mtd": usd if project.billing_mode == "api_key" else tokens,
+            "cap": (cons.monthly_usd_cap if project.billing_mode == "api_key"
+                    else cons.monthly_token_cap),
+        },
+        "scope": {
+            "open": len([r for r in scope if r.status in policy.OPEN_REQUIREMENT_STATUSES]),
+            "proposed": len([r for r in scope if r.status == RequirementStatus.PROPOSED]),
+            "met": len([r for r in scope if r.status == RequirementStatus.MET]),
+            "cut": len([r for r in scope if r.status == RequirementStatus.CUT]),
+            "met_since_last_review": int(met_since),
+        },
+        "hypotheses": [
+            {"statement": h.statement[:300], "kill_date": h.kill_date.isoformat(),
+             "status": h.status}
+            for h in session.execute(
+                select(Hypothesis).where(
+                    Hypothesis.project_id == project.id,
+                    Hypothesis.status.in_([HypothesisStatus.ACTIVE,
+                                           HypothesisStatus.EXPIRED]))
+            ).scalars()
+        ],
+        "audit_coverage": {
+            "considered": len(samples),
+            "sampled": len([s for s in samples if s.status != AuditSampleStatus.SKIPPED]),
+            "failed": len([s for s in samples if s.status == AuditSampleStatus.FAILED]),
+            "expired_unreviewed": len(
+                [s for s in samples if s.status == AuditSampleStatus.EXPIRED]),
+        },
+    }
+    if prior is not None:
+        numbers["prior"] = {
+            "number": prior.number,
+            "opened_at": prior.opened_at.isoformat(),
+            "decisions": prior.decisions or [],
+            # What the week's levers bought, in the only currencies that
+            # count here: things made true, and the pace they happened at.
+            "bought": {
+                "met_since": int(met_since),
+                "pace_then": (prior.numbers or {}).get("velocity", {}).get("per_week_3w"),
+                "pace_now": velocity["per_week_3w"],
+            },
+        }
+    return numbers
+
+
+def open_reviews(session: Session, project: Project, cons: ConstitutionDoc) -> Review | None:
+    """Open the standing meeting when it is due — with zero tokens, regardless
+    of budgets, board state, or anything else. A review with an empty board
+    still fires: that is the one the chairman most needs."""
+    latest = session.execute(
+        select(Review).where(Review.project_id == project.id)
+        .order_by(Review.number.desc()).limit(1)
+    ).scalar_one_or_none()
+    if latest is not None and latest.status == ReviewStatus.OPEN:
+        return None  # one meeting at a time; an unattended one nags instead
+    interval = timedelta(days=cons.review_interval_days)
+    if latest is None:
+        due = project.created_at + interval
+        number = 1
+    else:
+        due = max(latest.scheduled_for + interval,
+                  (latest.closed_at or latest.opened_at))
+        number = latest.number + 1
+    now = utcnow()
+    if now < due:
+        return None
+
+    numbers = review_numbers(session, project, cons, latest)
+    review = Review(
+        id=ids.new_id(ids.REVIEW),
+        project_id=project.id,
+        number=number,
+        scheduled_for=due,
+        numbers=numbers,
+    )
+    session.add(review)
+    session.flush()
+
+    velocity = numbers["velocity"]
+    commitment = numbers["commitment"]
+    prior_lines = ""
+    if numbers.get("prior", {}).get("decisions"):
+        bought = numbers["prior"]["bought"]
+        prior_lines = (
+            f"\nLast review's decisions ({len(numbers['prior']['decisions'])}): "
+            + "; ".join(f"{d['kind']} — {d['reason'][:80]}"
+                        for d in numbers["prior"]["decisions"])
+            + f"\nWhat they bought: {bought['met_since']} requirement(s) met since, "
+              f"pace {bought['pace_then']} → {bought['pace_now']}/wk.\n"
+        )
+    chairman_notify(
+        session, project, f"review #{number} is open",
+        f"The standing review for {project.name} is open. The numbers:\n\n"
+        f"  goal: {project.goal[:300]}\n"
+        f"  pace: {velocity['per_week_3w']}/wk (3w), {velocity['per_week_12w']}/wk (12w); "
+        f"{velocity['remaining']} requirement(s) open\n"
+        f"  met since last review: {numbers['scope']['met_since_last_review']}\n"
+        + (f"  commitment: {commitment['status']} — promised "
+           f"{commitment['deliver_by'][:10]}, projected "
+           f"{(commitment['projected_done_at'] or 'unknown')[:10]}\n" if commitment else "")
+        + f"  budget: {numbers['budget']['spent_mtd']:,.0f} of "
+          f"{numbers['budget']['cap']:,.0f} {numbers['budget']['unit']} this month\n"
+        f"  audit coverage since last review: "
+        f"{numbers['audit_coverage']['sampled']} sampled, "
+        f"{numbers['audit_coverage']['failed']} failed, "
+        f"{numbers['audit_coverage']['expired_unreviewed']} expired unreviewed\n"
+        f"{prior_lines}\n"
+        "The CEO is filing its variance narrative on a reserved governance run. "
+        "Take the meeting on the Review tab — your levers there are cut, add, "
+        "reword, move the date, raise the budget, and accept the slip; each is "
+        "recorded with your reason and shown at the next review beside what it "
+        "bought.",
+    )
+    _notice_ceo(
+        session, project, NoticeKind.REVIEW_OPENED,
+        f"Review #{number} is open. File your variance narrative with "
+        "review_narrative: what moved against the plan since last review, the "
+        "SINGLE largest cause by name, and what you recommend he cut or move. "
+        "This wake may spend the governance reserve — the narrative is why the "
+        "reserve exists. The platform's numbers are in your pack; do not restate "
+        "them, explain them.",
+    )
+    log.info("opened review #%s for %s", number, project.slug)
+    return review
+
+
+def nag_reviews(session: Session, project: Project) -> None:
+    """An unattended meeting chases the chairman — once politely, once loudly —
+    and never stops the work. The escalation is a louder email and an audit
+    row, not a brake: a governance meeting that could halt the company would
+    be a new failure mode, not a fix."""
+    review = session.execute(
+        select(Review).where(Review.project_id == project.id,
+                             Review.status == ReviewStatus.OPEN)
+    ).scalar_one_or_none()
+    if review is None:
+        return
+    now = utcnow()
+    age_hours = (now - review.opened_at).total_seconds() / 3600
+    if review.nag_sent_at is None and age_hours >= REVIEW_NAG_HOURS:
+        chairman_notify(
+            session, project, f"review #{review.number} is waiting on you",
+            f"It opened {age_hours:.0f}h ago"
+            + (" and the CEO's narrative is in" if review.narrative else
+               " (the CEO has not filed its narrative yet)")
+            + ". The company keeps working either way — but decisions deferred "
+              "are decisions the arithmetic makes for you.",
+        )
+        review.nag_sent_at = now
+    elif review.escalated_at is None and age_hours >= REVIEW_ESCALATE_HOURS:
+        chairman_notify(
+            session, project, f"review #{review.number} has been open {age_hours / 24:.0f} days",
+            "This is the second reminder; there will not be a third. Close it with "
+            "no decisions if that is the decision — an explicit 'no change' is a "
+            "record, an open meeting is a hole.",
+        )
+        review.escalated_at = now
+        session.add(AuditLog(
+            id=ids.new_id(ids.AUDIT),
+            project_id=project.id,
+            actor="system:janitor",
+            action="review.escalated",
+            entity="review",
+            entity_id=review.id,
+            detail={"number": review.number, "open_hours": round(age_hours)},
+        ))
 
 
 # ── the sampled audit: drawn after the fact, never blocking ─────────────────────
