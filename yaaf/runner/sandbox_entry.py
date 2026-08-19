@@ -646,9 +646,17 @@ async def _owned_client_cm(factory, url: str, headers: dict):
         yield streams
 
 
+@asynccontextmanager
 async def _mcp_session(config: dict):
-    """Yields an initialized ClientSession for a data source. Split out from the
-    call helpers so tests can replace the whole transport in one place."""
+    """An initialized ClientSession for a data source.
+
+    A context manager rather than a generator on purpose: the transport runs on
+    anyio task groups, and a generator abandoned by an early `return` gets
+    closed later by the garbage collector, on a different task — which raises
+    "attempted to exit cancel scope in a different task" and leaves the
+    connection's teardown to chance. `async with` unwinds it where it was
+    entered, every time.
+    """
     from mcp import ClientSession
 
     # streamable http yields (read, write, get_session_id); sse yields two.
@@ -661,12 +669,12 @@ async def _mcp_session(config: dict):
 
 
 async def _mcp_call_tool(config: dict, tool_name: str, arguments: dict):
-    async for session in _mcp_session(config):
+    async with _mcp_session(config) as session:
         return await session.call_tool(tool_name, arguments)
 
 
 async def _mcp_list_tools(config: dict):
-    async for session in _mcp_session(config):
+    async with _mcp_session(config) as session:
         return await session.list_tools()
 
 
@@ -686,6 +694,15 @@ def _serialize_result(result) -> tuple[str, bool]:
     contains a note and a chart.
     """
     structured = getattr(result, "structuredContent", None)
+    # A tool that returns something which is not an object has its value wrapped
+    # as {"result": value} by the protocol. Unwrap a wrapped STRING: servers
+    # built on FastMCP send a CSV export exactly this way, and writing the
+    # wrapper would leave JSON-escaped CSV on disk — bigger, unparseable by the
+    # tools that would read it, and unwrappable only by the agent we are trying
+    # to keep out of the data.
+    if isinstance(structured, dict) and set(structured) == {"result"} \
+            and isinstance(structured["result"], str):
+        return structured["result"], True
     if structured is not None:
         return json.dumps(structured, indent=2, default=str), True
     blocks = list(getattr(result, "content", None) or [])

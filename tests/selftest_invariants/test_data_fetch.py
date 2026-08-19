@@ -18,6 +18,8 @@ import asyncio
 import hashlib
 import importlib
 import json
+import sys
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -172,6 +174,32 @@ def test_an_oversize_result_says_how_to_ask_for_less(sandbox_entry, monkeypatch)
 # ── serialization ──────────────────────────────────────────────────────────────
 
 
+def test_a_csv_export_lands_as_csv_not_as_wrapped_json(sandbox_entry, monkeypatch):
+    """A tool returning a non-object has its value wrapped as {"result": value}
+    by the protocol — every FastMCP-based server sends a CSV export this way,
+    with the same bytes in both the text block and the wrapper. Writing the
+    wrapper would put JSON-escaped CSV on disk: larger, unreadable by the pandas
+    and duckdb calls that are the entire point, and unwrappable only by pulling
+    it back through the context we just kept it out of."""
+    csv = "asin,spend\nB00000001,4.00\nB00000002,9.50\n"
+    out = _fetch(sandbox_entry, monkeypatch,
+                 {"server": "ppc", "tool": "export", "path": "data/spend.csv"},
+                 result=_result(text=csv, structured={"result": csv}))
+
+    written = (sandbox_entry.WORKSPACE / "data/spend.csv").read_text()
+    assert written == csv, "the wrapper must be unwrapped, not written"
+    assert out["body"]["bytes"] == len(csv.encode())
+    # Wrapped values are scalars, not records — no invented row count.
+    assert out["body"]["rows"] is None
+
+    # A wrapper around real structure is still structure, and stays JSON.
+    _fetch(sandbox_entry, monkeypatch,
+           {"server": "ppc", "tool": "rows", "path": "data/rows.json"},
+           result=_result(structured={"result": [{"asin": "B1"}]}))
+    assert json.loads((sandbox_entry.WORKSPACE / "data/rows.json").read_text()) == {
+        "result": [{"asin": "B1"}]}
+
+
 def test_structured_and_multi_block_results_serialize_predictably(
     sandbox_entry, monkeypatch
 ):
@@ -212,6 +240,49 @@ def test_listing_a_sources_tools_writes_nothing(sandbox_entry, monkeypatch):
 
 
 # ── enforcement: a bulk source has no expensive path ───────────────────────────
+
+
+def test_the_transport_is_torn_down_on_the_task_that_opened_it(sandbox_entry, monkeypatch):
+    """The mcp transport runs on anyio task groups. An early `return` out of an
+    async GENERATOR leaves it for the garbage collector to close, on whatever
+    task happens to be running then — which raises "attempted to exit cancel
+    scope in a different task" and leaves the connection's teardown to chance.
+    Seen live against a real server before this became a context manager."""
+    events = []
+
+    @asynccontextmanager
+    async def fake_streams(config):
+        events.append(("open", asyncio.current_task()))
+        try:
+            yield (object(), object())
+        finally:
+            events.append(("close", asyncio.current_task()))
+
+    class FakeSession:
+        def __init__(self, *streams):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def initialize(self):
+            return None
+
+        async def call_tool(self, name, arguments):
+            return _result(text="done")
+
+    monkeypatch.setattr(sandbox_entry, "_mcp_streams_cm", fake_streams)
+    monkeypatch.setitem(sys.modules, "mcp", SimpleNamespace(ClientSession=FakeSession))
+
+    out = json.loads(asyncio.run(sandbox_entry.t_data_fetch.handler(
+        {"server": "ppc", "tool": "export", "path": "data/x.txt"}))["content"][0]["text"])
+    assert out["status"] == 200
+
+    assert [name for name, _ in events] == ["open", "close"], "the transport must close"
+    assert events[0][1] is events[1][1], "and close on the task that opened it"
 
 
 def test_a_bulk_source_is_never_mounted_but_data_fetch_still_reaches_it(sandbox_entry):
