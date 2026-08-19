@@ -31,6 +31,18 @@ function isFullUrl(value: string): boolean {
   }
 }
 
+const MODES = [
+  { value: "explore", label: "Explore",
+    blurb: "Chase a goal with no fixed end. Bets, proof, and your call on when it has earned its keep.",
+    example: "\u201CFind an idea and get one sale in 60 days.\u201D" },
+  { value: "deliver", label: "Deliver",
+    blurb: "Ship one thing, then stop. You accept what done means; the platform proves it.",
+    example: "\u201CA security audit of our AWS estate.\u201D" },
+  { value: "operate", label: "Operate",
+    blurb: "Run the same play on a rhythm, and get better at it every cycle.",
+    example: "\u201CA weekly blog post, tracked and improved.\u201D" },
+] as const;
+
 export default function NewProject() {
   const navigate = useNavigate();
   const [roles, setRoles] = useState<RoleSummary[]>([]);
@@ -43,6 +55,7 @@ export default function NewProject() {
   const [chairmanEmail, setChairmanEmail] = useState("");
   const [chairmanName, setChairmanName] = useState("");
   const [billingMode, setBillingMode] = useState("api_key");
+  const [mode, setMode] = useState("explore");
   const [runtime, setRuntime] = useState("agent_sdk");
   const [controlledDomains, setControlledDomains] = useState("");
   const [teams, setTeams] = useState<TeamDraft[]>([
@@ -98,6 +111,7 @@ export default function NewProject() {
       setSlug(p.slug);
       setGoal(p.goal);
       setBillingMode(p.billing_mode);
+      setMode((p as { mode?: string }).mode ?? "explore");
       setRuntime(String(p.integrations["runtime"] ?? "agent_sdk"));
       setControlledDomains((p.controlled_domains ?? []).join(", "));
       setSolo(Boolean(p.solo));
@@ -201,6 +215,7 @@ export default function NewProject() {
         goal: goal.trim(),
         chairman_email: chairmanEmail.trim(),
         billing_mode: billingMode,
+        mode,
         controlled_domains: controlledDomains
           .split(",")
           .map((d) => d.trim())
@@ -303,6 +318,38 @@ export default function NewProject() {
                 ` ${dataSourceUrls.size === 1 ? "One of them is a data source's" : "Some of them are data sources'"} ` +
                   "address: a full URL, tested before this project starts."}
               {" "}Billing is connected afterwards in Settings.
+            </p>
+          )}
+        </div>
+        <div className="card" style={{ marginBottom: 10 }}>
+          <label className="field">What kind of company is this?</label>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+            gap: 10, marginTop: 6 }}>
+            {MODES.map((m) => (
+              <button key={m.value} type="button" onClick={() => setMode(m.value)}
+                style={{
+                  font: "inherit", textAlign: "left", cursor: "pointer",
+                  background: mode === m.value ? "rgba(57,135,229,0.07)" : "var(--surface)",
+                  border: mode === m.value
+                    ? "1px solid var(--accent)" : "1px solid var(--border)",
+                  borderRadius: 8, padding: "12px 14px",
+                }}>
+                <div style={{ fontWeight: 650, fontSize: 15, color: "var(--ink)" }}>
+                  {mode === m.value ? "◉" : "○"} {m.label}
+                </div>
+                <div style={{ fontSize: 12.5, color: "var(--ink-2)", marginTop: 6 }}>{m.blurb}</div>
+                <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 8, fontStyle: "italic",
+                  borderTop: "1px solid var(--grid, var(--border))", paddingTop: 7 }}>
+                  {m.example}
+                </div>
+              </button>
+            ))}
+          </div>
+          {mode !== "explore" && (
+            <p className="help" style={{ marginTop: 10 }}>
+              This project starts owing a plan: the CEO proposes requirements, you accept
+              them on the Plan tab, and no work may be created until the plan holds and
+              adds up against the budget.
             </p>
           )}
         </div>
