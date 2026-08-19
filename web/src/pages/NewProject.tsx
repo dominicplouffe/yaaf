@@ -56,6 +56,10 @@ export default function NewProject() {
   const [chairmanName, setChairmanName] = useState("");
   const [billingMode, setBillingMode] = useState("api_key");
   const [mode, setMode] = useState("explore");
+  // Set when a loaded setup file could not answer the shape question itself —
+  // the one prefill that must never be guessed silently, because a project's
+  // mode is frozen at creation and Explore hides the Plan tab by design.
+  const [modeNotice, setModeNotice] = useState<string | null>(null);
   const [exploreDeadline, setExploreDeadline] = useState("");
   const [runtime, setRuntime] = useState("agent_sdk");
   const [controlledDomains, setControlledDomains] = useState("");
@@ -118,7 +122,18 @@ export default function NewProject() {
       setSlug(p.slug);
       setGoal(p.goal);
       setBillingMode(p.billing_mode);
-      setMode((p as { mode?: string }).mode ?? "explore");
+      if (p.mode) {
+        setMode(p.mode);
+        setModeNotice(null);
+      } else {
+        // A file from before project shapes existed. Guessing Explore here
+        // once silently overwrote a chairman's Deliver choice — keep whatever
+        // is selected and say the file had no opinion.
+        setModeNotice(
+          "This setup file predates project shapes, so it does not say what kind of " +
+          "company it was. Nothing was changed — confirm the choice above is what you want.",
+        );
+      }
       setRuntime(String(p.integrations["runtime"] ?? "agent_sdk"));
       setControlledDomains((p.controlled_domains ?? []).join(", "));
       setSolo(Boolean(p.solo));
@@ -392,7 +407,8 @@ export default function NewProject() {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
             gap: 10, marginTop: 6 }}>
             {MODES.map((m) => (
-              <button key={m.value} type="button" onClick={() => setMode(m.value)}
+              <button key={m.value} type="button"
+                onClick={() => { setMode(m.value); setModeNotice(null); }}
                 style={{
                   font: "inherit", textAlign: "left", cursor: "pointer",
                   background: mode === m.value ? "rgba(57,135,229,0.07)" : "var(--surface)",
@@ -411,6 +427,11 @@ export default function NewProject() {
               </button>
             ))}
           </div>
+          {modeNotice && (
+            <p className="help" style={{ marginTop: 10, color: "var(--warn, var(--ink-2))" }}>
+              {modeNotice}
+            </p>
+          )}
           {mode !== "explore" ? (
             <p className="help" style={{ marginTop: 10 }}>
               This project starts owing a plan: the CEO proposes requirements, you accept

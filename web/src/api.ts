@@ -166,6 +166,9 @@ export interface Dashboard {
       arrive in seconds instead of via queued runs. */
   chat_live: boolean;
   pending_approvals: number;
+  /** Requirements the CEO proposed and is parked on — a decision only the
+      chairman can make, taken on the Plan tab. */
+  requirements_proposed: number;
   ceo_judgment: {
     tasks_created: number;
     tasks_with_verified_external: number;
@@ -509,6 +512,8 @@ export interface ProjectBundle {
     name: string;
     goal: string;
     billing_mode: string;
+    /** Absent from setup files exported before project shapes existed. */
+    mode?: string;
     controlled_domains: string[];
     constitution: Record<string, unknown>;
     integrations: Record<string, unknown>;

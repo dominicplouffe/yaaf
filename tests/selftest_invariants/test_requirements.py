@@ -26,7 +26,6 @@ from yaaf.core.models import (
     Requirement,
     RequirementEvent,
     RequirementStatus,
-    TaskStatus,
 )
 
 CMD_TEST = {"type": "command", "command": "test -s out/report.pdf"}
@@ -149,6 +148,43 @@ def test_explore_has_no_requirements_and_says_so(client):
     token = ceo_token(project)
     allowed = make_task(client, token, project, None)
     assert allowed.status_code == 200, allowed.text
+
+
+def test_an_explore_ceo_cannot_park_the_company_on_an_acceptance(client):
+    """The kickoff deadlock: an Explore CEO once proposed staged requirements
+    and then waited on an acceptance the mode gives the chairman no screen to
+    perform. The proposal is refused at the door, and the refusal names both
+    what to do instead and whose decision a reshape would be."""
+    project = make_project(client, slug="no-scope-here")   # defaults to explore
+    token = ceo_token(project)
+    response = client.post(
+        "/agent/requirements",
+        json={"statement": "A report exists, sourced and dated",
+              "acceptance_test": CMD_TEST, "est_runs": 5},
+        headers=bearer(token),
+    )
+    assert response.status_code == 409
+    assert "Explore" in response.json()["error"]
+    assert "chairman" in response.json()["error"]
+
+
+def test_the_dashboard_counts_scope_waiting_on_the_chairman(client):
+    """The deadlock's UI half: the CEO's report can say "waiting on R-01
+    acceptance" without saying where accepting happens. The dashboard carries
+    the proposed count so every tab can point at the Plan tab."""
+    project = deliver_project(client, slug="counted")
+    token = ceo_token(project)
+
+    def proposed_count() -> int:
+        response = client.get(f"/observe/projects/{project['id']}", headers=ADMIN)
+        assert response.status_code == 200, response.text
+        return response.json()["requirements_proposed"]
+
+    assert proposed_count() == 0   # R-00 is born accepted, never proposed
+    proposal = propose(client, token)
+    assert proposed_count() == 1
+    accept(client, proposal["requirement_id"], project)
+    assert proposed_count() == 0
 
 
 # ── done is never self-graded ───────────────────────────────────────────────────

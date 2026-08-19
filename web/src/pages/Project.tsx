@@ -283,11 +283,13 @@ function ProjectBar({
     tab is the decision that runs out of time on its own. */
 function ActionStrip({
   projectId,
+  dash,
   approvals,
   hypotheses,
   onDecided,
 }: {
   projectId: string;
+  dash: Dashboard;
   approvals: ApprovalRow[];
   hypotheses: HypothesisRow[];
   onDecided: () => void;
@@ -296,10 +298,16 @@ function ActionStrip({
     .filter((a) => a.status === "pending")
     .sort((a, b) => a.expires_at.localeCompare(b.expires_at));
   const expiredBets = hypotheses.filter((h) => h.status === "expired" && !h.extended_once);
+  // Proposed scope is the CEO parked on the chairman: its report can say
+  // "waiting on R-01 acceptance" without saying where accepting happens, so
+  // this strip says it from every tab. Explore is excluded — it has no Plan
+  // tab to send anyone to, and proposals are refused there at the door.
+  const proposedScope = dash.mode !== "explore" && dash.requirements_proposed > 0
+    ? dash.requirements_proposed : 0;
 
-  if (pending.length === 0 && expiredBets.length === 0) return null;
+  if (pending.length === 0 && expiredBets.length === 0 && proposedScope === 0) return null;
 
-  const rest = pending.length - 1 + expiredBets.length;
+  const rest = pending.length - 1 + expiredBets.length + (proposedScope > 0 ? 1 : 0);
 
   if (pending.length > 0) {
     const a = pending[0];
@@ -323,6 +331,29 @@ function ActionStrip({
         </div>
         <DecideButtons approvalId={a.id} onDone={onDecided} />
         <NavLink to={`/projects/${projectId}/records/decisions`}>the full case →</NavLink>
+      </div>
+    );
+  }
+
+  if (proposedScope > 0) {
+    return (
+      <div className="strip">
+        <span className="chip warn">scope proposed</span>
+        <div className="grow">
+          <div>
+            <strong>
+              {proposedScope === 1
+                ? "A requirement awaits your acceptance"
+                : `${proposedScope} requirements await your acceptance`}
+            </strong>
+          </div>
+          <div className="sb">
+            The CEO proposed what “done” should mean and can create no work for it
+            until you accept or cut each one
+            {expiredBets.length > 0 && ` · ${expiredBets.length} more waiting on you`}
+          </div>
+        </div>
+        <NavLink to={`/projects/${projectId}/plan`}>decide on the Plan tab →</NavLink>
       </div>
     );
   }
@@ -482,6 +513,7 @@ export default function ProjectPage() {
 
       <ActionStrip
         projectId={projectId}
+        dash={dash}
         approvals={ctx.approvals}
         hypotheses={ctx.hypotheses}
         onDecided={() => {

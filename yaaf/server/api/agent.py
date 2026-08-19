@@ -860,7 +860,7 @@ def propose_requirement(
     body: RequirementPropose, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
 ) -> dict:
     cons = effective(session, ctx.project.id)
-    policy.check_requirement_propose(cons, ctx.agent, body.acceptance_test)
+    policy.check_requirement_propose(cons, ctx.project, ctx.agent, body.acceptance_test)
     if policy.requires_requirements(ctx.project) and not body.est_runs:
         raise Refusal(
             "This project plans before it builds, so a requirement needs est_runs: your "

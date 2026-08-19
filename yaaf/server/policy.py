@@ -675,9 +675,23 @@ def requires_requirements(project: Project) -> bool:
     return project.mode != ProjectMode.EXPLORE
 
 
-def check_requirement_propose(cons: ConstitutionDoc, agent: Agent, acceptance_test: dict) -> None:
-    """Only the CEO proposes scope. A lead proposing requirements would be a
-    team writing its own definition of done one level down."""
+def check_requirement_propose(
+    cons: ConstitutionDoc, project: Project, agent: Agent, acceptance_test: dict
+) -> None:
+    """Only the CEO proposes scope, and only in a mode that has scope. A lead
+    proposing requirements would be a team writing its own definition of done
+    one level down; a proposal in Explore would park the company forever on an
+    acceptance the mode deliberately gives the chairman no screen to perform."""
+    if project.mode == ProjectMode.EXPLORE:
+        raise Refusal(
+            "This is an Explore project: scope is open by design, there is no "
+            "requirement list, and the chairman has no Plan screen to accept a "
+            "proposal on — waiting on acceptance here would wait forever. Create "
+            "tasks directly toward the goal. If this work now needs a fixed "
+            "definition of done, suggest that to the chairman: reshaping the "
+            "project as Deliver is a decision only the chairman can make.",
+            status_code=409,
+        )
     if agent.kind != AgentKind.CEO:
         raise Refusal(
             "Only the CEO proposes requirements. If you think something must be true at "

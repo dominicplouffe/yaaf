@@ -34,6 +34,7 @@ from yaaf.core.models import (
     MemoryScope,
     Message,
     Project,
+    Requirement,
     RequirementEvent,
     RequirementStatus,
     Review,
@@ -53,7 +54,6 @@ from yaaf.core.models import (
     utcnow,
 )
 from yaaf.server import policy, typing_state
-from yaaf.server.velocity import commitment_projection, project_velocity
 from yaaf.server.deps import admin_auth, db
 from yaaf.server.dispatcher import (
     activity_state,
@@ -61,6 +61,7 @@ from yaaf.server.dispatcher import (
     daily_runs_used,
     day_start,
 )
+from yaaf.server.velocity import commitment_projection, project_velocity
 
 router = APIRouter(dependencies=[Depends(admin_auth)])
 
@@ -357,6 +358,15 @@ def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
             Approval.project_id == project.id, Approval.status == ApprovalStatus.PENDING
         )
     ).scalar_one()
+    # Proposed scope is the CEO parked on a decision only the chairman can
+    # make. It rides the dashboard so every tab can say so — a CEO report that
+    # reads "waiting on R-01 acceptance" never says where accepting happens.
+    requirements_proposed = session.execute(
+        select(func.count(Requirement.id)).where(
+            Requirement.project_id == project.id,
+            Requirement.status == RequirementStatus.PROPOSED,
+        )
+    ).scalar_one()
     return {
         "id": project.id,
         "slug": project.slug,
@@ -383,6 +393,7 @@ def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
         "activity": activity_state(session, project, cons),
         "chat_live": chat_session_live(session, project),
         "pending_approvals": pending_approvals,
+        "requirements_proposed": requirements_proposed,
         "ceo_judgment": policy.ceo_judgment(session, project.id),
         "constitution": cons.model_dump(),
         "mode": project.mode,
