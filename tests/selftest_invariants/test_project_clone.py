@@ -82,8 +82,8 @@ def test_credentials_come_across_with_their_values(client):
     check = twin["copied"]["data_sources"][0]["check"]
     assert check["ok"] and check["detail"] == "reachable (https://data.example.com:3845/mcp)"
     with db_session() as session:
-        source_entry = session.get(Project, project["id"]).config["mcp_servers"][0]
-        twin_entry = session.get(Project, twin["id"]).config["mcp_servers"][0]
+        source_entry = session.get(Project, project["id"]).integrations["mcp_servers"][0]
+        twin_entry = session.get(Project, twin["id"]).integrations["mcp_servers"][0]
         assert twin_entry["last_check"]["at"] > source_entry["last_check"]["at"]
 
 
@@ -140,11 +140,12 @@ def test_slack_tokens_travel_but_rooms_do_not(client):
     re-pasting the tokens to avoid it is a chore nobody asked for either."""
     project = make_project(client, start=False)
     client.patch(f"/admin/projects/{project['id']}", json={
-        "config": {"slack": {"bot_token_secret": "slack-bot",
-                             "signing_secret": "slack-signing",
-                             "chairman_slack_user": "U123",
-                             "channel_map": {"boardroom": "C0BQ", "leadership": "C0BR"}},
-                   "webhook_secret": "whsec-not-portable"},
+        "integrations": {
+            "slack": {"bot_token_secret": "slack-bot",
+                      "signing_secret": "slack-signing",
+                      "chairman_slack_user": "U123",
+                      "channel_map": {"boardroom": "C0BQ", "leadership": "C0BR"}},
+            "webhook_secret": "whsec-not-portable"},
     }, headers=ADMIN)
     client.post("/admin/secrets", json={
         "project_id": project["id"], "name": "slack-bot", "value": "xoxb-token",
@@ -154,11 +155,11 @@ def test_slack_tokens_travel_but_rooms_do_not(client):
     assert twin["copied"]["slack_rooms_dropped"] is True
 
     with db_session() as session:
-        config = session.get(Project, twin["id"]).config
-        assert config["slack"]["channel_map"] == {}
-        assert config["slack"]["bot_token_secret"] == "slack-bot"  # still wired
-        assert config["slack"]["chairman_slack_user"] == "U123"
-        assert "webhook_secret" not in config  # this project's own signing key
+        wiring = session.get(Project, twin["id"]).integrations
+        assert wiring["slack"]["channel_map"] == {}
+        assert wiring["slack"]["bot_token_secret"] == "slack-bot"  # still wired
+        assert wiring["slack"]["chairman_slack_user"] == "U123"
+        assert "webhook_secret" not in wiring  # this project's own signing key
         token = session.query(Secret).filter_by(project_id=twin["id"],
                                                 name="slack-bot").one()
         assert decrypt(token.ciphertext) == "xoxb-token"  # no re-pasting

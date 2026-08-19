@@ -604,7 +604,7 @@ def cadence_of(cons: ConstitutionDoc) -> ReportCadence:
     write would have reproduced exactly that.
     """
     try:
-        tz = ZoneInfo(cons.chairman_report_timezone)
+        tz = ZoneInfo(cons.timezone)
     except Exception:  # a body written before the field was validated
         tz = ZoneInfo("UTC")
     return ReportCadence(max(cons.chairman_report_interval_hours, 0.0),

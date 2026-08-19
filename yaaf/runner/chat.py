@@ -80,7 +80,7 @@ CHAT SESSION: You are in a live boardroom conversation with the chairman.
 
 
 def chat_enabled(project: Project) -> bool:
-    return bool(((project.config or {}).get("chat") or {}).get("enabled", True))
+    return bool(((project.integrations or {}).get("chat") or {}).get("enabled", True))
 
 
 def chat_supervisor_loop() -> None:  # pragma: no cover - thin loop

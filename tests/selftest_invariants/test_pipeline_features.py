@@ -66,8 +66,9 @@ def test_secret_grants_live_on_the_secret_and_apply_immediately(client):
 def test_daily_wake_fires_once_per_local_day(client):
     project = make_project(
         client,
-        config={"runtime": "mock", "ceo_daily_at": "00:00", "timezone": "UTC",
-                "ceo_heartbeat_hours": 9999},
+        integrations={"runtime": "mock"},
+        constitution={"ceo_daily_at": "00:00", "timezone": "UTC",
+                      "ceo_heartbeat_hours": 9999},
     )
     from tests.conftest import finish_runs
 

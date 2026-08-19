@@ -105,6 +105,52 @@ def seed_roles(directory: Path = typer.Argument(Path("roles"))) -> None:
 
 
 @app.command()
+def save_seed(directory: Path = typer.Argument(Path("seed"))) -> None:
+    """Write this install's reusable design to a folder: every role, and every
+    project as a ready-to-create spec.
+
+    Roles are global and survive a project wipe on their own; goals do not, and
+    retyping a page-long mandate is how a rebuild loses the thing that took
+    longest to write. What lands here is design — prompts, goals, constitutions
+    — never plumbing: no secrets, no Slack wiring, no webhook keys.
+    """
+    from yaaf.core import seed as seedlib
+
+    with _client() as client:
+        roles, projects = seedlib.save_seed(client, directory)
+    typer.echo(f"{roles} roles → {directory / 'roles'}")
+    typer.echo(f"{projects} projects → {directory / 'projects'}")
+
+
+@app.command()
+def seed(
+    directory: Path = typer.Argument(Path("seed")),
+    chairman: str = typer.Option(None, "--chairman",
+                                 help="Chairman email for the restored projects"),
+    roles_only: bool = typer.Option(False, "--roles-only",
+                                    help="Restore the roles and stop, leaving projects to you"),
+) -> None:
+    """Restore a folder written by `save-seed` onto an empty install.
+
+    Roles first, because a project spec names the roles its teams run. Projects
+    are created in draft and never started: a seeded company should not begin
+    spending because someone restored a backup.
+    """
+    from yaaf.core import seed as seedlib
+
+    with _client() as client:
+        for slug, status in seedlib.restore_roles(client, directory):
+            typer.echo(f"role {slug}: {status}")
+        if roles_only:
+            return
+        if seedlib.project_specs(directory) and not chairman:
+            typer.echo("--chairman is required to restore projects (or pass --roles-only)")
+            raise typer.Exit(1)
+        for slug, status in seedlib.restore_projects(client, directory, chairman):
+            typer.echo(f"project {slug}: {status}")
+
+
+@app.command()
 def create_user(email: str, name: str) -> None:
     with _client() as client:
         _show(client.post("/admin/users", json={"email": email, "display_name": name}))
@@ -141,20 +187,19 @@ def configure(
     runtime: str = typer.Option(None, "--runtime", help="mock | agent_sdk"),
     billing_secret_id: str = typer.Option(None, "--billing-secret-id"),
     billing_mode: str = typer.Option(None, "--billing-mode", help="api_key | subscription"),
-    ceo_heartbeat_hours: float = typer.Option(None, "--ceo-heartbeat-hours"),
-    max_concurrent_runs: int = typer.Option(None, "--max-concurrent-runs"),
 ) -> None:
-    """Update a project's mutable configuration (never its constitution)."""
-    config: dict = {}
+    """Update a project's outward wiring — runtime and billing.
+
+    Limits are not here. Wake cadence, concurrency and every other rule an
+    agent runs under live in the constitution, so they change through `amend`:
+    with a written reason, an audit entry, and disclosure to the CEO.
+    """
+    integrations: dict = {}
     if runtime is not None:
-        config["runtime"] = runtime
-    if ceo_heartbeat_hours is not None:
-        config["ceo_heartbeat_hours"] = ceo_heartbeat_hours
-    if max_concurrent_runs is not None:
-        config["max_concurrent_runs"] = max_concurrent_runs
+        integrations["runtime"] = runtime
     payload: dict = {}
-    if config:
-        payload["config"] = config
+    if integrations:
+        payload["integrations"] = integrations
     if billing_secret_id is not None:
         payload["billing_secret_id"] = billing_secret_id
     if billing_mode is not None:
@@ -166,6 +211,40 @@ def configure(
         _show(client.request("PATCH",
                              f"/admin/projects/{_resolve_project(client, project)}",
                              json=payload))
+
+
+@app.command()
+def amend(
+    project: str,
+    reason: str = typer.Option(..., "--reason", help="Why. Recorded, audited, and shown to the CEO"),
+    set_: list[str] = typer.Option(None, "--set", help="rule=value, repeatable"),
+) -> None:
+    """Change a constitution rule.
+
+    Every limit an agent runs under lives in the constitution, so this is the
+    only way to move one. The value is parsed as JSON when it can be, so
+    `--set runs_per_project_per_day=80` gives a number and
+    `--set ceo_daily_at='"09:00"'` gives a string. An invalid overlay is
+    refused whole rather than half-applied.
+    """
+    changes: dict = {}
+    for pair in set_ or []:
+        if "=" not in pair:
+            typer.echo(f"--set wants rule=value, got {pair!r}")
+            raise typer.Exit(1)
+        key, raw = pair.split("=", 1)
+        try:
+            changes[key.strip()] = json.loads(raw)
+        except json.JSONDecodeError:
+            changes[key.strip()] = raw
+    if not changes:
+        typer.echo("nothing to change — pass at least one --set rule=value")
+        raise typer.Exit(1)
+    with _client() as client:
+        _show(client.post(
+            f"/admin/projects/{_resolve_project(client, project)}/amendments",
+            json={"reason": reason, "changes": changes},
+        ))
 
 
 # ── lifecycle ───────────────────────────────────────────────────────────────────

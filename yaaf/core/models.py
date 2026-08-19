@@ -68,8 +68,13 @@ class Base(DeclarativeBase):
 class ProjectStatus(enum.StrEnum):
     DRAFT = "draft"
     RUNNING = "running"
-    PAUSED = "paused"      # kill switch or budget trip; resumable
-    STOPPED = "stopped"    # terminal
+    PAUSED = "paused"        # kill switch or budget trip; resumable
+    STOPPED = "stopped"      # terminal: abandoned
+    COMPLETED = "completed"  # terminal: the work is finished and the platform proved it
+
+    @property
+    def is_terminal(self) -> bool:
+        return self in (ProjectStatus.STOPPED, ProjectStatus.COMPLETED)
 
 
 class AgentKind(enum.StrEnum):
@@ -221,8 +226,13 @@ class Project(Base):
     # Domains/accounts the project controls; evidence from these can never be external.
     controlled_domains: Mapped[list] = mapped_column(JSONVariant, default=list)
     github_repo: Mapped[str | None] = mapped_column(String(255))
-    # Mutable configuration (heartbeat cadences, concurrency, slack mapping).
-    config: Mapped[dict] = mapped_column(JSONVariant, default=dict)
+    # Wiring, not rules. Runtime backend, MCP servers, Slack mapping, webhook
+    # secrets — things that say *how to reach the outside*, never how much an
+    # agent may spend or how often it may wake. Every limit that used to live
+    # here (heartbeat cadence, concurrency, the daily wake time) moved into
+    # ConstitutionDoc in the rebuild: a limit kept here generated no settings
+    # UI, recorded no amendment, and was never disclosed to the CEO it bound.
+    integrations: Mapped[dict] = mapped_column(JSONVariant, default=dict)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 

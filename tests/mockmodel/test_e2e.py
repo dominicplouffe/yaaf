@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from tests.conftest import ADMIN, make_project
+from tests.conftest import ADMIN, amend, make_project
 from yaaf.core.db import db_session
 from yaaf.core.models import Run, Task, utcnow
 from yaaf.runner.backends import mock as mock_backend
@@ -122,8 +122,9 @@ def test_full_org_loop(client):
     project = make_project(
         client,
         slug="toy",
-        config={"runtime": "mock", "ceo_heartbeat_hours": 0.0},
-        constitution={"wakes_per_agent_per_hour": 100, "external_ratio_min": 0.0},
+        integrations={"runtime": "mock"},
+        constitution={"wakes_per_agent_per_hour": 100, "external_ratio_min": 0.0,
+                      "ceo_heartbeat_hours": 0.0001},
     )
 
     for _ in range(12):
@@ -157,11 +158,7 @@ def test_full_org_loop(client):
     # Every wake had a reason; no agent is woken for nothing once settled.
     # (Restore a sane planning cadence first — the test ran with an always-due
     # heartbeat to drive the loop quickly.)
-    from yaaf.core.models import Project
-
-    with db_session() as session:
-        row = session.get(Project, project["id"])
-        row.config = {**row.config, "ceo_heartbeat_hours": 6.0}
+    amend(client, project["id"], ceo_heartbeat_hours=6.0)
     with db_session() as session:
         idle = dispatch_once(session)
     assert idle == 0, "a settled project must cost nothing"

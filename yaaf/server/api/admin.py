@@ -248,7 +248,7 @@ class ProjectCreate(BaseModel):
     billing_mode: str = Field(default="api_key", pattern="^(api_key|subscription)$")
     controlled_domains: list[str] = Field(default_factory=list)
     constitution: dict = Field(default_factory=dict)  # overrides onto defaults
-    config: dict = Field(default_factory=dict)
+    integrations: dict = Field(default_factory=dict)
     ceo_role_slug: str = "ceo"
     ceo_name: str = "CEO"
     teams: list[TeamSpec] = Field(default_factory=list)
@@ -297,7 +297,7 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
         chairman_user_id=chairman.id,
         billing_mode=body.billing_mode,
         controlled_domains=body.controlled_domains,
-        config=body.config,
+        integrations=body.integrations,
     )
     session.add(project)
     session.flush()
@@ -364,8 +364,8 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
 
 # Config keys that are this install's plumbing, not the project's design:
 # Slack wiring, webhook signing secrets, experiment bookkeeping. Everything
-# else in config (runtime, cadences, data sources…) travels with the bundle.
-_NON_PORTABLE_CONFIG_KEYS = frozenset(
+# else in integrations (runtime, data sources…) travels with the bundle.
+_NON_PORTABLE_INTEGRATION_KEYS = frozenset(
     {"slack", "github_webhook_secret", "webhook_secret", "experiment"}
 )
 
@@ -427,12 +427,12 @@ def export_project(project_id: str, session: Session = Depends(db)) -> dict:
             "lead": next((a.name for a in members if a.id == team.lead_agent_id), None),
         })
 
-    config = {k: v for k, v in (project.config or {}).items()
-              if k not in _NON_PORTABLE_CONFIG_KEYS}
-    if "mcp_servers" in config:
-        config["mcp_servers"] = [
+    integrations = {k: v for k, v in (project.integrations or {}).items()
+                    if k not in _NON_PORTABLE_INTEGRATION_KEYS}
+    if "mcp_servers" in integrations:
+        integrations["mcp_servers"] = [
             {k: v for k, v in entry.items() if k != "last_check"}
-            for entry in config["mcp_servers"]
+            for entry in integrations["mcp_servers"]
         ]
 
     # Billing credentials stay out entirely: their values cannot travel, and
@@ -459,7 +459,7 @@ def export_project(project_id: str, session: Session = Depends(db)) -> dict:
             "billing_mode": project.billing_mode,
             "controlled_domains": project.controlled_domains,
             "constitution": effective(session, project.id).model_dump(),
-            "config": config,
+            "integrations": integrations,
             "ceo_role_slug": ceo_role_slug,
             "ceo_name": ceo.name,
             "teams": teams,
@@ -473,7 +473,7 @@ def export_project(project_id: str, session: Session = Depends(db)) -> dict:
 # Config a twin must not inherit: this project's own webhook signing keys and
 # its experiment bookkeeping. Slack is handled separately below — its tokens
 # travel, its room bindings do not.
-_NON_CLONABLE_CONFIG_KEYS = frozenset({"github_webhook_secret", "webhook_secret", "experiment"})
+_NON_CLONABLE_INTEGRATION_KEYS = frozenset({"github_webhook_secret", "webhook_secret", "experiment"})
 
 
 class ProjectCloneIn(BaseModel):
@@ -504,13 +504,13 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
     if session.execute(select(Project).where(Project.slug == body.slug)).scalar_one_or_none():
         raise HTTPException(status_code=409, detail="project slug already exists")
 
-    config = {k: v for k, v in (source.config or {}).items()
-              if k not in _NON_CLONABLE_CONFIG_KEYS}
-    slack_rooms_dropped = bool((config.get("slack") or {}).get("channel_map"))
-    if "slack" in config:
+    integrations = {k: v for k, v in (source.integrations or {}).items()
+                    if k not in _NON_CLONABLE_INTEGRATION_KEYS}
+    slack_rooms_dropped = bool((integrations.get("slack") or {}).get("channel_map"))
+    if "slack" in integrations:
         # The bridge is inert without a channel map, so the twin mirrors
         # nowhere until the chairman maps rooms — with the tokens already there.
-        config["slack"] = {**config["slack"], "channel_map": {}}
+        integrations["slack"] = {**integrations["slack"], "channel_map": {}}
 
     project = Project(
         id=ids.new_id(ids.PROJECT),
@@ -521,7 +521,7 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
         billing_mode=source.billing_mode,
         controlled_domains=list(source.controlled_domains or []),
         github_repo=source.github_repo,
-        config=config,
+        integrations=integrations,
     )
     session.add(project)
     session.flush()
@@ -601,7 +601,7 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
     # source that cannot answer is exactly what a clone exists to rule out —
     # and the source project's stale verdict would be a lie about this one.
     checked = []
-    for entry in config.get("mcp_servers") or []:
+    for entry in integrations.get("mcp_servers") or []:
         from yaaf.core.crypto import decrypt
 
         entry = {k: v for k, v in entry.items() if k != "last_check"}
@@ -615,7 +615,7 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
         entry["last_check"] = {**check, "at": utcnow().isoformat()}
         checked.append(entry)
     if checked:
-        project.config = {**config, "mcp_servers": checked}
+        project.integrations = {**integrations, "mcp_servers": checked}
 
     _audit(session, source.id, "project.clone", "project", project.id, {"slug": body.slug})
     _audit(session, project.id, "project.create", "project", project.id,
@@ -768,7 +768,7 @@ def _data_source_using(session: Session, project_id: str | None, secret_name: st
     project = session.get(Project, project_id)
     if project is None:
         return None
-    for source in (project.config or {}).get("mcp_servers", []):
+    for source in (project.integrations or {}).get("mcp_servers", []):
         if source.get("url_secret") == secret_name:
             return source.get("name")
     return None
@@ -784,7 +784,7 @@ def _data_source_owning(session: Session, project_id: str | None, secret_name: s
     project = session.get(Project, project_id)
     if project is None:
         return None
-    for source in (project.config or {}).get("mcp_servers", []):
+    for source in (project.integrations or {}).get("mcp_servers", []):
         if secret_name in (source.get("url_secret"), source.get("bearer_secret")):
             return source.get("name")
     return None
@@ -903,7 +903,7 @@ def add_data_source(project_id: str, body: DataSourceIn, session: Session = Depe
     for slug in body.roles:
         _latest_role_version(session, slug)  # 422s on unknown role
 
-    servers = (project.config or {}).get("mcp_servers", [])
+    servers = (project.integrations or {}).get("mcp_servers", [])
     prior = next((s for s in servers if s.get("name") == body.name), None)
 
     url_secret = _upsert_project_secret(
@@ -940,7 +940,7 @@ def add_data_source(project_id: str, body: DataSourceIn, session: Session = Depe
     entry["last_check"] = {**check, "at": utcnow().isoformat()}
 
     servers = [s for s in servers if s.get("name") != body.name]
-    project.config = {**(project.config or {}), "mcp_servers": [*servers, entry]}
+    project.integrations = {**(project.integrations or {}), "mcp_servers": [*servers, entry]}
     _audit(session, project.id, "mcp_server.save", "project", project.id,
            {"name": body.name, "roles": body.roles, "host": entry["url_host"],
             "check_ok": check["ok"]})
@@ -952,14 +952,14 @@ def add_data_source(project_id: str, body: DataSourceIn, session: Session = Depe
 @router.delete("/projects/{project_id}/mcp_servers/{name}")
 def delete_data_source(project_id: str, name: str, session: Session = Depends(db)) -> dict:
     project = _get_project(session, project_id)
-    servers = (project.config or {}).get("mcp_servers", [])
+    servers = (project.integrations or {}).get("mcp_servers", [])
     entry = next((s for s in servers if s.get("name") == name), None)
     if entry is None:
         raise HTTPException(status_code=404, detail="unknown data source")
     for secret_name in (entry.get("url_secret"), entry.get("bearer_secret")):
         if secret_name:
             _delete_project_secret(session, project.id, secret_name)
-    project.config = {**project.config,
+    project.integrations = {**project.integrations,
                       "mcp_servers": [s for s in servers if s.get("name") != name]}
     _audit(session, project.id, "mcp_server.delete", "project", project.id, {"name": name})
     return {"deleted": name}
@@ -968,7 +968,7 @@ def delete_data_source(project_id: str, name: str, session: Session = Depends(db
 @router.post("/projects/{project_id}/mcp_servers/{name}/check")
 def check_data_source(project_id: str, name: str, session: Session = Depends(db)) -> dict:
     project = _get_project(session, project_id)
-    servers = (project.config or {}).get("mcp_servers", [])
+    servers = (project.integrations or {}).get("mcp_servers", [])
     entry = next((s for s in servers if s.get("name") == name), None)
     if entry is None:
         raise HTTPException(status_code=404, detail="unknown data source")
@@ -983,7 +983,7 @@ def check_data_source(project_id: str, name: str, session: Session = Depends(db)
         raise HTTPException(status_code=422, detail="the data source's URL secret is missing")
     check = _check_data_source(url, value_of(entry.get("bearer_secret")))
     entry["last_check"] = {**check, "at": utcnow().isoformat()}
-    project.config = {**project.config, "mcp_servers": servers}
+    project.integrations = {**project.integrations, "mcp_servers": servers}
     _audit(session, project.id, "mcp_server.check", "project", project.id,
            {"name": name, "ok": check["ok"]})
     return check
@@ -1030,9 +1030,9 @@ class ProjectPatch(BaseModel):
     billing_mode: str | None = Field(default=None, pattern="^(api_key|subscription)$")
     billing_secret_id: str | None = None
     controlled_domains: list[str] | None = None
-    # Merged into the existing config (mutable configuration only — the
-    # constitution changes exclusively through amendments).
-    config: dict | None = None
+    # Merged into the existing integrations (outward wiring only — every
+    # limit lives in the constitution and changes only through amendments).
+    integrations: dict | None = None
 
 
 def _billing_shape_error(mode: str, plaintext: str) -> str | None:
@@ -1098,14 +1098,28 @@ def patch_project(project_id: str, body: ProjectPatch, session: Session = Depend
     if body.controlled_domains is not None:
         project.controlled_domains = body.controlled_domains
         changed["controlled_domains"] = body.controlled_domains
-    if body.config is not None:
-        project.config = {**(project.config or {}), **body.config}
-        changed["config"] = body.config
+    if body.integrations is not None:
+        # A limit written here would be stored and never read — the silent
+        # failure that made `ceo_heartbeat_hours` invisible to the settings UI,
+        # to the amendment log and to the CEO it governed. Refuse it and say
+        # where it goes instead.
+        rules = set(ConstitutionDoc.model_fields) & set(body.integrations)
+        if rules:
+            raise HTTPException(
+                status_code=422,
+                detail=(f"{', '.join(sorted(rules))} "
+                        f"{'is a constitution rule' if len(rules) == 1 else 'are constitution rules'}, "
+                        "not wiring. Change it with POST "
+                        f"/admin/projects/{project.id}/amendments so it is validated, "
+                        "audited with your reason, and disclosed to the CEO."),
+            )
+        project.integrations = {**(project.integrations or {}), **body.integrations}
+        changed["integrations"] = body.integrations
     _audit(session, project.id, "project.patch", "project", project.id, changed)
     return {"id": project.id, "name": project.name, "goal": project.goal,
             "billing_mode": project.billing_mode,
             "billing_secret_id": project.billing_secret_id,
-            "controlled_domains": project.controlled_domains, "config": project.config,
+            "controlled_domains": project.controlled_domains, "integrations": project.integrations,
             "changed": changed}
 
 
@@ -1610,15 +1624,15 @@ def delete_secret(secret_id: str, session: Session = Depends(db)) -> dict:
 @router.post("/projects/{project_id}/webhook_secrets")
 def provision_webhook_secrets(project_id: str, session: Session = Depends(db)) -> dict:
     """Generate the signing secrets for the inbound evidence connectors. The
-    secrets live only in project.config — never in a role scope — so no run
+    secrets live only in project.integrations — never in a role scope — so no run
     ever holds them, which is what makes webhook evidence unforgeable by
     agents."""
     project = _get_project(session, project_id)
     github_secret = pysecrets.token_hex(32)
     generic_secret = pysecrets.token_hex(32)
-    # Merge, never clobber: config also carries cadences, Slack mapping, etc.
-    project.config = {
-        **(project.config or {}),
+    # Merge, never clobber: integrations also carries the runtime, Slack mapping, etc.
+    project.integrations = {
+        **(project.integrations or {}),
         "github_webhook_secret": github_secret,
         "webhook_secret": generic_secret,
     }

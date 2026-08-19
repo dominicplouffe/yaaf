@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 
-from tests.conftest import ADMIN, make_project
+from tests.conftest import ADMIN, amend, make_project
 
 
 def _export(client, project_id: str) -> dict:
@@ -33,9 +33,12 @@ def test_bundle_carries_design_not_plumbing(client):
     }, headers=ADMIN)
     client.post(f"/admin/projects/{project['id']}/webhook_secrets", headers=ADMIN)
     client.patch(f"/admin/projects/{project['id']}", json={
-        "config": {"slack": {"chairman_slack_user": "U123"},
-                   "timezone": "America/Toronto"},
+        "integrations": {"slack": {"chairman_slack_user": "U123"},
+                         "runtime": "mock"},
     }, headers=ADMIN)
+    # The chairman's timezone is a constitution rule, not wiring — it travels
+    # in the constitution half of the bundle.
+    amend(client, project["id"], timezone="America/Toronto")
 
     bundle = _export(client, project["id"])
     spec = bundle["project"]
@@ -46,10 +49,13 @@ def test_bundle_carries_design_not_plumbing(client):
     assert spec["constitution"]["queue_ceiling"] == 5
     assert spec["ceo_role_slug"] == "ceo"
     assert spec["solo"] is False
-    # Portable config survives; plumbing does not.
-    assert spec["config"]["timezone"] == "America/Toronto"
+    # Portable wiring survives; this install's plumbing does not.
+    assert spec["integrations"]["runtime"] == "mock"
     for key in ("slack", "github_webhook_secret", "webhook_secret"):
-        assert key not in spec["config"]
+        assert key not in spec["integrations"]
+    # And a rule travels as a rule, so an imported twin runs under the same
+    # limits rather than silently reverting to the defaults.
+    assert spec["constitution"]["timezone"] == "America/Toronto"
     # Role definitions travel with their prompts; credential names travel bare.
     assert {r["slug"] for r in bundle["roles"]} == {"ceo", "worker"}
     assert all(r["system_prompt"] for r in bundle["roles"])
@@ -70,7 +76,7 @@ def test_data_sources_travel_without_check_results(client):
     assert added.status_code == 200, added.text
 
     bundle = _export(client, project["id"])
-    servers = bundle["project"]["config"]["mcp_servers"]
+    servers = bundle["project"]["integrations"]["mcp_servers"]
     assert [s["name"] for s in servers] == ["kb"]
     assert "last_check" not in servers[0]
     # The data source's secrets ride along by name so an import can ask for

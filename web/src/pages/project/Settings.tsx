@@ -111,7 +111,7 @@ function SlackBridge({
   act: (fn: () => Promise<unknown>, ok: string) => Promise<void>;
   busy: boolean;
 }) {
-  const existing = (dash.config["slack"] as SlackConfig | null | undefined) ?? null;
+  const existing = (dash.integrations["slack"] as SlackConfig | null | undefined) ?? null;
   const [org, setOrg] = useState<OrgView | null>(null);
   const [botToken, setBotToken] = useState("");
   const [signingSecret, setSigningSecret] = useState("");
@@ -254,7 +254,7 @@ function SlackBridge({
               }
               const socketMode = appToken.trim() !== "" || !!existing?.app_token_secret;
               await patch(`/admin/projects/${projectId}`, {
-                config: { slack: {
+                integrations: { slack: {
                   bot_token_secret: "slack-bot",
                   signing_secret: "slack-signing",
                   ...(socketMode ? { app_token_secret: "slack-app" } : {}),
@@ -277,7 +277,7 @@ function SlackBridge({
               if (!confirm("Disconnect Slack? The bus keeps everything; mirroring just stops."))
                 return;
               act(
-                () => patch(`/admin/projects/${projectId}`, { config: { slack: null } }),
+                () => patch(`/admin/projects/${projectId}`, { integrations: { slack: null } }),
                 "Slack disconnected. The bus is unaffected.",
               );
             }}
@@ -487,7 +487,7 @@ function DataSources({
   act: Act;
   busy: boolean;
 }) {
-  const sources = (dash.config["mcp_servers"] as McpServerEntry[] | undefined) ?? [];
+  const sources = (dash.integrations["mcp_servers"] as McpServerEntry[] | undefined) ?? [];
   const [org, setOrg] = useState<OrgView | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [name, setName] = useState("");
@@ -789,8 +789,8 @@ function CredentialsManager({
   // the thing that made them and are edited there, so one object never shows
   // up as three rows: billing lives in the billing card, a data source's
   // address and token live on the source, Slack's tokens live on the bridge.
-  const slack = dash.config["slack"] as SlackConfig | null | undefined;
-  const sources = (dash.config["mcp_servers"] as McpServerEntry[] | undefined) ?? [];
+  const slack = dash.integrations["slack"] as SlackConfig | null | undefined;
+  const sources = (dash.integrations["mcp_servers"] as McpServerEntry[] | undefined) ?? [];
   const managed = new Set(
     [
       ...sources.flatMap((s) => [s.url_secret, s.bearer_secret]),
@@ -1180,10 +1180,7 @@ export default function Settings({
   const [credential, setCredential] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const [runtime, setRuntime] = useState(String(dash.config["runtime"] ?? "agent_sdk"));
-  const [heartbeatHours, setHeartbeatHours] = useState(
-    String(dash.config["ceo_heartbeat_hours"] ?? 6),
-  );
+  const [runtime, setRuntime] = useState(String(dash.integrations["runtime"] ?? "agent_sdk"));
 
   const navigate = useNavigate();
   const [cloneSlug, setCloneSlug] = useState(() => nextInSeries(dash.slug, "-2"));
@@ -1284,7 +1281,7 @@ export default function Settings({
   }
 
   const billingReady = dash.billing_secret_id !== null;
-  const runtimeNow = String(dash.config["runtime"] ?? "agent_sdk");
+  const runtimeNow = String(dash.integrations["runtime"] ?? "agent_sdk");
 
   async function cloneProject() {
     setError(null);
@@ -1662,7 +1659,7 @@ export default function Settings({
       <h2>Advanced</h2>
       <details className="card">
         <summary>
-          Agent execution & planning cadence — you almost never need to touch these
+          Agent execution — you almost never need to touch this
         </summary>
         <div className="row" style={{ marginTop: 12 }}>
           <div>
@@ -1676,19 +1673,6 @@ export default function Settings({
               </option>
             </select>
           </div>
-          <div>
-            <label className="field">
-              CEO self-wake interval (hours) — the CEO plans on this clock even when idle,
-              and every wake is a paid model call
-            </label>
-            <input
-              type="number"
-              min={0.1}
-              step={0.5}
-              value={heartbeatHours}
-              onChange={(e) => setHeartbeatHours(e.target.value)}
-            />
-          </div>
         </div>
         <div className="actions">
           <button
@@ -1697,10 +1681,7 @@ export default function Settings({
               act(
                 () =>
                   patch(`/admin/projects/${projectId}`, {
-                    config: {
-                      runtime,
-                      ceo_heartbeat_hours: Number(heartbeatHours) || 6,
-                    },
+                    integrations: { runtime },
                   }),
                 "Applied.",
               )
@@ -1716,15 +1697,15 @@ export default function Settings({
           ever holds one, which is what makes webhook evidence impossible for an agent to forge.
           Point your senders at them; regenerating invalidates the old pair.
         </p>
-        {dash.config["webhook_secret"] || dash.config["github_webhook_secret"] ? (
+        {dash.integrations["webhook_secret"] || dash.integrations["github_webhook_secret"] ? (
           <div className="row">
             <div>
               <label className="field">GitHub</label>
-              <SecretInput readOnly value={String(dash.config["github_webhook_secret"] ?? "")} />
+              <SecretInput readOnly value={String(dash.integrations["github_webhook_secret"] ?? "")} />
             </div>
             <div>
               <label className="field">Generic evidence sender</label>
-              <SecretInput readOnly value={String(dash.config["webhook_secret"] ?? "")} />
+              <SecretInput readOnly value={String(dash.integrations["webhook_secret"] ?? "")} />
             </div>
           </div>
         ) : (
@@ -1735,7 +1716,7 @@ export default function Settings({
             disabled={busy}
             onClick={() => {
               if (
-                dash.config["webhook_secret"] &&
+                dash.integrations["webhook_secret"] &&
                 !confirm("Regenerate? Any sender still using the old secrets stops verifying.")
               )
                 return;
@@ -1745,7 +1726,7 @@ export default function Settings({
               );
             }}
           >
-            {dash.config["webhook_secret"] ? "Regenerate" : "Generate signing secrets"}
+            {dash.integrations["webhook_secret"] ? "Regenerate" : "Generate signing secrets"}
           </button>
         </div>
       </details>

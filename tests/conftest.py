@@ -98,6 +98,19 @@ def make_project(
     return project
 
 
+def amend(client: TestClient, project_id: str, reason: str = "test amendment", **changes) -> dict:
+    """Change constitution rules the way the chairman does — over HTTP, with a
+    reason, audited, and disclosed to the CEO. Every limit lives in the
+    constitution, so this is the only route a test may move one."""
+    response = client.post(
+        f"/admin/projects/{project_id}/amendments",
+        json={"reason": reason, "changes": changes},
+        headers=ADMIN,
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
 def agent_by_name(project: dict, name: str) -> str:
     if name == "CEO":
         return project["ceo_agent_id"]

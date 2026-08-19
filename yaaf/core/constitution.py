@@ -43,6 +43,18 @@ def parse_report_window(raw: object) -> tuple[time, time] | None:
     return (start, end) if start < end else None
 
 
+def parse_hhmm(raw: object) -> time | None:
+    """``"09:00"`` → 09:00. None for absent or malformed, which the validator
+    below turns into a refusal when a value was actually given."""
+    if not raw:
+        return None
+    try:
+        hour, minute = (int(part) for part in str(raw).strip().split(":", 1))
+        return time(hour, minute)
+    except (TypeError, ValueError):
+        return None
+
+
 def _rule(default: Any, *, group: str, label: str, help: str, **constraints: Any) -> Any:
     """A constitution field that can describe itself.
 
@@ -161,6 +173,34 @@ class ConstitutionDoc(BaseModel):
              "finish. It blocks and becomes a question for whoever planned it, instead of "
              "buying another wake to fail the same way. Counts across re-claims; only a "
              "passing check resets it.")
+    max_concurrent_runs: int = _rule(
+        3, ge=1, group="Wake-loop brakes", label="Runs in flight at once",
+        help="How many agents may be working simultaneously. Protects the provider rate "
+             "limit that every project on the box shares.")
+    reserved_governance_runs: int = _rule(
+        3, ge=0, group="Wake-loop brakes", label="Runs held back for governance",
+        help="Runs kept out of the daily ceiling so a status review, a cycle plan or a "
+             "commitment re-forecast can always happen. Ordinary work stops at the daily "
+             "cap minus this number; governance runs may use the full cap. Without it the "
+             "day the company burns its allowance by lunch is the day it cannot report "
+             "that it did. 0 turns the reservation off.")
+
+    # The CEO's own cadence. These were project config until the rebuild, which
+    # meant they generated no settings UI, recorded no amendment, and were never
+    # disclosed to the CEO that they governed. They are limits; limits live here.
+    ceo_heartbeat_hours: float = _rule(
+        6.0, gt=0, group="CEO cadence", label="Hours between planning wakes",
+        help="How often the CEO wakes to plan when nothing else has woken it. Every wake "
+             "is a full-price run.")
+    ceo_heartbeat_always: bool = _rule(
+        False, group="CEO cadence", label="Plan even with an empty board",
+        help="Off, a planning wake is skipped when there is no open task and no live bet — "
+             "it would buy a full-price run to conclude 'nothing to do'. On for a project "
+             "you want thinking anyway.")
+    ceo_daily_at: str | None = _rule(
+        None, group="CEO cadence", label="A daily wake at this time",
+        help="'09:00' in your timezone, or blank for none. Fires once per local day, at or "
+             "after the time. The standup pattern.")
 
     # The chairman's reporting cadence. A wake ceiling stops the company
     # burning money on itself; this stops it burning money on *him* — the CEO
@@ -174,9 +214,14 @@ class ConstitutionDoc(BaseModel):
     chairman_report_window_local: str | None = _rule(
         None, group="Reporting to you", label="Only report during these hours",
         help="'09:00-20:00' in your local time, or blank for any hour.")
-    chairman_report_timezone: str = _rule(
-        "UTC", group="Reporting to you", label="Your timezone",
-        help="IANA name, e.g. 'America/New_York'. The window above is read in this zone.")
+
+    # One timezone, read by the reporting window, the daily CEO wake and every
+    # recurring rhythm. It used to be set twice — once here and once in project
+    # config for the daily wake — which is one place too many to get it wrong.
+    timezone: str = _rule(
+        "UTC", group="Your timezone", label="Your timezone",
+        help="IANA name, e.g. 'America/New_York'. Every local time in these rules — the "
+             "reporting window, the daily wake, a recurring rhythm — is read in this zone.")
 
     # Runs
     run_timeout_s: int = _rule(
@@ -194,13 +239,22 @@ class ConstitutionDoc(BaseModel):
                 "chairman's local time, with the start before the end")
         return raw
 
-    @field_validator("chairman_report_timezone")
+    @field_validator("timezone")
     @classmethod
     def _timezone_exists(cls, raw: str) -> str:
         try:
             ZoneInfo(raw)
         except Exception as exc:
             raise ValueError(f"{raw!r} is not an IANA timezone (e.g. 'America/New_York')") from exc
+        return raw
+
+    @field_validator("ceo_daily_at")
+    @classmethod
+    def _daily_time_is_readable(cls, raw: str | None) -> str | None:
+        if raw is not None and parse_hhmm(raw) is None:
+            raise ValueError(
+                f"{raw!r} is not a time of day: write it 'HH:MM' in your timezone, or "
+                "leave it blank for no daily wake")
         return raw
 
     def overlay(self, changes: dict[str, Any]) -> ConstitutionDoc:
@@ -243,7 +297,7 @@ def create_initial(session: Session, project_id: str, doc: ConstitutionDoc) -> C
 # the chairman's alone to change.
 CADENCE_FIELDS = frozenset({"chairman_report_interval_hours",
                             "chairman_report_window_local",
-                            "chairman_report_timezone"})
+                            "timezone"})
 
 
 def propose_amendment(

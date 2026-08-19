@@ -361,7 +361,7 @@ def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
         "pending_approvals": pending_approvals,
         "ceo_judgment": policy.ceo_judgment(session, project.id),
         "constitution": cons.model_dump(),
-        "config": project.config or {},
+        "integrations": project.integrations or {},
         "github_repo": project.github_repo,
         "billing_secret_id": project.billing_secret_id,
         "billing_secret_name": _secret_name(session, project.billing_secret_id),
@@ -389,7 +389,7 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
     from yaaf.server.api.admin import _billing_shape_error
 
     project = _project(session, project_id)
-    config = project.config or {}
+    integrations = project.integrations or {}
     checks: list[dict] = []
 
     def add(key: str, status: str, detail: str, where: str | None = None,
@@ -420,7 +420,7 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
     secrets_by_name = {s.name: s for s in secrets}
 
     # Project data sources: secrets present, granted, and last check green.
-    for source in config.get("mcp_servers", []):
+    for source in integrations.get("mcp_servers", []):
         name = source.get("name", "?")
         url_secret = secrets_by_name.get(source.get("url_secret", ""))
         if url_secret is None:
@@ -467,7 +467,7 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
                 "overview", {"kind": "repin", "team_id": team.id})
 
     # Slack: config present implies its secrets exist.
-    slack = config.get("slack") or {}
+    slack = integrations.get("slack") or {}
     if slack:
         missing = [slack.get(k) for k in ("bot_token_secret", "signing_secret",
                                           "app_token_secret")
@@ -482,7 +482,7 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
     # The chat lane: a running project with billing should have its CEO chat
     # session live (the supervisor restarts it within seconds; a persistent
     # absence means the runner is down or the session is boot-looping).
-    chat_on = ((project.config or {}).get("chat") or {}).get("enabled", True)
+    chat_on = ((project.integrations or {}).get("chat") or {}).get("enabled", True)
     if project.status == "running" and project.billing_secret_id is not None and chat_on:
         if chat_session_live(session, project):
             add("chat", "ok", "CEO chat session is live — the boardroom answers "
@@ -546,7 +546,7 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
 
     # Connectors: controlled GitHub accounts registered but webhooks unprovisioned.
     if any(str(d).startswith("github:") for d in (project.controlled_domains or [])) \
-            and not config.get("github_webhook_secret"):
+            and not integrations.get("github_webhook_secret"):
         add("connectors", "warn",
             "controlled GitHub accounts are registered but webhook secrets are not "
             "provisioned — GitHub events cannot become attested evidence yet",

@@ -36,7 +36,7 @@ def test_garbage_is_unstorable(client):
     assert refused.status_code == 422
     assert "not a URL" in refused.json()["detail"]
     with db_session() as session:
-        assert "mcp_servers" not in (session.get(Project, project["id"]).config or {})
+        assert "mcp_servers" not in (session.get(Project, project["id"]).integrations or {})
         assert session.query(Secret).filter(Secret.name.like("mcp-%")).count() == 0
 
     unknown_role = _save(client, project["id"], roles=["nonexistent"])
@@ -50,7 +50,7 @@ def test_one_save_wires_config_secrets_and_runner(client):
     assert saved.json()["check"]["ok"] is True
 
     with db_session() as session:
-        entry = session.get(Project, project["id"]).config["mcp_servers"][0]
+        entry = session.get(Project, project["id"]).integrations["mcp_servers"][0]
         assert (entry["url_host"], entry["url_port"]) == ("data.example.com", 3845)
         assert entry["last_check"]["ok"] is True
         url_secret = session.query(Secret).filter_by(name="mcp-ppc-url").one()
@@ -174,7 +174,7 @@ def test_editing_the_url_alone_keeps_the_token(client, monkeypatch):
     assert moved.status_code == 200, moved.text
     assert seen == ["tok-123"], "the carried token must be used to preflight"
     with db_session() as session:
-        entry = session.get(Project, project["id"]).config["mcp_servers"][0]
+        entry = session.get(Project, project["id"]).integrations["mcp_servers"][0]
         assert entry["url_port"] == 9999
         assert entry["bearer_secret"] == "mcp-ppc-token"
         token = session.query(Secret).filter_by(name="mcp-ppc-token").one()
@@ -189,7 +189,7 @@ def test_editing_the_url_alone_keeps_the_token(client, monkeypatch):
     # Empty string is the explicit removal, and leaves no orphan row behind.
     _save(client, project["id"], bearer="")
     with db_session() as session:
-        entry = session.get(Project, project["id"]).config["mcp_servers"][0]
+        entry = session.get(Project, project["id"]).integrations["mcp_servers"][0]
         assert "bearer_secret" not in entry
         assert session.query(Secret).filter_by(name="mcp-ppc-token").count() == 0
 
@@ -214,7 +214,7 @@ def test_delete_cleans_up_completely(client):
                             headers=ADMIN)
     assert deleted.status_code == 200
     with db_session() as session:
-        assert session.get(Project, project["id"]).config["mcp_servers"] == []
+        assert session.get(Project, project["id"]).integrations["mcp_servers"] == []
         assert session.query(Secret).filter(Secret.name.like("mcp-ppc%")).count() == 0
     assert client.delete(f"/admin/projects/{project['id']}/mcp_servers/ppc",
                          headers=ADMIN).status_code == 404

@@ -9,7 +9,9 @@ Hard limits enforced here (constitution class):
 - per-agent wakes/hour cap
 - per-project daily run ceiling
 - one in-flight run per agent (coalescing: N triggers, one wake)
-- per-project concurrent-run cap (config; protects shared rate limits)
+- per-project concurrent-run cap (protects shared rate limits)
+- the reserved governance slice: past `daily cap - reserved_governance_runs`
+  only a review, a cycle plan or a re-forecast may still spend
 - the pair circuit-breaker: a thread where the same two agents exchanged N
   messages with no task changing state gets frozen, not another wake
 """
@@ -56,8 +58,11 @@ from yaaf.server import policy
 
 log = logging.getLogger("yaaf.dispatcher")
 
-DEFAULT_CEO_HEARTBEAT_HOURS = 6.0
-DEFAULT_MAX_CONCURRENT_RUNS = 3
+# Wake reasons that may spend the constitution's reserved governance runs.
+# These are the wakes whose job is to *report on* the work — a status review, a
+# new cycle's plan, a commitment that needs re-forecasting — so they must still
+# be possible on a day the company has spent its ordinary allowance.
+GOVERNANCE_REASON_KINDS = {"review", "cycle_plan", "commitment"}
 
 # Notice coalescing: the janitor drips notices (a reaped run, a drought, an
 # expiry) and each alone is not worth a full-price run. Chairman-driven or
@@ -142,9 +147,22 @@ def _in_flight(session: Session, project: Project) -> int:
     return running
 
 
-def _max_concurrent(project: Project) -> int:
-    """Concurrency cap (project config, not constitution)."""
-    return int(project.config.get("max_concurrent_runs", DEFAULT_MAX_CONCURRENT_RUNS))
+def _max_concurrent(cons: ConstitutionDoc) -> int:
+    """Concurrency cap. A constitution rule since the rebuild: it is a limit on
+    the agents, so it belongs where limits are audited and disclosed."""
+    return cons.max_concurrent_runs
+
+
+def _is_governance(reasons: list[dict]) -> bool:
+    """Does this wake exist to *report on* the work rather than do it?
+
+    Governance wakes may spend the reserved slice of the daily ceiling. The
+    audit's sharpest failure was a company that spent its whole allowance
+    before lunch: on such a day ordinary work stopping is the brake working,
+    but the status review stopping is the brake eating the one run whose entire
+    job is to tell the chairman what happened.
+    """
+    return any(r.get("kind") in GOVERNANCE_REASON_KINDS for r in reasons)
 
 
 def _dispatch_project(session: Session, project: Project, cons: ConstitutionDoc) -> int:
@@ -153,6 +171,17 @@ def _dispatch_project(session: Session, project: Project, cons: ConstitutionDoc)
     today = daily_runs_used(session, project, day_start(now))
     if today >= cons.runs_per_project_per_day:
         return 0
+    # Past this line ordinary work is done for the day and only governance may
+    # still spend. The reservation is against the *daily* ceiling alone: the
+    # hourly brake below clears continuously, so it can only ever delay a
+    # review by an hour, never cost the day one.
+    #
+    # Never more than half the day, whatever the rule says. A reservation of 3
+    # against a ceiling of 1 would make every run a governance run and the
+    # company would report on work it was never allowed to do — the brake
+    # eating the thing it exists to protect.
+    reserved = min(cons.reserved_governance_runs, cons.runs_per_project_per_day // 2)
+    governance_only = today >= cons.runs_per_project_per_day - reserved
 
     # Pacing. Without this the daily ceiling is the only brake, and it is a
     # fixed window with no rate limit: six agents at six wakes an hour is
@@ -161,7 +190,7 @@ def _dispatch_project(session: Session, project: Project, cons: ConstitutionDoc)
     if hourly_runs_used(session, project, now) >= cons.runs_per_project_per_hour:
         return 0
 
-    max_concurrent = _max_concurrent(project)
+    max_concurrent = _max_concurrent(cons)
     in_flight = _in_flight(session, project)
 
     enqueued = 0
@@ -180,6 +209,8 @@ def _dispatch_project(session: Session, project: Project, cons: ConstitutionDoc)
             continue
         reasons = _wake_reasons(session, project, cons, agent)
         if not reasons:
+            continue
+        if governance_only and not _is_governance(reasons):
             continue
         session.add(
             RunQueue(
@@ -254,7 +285,7 @@ def activity_state(session: Session, project: Project, cons: ConstitutionDoc) ->
     used = daily_runs_used(session, project, start)
     used_hour = hourly_runs_used(session, project, now)
     in_flight = _in_flight(session, project)
-    max_concurrent = _max_concurrent(project)
+    max_concurrent = _max_concurrent(cons)
 
     agents = list(
         session.execute(
@@ -272,15 +303,14 @@ def activity_state(session: Session, project: Project, cons: ConstitutionDoc) ->
         pending = len(_work_reasons(session, agent, now)) + notices
         pending += _unread_for(session, project, agent)
         if agent.kind == AgentKind.CEO:
-            hours = float(project.config.get("ceo_heartbeat_hours",
-                                             DEFAULT_CEO_HEARTBEAT_HOURS))
+            hours = float(cons.ceo_heartbeat_hours)
             beat = session.execute(
                 select(Heartbeat).where(Heartbeat.agent_id == agent.id,
                                         Heartbeat.name == "planning")
             ).scalar_one_or_none()
             due = beat is None or beat.last_fired_at <= now - timedelta(hours=hours)
             if due and (beat is None
-                        or project.config.get("ceo_heartbeat_always")
+                        or cons.ceo_heartbeat_always
                         or _ceo_has_planning_material(session, project)):
                 pending += 1
         wakes = _wakes_last_hour(session, agent)
@@ -577,7 +607,7 @@ def _wake_reasons(
     #    so a busy company keeps its rhythm and an idle one sleeps until
     #    something happens (config ceo_heartbeat_always restores always-wake).
     if agent.kind == AgentKind.CEO:
-        hours = float(project.config.get("ceo_heartbeat_hours", DEFAULT_CEO_HEARTBEAT_HOURS))
+        hours = float(cons.ceo_heartbeat_hours)
         beat = session.execute(
             select(Heartbeat).where(Heartbeat.agent_id == agent.id,
                                     Heartbeat.name == "planning")
@@ -586,7 +616,7 @@ def _wake_reasons(
         if due:
             skip = (beat is not None
                     and not reasons
-                    and not project.config.get("ceo_heartbeat_always")
+                    and not cons.ceo_heartbeat_always
                     and not _ceo_has_planning_material(session, project))
             if beat is None:
                 session.add(Heartbeat(agent_id=agent.id, name="planning", last_fired_at=now))
@@ -598,7 +628,7 @@ def _wake_reasons(
         # 4b. Daily wake at a wall-clock time (config: ceo_daily_at "HH:MM" +
         #     timezone). Fires once per local day, at or after the target;
         #     lana's standup pattern, generalized.
-        daily = _daily_wake_due(session, project, agent, now)
+        daily = _daily_wake_due(session, project, cons, agent, now)
         if daily:
             reasons.append(daily)
 
@@ -620,15 +650,16 @@ def _ceo_has_planning_material(session: Session, project: Project) -> bool:
     ).scalar_one() > 0
 
 
-def _daily_wake_due(session: Session, project: Project, agent: Agent, now) -> dict | None:
-    raw = project.config.get("ceo_daily_at")
+def _daily_wake_due(session: Session, project: Project, cons: ConstitutionDoc,
+                    agent: Agent, now) -> dict | None:
+    raw = cons.ceo_daily_at
     if not raw:
         return None
     try:
         from zoneinfo import ZoneInfo
 
         hour, minute = (int(part) for part in str(raw).split(":", 1))
-        tz = ZoneInfo(project.config.get("timezone", "UTC"))
+        tz = ZoneInfo(cons.timezone)
     except Exception:
         log.warning("project %s has invalid ceo_daily_at/timezone config", project.slug)
         return None
@@ -646,7 +677,7 @@ def _daily_wake_due(session: Session, project: Project, agent: Agent, now) -> di
     else:
         beat.last_fired_at = now
     return {"kind": "heartbeat", "name": "daily",
-            "note": f"daily {raw} {project.config.get('timezone', 'UTC')} wake"}
+            "note": f"daily {raw} {cons.timezone} wake"}
 
 
 def _work_reasons(session: Session, agent: Agent, now) -> list[dict]:

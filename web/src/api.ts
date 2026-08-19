@@ -170,7 +170,7 @@ export interface Dashboard {
     conversion: number | null;
   };
   constitution: Record<string, unknown>;
-  config: Record<string, unknown>;
+  integrations: Record<string, unknown>;
   github_repo: string | null;
   billing_secret_id: string | null;
   billing_secret_name: string | null;
@@ -226,7 +226,7 @@ export interface ProjectHealth {
   checks: HealthCheck[];
 }
 
-/** A project data source (MCP server) as stored in dash.config["mcp_servers"]. */
+/** A project data source (MCP server) as stored in dash.integrations["mcp_servers"]. */
 export interface McpServerEntry {
   name: string;
   url_secret: string;
@@ -502,7 +502,7 @@ export interface ProjectBundle {
     billing_mode: string;
     controlled_domains: string[];
     constitution: Record<string, unknown>;
-    config: Record<string, unknown>;
+    integrations: Record<string, unknown>;
     ceo_role_slug: string;
     ceo_name: string;
     teams: { role_slug: string; name: string; employees: string[]; lead: string | null }[];

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from tests.conftest import agent_by_name, channel_of, make_project
+from tests.conftest import agent_by_name, amend, channel_of, make_project
 from yaaf.core import ids
 from yaaf.core.db import db_session
 from yaaf.core.models import (
@@ -75,10 +75,7 @@ def test_heartbeat_fires_when_there_is_material(client):
 def test_heartbeat_always_config_restores_idle_wakes(client):
     project = make_project(client)
     _drain()
-    with db_session() as session:
-        from yaaf.core.models import Project
-        row = session.get(Project, project["id"])
-        row.config = {**row.config, "ceo_heartbeat_always": True}
+    amend(client, project["id"], ceo_heartbeat_always=True)
     _force_heartbeat_due(project["ceo_agent_id"])
     with db_session() as session:
         assert dispatcher.dispatch_once(session) == 1

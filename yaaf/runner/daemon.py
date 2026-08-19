@@ -254,7 +254,7 @@ def _merge_project_data_sources(session: Session, project: Project, role_version
 
         role = session.get(Role, role_version.role_id)
         hosts = list(job.tool_permissions.get("egress_allow", []))
-        for source in (project.config or {}).get("mcp_servers", []):
+        for source in (project.integrations or {}).get("mcp_servers", []):
             if role is None or role.slug not in source.get("roles", []):
                 continue
             spec = {"name": source["name"],
@@ -450,7 +450,7 @@ def execute_job(job: RunJob, backend=None) -> RunResult:
 def _backend_for(job: RunJob):
     with db_session() as session:
         project = session.get(Project, job.project_id)
-        runtime = (project.config or {}).get("runtime", "agent_sdk")
+        runtime = (project.integrations or {}).get("runtime", "agent_sdk")
     return get_backend(runtime)
 
 

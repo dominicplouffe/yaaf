@@ -98,7 +98,7 @@ export default function NewProject() {
       setSlug(p.slug);
       setGoal(p.goal);
       setBillingMode(p.billing_mode);
-      setRuntime(String(p.config["runtime"] ?? "agent_sdk"));
+      setRuntime(String(p.integrations["runtime"] ?? "agent_sdk"));
       setControlledDomains((p.controlled_domains ?? []).join(", "));
       setSolo(Boolean(p.solo));
       setTeams(
@@ -141,7 +141,7 @@ export default function NewProject() {
   // straight to an MCP client. Knowing which lets this page check them here,
   // rather than let an agent discover it three runs later. Secret name → source.
   const dataSourceUrls = new Map<string, string>(
-    ((bundle?.project.config["mcp_servers"] as McpServerEntry[] | undefined) ?? []).map(
+    ((bundle?.project.integrations["mcp_servers"] as McpServerEntry[] | undefined) ?? []).map(
       (source) => [source.url_secret, source.name] as [string, string],
     ),
   );
@@ -214,7 +214,7 @@ export default function NewProject() {
           monthly_usd_cap: usdCap,
           approval_threshold_usd: approvalThreshold,
         },
-        config: { ...(bundle?.project.config ?? {}), runtime },
+        integrations: { ...(bundle?.project.integrations ?? {}), runtime },
         ceo_role_slug: ceoSlug,
         ceo_name: bundle?.project.ceo_name ?? "CEO",
         solo,

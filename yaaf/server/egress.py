@@ -66,7 +66,7 @@ def data_source_extras(session: Session) -> dict[str, tuple[list[str], list[int]
     precisely so this derivation never decrypts anything."""
     extras: dict[str, tuple[list[str], list[int]]] = {}
     for project in session.execute(select(Project)).scalars():
-        for source in (project.config or {}).get("mcp_servers", []):
+        for source in (project.integrations or {}).get("mcp_servers", []):
             host, port = source.get("url_host"), source.get("url_port")
             if not host:
                 continue

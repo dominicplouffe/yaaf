@@ -8,7 +8,7 @@ keeps ``slack_ts`` NULL and waits for the next tick, and one misconfigured
 project never stops another from mirroring.
 
 Enabled per project through the ordinary config merge
-(``PATCH /admin/projects/{id}``); the shape of ``project.config["slack"]``:
+(``PATCH /admin/projects/{id}``); the shape of ``project.integrations["slack"]``:
 
     {
       "bot_token_secret": "<Secret name: the xoxb- bot token>",
@@ -131,7 +131,7 @@ def mirror_once(session: Session) -> int:
     slack_ts NULL for the next tick — the bus never waits on Slack."""
     posted = 0
     for project in session.execute(select(Project)).scalars():
-        slack_cfg = (project.config or {}).get("slack") or {}
+        slack_cfg = (project.integrations or {}).get("slack") or {}
         if not slack_cfg.get("channel_map"):
             continue
         # One bad project (revoked token, deleted secret) never blocks another.

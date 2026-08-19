@@ -137,7 +137,7 @@ async def github_webhook(
     raw = await request.body()
     _require_signature(
         raw,
-        (project.config or {}).get("github_webhook_secret"),
+        (project.integrations or {}).get("github_webhook_secret"),
         request.headers.get("X-Hub-Signature-256"),
         prefix="sha256=",
     )
@@ -225,14 +225,14 @@ async def slack_webhook(
     through the admin API. Every other event is dropped. The bus stays
     canonical: Slack never writes anything the chairman could not."""
     project = _get_project(session, project_id)
-    slack_cfg = (project.config or {}).get("slack") or {}
+    slack_cfg = (project.integrations or {}).get("slack") or {}
     raw = await request.body()
     signing_secret = project_secret(session, project.id, slack_cfg.get("signing_secret"))
     if signing_secret is None:
         raise HTTPException(
             status_code=403,
             detail="This project has no Slack signing secret configured; store one via "
-                   "POST /admin/secrets and name it in project.config['slack'] first.",
+                   "POST /admin/secrets and name it in project.integrations['slack'] first.",
         )
     if not verify_slack_signature(
         signing_secret,
@@ -317,7 +317,7 @@ async def generic_webhook(
     # schema, and only a signed body is worth parsing at all.
     _require_signature(
         raw,
-        (project.config or {}).get("webhook_secret"),
+        (project.integrations or {}).get("webhook_secret"),
         request.headers.get("X-Yaaf-Signature"),
     )
     try:

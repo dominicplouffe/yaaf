@@ -81,7 +81,7 @@ def test_two_workers_race_one_lease(client):
             "FOR UPDATE SKIP LOCKED needs Postgres; SQLite ignores row locks and "
             "serializes writers, so the lease race cannot be exercised there"
         )
-    project = make_project(client, slug="race", config={"runtime": "mock"})
+    project = make_project(client, slug="race", integrations={"runtime": "mock"})
 
     # Several rounds so the threads genuinely overlap inside the transaction at
     # least once; the invariant must hold every time regardless of interleaving.
@@ -101,7 +101,7 @@ def test_two_workers_race_one_lease(client):
 
 
 def test_worker_death_reap_then_retry_sees_side_effects(client):
-    project = make_project(client, slug="death", config={"runtime": "mock"})
+    project = make_project(client, slug="death", integrations={"runtime": "mock"})
     team_id = project["teams"][0]["id"]
     lead_id = agent_by_name(project, "Lead")
 
@@ -169,7 +169,7 @@ def test_worker_death_reap_then_retry_sees_side_effects(client):
 
 
 def test_reaped_run_cannot_finalize(client):
-    project = make_project(client, slug="zombie", config={"runtime": "mock"})
+    project = make_project(client, slug="zombie", integrations={"runtime": "mock"})
     enqueue(project["id"], project["ceo_agent_id"])
     jobs = lease_and_prepare(limit=10)
     assert len(jobs) == 1
@@ -206,7 +206,7 @@ def test_reaped_run_cannot_finalize(client):
 
 
 def test_db_connection_drop_recovers(client):
-    project = make_project(client, slug="dropdb", config={"runtime": "mock"})
+    project = make_project(client, slug="dropdb", integrations={"runtime": "mock"})
 
     with db_session() as session:
         janitor_once(session)  # a healthy tick first
@@ -231,7 +231,7 @@ def test_db_connection_drop_recovers(client):
 
 
 def test_project_pause_mid_queue_drops_jobs(client):
-    project = make_project(client, slug="pausey", config={"runtime": "mock"})
+    project = make_project(client, slug="pausey", integrations={"runtime": "mock"})
     lead_id = agent_by_name(project, "Lead")
     queued_ceo = enqueue(project["id"], project["ceo_agent_id"])
     queued_lead = enqueue(project["id"], lead_id)

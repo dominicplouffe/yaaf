@@ -180,7 +180,7 @@ async def t_message_post(args):
     "this the moment he changes how or how often he wants to be reported to — a rule kept in "
     "memory does not survive into the next run. Settable: "
     "chairman_report_interval_hours (0 disables), chairman_report_window_local ('09:00-20:00'), "
-    "chairman_report_timezone (IANA name).",
+    "timezone (IANA name).",
     {"from_message_id": str, "changes": dict, "reason": str},
 )
 async def t_directive_file(args):

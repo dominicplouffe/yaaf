@@ -11,7 +11,7 @@ lane answers it in seconds and the mirror carries the reply out — chat in
 Slack, bus canonical throughout.
 
 Enabled by naming an ``app_token_secret`` (the xapp- token, an ordinary
-envelope-encrypted Secret) in ``project.config["slack"]`` next to the existing
+envelope-encrypted Secret) in ``project.integrations["slack"]`` next to the existing
 bridge fields. No agent ever holds either Slack token.
 """
 
@@ -41,7 +41,7 @@ def socket_configs() -> dict[str, dict]:
     out: dict[str, dict] = {}
     with db_session() as session:
         for project in session.execute(select(Project)).scalars():
-            cfg = (project.config or {}).get("slack") or {}
+            cfg = (project.integrations or {}).get("slack") or {}
             boardroom = (cfg.get("channel_map") or {}).get("boardroom")
             if not (cfg.get("app_token_secret") and boardroom
                     and cfg.get("chairman_slack_user")):
