@@ -43,6 +43,7 @@ from yaaf.core.constitution import (
 from yaaf.core.models import (
     Agent,
     AgentKind,
+    AgentStatus,
     Amendment,
     Approval,
     ApprovalStatus,
@@ -57,7 +58,12 @@ from yaaf.core.models import (
     MemoryScope,
     Message,
     Project,
+    ProjectMode,
     ProjectStatus,
+    Requirement,
+    RequirementEdge,
+    RequirementEvent,
+    RequirementStatus,
     Run,
     RunKind,
     SuccessTestKind,
@@ -305,9 +311,32 @@ def check_task_create(
     success_test: dict,
     produces_external_evidence: bool,
     hypothesis_id: str | None,
+    requirement: Requirement | None = None,
 ) -> None:
     require_project_running(project)
     validate_success_test(cons, success_test)
+
+    # What is this work FOR? Outside Explore, a task that serves nothing is a
+    # refusal rather than a smell. The audit's diagnosis in one line was that
+    # work got planned, claimed, done and evidenced without ever becoming a
+    # thing that exists — a pipeline with no terminus, because the CEO's
+    # standing instruction was "keep the queue fed but small".
+    if requires_requirements(project):
+        if requirement is None:
+            raise Refusal(
+                "Every task must serve a requirement. Name the one this makes true with "
+                "requirement_id — if none of them do, either this work is not needed or "
+                "the plan is missing something, and both of those are worth saying out "
+                "loud before spending a run on it.",
+                status_code=422,
+            )
+        check_work_allowed_for(session, project, requirement)
+    elif requirement is not None:
+        raise Refusal(
+            "This is an Explore project: it has no requirements, by design. Its shape is "
+            "bets and evidence, and the chairman judges when it has earned its keep.",
+            status_code=422,
+        )
 
     # Two tasks have now died on this exact check. Re-issuing is the only lever
     # a planner has over a blocked task, so without this the same broken
@@ -452,6 +481,24 @@ def check_task_claim(session: Session, project: Project, agent: Agent, task: Tas
                 status_code=403,
             )
 
+    # The requester owns the test. A claimant who wrote the check that judges
+    # it is grading its own homework with a pen it chose — the convention one
+    # CEO invented after thirty hours of being lied to, promoted to a rule.
+    #
+    # Solo mode is exempt, because the rule is unsatisfiable there rather than
+    # relaxed there: with one agent in the company, there is nobody to hand it
+    # to, and refusing would mean a solo project could never claim anything.
+    # This is a real difference in what "done" is worth between topologies —
+    # a solo arm self-grades every observable — and the topology experiment
+    # should read it as a cost of solo, not pretend the arms are equivalent.
+    if task.created_by_agent_id == agent.id and _has_another_agent(session, agent):
+        raise Refusal(
+            "You wrote this task's success test, so you may not also be the one it "
+            "judges. Whoever asks for the work owns the check — that is the whole "
+            "reason the check means anything. Hand it to someone else.",
+            status_code=403,
+        )
+
     already = session.execute(
         select(func.count(Task.id)).where(
             Task.claimed_by_agent_id == agent.id,
@@ -464,6 +511,19 @@ def check_task_claim(session: Session, project: Project, agent: Agent, task: Tas
             "or let it be reaped — do not collect work.",
             status_code=409,
         )
+
+
+def _has_another_agent(session: Session, agent: Agent) -> bool:
+    """Is there anyone else in this company at all? Solo mode is one agent that
+    is CEO, sole team member and derived lead; every separation-of-duties rule
+    degrades to nothing there, and pretending otherwise would just deadlock."""
+    return session.execute(
+        select(func.count(Agent.id)).where(
+            Agent.project_id == agent.project_id,
+            Agent.id != agent.id,
+            Agent.status == AgentStatus.ACTIVE,
+        )
+    ).scalar_one() > 0
 
 
 def check_task_complete(
@@ -525,6 +585,209 @@ def record_task_event(
             note=note,
         )
     )
+
+
+# ── requirement rules ───────────────────────────────────────────────────────────
+#
+# A requirement is what work is FOR. Three rules make it load-bearing rather
+# than decorative, and all three are enforced here or by an absent verb:
+#
+#   * the CEO proposes, the chairman accepts — scope is never self-served
+#   * nothing but the platform writes `met` — there is no agent tool for it
+#   * work may not be created for a requirement whose dependencies are unmet
+#
+# The third is what turns the dependency graph from a picture into a gate.
+
+
+OPEN_REQUIREMENT_STATUSES = (
+    RequirementStatus.PENDING,
+    RequirementStatus.IN_PROGRESS,
+    RequirementStatus.CHECKING,
+)
+
+CLOSED_REQUIREMENT_STATUSES = (RequirementStatus.MET, RequirementStatus.CUT)
+
+
+_UNSET = object()
+
+
+def record_requirement_event(
+    session: Session,
+    requirement: Requirement,
+    to_status: str,
+    actor: str,
+    note: str | None = None,
+    from_status: str | None | object = _UNSET,
+) -> None:
+    """`from_status=None` means "there was no prior status" — the birth of a
+    requirement — and is deliberately distinguishable from omitting it, which
+    means "read it off the row". Collapsing the two would stamp the first event
+    with the status it was being created in and make the log lie about where
+    scope came from."""
+    session.add(
+        RequirementEvent(
+            id=ids.new_id(ids.REQUIREMENT_EVENT),
+            project_id=requirement.project_id,
+            requirement_id=requirement.id,
+            from_status=requirement.status if from_status is _UNSET else from_status,
+            to_status=to_status,
+            actor=actor,
+            note=note,
+        )
+    )
+
+
+def next_requirement_key(session: Session, project_id: str) -> str:
+    """R-01, R-02, … Stable and human-readable, because the chairman says "cut
+    R-09" and an opaque id would make him quote a hash back at his own CEO."""
+    used = session.execute(
+        select(Requirement.key).where(Requirement.project_id == project_id)
+    ).scalars().all()
+    highest = 0
+    for key in used:
+        try:
+            highest = max(highest, int(str(key).split("-", 1)[1]))
+        except (IndexError, ValueError):
+            continue
+    return f"R-{highest + 1:02d}"
+
+
+def requires_requirements(project: Project) -> bool:
+    """Explore has no scope by design — it is the open-ended arm, and demanding
+    a requirement there would be demanding a plan for work whose whole point is
+    that the plan is not known yet."""
+    return project.mode != ProjectMode.EXPLORE
+
+
+def check_requirement_propose(cons: ConstitutionDoc, agent: Agent, acceptance_test: dict) -> None:
+    """Only the CEO proposes scope. A lead proposing requirements would be a
+    team writing its own definition of done one level down."""
+    if agent.kind != AgentKind.CEO:
+        raise Refusal(
+            "Only the CEO proposes requirements. If you think something must be true at "
+            "the end and is not on the list, say so to the CEO — a suggestion is the "
+            "authority you have over scope, and it survives a crash.",
+            status_code=403,
+        )
+    validate_success_test(cons, acceptance_test)
+
+
+def check_requirement_accept(requirement: Requirement) -> None:
+    if requirement.status != RequirementStatus.PROPOSED:
+        raise Refusal(
+            f"{requirement.key} is {requirement.status}, not proposed. Only a proposal "
+            "can be accepted into scope.",
+            status_code=409,
+        )
+
+
+def check_requirement_cut(requirement: Requirement) -> None:
+    if requirement.status in CLOSED_REQUIREMENT_STATUSES:
+        raise Refusal(
+            f"{requirement.key} is already {requirement.status}.", status_code=409
+        )
+
+
+def unmet_dependencies(session: Session, requirement: Requirement) -> list[Requirement]:
+    """Everything that must be true before this one may be worked."""
+    rows = session.execute(
+        select(Requirement)
+        .join(RequirementEdge, RequirementEdge.from_requirement_id == Requirement.id)
+        .where(RequirementEdge.to_requirement_id == requirement.id)
+    ).scalars().all()
+    return [r for r in rows if r.status not in CLOSED_REQUIREMENT_STATUSES]
+
+
+def would_cycle(session: Session, from_id: str, to_id: str) -> list[str] | None:
+    """Does adding from→to close a loop? Returns the offending path if so.
+
+    A cycle makes the critical path infinite and the dependency gate
+    unsatisfiable — every requirement in the loop waits for another one in the
+    same loop, forever, and the company looks idle for a reason no screen could
+    explain. Cheaper to refuse at the edge than to detect as a mystery later.
+    """
+    if from_id == to_id:
+        return [from_id, to_id]
+    # Walk forward from `to`: if we can already reach `from`, the new edge closes it.
+    seen: set[str] = set()
+    stack: list[tuple[str, list[str]]] = [(to_id, [to_id])]
+    while stack:
+        node, path = stack.pop()
+        if node == from_id:
+            return [*path, from_id]
+        if node in seen:
+            continue
+        seen.add(node)
+        for nxt in session.execute(
+            select(RequirementEdge.to_requirement_id).where(
+                RequirementEdge.from_requirement_id == node
+            )
+        ).scalars():
+            stack.append((nxt, [*path, nxt]))
+    return None
+
+
+def check_requirement_edge(
+    session: Session, project: Project, source: Requirement, target: Requirement
+) -> None:
+    if source.project_id != project.id or target.project_id != project.id:
+        raise Refusal("Both requirements must belong to this project.", status_code=404)
+    if source.id == target.id:
+        raise Refusal(
+            f"{source.key} cannot depend on itself.", status_code=422
+        )
+    existing = session.execute(
+        select(RequirementEdge).where(
+            RequirementEdge.from_requirement_id == source.id,
+            RequirementEdge.to_requirement_id == target.id,
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        raise Refusal(f"{target.key} already depends on {source.key}.", status_code=409)
+
+    loop = would_cycle(session, source.id, target.id)
+    if loop is not None:
+        keys = {
+            r.id: r.key
+            for r in session.execute(
+                select(Requirement).where(Requirement.id.in_(loop))
+            ).scalars()
+        }
+        drawn = " → ".join(keys.get(node, node) for node in loop)
+        raise Refusal(
+            f"That edge closes a loop: {drawn}. A cycle can never be satisfied — every "
+            "requirement in it waits for another one in it — so the work would sit "
+            "unstartable with nothing to point at. Break the loop first.",
+            status_code=409,
+        )
+
+
+def check_work_allowed_for(session: Session, project: Project, requirement: Requirement) -> None:
+    """The gate that makes the graph real."""
+    if requirement.status == RequirementStatus.PROPOSED:
+        raise Refusal(
+            f"{requirement.key} is only proposed. The chairman has not accepted it into "
+            "scope, so it is not yet something to build. Work on what he has accepted, "
+            "or wait for him.",
+            status_code=409,
+        )
+    if requirement.status in CLOSED_REQUIREMENT_STATUSES:
+        raise Refusal(
+            f"{requirement.key} is {requirement.status}. "
+            + ("It is already true — creating more work for it would be work with no "
+               "outcome to change." if requirement.status == RequirementStatus.MET
+               else "The chairman cut it from scope."),
+            status_code=409,
+        )
+    blocked = unmet_dependencies(session, requirement)
+    if blocked:
+        names = ", ".join(f"{r.key} ({r.status})" for r in blocked[:5])
+        raise Refusal(
+            f"{requirement.key} depends on work that is not finished: {names}. Its "
+            "dependencies were accepted as the order this has to happen in, so starting "
+            "here would be starting in the middle. Work the blockers first.",
+            status_code=409,
+        )
 
 
 # ── message rules ───────────────────────────────────────────────────────────────

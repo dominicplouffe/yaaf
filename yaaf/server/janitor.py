@@ -30,7 +30,7 @@ from sqlalchemy.orm import Session
 from yaaf.core import ids
 from yaaf.core.config import settings
 from yaaf.core.constitution import ConstitutionDoc, apply_due_amendments, effective
-from yaaf.core.db import db_session
+from yaaf.core.db import db_session, notify
 from yaaf.core.models import (
     Agent,
     Approval,
@@ -43,10 +43,13 @@ from yaaf.core.models import (
     NoticeKind,
     Project,
     ProjectStatus,
+    Requirement,
+    RequirementStatus,
     Run,
     RunKind,
     RunQueue,
     RunStatus,
+    SuccessTestKind,
     Task,
     TaskStatus,
     Team,
@@ -91,6 +94,7 @@ def janitor_once(session: Session) -> None:
         expire_approvals(session, project, cons)
         enforce_budget(session, project, cons)
         release_dead_claims(session, project, cons)
+        check_finished_requirements(session, project)
         warn_drought(session, project, cons)
         warn_memory_pressure(session, project, cons)
     verify_pending_evidence(session)
@@ -113,6 +117,76 @@ def _notice_agent(session: Session, project: Project, agent_id: str, kind: str, 
         Notice(id=ids.new_id(ids.NOTICE), project_id=project.id, agent_id=agent_id,
                kind=kind, body=body)
     )
+
+
+# ── requirements: is it true yet? ───────────────────────────────────────────────
+
+
+def check_finished_requirements(session: Session, project: Project) -> int:
+    """A requirement whose work has all closed goes to the platform to be
+    judged — never to the agents who did it.
+
+    This lives in the janitor and not the dispatcher on purpose. Deciding that
+    a requirement is ready to test costs no tokens and must happen whether or
+    not the company has runs left today: a project that spent its allowance is
+    still allowed to have finished something, and a `met` that waited for
+    budget would make the burn-up lie for a day at a time.
+
+    Command tests queue a REQUIREMENT_CHECK the runner executes. Observable
+    ones stop here and wait for the chairman — a script cannot tell him the
+    memo reads well, and the agent that wrote it is the last thing that should
+    be asked.
+    """
+    moved = 0
+    live = session.execute(
+        select(Requirement).where(
+            Requirement.project_id == project.id,
+            Requirement.status == RequirementStatus.IN_PROGRESS,
+        )
+    ).scalars().all()
+    for requirement in live:
+        tasks = session.execute(
+            select(Task).where(Task.requirement_id == requirement.id)
+        ).scalars().all()
+        if not tasks:
+            continue
+        if any(t.status in policy.OPEN_TASK_STATUSES for t in tasks):
+            continue
+        # Every task closed. If they were ALL killed, nothing was built and the
+        # requirement is not a candidate — it goes back to waiting for a plan
+        # rather than being tested against an empty workspace.
+        if not any(t.status == TaskStatus.DONE for t in tasks):
+            continue
+
+        from_status = requirement.status
+        requirement.status = RequirementStatus.CHECKING
+        kind = (requirement.acceptance_test or {}).get("type")
+        if kind == SuccessTestKind.COMMAND:
+            run_id = ids.new_id(ids.RUN)
+            session.add(RunQueue(
+                id=run_id,
+                project_id=project.id,
+                agent_id=None,
+                kind=RunKind.REQUIREMENT_CHECK,
+                trigger={"type": "requirement_check", "requirement_id": requirement.id},
+                requirement_id=requirement.id,
+            ))
+            note = "all work closed; the platform is running the acceptance test"
+        else:
+            note = "all work closed; waiting on the chairman to confirm the observable"
+            _notice_ceo(
+                session, project, NoticeKind.GOAL_CHANGED,
+                f"{requirement.key} has no work left open and its acceptance test is an "
+                f"observable, so it is with the chairman: {requirement.statement[:300]}\n"
+                "You cannot mark it met and neither can anyone here. Do not create more "
+                "work for it while he is looking.",
+            )
+        policy.record_requirement_event(session, requirement, RequirementStatus.CHECKING,
+                                        "janitor", note=note, from_status=from_status)
+        moved += 1
+    if moved:
+        notify(session, "yaaf_run_queue", project.id)
+    return moved
 
 
 # ── reaping ─────────────────────────────────────────────────────────────────────

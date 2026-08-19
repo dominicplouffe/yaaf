@@ -45,6 +45,9 @@ from yaaf.core.models import (
     Project,
     ProjectMember,
     ProjectStatus,
+    Requirement,
+    RequirementEdge,
+    RequirementStatus,
     Role,
     RoleVersion,
     Run,
@@ -55,8 +58,8 @@ from yaaf.core.models import (
     TaskStatus,
     Team,
     User,
-    VerificationStatus,
     utcnow,
+    VerificationStatus,
 )
 from yaaf.server import policy
 from yaaf.server.api.agent import WAKE_CHANNEL
@@ -1541,6 +1544,174 @@ def audit_task(task_id: str, body: TaskAudit, session: Session = Depends(db)) ->
             "treat that agent's completions as suspect and re-check what depended on this.",
         )
     return {"id": row.id, "audit_status": row.audit_status}
+
+
+# ── requirements: the chairman owns scope ───────────────────────────────────────
+
+
+@router.get("/projects/{project_id}/requirements")
+def list_requirements(project_id: str, session: Session = Depends(db)) -> list[dict]:
+    project = _get_project(session, project_id)
+    edges = list(session.execute(
+        select(RequirementEdge).where(RequirementEdge.project_id == project.id)
+    ).scalars())
+    blocked_by: dict[str, list[str]] = {}
+    for edge in edges:
+        blocked_by.setdefault(edge.to_requirement_id, []).append(edge.from_requirement_id)
+    rows = session.execute(
+        select(Requirement)
+        .where(Requirement.project_id == project.id)
+        .order_by(Requirement.stage, Requirement.key)
+    ).scalars()
+    return [
+        {
+            "id": r.id, "key": r.key, "statement": r.statement, "status": r.status,
+            "stage": r.stage, "acceptance_test": r.acceptance_test,
+            "est_runs": r.est_runs, "actual_runs": r.actual_runs,
+            "failure_load": r.failure_load,
+            "depends_on": blocked_by.get(r.id, []),
+            "proposed_by_agent_id": r.proposed_by_agent_id,
+            "accepted_at": r.accepted_at.isoformat() if r.accepted_at else None,
+            "met_at": r.met_at.isoformat() if r.met_at else None,
+            "check_output": r.check_output,
+            "cut_reason": r.cut_reason,
+        }
+        for r in rows
+    ]
+
+
+class RequirementDecision(BaseModel):
+    stage: int | None = Field(default=None, ge=1, le=50)
+    note: str = Field(default="", max_length=4000)
+
+
+@router.post("/requirements/{requirement_id}/accept")
+def accept_requirement(
+    requirement_id: str, body: RequirementDecision, session: Session = Depends(db)
+) -> dict:
+    """Scope becomes scope here and nowhere else.
+
+    The CEO proposes; only the chairman accepts. That split is the whole reason
+    the forecast means anything: remaining ÷ velocity is a number about the
+    CEO's work, and a CEO that could accept its own requirements would own both
+    sides of its own scoreboard.
+    """
+    row = session.get(Requirement, requirement_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="unknown requirement")
+    project = _get_project(session, row.project_id)
+    try:
+        policy.check_requirement_accept(row)
+    except policy.Refusal as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    from_status = row.status
+    row.status = RequirementStatus.PENDING
+    row.accepted_by_user_id = project.chairman_user_id
+    row.accepted_at = utcnow()
+    if body.stage is not None:
+        row.stage = body.stage
+    policy.record_requirement_event(session, row, RequirementStatus.PENDING,
+                                    f"user:{project.chairman_user_id}",
+                                    note=body.note or None, from_status=from_status)
+    _audit(session, row.project_id, "requirement.accept", "requirement", row.id,
+           {"key": row.key, "stage": row.stage})
+    _notice_ceo(
+        session, row.project_id, NoticeKind.GOAL_CHANGED,
+        f"The chairman ACCEPTED {row.key} into scope: {row.statement[:400]}\n"
+        f"Stage {row.stage}. It is now something you may create work for, and it counts "
+        "toward what has to be true before this project is finished.",
+    )
+    return {"id": row.id, "key": row.key, "status": row.status, "stage": row.stage}
+
+
+class RequirementCut(BaseModel):
+    reason: str = Field(min_length=5, max_length=4000)
+
+
+@router.post("/requirements/{requirement_id}/cut")
+def cut_requirement(
+    requirement_id: str, body: RequirementCut, session: Session = Depends(db)
+) -> dict:
+    """Cutting is how a date is met when the work will not fit. It is the
+    chairman's lever, never the CEO's — the party being measured does not get
+    to shrink the thing it is measured against."""
+    row = session.get(Requirement, requirement_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="unknown requirement")
+    project = _get_project(session, row.project_id)
+    try:
+        policy.check_requirement_cut(row)
+    except policy.Refusal as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    from_status = row.status
+    row.status = RequirementStatus.CUT
+    row.cut_reason = body.reason
+    row.cut_at = utcnow()
+    policy.record_requirement_event(session, row, RequirementStatus.CUT,
+                                    f"user:{project.chairman_user_id}",
+                                    note=body.reason, from_status=from_status)
+    _audit(session, row.project_id, "requirement.cut", "requirement", row.id,
+           {"key": row.key, "reason": body.reason})
+    _notice_ceo(
+        session, row.project_id, NoticeKind.GOAL_CHANGED,
+        f"The chairman CUT {row.key} from scope: {row.statement[:300]}\n"
+        f"His reason: {body.reason[:1000]}\nStop work on it. Anything that depended on it "
+        "is now unblocked — a cut requirement counts as settled, not as pending forever.",
+    )
+    return {"id": row.id, "key": row.key, "status": row.status}
+
+
+class RequirementVerdict(BaseModel):
+    ok: bool
+    note: str = Field(default="", max_length=4000)
+
+
+@router.post("/requirements/{requirement_id}/verdict")
+def requirement_verdict(
+    requirement_id: str, body: RequirementVerdict, session: Session = Depends(db)
+) -> dict:
+    """The chairman's answer on an *observable* acceptance test.
+
+    A command test is run by the platform and needs nobody. An observable one
+    names something a script cannot check — "the memo reads well" — so somebody
+    has to look. That somebody is never the agent whose work it judges, which
+    is why this route is here and not in the agent API.
+    """
+    row = session.get(Requirement, requirement_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="unknown requirement")
+    if row.status != RequirementStatus.CHECKING:
+        raise HTTPException(
+            status_code=409,
+            detail=f"{row.key} is {row.status}; only a requirement awaiting your verdict "
+                   "can take one.",
+        )
+    project = _get_project(session, row.project_id)
+    actor = f"user:{project.chairman_user_id}"
+    from_status = row.status
+    if body.ok:
+        row.status = RequirementStatus.MET
+        row.met_at = utcnow()
+        row.check_output = body.note or "chairman confirmed the observable"
+        policy.record_requirement_event(session, row, RequirementStatus.MET, actor,
+                                        note=body.note or None, from_status=from_status)
+    else:
+        row.status = RequirementStatus.IN_PROGRESS
+        row.failure_load += 1
+        policy.record_requirement_event(session, row, RequirementStatus.IN_PROGRESS, actor,
+                                        note=body.note or "chairman rejected the observable",
+                                        from_status=from_status)
+        _notice_ceo(
+            session, row.project_id, NoticeKind.AUDIT_FAILED,
+            f"The chairman looked at {row.key} and it does NOT hold: "
+            f"{body.note[:1000] or '(no note)'}\nIt is back in progress. Read what he said "
+            "before creating more work for it.",
+        )
+    _audit(session, row.project_id, "requirement.verdict", "requirement", row.id,
+           {"key": row.key, "ok": body.ok})
+    return {"id": row.id, "key": row.key, "status": row.status}
 
 
 class SecretIn(BaseModel):

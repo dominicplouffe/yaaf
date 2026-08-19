@@ -13,7 +13,8 @@ class RunJob:
     kind: str  # RunKind
     trigger: dict
     task_id: str | None
-    attempt: int
+    requirement_id: str | None = None
+    attempt: int = 1
     # Assembled by the runner from the DB before execution:
     system_prompt: str = ""
     context_pack: dict = field(default_factory=dict)

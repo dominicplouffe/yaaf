@@ -33,6 +33,8 @@ from yaaf.core.models import (
     NoticeKind,
     Project,
     ProjectStatus,
+    Requirement,
+    RequirementStatus,
     Run,
     RunKind,
     RunQueue,
@@ -163,6 +165,7 @@ def _materialize(session: Session, queued: RunQueue, project: Project) -> RunJob
         kind=queued.kind,
         trigger=queued.trigger,
         task_id=queued.task_id,
+        requirement_id=queued.requirement_id,
         attempt=queued.attempt,
         prior_run_id=queued.prior_run_id,
         status=RunStatus.RUNNING,
@@ -180,6 +183,7 @@ def _materialize(session: Session, queued: RunQueue, project: Project) -> RunJob
         kind=queued.kind,
         trigger=queued.trigger or {},
         task_id=queued.task_id,
+        requirement_id=queued.requirement_id,
         attempt=queued.attempt,
         timeout_s=cons.run_timeout_s,
         api_base_url=settings().api_base_url,
@@ -194,6 +198,18 @@ def _materialize(session: Session, queued: RunQueue, project: Project) -> RunJob
             run.finished_at = utcnow()
             return None
         job.check_command = (task.success_test or {}).get("command", "")
+        job.timeout_s = min(cons.run_timeout_s, 300)
+        return job
+
+    if queued.kind == RunKind.REQUIREMENT_CHECK:
+        requirement = session.get(Requirement, queued.requirement_id)
+        if requirement is None or requirement.status != RequirementStatus.CHECKING:
+            run.status = RunStatus.FAILED
+            run.summary = "requirement check job with no requirement in checking state"
+            run.finished_at = utcnow()
+            return None
+        job.check_command = (requirement.acceptance_test or {}).get("command", "")
+        job.requirement_id = requirement.id
         job.timeout_s = min(cons.run_timeout_s, 300)
         return job
 
@@ -517,6 +533,8 @@ def finalize(job: RunJob, result: RunResult, was_revoked: bool = False) -> None:
 
         if job.kind == RunKind.SUCCESS_CHECK:
             _finalize_success_check(session, job, result)
+        elif job.kind == RunKind.REQUIREMENT_CHECK:
+            _finalize_requirement_check(session, job, result)
         elif run.status == RunStatus.FAILED:
             if project is not None and _looks_like_credential_failure(run.summary):
                 _flag_credential_failure(session, project, run)
@@ -745,6 +763,69 @@ def _record_check_attempt(task: Task, output: str) -> None:
         "output": output[:CHECK_HISTORY_OUTPUT_CHARS],
     })
     task.check_history = history[-CHECK_HISTORY_KEEP:]
+
+
+def _finalize_requirement_check(session: Session, job: RunJob, result: RunResult) -> None:
+    """The only place `met` is ever written by a command test.
+
+    A requirement is not done because an agent says so and not because its
+    tasks are done — five deliverables in the audited week were marked DONE
+    while failing their own stated success test, each with a confident status
+    report attached. It is done because the platform ran the acceptance test
+    and read the exit code itself.
+
+    A failure does not block or nag: it reopens the requirement and adds to its
+    failure load, which is what lets a review say the rate fell because one
+    requirement ate fifty runs rather than that the company got slower.
+    """
+    requirement = session.get(Requirement, job.requirement_id)
+    if requirement is None or requirement.status != RequirementStatus.CHECKING:
+        return
+    output = (result.check_output or "")[:4000]
+    requirement.check_output = output
+    from_status = requirement.status
+
+    if result.check_exit_code == 0:
+        requirement.status = RequirementStatus.MET
+        requirement.met_at = utcnow()
+        requirement.met_by_run_id = job.run_id
+        policy.record_requirement_event(session, requirement, RequirementStatus.MET,
+                                        "checker", note="acceptance test passed",
+                                        from_status=from_status)
+        _notice_ceo_requirement(
+            session, requirement,
+            f"{requirement.key} is MET. The platform ran its acceptance test and it "
+            f"passed (exit 0). {requirement.statement[:300]}",
+        )
+        return
+
+    requirement.status = RequirementStatus.IN_PROGRESS
+    requirement.failure_load += 1
+    policy.record_requirement_event(
+        session, requirement, RequirementStatus.IN_PROGRESS, "checker",
+        note=f"acceptance test FAILED (exit {result.check_exit_code})",
+        from_status=from_status,
+    )
+    _notice_ceo_requirement(
+        session, requirement,
+        f"{requirement.key} is NOT met: its acceptance test failed (exit "
+        f"{result.check_exit_code}) even though every task under it closed. That gap is "
+        f"the thing worth looking at — the work was reported done and the requirement is "
+        f"still false.\n\nWhat the test printed:\n{output[:1200]}",
+    )
+
+
+def _notice_ceo_requirement(session: Session, requirement, body: str) -> None:
+    ceo = policy.ceo_of(session, requirement.project_id)
+    if ceo is None:
+        return
+    session.add(Notice(
+        id=ids.new_id(ids.NOTICE),
+        project_id=requirement.project_id,
+        agent_id=ceo.id,
+        kind=NoticeKind.GOAL_CHANGED,
+        body=body,
+    ))
 
 
 def _finalize_success_check(session: Session, job: RunJob, result: RunResult) -> None:

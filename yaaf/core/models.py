@@ -107,6 +107,41 @@ class SuccessTestKind(enum.StrEnum):
     OBSERVABLE = "observable"  # names a checkable artifact/URL/metric; spot-audited
 
 
+class ProjectMode(enum.StrEnum):
+    """What shape this company takes, chosen once at creation.
+
+    EXPLORE is the open-ended arm — a goal, bets, evidence, and the chairman's
+    judgement on when it has earned its keep. DELIVER ships one thing and then
+    finishes. OPERATE is a DELIVER that starts again on a rhythm.
+
+    The field exists from the first stage of the rebuild because the rules
+    differ by mode: outside EXPLORE a task must serve a requirement. What later
+    stages add is the machinery — cycles, the picker, the completion receipt —
+    not the distinction.
+    """
+
+    EXPLORE = "explore"
+    DELIVER = "deliver"
+    OPERATE = "operate"
+
+
+class RequirementStatus(enum.StrEnum):
+    """A requirement is a thing that must be true at the end.
+
+    PROPOSED is the CEO's suggestion and counts as nothing: it is not scope
+    until the chairman accepts it, which is what keeps the denominator of the
+    forecast out of the hands of the party the forecast grades. MET is written
+    only by the platform, after it has run the acceptance test itself.
+    """
+
+    PROPOSED = "proposed"        # the CEO's; not scope yet
+    PENDING = "pending"          # accepted, no work started
+    IN_PROGRESS = "in_progress"  # has live tasks
+    CHECKING = "checking"        # platform is running its acceptance test
+    MET = "met"                  # the platform ran the test and it passed
+    CUT = "cut"                  # the chairman removed it from scope
+
+
 class EvidenceProvenance(enum.StrEnum):
     AGENT_CLAIMED = "agent_claimed"        # unverified until the platform checks it
     PLATFORM_ATTESTED = "platform_attested"  # arrived via a connector agents can't forge
@@ -143,6 +178,12 @@ class RunStatus(enum.StrEnum):
 class RunKind(enum.StrEnum):
     AGENT_RUN = "agent_run"
     SUCCESS_CHECK = "success_check"  # platform executes a command-type success test
+    # The same thing one level up: the acceptance test on a requirement, run by
+    # the platform when the requirement's last task closes. Separate from
+    # SUCCESS_CHECK because it resolves a different row and finalizes
+    # differently — a failed requirement check reopens the requirement rather
+    # than handing a task back to a claimant.
+    REQUIREMENT_CHECK = "requirement_check"
     # The talk lane: a resident CEO conversation session, supervised by the
     # runner outside the run queue. Exempt from wake/concurrency/daily caps —
     # chat is not work — but it authenticates, meters, heartbeats, and revokes
@@ -219,6 +260,10 @@ class Project(Base):
     goal: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(16), default=ProjectStatus.DRAFT)
     status_reason: Mapped[str | None] = mapped_column(Text)
+    # What shape this company takes. Explore is the default and today's
+    # behaviour; outside it, a task must serve a requirement.
+    mode: Mapped[str] = mapped_column(String(16), default=ProjectMode.EXPLORE,
+                                      server_default=ProjectMode.EXPLORE)
     chairman_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
     # "api_key" | "subscription" — decides the budget's native unit (usd vs tokens)
     billing_mode: Mapped[str] = mapped_column(String(16), default="api_key")
@@ -395,6 +440,112 @@ class ChannelRead(Base):
     last_read_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 
+# ── scope: requirements ─────────────────────────────────────────────────────────
+
+
+class Requirement(Base):
+    """A thing that must be true at the end.
+
+    The root object of the rebuild. Before it, the board was the spine and the
+    CEO's standing instruction was "keep the queue fed but small" — a pipeline
+    with no terminus, so there was nothing to divide by velocity and nothing to
+    cut when a date slipped. A requirement gives the work a denominator, an
+    owner who is not the party being graded, and a test the platform runs.
+
+    Three properties are load-bearing and each is enforced elsewhere as a
+    refusal or an absent verb:
+
+    * The CEO **proposes**; only the chairman **accepts**. `accepted_by_user_id`
+      is set on a chairman-only route, so scope cannot be self-served.
+    * Nothing marks a requirement `met` except the platform. There is no agent
+      tool that writes it — the strongest form of "done is never self-graded"
+      is that the verb does not exist.
+    * `est_runs` is the CEO's estimate and is *scored*, not trusted: stage 2
+      compares it against `actual_runs` and multiplies future estimates by the
+      ratio, so writing smaller numbers buys nothing.
+    """
+
+    __tablename__ = "requirements"
+    __table_args__ = (
+        UniqueConstraint("project_id", "key"),
+        Index("ix_requirements_project_status", "project_id", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    # Human-readable and stable: the chairman says "cut R-09", not an opaque id.
+    key: Mapped[str] = mapped_column(String(16))
+    statement: Mapped[str] = mapped_column(Text)
+    # Same shape as a task's: {"type": "command", ...} | {"type": "observable", ...}
+    acceptance_test: Mapped[dict] = mapped_column(JSONVariant)
+    status: Mapped[str] = mapped_column(String(16), default=RequirementStatus.PROPOSED)
+    # The waterfall axis. Ordered, chairman-owned, and gated: work may only be
+    # created for requirements in the open stage or earlier.
+    stage: Mapped[int] = mapped_column(Integer, default=1)
+    est_runs: Mapped[int | None] = mapped_column(Integer)
+    actual_runs: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # Runs that died and checks that failed against this requirement. The
+    # chairman asked the CEO to be adaptable to "plan changes, parameter
+    # changes, errors"; this is the errors half, and it is what lets a review
+    # say the rate fell because one requirement ate fifty runs.
+    failure_load: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    proposed_by_agent_id: Mapped[str | None] = mapped_column(String(40))
+    accepted_by_user_id: Mapped[str | None] = mapped_column(String(40))
+    accepted_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    met_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # Which platform-run check passed. Null met_at with a set met_by is
+    # impossible by construction; the pair is the receipt.
+    met_by_run_id: Mapped[str | None] = mapped_column(String(40))
+    check_output: Mapped[str | None] = mapped_column(Text)
+    cut_reason: Mapped[str | None] = mapped_column(Text)
+    cut_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
+
+
+class RequirementEvent(Base):
+    """Every requirement transition. The mirror of TaskEvent, and deliberately
+    so: velocity is measured on requirements because the forecast divides by
+    requirements, and a metric needs its own log rather than an inference from
+    somebody else's."""
+
+    __tablename__ = "requirement_events"
+    __table_args__ = (Index("ix_requirement_events_project_at", "project_id", "at"),)
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    requirement_id: Mapped[str] = mapped_column(ForeignKey("requirements.id"))
+    from_status: Mapped[str | None] = mapped_column(String(16))
+    to_status: Mapped[str] = mapped_column(String(16))
+    actor: Mapped[str] = mapped_column(String(64))  # agent id, user id, "janitor", "checker"
+    note: Mapped[str | None] = mapped_column(Text)
+    at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class RequirementEdge(Base):
+    """`from_requirement_id` must be met before `to_requirement_id` may be
+    worked. The graph the chairman asked to look at, and the one a previous
+    design declined to draw on the correct grounds that nothing had a
+    `depends_on`. Now something does.
+
+    Kept acyclic by a check on insert rather than by hope: a cycle would make
+    the critical path infinite and the stage gate unsatisfiable, and the
+    refusal names the loop it found.
+    """
+
+    __tablename__ = "requirement_edges"
+    __table_args__ = (
+        UniqueConstraint("from_requirement_id", "to_requirement_id"),
+        Index("ix_requirement_edges_to", "to_requirement_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    from_requirement_id: Mapped[str] = mapped_column(ForeignKey("requirements.id"))
+    to_requirement_id: Mapped[str] = mapped_column(ForeignKey("requirements.id"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
 # ── work: tasks ─────────────────────────────────────────────────────────────────
 
 
@@ -414,6 +565,10 @@ class Task(Base):
     assignee_agent_id: Mapped[str | None] = mapped_column(String(40))
     created_by_agent_id: Mapped[str] = mapped_column(String(40))
     hypothesis_id: Mapped[str | None] = mapped_column(String(40))
+    # What this work is FOR. Nullable in the column because an Explore
+    # project has no requirements; required by policy everywhere else, where
+    # a task serving nothing is a refusal rather than a smell.
+    requirement_id: Mapped[str | None] = mapped_column(ForeignKey("requirements.id"))
     title: Mapped[str] = mapped_column(String(300))
     goal: Mapped[str] = mapped_column(Text)
     # {"type": "command", "command": "..."} | {"type": "observable", "target": "..."}
@@ -594,6 +749,7 @@ class RunQueue(Base):
     kind: Mapped[str] = mapped_column(String(24), default=RunKind.AGENT_RUN)
     trigger: Mapped[dict] = mapped_column(JSONVariant)
     task_id: Mapped[str | None] = mapped_column(String(40))
+    requirement_id: Mapped[str | None] = mapped_column(String(40))
     not_before: Mapped[datetime | None] = mapped_column(UTCDateTime)
     attempt: Mapped[int] = mapped_column(Integer, default=1)
     prior_run_id: Mapped[str | None] = mapped_column(String(40))
@@ -616,6 +772,12 @@ class Run(Base):
     kind: Mapped[str] = mapped_column(String(24), default=RunKind.AGENT_RUN)
     trigger: Mapped[dict] = mapped_column(JSONVariant)
     task_id: Mapped[str | None] = mapped_column(String(40))
+    # What this run was FOR. 62% of runs in the audit carried no task id and
+    # consumed half the spend, because a planning run is unattributable by
+    # construction — so cost per deliverable was not computable, and the
+    # forecast needs it. A run stamps the requirement it served even when it
+    # served no single task.
+    requirement_id: Mapped[str | None] = mapped_column(String(40))
     attempt: Mapped[int] = mapped_column(Integer, default=1)
     prior_run_id: Mapped[str | None] = mapped_column(String(40))
     status: Mapped[str] = mapped_column(String(24), default=RunStatus.RUNNING)

@@ -12,7 +12,7 @@ stamps amendment disclosure — the CEO can never claim it wasn't told.
 
 from __future__ import annotations
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from yaaf.core.constitution import ConstitutionDoc, effective
@@ -32,6 +32,8 @@ from yaaf.core.models import (
     Message,
     Notice,
     Project,
+    Requirement,
+    RequirementStatus,
     RoleVersion,
     Run,
     SideEffect,
@@ -478,6 +480,56 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
             "ceiling": cons.queue_ceiling,
             "drought_active": policy.drought_active(session, project.id, cons),
         }
+        # Scope, if this company has any. The board tells the CEO what is
+        # moving; this tells it what any of that is FOR — and which
+        # requirements it may not touch yet, so the dependency gate is
+        # something it can plan around rather than discover as a refusal.
+        requirements = list(
+            session.execute(
+                select(Requirement)
+                .where(
+                    Requirement.project_id == project.id,
+                    Requirement.status.in_(
+                        [RequirementStatus.PROPOSED, *policy.OPEN_REQUIREMENT_STATUSES]
+                    ),
+                )
+                .order_by(Requirement.stage, Requirement.key)
+            ).scalars()
+        )
+        if requirements:
+            blocked = {
+                r.id: [d.key for d in policy.unmet_dependencies(session, r)]
+                for r in requirements
+            }
+            pack["requirements"] = [
+                {
+                    "id": r.id, "key": r.key, "stage": r.stage,
+                    "statement": _clip(r.statement, 400, "clipped"),
+                    "status": r.status,
+                    "acceptance_test": r.acceptance_test,
+                    "blocked_by": blocked[r.id],
+                    "failure_load": r.failure_load,
+                }
+                for r in requirements
+            ]
+            met = session.execute(
+                select(func.count(Requirement.id)).where(
+                    Requirement.project_id == project.id,
+                    Requirement.status == RequirementStatus.MET,
+                )
+            ).scalar_one()
+            pack["scope"] = {
+                "met": int(met),
+                "open": len([r for r in requirements
+                             if r.status in policy.OPEN_REQUIREMENT_STATUSES]),
+                "awaiting_your_chairman": len(
+                    [r for r in requirements if r.status == RequirementStatus.PROPOSED]
+                ),
+                "note": ("A task must name the requirement it serves. You propose "
+                         "requirements; the chairman accepts them. Nothing here — "
+                         "including you — can mark one met: the platform runs the "
+                         "acceptance test itself."),
+            }
         pack["hypotheses"] = [
             {"id": h.id, "statement": h.statement, "kill_date": h.kill_date.isoformat(),
              "status": h.status}

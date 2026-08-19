@@ -84,7 +84,10 @@ async def t_board(args):
     '{"type":"observable","target":...}. '
     "not_before is an ISO 8601 datetime before which the task cannot be claimed and "
     "wakes nobody — use it to lay work out in time (a weekly rhythm, a step that only "
-    "makes sense after another lands) instead of creating it all at once.",
+    "makes sense after another lands) instead of creating it all at once. "
+    "requirement_id names what this work is FOR and is required outside Explore "
+    "projects: a task that serves no requirement is refused, because work that makes "
+    "nothing true is how a company stays busy without finishing.",
     {
         "team_id": str,
         "title": str,
@@ -94,12 +97,51 @@ async def t_board(args):
         "parent_task_id": str,
         "assignee_agent_id": str,
         "hypothesis_id": str,
+        "requirement_id": str,
         "not_before": str,
     },
 )
 async def t_task_create(args):
     payload = {k: v for k, v in args.items() if v not in (None, "")}
     return _text(_call("POST", "/agent/tasks", payload))
+
+
+@tool(
+    "requirement_propose",
+    "CEO only. Propose something that must be TRUE at the end — not a task, an outcome. "
+    "acceptance_test has the same shape as a success test: "
+    '{"type":"command","command":...} the platform runs itself, or '
+    '{"type":"observable","target":...} the chairman confirms. Prefer a command: an '
+    "observable puts him in the loop every time it closes. "
+    "This is a PROPOSAL and creates no scope — the chairman accepts it, and until he "
+    "does no work may be created for it. You cannot accept your own, and you cannot "
+    "mark one met: the platform runs the test and writes the result. "
+    "stage is the order this happens in (1, 2, 3…); est_runs is your honest guess at "
+    "how many runs it will take, and it is compared against what it actually costs. "
+    "depends_on lists requirement ids that must be settled first.",
+    {
+        "statement": str,
+        "acceptance_test": dict,
+        "stage": int,
+        "est_runs": int,
+        "depends_on": list,
+    },
+)
+async def t_requirement_propose(args):
+    payload = {k: v for k, v in args.items() if v not in (None, "", [])}
+    return _text(_call("POST", "/agent/requirements", payload))
+
+
+@tool(
+    "requirement_depends_on",
+    "CEO only. Record that one requirement cannot be worked until another is settled. "
+    "This is the sequencing the chairman looks at, and it is enforced: work is refused "
+    "for a requirement whose dependencies are still open. An edge that would close a "
+    "loop is refused.",
+    {"requirement_id": str, "depends_on_requirement_id": str},
+)
+async def t_requirement_depends_on(args):
+    return _text(_call("POST", "/agent/requirement_edges", dict(args)))
 
 
 @tool("task_claim", "Claim a ready task that is yours to work.", {"task_id": str})
@@ -382,6 +424,7 @@ async def t_env_list(args):
 
 ALL_TOOLS = [
     t_board, t_task_create, t_task_claim, t_task_complete, t_task_block, t_task_kill,
+    t_requirement_propose, t_requirement_depends_on,
     t_suggest, t_channels, t_messages_read, t_message_post, t_directive_file,
     t_memory_search, t_memory_add, t_memory_supersede, t_memory_compact, t_memory_forget,
     t_evidence_add, t_hypothesis_add, t_hypothesis_kill, t_decision_add,

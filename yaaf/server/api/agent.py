@@ -36,6 +36,9 @@ from yaaf.core.models import (
     LedgerEntry,
     Memory,
     Message,
+    Requirement,
+    RequirementEdge,
+    RequirementStatus,
     RunKind,
     RunQueue,
     SideEffect,
@@ -145,6 +148,7 @@ class TaskCreate(BaseModel):
     parent_task_id: str | None = None
     assignee_agent_id: str | None = None
     hypothesis_id: str | None = None
+    requirement_id: str | None = None
     not_before: datetime | None = None
 
 
@@ -153,6 +157,17 @@ def create_task(
     body: TaskCreate, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
 ) -> dict:
     cons = effective(session, ctx.project.id)
+    requirement = None
+    if body.requirement_id is not None:
+        requirement = session.get(Requirement, body.requirement_id)
+        if requirement is None or requirement.project_id != ctx.project.id:
+            raise Refusal("Unknown requirement.", status_code=404)
+    # A subtask inherits what its parent is for: a lead decomposing work cannot
+    # quietly point half of it at something else.
+    if requirement is None and body.parent_task_id is not None:
+        parent = session.get(Task, body.parent_task_id)
+        if parent is not None and parent.requirement_id:
+            requirement = session.get(Requirement, parent.requirement_id)
     policy.check_task_create(
         session,
         cons,
@@ -163,6 +178,7 @@ def create_task(
         success_test=body.success_test,
         produces_external_evidence=body.produces_external_evidence,
         hypothesis_id=body.hypothesis_id,
+        requirement=requirement,
     )
     if body.parent_task_id is not None:
         if body.assignee_agent_id is None:
@@ -184,6 +200,7 @@ def create_task(
         assignee_agent_id=body.assignee_agent_id,
         created_by_agent_id=ctx.agent.id,
         hypothesis_id=body.hypothesis_id,
+        requirement_id=requirement.id if requirement else None,
         title=body.title,
         goal=body.goal,
         success_test=body.success_test,
@@ -193,6 +210,12 @@ def create_task(
     session.add(task)
     policy.record_task_event(session, task, TaskStatus.READY, f"agent:{ctx.agent.id}",
                              from_status=None)
+    # Accepted scope becomes live scope the moment work exists for it, so the
+    # burn-up and the review can tell "nobody has started" from "in flight".
+    if requirement is not None and requirement.status == RequirementStatus.PENDING:
+        policy.record_requirement_event(session, requirement, RequirementStatus.IN_PROGRESS,
+                                        f"agent:{ctx.agent.id}", note=f"work created: {task.id}")
+        requirement.status = RequirementStatus.IN_PROGRESS
     notify(session, WAKE_CHANNEL, ctx.project.id)
     return _task_view(task)
 
@@ -805,6 +828,90 @@ def memory_forget(
         raise Refusal("Only the scope's curator forgets memory.", status_code=403)
     old.superseded_at = utcnow()
     return {"forgotten": old.id}
+
+
+# ── requirements: the CEO proposes, the chairman accepts ────────────────────────
+#
+# Note what is absent: there is no route here that writes `met`. That is the
+# strongest available form of "done is never self-graded" — not a rule an agent
+# could argue with, but a verb it was never given. The platform runs the
+# acceptance test and writes the result itself.
+
+
+class RequirementPropose(BaseModel):
+    statement: str = Field(min_length=10, max_length=2000)
+    acceptance_test: dict
+    stage: int = Field(default=1, ge=1, le=50)
+    est_runs: int | None = Field(default=None, ge=1, le=10_000)
+    depends_on: list[str] = Field(default_factory=list)
+
+
+@router.post("/requirements")
+def propose_requirement(
+    body: RequirementPropose, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
+) -> dict:
+    cons = effective(session, ctx.project.id)
+    policy.check_requirement_propose(cons, ctx.agent, body.acceptance_test)
+    requirement = Requirement(
+        id=ids.new_id(ids.REQUIREMENT),
+        project_id=ctx.project.id,
+        key=policy.next_requirement_key(session, ctx.project.id),
+        statement=body.statement.strip(),
+        acceptance_test=body.acceptance_test,
+        status=RequirementStatus.PROPOSED,
+        stage=body.stage,
+        est_runs=body.est_runs,
+        proposed_by_agent_id=ctx.agent.id,
+    )
+    session.add(requirement)
+    session.flush()
+    policy.record_requirement_event(session, requirement, RequirementStatus.PROPOSED,
+                                    f"agent:{ctx.agent.id}", from_status=None)
+    for source_id in body.depends_on:
+        source = session.get(Requirement, source_id)
+        if source is None or source.project_id != ctx.project.id:
+            raise Refusal(f"Unknown requirement in depends_on: {source_id}", status_code=404)
+        policy.check_requirement_edge(session, ctx.project, source, requirement)
+        session.add(RequirementEdge(
+            id=ids.new_id(ids.REQUIREMENT_EDGE),
+            project_id=ctx.project.id,
+            from_requirement_id=source.id,
+            to_requirement_id=requirement.id,
+        ))
+    return {
+        "requirement_id": requirement.id,
+        "key": requirement.key,
+        "status": requirement.status,
+        "note": ("Proposed, not scope. The chairman accepts requirements; until he does, "
+                 "no work may be created for this one."),
+    }
+
+
+class RequirementDependency(BaseModel):
+    requirement_id: str
+    depends_on_requirement_id: str
+
+
+@router.post("/requirement_edges")
+def add_requirement_edge(
+    body: RequirementDependency,
+    ctx: RunContext = Depends(run_auth),
+    session: Session = Depends(db),
+) -> dict:
+    if ctx.agent.kind != AgentKind.CEO:
+        raise Refusal("Only the CEO sequences requirements.", status_code=403)
+    target = session.get(Requirement, body.requirement_id)
+    source = session.get(Requirement, body.depends_on_requirement_id)
+    if target is None or source is None:
+        raise Refusal("Unknown requirement.", status_code=404)
+    policy.check_requirement_edge(session, ctx.project, source, target)
+    session.add(RequirementEdge(
+        id=ids.new_id(ids.REQUIREMENT_EDGE),
+        project_id=ctx.project.id,
+        from_requirement_id=source.id,
+        to_requirement_id=target.id,
+    ))
+    return {"ok": True, "note": f"{target.key} now waits for {source.key}."}
 
 
 # ── evidence, hypotheses, decisions ─────────────────────────────────────────────
