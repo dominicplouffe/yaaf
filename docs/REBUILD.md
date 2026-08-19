@@ -58,7 +58,10 @@ session preferred, twice over, which is why this table names objects.
 | 6 | Deliverables, attestation, the sampled audit | **done** — migration 0004 |
 | 7 | The status meeting, and six levers | **done** — migration 0005 |
 | 8 | Explore / Deliver / Operate, and the learning loop | **done** — migration 0006 |
-| 9 | The topology experiment | not started |
+| 9 | The topology experiment | **done** — migration 0007 |
+
+**The rebuild is complete** — all ten stages built, tested, deployed and
+verified on the live box, 19 Aug 2026. Schema at `0007 (head)`; ~374 tests.
 
 Stage 3 is early on purpose. The visual was asked for twice, deferred to last
 twice, and dropped both times.
@@ -322,6 +325,34 @@ twice, and dropped both times.
   screen all read the open cycle for free; `estimate_bias` deliberately reads
   ALL cycles, or a CEO that lowballs every cycle would start each one
   forgiven.
+
+## Stage 9, as built
+
+- **`projects.topology`** is stamped at creation from the team specs — solo /
+  ceo_team (flat: one-person teams the CEO talks to directly) /
+  ceo_leads_workers — a recorded fact, never an inference.
+- **`experiments` freezes what must be identical**: goal text, chairman-
+  authored requirement set, constitution body. "The arms were identical" is a
+  checkable fact about the row. `experiment_arms` binds each topology to its
+  project and carries the stop rule's mark.
+- **Arms are built through the normal machinery**: `create_project` per
+  topology, scope copied in through the stage-7 add lever (accepted at birth
+  — the CEOs plan HOW, never WHAT, so the denominator is identical by
+  construction), started concurrently. The invariant test asserts
+  field-for-field constitution equality and verbatim scope equality.
+- **Four numbers, one producer** (`yaaf/server/experiments.py`): cost per
+  requirement met, hours to first platform-attested evidence, share of spend
+  producing nothing, internal words per delivered byte — each `None` when its
+  denominator is honestly zero. The solo self-grading asymmetry rides every
+  report that includes a solo arm, as a printed warning, not a footnote.
+- **The stop rule** runs in the janitor and watches PAUSED projects (budget
+  exhaustion pauses first; the rule is the verdict on top): budget breached
+  with zero met → arm halted, chairman emailed, reason on the arm. An arm
+  that met something keeps its pause — it earned a decision, not a rule.
+- **The Experiments page**: one form creates the three companies (command
+  tests only in the UI so the grading stays self-judging), the report table
+  highlights the cheapest-per-met arm, closing stops the burn and keeps the
+  record.
 
 ## The reset — done, 18 Aug
 

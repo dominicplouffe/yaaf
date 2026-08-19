@@ -2,171 +2,132 @@
 
 ---
 
-You are continuing a rebuild of `yaaf` (a framework that runs a company of AI agents —
-a CEO that plans, role-based employees that work, one human "chairman": Dominic,
-dplouffe@gmail.com). Repo `/home/dplouffe/projects/yaaf`, branch **`rebuild`**. Read
-`docs/REBUILD.md` first — it is the plan of record, with per-stage "as built" sections
-and links to the full-plan artifact and the adversarial validation that preceded it.
+You are working on `yaaf` (a framework that runs a company of AI agents — a CEO
+that plans, role-based employees that work, one human "chairman": Dominic,
+dplouffe@gmail.com). Repo `/home/dplouffe/projects/yaaf`, branch **`rebuild`**.
+Read `docs/REBUILD.md` first — it is the plan of record, with per-stage
+"as built" sections and links to the full-plan artifact and the adversarial
+validation that preceded it.
 
-## What this rebuild is
+## Status: THE REBUILD IS COMPLETE
 
-Nothing has shipped; everything is experimental and backward compatibility is
-explicitly NOT a goal. On 18 Aug the chairman approved dropping the live database and
-re-architecting his eight requests in rather than bolting them on. The one change under
-everything: **the requirement is the root object**. A requirement is a thing that must
-be true at the end; it carries an acceptance test the platform runs; tasks exist to
-make requirements true; outside Explore mode a task serving no requirement is refused.
+All ten stages (0–9) are built, tested, deployed and verified live as of
+19 Aug 2026. Schema at `0007 (head)`; ~374 tests passing. The per-stage
+"as built" sections in REBUILD.md are the authoritative record — including
+where the build deliberately deviated from the design (evidence NOT NULL
+became a refusal; skills default dark; day-granular commitment dates).
 
-yaaf's thesis (README): **rules live in the server, never in the prompt.** Every rule is
-an API `Refusal` (yaaf/server/policy.py) or an automatic state change. An agent cannot
-be talked out of a rule it never held.
+The one change under everything: **the requirement is the root object**. A
+requirement is a thing that must be true at the end; it carries an acceptance
+test the platform runs; tasks exist to make requirements true; outside Explore
+mode a task serving no requirement is refused. yaaf's thesis: **rules live in
+the server, never in the prompt** — every rule is an API `Refusal`
+(yaaf/server/policy.py) or an automatic state change.
 
-## Status: stages 0–4 are DONE, deployed, and verified live
+## What exists, in one line per stage
 
-Details in REBUILD.md's "as built" sections. In one line each:
-
-- **0** — DB wiped and reseeded; every limit moved into `ConstitutionDoc` (settings UI
-  generates from `_rule()`; `PATCH /admin/projects` refuses rule names as wiring);
-  `projects.config` → `integrations`; migrations collapsed to `0001_baseline`;
-  `reserved_governance_runs` (dispatcher holds back a slice of the daily cap for
-  governance wakes — reason kinds `review`, `cycle_plan`, `commitment`).
-- **1** — `requirements` / `requirement_events` / `requirement_edges`; CEO proposes,
-  only chairman accepts; **no agent route writes `met`** (absent verb — janitor runs
-  command acceptance tests via `RunKind.REQUIREMENT_CHECK`, observables go to the
-  chairman's verdict route); dependency gate + cycle refusal that draws the loop;
-  requester-owns-the-test claim rule (solo mode exempt, deliberately).
-- **2** — **R-00**, the plan requirement, platform-created on start of a Deliver/Operate
-  project; no task until the plan holds (accepted + staged + estimated + affordable);
-  feasibility gate with **estimate bias**: settled est vs actual runs becomes a ×
-  multiplier ≥ 1 on future plans (lowball once, priced in after); two sums — proposals
-  count while planning, only accepted scope decides whether the plan HOLDS (else the
-  CEO could freeze its own board by speculating); R-00 closes/reopens **in the
-  janitor** (`check_plan`) because budgets move without anyone touching a requirement;
-  stage gate (work may not jump the open stage); runs stamp `requirement_id`
-  (planning runs stamp R-00).
-- **3** — Plan tab (`web/src/pages/project/Plan.tsx`): Stages / Dependencies views on a
-  toggle over ONE endpoint `GET /observe/projects/{id}/plan`; critical path computed
-  server-side (`policy.critical_path`) from the same arithmetic the refusals quote;
-  settled work conducts but weighs 0. Accept/cut/observable-verdict are buttons on the
-  screen. Explore projects get no Plan tab. **Mode picker on New project** (3 cards)
-  landed early because the tab was otherwise unreachable from the UI.
-- **4** — `yaaf/server/velocity.py`, ONE producer read by both the CEO's context pack
-  and the Plan screen: met/week trailing 3w+12w from `requirement_events` (R-00
-  excluded), `weeks_left_at_pace`, waste (dead-run share of the window, worst offender
-  named), attribution split (share of runs/dollars stamped to any requirement). Dead
-  runs charge `Requirement.failure_load` from both death paths (`daemon.finalize` and
-  `janitor.reap_stale_runs`) via `policy.charge_failure`. Pace + Waste tiles on Plan.
-
-## Remaining stages (the full designs are in the REBUILD.md artifact)
-
-- **5 — Commitment, and a forecast that refuses things.** `commitments` table:
-  `deliver_by`, `accepted_at/by`, `constitution_version` frozen at acceptance,
-  `scope_snapshot` (requirement keys), `status` proposed/accepted/at_risk/breached/met.
-  Projection = remaining ÷ trailing velocity, recomputed by the **janitor**;
-  `at_risk`/`breached` transitions disclosed to the CEO via `Notice` and emailed to the
-  chairman (`yaaf/server/notify.py` has `chairman_notify`). Re-validation is
-  **state-based** on three triggers: constitution version moved, scope changed, failure
-  load crossed a threshold (never event hooks — amendments apply inline from three
-  callers). **Refusals:** no new scope while projection > deliver_by (existing work
-  continues; a new requirement needs the chairman); no agent can write a date (absent
-  verb — the CEO proposes a commitment, the chairman accepts it; only the platform
-  computes the projection). Burn-up/projection lands on the Plan screen (stage-board
-  axis markers: commitment vs projected). New rules go in `ConstitutionDoc` via
-  `_rule()` (e.g. a failure-load re-forecast threshold), never `projects.config`.
-- **6 — Deliverables, attestation, sampled audit.** `artifacts` table (name, version,
-  sha256, bytes, published_at/by, requirements satisfied); webhook secrets generated
-  and shown at project creation (the `platform_attested` path in
-  `yaaf/server/api/webhooks.py` EXISTS and has simply never been provisioned);
-  `evidence.task_id` → real FK NOT NULL; **sampled audit**: `audit_sample_rate` +
-  `audit_response_hours` as constitution rules, janitor draws samples of observable
-  closes into an `audit_samples` table, chairman confirms on the Plan/Work screen,
-  expiry recorded as "not reviewed" and NEVER blocks; memory-tool-shaped MCP tool over
-  the governed store; `PreCompact` + record-only `Stop` hooks; `skills`.
-- **7 — The status meeting.** Janitor opens/numbers/emails the review with zero tokens
-  (this is why `reserved_governance_runs` exists — the CEO's variance narrative is a
-  reserved governance run, reason kind `review`); the review covers goal + live bets +
-  deadline; **six levers**: cut / **add** / **reword** / move date / raise budget /
-  accept slip — each recorded with the chairman's reason, disclosed to the CEO, shown
-  at the next review beside what it bought. A review with an empty board still fires.
-- **8 — Explore/Deliver/Operate machinery.** Explore may carry an optional date (the
-  chairman's own example: "one sale in 60 days" — open scope, bounded time; burn-up
-  degrades to a countdown). Deliver: platform-run completion → `ProjectStatus.COMPLETED`
-  (enum exists) + receipt whose load-bearing row is "failed once before". Operate:
-  `RecurrenceRule` in a `cycles` table, 4 frequencies + IANA zone (constitution
-  `timezone` rule), 29–31st refused not clamped, cycles roll in the **janitor**, at
-  most one open cycle, two skips → pause + email. **The learning loop** (the half the
-  old plan dropped): review writes `cycle.narrative` (uncapped), next cycle's context
-  pack carries the last three verbatim; wake reason kind `cycle_plan`.
-- **9 — Topology experiment.** `projects.topology`: solo / ceo_team /
-  ceo_leads_workers; `experiments` + arms — one chairman-authored requirement set
-  copied to every arm, identical constitutions, run concurrently; compared on **cost
-  per requirement met**, wall-clock to first attested evidence, share of spend
-  producing nothing, internal words per delivered byte; stop rule for an arm that
-  breaches budget with nothing met. Known asymmetry to REPORT, not hide: solo is
-  exempt from requester-owns-the-test, so solo self-grades observables.
+- **0** — fresh DB, one baseline, every limit in `ConstitutionDoc` via
+  `_rule()` (settings UI generates itself); `reserved_governance_runs`.
+- **1** — requirements/events/edges; CEO proposes, chairman accepts; no agent
+  route writes `met`; dependency+cycle gates; requester-owns-the-test.
+- **2** — R-00 the plan gate; feasibility with estimate-bias multiplier ≥1;
+  two sums (proposals count while planning, accepted scope decides HOLDS);
+  stage gate; runs stamp `requirement_id`.
+- **3** — Plan tab: stages/dependencies toggle over ONE endpoint;
+  server-computed critical path; accept/cut/verdict buttons; mode picker.
+- **4** — `velocity.py`, one producer: met/week 3w+12w, waste with the worst
+  offender named, attribution share; `failure_load` charged from both death
+  paths; Pace + Waste tiles.
+- **5** — `commitments`: CEO proposes with NO date field (platform stamps its
+  projection, end-of-day), chairman accepts/moves/declines; janitor walks
+  accepted→at_risk→breached→met and re-validates on three state diffs
+  (constitution version, scope keys, failure-load threshold rule); scope
+  frozen past the wall (proposals refused with arithmetic; existing work
+  continues); burn-up with committed + projected markers; governance-classed
+  `commitment` wake.
+- **6** — `artifacts` receipts (name/version/sha256/satisfies); evidence
+  task_id real FK + refusal in Deliver/Operate; webhook secrets at project
+  creation (shown once); `audit_samples` drawn server-side after observable
+  closes at `audit_sample_rate`, expiry never blocks, invisible to run
+  tokens; memory-tool-shaped MCP tool; record-only PreCompact/Stop hooks;
+  role-defined skills with explicit allowlist ([] = dark); `run_token_budget`.
+- **7** — `reviews`: janitor opens/numbers/emails with zero tokens (empty
+  board still fires); frozen numbers; CEO narrative via `review_narrative` on
+  a `review` governance wake, files once; SIX levers (cut/add/reword/
+  move_date/raise_budget/accept_slip) each acting through its normal route
+  and recorded with the chairman's reason; next review shows decisions beside
+  what they bought; nag 24h → escalate 72h, never a brake; Review tab.
+- **8** — Explore `projects.deadline` (refused elsewhere; passing tells both
+  parties once, pauses nothing); Deliver completion gate (janitor detects,
+  chairman's button decides, receipt's load-bearing row is "failed once
+  before"; COMPLETED terminal); Operate cycles (`cycle_frequency`/`cycle_day`
+  rules, 29–31 refused; rolls in janitor; at most one open cycle; carries
+  unsettled scope by `requirements.cycle_id`; R-00 reopens per cycle on a
+  `cycle_plan` governance wake; two skips → pause + email); the learning
+  loop: review-close writes `cycle.narrative`, next pack carries last three
+  VERBATIM. Scope is cycle-aware in ONE place (`policy.scope_requirements`);
+  `estimate_bias` reads all cycles on purpose.
+- **9** — `projects.topology` stamped at creation; `experiments` +
+  `experiment_arms` freeze goal/scope/constitution; arms built through the
+  normal machinery with chairman-authored scope accepted at birth; four
+  metrics from one producer (`yaaf/server/experiments.py`), None on zero
+  denominators; solo self-grading asymmetry printed on every report; stop
+  rule halts a budget-breached arm with nothing met (watches PAUSED
+  projects); Experiments page.
 
 ## How to work (the chairman's standing instructions)
 
-- Plain English, no jargon walls; tight updates; he is visual; **UI over CLI**; Apple-
-  grade UX bar. Answer the question asked. He approved this whole plan — don't
-  re-litigate settled decisions (they're in REBUILD.md "Decisions the chairman has
-  made").
-- Loop per stage: build → full test suite → commit (narrative commit messages, subject
-  line a sentence about the *why*, end with `Co-Authored-By:` your model name
-  `<noreply@anthropic.com>`) → `./update_single_server.sh --no-pull` (rebuilds BOTH
-  images, keeps data) → verify on the live box (curl the API / query the DB) → update
-  REBUILD.md status + "as built" → commit that too.
-- Tests: `python3 -m pytest tests/ -q` from repo root. **3 failures in test_chat_lane
-  and 4 errors in test_mcp_mount are pre-existing** (no `claude_agent_sdk` installed
-  locally; it exists in the sandbox image). Everything else must pass. Current count:
-  ~298 passing.
-- Invariant tests live in `tests/selftest_invariants/`, run over HTTP with real minted
-  run tokens, each trying to BREAK a rule. Reusable helpers:
-  `tests/conftest.py`: `make_project(client, slug=, mode=, constitution=, start=)`,
-  `amend(client, project_id, **changes)`, `live_token`, `agent_by_name`, `bearer`.
-  `tests/selftest_invariants/test_requirements.py`: `deliver_project`, `propose`,
-  `accept(..., project)` (runs the janitor tick), `make_task`, `tick`.
+- Plain English, no jargon walls; tight updates; he is visual; **UI over
+  CLI**; Apple-grade UX bar. Answer the question asked. Don't re-litigate
+  settled decisions (REBUILD.md "Decisions the chairman has made").
+- Loop per change: build → full test suite → commit (narrative commit
+  messages, subject line a sentence about the *why*, end with
+  `Co-Authored-By:` your model name `<noreply@anthropic.com>`) →
+  `./update_single_server.sh --no-pull` (rebuilds BOTH images, keeps data) →
+  verify on the live box (curl the API / query the DB) → update REBUILD.md →
+  commit that too.
+- Tests: `python3 -m pytest tests/ -q` from repo root, ~374 passing.
+  `claude_agent_sdk` IS installed locally now (the old note about it missing
+  is stale). `test_ws.py::test_good_token_gets_stamp_and_changes_move_it` is
+  flaky under full-suite load and passes in isolation.
+- Invariant tests live in `tests/selftest_invariants/`, over HTTP with real
+  minted run tokens, each trying to BREAK a rule. Helpers: `tests/conftest.py`
+  (`make_project`, `amend`, `live_token`, `agent_by_name`, `bearer`,
+  `seed_role`) and `tests/selftest_invariants/test_requirements.py`
+  (`deliver_project`, `propose`, `accept(..., project)`, `make_task`, `tick`).
 
 ## Architecture rules (violating these is how previous plans failed validation)
 
-- Enforcement is a `Refusal` with a message written FOR the agent, or an absent verb.
-  Advisory-only anything is suspect.
-- Governed knobs go in `ConstitutionDoc` via `_rule(group=, label=, help=)` — the
-  settings UI generates itself, amendments are audited, the CEO is told via `Notice`.
-- Disclosure rides `Notice` rows consumed exactly once by the next context pack.
+- Enforcement is a `Refusal` with a message written FOR the agent, or an
+  absent verb. Advisory-only anything is suspect.
+- Governed knobs go in `ConstitutionDoc` via `_rule()`; disclosure rides
+  `Notice` rows consumed exactly once by the next context pack.
 - "Done" is never self-graded, at any level.
-- Automatic state changes → janitor (15s tick, budget-independent); wake decisions →
-  dispatcher (gated by run budgets). Anything that must happen regardless of budget
-  CANNOT live behind the dispatcher's gates.
-- **Migrations:** `0001_baseline` is `Base.metadata.create_all`, so every model change
-  needs a guarded revision (`add_column_if_missing` / `create_table_if_missing` from
-  `yaaf/core/migration_ops.py`). `tests/selftest_invariants/test_migration_chain.py`
-  fails if models and the chain diverge — stage 1 shipped without its migration once
-  and was caught on the live box, not in review. Keep that test's
-  `STAGE_*` lists honest when adding schema. No PG enums: `String(n)` + `enum.StrEnum`.
-  New id prefixes go in `yaaf/core/ids.py`.
-- One producer per number: if two screens/consumers need the same figure, they read
-  the same function (see `velocity.py`, `plan_arithmetic`, `critical_path`).
-- Web: `web/src/` React SPA, dark cockpit theme, `npx tsc -b && npm run build` in
-  `web/` before deploying; the api image serves the built bundle at `/app/`.
+- Automatic state changes → janitor (15s, budget-independent); wake decisions
+  → dispatcher (budget-gated). Governance wakes (`review`, `cycle_plan`,
+  `commitment`) may spend the reserved slice.
+- **Migrations:** `0001_baseline` is `create_all`, so every model change needs
+  a guarded revision (`yaaf/core/migration_ops.py` helpers). Keep
+  `test_migration_chain.py`'s `STAGE_*` lists honest. No PG enums. New id
+  prefixes in `yaaf/core/ids.py`.
+- One producer per number (see `velocity.py`, `plan_arithmetic`,
+  `critical_path`, `commitment_projection`, `experiments.arm_metrics`).
+- Web: `web/src/` React SPA, dark cockpit theme; `npx tsc -b && npm run build`
+  in `web/` before deploying.
 
 ## The live box
 
 Single-server Docker deploy (`deploy-db-1`, `deploy-api-1`, `deploy-runner-1`,
-`deploy-proxy-1`). Admin token: `grep YAAF_ADMIN_TOKEN deploy/.env`. DB read access:
-`docker exec deploy-db-1 psql -U yaaf -d yaaf`. Schema at `0002 (head)`. The database
-was wiped 18 Aug (backup: `~/yaaf-backup/pre-rebuild-2026-08-18.sql.gz`; seed:
-`~/yaaf-seed/`, restorable via `yaaf/core/seed.py`). On it now: 9 restored projects,
-all **draft + explore mode**, plus 2 stopped smoke projects (deliver). No project is
-running; nothing is spending. Old memories about the pre-wipe data (1,091 runs,
-$220.37) refer to the backup only.
+`deploy-proxy-1`). Admin token: `grep YAAF_ADMIN_TOKEN deploy/.env`. DB read:
+`docker exec deploy-db-1 psql -U yaaf -d yaaf`. Schema at `0007 (head)`.
+On it: 9 restored projects (draft, explore) + 2 stopped smoke projects. No
+project is running; nothing is spending. Pre-wipe backup:
+`~/yaaf-backup/pre-rebuild-2026-08-18.sql.gz`; seed: `~/yaaf-seed/`.
 
-## Start here
+## What might come next (not started; the chairman decides)
 
-Stage 5. Design it against the patterns above (the commitment is chairman-accepted
-like a requirement; the projection is platform-computed like `met`; re-validation is
-state-based in the janitor like `check_plan`; the scope refusal extends
-`check_plan_affordable`'s style and shows its arithmetic). Migration `0003`, invariant
-tests that try to fake a date, move scope past a breached commitment, and amend the
-constitution out from under a frozen one. Then the burn-up on the Plan screen. Deploy,
-verify live, update REBUILD.md, commit.
+- Run a real project end-to-end through the new machinery (needs a billing
+  credential attached; nothing on the box is spending today).
+- Run the first real topology experiment from the Experiments page.
+- The open decisions from before the rebuild: squash-to-public, ToS stance,
+  Proxmox migration.
