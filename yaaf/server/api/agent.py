@@ -13,7 +13,7 @@ import hashlib
 from datetime import datetime
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
@@ -27,6 +27,8 @@ from yaaf.core.models import (
     AuditLog,
     Channel,
     ChannelRead,
+    Commitment,
+    CommitmentStatus,
     Decision,
     Evidence,
     EvidenceKind,
@@ -860,6 +862,9 @@ def propose_requirement(
             "behind is worth more here than a small number.",
             status_code=422,
         )
+    # The commitment's guarantee: while the promised date does not hold, new
+    # scope is refused before affordability is even asked.
+    policy.check_scope_within_commitment(session, ctx.project, cons)
     policy.check_plan_affordable(session, ctx.project, cons, body.est_runs or 0)
     requirement = Requirement(
         id=ids.new_id(ids.REQUIREMENT),
@@ -921,6 +926,56 @@ def add_requirement_edge(
         to_requirement_id=target.id,
     ))
     return {"ok": True, "note": f"{target.key} now waits for {source.key}."}
+
+
+# ── the commitment: the CEO asks, the platform computes, the chairman decides ──
+#
+# Note what is absent, again: there is no date field in the proposal — extra
+# fields are a validation error, so a smuggled deliver_by dies at the schema —
+# and no agent route accepts, moves or closes a commitment. The projection is
+# computed by the platform, the transitions are the janitor's, and the date is
+# the chairman's.
+
+
+class CommitmentPropose(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    note: str | None = Field(default=None, max_length=2000)
+
+
+@router.post("/commitments")
+def propose_commitment(
+    body: CommitmentPropose, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
+) -> dict:
+    cons = effective(session, ctx.project.id)
+    projection = policy.check_commitment_propose(session, ctx.project, cons, ctx.agent)
+    projected = projection["projected_done_at"]
+    # A promise is day-shaped — "by the 30th", never "by 14:07:22" — so the
+    # proposed date is the end of the projected day. It also keeps a promise
+    # accepted at exactly the projection from reading as late one tick later,
+    # when the sliding projection has moved past it by seconds.
+    deliver_by = projected.replace(hour=23, minute=59, second=59, microsecond=0)
+    commitment = Commitment(
+        id=ids.new_id(ids.COMMITMENT),
+        project_id=ctx.project.id,
+        status=CommitmentStatus.PROPOSED,
+        deliver_by=deliver_by,
+        proposed_by_agent_id=ctx.agent.id,
+        note=(body.note or "").strip() or None,
+        projected_done_at=projected,
+        projection={"method": projection["method"], "note": projection["basis"]},
+    )
+    session.add(commitment)
+    session.flush()
+    return {
+        "commitment_id": commitment.id,
+        "status": commitment.status,
+        "deliver_by": deliver_by.isoformat(),
+        "basis": projection["basis"],
+        "note": ("Proposed to the chairman. The date is the platform's own projection "
+                 "— you did not write it and cannot. He accepts it (with this date or "
+                 "his own), or declines; nothing binds until he does."),
+    }
 
 
 # ── evidence, hypotheses, decisions ─────────────────────────────────────────────

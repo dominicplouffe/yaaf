@@ -459,6 +459,10 @@ pre.block {
   background: rgba(236, 131, 90, 0.07); border-color: rgba(236, 131, 90, 0.35);
   border-left-color: var(--serious);
 }
+.strip.critical {
+  background: rgba(208, 59, 59, 0.07); border-color: rgba(208, 59, 59, 0.35);
+  border-left-color: var(--critical);
+}
 .strip .grow { flex: 1; min-width: 260px; }
 .strip .sb { color: var(--muted); font-size: 12px; margin-top: 1px; }
 

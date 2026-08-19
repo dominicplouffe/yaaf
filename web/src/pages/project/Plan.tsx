@@ -36,9 +36,30 @@ interface PlanRequirement {
   check_output: string | null;
 }
 
+interface PlanCommitment {
+  id: string;
+  status: string;
+  deliver_by: string;
+  projected_done_at: string | null;
+  projection_basis: string | null;
+  accepted_at: string | null;
+  constitution_version: number | null;
+  scope_snapshot: string[];
+  status_reason: string | null;
+  note: string | null;
+  met_at: string | null;
+}
+
+interface PlanBurnup {
+  scope_total: number;
+  met_points: { at: string; count: number }[];
+}
+
 interface PlanView {
   mode: string;
   planless: boolean;
+  commitment?: PlanCommitment | null;
+  burnup?: PlanBurnup | null;
   plan?: {
     status: string | null;
     holds: boolean;
@@ -240,6 +261,182 @@ function RequirementCard({ r, onCritical, onDone }: {
   );
 }
 
+// ── the commitment ──────────────────────────────────────────────────────────────
+
+function fmtDay(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function isoDay(iso: string): string {
+  return iso.slice(0, 10);
+}
+
+/** The CEO asked to promise a date it did not get to pick. The chairman takes
+    it, replaces it with his own, or declines — nothing binds until he acts. */
+function ProposedCommitment({ c, onDone }: { c: PlanCommitment; onDone: () => void }) {
+  const [date, setDate] = useState(isoDay(c.deliver_by));
+  return (
+    <div className="strip" style={{ marginBottom: 14 }}>
+      <div className="grow">
+        <b>The CEO proposes to commit: {c.scope_snapshot.length > 0
+          ? `${c.scope_snapshot.length} requirements` : "the accepted scope"} by {fmtDay(c.deliver_by)}.</b>
+        <div className="sb">
+          The date is the platform's own projection — {c.projection_basis ?? "computed from the plan"}.
+          {c.note ? <> The CEO adds: “{c.note}”</> : null}
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
+          <label className="help" htmlFor="cmt-date">deliver by</label>
+          <input id="cmt-date" type="date" value={date} min={isoDay(new Date().toISOString())}
+            onChange={(e) => setDate(e.target.value)}
+            style={{ font: "inherit", fontSize: 13, padding: "3px 6px",
+              background: "var(--surface)", color: "var(--ink)",
+              border: "1px solid var(--border)", borderRadius: 5 }} />
+          <button className="small primary" onClick={async () => {
+            const body = date !== isoDay(c.deliver_by)
+              ? { deliver_by: `${date}T23:59:59Z` } : {};
+            await post(`/admin/commitments/${c.id}/accept`, body);
+            onDone();
+          }}>✓ Accept the commitment</button>
+          <NoteAction
+            label="Decline…"
+            className="small danger"
+            placeholder="Why not — the CEO reads it and keeps working the plan"
+            confirmLabel="✗ Decline"
+            requireNote
+            onSubmit={async (note) => {
+              await post(`/admin/commitments/${c.id}/decline`, { reason: note });
+              onDone();
+            }}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** A promise that stopped holding. New scope is already frozen server-side —
+    this shows the arithmetic and hands the chairman his levers. */
+function SlippingCommitment({ c, onDone }: { c: PlanCommitment; onDone: () => void }) {
+  const [date, setDate] = useState("");
+  const [reason, setReason] = useState("");
+  const breached = c.status === "breached";
+  return (
+    <div className={`strip ${breached ? "critical" : "serious"}`} style={{ marginBottom: 14 }}>
+      <div className="grow">
+        <b>
+          {breached
+            ? `The commitment is breached: ${fmtDay(c.deliver_by)} has passed.`
+            : `The commitment is at risk: promised ${fmtDay(c.deliver_by)}, projected ${c.projected_done_at ? fmtDay(c.projected_done_at) : "unknown"}.`}
+        </b>
+        <div className="sb">
+          {c.status_reason ?? ""} New scope is frozen for the CEO — existing work continues.
+          Your levers: cut requirements below, or move the date with a reason.
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8, flexWrap: "wrap" }}>
+          <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
+            style={{ font: "inherit", fontSize: 13, padding: "3px 6px",
+              background: "var(--surface)", color: "var(--ink)",
+              border: "1px solid var(--border)", borderRadius: 5 }} />
+          <input type="text" value={reason} placeholder="Why the date moves — the CEO reads it"
+            onChange={(e) => setReason(e.target.value)}
+            style={{ font: "inherit", fontSize: 13, padding: "3px 8px", minWidth: 280,
+              background: "var(--surface)", color: "var(--ink)",
+              border: "1px solid var(--border)", borderRadius: 5 }} />
+          <button className="small" disabled={!date || reason.trim().length < 5}
+            onClick={async () => {
+              await post(`/admin/commitments/${c.id}/move`,
+                { deliver_by: `${date}T23:59:59Z`, reason });
+              onDone();
+            }}>Move the date</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** The burn-up: what has become true, against the promise and the projection.
+    Server data only — the two markers are the commitment (his) and the
+    projection (the platform's), which is the whole conversation. */
+function Burnup({ c, burnup }: { c: PlanCommitment; burnup: PlanBurnup }) {
+  const W = 720, H = 170, L = 36, R = 12, T = 14, B = 26;
+  const now = Date.now();
+  const points = burnup.met_points.map((p) => ({ t: new Date(p.at).getTime(), n: p.count }));
+  const start = Math.min(
+    c.accepted_at ? new Date(c.accepted_at).getTime() : now,
+    points.length ? points[0].t : now,
+  );
+  const deliverBy = new Date(c.deliver_by).getTime();
+  const projected = c.projected_done_at ? new Date(c.projected_done_at).getTime() : null;
+  const end = Math.max(deliverBy, projected ?? 0, now) + (deliverBy - start) * 0.06 + 1;
+  const yMax = Math.max(burnup.scope_total, 1);
+  const x = (t: number) => L + ((t - start) / (end - start)) * (W - L - R);
+  const y = (n: number) => H - B - (n / yMax) * (H - T - B);
+
+  // The line of record: met counts, stepped. Then the platform's dashed reach
+  // from where the work stands now to where it is projected to land.
+  let line = `M ${x(start)} ${y(0)}`;
+  let lastN = 0;
+  for (const p of points) {
+    line += ` L ${x(p.t)} ${y(lastN)} L ${x(p.t)} ${y(p.n)}`;
+    lastN = p.n;
+  }
+  line += ` L ${x(Math.min(now, end))} ${y(lastN)}`;
+
+  return (
+    <div className="card" style={{ padding: "14px 18px", marginBottom: 14 }}>
+      <div style={{ display: "flex", gap: 12, alignItems: "baseline", flexWrap: "wrap" }}>
+        <b style={{ fontSize: 13 }}>Burn-up</b>
+        <span className="help">
+          {lastN} of {burnup.scope_total} true · committed {fmtDay(c.deliver_by)}
+          {projected ? ` · projected ${fmtDay(new Date(projected).toISOString())}` : ""}
+          {c.projection_basis ? ` — ${c.projection_basis}` : ""}
+        </span>
+      </div>
+      <div style={{ overflowX: "auto" }}>
+        <svg viewBox={`0 0 ${W} ${H}`} style={{ display: "block", width: "100%", minWidth: 520 }}>
+          {/* scope line */}
+          <line x1={L} y1={y(yMax)} x2={W - R} y2={y(yMax)}
+            stroke="var(--border)" strokeDasharray="2 3" />
+          <text x={L} y={y(yMax) - 4} fontSize={10} fill="var(--muted)">
+            scope · {burnup.scope_total}
+          </text>
+          <line x1={L} y1={y(0)} x2={W - R} y2={y(0)} stroke="var(--border)" />
+          {/* the two markers: his date, and the platform's */}
+          <line x1={x(deliverBy)} y1={T} x2={x(deliverBy)} y2={H - B}
+            stroke={c.status === "breached" ? "var(--critical)" : "var(--ink-2)"}
+            strokeWidth={1.4} />
+          <text x={x(deliverBy)} y={H - B + 14} fontSize={10} textAnchor="middle"
+            fill={c.status === "breached" ? "var(--critical)" : "var(--ink-2)"}>
+            committed {fmtDay(c.deliver_by)}
+          </text>
+          {projected && Math.abs(x(projected) - x(deliverBy)) > 40 && (
+            <text x={x(projected)} y={T + 9} fontSize={10} textAnchor="middle"
+              fill={projected > deliverBy ? "var(--serious)" : "var(--good)"}>
+              projected {fmtDay(new Date(projected).toISOString())}
+            </text>
+          )}
+          {projected && (
+            <line x1={x(projected)} y1={T} x2={x(projected)} y2={H - B}
+              stroke={projected > deliverBy ? "var(--serious)" : "var(--good)"}
+              strokeDasharray="4 3" strokeWidth={1.4} />
+          )}
+          {/* projection reach: from where the work stands to where it lands */}
+          {projected && lastN < yMax && (
+            <line x1={x(Math.min(now, end))} y1={y(lastN)} x2={x(projected)} y2={y(yMax)}
+              stroke={projected > deliverBy ? "var(--serious)" : "var(--good)"}
+              strokeDasharray="3 4" strokeWidth={1.2} />
+          )}
+          {/* the record */}
+          <path d={line} fill="none" stroke="var(--accent)" strokeWidth={2} />
+          {points.map((p) => (
+            <circle key={p.t} cx={x(p.t)} cy={y(p.n)} r={2.6} fill="var(--accent)" />
+          ))}
+        </svg>
+      </div>
+    </div>
+  );
+}
+
 // ── the dependency graph ────────────────────────────────────────────────────────
 
 const NODE_W = 168;
@@ -396,9 +593,16 @@ export default function Plan({ ctx }: { ctx: ProjectCtx }) {
   const critical = data.critical_path?.keys ?? [];
   const sums = plan.arithmetic;
   const stages = [...new Set(reqs.map((r) => r.stage))].sort((a, b) => a - b);
+  const commitment = data.commitment ?? null;
 
   return (
     <div>
+      {commitment?.status === "proposed" && (
+        <ProposedCommitment c={commitment} onDone={reload} />
+      )}
+      {commitment && (commitment.status === "at_risk" || commitment.status === "breached") && (
+        <SlippingCommitment c={commitment} onDone={reload} />
+      )}
       {/* R-00, translated. When the plan does not hold the reasons are the
           platform's own words — the same list the CEO reads in its refusal. */}
       {!plan.holds ? (
@@ -418,6 +622,19 @@ export default function Plan({ ctx }: { ctx: ProjectCtx }) {
         </div>
       ) : (
         <div className="tiles" style={{ marginBottom: 14 }}>
+          {commitment && !["proposed", "at_risk", "breached"].includes(commitment.status) && (
+            <div className="tile">
+              <div className="label">Commitment</div>
+              <div className="value">{fmtDay(commitment.deliver_by)}</div>
+              <div className="sub">
+                {commitment.status === "met"
+                  ? `delivered ${commitment.met_at ? fmtDay(commitment.met_at) : ""} — every requirement true`
+                  : commitment.projected_done_at
+                    ? `projected ${fmtDay(commitment.projected_done_at)} — holds`
+                    : "accepted — no projection yet"}
+              </div>
+            </div>
+          )}
           <div className="tile">
             <div className="label">Scope</div>
             <div className="value">{sums.requirements}</div>
@@ -480,6 +697,10 @@ export default function Plan({ ctx }: { ctx: ProjectCtx }) {
             </div>
           )}
         </div>
+      )}
+
+      {commitment && commitment.status !== "proposed" && data.burnup && (
+        <Burnup c={commitment} burnup={data.burnup} />
       )}
 
       <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 12 }}>

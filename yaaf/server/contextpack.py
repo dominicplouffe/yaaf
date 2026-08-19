@@ -503,6 +503,28 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
                          "nobody here can."),
                 "arithmetic": policy.plan_arithmetic(session, project, cons),
             }
+        # The promise, if one exists. The projection and status are read-only
+        # facts here — the enforcement (scope freeze) lives in policy, and the
+        # transitions in the janitor.
+        commitment = policy.open_commitment(session, project.id)
+        if commitment is not None:
+            frozen = commitment.status in ("at_risk", "breached")
+            pack["commitment"] = {
+                "status": commitment.status,
+                "deliver_by": commitment.deliver_by.isoformat(),
+                "projected_done_at": (commitment.projected_done_at.isoformat()
+                                      if commitment.projected_done_at else None),
+                "basis": (commitment.projection or {}).get("note"),
+                "note": (
+                    "Waiting on the chairman; nothing binds yet."
+                    if commitment.status == "proposed" else
+                    "New scope is FROZEN: requirement proposals are refused while the "
+                    "projection is past the date. Finish what is open or propose cuts."
+                    if frozen else
+                    "The platform recomputes the projection continuously. If it slips "
+                    "past the date, new scope freezes and the chairman is emailed."
+                ),
+            }
         if requirements:
             blocked = {
                 r.id: [d.key for d in policy.unmet_dependencies(session, r)]

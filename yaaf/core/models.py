@@ -149,6 +149,24 @@ class RequirementStatus(enum.StrEnum):
     CUT = "cut"                  # the chairman removed it from scope
 
 
+class CommitmentStatus(enum.StrEnum):
+    """A delivery date, and what the promise is currently worth.
+
+    PROPOSED is the CEO asking to commit; it binds nothing. ACCEPTED is the
+    chairman's act, and from that moment the platform recomputes the projection
+    on every janitor tick and moves the status itself. There is no agent verb
+    behind any of these transitions — the strongest form of "the CEO never
+    states a date" is that the date is computed and the walls move by
+    themselves.
+    """
+
+    PROPOSED = "proposed"
+    ACCEPTED = "accepted"
+    AT_RISK = "at_risk"    # the projection lands past deliver_by
+    BREACHED = "breached"  # deliver_by passed with scope still open
+    MET = "met"            # every requirement in scope settled true
+
+
 class EvidenceProvenance(enum.StrEnum):
     AGENT_CLAIMED = "agent_claimed"        # unverified until the platform checks it
     PLATFORM_ATTESTED = "platform_attested"  # arrived via a connector agents can't forge
@@ -242,6 +260,15 @@ class NoticeKind(enum.StrEnum):
     # accepting writes and only the curator can restart it.
     MEMORY_PRESSURE = "memory_pressure"
     MEMORY_FULL = "memory_full"
+    # The commitment's transitions and re-validations, each disclosed to the
+    # CEO exactly once. AT_RISK and BREACHED also freeze new scope — the
+    # notice is the explanation, the refusal in policy is the enforcement.
+    COMMITMENT_ACCEPTED = "commitment_accepted"
+    COMMITMENT_AT_RISK = "commitment_at_risk"
+    COMMITMENT_BREACHED = "commitment_breached"
+    COMMITMENT_RECOVERED = "commitment_recovered"
+    COMMITMENT_MET = "commitment_met"
+    COMMITMENT_REVALIDATED = "commitment_revalidated"
 
 
 # ── people & projects ───────────────────────────────────────────────────────────
@@ -551,6 +578,58 @@ class RequirementEdge(Base):
     from_requirement_id: Mapped[str] = mapped_column(ForeignKey("requirements.id"))
     to_requirement_id: Mapped[str] = mapped_column(ForeignKey("requirements.id"))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class Commitment(Base):
+    """The delivery date, as a row the platform owns.
+
+    The chairman's ask: "it's impossible to get a delivery date or anything of
+    substance that can offer me some sort of guarantee." The guarantee is not
+    that the date holds — nobody can promise that. It is that when the date
+    stops holding the company cannot quietly add work: new scope is refused,
+    the chairman is emailed, and what happens next is his decision, made with
+    the projection in front of him.
+
+    The CEO proposes a commitment but never writes the date — `deliver_by` is
+    stamped by the platform from its own projection at proposal time, and the
+    chairman may replace it with his own date when he accepts. Two freezes at
+    acceptance make later drift *detectable*: `constitution_version` records
+    the rules the promise was made under, `scope_snapshot` the requirement
+    keys it covered. The janitor re-validates when either moves, or when
+    failure load crosses its constitution threshold — state-based diffs
+    against `projection`, never event hooks, because amendments apply inline
+    from three different callers and a hook misses every one it was not wired
+    to.
+    """
+
+    __tablename__ = "commitments"
+    __table_args__ = (Index("ix_commitments_project_status", "project_id", "status"),)
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    status: Mapped[str] = mapped_column(String(16), default=CommitmentStatus.PROPOSED)
+    deliver_by: Mapped[datetime] = mapped_column(UTCDateTime)
+    proposed_by_agent_id: Mapped[str | None] = mapped_column(String(40))
+    # The CEO's words with the proposal — why it believes the date.
+    note: Mapped[str | None] = mapped_column(Text)
+    accepted_by_user_id: Mapped[str | None] = mapped_column(String(40))
+    accepted_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # Frozen at acceptance and never updated: the rulebook the promise was
+    # made under. The current version lives in `projection`, where the
+    # janitor's trigger diff can see it move.
+    constitution_version: Mapped[int | None] = mapped_column(Integer)
+    # The requirement keys in force (accepted, not cut) at acceptance.
+    scope_snapshot: Mapped[list] = mapped_column(JSONVariant, default=list)
+    # Platform-computed, janitor-refreshed. No route writes this from input.
+    projected_done_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # What the janitor last read to project: constitution version, scope keys,
+    # failure load, method and basis sentence. The three re-validation
+    # triggers are diffs against this.
+    projection: Mapped[dict | None] = mapped_column(JSONVariant)
+    status_reason: Mapped[str | None] = mapped_column(Text)
+    met_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
 
 
 # ── work: tasks ─────────────────────────────────────────────────────────────────

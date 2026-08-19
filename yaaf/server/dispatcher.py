@@ -80,7 +80,13 @@ MESSAGE_COALESCE_COUNT = 3
 # store is not worth a full-price wake, so it coalesces and rides the next one.
 URGENT_NOTICE_KINDS = {NoticeKind.BUDGET_WARNING, NoticeKind.BUDGET_EXHAUSTED,
                        NoticeKind.APPROVAL_DECIDED, NoticeKind.AUDIT_FAILED,
-                       NoticeKind.MEMORY_FULL}
+                       NoticeKind.MEMORY_FULL,
+                       NoticeKind.COMMITMENT_AT_RISK, NoticeKind.COMMITMENT_BREACHED}
+
+# A commitment that stopped holding needs a re-forecast wake even on a day
+# ordinary work already spent the allowance — that wake is one of the three
+# things the reserved governance slice exists for.
+COMMITMENT_NOTICE_KINDS = {NoticeKind.COMMITMENT_AT_RISK, NoticeKind.COMMITMENT_BREACHED}
 
 
 def dispatcher_loop() -> None:  # pragma: no cover - thin loop around dispatch_once
@@ -623,6 +629,10 @@ def _wake_reasons(
         ripe = oldest <= now - timedelta(minutes=NOTICE_COALESCE_MINUTES)
         if urgent or ripe or len(pending) >= NOTICE_COALESCE_COUNT:
             reasons.append({"kind": "notices", "count": len(pending)})
+        # The re-forecast wake is governance: it must land on the day the
+        # allowance is gone, because that is exactly the day the date slipped.
+        if any(kind in COMMITMENT_NOTICE_KINDS for kind, _ in pending):
+            reasons.append({"kind": "commitment"})
 
     # 3. Work: ready tasks this agent could claim, or a claim to push forward.
     reasons.extend(_work_reasons(session, agent, now))

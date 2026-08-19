@@ -30,10 +30,11 @@ from yaaf.core.models import Base
 
 REPO = Path(__file__).resolve().parents[2]
 
-# The tables and columns stage 1 introduced. A database stamped at 0001 before
-# they existed is the shape this file exists to defend, so it is built by hand
-# rather than derived from today's metadata — deriving it from the models would
-# make the test agree with whatever the models happen to say.
+# The tables and columns each stage introduced. A database stamped at an older
+# revision before they existed is the shape this file exists to defend, so the
+# lists are built by hand rather than derived from today's metadata — deriving
+# them from the models would make the test agree with whatever the models
+# happen to say. Every stage that adds schema adds its entries here.
 STAGE_1_TABLES = ("requirement_edges", "requirement_events", "requirements")
 STAGE_1_COLUMNS = (
     ("projects", "mode"),
@@ -41,6 +42,10 @@ STAGE_1_COLUMNS = (
     ("runs", "requirement_id"),
     ("run_queue", "requirement_id"),
 )
+STAGE_5_TABLES = ("commitments",)
+
+REMOVED_TABLES = STAGE_1_TABLES + STAGE_5_TABLES
+REMOVED_COLUMNS = STAGE_1_COLUMNS
 
 
 def _alembic_config(url: str) -> Config:
@@ -74,10 +79,10 @@ def _create_pre_stage_1_schema(engine) -> None:
     in a foreign key. The migration guards only ever ask `has_table` and
     `has_column`, so names are the whole of what this needs to get right.
     """
-    removed = set(STAGE_1_COLUMNS)
+    removed = set(REMOVED_COLUMNS)
     old = sa.MetaData()
     for table in Base.metadata.sorted_tables:
-        if table.name in STAGE_1_TABLES:
+        if table.name in REMOVED_TABLES:
             continue
         columns = [
             sa.Column(column.name, column.type, primary_key=column.primary_key)
@@ -134,7 +139,7 @@ def test_a_database_stamped_before_stage_1_still_reaches_the_models(scratch_db):
     _create_pre_stage_1_schema(engine)
 
     before = _live_schema(engine)
-    for table in STAGE_1_TABLES:
+    for table in REMOVED_TABLES:
         assert table not in before, "the fixture must actually remove the table"
 
     config = _alembic_config(scratch_db)

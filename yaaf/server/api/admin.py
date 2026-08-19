@@ -24,6 +24,7 @@ from yaaf.core.constitution import (
     ConstitutionDoc,
     create_initial,
     effective,
+    effective_version,
     propose_amendment,
 )
 from yaaf.core.db import notify
@@ -36,6 +37,8 @@ from yaaf.core.models import (
     AuditLog,
     Channel,
     ChannelKind,
+    Commitment,
+    CommitmentStatus,
     Evidence,
     Hypothesis,
     HypothesisStatus,
@@ -1725,6 +1728,177 @@ def requirement_verdict(
     _audit(session, row.project_id, "requirement.verdict", "requirement", row.id,
            {"key": row.key, "ok": body.ok})
     return {"id": row.id, "key": row.key, "status": row.status}
+
+
+# ── the commitment: the chairman owns the date ──────────────────────────────────
+
+
+def _get_commitment(session: Session, commitment_id: str) -> Commitment:
+    row = session.get(Commitment, commitment_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="unknown commitment")
+    return row
+
+
+def _freeze_commitment_basis(session: Session, project: Project, row: Commitment,
+                             cons: ConstitutionDoc) -> None:
+    """Record what the promise was made under, and project from it fresh. The
+    janitor's three re-validation triggers diff against exactly this."""
+    from yaaf.server.velocity import commitment_projection
+
+    scope_keys = policy.commitment_scope_keys(session, project.id)
+    scope = [r for r in policy.scope_requirements(session, project.id)
+             if r.key in set(scope_keys)]
+    row.constitution_version = effective_version(session, project.id)
+    row.scope_snapshot = scope_keys
+    projection = commitment_projection(session, project, cons)
+    row.projected_done_at = (projection["projected_done_at"]
+                             if projection["known"] else None)
+    row.projection = {
+        "constitution_version": row.constitution_version,
+        "scope_keys": scope_keys,
+        "failure_load": sum(r.failure_load for r in scope),
+        "method": projection.get("method"),
+        "note": projection.get("basis") or projection.get("why"),
+    }
+
+
+class CommitmentAccept(BaseModel):
+    # The chairman's own date, if he wants one other than the projection the
+    # CEO proposed. His to write — the constraint runs on agents, not on him.
+    deliver_by: datetime | None = None
+    note: str = Field(default="", max_length=4000)
+
+
+@router.post("/commitments/{commitment_id}/accept")
+def accept_commitment(
+    commitment_id: str, body: CommitmentAccept, session: Session = Depends(db)
+) -> dict:
+    """The promise becomes a promise here and nowhere else.
+
+    Acceptance freezes two things — the constitution version and the scope
+    keys in force — so that later drift is detectable rather than deniable.
+    From this moment the janitor recomputes the projection continuously and
+    walks the status itself; nobody, including the chairman, edits it by hand.
+    """
+    row = _get_commitment(session, commitment_id)
+    project = _get_project(session, row.project_id)
+    try:
+        policy.check_commitment_accept(row)
+    except policy.Refusal as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    if body.deliver_by is not None:
+        deliver_by = body.deliver_by
+        if deliver_by.tzinfo is None:
+            from datetime import UTC
+            deliver_by = deliver_by.replace(tzinfo=UTC)
+        if deliver_by <= utcnow():
+            raise HTTPException(
+                status_code=422,
+                detail="deliver_by is in the past — a promise that starts breached "
+                       "is not a promise.",
+            )
+        row.deliver_by = deliver_by
+    cons = effective(session, project.id)
+    row.status = CommitmentStatus.ACCEPTED
+    row.accepted_by_user_id = project.chairman_user_id
+    row.accepted_at = utcnow()
+    _freeze_commitment_basis(session, project, row, cons)
+    _audit(session, project.id, "commitment.accept", "commitment", row.id,
+           {"deliver_by": row.deliver_by.isoformat(),
+            "constitution_version": row.constitution_version,
+            "scope": row.scope_snapshot})
+    _notice_ceo(
+        session, project.id, NoticeKind.COMMITMENT_ACCEPTED,
+        f"The chairman ACCEPTED the commitment: {len(row.scope_snapshot)} "
+        f"requirement(s) by {row.deliver_by:%Y-%m-%d}."
+        + (f" His note: {body.note[:500]}" if body.note else "")
+        + " From here the platform recomputes the projection continuously. If it "
+          "slips past the date, new scope freezes and he is emailed — the way to "
+          "keep the promise is to finish things, not to say reassuring words about "
+          "them.",
+    )
+    return {"id": row.id, "status": row.status,
+            "deliver_by": row.deliver_by.isoformat(),
+            "constitution_version": row.constitution_version,
+            "scope_snapshot": row.scope_snapshot}
+
+
+class CommitmentDecline(BaseModel):
+    reason: str = Field(min_length=5, max_length=4000)
+
+
+@router.post("/commitments/{commitment_id}/decline")
+def decline_commitment(
+    commitment_id: str, body: CommitmentDecline, session: Session = Depends(db)
+) -> dict:
+    """A proposal the chairman does not want is removed, with his reason on the
+    record and in front of the CEO. Only proposals — a live promise is not
+    something to disappear; move its date or cut its scope instead."""
+    row = _get_commitment(session, commitment_id)
+    if row.status != CommitmentStatus.PROPOSED:
+        raise HTTPException(
+            status_code=409,
+            detail=f"This commitment is {row.status}; only a proposal can be declined. "
+                   "A live promise is changed by moving the date or cutting scope, "
+                   "never by deleting it.",
+        )
+    project = _get_project(session, row.project_id)
+    _audit(session, project.id, "commitment.decline", "commitment", row.id,
+           {"reason": body.reason, "deliver_by": row.deliver_by.isoformat()})
+    _notice_ceo(
+        session, project.id, NoticeKind.GOAL_CHANGED,
+        f"The chairman DECLINED the proposed commitment ({row.deliver_by:%Y-%m-%d}). "
+        f"His reason: {body.reason[:1000]}\nNothing binds. Keep working the plan; "
+        "propose again when the arithmetic has changed enough to answer him.",
+    )
+    session.delete(row)
+    return {"declined": commitment_id}
+
+
+class CommitmentMove(BaseModel):
+    deliver_by: datetime
+    reason: str = Field(min_length=5, max_length=4000)
+
+
+@router.post("/commitments/{commitment_id}/move")
+def move_commitment(
+    commitment_id: str, body: CommitmentMove, session: Session = Depends(db)
+) -> dict:
+    """The chairman moves the date — the release valve on a promise that
+    stopped holding, and one of the six levers the stage-7 review will offer.
+    Recorded with his reason, disclosed to the CEO, re-projected on the spot
+    so at_risk/breached lift (or persist) immediately rather than on the next
+    janitor tick."""
+    row = _get_commitment(session, commitment_id)
+    if row.status not in policy.LIVE_COMMITMENT_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail=f"This commitment is {row.status}; only a live one has a date to move.",
+        )
+    project = _get_project(session, row.project_id)
+    deliver_by = body.deliver_by
+    if deliver_by.tzinfo is None:
+        from datetime import UTC
+        deliver_by = deliver_by.replace(tzinfo=UTC)
+    old = row.deliver_by
+    row.deliver_by = deliver_by
+    _audit(session, project.id, "commitment.move", "commitment", row.id,
+           {"from": old.isoformat(), "to": deliver_by.isoformat(),
+            "reason": body.reason})
+    _notice_ceo(
+        session, project.id, NoticeKind.GOAL_CHANGED,
+        f"The chairman MOVED the commitment date: {old:%Y-%m-%d} → "
+        f"{deliver_by:%Y-%m-%d}. His reason: {body.reason[:1000]}\nThe projection is "
+        "being re-checked against the new date; a freeze lifts only if the "
+        "arithmetic now fits inside it.",
+    )
+    # Re-walk the status now, through the same producer the janitor uses.
+    from yaaf.server import janitor
+
+    janitor.check_commitments(session, project, effective(session, project.id))
+    return {"id": row.id, "status": row.status,
+            "deliver_by": row.deliver_by.isoformat()}
 
 
 class SecretIn(BaseModel):

@@ -50,6 +50,8 @@ from yaaf.core.models import (
     AuditLog,
     Channel,
     ChannelKind,
+    Commitment,
+    CommitmentStatus,
     Evidence,
     EvidenceKind,
     Hypothesis,
@@ -1180,6 +1182,177 @@ def critical_path(session: Session, project_id: str) -> dict:
         "adjusted_runs": top_cost,
         "multiplier": round(multiplier, 2),
     }
+
+
+# ── the commitment: a date, and what may not happen past it ─────────────────────
+#
+# The chairman asked for "a delivery date and anything of substance that can
+# offer me some sort of guarantee". Two absent verbs and one refusal carry it:
+#
+#   * no agent writes a date — the CEO proposes a commitment and the platform
+#     stamps its own projection as the proposed date; the chairman may replace
+#     it with his when he accepts
+#   * no agent moves a commitment's status — the janitor recomputes the
+#     projection and walks accepted → at_risk → breached → met by itself
+#   * while the projection is past the date, NEW SCOPE IS REFUSED. Existing
+#     work continues; a new requirement needs the chairman himself.
+
+LIVE_COMMITMENT_STATUSES = (
+    CommitmentStatus.ACCEPTED,
+    CommitmentStatus.AT_RISK,
+    CommitmentStatus.BREACHED,
+)
+
+
+def live_commitment(session: Session, project_id: str) -> Commitment | None:
+    """The commitment currently in force: accepted and not yet met. At most
+    one exists, because proposing a second while any is open is refused."""
+    return session.execute(
+        select(Commitment)
+        .where(Commitment.project_id == project_id,
+               Commitment.status.in_(LIVE_COMMITMENT_STATUSES))
+        .order_by(Commitment.created_at.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+
+def open_commitment(session: Session, project_id: str) -> Commitment | None:
+    """Live, or still on the chairman's desk. What "one promise at a time"
+    counts against, and what the context pack shows the CEO."""
+    return session.execute(
+        select(Commitment)
+        .where(Commitment.project_id == project_id,
+               Commitment.status.in_((CommitmentStatus.PROPOSED,
+                                      *LIVE_COMMITMENT_STATUSES)))
+        .order_by(Commitment.created_at.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+
+def commitment_scope_keys(session: Session, project_id: str) -> list[str]:
+    """The requirement keys in force: accepted (met included — it was in
+    force and delivered), cut and merely-proposed excluded. This is what gets
+    frozen into scope_snapshot and what the janitor diffs against it."""
+    return sorted(
+        r.key
+        for r in scope_requirements(session, project_id)
+        if r.status not in (RequirementStatus.PROPOSED, RequirementStatus.CUT)
+    )
+
+
+def check_commitment_propose(
+    session: Session, project: Project, cons: ConstitutionDoc, agent: Agent
+) -> dict:
+    """Only the CEO asks to commit, only on a plan that holds, and the date it
+    proposes is not its to write: the platform computes the projection and
+    that projection IS the proposal. Returns it so the route can stamp it."""
+    require_project_running(project)
+    if agent.kind != AgentKind.CEO:
+        raise Refusal(
+            "Only the CEO proposes a commitment. If you believe a date can be promised, "
+            "say so to the CEO — the promise is made from the whole plan, not one desk.",
+            status_code=403,
+        )
+    if not requires_requirements(project):
+        raise Refusal(
+            "This is an Explore project: it has no fixed scope, so there is nothing a "
+            "delivery date could be a promise about. Its shape is bets and evidence.",
+            status_code=422,
+        )
+    plan = plan_requirement(session, project.id)
+    if plan is None or plan.status != RequirementStatus.MET:
+        raise Refusal(
+            "There is no plan yet, so there is nothing to promise a date on — a date "
+            "without a plan under it is a wish. Close R-00 first: propose requirements, "
+            "get them accepted, and the moment the plan holds you can ask to commit.",
+            status_code=409,
+        )
+    existing = open_commitment(session, project.id)
+    if existing is not None:
+        raise Refusal(
+            f"A commitment already exists and is {existing.status} "
+            f"(deliver by {existing.deliver_by:%Y-%m-%d}). One promise at a time: "
+            "deliver this one, or take what should change about it to the chairman.",
+            status_code=409,
+        )
+    from yaaf.server.velocity import commitment_projection
+
+    projection = commitment_projection(session, project, cons)
+    if not projection["known"]:
+        raise Refusal(
+            "There is nothing to project a date from: " + projection["why"] + " "
+            "Estimate the scope or meet something first — a promise with no arithmetic "
+            "under it is exactly the kind of date this platform refuses to state.",
+            status_code=409,
+        )
+    return projection
+
+
+def check_commitment_accept(commitment: Commitment) -> None:
+    if commitment.status != CommitmentStatus.PROPOSED:
+        raise Refusal(
+            f"This commitment is {commitment.status}, not proposed. Only a proposal "
+            "can be accepted.",
+            status_code=409,
+        )
+
+
+def commitment_scope_frozen(
+    session: Session, project: Project, cons: ConstitutionDoc
+) -> tuple[Commitment, dict, str] | None:
+    """Is new scope frozen right now? None when it is not; otherwise the
+    commitment, the live projection, and which wall — "breached" (the date has
+    passed) or "late" (the projection lands past it).
+
+    Computed live rather than read off the row, so the refusal can never lag
+    the janitor by a tick: the janitor owns the *disclosed* status, this owns
+    the wall itself, and both call the same projection producer.
+    """
+    commitment = live_commitment(session, project.id)
+    if commitment is None:
+        return None
+    from yaaf.server.velocity import commitment_projection
+
+    projection = commitment_projection(session, project, cons)
+    if utcnow() > commitment.deliver_by:
+        return commitment, projection, "breached"
+    if projection["known"] and projection["remaining"] > 0 \
+            and projection["projected_done_at"] > commitment.deliver_by:
+        return commitment, projection, "late"
+    return None
+
+
+def check_scope_within_commitment(
+    session: Session, project: Project, cons: ConstitutionDoc
+) -> None:
+    """The guarantee, as a refusal. When the date stops holding, the company
+    cannot quietly add work — existing work continues, but a new requirement
+    needs the chairman himself, with the slip in front of him."""
+    frozen = commitment_scope_frozen(session, project, cons)
+    if frozen is None:
+        return
+    commitment, projection, wall = frozen
+    if wall == "breached":
+        raise Refusal(
+            f"No new scope: the commitment is breached. You promised "
+            f"{commitment.deliver_by:%Y-%m-%d} and it has passed with "
+            f"{projection['remaining']} requirement(s) still open. Existing work "
+            "continues — finish it. New scope is the chairman's to add now, with the "
+            "breach in front of him; he has been told, and this is not something you "
+            "can plan your way around.",
+            status_code=409,
+        )
+    projected = projection["projected_done_at"]
+    days_late = max(1, (projected - commitment.deliver_by).days)
+    raise Refusal(
+        f"No new scope while the date does not hold. You promised "
+        f"{commitment.deliver_by:%Y-%m-%d} and the projection lands "
+        f"{projected:%Y-%m-%d} — about {days_late} day(s) past it "
+        f"({projection['basis']}). Adding work moves that the wrong way. Finish "
+        "something, or propose cuts to the chairman; if the scope truly must grow, "
+        "that is his decision to make with the slip in front of him, not yours.",
+        status_code=409,
+    )
 
 
 # ── message rules ───────────────────────────────────────────────────────────────

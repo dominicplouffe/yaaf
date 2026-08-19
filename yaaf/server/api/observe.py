@@ -22,6 +22,7 @@ from yaaf.core.models import (
     Approval,
     ApprovalStatus,
     Channel,
+    Commitment,
     Evidence,
     EvidenceKind,
     Hypothesis,
@@ -30,6 +31,7 @@ from yaaf.core.models import (
     MemoryScope,
     Message,
     Project,
+    RequirementEvent,
     RequirementStatus,
     Role,
     RoleVersion,
@@ -46,7 +48,7 @@ from yaaf.core.models import (
     utcnow,
 )
 from yaaf.server import policy, typing_state
-from yaaf.server.velocity import project_velocity
+from yaaf.server.velocity import commitment_projection, project_velocity
 from yaaf.server.deps import admin_auth, db
 from yaaf.server.dispatcher import (
     activity_state,
@@ -616,6 +618,53 @@ def plan_view(project_id: str, session: Session = Depends(db)) -> dict:
         )
     }
 
+    # The promise and the line toward it. The projection is computed live from
+    # the same producer the janitor stamps and the refusals quote; the status
+    # is the janitor's (it owns the transitions and the disclosure).
+    commitment_row = session.execute(
+        select(Commitment).where(Commitment.project_id == project.id)
+        .order_by(Commitment.created_at.desc()).limit(1)
+    ).scalar_one_or_none()
+    commitment = None
+    burnup = None
+    if commitment_row is not None:
+        projection = commitment_projection(session, project, cons)
+        commitment = {
+            "id": commitment_row.id,
+            "status": commitment_row.status,
+            "deliver_by": commitment_row.deliver_by.isoformat(),
+            "projected_done_at": (
+                projection["projected_done_at"].isoformat()
+                if projection["known"] else None),
+            "projection_basis": projection.get("basis") or projection.get("why"),
+            "accepted_at": (commitment_row.accepted_at.isoformat()
+                            if commitment_row.accepted_at else None),
+            "constitution_version": commitment_row.constitution_version,
+            "scope_snapshot": commitment_row.scope_snapshot or [],
+            "status_reason": commitment_row.status_reason,
+            "note": commitment_row.note,
+            "met_at": (commitment_row.met_at.isoformat()
+                       if commitment_row.met_at else None),
+        }
+        # Cumulative MET over time — the burn-up's line. R-00 excluded for the
+        # same reason velocity excludes it: the gate lifting is not scope
+        # landing.
+        met_stmt = (
+            select(RequirementEvent.at)
+            .where(RequirementEvent.project_id == project.id,
+                   RequirementEvent.to_status == RequirementStatus.MET)
+            .order_by(RequirementEvent.at)
+        )
+        if plan is not None:
+            met_stmt = met_stmt.where(RequirementEvent.requirement_id != plan.id)
+        met_at = [at for (at,) in session.execute(met_stmt)]
+        burnup = {
+            "scope_total": len(policy.commitment_scope_keys(session, project.id)),
+            "met_points": [
+                {"at": at.isoformat(), "count": i + 1} for i, at in enumerate(met_at)
+            ],
+        }
+
     return {
         "mode": project.mode,
         "planless": False,
@@ -626,6 +675,8 @@ def plan_view(project_id: str, session: Session = Depends(db)) -> dict:
             "arithmetic": policy.plan_arithmetic(session, project, cons),
             "planning_spend": spend.get(plan.id, {"runs": 0, "usd": 0}) if plan else None,
         },
+        "commitment": commitment,
+        "burnup": burnup,
         "open_stage": policy.open_stage(session, project.id),
         "critical_path": policy.critical_path(session, project.id),
         "velocity": project_velocity(session, project.id),

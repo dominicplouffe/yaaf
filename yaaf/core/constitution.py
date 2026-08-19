@@ -223,6 +223,16 @@ class ConstitutionDoc(BaseModel):
         help="IANA name, e.g. 'America/New_York'. Every local time in these rules — the "
              "reporting window, the daily wake, a recurring rhythm — is read in this zone.")
 
+    # The commitment. The projection itself refreshes every janitor tick; this
+    # governs the third re-validation trigger — the "errors" one.
+    commitment_failure_reforecast: int = _rule(
+        5, ge=0, group="The commitment", label="Dead runs before the promise is re-checked",
+        help="Once this many runs have died against the plan since the commitment was "
+             "last validated, the platform re-projects the date and tells the CEO the "
+             "ground moved. Rule changes and scope changes always re-validate; this "
+             "catches the failure-storm case where neither moved but the pace did. "
+             "0 turns this trigger off.")
+
     # Runs
     run_timeout_s: int = _rule(
         1800, ge=60, group="Runs", label="Run timeout (seconds)",
@@ -277,6 +287,20 @@ def effective(session: Session, project_id: str, at: datetime | None = None) -> 
     if row is None:
         raise LookupError(f"project {project_id} has no effective constitution")
     return ConstitutionDoc.model_validate(row.body)
+
+
+def effective_version(session: Session, project_id: str, at: datetime | None = None) -> int:
+    """The version number behind :func:`effective` — same filter, so the two
+    can never describe different documents. The commitment freezes this at
+    acceptance and the janitor diffs it to notice an amendment landed."""
+    at = at or utcnow()
+    version = session.execute(
+        select(Constitution.version)
+        .where(Constitution.project_id == project_id, Constitution.effective_at <= at)
+        .order_by(Constitution.version.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    return int(version or 0)
 
 
 def create_initial(session: Session, project_id: str, doc: ConstitutionDoc) -> Constitution:

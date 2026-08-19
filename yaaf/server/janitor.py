@@ -29,12 +29,18 @@ from sqlalchemy.orm import Session
 
 from yaaf.core import ids
 from yaaf.core.config import settings
-from yaaf.core.constitution import ConstitutionDoc, apply_due_amendments, effective
+from yaaf.core.constitution import (
+    ConstitutionDoc,
+    apply_due_amendments,
+    effective,
+    effective_version,
+)
 from yaaf.core.db import db_session, notify
 from yaaf.core.models import (
     Agent,
     Approval,
     ApprovalStatus,
+    CommitmentStatus,
     Hypothesis,
     HypothesisStatus,
     LedgerEntry,
@@ -96,6 +102,7 @@ def janitor_once(session: Session) -> None:
         release_dead_claims(session, project, cons)
         check_plan(session, project, cons)
         check_finished_requirements(session, project)
+        check_commitments(session, project, cons)
         warn_drought(session, project, cons)
         warn_memory_pressure(session, project, cons)
     verify_pending_evidence(session)
@@ -179,6 +186,190 @@ def check_plan(session: Session, project: Project, cons: ConstitutionDoc) -> boo
         )
         return True
     return False
+
+
+# ── the commitment: does the date still hold? ───────────────────────────────────
+
+
+# Only re-stamp the row when the projection has genuinely moved; the naive
+# projection slides forward every second and stamping it every tick would turn
+# an idle project into a write-per-15s heartbeat on its own promise.
+PROJECTION_STAMP_TOLERANCE = timedelta(hours=1)
+
+
+def check_commitments(session: Session, project: Project, cons: ConstitutionDoc) -> None:
+    """The forecast, recomputed; the promise, re-validated; every transition,
+    disclosed.
+
+    In the janitor for the same reason check_plan is: the promise can stop
+    holding without anyone touching a commitment — the trailing pace slides, a
+    run dies, the chairman amends a rule. Re-validation is STATE-BASED, a diff
+    of {constitution version, scope keys, failure load} against what this
+    function last recorded on the row. Never event hooks: amendments apply
+    inline from three different callers, and a hook misses every one it was
+    not wired to.
+    """
+    commitment = policy.live_commitment(session, project.id)
+    if commitment is None:
+        return
+    from yaaf.server.velocity import commitment_projection
+
+    now = utcnow()
+    scope = [
+        r for r in policy.scope_requirements(session, project.id)
+        if r.status not in (RequirementStatus.PROPOSED, RequirementStatus.CUT)
+    ]
+    scope_keys = sorted(r.key for r in scope)
+    failure_load = sum(r.failure_load for r in scope)
+    version = effective_version(session, project.id)
+    projection = commitment_projection(session, project, cons)
+    projected = projection["projected_done_at"] if projection["known"] else None
+
+    # The three re-validation triggers, as diffs against the recorded basis.
+    basis = dict(commitment.projection or {})
+    moved: list[str] = []
+    if basis.get("constitution_version") != version:
+        if basis.get("constitution_version") is not None:
+            moved.append(
+                f"the rules moved (constitution v{basis['constitution_version']} → "
+                f"v{version}; the promise was accepted under "
+                f"v{commitment.constitution_version})"
+            )
+        basis["constitution_version"] = version
+    if basis.get("scope_keys") != scope_keys:
+        if basis.get("scope_keys") is not None:
+            old, new = set(basis["scope_keys"]), set(scope_keys)
+            delta = [f"+{k}" for k in sorted(new - old)] + \
+                    [f"−{k}" for k in sorted(old - new)]
+            moved.append("the scope changed (" + ", ".join(delta) + ")")
+        basis["scope_keys"] = scope_keys
+    prior_load = int(basis.get("failure_load") or 0)
+    if failure_load < prior_load:
+        basis["failure_load"] = failure_load  # scope was cut out from under it
+    elif cons.commitment_failure_reforecast and \
+            failure_load - prior_load >= cons.commitment_failure_reforecast:
+        moved.append(
+            f"{failure_load - prior_load} run(s) have died against the plan since the "
+            "promise was last validated"
+        )
+        basis["failure_load"] = failure_load
+    basis["method"] = projection.get("method")
+    basis["note"] = projection.get("basis") or projection.get("why")
+
+    # Where the promise stands now. Breach outranks risk; met outranks both.
+    met = bool(scope) and all(r.status == RequirementStatus.MET for r in scope)
+    if met:
+        status = CommitmentStatus.MET
+    elif now > commitment.deliver_by:
+        status = CommitmentStatus.BREACHED
+    elif projected is not None and projection["remaining"] > 0 \
+            and projected > commitment.deliver_by:
+        status = CommitmentStatus.AT_RISK
+    else:
+        status = CommitmentStatus.ACCEPTED
+
+    stamp = (
+        status != commitment.status
+        or bool(moved)
+        or (projected is None) != (commitment.projected_done_at is None)
+        or (projected is not None and commitment.projected_done_at is not None
+            and abs(projected - commitment.projected_done_at) > PROJECTION_STAMP_TOLERANCE)
+    )
+    if not stamp:
+        return
+    commitment.projected_done_at = projected
+    if projected is not None:
+        basis["projected_done_at"] = projected.isoformat()
+    commitment.projection = basis
+
+    if status == commitment.status:
+        if moved:
+            _notice_ceo(
+                session, project, NoticeKind.COMMITMENT_REVALIDATED,
+                "The ground under the commitment moved: " + "; ".join(moved) + ". "
+                "The platform re-projected the date"
+                + (f": the work now lands about {projected:%Y-%m-%d} against the "
+                   f"promised {commitment.deliver_by:%Y-%m-%d}." if projected
+                   else f", and there is currently no arithmetic to project from "
+                        f"({basis['note']}).")
+                + " Nothing is frozen — this is the promise being re-checked, "
+                  "which is what a promise is for.",
+            )
+        return
+
+    landing = (f"the projection lands about {projected:%Y-%m-%d}" if projected
+               else f"there is no arithmetic to project from ({basis['note']})")
+    ground = (" The ground moved first: " + "; ".join(moved) + ".") if moved else ""
+    commitment.status, from_status = status, commitment.status
+
+    if status == CommitmentStatus.MET:
+        commitment.met_at = now
+        commitment.status_reason = (
+            f"every requirement in scope is true ({len(scope_keys)} of them)"
+        )
+        _notice_ceo(
+            session, project, NoticeKind.COMMITMENT_MET,
+            f"The commitment is MET: all {len(scope_keys)} requirement(s) in scope are "
+            f"true, against a promise of {commitment.deliver_by:%Y-%m-%d}. The chairman "
+            "has been told. Do not invent new work to fill the quiet — if something "
+            "more is worth doing, it is a proposal for him, not a task.",
+        )
+        chairman_notify(
+            session, project, "commitment met",
+            f"Every requirement in scope is true — {len(scope_keys)} requirement(s), "
+            f"promised by {commitment.deliver_by:%Y-%m-%d}, finished "
+            f"{now:%Y-%m-%d %H:%M} UTC.",
+        )
+    elif status == CommitmentStatus.BREACHED:
+        commitment.status_reason = (
+            f"{commitment.deliver_by:%Y-%m-%d} passed with "
+            f"{projection['remaining']} requirement(s) still open"
+        )
+        _notice_ceo(
+            session, project, NoticeKind.COMMITMENT_BREACHED,
+            f"The commitment is BREACHED: {commitment.deliver_by:%Y-%m-%d} has passed "
+            f"and {projection['remaining']} requirement(s) are still open.{ground} "
+            "New scope is frozen — requirement proposals will be refused. Existing "
+            "work continues; finish it. The date is the chairman's to move and the "
+            "scope his to cut, and he has been emailed the numbers.",
+        )
+        chairman_notify(
+            session, project, "commitment BREACHED",
+            f"The promised date {commitment.deliver_by:%Y-%m-%d} has passed with "
+            f"{projection['remaining']} requirement(s) still open; {landing}. "
+            "New scope is frozen until you act: move the date, cut scope, or let it "
+            "stand and hold the company to finishing what is open.",
+        )
+    elif status == CommitmentStatus.AT_RISK:
+        days = max(1, (projected - commitment.deliver_by).days)
+        commitment.status_reason = f"{landing}, ~{days} day(s) past the promise"
+        _notice_ceo(
+            session, project, NoticeKind.COMMITMENT_AT_RISK,
+            f"The commitment is AT RISK: you promised {commitment.deliver_by:%Y-%m-%d} "
+            f"and {landing} — about {days} day(s) late ({basis['note']}).{ground} "
+            "New scope is frozen while this holds: proposals will be refused. Your "
+            "moves are the ones that change the arithmetic — finish what is open, or "
+            "propose cuts to the chairman. He has been emailed.",
+        )
+        chairman_notify(
+            session, project, "commitment at risk",
+            f"The projection now lands about {projected:%Y-%m-%d} against the promised "
+            f"{commitment.deliver_by:%Y-%m-%d} ({basis['note']}).{ground}\n\n"
+            "New scope is frozen for the CEO. Your levers: cut scope on the Plan "
+            "screen, move the date, or wait — the freeze lifts by itself if the pace "
+            "recovers.",
+        )
+    else:  # recovered to ACCEPTED
+        commitment.status_reason = None
+        _notice_ceo(
+            session, project, NoticeKind.COMMITMENT_RECOVERED,
+            f"The commitment holds again: {landing}, inside the promised "
+            f"{commitment.deliver_by:%Y-%m-%d}.{ground} New scope is no longer frozen. "
+            "It unfroze because the arithmetic changed, not because anyone relented — "
+            "keep it that way.",
+        )
+    log.info("commitment %s: %s → %s (project %s)",
+             commitment.id, from_status, status, project.slug)
 
 
 # ── requirements: is it true yet? ───────────────────────────────────────────────

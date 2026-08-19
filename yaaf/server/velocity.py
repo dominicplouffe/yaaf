@@ -26,7 +26,9 @@ from datetime import timedelta
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from yaaf.core.constitution import ConstitutionDoc
 from yaaf.core.models import (
+    Project,
     Requirement,
     RequirementEvent,
     RequirementStatus,
@@ -141,3 +143,45 @@ def project_velocity(session: Session, project_id: str) -> dict:
         "runs_3w": runs_short,
         "worst_failure": _worst_failure(session, project_id),
     }
+
+
+def commitment_projection(session: Session, project: Project, cons: ConstitutionDoc) -> dict:
+    """Where the remaining scope lands, as a date. The ONLY producer of the
+    delivery projection: the propose route quotes it, the janitor stamps it on
+    the commitment, the scope refusal shows its arithmetic, and the Plan
+    screen draws it — one function, so none of them can ever disagree.
+
+    Measured pace first: remaining ÷ met-per-week, trailing 3 weeks, falling
+    back to 12. A project that has met nothing yet has no pace to divide by,
+    so it falls back to the plan's own arithmetic — adjusted runs at the daily
+    cap, the same sum the feasibility refusals quote. The basis is named in
+    the result, because a date that cannot say where it came from is an
+    assertion, not a forecast.
+    """
+    pace = project_velocity(session, project.id)
+    remaining = pace["remaining"]
+    now = utcnow()
+    if remaining == 0:
+        return {"known": True, "remaining": 0, "method": "settled",
+                "projected_done_at": now,
+                "basis": "nothing is open — the scope is settled"}
+    per_week = pace["per_week_3w"] or pace["per_week_12w"]
+    if per_week:
+        window = "3 weeks" if pace["per_week_3w"] else "12 weeks"
+        projected = now + timedelta(weeks=remaining / per_week)
+        return {"known": True, "remaining": remaining, "method": "velocity",
+                "per_week": per_week, "projected_done_at": projected,
+                "basis": f"{remaining} open requirement(s) at the measured pace of "
+                         f"{per_week}/week (trailing {window})"}
+    sums = policy.plan_arithmetic(session, project, cons)
+    if sums["adjusted_runs"] > 0 and cons.runs_per_project_per_day:
+        days = sums["adjusted_runs"] / cons.runs_per_project_per_day
+        return {"known": True, "remaining": remaining, "method": "plan_arithmetic",
+                "projected_done_at": now + timedelta(days=days),
+                "basis": f"nothing met yet, so this is the plan's own arithmetic: "
+                         f"{sums['adjusted_runs']} adjusted runs at "
+                         f"{cons.runs_per_project_per_day}/day ≈ {round(days, 1)} days — "
+                         "an at-the-cap best case, not a measured pace"}
+    return {"known": False, "remaining": remaining,
+            "why": "nothing has been met and nothing is estimated — there is no "
+                   "arithmetic to project a date from"}
