@@ -685,6 +685,17 @@ def _wake_reasons(
         if unfiled is not None:
             reasons.append({"kind": "review", "review_id": unfiled})
 
+        # 4d. An Operate cycle waiting on its plan. The CEO's first act in a
+        #     new cycle is to read the narratives and plan; governance-classed
+        #     for the same reason the review is — a rhythm that rolled on a
+        #     spent day still deserves its planning run.
+        from yaaf.core.models import ProjectMode, RequirementStatus
+
+        if project.mode == ProjectMode.OPERATE:
+            plan_row = policy.plan_requirement(session, project.id)
+            if plan_row is not None and plan_row.status != RequirementStatus.MET:
+                reasons.append({"kind": "cycle_plan"})
+
     return reasons
 
 

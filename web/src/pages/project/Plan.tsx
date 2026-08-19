@@ -565,6 +565,53 @@ function Graph({ reqs, critical }: { reqs: PlanRequirement[]; critical: string[]
 
 // ── the page ────────────────────────────────────────────────────────────────────
 
+interface CycleRow {
+  ordinal: number;
+  status: string;
+  opened_at: string;
+  closed_at: string | null;
+  narrative: string | null;
+}
+
+/** Operate only: the rhythm's record. The narratives are shown whole — they
+    are exactly what the CEO reads at the top of each cycle, and the chairman
+    should never see less than his own CEO does. */
+function CycleHistory({ projectId }: { projectId: string }) {
+  const { data } = usePoll<{ current: { ordinal: number } | null; history: CycleRow[] }>(
+    () => get(`/observe/projects/${projectId}/cycles`), 30000);
+  const [openOrdinal, setOpenOrdinal] = useState<number | null>(null);
+  if (!data || data.history.length === 0) return null;
+  return (
+    <section style={{ marginTop: 22 }}>
+      <h2>Past cycles</h2>
+      {data.history.map((c) => (
+        <div className="card" key={c.ordinal} style={{ padding: "8px 14px", marginBottom: 6 }}>
+          <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
+            <b>Cycle {c.ordinal}</b>
+            <span className={`badge ${c.status === "completed" ? "good"
+              : c.status === "skipped" ? "critical" : "serious"}`}>{c.status}</span>
+            <span className="help">
+              {c.opened_at.slice(0, 10)} → {c.closed_at?.slice(0, 10) ?? "—"}
+            </span>
+            <span className="sp" style={{ flex: 1 }} />
+            {c.narrative && (
+              <button className="small" onClick={() =>
+                setOpenOrdinal(openOrdinal === c.ordinal ? null : c.ordinal)}>
+                {openOrdinal === c.ordinal ? "hide narrative" : "narrative"}
+              </button>
+            )}
+          </div>
+          {openOrdinal === c.ordinal && c.narrative && (
+            <p style={{ whiteSpace: "pre-wrap", fontSize: 13, marginTop: 8 }}>
+              {c.narrative}
+            </p>
+          )}
+        </div>
+      ))}
+    </section>
+  );
+}
+
 export default function Plan({ ctx }: { ctx: ProjectCtx }) {
   const { projectId } = ctx;
   const { data, at, error, reload } = usePoll<PlanView>(
@@ -597,6 +644,12 @@ export default function Plan({ ctx }: { ctx: ProjectCtx }) {
 
   return (
     <div>
+      {ctx.dash.mode === "operate" && ctx.dash.cycle && (
+        <p className="help" style={{ margin: "0 0 10px" }}>
+          Cycle {ctx.dash.cycle.ordinal} — this board is this cycle's plan. Each cycle
+          plans fresh; unfinished scope carries forward when the rhythm rolls.
+        </p>
+      )}
       {commitment?.status === "proposed" && (
         <ProposedCommitment c={commitment} onDone={reload} />
       )}
@@ -763,6 +816,8 @@ export default function Plan({ ctx }: { ctx: ProjectCtx }) {
           </p>
         </div>
       )}
+
+      {ctx.dash.mode === "operate" && <CycleHistory projectId={projectId} />}
     </div>
   );
 }

@@ -32,6 +32,7 @@ from yaaf.core.models import (
     Message,
     Notice,
     Project,
+    ProjectMode,
     Requirement,
     RequirementStatus,
     RoleVersion,
@@ -503,6 +504,35 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
                          "nobody here can."),
                 "arithmetic": policy.plan_arithmetic(session, project, cons),
             }
+        # The learning loop: an Operate CEO opens every cycle by reading the
+        # last three cycles' narratives VERBATIM — uncapped, unclipped. Only a
+        # lesson still true several cycles out spends a memory slot; the rest
+        # lives here, and clipping it would amputate exactly the specifics
+        # that make a lesson usable.
+        if project.mode == ProjectMode.OPERATE:
+            from yaaf.core.models import Cycle, CycleStatus
+
+            cycle = policy.current_cycle(session, project.id)
+            recent = list(session.execute(
+                select(Cycle).where(Cycle.project_id == project.id,
+                                    Cycle.status != CycleStatus.OPEN)
+                .order_by(Cycle.ordinal.desc()).limit(3)
+            ).scalars())
+            pack["cycles"] = {
+                "current": ({"ordinal": cycle.ordinal,
+                             "opened_at": cycle.opened_at.isoformat()}
+                            if cycle is not None else None),
+                "recent_narratives": [
+                    {"ordinal": c.ordinal, "status": c.status,
+                     "narrative": c.narrative or ""}
+                    for c in reversed(recent)
+                ],
+                "note": ("Each cycle plans fresh: R-00 reopens when the rhythm "
+                         "rolls. Read these narratives FIRST — they are what the "
+                         "last three turns learned, verbatim — then propose this "
+                         "cycle's requirements."),
+            }
+
         # The open review, if one is waiting on this CEO's narrative. The
         # numbers are the janitor's frozen snapshot — the CEO explains them,
         # it does not produce them.

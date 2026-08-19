@@ -16,7 +16,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from yaaf.core import ids
@@ -41,6 +41,7 @@ from yaaf.core.models import (
     ChannelKind,
     Commitment,
     CommitmentStatus,
+    Cycle,
     Evidence,
     Hypothesis,
     HypothesisStatus,
@@ -49,6 +50,7 @@ from yaaf.core.models import (
     NoticeKind,
     Project,
     ProjectMember,
+    ProjectMode,
     ProjectStatus,
     Requirement,
     RequirementEdge,
@@ -271,6 +273,9 @@ class ProjectCreate(BaseModel):
     # — hence derived lead — of the only team, so one brain plans AND executes
     # under byte-identical policy. Requires exactly one team with no employees.
     solo: bool = False
+    # Explore only: a bounded window on open scope ("one sale in 60 days").
+    # Deliver has commitments and Operate has cycles, so it is refused there.
+    deadline: datetime | None = None
 
 
 def _latest_role_version(session: Session, slug: str) -> RoleVersion:
@@ -301,6 +306,19 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
         )
     if not body.solo and any(not spec.employees for spec in body.teams):
         raise HTTPException(status_code=422, detail="every team needs at least one employee")
+    deadline = body.deadline
+    if deadline is not None:
+        if body.mode != "explore":
+            raise HTTPException(
+                status_code=422,
+                detail="a bare deadline is Explore's shape — open scope, bounded time. "
+                       "Deliver promises through a commitment; Operate runs on cycles.",
+            )
+        if deadline.tzinfo is None:
+            from datetime import UTC
+            deadline = deadline.replace(tzinfo=UTC)
+        if deadline <= utcnow():
+            raise HTTPException(status_code=422, detail="the deadline is already past")
 
     ceo_role_version = _latest_role_version(session, body.ceo_role_slug)
 
@@ -314,6 +332,7 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
         mode=body.mode,
         controlled_domains=body.controlled_domains,
         integrations=body.integrations,
+        deadline=deadline,
     )
     session.add(project)
     session.flush()
@@ -1069,6 +1088,9 @@ class ProjectPatch(BaseModel):
     # Merged into the existing integrations (outward wiring only — every
     # limit lives in the constitution and changes only through amendments).
     integrations: dict | None = None
+    # Explore only. Set a new window, or clear it with clear_deadline.
+    deadline: datetime | None = None
+    clear_deadline: bool = False
 
 
 def _billing_shape_error(mode: str, plaintext: str) -> str | None:
@@ -1151,6 +1173,31 @@ def patch_project(project_id: str, body: ProjectPatch, session: Session = Depend
             )
         project.integrations = {**(project.integrations or {}), **body.integrations}
         changed["integrations"] = body.integrations
+    if body.deadline is not None or body.clear_deadline:
+        if project.mode != ProjectMode.EXPLORE:
+            raise HTTPException(
+                status_code=422,
+                detail="a bare deadline is Explore's shape. Deliver promises through a "
+                       "commitment; Operate runs on cycles.",
+            )
+        if body.clear_deadline:
+            project.deadline = None
+            changed["deadline"] = None
+        else:
+            deadline = body.deadline
+            if deadline.tzinfo is None:
+                from datetime import UTC
+                deadline = deadline.replace(tzinfo=UTC)
+            project.deadline = deadline
+            changed["deadline"] = deadline.isoformat()
+        _notice_ceo(
+            session, project.id, NoticeKind.GOAL_CHANGED,
+            "The chairman "
+            + ("cleared the deadline — the window is open-ended again."
+               if body.clear_deadline else
+               f"set the window: {project.deadline:%Y-%m-%d}. Open scope, bounded "
+               "time — what exists by then is what this project will be judged on."),
+        )
     _audit(session, project.id, "project.patch", "project", project.id, changed)
     return {"id": project.id, "name": project.name, "goal": project.goal,
             "billing_mode": project.billing_mode,
@@ -1209,8 +1256,9 @@ def billing_check(project_id: str, session: Session = Depends(db)) -> dict:
 @router.post("/projects/{project_id}/start")
 def start_project(project_id: str, session: Session = Depends(db)) -> dict:
     project = _get_project(session, project_id)
-    if project.status == ProjectStatus.STOPPED:
-        raise HTTPException(status_code=409, detail="a stopped project is terminal")
+    if project.status in (ProjectStatus.STOPPED, ProjectStatus.COMPLETED):
+        raise HTTPException(status_code=409,
+                            detail=f"a {project.status} project is terminal")
     project.status = ProjectStatus.RUNNING
     project.status_reason = None
     # A Deliver or Operate project starts owing a plan. The chairman's words
@@ -1219,6 +1267,17 @@ def start_project(project_id: str, session: Session = Depends(db)) -> dict:
     if policy.requires_requirements(project) and \
             policy.plan_requirement(session, project.id) is None:
         policy.create_plan_requirement(session, project)
+    # An Operate project always has exactly one open cycle while running.
+    # Opened here rather than waiting a janitor tick, so the first proposal
+    # lands inside it; on a resume after a long pause this is also what makes
+    # it ONE new cycle, never one per missed boundary.
+    if project.mode == ProjectMode.OPERATE and \
+            policy.current_cycle(session, project.id) is None:
+        last = session.execute(
+            select(func.max(Cycle.ordinal)).where(Cycle.project_id == project.id)
+        ).scalar_one() or 0
+        session.add(Cycle(id=ids.new_id(ids.CYCLE), project_id=project.id,
+                          ordinal=last + 1))
     _audit(session, project.id, "project.start", "project", project.id)
     notify(session, WAKE_CHANNEL, project.id)
     return {"id": project.id, "status": project.status}
@@ -1252,6 +1311,106 @@ def stop_project(
     _audit(session, project.id, "project.stop", "project", project.id,
            {"revoked_runs": revoked})
     return {"id": project.id, "status": project.status, "revoked_runs": revoked}
+
+
+@router.post("/projects/{project_id}/complete")
+def complete_project(project_id: str, session: Session = Depends(db)) -> dict:
+    """The chairman confirms a delivery. One of the three gates he chose to be
+    asked at — the janitor only detects readiness and emails; this button
+    decides. Refused with the same outstanding list the janitor checks, so
+    the email and the refusal can never disagree.
+
+    The receipt's load-bearing row is "failed once before": every requirement
+    that ate dead runs on its way to true says so, because a delivery that
+    looked effortless in the receipt would teach the wrong lesson about what
+    it cost.
+    """
+    from yaaf.server.janitor import delivery_outstanding
+
+    project = _get_project(session, project_id)
+    if project.mode != ProjectMode.DELIVER:
+        raise HTTPException(
+            status_code=422,
+            detail="only a Deliver project completes: Explore is judged and stopped, "
+                   "Operate finishes and starts again.",
+        )
+    if project.status == ProjectStatus.COMPLETED:
+        raise HTTPException(status_code=409, detail="already completed")
+    outstanding = delivery_outstanding(session, project)
+    if outstanding:
+        raise HTTPException(
+            status_code=409,
+            detail="not everything is true yet — " + "; ".join(outstanding),
+        )
+
+    scope = policy.scope_requirements(session, project.id)
+    accepted = [r for r in scope if r.status != RequirementStatus.PROPOSED]
+    rows = []
+    for r in accepted:
+        actual = policy.runs_spent_on(session, r.id)
+        rows.append({
+            "key": r.key, "statement": r.statement[:300], "status": r.status,
+            "est_runs": r.est_runs, "actual_runs": actual,
+            "failure_load": r.failure_load,
+            "failed_before": r.failure_load > 0,
+        })
+    runs_total, cost_total = session.execute(
+        select(func.count(Run.id), func.coalesce(func.sum(Run.cost_usd), 0.0))
+        .where(Run.project_id == project.id)
+    ).one()
+    commitment = session.execute(
+        select(Commitment).where(Commitment.project_id == project.id)
+        .order_by(Commitment.created_at.desc()).limit(1)
+    ).scalar_one_or_none()
+    now = utcnow()
+    receipt = {
+        "requirements": rows,
+        "met": len([r for r in rows if r["status"] == RequirementStatus.MET]),
+        "cut": len([r for r in rows if r["status"] == RequirementStatus.CUT]),
+        "runs_total": int(runs_total),
+        "cost_usd": round(float(cost_total), 2),
+        "duration_days": (now - project.created_at).days,
+        "commitment": ({
+            "deliver_by": commitment.deliver_by.isoformat(),
+            "met_at": commitment.met_at.isoformat() if commitment.met_at else None,
+            "kept": bool(commitment.met_at and commitment.met_at <= commitment.deliver_by),
+        } if commitment is not None else None),
+        "completed_at": now.isoformat(),
+    }
+    project.status = ProjectStatus.COMPLETED
+    project.status_reason = f"delivered: {receipt['met']} requirement(s) true"
+    revoked = _revoke_running(session, project.id)
+    for queued in session.execute(
+        select(RunQueue).where(RunQueue.project_id == project.id)
+    ).scalars():
+        session.delete(queued)
+
+    lines = []
+    for r in rows:
+        history = (f"met after {r['failure_load']} failed run(s)" if
+                   r["status"] == RequirementStatus.MET and r["failed_before"]
+                   else "met clean" if r["status"] == RequirementStatus.MET
+                   else f"cut ({r['failure_load']} failed run(s) first)"
+                   if r["failed_before"] else "cut")
+        est = f", est {r['est_runs']} vs {r['actual_runs']} actual" if r["est_runs"] else ""
+        lines.append(f"{r['key']} — {history}{est}")
+    from yaaf.core.models import Decision
+
+    session.add(Decision(
+        id=ids.new_id(ids.DECISION),
+        project_id=project.id,
+        by_user_id=project.chairman_user_id,
+        subject=f"delivery receipt: {receipt['met']} true, {receipt['cut']} cut",
+        body=("Confirmed complete by the chairman.\n\n" + "\n".join(lines)
+              + f"\n\nTotals: {receipt['runs_total']} runs, "
+                f"${receipt['cost_usd']:,.2f}, {receipt['duration_days']} days."
+              + (f"\nCommitment {'KEPT' if receipt['commitment']['kept'] else 'missed'}: "
+                 f"promised {receipt['commitment']['deliver_by'][:10]}."
+                 if receipt["commitment"] else "")),
+    ))
+    _audit(session, project.id, "project.complete", "project", project.id, receipt)
+    return {"id": project.id, "status": project.status, "receipt": receipt,
+            "revoked_runs": revoked}
 
 
 class AgentPause(BaseModel):
@@ -1827,9 +1986,11 @@ def add_requirement(
         policy.validate_success_test(effective(session, project.id), body.acceptance_test)
     except policy.Refusal as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    cycle = policy.current_cycle(session, project.id)
     requirement = Requirement(
         id=ids.new_id(ids.REQUIREMENT),
         project_id=project.id,
+        cycle_id=cycle.id if cycle is not None else None,
         key=policy.next_requirement_key(session, project.id),
         statement=body.statement.strip(),
         acceptance_test=body.acceptance_test,
@@ -2022,6 +2183,23 @@ def close_review(
     summary = ("; ".join(f"{d['kind']}: {d['detail']} — {d['reason'][:120]}"
                          for d in decisions)
                if decisions else "no changes — the plan stands as it is")
+    # The learning loop: on an Operate project the review writes the cycle's
+    # narrative — platform-composed from the frozen numbers, the CEO's own
+    # words, and the chairman's decisions. The next cycle's pack carries the
+    # last three of these verbatim.
+    if project.mode == ProjectMode.OPERATE:
+        cycle = policy.current_cycle(session, project.id)
+        if cycle is not None:
+            numbers = review.numbers or {}
+            block = (
+                f"[review #{review.number}, {utcnow():%Y-%m-%d}] "
+                f"pace {numbers.get('velocity', {}).get('per_week_3w')}/wk; "
+                f"{numbers.get('scope', {}).get('met_since_last_review')} met since "
+                f"last review; decisions: {summary}."
+                + (f"\nThe CEO's variance narrative: {review.narrative}"
+                   if review.narrative else "\nNo variance narrative was filed.")
+            )
+            cycle.narrative = ((cycle.narrative + "\n\n") if cycle.narrative else "") + block
     _notice_ceo(
         session, project.id, NoticeKind.GOAL_CHANGED,
         f"Review #{review.number} is closed. Decisions: {summary}."

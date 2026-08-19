@@ -45,6 +45,8 @@ from yaaf.core.models import (
     AuditSample,
     AuditSampleStatus,
     CommitmentStatus,
+    Cycle,
+    CycleStatus,
     Hypothesis,
     HypothesisStatus,
     LedgerEntry,
@@ -52,6 +54,7 @@ from yaaf.core.models import (
     Notice,
     NoticeKind,
     Project,
+    ProjectMode,
     ProjectStatus,
     Requirement,
     RequirementEvent,
@@ -114,6 +117,9 @@ def janitor_once(session: Session) -> None:
         expire_audit_samples(session, project)
         open_reviews(session, project, cons)
         nag_reviews(session, project)
+        roll_cycles(session, project, cons)
+        check_explore_deadline(session, project)
+        check_delivery_ready(session, project)
         warn_drought(session, project, cons)
         warn_memory_pressure(session, project, cons)
     verify_pending_evidence(session)
@@ -451,6 +457,258 @@ def check_finished_requirements(session: Session, project: Project) -> int:
     if moved:
         notify(session, "yaaf_run_queue", project.id)
     return moved
+
+
+# ── the Operate rhythm: cycles roll here, and the learning loop rides them ──────
+
+
+def next_cycle_roll(opened_at, cons: ConstitutionDoc):
+    """When the cycle that opened at `opened_at` rolls, in UTC.
+
+    All local arithmetic happens in the constitution's one timezone. Monthly
+    and quarterly days are 1-28 by validation — the 29th-31st were refused at
+    the rule, not clamped here, so this never has to guess what the chairman
+    meant by "the 30th" in February.
+    """
+    from zoneinfo import ZoneInfo
+
+    try:
+        tz = ZoneInfo(cons.timezone)
+    except Exception:
+        from datetime import UTC as tz  # noqa: N813 - a body written before validation
+
+    local = opened_at.astimezone(tz)
+    midnight = {"hour": 0, "minute": 0, "second": 0, "microsecond": 0}
+    if cons.cycle_frequency == "daily":
+        boundary = (local + timedelta(days=1)).replace(**midnight)
+    elif cons.cycle_frequency == "weekly":
+        ahead = (cons.cycle_day - local.weekday()) % 7
+        boundary = (local + timedelta(days=ahead)).replace(**midnight)
+        if boundary <= local:
+            boundary += timedelta(days=7)
+    else:
+        anchors = (list(range(1, 13)) if cons.cycle_frequency == "monthly"
+                   else [1, 4, 7, 10])
+        boundary = None
+        for months_ahead in range(0, 16):
+            month = (local.month - 1 + months_ahead) % 12 + 1
+            year = local.year + (local.month - 1 + months_ahead) // 12
+            if month not in anchors:
+                continue
+            candidate = local.replace(year=year, month=month,
+                                      day=cons.cycle_day, **midnight)
+            if candidate > local:
+                boundary = candidate
+                break
+    from datetime import UTC
+
+    return boundary.astimezone(UTC)
+
+
+def _open_cycle(session: Session, project: Project, ordinal: int) -> Cycle:
+    cycle = Cycle(id=ids.new_id(ids.CYCLE), project_id=project.id, ordinal=ordinal)
+    session.add(cycle)
+    session.flush()
+    return cycle
+
+
+def roll_cycles(session: Session, project: Project, cons: ConstitutionDoc) -> None:
+    """Close the cycle whose time came, carry the unfinished scope, reopen the
+    plan gate, and hand the CEO the last three narratives.
+
+    In the janitor because a rhythm firing while the company is busy or broke
+    must still be recorded, and opening a cycle costs nothing. At most one
+    cycle is ever open: close-and-open is one transition, and a project
+    paused across many boundaries resumes into ONE new cycle — the janitor
+    never touches paused projects, so no boundaries "queue up".
+    """
+    if project.mode != ProjectMode.OPERATE:
+        return
+    cycle = policy.current_cycle(session, project.id)
+    now = utcnow()
+    if cycle is None:
+        last = session.execute(
+            select(func.max(Cycle.ordinal)).where(Cycle.project_id == project.id)
+        ).scalar_one() or 0
+        opened = _open_cycle(session, project, last + 1)
+        log.info("opened cycle #%s for %s", opened.ordinal, project.slug)
+        return
+    if now < next_cycle_roll(cycle.opened_at, cons):
+        return
+
+    scope = policy.scope_requirements(session, project.id)  # the open cycle's
+    accepted = [r for r in scope if r.status != RequirementStatus.PROPOSED]
+    unsettled = [r for r in accepted
+                 if r.status not in policy.CLOSED_REQUIREMENT_STATUSES]
+    met = [r for r in accepted if r.status == RequirementStatus.MET]
+
+    if unsettled:
+        cycle.status = CycleStatus.MISSED
+    elif met:
+        cycle.status = CycleStatus.COMPLETED
+    else:
+        cycle.status = CycleStatus.SKIPPED  # nothing accepted, or nothing made true
+    cycle.closed_at = now
+    if not cycle.narrative:
+        # No review wrote one this cycle; the platform leaves an honest stub
+        # so the next cycle's pack never carries a silent gap.
+        cycle.narrative = (
+            f"Cycle {cycle.ordinal} closed {cycle.status}: "
+            f"{len(met)} met" + (f" ({', '.join(r.key for r in met)})" if met else "")
+            + f", {len(unsettled)} carried forward. No review narrative was "
+              "written this cycle."
+        )
+
+    # Two consecutive cycles with nothing made true pause the project: a
+    # rhythm nobody dances to is a bill, not a company.
+    if cycle.status == CycleStatus.SKIPPED:
+        previous = session.execute(
+            select(Cycle).where(Cycle.project_id == project.id,
+                                Cycle.ordinal == cycle.ordinal - 1)
+        ).scalar_one_or_none()
+        if previous is not None and previous.status == CycleStatus.SKIPPED:
+            project.status = ProjectStatus.PAUSED
+            project.status_reason = (
+                f"two consecutive cycles ({previous.ordinal} and {cycle.ordinal}) "
+                "closed with nothing made true"
+            )
+            for run in session.execute(
+                select(Run).where(Run.project_id == project.id,
+                                  Run.status == RunStatus.RUNNING)
+            ).scalars():
+                run.token_revoked = True
+            chairman_notify(
+                session, project, "project paused: two skipped cycles",
+                f"Cycles {previous.ordinal} and {cycle.ordinal} both closed with "
+                "nothing made true. The platform paused the project rather than "
+                "billing you for a third. Resume from the project page when you have "
+                "decided what changes — the next cycle opens on resume.",
+            )
+            log.warning("project %s paused: two skipped cycles", project.slug)
+            return
+
+    new = _open_cycle(session, project, cycle.ordinal + 1)
+    carried = unsettled + [r for r in scope if r.status == RequirementStatus.PROPOSED]
+    for requirement in carried:
+        requirement.cycle_id = new.id
+
+    plan = policy.plan_requirement(session, project.id)
+    if plan is not None and plan.status == RequirementStatus.MET:
+        from_status = plan.status
+        plan.status = RequirementStatus.PENDING
+        plan.met_at = None
+        policy.record_requirement_event(
+            session, plan, RequirementStatus.PENDING, "janitor",
+            note=f"cycle {new.ordinal} opened; each cycle plans fresh",
+            from_status=from_status)
+
+    _notice_ceo(
+        session, project, NoticeKind.CYCLE_ROLLED,
+        f"Cycle {cycle.ordinal} closed {cycle.status.upper()} "
+        f"({len(met)} met, {len(unsettled)} carried forward"
+        + (f": {', '.join(r.key for r in unsettled)}" if unsettled else "") + "). "
+        f"Cycle {new.ordinal} is open. Your FIRST act: read the last three cycles' "
+        "narratives in your pack, then plan — R-00 reopened, and no work may be "
+        "created until the new cycle's plan holds. A lesson still true several "
+        "cycles out goes to memory; everything else lives in the narratives.",
+    )
+    log.info("rolled cycle #%s → #%s for %s (%s)",
+             cycle.ordinal, new.ordinal, project.slug, cycle.status)
+
+
+# ── explore: a window, not a scope ──────────────────────────────────────────────
+
+
+def check_explore_deadline(session: Session, project: Project) -> None:
+    """The chairman's own example: "one sale in the next 60 days" — open
+    scope, bounded time. When the window closes, both parties are told ONCE
+    and the judgment is his; nothing pauses by itself, because an Explore
+    project's worth was always his call, not a date's."""
+    if project.mode != ProjectMode.EXPLORE or project.deadline is None:
+        return
+    if utcnow() < project.deadline:
+        return
+    already = session.execute(
+        select(func.count(Notice.id)).where(
+            Notice.project_id == project.id,
+            Notice.kind == NoticeKind.EXPLORE_DEADLINE)
+    ).scalar_one()
+    if already:
+        return
+    usd, tokens = month_to_date(session, project.id)
+    _notice_ceo(
+        session, project, NoticeKind.EXPLORE_DEADLINE,
+        f"The window closed: {project.deadline:%Y-%m-%d} has passed. Say plainly, "
+        "in the boardroom, what was earned and what was learned — the chairman is "
+        "deciding whether this project earned its keep, and spending on as if the "
+        "date had not existed is the one answer that decides it against you.",
+    )
+    chairman_notify(
+        session, project, "explore window closed",
+        f"The deadline you set ({project.deadline:%Y-%m-%d}) has passed. "
+        f"This month's spend so far: ${usd:,.2f} / {tokens:,} tokens.\n\n"
+        "Your call, as it always was: stop it, extend the window (set a new date in "
+        "Settings), or convert what worked into a Deliver project with real "
+        "requirements. The company keeps working until you decide.",
+    )
+
+
+# ── deliver: completion is detected here, confirmed by the chairman ─────────────
+
+
+def delivery_outstanding(session: Session, project: Project) -> list[str]:
+    """What still stands between this Deliver project and COMPLETED. Empty
+    means ready — the same list the complete route refuses with, so the
+    email and the refusal can never disagree."""
+    outstanding: list[str] = []
+    plan = policy.plan_requirement(session, project.id)
+    if plan is None or plan.status != RequirementStatus.MET:
+        outstanding.append("the plan gate is open")
+    scope = [r for r in policy.scope_requirements(session, project.id)
+             if r.status != RequirementStatus.PROPOSED]
+    if not scope:
+        outstanding.append("no requirements were ever accepted")
+    open_scope = [r for r in scope if r.status not in policy.CLOSED_REQUIREMENT_STATUSES]
+    if open_scope:
+        outstanding.append(
+            "still open: " + ", ".join(f"{r.key} ({r.status})" for r in open_scope[:8]))
+    if scope and not any(r.status == RequirementStatus.MET for r in scope):
+        outstanding.append("nothing was made true — everything was cut")
+    open_tasks = policy.open_top_level_tasks(session, project.id)
+    if open_tasks:
+        outstanding.append(f"{len(open_tasks)} task(s) still open")
+    return outstanding
+
+
+def check_delivery_ready(session: Session, project: Project) -> None:
+    """Tell the chairman ONCE that everything is true. Completion itself is
+    his gate — one of the three moments he chose to be asked at — so the
+    janitor detects and the button on the project page decides."""
+    if project.mode != ProjectMode.DELIVER:
+        return
+    if delivery_outstanding(session, project):
+        return
+    already = session.execute(
+        select(func.count(AuditLog.id)).where(
+            AuditLog.project_id == project.id,
+            AuditLog.action == "project.completion_ready")
+    ).scalar_one()
+    if already:
+        return
+    met = [r for r in policy.scope_requirements(session, project.id)
+           if r.status == RequirementStatus.MET]
+    session.add(AuditLog(
+        id=ids.new_id(ids.AUDIT), project_id=project.id, actor="system:janitor",
+        action="project.completion_ready", entity="project", entity_id=project.id,
+        detail={"met": [r.key for r in met]},
+    ))
+    chairman_notify(
+        session, project, "ready to complete",
+        f"Every requirement is settled and {len(met)} of them are true: "
+        f"{', '.join(r.key for r in met)}. Confirm completion on the project page — "
+        "it writes the delivery receipt and closes the company down cleanly. "
+        "Until you do, it keeps running (and spending).",
+    )
 
 
 # ── the review: opened, numbered and emailed with zero tokens ───────────────────

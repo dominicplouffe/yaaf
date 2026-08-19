@@ -309,6 +309,21 @@ def desk(session: Session = Depends(db)) -> dict:
     return {"as_of": now.isoformat(), "away": away, "projects": projects_out}
 
 
+def _delivery_outstanding(session: Session, project: Project) -> list[str]:
+    from yaaf.server.janitor import delivery_outstanding
+
+    return delivery_outstanding(session, project)
+
+
+def _current_cycle_view(session: Session, project: Project) -> dict | None:
+    if project.mode != "operate":
+        return None
+    cycle = policy.current_cycle(session, project.id)
+    if cycle is None:
+        return None
+    return {"ordinal": cycle.ordinal, "opened_at": cycle.opened_at.isoformat()}
+
+
 @router.get("/projects/{project_id}")
 def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
     project = _project(session, project_id)
@@ -371,6 +386,14 @@ def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
         "ceo_judgment": policy.ceo_judgment(session, project.id),
         "constitution": cons.model_dump(),
         "mode": project.mode,
+        # Explore's window; Deliver's completion readiness; Operate's current
+        # turn. Mode-shaped facts, one each, so the Overview can show the one
+        # that applies without three extra requests.
+        "deadline": project.deadline.isoformat() if project.deadline else None,
+        "delivery_outstanding": (
+            _delivery_outstanding(session, project)
+            if project.mode == "deliver" and project.status == "running" else None),
+        "cycle": _current_cycle_view(session, project),
         "integrations": project.integrations or {},
         "github_repo": project.github_repo,
         "billing_secret_id": project.billing_secret_id,
@@ -1174,6 +1197,32 @@ def suggestions(project_id: str, session: Session = Depends(db)) -> list[dict]:
     ).scalars()
     return [{"id": s.id, "by": s.by_agent_id, "text": s.text,
              "consumed": s.consumed_at is not None} for s in rows]
+
+
+@router.get("/projects/{project_id}/cycles")
+def cycles(project_id: str, session: Session = Depends(db)) -> dict:
+    """The rhythm's record: every turn, newest first, narratives whole. The
+    narratives are the learning loop's storage — clipping them here would
+    show the chairman less than his own CEO reads."""
+    from yaaf.core.models import Cycle, CycleStatus
+
+    project = _project(session, project_id)
+    rows = list(session.execute(
+        select(Cycle).where(Cycle.project_id == project.id)
+        .order_by(Cycle.ordinal.desc()).limit(50)
+    ).scalars())
+    return {
+        "current": next(
+            ({"ordinal": c.ordinal, "opened_at": c.opened_at.isoformat()}
+             for c in rows if c.status == CycleStatus.OPEN), None),
+        "history": [
+            {"ordinal": c.ordinal, "status": c.status,
+             "opened_at": c.opened_at.isoformat(),
+             "closed_at": c.closed_at.isoformat() if c.closed_at else None,
+             "narrative": c.narrative}
+            for c in rows if c.status != CycleStatus.OPEN
+        ],
+    }
 
 
 @router.get("/projects/{project_id}/reviews")

@@ -873,9 +873,11 @@ def propose_requirement(
     # scope is refused before affordability is even asked.
     policy.check_scope_within_commitment(session, ctx.project, cons)
     policy.check_plan_affordable(session, ctx.project, cons, body.est_runs or 0)
+    cycle = policy.current_cycle(session, ctx.project.id)
     requirement = Requirement(
         id=ids.new_id(ids.REQUIREMENT),
         project_id=ctx.project.id,
+        cycle_id=cycle.id if cycle is not None else None,
         key=policy.next_requirement_key(session, ctx.project.id),
         statement=body.statement.strip(),
         acceptance_test=body.acceptance_test,

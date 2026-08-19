@@ -201,6 +201,22 @@ class AuditSampleStatus(enum.StrEnum):
     SKIPPED = "skipped"
 
 
+class CycleStatus(enum.StrEnum):
+    """One period of an Operate project's rhythm.
+
+    COMPLETED closed with its scope settled true; MISSED rolled with work
+    unfinished (the unsettled scope carries into the next cycle); SKIPPED
+    rolled with nothing ever accepted into it at all — and two consecutive
+    SKIPPEDs pause the project, because a rhythm nobody dances to is a bill,
+    not a company.
+    """
+
+    OPEN = "open"
+    COMPLETED = "completed"
+    MISSED = "missed"
+    SKIPPED = "skipped"
+
+
 class ReviewStatus(enum.StrEnum):
     OPEN = "open"      # the janitor opened it; the meeting is in progress
     CLOSED = "closed"  # the chairman closed it, with his decisions on it
@@ -286,6 +302,8 @@ class NoticeKind(enum.StrEnum):
     # CEO exactly once. AT_RISK and BREACHED also freeze new scope — the
     # notice is the explanation, the refusal in policy is the enforcement.
     REVIEW_OPENED = "review_opened"
+    EXPLORE_DEADLINE = "explore_deadline"
+    CYCLE_ROLLED = "cycle_rolled"
     COMMITMENT_ACCEPTED = "commitment_accepted"
     COMMITMENT_AT_RISK = "commitment_at_risk"
     COMMITMENT_BREACHED = "commitment_breached"
@@ -335,6 +353,11 @@ class Project(Base):
     # ConstitutionDoc in the rebuild: a limit kept here generated no settings
     # UI, recorded no amendment, and was never disclosed to the CEO it bound.
     integrations: Mapped[dict] = mapped_column(JSONVariant, default=dict)
+    # Explore only: the chairman's own example was "one sale in the next 60
+    # days" — open scope, bounded time. When it passes, he is told and the
+    # judgment is his; nothing pauses by itself. Deliver has commitments and
+    # Operate has cycles, so a bare date is refused there.
+    deadline: Mapped[datetime | None] = mapped_column(UTCDateTime)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 
@@ -530,6 +553,10 @@ class Requirement(Base):
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    # Operate only: which turn of the rhythm this scope belongs to. The plan
+    # gate, the Plan screen and the feasibility arithmetic read the OPEN
+    # cycle's scope; unsettled requirements carry forward when a cycle rolls.
+    cycle_id: Mapped[str | None] = mapped_column(String(40))
     # Human-readable and stable: the chairman says "cut R-09", not an opaque id.
     key: Mapped[str] = mapped_column(String(16))
     statement: Mapped[str] = mapped_column(Text)
@@ -839,6 +866,38 @@ class Artifact(Base):
     # written by the platform.
     requirement_ids: Mapped[list] = mapped_column(JSONVariant, default=list)
     published_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class Cycle(Base):
+    """One turn of an Operate project — a Deliver that finishes and starts
+    again on the constitution's rhythm (`cycle_frequency` + `cycle_day`, read
+    in the constitution's one timezone).
+
+    Cycles roll in the JANITOR: a rhythm firing while the company is busy or
+    broke must still be recorded, and opening a cycle costs nothing. At most
+    one is ever open — a project paused three weeks resumes into one new
+    cycle, not twenty-one.
+
+    ``narrative`` is the learning loop, the half the old plan dropped: the
+    review writes it (uncapped), and the next cycle's context pack carries
+    the last three VERBATIM. Only a lesson still true several cycles out
+    spends a memory slot; the narrative is where the rest lives.
+    """
+
+    __tablename__ = "cycles"
+    __table_args__ = (
+        UniqueConstraint("project_id", "ordinal"),
+        Index("ix_cycles_project_status", "project_id", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    ordinal: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(16), default=CycleStatus.OPEN)
+    opened_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    closed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    narrative: Mapped[str | None] = mapped_column(Text)  # uncapped, on purpose
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 
 class Review(Base):

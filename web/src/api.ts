@@ -172,6 +172,13 @@ export interface Dashboard {
     conversion: number | null;
   };
   constitution: Record<string, unknown>;
+  /** Explore's bounded window, if the chairman set one. */
+  deadline: string | null;
+  /** Deliver, while running: what still stands between here and COMPLETED.
+      Empty array = ready for the chairman's confirmation. Null elsewhere. */
+  delivery_outstanding: string[] | null;
+  /** Operate: the open turn of the rhythm. */
+  cycle: { ordinal: number; opened_at: string } | null;
   integrations: Record<string, unknown>;
   github_repo: string | null;
   billing_secret_id: string | null;

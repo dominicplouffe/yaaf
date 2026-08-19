@@ -202,6 +202,76 @@ function SpendByTeam({ projectId, usdMode }: { projectId: string; usdMode: boole
 
 /** The first tab answers the daily question in order: needs you → is it
     working → what came out → what to watch → the money → the org. */
+/** The mode-shaped fact, one per mode: Explore counts its window down,
+    Deliver offers the completion gate the moment everything is true, Operate
+    names the turn of the rhythm it is on. */
+function ModeStrip({ dash, reload }: { dash: import("../../api").Dashboard;
+  reload: () => void }) {
+  const [confirming, setConfirming] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (dash.mode === "deliver" && dash.delivery_outstanding !== null
+      && dash.delivery_outstanding.length === 0) {
+    return (
+      <div className="strip" style={{ marginTop: 12, borderLeftColor: "var(--good)" }}>
+        <div className="grow">
+          <b>Everything is true. This delivery is ready for your confirmation.</b>
+          <div className="sb">
+            Completing writes the receipt — including which requirements failed before
+            they passed — and closes the company down cleanly. Until you do, it keeps
+            running and spending.
+          </div>
+          {error && <div className="error">{error}</div>}
+        </div>
+        {confirming ? (
+          <>
+            <button className="small primary" onClick={async () => {
+              try {
+                await post(`/admin/projects/${dash.id}/complete`);
+                reload();
+              } catch (e) { setError((e as Error).message); }
+            }}>✓ Yes, complete it</button>
+            <button className="small" onClick={() => setConfirming(false)}>not yet</button>
+          </>
+        ) : (
+          <button className="small primary" onClick={() => setConfirming(true)}>
+            Complete the project…
+          </button>
+        )}
+      </div>
+    );
+  }
+  if (dash.mode === "explore" && dash.deadline) {
+    const daysLeft = Math.ceil(
+      (new Date(dash.deadline).getTime() - Date.now()) / 86_400_000);
+    return (
+      <div className={`strip${daysLeft <= 0 ? " serious" : ""}`} style={{ marginTop: 12 }}>
+        <div className="grow">
+          <b>{daysLeft > 0
+            ? `${daysLeft} day${daysLeft === 1 ? "" : "s"} left in the window.`
+            : "The window has closed."}</b>
+          <div className="sb">
+            Open scope, bounded time — {daysLeft > 0
+              ? "what exists by then is what this project is judged on."
+              : "the judgment is yours: stop it, set a new date in Settings, or " +
+                "convert what worked into a Deliver project."}
+          </div>
+        </div>
+      </div>
+    );
+  }
+  if (dash.mode === "operate" && dash.cycle) {
+    return (
+      <p className="help" style={{ margin: "12px 0 0" }}>
+        Cycle {dash.cycle.ordinal}, open since {fmtWhen(dash.cycle.opened_at)} — each
+        cycle plans fresh, and the CEO opens it by reading the last three cycles'
+        narratives.
+      </p>
+    );
+  }
+  return null;
+}
+
 export default function Overview({
   ctx,
   asOf,
@@ -211,7 +281,7 @@ export default function Overview({
   asOf: Date | null;
   error: string | null;
 }) {
-  const { projectId, dash, approvals, hypotheses, org, reloadApprovals, reloadOrg } = ctx;
+  const { projectId, dash, approvals, hypotheses, org, reload, reloadApprovals, reloadOrg } = ctx;
   const { data: tasks } = usePoll(
     () => get<TaskRow[]>(`/observe/projects/${projectId}/board`),
     10000,
@@ -402,6 +472,8 @@ export default function Overview({
       ) : (
         <p className="help" style={{ margin: "10px 0 0" }}>Nothing waiting on you here.</p>
       )}
+
+      <ModeStrip dash={dash} reload={reload} />
 
       {/* Is it working? The question a chairman asks first and the product
           answered nowhere: runs that ended early were a grey aside on a tab

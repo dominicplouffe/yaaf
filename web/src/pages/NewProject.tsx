@@ -56,6 +56,7 @@ export default function NewProject() {
   const [chairmanName, setChairmanName] = useState("");
   const [billingMode, setBillingMode] = useState("api_key");
   const [mode, setMode] = useState("explore");
+  const [exploreDeadline, setExploreDeadline] = useState("");
   const [runtime, setRuntime] = useState("agent_sdk");
   const [controlledDomains, setControlledDomains] = useState("");
   const [teams, setTeams] = useState<TeamDraft[]>([
@@ -222,6 +223,8 @@ export default function NewProject() {
         chairman_email: chairmanEmail.trim(),
         billing_mode: billingMode,
         mode,
+        ...(mode === "explore" && exploreDeadline
+          ? { deadline: `${exploreDeadline}T23:59:59Z` } : {}),
         controlled_domains: controlledDomains
           .split(",")
           .map((d) => d.trim())
@@ -408,12 +411,26 @@ export default function NewProject() {
               </button>
             ))}
           </div>
-          {mode !== "explore" && (
+          {mode !== "explore" ? (
             <p className="help" style={{ marginTop: 10 }}>
               This project starts owing a plan: the CEO proposes requirements, you accept
               them on the Plan tab, and no work may be created until the plan holds and
               adds up against the budget.
             </p>
+          ) : (
+            <div style={{ marginTop: 10, display: "flex", gap: 10, alignItems: "baseline",
+              flexWrap: "wrap" }}>
+              <label className="field" style={{ margin: 0 }}>
+                Window (optional)
+              </label>
+              <input type="date" value={exploreDeadline}
+                onChange={(e) => setExploreDeadline(e.target.value)}
+                style={{ width: 170 }} />
+              <span className="help">
+                Open scope, bounded time — “one sale in the next 60 days.” When it
+                passes you are told and the judgment is yours; nothing pauses itself.
+              </span>
+            </div>
           )}
         </div>
         <div className="card">

@@ -854,10 +854,29 @@ def plan_requirement(session: Session, project_id: str) -> Requirement | None:
     ).scalar_one_or_none()
 
 
-def scope_requirements(session: Session, project_id: str) -> list[Requirement]:
+def current_cycle(session: Session, project_id: str):
+    """The one open cycle of an Operate project, or None. At most one is ever
+    open — the janitor closes before it opens, in the same transition."""
+    from yaaf.core.models import Cycle, CycleStatus
+
+    return session.execute(
+        select(Cycle).where(Cycle.project_id == project_id,
+                            Cycle.status == CycleStatus.OPEN)
+    ).scalar_one_or_none()
+
+
+def scope_requirements(session: Session, project_id: str, *,
+                       all_cycles: bool = False) -> list[Requirement]:
     """Everything except R-00. Planning is work, but it is not the deliverable,
-    and counting it as scope would put the plan in its own denominator."""
-    return [
+    and counting it as scope would put the plan in its own denominator.
+
+    For an Operate project this is the OPEN CYCLE's scope: each turn of the
+    rhythm plans fresh, and unsettled work carries its cycle_id forward when
+    the janitor rolls. `all_cycles=True` is for the readers that must learn
+    across turns — the estimate-bias multiplier above all, because a CEO that
+    lowballs every cycle would otherwise start each one forgiven.
+    """
+    rows = [
         r
         for r in session.execute(
             select(Requirement)
@@ -866,6 +885,14 @@ def scope_requirements(session: Session, project_id: str) -> list[Requirement]:
         ).scalars()
         if r.key != PLAN_KEY
     ]
+    if all_cycles:
+        return rows
+    project = session.get(Project, project_id)
+    if project is not None and project.mode == ProjectMode.OPERATE:
+        cycle = current_cycle(session, project_id)
+        if cycle is not None:
+            rows = [r for r in rows if r.cycle_id == cycle.id]
+    return rows
 
 
 def create_plan_requirement(session: Session, project: Project) -> Requirement:
@@ -931,7 +958,7 @@ def estimate_bias(session: Session, project_id: str) -> tuple[float, dict]:
     """
     settled = [
         r
-        for r in scope_requirements(session, project_id)
+        for r in scope_requirements(session, project_id, all_cycles=True)
         if r.status in CLOSED_REQUIREMENT_STATUSES and r.est_runs
     ]
     pairs = [(r.est_runs, runs_spent_on(session, r.id)) for r in settled]

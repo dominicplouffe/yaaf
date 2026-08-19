@@ -20,7 +20,7 @@ from datetime import UTC, datetime, time
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -240,6 +240,20 @@ class ConstitutionDoc(BaseModel):
         help="IANA name, e.g. 'America/New_York'. Every local time in these rules — the "
              "reporting window, the daily wake, a recurring rhythm — is read in this zone.")
 
+    # The Operate rhythm. Cycles roll in the janitor — a rhythm firing while
+    # the company is busy or broke must still be recorded — and all local
+    # times read the constitution's one timezone.
+    cycle_frequency: str = _rule(
+        "weekly", group="Operate rhythm", label="How often a cycle rolls",
+        help="Operate projects only: 'daily', 'weekly', 'monthly' or 'quarterly'. Each "
+             "roll closes the cycle, carries unfinished scope forward, reopens the plan "
+             "gate, and hands the CEO the last three cycles' narratives verbatim.")
+    cycle_day: int = _rule(
+        0, ge=0, le=28, group="Operate rhythm", label="Which day the cycle rolls",
+        help="Weekly: 0=Monday … 6=Sunday. Monthly and quarterly: the day of the month, "
+             "1–28 — the 29th to 31st do not exist in every month and are refused "
+             "rather than quietly moved. Daily ignores this.")
+
     # The review. Opened, numbered and emailed by the janitor with zero
     # tokens; the CEO's narrative rides the governance reserve.
     review_interval_days: int = _rule(
@@ -291,6 +305,25 @@ class ConstitutionDoc(BaseModel):
         except Exception as exc:
             raise ValueError(f"{raw!r} is not an IANA timezone (e.g. 'America/New_York')") from exc
         return raw
+
+    @field_validator("cycle_frequency")
+    @classmethod
+    def _frequency_is_known(cls, raw: str) -> str:
+        if raw not in ("daily", "weekly", "monthly", "quarterly"):
+            raise ValueError(
+                f"{raw!r} is not a cycle frequency: daily, weekly, monthly or quarterly")
+        return raw
+
+    @model_validator(mode="after")
+    def _cycle_day_fits_the_frequency(self) -> ConstitutionDoc:
+        if self.cycle_frequency == "weekly" and not 0 <= self.cycle_day <= 6:
+            raise ValueError("weekly cycles take cycle_day 0 (Monday) through 6 (Sunday)")
+        if self.cycle_frequency in ("monthly", "quarterly") and not 1 <= self.cycle_day <= 28:
+            raise ValueError(
+                "monthly and quarterly cycles take cycle_day 1-28: the 29th to 31st do "
+                "not exist in every month, and a rhythm that quietly moves is not a "
+                "rhythm — pick a day every month has")
+        return self
 
     @field_validator("ceo_daily_at")
     @classmethod

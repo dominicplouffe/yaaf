@@ -45,9 +45,15 @@ STAGE_1_COLUMNS = (
 STAGE_5_TABLES = ("commitments",)
 STAGE_6_TABLES = ("artifacts", "audit_samples")
 STAGE_7_TABLES = ("reviews",)
+STAGE_8_TABLES = ("cycles",)
+STAGE_8_COLUMNS = (
+    ("projects", "deadline"),
+    ("requirements", "cycle_id"),
+)
 
-REMOVED_TABLES = STAGE_1_TABLES + STAGE_5_TABLES + STAGE_6_TABLES + STAGE_7_TABLES
-REMOVED_COLUMNS = STAGE_1_COLUMNS
+REMOVED_TABLES = (STAGE_1_TABLES + STAGE_5_TABLES + STAGE_6_TABLES
+                  + STAGE_7_TABLES + STAGE_8_TABLES)
+REMOVED_COLUMNS = STAGE_1_COLUMNS + STAGE_8_COLUMNS
 
 
 def _alembic_config(url: str) -> Config:
