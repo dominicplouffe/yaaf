@@ -52,7 +52,7 @@ session preferred, twice over, which is why this table names objects.
 | 0 | Fresh database, one baseline, one place for rules | **done** — reset run, seed restored |
 | 1 | Requirements as the spine; done is true by construction | **done** — migration 0002 |
 | 2 | The plan is the CEO's first task, and it has to add up | **done** |
-| 3 | The plan screen — stage board and dependency graph | not started |
+| 3 | The plan screen — stage board and dependency graph | **done** |
 | 4 | Velocity, cost attribution, error load | not started |
 | 5 | Commitment, and a forecast that refuses things | not started |
 | 6 | Deliverables, attestation, the sampled audit | not started |
@@ -144,6 +144,23 @@ twice, and dropped both times.
   is what makes estimate-vs-actual a comparison rather than a hope.
 - `mode` is settable at creation (`explore` / `deliver` / `operate`). Stage 8
   still owns the picker, cycles and the completion receipt.
+
+## Stage 3, as built
+
+- `GET /observe/projects/{id}/plan` — **one response for both views**, so the
+  stage board and the dependency graph cannot disagree with each other, and
+  the critical path arrives computed server-side from the same arithmetic the
+  feasibility refusals quote (bias multiplier included).
+- The critical path is the longest chain of **unsettled** work: met and cut
+  requirements conduct but weigh nothing, so the number beside the path is
+  always the work still ahead, and cutting the heavy branch of a diamond
+  visibly reroutes the path through the light one.
+- `Plan.tsx` — Stages / Dependencies on a toggle. Stage board groups by stage
+  with the open stage marked; the graph is layered SVG with arrows from
+  blocker to blocked and the critical path accented.
+- **Scope decisions happen on the screen**: accept, cut, and the observable
+  verdict are buttons on the requirement they concern. Explore projects get no
+  Plan tab at all — a tab that only ever explains its own absence is clutter.
 
 ## The reset — done, 18 Aug
 
