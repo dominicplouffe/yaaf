@@ -56,7 +56,7 @@ session preferred, twice over, which is why this table names objects.
 | 4 | Velocity, cost attribution, error load | **done** |
 | 5 | Commitment, and a forecast that refuses things | **done** — migration 0003 |
 | 6 | Deliverables, attestation, the sampled audit | **done** — migration 0004 |
-| 7 | The status meeting, and six levers | not started |
+| 7 | The status meeting, and six levers | **done** — migration 0005 |
 | 8 | Explore / Deliver / Operate, and the learning loop | not started |
 | 9 | The topology experiment | not started |
 
@@ -258,6 +258,36 @@ twice, and dropped both times.
   skills staged into a platform-owned `.claude/skills` with an explicit SDK
   allowlist — `[]` when none granted, so an agent-authored skill file stays
   dark; and `run_token_budget` handed to the SDK as an API-side task budget.
+
+## Stage 7, as built
+
+- **The janitor owns the meeting.** `reviews` (migration 0005): opened,
+  numbered and emailed on `review_interval_days` with zero tokens — regardless
+  of budget, an empty board included, every mode including Explore. One open
+  at a time; an unattended one nags at 24h and escalates at 72h (louder email
+  + audit row, never a brake).
+- **The numbers are frozen at open**, from the same producers every screen
+  reads: pace, the commitment projection, budget month-to-date, scope
+  movement, audit coverage since the last review — so the record cannot drift
+  as the week moves on.
+- **The narrative rides the reserve.** An open review missing its narrative is
+  a dispatcher wake of reason kind `review` — governance-classed, so it can
+  spend the reserved slice on exactly the day the ordinary allowance is gone.
+  `review_narrative` (new agent verb + tool) files it once; only the CEO;
+  emailed to the chairman on arrival.
+- **Six levers**, each acting through the same route it would outside the
+  meeting and recorded on the review with the chairman's reason: cut; **add**
+  (`POST /admin/projects/{id}/requirements` — chairman-authored scope,
+  accepted at birth, est_runs required because the feasibility arithmetic
+  does not care whose idea the work was); **reword** (words move, key /
+  estimate / history / failure load do not — no laundering); move the date;
+  raise the budget (the amendment rails, so it is recorded and disclosed like
+  any rule change); accept the slip (an explicit decision on the record).
+  Closing with zero decisions records "no change".
+- **The next review remembers**: it opens with the prior review's decisions
+  beside what they bought — requirements met since, pace then vs pace now.
+- **The Review tab** is the meeting: frozen tiles, the narrative, prior
+  decisions with their price, six buttons, close.
 
 ## The reset — done, 18 Aug
 
