@@ -146,6 +146,8 @@ export interface Dashboard {
   status_reason: string | null;
   goal: string;
   billing_mode: string;
+  /** explore | deliver | operate — decides whether a Plan exists at all. */
+  mode: string;
   month_to_date: {
     usd: number;
     tokens_in: number;

@@ -1101,6 +1101,69 @@ def evaluate_plan(session: Session, project: Project, cons: ConstitutionDoc) -> 
     return missing
 
 
+def requirement_edges(session: Session, project_id: str) -> list[RequirementEdge]:
+    return list(
+        session.execute(
+            select(RequirementEdge).where(RequirementEdge.project_id == project_id)
+        ).scalars()
+    )
+
+
+def critical_path(session: Session, project_id: str) -> dict:
+    """The longest chain of unsettled work, weighted by adjusted estimates.
+
+    This is what makes the projection *explicable* rather than asserted: a
+    number of days is an argument nobody can act on, but "R-07 sits on the
+    path and has eaten 53 runs" names the thing to cut, fix or fund. Computed
+    server-side so the screen can never disagree with the data it draws.
+
+    Weights are est_runs × the CEO's historical bias — the same arithmetic the
+    feasibility gate uses, so the path and the refusals never quote different
+    numbers. Settled requirements weigh nothing but still conduct: met work on
+    a chain does not shorten the drawing, it just stops costing.
+    """
+    scope = scope_requirements(session, project_id)
+    if not scope:
+        return {"keys": [], "adjusted_runs": 0}
+    multiplier, _ = estimate_bias(session, project_id)
+    by_id = {r.id: r for r in scope}
+    weight = {
+        r.id: (round((r.est_runs or 0) * multiplier)
+               if r.status not in CLOSED_REQUIREMENT_STATUSES else 0)
+        for r in scope
+    }
+    inbound: dict[str, list[str]] = {r.id: [] for r in scope}
+    for edge in requirement_edges(session, project_id):
+        if edge.from_requirement_id in by_id and edge.to_requirement_id in by_id:
+            inbound[edge.to_requirement_id].append(edge.from_requirement_id)
+
+    # Longest path over a DAG (would_cycle guards inserts, so ordering by
+    # repeated relaxation terminates). Memoized walk from every sink.
+    best: dict[str, tuple[int, list[str]]] = {}
+
+    def walk(node: str) -> tuple[int, list[str]]:
+        if node in best:
+            return best[node]
+        head_cost, head_path = 0, []
+        for prev in inbound[node]:
+            cost, path = walk(prev)
+            if cost > head_cost:
+                head_cost, head_path = cost, path
+        best[node] = (head_cost + weight[node], [*head_path, node])
+        return best[node]
+
+    top_cost, top_path = 0, []
+    for r in scope:
+        cost, path = walk(r.id)
+        if cost > top_cost:
+            top_cost, top_path = cost, path
+    return {
+        "keys": [by_id[n].key for n in top_path],
+        "adjusted_runs": top_cost,
+        "multiplier": round(multiplier, 2),
+    }
+
+
 # ── message rules ───────────────────────────────────────────────────────────────
 
 

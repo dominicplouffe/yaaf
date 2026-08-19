@@ -30,6 +30,7 @@ from yaaf.core.models import (
     MemoryScope,
     Message,
     Project,
+    RequirementStatus,
     Role,
     RoleVersion,
     Run,
@@ -557,6 +558,95 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
         "ok": not any(c["status"] == "fail" for c in checks),
         "all_ok": all(c["status"] == "ok" for c in checks) if checks else True,
         "checks": checks,
+    }
+
+
+@router.get("/projects/{project_id}/plan")
+def plan_view(project_id: str, session: Session = Depends(db)) -> dict:
+    """Everything the Plan screen draws, in one request.
+
+    One dataset for both views — the stage board and the dependency graph read
+    the same rows, so they cannot disagree with each other, and the critical
+    path arrives computed rather than being re-derived in the browser where it
+    could drift from the refusals' arithmetic.
+    """
+    from yaaf.core.constitution import effective as effective_constitution
+
+    project = _project(session, project_id)
+    if not policy.requires_requirements(project):
+        return {"mode": project.mode, "planless": True}
+
+    cons = effective_constitution(session, project.id)
+    agents, _ = _name_maps(session, project.id)
+
+    plan = policy.plan_requirement(session, project.id)
+    scope = policy.scope_requirements(session, project.id)
+    edges = policy.requirement_edges(session, project.id)
+    key_of = {r.id: r.key for r in scope}
+    if plan is not None:
+        key_of[plan.id] = plan.key
+
+    depends_on: dict[str, list[str]] = {}
+    for edge in edges:
+        depends_on.setdefault(edge.to_requirement_id, []).append(
+            key_of.get(edge.from_requirement_id, edge.from_requirement_id))
+
+    tasks_by_requirement: dict[str, list[dict]] = {}
+    for task in session.execute(
+        select(Task).where(Task.project_id == project.id,
+                           Task.requirement_id.is_not(None))
+    ).scalars():
+        tasks_by_requirement.setdefault(task.requirement_id, []).append({
+            "id": task.id,
+            "title": task.title,
+            "status": task.status,
+            "holder": agents.get(task.claimed_by_agent_id),
+            "failed_checks": task.check_failures,
+        })
+
+    # Runs and dollars actually spent, per requirement — planning runs
+    # included, which is the half of spend that used to be unattributable.
+    spend = {
+        requirement_id: {"runs": int(runs), "usd": round(float(usd or 0), 2)}
+        for requirement_id, runs, usd in session.execute(
+            select(Run.requirement_id, func.count(Run.id), func.sum(Run.cost_usd))
+            .where(Run.project_id == project.id, Run.requirement_id.is_not(None))
+            .group_by(Run.requirement_id)
+        )
+    }
+
+    return {
+        "mode": project.mode,
+        "planless": False,
+        "plan": {
+            "status": plan.status if plan else None,
+            "holds": plan is not None and plan.status == RequirementStatus.MET,
+            "outstanding": policy.evaluate_plan(session, project, cons),
+            "arithmetic": policy.plan_arithmetic(session, project, cons),
+            "planning_spend": spend.get(plan.id, {"runs": 0, "usd": 0}) if plan else None,
+        },
+        "open_stage": policy.open_stage(session, project.id),
+        "critical_path": policy.critical_path(session, project.id),
+        "requirements": [
+            {
+                "id": r.id,
+                "key": r.key,
+                "statement": r.statement,
+                "status": r.status,
+                "stage": r.stage,
+                "test_kind": (r.acceptance_test or {}).get("type"),
+                "acceptance_test": r.acceptance_test,
+                "est_runs": r.est_runs,
+                "spent": spend.get(r.id, {"runs": 0, "usd": 0}),
+                "failure_load": r.failure_load,
+                "depends_on": sorted(depends_on.get(r.id, [])),
+                "tasks": tasks_by_requirement.get(r.id, []),
+                "met_at": r.met_at.isoformat() if r.met_at else None,
+                "cut_reason": r.cut_reason,
+                "check_output": r.check_output,
+            }
+            for r in scope
+        ],
     }
 
 

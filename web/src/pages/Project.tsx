@@ -23,6 +23,7 @@ import {
   statusBrief,
 } from "../ui";
 import Overview from "./project/Overview";
+import Plan from "./project/Plan";
 import Boardroom from "./project/Boardroom";
 import Work from "./project/Work";
 import Deliverables from "./project/Deliverables";
@@ -35,6 +36,7 @@ import Settings from "./project/Settings";
 const TABS = [
   ["", "Overview"],
   ["boardroom", "Boardroom"],
+  ["plan", "Plan"],
   ["work", "Work"],
   ["deliverables", "Deliverables"],
 ] as const;
@@ -509,7 +511,10 @@ export default function ProjectPage() {
       )}
 
       <nav className="tabs">
-        {TABS.map(([path, label]) => (
+        {/* Explore has no plan by design, so it gets no Plan tab — a tab that
+            only ever explains its own absence is clutter, not honesty. */}
+        {TABS.filter(([path]) => path !== "plan" || dash.mode !== "explore")
+          .map(([path, label]) => (
           <NavLink
             key={path}
             to={path === "" ? `/projects/${projectId}` : `/projects/${projectId}/${path}`}
@@ -531,6 +536,7 @@ export default function ProjectPage() {
       <Routes>
         <Route index element={<Overview ctx={ctx} asOf={at} error={error} />} />
         <Route path="boardroom" element={<Boardroom projectId={projectId} dash={dash} />} />
+        <Route path="plan" element={<Plan ctx={ctx} />} />
         <Route path="work" element={<Work ctx={ctx} />} />
         <Route path="deliverables" element={<Deliverables projectId={projectId} />} />
         <Route path="records/*" element={<Records ctx={ctx} />} />
