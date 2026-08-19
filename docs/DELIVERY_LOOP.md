@@ -1,4 +1,10 @@
-# The delivery loop — plan of record
+# The delivery loop — superseded
+
+**This plan is superseded by [REBUILD.md](REBUILD.md).** Nothing had shipped, so the
+database is being dropped and the requests are being architected in rather than added
+beside — which removes most of the compromises below. This file is kept because its
+audit findings are still the evidence base, not because its phases are still the plan.
+Validating it turned up six numbers that do not reproduce; see REBUILD.md for the link.
 
 Why the chairman cannot get a delivery date out of yaaf, and the work that fixes it.
 Derived from an audit of 1,091 runs across 9 projects and $220.37 of real spend.
