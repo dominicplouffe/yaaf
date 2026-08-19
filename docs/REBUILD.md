@@ -54,7 +54,7 @@ session preferred, twice over, which is why this table names objects.
 | 2 | The plan is the CEO's first task, and it has to add up | **done** |
 | 3 | The plan screen — stage board and dependency graph | **done** |
 | 4 | Velocity, cost attribution, error load | **done** |
-| 5 | Commitment, and a forecast that refuses things | not started |
+| 5 | Commitment, and a forecast that refuses things | **done** — migration 0003 |
 | 6 | Deliverables, attestation, the sampled audit | not started |
 | 7 | The status meeting, and six levers | not started |
 | 8 | Explore / Deliver / Operate, and the learning loop | not started |
@@ -186,6 +186,45 @@ twice, and dropped both times.
   3's Plan tab was unreachable from the UI because mode was API-only until
   stage 8's picker. A screen nobody can reach is not shipped; a compact
   three-card picker landed the day the screens behind it existed.
+
+## Stage 5, as built
+
+- `commitments` (migration 0003). The CEO proposes one — but the proposal has
+  **no date field** (extra fields die at the schema), and the platform stamps
+  its own projection as the proposed date, rounded to end-of-day because a
+  promise is day-shaped. The chairman accepts with that date or his own,
+  declines with a reason, or moves it later — his three verbs, none of them
+  an agent's.
+- **One producer for the projection**: `velocity.commitment_projection` —
+  remaining ÷ trailing met-per-week (3w, falling back to 12w), and before any
+  pace exists, the plan's own arithmetic (adjusted runs at the daily cap,
+  labelled as the best case it is). The propose route quotes it, the janitor
+  stamps it, the scope refusal shows it, the Plan screen draws it.
+- **Acceptance freezes the ground**: `constitution_version` and
+  `scope_snapshot` are written once and never updated. What the janitor last
+  saw lives in `projection`, and re-validation is a **state diff** against it
+  on three triggers — constitution version moved, scope keys changed, failure
+  load crossed `commitment_failure_reforecast` (new constitution rule, default
+  5, baseline advances only when it fires so a storm triggers once, not every
+  tick). Never event hooks: amendments apply inline from three callers.
+- The janitor walks the status itself — accepted / at_risk / breached / met —
+  and every transition is a Notice to the CEO; at_risk and breached also email
+  the chairman with the numbers. Those two notice kinds are urgent AND add a
+  `commitment` wake reason, which is governance-classed — the re-forecast can
+  spend the reserved slice on exactly the day ordinary work burned the cap.
+- **The guarantee is a refusal**: while the projection lands past the date (or
+  the date has passed), `POST /agent/requirements` is refused with the
+  arithmetic — pace, projection, days late — in the message. Existing work
+  continues; the freeze is on scope, never on finishing. The freeze computes
+  live from the same producer, so it can never lag the janitor's last tick.
+- Plan screen: proposal strip (accept with your own date / decline), slip
+  banner with the move-date lever, a Commitment tile, and the **burn-up** —
+  the met line against two markers, *committed* (his) and *projected* (the
+  platform's), which is the whole conversation.
+- 13 invariant tests: smuggle a date (dies at the schema), accept from a run
+  token (no route), add scope past a breach (refused, arithmetic shown, task
+  creation still allowed), amend the constitution out from under the freeze
+  (re-validated and disclosed; the frozen version untouched).
 
 ## The reset — done, 18 Aug
 
