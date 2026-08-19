@@ -21,6 +21,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 import pytest
+from pydantic import ValidationError
 
 from tests.conftest import ADMIN, bearer, live_token, make_project
 from tests.selftest_invariants.test_requirements import (
@@ -180,7 +181,7 @@ def operate_project(client, slug="ops", **kwargs):
 
 
 def test_the_29th_is_refused_not_clamped(client):
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         ConstitutionDoc(cycle_frequency="monthly", cycle_day=29)
     response = client.post("/admin/projects", json={
         "slug": "day29", "name": "X", "goal": "Recurring, impossibly dated",

@@ -34,7 +34,6 @@ from yaaf.core.models import (
     Message,
     Project,
     ProjectStatus,
-    Requirement,
     RequirementStatus,
     Run,
     RunKind,

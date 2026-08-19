@@ -67,8 +67,8 @@ from yaaf.core.models import (
     TaskStatus,
     Team,
     User,
-    utcnow,
     VerificationStatus,
+    utcnow,
 )
 from yaaf.server import policy
 from yaaf.server.api.agent import WAKE_CHANNEL

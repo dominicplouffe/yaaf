@@ -21,6 +21,7 @@ from __future__ import annotations
 from sqlalchemy import select
 
 from tests.conftest import amend, make_project
+from yaaf.core import ids
 from yaaf.core.constitution import ConstitutionDoc, effective
 from yaaf.core.db import db_session
 from yaaf.core.models import (
@@ -33,7 +34,6 @@ from yaaf.core.models import (
     RunStatus,
     utcnow,
 )
-from yaaf.core import ids
 from yaaf.server import dispatcher
 
 

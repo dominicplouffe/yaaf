@@ -147,8 +147,14 @@ async def project_live(websocket: WebSocket, project_id: str, token: str = "") -
         # the client falls back to its polling floor and may reconnect.
         pass
     finally:
+        # Teardown races the server (or test client) cancelling THIS coroutine:
+        # any await below can take a CancelledError mid-cleanup, which would
+        # strand the session as a cancelled task instead of a closed socket.
+        # Cleanup survives it (BaseException, because cancellation is not an
+        # Exception), and the close still runs when the gather is cut short.
         for task in (watcher, sender):
             task.cancel()
-        await asyncio.gather(watcher, sender, return_exceptions=True)
-        with contextlib.suppress(Exception):
+        with contextlib.suppress(BaseException):
+            await asyncio.gather(watcher, sender, return_exceptions=True)
+        with contextlib.suppress(BaseException):
             await websocket.close()

@@ -12,7 +12,7 @@ stamps amendment disclosure — the CEO can never claim it wasn't told.
 
 from __future__ import annotations
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from yaaf.core.constitution import ConstitutionDoc, effective
@@ -33,7 +33,6 @@ from yaaf.core.models import (
     Notice,
     Project,
     ProjectMode,
-    Requirement,
     RequirementStatus,
     RoleVersion,
     Run,

@@ -22,7 +22,7 @@ What is attacked here:
 
 from __future__ import annotations
 
-from tests.conftest import ADMIN, agent_by_name, bearer, live_token, make_project
+from tests.conftest import ADMIN, bearer, make_project
 from tests.selftest_invariants.test_requirements import (
     CMD_TEST,
     accept,
@@ -35,7 +35,6 @@ from tests.selftest_invariants.test_requirements import (
 from yaaf.core.db import db_session
 from yaaf.core.models import (
     Project,
-    ProjectMode,
     Requirement,
     RequirementStatus,
     Run,
