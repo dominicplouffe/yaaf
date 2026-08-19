@@ -22,6 +22,7 @@ import httpx
 from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
+    HookMatcher,
     ResultMessage,
     TextBlock,
     create_sdk_mcp_server,
@@ -38,6 +39,9 @@ EFFORT = os.environ.get("YAAF_EFFORT", "high")
 # tells the model as it approaches and stops it at the line, so the run ends
 # having said something rather than being cut off silently. 0 = unbounded.
 MAX_USD = float(os.environ.get("YAAF_MAX_USD", "0") or 0)
+# Constitution run_token_budget: handed to the model as an API-side task
+# budget so it paces itself and wraps up before the line. 0 = off.
+TASK_BUDGET = int(os.environ.get("YAAF_TASK_BUDGET", "0") or 0)
 PERMS = json.loads(os.environ.get("YAAF_TOOL_PERMISSIONS", "{}"))
 
 STAGING = Path("/workspace/.yaaf")
@@ -412,6 +416,100 @@ async def t_artifact_get(args):
     return _text(_call("GET", "/agent/artifacts/content", params=params))
 
 
+def _memory_entry_id(path: str) -> str | None:
+    """`/memories/mem_x` → `mem_x`; `/memories` (or bare) → None (a listing)."""
+    parts = [part for part in (path or "").split("/") if part]
+    if not parts or parts == ["memories"]:
+        return None
+    return parts[-1]
+
+
+@tool(
+    "memory",
+    "Your durable memory, in the standard memory-tool directory shape — over the SAME "
+    "governed store as the memory_* tools, with the same rules (caps refuse adds; only "
+    "a scope's curator edits, folds or deletes). Commands: "
+    "view (path '/memories' lists entries; '/memories/<id>' shows one) · "
+    "create (path '/memories/<scope>/<subject>.md' where scope is project|team, "
+    "file_text is the content) · "
+    "str_replace (path '/memories/<id>', old_str, new_str — edits one entry) · "
+    "delete (path '/memories/<id>') · "
+    "rename (path '/memories/<id>', new_path names the new subject). "
+    "Check your memory directory at the start of a run; record only what will still "
+    "be true next month.",
+    {"command": str, "path": str, "file_text": str, "old_str": str, "new_str": str,
+     "new_path": str},
+)
+async def t_memory_tool(args):
+    command = (args.get("command") or "").strip()
+    path = (args.get("path") or "").strip()
+    entry = _memory_entry_id(path)
+
+    if command == "view":
+        if entry is None:
+            listing = _call("GET", "/agent/memory/search", params={"q": "", "limit": 50})
+            body = listing.get("body")
+            if listing["status"] == 200 and isinstance(body, list):
+                lines = [f"/memories/{r['id']}  [{r['scope']}/{r['kind']}]  {r['subject']}"
+                         for r in body]
+                return _text({"status": 200, "body": {
+                    "directory": lines,
+                    "note": "view /memories/<id> for one entry; memory_search for "
+                            "full-text search."}})
+            return _text(listing)
+        return _text(_call("GET", "/agent/memory/search",
+                           params={"memory_id": entry, "limit": 1,
+                                   "include_superseded": "true"}))
+
+    if command == "create":
+        parts = [p for p in path.split("/") if p]
+        scope = parts[1] if len(parts) >= 3 and parts[0] == "memories" \
+            and parts[1] in ("project", "team") else "project"
+        subject = (parts[-1] if parts else "").removesuffix(".md").replace("-", " ").strip()
+        return _text(_call("POST", "/agent/memory", {
+            "scope": scope, "kind": "fact",
+            "subject": subject or "untitled",
+            "body": args.get("file_text") or "",
+        }))
+
+    if command == "str_replace":
+        if entry is None:
+            return _text({"status": 422, "body": {"error": "path must be /memories/<id>"}})
+        current = _call("GET", "/agent/memory/search",
+                        params={"memory_id": entry, "limit": 1})
+        rows = current.get("body") if current["status"] == 200 else None
+        if not rows:
+            return _text({"status": 404, "body": {"error": f"no memory {entry}"}})
+        row = rows[0]
+        edited = row["body"].replace(args.get("old_str") or "", args.get("new_str") or "", 1)
+        return _text(_call("POST", f"/agent/memory/{entry}/supersede", {
+            "kind": row["kind"], "subject": row["subject"], "body": edited}))
+
+    if command == "rename":
+        if entry is None:
+            return _text({"status": 422, "body": {"error": "path must be /memories/<id>"}})
+        current = _call("GET", "/agent/memory/search",
+                        params={"memory_id": entry, "limit": 1})
+        rows = current.get("body") if current["status"] == 200 else None
+        if not rows:
+            return _text({"status": 404, "body": {"error": f"no memory {entry}"}})
+        row = rows[0]
+        new_subject = (args.get("new_path") or "").split("/")[-1] \
+            .removesuffix(".md").replace("-", " ").strip()
+        return _text(_call("POST", f"/agent/memory/{entry}/supersede", {
+            "kind": row["kind"], "subject": new_subject or row["subject"],
+            "body": row["body"]}))
+
+    if command == "delete":
+        if entry is None:
+            return _text({"status": 422, "body": {"error": "path must be /memories/<id>"}})
+        return _text(_call("POST", f"/agent/memory/{entry}/forget"))
+
+    return _text({"status": 422, "body": {
+        "error": f"unknown command {command!r}; use view, create, str_replace, "
+                 "rename or delete"}})
+
+
 @tool(
     "env_list",
     "List the environment variable NAMES available in your sandbox (never values). "
@@ -427,11 +525,64 @@ ALL_TOOLS = [
     t_requirement_propose, t_requirement_depends_on,
     t_suggest, t_channels, t_messages_read, t_message_post, t_directive_file,
     t_memory_search, t_memory_add, t_memory_supersede, t_memory_compact, t_memory_forget,
+    t_memory_tool,
     t_evidence_add, t_hypothesis_add, t_hypothesis_kill, t_decision_add,
     t_approval_request, t_approvals_list, t_spend_book,
     t_side_effect_begin, t_side_effect_finish,
     t_artifact_put, t_artifact_list, t_artifact_get, t_env_list,
 ]
+
+
+# ── hooks: the platform's ears inside the session, record-only ─────────────────
+#
+# Both hooks APPEND TO A LOG AND NOTHING ELSE. The Stop hook in particular is
+# record-only BY CONSTRUCTION: it never returns a decision key, so it cannot
+# block a run from ending — a hook that could would be a lever an agent's
+# output might learn to pull.
+
+HOOK_LOG: list[dict] = []
+
+
+async def hook_precompact(input_data, tool_use_id, context):
+    HOOK_LOG.append({
+        "type": "hook", "hook": "PreCompact",
+        "trigger": (input_data or {}).get("trigger"),
+        "note": "context was compacted mid-run; durable facts belong in memory, "
+                "not in conversation history",
+    })
+    return {}
+
+
+async def hook_stop(input_data, tool_use_id, context):
+    HOOK_LOG.append({"type": "hook", "hook": "Stop"})
+    return {}
+
+
+def build_hooks() -> dict:
+    return {
+        "PreCompact": [HookMatcher(hooks=[hook_precompact])],
+        "Stop": [HookMatcher(hooks=[hook_stop])],
+    }
+
+
+def skill_names() -> list[str]:
+    """The explicit allowlist for options.skills. ALWAYS a list — never None —
+    because None means "CLI defaults", and the workspace is agent-writable: a
+    skill an agent authored into .claude/skills must stay dark unless the
+    chairman's role definition names it."""
+    names = []
+    for spec in PERMS.get("skills", []):
+        slug = _skill_slug(str(spec.get("name", "")))
+        if slug:
+            names.append(slug)
+    return names
+
+
+def _skill_slug(name: str) -> str:
+    return "".join(
+        ch for ch in name.lower().strip().replace(" ", "-")
+        if ch.isalnum() or ch == "-"
+    )[:64]
 
 
 def _builtin_tools() -> list[str]:
@@ -527,6 +678,12 @@ async def main() -> int:
         cwd="/workspace",
         setting_sources=[],
         max_turns=100,
+        hooks=build_hooks(),
+        # Explicit allowlist, [] when the role grants none — [] suppresses
+        # every discovered skill, which is the point: the workspace is
+        # agent-writable and an unlisted skill must stay dark.
+        skills=skill_names(),
+        **({"task_budget": {"total": TASK_BUDGET}} if TASK_BUDGET > 0 else {}),
         **({"max_budget_usd": MAX_USD} if MAX_USD > 0 else {}),
         # A big MCP tool result (a real data pull) overflows the SDK's default
         # 1MB transport buffer and kills the run; seen live on audit data.
@@ -569,8 +726,13 @@ async def main() -> int:
         os.replace(tmp, result_path)
 
     with trace_path.open("a") as trace:
+        def drain_hooks() -> None:
+            while HOOK_LOG:
+                trace.write(json.dumps(HOOK_LOG.pop(0)) + "\n")
+
         try:
             async for message in query(prompt=prompt, options=options):
+                drain_hooks()
                 if isinstance(message, AssistantMessage):
                     for block in message.content:
                         if isinstance(block, TextBlock):
@@ -600,6 +762,7 @@ async def main() -> int:
             ok = False
             summary_parts.append(f"[sandbox_entry error: {exc!r}]")
             trace.write(json.dumps({"type": "error", "error": repr(exc)}) + "\n")
+        drain_hooks()
 
     write_result(partial=False)
     return 0 if ok else 1

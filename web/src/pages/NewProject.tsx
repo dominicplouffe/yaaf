@@ -75,6 +75,12 @@ export default function NewProject() {
   // definitions the library lacks ride along at submit time.
   const [bundle, setBundle] = useState<ProjectBundle | null>(null);
   const [solo, setSolo] = useState(false);
+  const [done, setDone] = useState<string | null>(null);
+  const [webhooks, setWebhooks] = useState<{
+    projectId: string;
+    github: { url: string; secret: string };
+    generic: { url: string; secret: string };
+  } | null>(null);
 
   useEffect(() => {
     get<RoleSummary[]>("/admin/roles").then(setRoles).catch((e: Error) => setError(e.message));
@@ -245,7 +251,12 @@ export default function NewProject() {
             };
           }),
       };
-      const created = await post<{ id: string }>("/admin/projects", body);
+      const created = await post<{
+        id: string;
+        webhooks?: { github: { url: string; secret: string };
+                     generic: { url: string; secret: string } };
+      }>("/admin/projects", body);
+      if (created.webhooks) setWebhooks({ projectId: created.id, ...created.webhooks });
       try {
         for (const cred of credentials) {
           if (!cred.name.trim() || !cred.value) continue;
@@ -281,16 +292,68 @@ export default function NewProject() {
             `answering:\n\n${unreachable.join("\n")}\n\nThe project was NOT started. Fix the ` +
             "address in Settings → Data sources — that form tests it — then start the project.",
         );
-        navigate(`/projects/${created.id}`);
+        if (created.webhooks) setDone(created.id);
+        else navigate(`/projects/${created.id}`);
         return;
       }
       if (startNow) await post(`/admin/projects/${created.id}/start`);
-      navigate(`/projects/${created.id}`);
+      if (created.webhooks) setDone(created.id);
+      else navigate(`/projects/${created.id}`);
     } catch (err) {
       setError((err as Error).message);
     } finally {
       setBusy(false);
     }
+  }
+
+  // The project exists; the one thing this screen still owes the chairman is
+  // the webhook secrets, shown exactly once with the endpoint beside each.
+  if (done && webhooks) {
+    const origin = window.location.origin;
+    return (
+      <>
+        <h1>Project created</h1>
+        <div className="card" style={{ maxWidth: 760 }}>
+          <p style={{ marginTop: 0 }}>
+            <b>Inbound evidence endpoints — copy the secrets now.</b> They are shown
+            only this once. Evidence arriving signed with them is platform-attested:
+            proof no agent can forge, because the secrets never enter a sandbox.
+          </p>
+          <table>
+            <tbody>
+              <tr>
+                <td>GitHub</td>
+                <td className="mono" style={{ wordBreak: "break-all" }}>
+                  {origin}{webhooks.github.url}</td>
+              </tr>
+              <tr>
+                <td>&nbsp;&nbsp;secret</td>
+                <td className="mono" style={{ userSelect: "all", wordBreak: "break-all" }}>
+                  {webhooks.github.secret}</td>
+              </tr>
+              <tr>
+                <td>Generic</td>
+                <td className="mono" style={{ wordBreak: "break-all" }}>
+                  {origin}{webhooks.generic.url}</td>
+              </tr>
+              <tr>
+                <td>&nbsp;&nbsp;secret</td>
+                <td className="mono" style={{ userSelect: "all", wordBreak: "break-all" }}>
+                  {webhooks.generic.secret}</td>
+              </tr>
+            </tbody>
+          </table>
+          <p className="help">
+            GitHub signs with HMAC-SHA256 in <code>X-Hub-Signature-256</code>; other
+            senders sign the raw body into <code>X-Yaaf-Signature</code>. Lost secrets
+            are regenerated in Settings → Integrations, which invalidates these.
+          </p>
+          <button className="primary" onClick={() => navigate(`/projects/${done}`)}>
+            I copied them — open the project
+          </button>
+        </div>
+      </>
+    );
   }
 
   return (

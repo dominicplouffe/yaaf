@@ -1161,6 +1161,62 @@ function Section({ on, children }: { on: boolean; children: React.ReactNode }) {
   return on ? <>{children}</> : null;
 }
 
+/** The unforgeable-evidence doors. Secrets are shown exactly once — at project
+    creation or on regenerate — because a secret the UI can always re-show is a
+    secret every screen-share leaks. */
+function WebhookEndpoints({ projectId }: { projectId: string }) {
+  const [fresh, setFresh] = useState<{ github: string; generic: string } | null>(null);
+  const origin = window.location.origin;
+  return (
+    <div>
+      <p className="help" style={{ marginTop: 0 }}>
+        Evidence arriving signed at these endpoints is <b>platform-attested</b> — no agent
+        can forge it, because the signing secrets never enter a sandbox. Point GitHub's
+        webhook (HMAC, <code>X-Hub-Signature-256</code>) and any other sender
+        (<code>X-Yaaf-Signature</code>) here:
+      </p>
+      <table>
+        <tbody>
+          <tr>
+            <td>GitHub</td>
+            <td><code>{origin}/webhooks/github/{projectId}</code></td>
+          </tr>
+          <tr>
+            <td>Generic</td>
+            <td><code>{origin}/webhooks/generic/{projectId}</code></td>
+          </tr>
+        </tbody>
+      </table>
+      {fresh ? (
+        <div className="strip" style={{ marginTop: 10 }}>
+          <div className="grow">
+            <b>New secrets — copy them now; they are not shown again.</b>
+            <div className="sb" style={{ fontFamily: "var(--mono, monospace)", userSelect: "all" }}>
+              github: {fresh.github}
+            </div>
+            <div className="sb" style={{ fontFamily: "var(--mono, monospace)", userSelect: "all" }}>
+              generic: {fresh.generic}
+            </div>
+          </div>
+        </div>
+      ) : (
+        <p className="help">
+          The secrets were shown once when this project was created. Lost them?
+          Regenerating invalidates the old ones everywhere they are configured.
+        </p>
+      )}
+      <button className="small danger" style={{ marginTop: 6 }}
+        onClick={async () => {
+          const out = await post<{ github_webhook_secret: string; webhook_secret: string }>(
+            `/admin/projects/${projectId}/webhook_secrets`, {});
+          setFresh({ github: out.github_webhook_secret, generic: out.webhook_secret });
+        }}>
+        Regenerate secrets…
+      </button>
+    </div>
+  );
+}
+
 export default function Settings({
   projectId,
   dash,
@@ -1587,6 +1643,11 @@ export default function Settings({
       <h2>GitHub workspace</h2>
       <div className="card">
         <GithubWorkspace projectId={projectId} dash={dash} act={act} busy={busy} />
+      </div>
+
+      <h2>Inbound evidence webhooks</h2>
+      <div className="card">
+        <WebhookEndpoints projectId={projectId} />
       </div>
 
       </Section>

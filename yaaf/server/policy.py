@@ -1799,7 +1799,13 @@ def _curator_of(session: Session, agent: Agent, scope: str) -> Agent | None:
 # ── evidence rules ──────────────────────────────────────────────────────────────
 
 
-def check_evidence_add(project: Project, kind: str, source_url: str | None) -> None:
+def check_evidence_add(
+    session: Session,
+    project: Project,
+    kind: str,
+    source_url: str | None,
+    task_id: str | None,
+) -> None:
     require_project_running(project)
     if kind == EvidenceKind.EXTERNAL and not (source_url or "").strip():
         raise Refusal(
@@ -1808,3 +1814,26 @@ def check_evidence_add(project: Project, kind: str, source_url: str | None) -> N
         )
     if kind not in (EvidenceKind.EXTERNAL, EvidenceKind.INTERNAL):
         raise Refusal("kind must be 'external' or 'internal'.")
+    # task_id used to be an un-FK'd string that ceo_judgment joined on: paste
+    # any id and you inflate your own score, omit it and you suppress it. Now
+    # a given id must be a real task of THIS project, and in the modes where
+    # work is tasks (Deliver/Operate), evidence must say which work it came
+    # from. Explore stays taskless-friendly — its shape is bets and evidence.
+    if task_id is not None:
+        task = session.get(Task, task_id)
+        if task is None or task.project_id != project.id:
+            raise Refusal(
+                f"task_id {task_id!r} is not a task of this project. Evidence joins the "
+                "record through the work that produced it; a made-up id would credit "
+                "work that never happened.",
+                status_code=404,
+            )
+    elif requires_requirements(project):
+        raise Refusal(
+            "Evidence needs task_id: the task this observation came from. In this "
+            "project mode all work is tasks, so evidence that names none is not "
+            "attributable to anything — and unattributable evidence is how a "
+            "scoreboard gets gamed. (Connectors attest without a task; you are "
+            "not one.)",
+            status_code=422,
+        )

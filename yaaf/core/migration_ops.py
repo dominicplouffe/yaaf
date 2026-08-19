@@ -53,6 +53,22 @@ def create_table_if_missing(table: str, *columns, **kwargs) -> None:
         op.create_table(table, *columns, **kwargs)
 
 
+def create_fk_if_missing(name: str, source: str, referent: str,
+                         local_cols: list[str], remote_cols: list[str]) -> None:
+    """`op.create_foreign_key`, skipped when the constraint (or an equivalent
+    one on the same columns) already exists — a fresh install's create_all
+    built it from the models — and skipped entirely on SQLite, which cannot
+    ALTER TABLE ADD CONSTRAINT. SQLite only ever runs the chain in tests,
+    where the baseline builds every FK from the models anyway."""
+    bind = op.get_bind()
+    if bind.dialect.name == "sqlite":
+        return
+    existing = sa.inspect(bind).get_foreign_keys(source)
+    if any(fk.get("constrained_columns") == local_cols for fk in existing):
+        return
+    op.create_foreign_key(name, source, referent, local_cols, remote_cols)
+
+
 def create_index_if_missing(name: str, table: str, columns: list[str], **kwargs) -> None:
     """`op.create_index`, skipped when create_all already made it. Same story:
     an index declared in __table_args__ exists on a fresh database before the

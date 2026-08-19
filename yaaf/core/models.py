@@ -184,6 +184,23 @@ class VerificationStatus(enum.StrEnum):
     NOT_APPLICABLE = "not_applicable"  # internal evidence; attested evidence
 
 
+class AuditSampleStatus(enum.StrEnum):
+    """One observable close, drawn (or passed over) by the janitor.
+
+    PENDING waits for the chairman; PASSED/FAILED are his verdict; EXPIRED is
+    "not reviewed in time", recorded and counted in review coverage but never
+    blocking anything — sampling is a thermometer, not a gate. SKIPPED closes
+    are recorded too, so the draw is never re-rolled and the coverage line has
+    a denominator.
+    """
+
+    PENDING = "pending"
+    PASSED = "passed"
+    FAILED = "failed"
+    EXPIRED = "expired"
+    SKIPPED = "skipped"
+
+
 class HypothesisStatus(enum.StrEnum):
     ACTIVE = "active"
     EXPIRED = "expired"    # kill date arrived; auto-set by the janitor
@@ -747,7 +764,13 @@ class Evidence(Base):
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
-    task_id: Mapped[str | None] = mapped_column(String(40))
+    # A real foreign key since stage 6: it used to be an un-FK'd string that
+    # ceo_judgment joined on — paste any id and you inflate your own score.
+    # Still nullable, because the two legitimate taskless authors remain: a
+    # connector (webhooks carry no task) and an Explore-mode agent (bets and
+    # evidence, no board). Agent-written evidence in Deliver/Operate must name
+    # the task it came from — enforced as a Refusal in policy.
+    task_id: Mapped[str | None] = mapped_column(ForeignKey("tasks.id"))
     created_by_agent_id: Mapped[str | None] = mapped_column(String(40))  # null => connector
     kind: Mapped[str] = mapped_column(String(16))  # EvidenceKind
     provenance: Mapped[str] = mapped_column(String(24))  # EvidenceProvenance
@@ -774,6 +797,68 @@ class Decision(Base):
     subject: Mapped[str] = mapped_column(String(300))
     body: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class Artifact(Base):
+    """A deliverable as a row: named, versioned, hashed, and tied to the
+    requirements it claims to satisfy.
+
+    Before this, "published" meant a storage key started with ``projects/``
+    and the date was a filesystem mtime a restore would rewrite. The row is
+    the receipt: the platform computes the sha256 and the version at write
+    time, so what shipped, when, and what it was FOR are facts with an author
+    — not properties of a directory listing.
+    """
+
+    __tablename__ = "artifacts"
+    __table_args__ = (
+        UniqueConstraint("project_id", "name", "version"),
+        Index("ix_artifacts_project_published", "project_id", "published_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    name: Mapped[str] = mapped_column(String(255))
+    # Per (project, name), starting at 1. Publishing the same name again is a
+    # new version, never an overwrite — the store key is run-scoped anyway.
+    version: Mapped[int] = mapped_column(Integer)
+    sha256: Mapped[str] = mapped_column(String(64))
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    storage_key: Mapped[str] = mapped_column(Text)
+    uri: Mapped[str] = mapped_column(Text)
+    published_by_agent_id: Mapped[str | None] = mapped_column(String(40))
+    run_id: Mapped[str | None] = mapped_column(String(40))
+    # Requirement ids this deliverable claims to satisfy. Validated against
+    # the project at publish; a claim, not a verdict — met is still only ever
+    # written by the platform.
+    requirement_ids: Mapped[list] = mapped_column(JSONVariant, default=list)
+    published_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class AuditSample(Base):
+    """One observable task close, drawn for the chairman's sampled audit.
+
+    The janitor rolls the dice AFTER the close, server-side, at the rate the
+    constitution sets — so no run token can know which claim will be checked,
+    which is the entire mechanism. Every considered close gets a row (drawn or
+    skipped), so nothing is re-rolled and the review's coverage line has a
+    denominator. An expired sample records "not reviewed" and blocks nothing.
+    """
+
+    __tablename__ = "audit_samples"
+    __table_args__ = (
+        UniqueConstraint("task_id"),
+        Index("ix_audit_samples_project_status", "project_id", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"))
+    status: Mapped[str] = mapped_column(String(16), default=AuditSampleStatus.PENDING)
+    drawn_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    decided_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    note: Mapped[str | None] = mapped_column(Text)
 
 
 # ── memory ──────────────────────────────────────────────────────────────────────

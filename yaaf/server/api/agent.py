@@ -650,6 +650,7 @@ def memory_search(
     scope: str | None = None,
     limit: int = 15,
     include_superseded: bool = False,
+    memory_id: str | None = None,
     ctx: RunContext = Depends(run_auth),
     session: Session = Depends(db),
 ) -> list[dict]:
@@ -658,6 +659,10 @@ def memory_search(
     # fetches back something it folded too eagerly — without it, "nothing is
     # ever deleted" would be a claim the agent has no way to act on.
     stmt = select(Memory).where(Memory.project_id == ctx.project.id)
+    if memory_id:
+        # Fetch-one for the memory-tool-shaped view: an id is an exact address,
+        # and making it ride the text search would cap it at the search limit.
+        stmt = stmt.where(Memory.id == memory_id)
     if not include_superseded:
         stmt = stmt.where(Memory.superseded_at.is_(None))
     if scope == "project":
@@ -993,7 +998,8 @@ class EvidenceAdd(BaseModel):
 def evidence_add(
     body: EvidenceAdd, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
 ) -> dict:
-    policy.check_evidence_add(ctx.project, body.kind, body.source_url)
+    policy.check_evidence_add(session, ctx.project, body.kind, body.source_url,
+                              body.task_id)
     row = Evidence(
         id=ids.new_id(ids.EVIDENCE),
         project_id=ctx.project.id,
@@ -1272,6 +1278,9 @@ MAX_ARTIFACT_READ_BYTES = 64 * 1024
 class ArtifactPut(BaseModel):
     filename: str = Field(min_length=1, max_length=200)
     content_base64: str
+    # Requirement ids or keys this deliverable claims to satisfy. A claim,
+    # not a verdict — met is still only ever written by the platform.
+    satisfies: list[str] = Field(default_factory=list, max_length=20)
 
 
 def _artifact_key(ctx: RunContext, ref: str) -> str:
@@ -1296,12 +1305,19 @@ def _artifact_key(ctx: RunContext, ref: str) -> str:
 
 
 @router.post("/artifacts")
-def artifact_put(body: ArtifactPut, ctx: RunContext = Depends(run_auth)) -> dict:
-    """Persist a finished deliverable to the artifact store. The workspace is
-    ephemeral; this is where finished work goes to outlive the run. The
-    platform picks the location — projects/<project>/<run>/<filename> — so an
-    agent names a file, never a path."""
+def artifact_put(
+    body: ArtifactPut, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
+) -> dict:
+    """Persist a finished deliverable to the artifact store, AND as a row.
+
+    The workspace is ephemeral; this is where finished work goes to outlive
+    the run. The platform picks the location — projects/<project>/<run>/
+    <filename> — so an agent names a file, never a path. The row is the
+    receipt: sha256 and version are computed here, published_at is a real
+    timestamp instead of a filesystem mtime a restore would rewrite, and the
+    requirements it claims to satisfy are validated against this project."""
     from yaaf.core.artifacts import store
+    from yaaf.core.models import Artifact
 
     filename = body.filename.strip()
     if "/" in filename or "\\" in filename or filename in (".", "..") or "\x00" in filename:
@@ -1320,12 +1336,54 @@ def artifact_put(body: ArtifactPut, ctx: RunContext = Depends(run_auth)) -> dict
             "somewhere addressable and record the URL as evidence instead.",
             status_code=413,
         )
+    # Satisfies: keys ("R-03") or ids, resolved and validated — an id from
+    # another project or thin air is refused, not stored as decoration.
+    satisfied: list[Requirement] = []
+    if body.satisfies:
+        scope = {r.id: r for r in policy.scope_requirements(session, ctx.project.id)}
+        by_key = {r.key: r for r in scope.values()}
+        for ref in body.satisfies:
+            requirement = scope.get(ref) or by_key.get(ref)
+            if requirement is None:
+                raise Refusal(
+                    f"satisfies names {ref!r}, which is not a requirement of this "
+                    "project. Cite real scope or cite nothing — a deliverable that "
+                    "claims to satisfy an invented requirement satisfies less than "
+                    "one that claims nothing.",
+                    status_code=404,
+                )
+            satisfied.append(requirement)
+    elif ctx.run.requirement_id:
+        stamped = session.get(Requirement, ctx.run.requirement_id)
+        if stamped is not None and stamped.key != policy.PLAN_KEY:
+            satisfied.append(stamped)
+
     key = f"projects/{ctx.project.id}/{ctx.run.id}/{filename}"
     uri = store().put_bytes(key, data)
+    digest = hashlib.sha256(data).hexdigest()
+    version = 1 + (session.execute(
+        select(func.max(Artifact.version)).where(
+            Artifact.project_id == ctx.project.id, Artifact.name == filename)
+    ).scalar_one() or 0)
+    row = Artifact(
+        id=ids.new_id(ids.ARTIFACT),
+        project_id=ctx.project.id,
+        name=filename,
+        version=version,
+        sha256=digest,
+        size_bytes=len(data),
+        storage_key=key,
+        uri=uri,
+        published_by_agent_id=ctx.agent.id if ctx.agent else None,
+        run_id=ctx.run.id,
+        requirement_ids=[r.id for r in satisfied],
+    )
+    session.add(row)
     # The digest is returned at write time so the author can record what it
     # shipped and a later reader can prove the store still holds those bytes.
-    return {"uri": uri, "key": key, "size": len(data),
-            "sha256": hashlib.sha256(data).hexdigest()}
+    return {"uri": uri, "key": key, "size": len(data), "sha256": digest,
+            "artifact_id": row.id, "version": version,
+            "satisfies": [r.key for r in satisfied]}
 
 
 @router.get("/artifacts")

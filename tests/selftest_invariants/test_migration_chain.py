@@ -43,8 +43,9 @@ STAGE_1_COLUMNS = (
     ("run_queue", "requirement_id"),
 )
 STAGE_5_TABLES = ("commitments",)
+STAGE_6_TABLES = ("artifacts", "audit_samples")
 
-REMOVED_TABLES = STAGE_1_TABLES + STAGE_5_TABLES
+REMOVED_TABLES = STAGE_1_TABLES + STAGE_5_TABLES + STAGE_6_TABLES
 REMOVED_COLUMNS = STAGE_1_COLUMNS
 
 

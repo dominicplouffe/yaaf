@@ -21,6 +21,9 @@ from yaaf.core.models import (
     Agent,
     Approval,
     ApprovalStatus,
+    Artifact,
+    AuditSample,
+    AuditSampleStatus,
     Channel,
     Commitment,
     Evidence,
@@ -1096,7 +1099,24 @@ def project_files(project_id: str, session: Session = Depends(db)) -> dict:
         rows.append({**entry,
                      "run_id": parts[2] if len(parts) > 3 else None,
                      "name": parts[-1]})
-    return {"workspace": workspace, "artifacts": rows}
+    # The receipts: published rows with a real hash, a real timestamp, and the
+    # requirements each claims to satisfy. The listing above is what the store
+    # HOLDS; this is what was formally shipped, and the two can differ.
+    key_of = {r.id: r.key for r in policy.scope_requirements(session, project.id)}
+    published = [
+        {
+            "id": a.id, "name": a.name, "version": a.version, "sha256": a.sha256,
+            "size": a.size_bytes, "key": a.storage_key,
+            "published_at": a.published_at.isoformat(),
+            "published_by": a.published_by_agent_id,
+            "satisfies": sorted(key_of.get(rid, rid) for rid in a.requirement_ids or []),
+        }
+        for a in session.execute(
+            select(Artifact).where(Artifact.project_id == project.id)
+            .order_by(Artifact.published_at.desc()).limit(200)
+        ).scalars()
+    ]
+    return {"workspace": workspace, "artifacts": rows, "published": published}
 
 
 @router.get("/projects/{project_id}/files/content")
@@ -1152,6 +1172,51 @@ def suggestions(project_id: str, session: Session = Depends(db)) -> list[dict]:
     ).scalars()
     return [{"id": s.id, "by": s.by_agent_id, "text": s.text,
              "consumed": s.consumed_at is not None} for s in rows]
+
+
+@router.get("/projects/{project_id}/audit_samples")
+def audit_samples(project_id: str, session: Session = Depends(db)) -> dict:
+    """The sampled audit's desk: pending draws first, then the recent record.
+    Chairman-only by router auth — no agent route serves any of this, because
+    a sample an agent can see coming is a sample that audits nothing."""
+    project = _project(session, project_id)
+    tasks = {
+        t.id: t for t in session.execute(
+            select(Task).where(Task.project_id == project.id)
+        ).scalars()
+    }
+    rows = list(session.execute(
+        select(AuditSample).where(AuditSample.project_id == project.id)
+        .order_by(AuditSample.drawn_at.desc()).limit(200)
+    ).scalars())
+
+    def view(s: AuditSample) -> dict:
+        task = tasks.get(s.task_id)
+        return {
+            "id": s.id, "task_id": s.task_id, "status": s.status,
+            "drawn_at": s.drawn_at.isoformat(),
+            "expires_at": s.expires_at.isoformat() if s.expires_at else None,
+            "decided_at": s.decided_at.isoformat() if s.decided_at else None,
+            "note": s.note,
+            "task_title": task.title if task else "(task gone)",
+            "test_target": ((task.success_test or {}).get("target", "") if task else ""),
+            "claimed_evidence": (task.completion_evidence if task else None),
+        }
+
+    pending = [view(s) for s in rows if s.status == AuditSampleStatus.PENDING]
+    decided = [view(s) for s in rows if s.status != AuditSampleStatus.PENDING
+               and s.status != AuditSampleStatus.SKIPPED]
+    considered = len(rows)
+    return {
+        "pending": pending,
+        "recent": decided[:50],
+        "coverage": {
+            "considered": considered,
+            "sampled": len([s for s in rows if s.status != AuditSampleStatus.SKIPPED]),
+            "expired_unreviewed": len(
+                [s for s in rows if s.status == AuditSampleStatus.EXPIRED]),
+        },
+    }
 
 
 @router.get("/projects/{project_id}/spot_audit")

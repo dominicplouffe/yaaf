@@ -122,6 +122,65 @@ function ExtendOnce({ hypothesis, onDone }: { hypothesis: HypothesisRow; onDone:
 /** The plan and its proof, as one page. A bet owns tasks; a task produces
     evidence. These were two tabs, so answering "has this bet been proven?"
     meant holding the join in your head and switching back and forth. */
+interface AuditSampleRow {
+  id: string;
+  task_id: string;
+  status: string;
+  drawn_at: string;
+  expires_at: string | null;
+  task_title: string;
+  test_target: string;
+  claimed_evidence: string | null;
+}
+
+/** The sampled audit's desk. The platform drew these observable closes at the
+    rate the constitution sets; unanswered ones expire to "not reviewed" and
+    never block — the buttons are the whole ceremony. */
+function AuditSamples({ projectId }: { projectId: string }) {
+  const { data, reload } = usePoll(
+    () => get<{ pending: AuditSampleRow[] }>(
+      `/observe/projects/${projectId}/audit_samples`),
+    20000,
+  );
+  const pending = data?.pending ?? [];
+  if (pending.length === 0) return null;
+  return (
+    <div className="strip" style={{ marginBottom: 14 }}>
+      <div className="grow">
+        <b>The platform sampled {pending.length} close{pending.length === 1 ? "" : "s"} for
+          your look.</b>
+        <div className="sb">
+          Confirm the claim held or fail it. Unanswered samples expire to “not reviewed”
+          and nothing blocks either way.
+        </div>
+        {pending.map((s) => (
+          <div key={s.id} style={{ display: "flex", gap: 8, alignItems: "baseline",
+            flexWrap: "wrap", marginTop: 8 }}>
+            <span style={{ flex: 1, minWidth: 240 }}>
+              <b>{s.task_title}</b>
+              <span className="help"> — test: {s.test_target || "(none)"} · claimed: {" "}
+                {(s.claimed_evidence ?? "").slice(0, 160) || "(no evidence text)"}</span>
+            </span>
+            <NoteAction label="Held ✓" className="small primary"
+              placeholder="What you checked (optional)" confirmLabel="✓ It held"
+              onSubmit={async (note) => {
+                await post(`/admin/audit_samples/${s.id}/decide`, { ok: true, note });
+                reload();
+              }} />
+            <NoteAction label="Failed ✗" className="small danger"
+              placeholder="What was wrong — the CEO reads this" confirmLabel="✗ It failed"
+              requireNote
+              onSubmit={async (note) => {
+                await post(`/admin/audit_samples/${s.id}/decide`, { ok: false, note });
+                reload();
+              }} />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function Work({ ctx }: { ctx: ProjectCtx }) {
   const { projectId, hypotheses } = ctx;
   // "?audit=1" arrives from the Overview attention row. Landing the chairman
@@ -300,6 +359,8 @@ export default function Work({ ctx }: { ctx: ProjectCtx }) {
         The plan and whether it has been proven. Bets set the direction, tasks do the work, and
         evidence decides whether any of it counted.
       </p>
+
+      <AuditSamples projectId={projectId} />
 
       <div className="pills">
         {FILTERS.map((f) => {

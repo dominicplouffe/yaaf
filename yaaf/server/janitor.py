@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 import time
 from datetime import timedelta
 from pathlib import Path
@@ -40,6 +41,8 @@ from yaaf.core.models import (
     Agent,
     Approval,
     ApprovalStatus,
+    AuditSample,
+    AuditSampleStatus,
     CommitmentStatus,
     Hypothesis,
     HypothesisStatus,
@@ -103,6 +106,8 @@ def janitor_once(session: Session) -> None:
         check_plan(session, project, cons)
         check_finished_requirements(session, project)
         check_commitments(session, project, cons)
+        draw_audit_samples(session, project, cons)
+        expire_audit_samples(session, project)
         warn_drought(session, project, cons)
         warn_memory_pressure(session, project, cons)
     verify_pending_evidence(session)
@@ -440,6 +445,81 @@ def check_finished_requirements(session: Session, project: Project) -> int:
     if moved:
         notify(session, "yaaf_run_queue", project.id)
     return moved
+
+
+# ── the sampled audit: drawn after the fact, never blocking ─────────────────────
+
+
+def draw_audit_samples(session: Session, project: Project, cons: ConstitutionDoc) -> int:
+    """Roll the dice on every observable close that has not been considered.
+
+    Observable closes are the ones taken on the claimant's word — a command
+    test the platform already ran needs no audit. The draw happens HERE,
+    server-side, after the close, at the constitution's rate: no run token can
+    know which claim will be checked, and that unpredictability is the entire
+    mechanism. Every considered close gets a row — drawn or skipped — so
+    nothing is ever re-rolled and the review's coverage line has a
+    denominator.
+    """
+    if cons.audit_sample_rate <= 0:
+        return 0
+    considered = {
+        task_id for (task_id,) in session.execute(
+            select(AuditSample.task_id).where(AuditSample.project_id == project.id))
+    }
+    drawn = 0
+    for task in session.execute(
+        select(Task).where(Task.project_id == project.id, Task.status == TaskStatus.DONE)
+    ).scalars():
+        if task.id in considered:
+            continue
+        if (task.success_test or {}).get("type") != SuccessTestKind.OBSERVABLE:
+            continue
+        sampled = random.random() < cons.audit_sample_rate
+        session.add(AuditSample(
+            id=ids.new_id(ids.AUDIT_SAMPLE),
+            project_id=project.id,
+            task_id=task.id,
+            status=AuditSampleStatus.PENDING if sampled else AuditSampleStatus.SKIPPED,
+            expires_at=(utcnow() + timedelta(hours=cons.audit_response_hours)
+                        if sampled else None),
+        ))
+        if sampled:
+            drawn += 1
+            chairman_notify(
+                session, project,
+                f"audit sample: {task.title[:80]}",
+                f"The platform drew this observable close for your look "
+                f"({cons.audit_sample_rate:.0%} sample rate):\n\n"
+                f"  task: {task.title}\n"
+                f"  test: {(task.success_test or {}).get('target', '')[:300]}\n"
+                f"  claimed evidence: {(task.completion_evidence or '')[:500]}\n\n"
+                f"Confirm or fail it on the Work screen within "
+                f"{cons.audit_response_hours}h; after that it is recorded as "
+                "'not reviewed' and nothing blocks either way.",
+            )
+    return drawn
+
+
+def expire_audit_samples(session: Session, project: Project) -> int:
+    """A sample the chairman never answered records "not reviewed" and moves
+    on. It NEVER blocks — the whole design is gates at the moments he chose
+    plus a thermometer in between, and a thermometer that stops the line is a
+    gate he did not choose."""
+    now = utcnow()
+    expired = 0
+    for sample in session.execute(
+        select(AuditSample).where(
+            AuditSample.project_id == project.id,
+            AuditSample.status == AuditSampleStatus.PENDING,
+            AuditSample.expires_at <= now,
+        )
+    ).scalars():
+        sample.status = AuditSampleStatus.EXPIRED
+        sample.decided_at = now
+        sample.note = "not reviewed in time"
+        expired += 1
+    return expired
 
 
 # ── reaping ─────────────────────────────────────────────────────────────────────

@@ -228,6 +228,7 @@ def _materialize(session: Session, queued: RunQueue, project: Project) -> RunJob
 
     role_version = role_version_for(session, agent)
     job.max_usd = cons.max_usd_per_run
+    job.task_budget_tokens = cons.run_token_budget
     job.model = agent.model_override or (role_version.model if role_version else "claude-sonnet-5")
     job.effort = role_version.effort if role_version else "high"
     # Pinned on the run row at lease time, not finalize: reaped and killed runs

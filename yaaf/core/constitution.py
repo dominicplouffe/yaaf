@@ -92,6 +92,23 @@ class ConstitutionDoc(BaseModel):
         help="Characters. A success test shorter than this is not falsifiable, so the "
              "platform refuses the task.")
 
+    # The sampled audit. Gates ask the chairman at commitment, review and
+    # completion; between them the platform samples observable closes at a
+    # rate he sets. Sampling never blocks — an expired sample records "not
+    # reviewed" and moves on — but the draw happens server-side AFTER the
+    # close, so no agent can know which claim will be checked.
+    audit_sample_rate: float = _rule(
+        0.2, ge=0, le=1, group="Sampled audit", label="Share of observable closes sampled",
+        help="When a task closes on an observable success test (one the platform cannot "
+             "run itself), this is the chance it lands on your desk for a look. 0 turns "
+             "sampling off; 1 samples everything. Command-checked closes are never "
+             "sampled — the platform already ran those.")
+    audit_response_hours: int = _rule(
+        48, ge=1, group="Sampled audit", label="Hours before a sample expires",
+        help="A sample you have not answered by then is recorded as 'not reviewed' and "
+             "counted in the next review's coverage line. It never blocks the work — "
+             "sampling is a thermometer, not a gate.")
+
     # Evidence discipline (lana §4) — drought counts verified/attested external only
     drought_hours: int = _rule(
         24, ge=1, group="Evidence", label="Hours without proof before a drought",
@@ -239,6 +256,12 @@ class ConstitutionDoc(BaseModel):
         help="A run past this is reaped and its task claim released. The CEO's "
              "resident chat session is exempt — it is meant to stay open for "
              "hours and dies only when its heartbeat stops.")
+    run_token_budget: int = _rule(
+        0, ge=0, group="Runs", label="Tokens one run may spend",
+        help="Handed to the model as a task budget so it paces itself and wraps up "
+             "before the line, instead of being cut off mid-thought. Complements the "
+             "per-run dollar ceiling: dollars stop the bleeding, this tells the agent "
+             "where the tourniquet is. 0 turns it off.")
 
     @field_validator("chairman_report_window_local")
     @classmethod

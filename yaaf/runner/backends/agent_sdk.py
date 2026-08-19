@@ -11,11 +11,49 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 from pathlib import Path
 
 from yaaf.runner.types import RunJob, RunResult
 
 log = logging.getLogger("yaaf.agent_sdk")
+
+
+def _skill_slug(name: str) -> str:
+    """Mirror of sandbox_entry._skill_slug — the staged directory name must be
+    exactly what the allowlist inside the sandbox will pass to the SDK."""
+    return "".join(
+        ch for ch in name.lower().strip().replace(" ", "-")
+        if ch.isalnum() or ch == "-"
+    )[:64]
+
+
+def stage_skills(workspace: Path, specs: list) -> None:
+    """Write the chairman's role-defined skills where the CLI discovers them.
+
+    The platform OWNS .claude/skills: wiped and rebuilt every run, so the
+    staged set is exactly the current role definition. An agent-written skill
+    file would be dark anyway — the sandbox passes an explicit allowlist to
+    the SDK — but a clean directory keeps the on-disk listing honest too.
+    """
+    skills_root = workspace / ".claude" / "skills"
+    if skills_root.exists():
+        shutil.rmtree(skills_root, ignore_errors=True)
+    for spec in specs or []:
+        slug = _skill_slug(str(spec.get("name", "")))
+        body = str(spec.get("body", "")).strip()
+        if not slug or not body:
+            continue
+        description = str(spec.get("description", "")).strip() or slug
+        skill_dir = skills_root / slug
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        (skill_dir / "SKILL.md").write_text(
+            f"---\nname: {slug}\ndescription: {description}\n---\n\n{body}\n"
+        )
+    if skills_root.exists():
+        # The sandbox runs unprivileged; the runner often does not.
+        for path in [workspace / ".claude", skills_root, *skills_root.rglob("*")]:
+            path.chmod(0o777 if path.is_dir() else 0o666)
 
 
 class AgentSDKBackend:
@@ -42,6 +80,7 @@ class AgentSDKBackend:
         result_path = staging / f"result-{job.run_id}.json"
         if result_path.exists():
             result_path.unlink()
+        stage_skills(workspace, (job.tool_permissions or {}).get("skills") or [])
 
         env = {
             "YAAF_RUN_ID": job.run_id,
@@ -50,6 +89,7 @@ class AgentSDKBackend:
             "YAAF_MODEL": job.model,
             "YAAF_EFFORT": job.effort,
             "YAAF_MAX_USD": str(job.max_usd or 0),
+            "YAAF_TASK_BUDGET": str(job.task_budget_tokens or 0),
             "YAAF_TOOL_PERMISSIONS": json.dumps(job.tool_permissions),
             **job.billing_env,
         }

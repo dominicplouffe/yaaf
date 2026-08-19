@@ -35,6 +35,8 @@ from yaaf.core.models import (
     Approval,
     ApprovalStatus,
     AuditLog,
+    AuditSample,
+    AuditSampleStatus,
     Channel,
     ChannelKind,
     Commitment,
@@ -319,6 +321,16 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
     doc = ConstitutionDoc.model_validate({**ConstitutionDoc().model_dump(), **body.constitution})
     create_initial(session, project.id, doc)
 
+    # Webhook secrets exist from birth. The platform_attested path was never
+    # the missing piece — provisioning was: 315 of 315 evidence rows in the
+    # audit said an agent claimed it, because no project ever had a secret.
+    # Generated here (unless the caller brought their own, e.g. a clone), and
+    # shown once in the response with the endpoint URL beside each.
+    integrations = dict(project.integrations or {})
+    integrations.setdefault("github_webhook_secret", pysecrets.token_hex(32))
+    integrations.setdefault("webhook_secret", pysecrets.token_hex(32))
+    project.integrations = integrations
+
     ceo = Agent(
         id=ids.new_id(ids.AGENT),
         project_id=project.id,
@@ -371,7 +383,16 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
 
     _audit(session, project.id, "project.create", "project", project.id)
     return {"id": project.id, "ceo_agent_id": ceo.id, "teams": team_out,
-            "constitution": doc.model_dump(), "status": project.status}
+            "constitution": doc.model_dump(), "status": project.status,
+            "webhooks": {
+                "github": {"url": f"/webhooks/github/{project.id}",
+                           "secret": integrations["github_webhook_secret"]},
+                "generic": {"url": f"/webhooks/generic/{project.id}",
+                            "secret": integrations["webhook_secret"]},
+                "note": ("Point senders at these now — evidence arriving signed with "
+                         "them is platform-attested, which no agent can forge. The "
+                         "secrets never enter a sandbox."),
+            }}
 
 
 # Config keys that are this install's plumbing, not the project's design:
@@ -1560,6 +1581,49 @@ def audit_task(task_id: str, body: TaskAudit, session: Session = Depends(db)) ->
             "treat that agent's completions as suspect and re-check what depended on this.",
         )
     return {"id": row.id, "audit_status": row.audit_status}
+
+
+class AuditSampleDecision(BaseModel):
+    ok: bool
+    note: str = Field(default="", max_length=4000)
+
+
+@router.post("/audit_samples/{sample_id}/decide")
+def decide_audit_sample(
+    sample_id: str, body: AuditSampleDecision, session: Session = Depends(db)
+) -> dict:
+    """The chairman's verdict on a drawn sample. Failing one lands on the
+    task's audit fields and in the CEO's next pack — the same disclosure path
+    as every other governance event. Passing one is recorded and life goes on.
+    An expired sample takes no verdict: the moment passed, and pretending
+    otherwise would make the coverage line lie."""
+    row = session.get(AuditSample, sample_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="unknown audit sample")
+    if row.status != AuditSampleStatus.PENDING:
+        raise HTTPException(
+            status_code=409,
+            detail=f"this sample is {row.status}; only a pending one takes a verdict.",
+        )
+    task = session.get(Task, row.task_id)
+    row.status = AuditSampleStatus.PASSED if body.ok else AuditSampleStatus.FAILED
+    row.decided_at = utcnow()
+    row.note = body.note or None
+    if task is not None:
+        task.audit_status = "passed" if body.ok else "failed"
+        task.audit_note = body.note or None
+        if not body.ok:
+            _notice_ceo(
+                session, row.project_id, NoticeKind.AUDIT_FAILED,
+                f"The chairman audited a sampled close and it FAILED: "
+                f"'{task.title[:200]}'. His note: {body.note[:1000] or '(none)'}\n"
+                "The task stays done — sampling never reopens work by itself — but "
+                "this is on the record, it will be on the next review, and a pattern "
+                "of failed samples is how a company loses the benefit of the doubt.",
+            )
+    _audit(session, row.project_id, "audit_sample.decide", "audit_sample", row.id,
+           {"task_id": row.task_id, "ok": body.ok})
+    return {"id": row.id, "status": row.status}
 
 
 # ── requirements: the chairman owns scope ───────────────────────────────────────
