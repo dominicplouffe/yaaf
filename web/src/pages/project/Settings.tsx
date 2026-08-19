@@ -358,6 +358,31 @@ function RoleTicks({ options, selected, onChange }: {
   );
 }
 
+type SourceAccess = "inline" | "bulk";
+
+/** How a source's results reach an agent — the choice that decides whether a
+    data pull costs tokens or CPU. Offered on both the add and edit forms
+    because it is the one setting worth changing after the fact. */
+function AccessPicker({ value, onChange }: {
+  value: SourceAccess;
+  onChange: (next: SourceAccess) => void;
+}) {
+  return (
+    <>
+      <label className="field">How agents read it</label>
+      <select value={value} onChange={(e) => onChange(e.target.value as SourceAccess)}>
+        <option value="inline">inline — mounted as tools, results go into the model</option>
+        <option value="bulk">bulk — results go to a file, via data_fetch</option>
+      </select>
+      <div className="help" style={{ marginTop: 4 }}>
+        {value === "inline"
+          ? "Every result is copied into the agent's context and billed by the token. Right for small lookups; ruinous for exports."
+          : "The tools are not mounted at all, so nothing can pull rows into context by accident. Agents call data_fetch, which writes the full result to a workspace file they then process with code."}
+      </div>
+    </>
+  );
+}
+
 function savedMessage(result: unknown): string {
   const saved = result as DataSourceSaveResult;
   return (
@@ -387,6 +412,7 @@ function DataSourceEditor({
   const [bearer, setBearer] = useState("");
   const [dropToken, setDropToken] = useState(false);
   const [roles, setRoles] = useState<string[]>(source.roles);
+  const [access, setAccess] = useState<SourceAccess>(source.access ?? "inline");
 
   useEffect(() => {
     setLoadError(null);
@@ -438,7 +464,8 @@ function DataSourceEditor({
           )}
         </div>
       </div>
-      <label className="field">Which roles get these tools</label>
+      <AccessPicker value={access} onChange={setAccess} />
+      <label className="field">Which roles get this source</label>
       <RoleTicks options={roleOptions} selected={roles} onChange={setRoles} />
       <div className="actions">
         <button
@@ -454,6 +481,7 @@ function DataSourceEditor({
                   // Omitted keeps the stored token; "" removes it; a value rotates.
                   bearer: dropToken ? "" : bearer.trim() || undefined,
                   roles,
+                  access,
                 },
               );
               onDone();
@@ -494,6 +522,7 @@ function DataSources({
   const [url, setUrl] = useState("");
   const [bearer, setBearer] = useState("");
   const [roles, setRoles] = useState<string[]>([]);
+  const [access, setAccess] = useState<SourceAccess>("inline");
 
   useEffect(() => {
     get<OrgView>(`/observe/projects/${projectId}/org`).then(setOrg).catch(() => {});
@@ -523,8 +552,9 @@ function DataSources({
             <tr>
               <th>Name</th>
               <th>Address</th>
+              <th>Read as</th>
               <th>Roles</th>
-              <th style={{ width: "32%" }}>Last check</th>
+              <th style={{ width: "28%" }}>Last check</th>
               <th></th>
             </tr>
           </thead>
@@ -541,6 +571,19 @@ function DataSources({
                   </td>
                   <td className="mono">
                     {source.url_host}:{source.url_port}
+                  </td>
+                  <td>
+                    {(source.access ?? "inline") === "bulk" ? (
+                      <>
+                        <span className="badge accent">bulk</span>
+                        <div className="help">to a file, via data_fetch</div>
+                      </>
+                    ) : (
+                      <>
+                        <span className="badge">inline</span>
+                        <div className="help">into the model's context</div>
+                      </>
+                    )}
                   </td>
                   <td>
                     <div className="pill-row">
@@ -613,7 +656,7 @@ function DataSources({
                 </tr>
                 {editing === source.name && (
                   <tr>
-                    <td colSpan={5}>
+                    <td colSpan={6}>
                       <DataSourceEditor
                         projectId={projectId}
                         source={source}
@@ -665,7 +708,8 @@ function DataSources({
           />
         </div>
       </div>
-      <label className="field">Which roles get these tools (nobody, until you tick)</label>
+      <AccessPicker value={access} onChange={setAccess} />
+      <label className="field">Which roles get this source (nobody, until you tick)</label>
       <RoleTicks options={roleOptions} selected={roles} onChange={setRoles} />
       <div className="actions">
         <button
@@ -680,12 +724,14 @@ function DataSources({
                   url: url.trim(),
                   bearer: bearer.trim() || undefined,
                   roles,
+                  access,
                 },
               );
               setName("");
               setUrl("");
               setBearer("");
               setRoles([]);
+              setAccess("inline");
               return result;
             }, savedMessage)
           }

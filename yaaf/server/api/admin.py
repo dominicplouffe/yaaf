@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import secrets as pysecrets
 from datetime import datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -770,6 +771,13 @@ class DataSourceIn(BaseModel):
     url: str
     bearer: str | None = None
     roles: list[str] = Field(min_length=1)
+    # inline: mounted as mcp__<name>__* tools, so results land in the model's
+    # context — right for small lookups, ruinous for exports. bulk: not mounted
+    # at all; reachable only through data_fetch, which writes the result to a
+    # workspace file. Marking a source bulk is enforcement, not advice — the
+    # expensive path stops existing for it. Default inline: a source that was
+    # already connected keeps behaving exactly as it did.
+    access: Literal["inline", "bulk"] = "inline"
 
 
 def _upsert_project_secret(session: Session, project_id: str, name: str, value: str,
@@ -978,6 +986,7 @@ def add_data_source(project_id: str, body: DataSourceIn, session: Session = Depe
         # never needs to decrypt anything.
         "url_host": parsed.hostname,
         "url_port": parsed.port or (443 if parsed.scheme == "https" else 80),
+        "access": body.access,
     }
     # Three cases, because an edit that changes only the URL must not silently
     # disarm the auth header. Absent (None) keeps whatever the source already
@@ -1005,7 +1014,7 @@ def add_data_source(project_id: str, body: DataSourceIn, session: Session = Depe
     project.integrations = {**(project.integrations or {}), "mcp_servers": [*servers, entry]}
     _audit(session, project.id, "mcp_server.save", "project", project.id,
            {"name": body.name, "roles": body.roles, "host": entry["url_host"],
-            "check_ok": check["ok"]})
+            "access": body.access, "check_ok": check["ok"]})
     return {"name": body.name, "check": check,
             "note": "Egress updates and the proxy reloads automatically within ~15s; "
                     "effective on each granted role's next run."}

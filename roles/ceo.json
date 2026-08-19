@@ -8,6 +8,7 @@
   "tool_permissions": {
     "files": true,
     "bash": false,
+    "data_processing": true,
     "web": true
   },
   "secret_scopes": [],

@@ -246,6 +246,10 @@ export interface McpServerEntry {
   roles: string[];
   url_host: string;
   url_port: number;
+  /** inline = mounted as mcp__<name>__* tools (results enter the model's
+      context); bulk = reachable only via data_fetch, which writes results to a
+      workspace file. Absent on sources saved before the field existed. */
+  access?: "inline" | "bulk";
   last_check?: { ok: boolean; detail: string; at: string };
 }
 

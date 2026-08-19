@@ -236,7 +236,7 @@ def _materialize(session: Session, queued: RunQueue, project: Project) -> RunJob
     run.model = job.model
     run.effort = job.effort
     job.tool_permissions = dict(role_version.tool_permissions) if role_version else {}
-    source_names = _merge_project_data_sources(session, project, role_version, job)
+    source_specs = _merge_project_data_sources(session, project, role_version, job)
     job.egress_proxy_url = _role_egress_url(session, role_version, job.tool_permissions)
     role_secrets = _role_secret_env(session, project, role_version)
     job.billing_env = {**_billing_env(session, project), **role_secrets}
@@ -246,13 +246,58 @@ def _materialize(session: Session, queued: RunQueue, project: Project) -> RunJob
             f"role: {', '.join(sorted(role_secrets))}. Use them for their purpose; never "
             "print, log, or write them to files."
         )
-    if source_names:
-        job.system_prompt += (
-            "\n\nDATA SOURCES: " + ", ".join(f"{n} (tools mcp__{n}__*)" for n in source_names)
-            + " — MCP servers mounted for your role. If a listed source's tools are absent "
-            "from your toolset, report that plainly instead of guessing at causes."
-        )
+    job.system_prompt += _data_source_prompt(source_specs)
     return job
+
+
+def _data_source_prompt(specs: list[dict]) -> str:
+    """The DATA SOURCES paragraph — what is connected, and how to use it without
+    setting money on fire.
+
+    The cost lesson is stated here rather than in the always-on prompt because
+    it is only payable when a source exists: a run with nothing connected should
+    not carry a paragraph about pulls it cannot make. Both lanes (scheduled runs
+    and the resident chat) build it from the same specs.
+    """
+    if not specs:
+        return ""
+    inline = [s.get("name", "?") for s in specs if s.get("access", "inline") != "bulk"]
+    bulk = [s.get("name", "?") for s in specs if s.get("access", "inline") == "bulk"]
+    lines = ["\n\nDATA SOURCES: MCP servers connected to this project for your role."]
+    if inline:
+        lines.append(
+            " Mounted as tools: "
+            + ", ".join(f"{n} (mcp__{n}__*)" for n in inline)
+            + ". If a listed source's tools are absent from your toolset, report that "
+            "plainly instead of guessing at causes."
+        )
+    if bulk:
+        lines.append(
+            " Bulk-only (deliberately NOT mounted as tools, because their results "
+            "belong in files rather than in your context): "
+            + ", ".join(bulk)
+            + ". Reach them with data_fetch — call data_fetch(server=\"<name>\") with no "
+            "tool to see what each one offers."
+        )
+    lines.append(
+        "\n\nDATA HANDLING: every result a mounted mcp__* tool returns is copied into "
+        "your context and paid for by the token, on that turn and on every turn after "
+        "it. Use those tools only for small lookups you intend to read in full. For "
+        "anything that could exceed a screenful — exports, row-level data, logs, "
+        "listings — call data_fetch(server, tool, arguments) instead: it makes the same "
+        "call but writes the complete result to a file in your workspace and returns "
+        "only the path, size and a short preview. Then process the FILE with code "
+        "(python3 has pandas and duckdb; use Bash if you have it, otherwise Read and "
+        "Grep slices of the file) and report only the aggregate. Three habits follow "
+        "from this: prefer a source tool's own filter, date-range or pagination "
+        "arguments over fetching everything; check your workspace before fetching "
+        "anything twice, because it persists across runs and yesterday's file is free; "
+        "and leave the script that produced an answer behind under scripts/, so the "
+        "next run of the same analysis re-executes it instead of re-deriving it. "
+        "Counting, summing, sorting and joining are things code does exactly and "
+        "cheaply — doing them by reading rows costs tokens and gets answers wrong."
+    )
+    return "".join(lines)
 
 
 def _merge_project_data_sources(session: Session, project: Project, role_version,
@@ -261,7 +306,7 @@ def _merge_project_data_sources(session: Session, project: Project, role_version
     roles they are assigned to — roles never declare their own servers. The
     mapping lives on the project and is applied at lease time, which is why
     connecting a source needs no role-library edit and no team repin. Returns
-    the mounted source names."""
+    the merged specs (name + access), which the prompt paragraph describes."""
     # Pinned versions minted before data sources became project-owned may still
     # freeze a legacy mcp_servers key; it is dead weight, never mounted.
     job.tool_permissions.pop("mcp_servers", None)
@@ -275,7 +320,11 @@ def _merge_project_data_sources(session: Session, project: Project, role_version
             if role is None or role.slug not in source.get("roles", []):
                 continue
             spec = {"name": source["name"],
-                    "url_env": _env_var_name(source["url_secret"])}
+                    "url_env": _env_var_name(source["url_secret"]),
+                    # bulk sources are reachable only through data_fetch (which
+                    # writes to a workspace file); the sandbox never mounts them
+                    # as tools, so their rows cannot enter a model's context.
+                    "access": source.get("access", "inline")}
             if source.get("bearer_secret"):
                 spec["bearer_env"] = _env_var_name(source["bearer_secret"])
             specs.append(spec)
@@ -287,7 +336,7 @@ def _merge_project_data_sources(session: Session, project: Project, role_version
             # role version's dict and must not mutate its nested lists.
             job.tool_permissions = {**job.tool_permissions, "mcp_servers": specs,
                                     **({"egress_allow": hosts} if hosts else {})}
-    return [s.get("name", "?") for s in specs]
+    return specs
 
 
 def _prepare_workspace(session: Session, project: Project) -> str:

@@ -1,5 +1,6 @@
 """Runs INSIDE the sandbox container. Do not import from the yaaf package here —
-the container only has this file, the Claude Agent SDK, and httpx.
+the container only has this file, the Claude Agent SDK (and its own dependency
+`mcp`, which data_fetch uses as a client), and httpx.
 
 It wires the yaaf platform tools (board, tasks, messages, memory, evidence,
 approvals, side effects) as SDK MCP tools that call the agent HTTP API with the
@@ -14,8 +15,11 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 import os
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -389,8 +393,11 @@ async def t_side_effect_finish(args):
 @tool(
     "artifact_put",
     "Persist a finished deliverable (report, dataset, document) to the platform's "
-    "artifact store — the durable home for finished work; your workspace is ephemeral "
-    "and vanishes after the run. Pass path: a file under /workspace (absolute or "
+    "artifact store — the shipped, versioned record the platform serves and audits. "
+    "Your /workspace is NOT ephemeral: it persists with the project across runs and is "
+    "shared by every agent on it, which makes it the right home for working state and "
+    "cached data pulls; ship an artifact when the work is FINISHED. "
+    "Pass path: a file under /workspace (absolute or "
     "workspace-relative) — the platform reads and uploads the bytes itself. NEVER "
     "base64-encode a file or route its contents through your own output to ship it; "
     "write it to the workspace and hand over the path. filename optionally renames "
@@ -573,6 +580,244 @@ async def t_env_list(args):
     return _text({"env_names": sorted(os.environ)})
 
 
+# ── data_fetch: a data source's bytes to disk, never through the context ───────
+#
+# The expensive default this exists to replace: an agent calls a mounted
+# mcp__<source>__* tool, the whole result lands in its context as conversation
+# text, and the "analysis" is a model doing arithmetic by reading rows. That is
+# paid for by the token on the way in and again on every later turn of the run —
+# and a model summing a column is less reliable than three lines of python.
+#
+# So: this tool makes the call itself and writes the bytes to a workspace file.
+# The model gets a path, a size, a digest and a 2 KB preview; the rows never
+# enter the conversation at all. The file is then processed with code (the image
+# ships pandas and duckdb) and only the aggregate is reported.
+
+DATA_FETCH_MAX_BYTES = 64 * 1024 * 1024
+DATA_FETCH_PREVIEW_CHARS = 2048
+DATA_FETCH_ERROR_CHARS = 2000
+DATA_FETCH_SCHEMA_CHARS = 1024
+DATA_FETCH_CONNECT_TIMEOUT_S = 30
+DATA_FETCH_READ_TIMEOUT_S = 180
+DATA_FETCH_TOTAL_TIMEOUT_S = 300
+
+
+def _mcp_streams_cm(config: dict):
+    """A connected (read, write) stream pair for one data source.
+
+    The transport client is imported by BOTH names it has carried across mcp
+    releases: the older ``streamablehttp_client`` (which builds its own httpx
+    client, honouring HTTPS_PROXY through trust_env — the sandbox's only route
+    out is the egress proxy) and the newer ``streamable_http_client`` (which
+    takes a client we must build). Trying the old name first keeps the proxy
+    behaviour we want by default.
+    """
+    headers = dict(config.get("headers") or {})
+    if config.get("type") == "sse":
+        from mcp.client.sse import sse_client
+
+        return sse_client(config["url"], headers=headers,
+                          timeout=DATA_FETCH_CONNECT_TIMEOUT_S,
+                          sse_read_timeout=DATA_FETCH_READ_TIMEOUT_S)
+    try:
+        from mcp.client.streamable_http import streamablehttp_client
+
+        return streamablehttp_client(config["url"], headers=headers,
+                                     timeout=DATA_FETCH_CONNECT_TIMEOUT_S,
+                                     sse_read_timeout=DATA_FETCH_READ_TIMEOUT_S)
+    except ImportError:
+        from mcp.client.streamable_http import streamable_http_client
+
+        return _owned_client_cm(streamable_http_client, config["url"], headers)
+
+
+@asynccontextmanager
+async def _owned_client_cm(factory, url: str, headers: dict):
+    """The new-API path: we own the httpx client, so we close it. trust_env
+    stays ON (unlike the platform client) — this traffic goes through squid."""
+    async with (
+        httpx.AsyncClient(
+            headers=headers, follow_redirects=True,
+            timeout=httpx.Timeout(DATA_FETCH_CONNECT_TIMEOUT_S,
+                                  read=DATA_FETCH_READ_TIMEOUT_S),
+        ) as client,
+        factory(url, http_client=client) as streams,
+    ):
+        yield streams
+
+
+async def _mcp_session(config: dict):
+    """Yields an initialized ClientSession for a data source. Split out from the
+    call helpers so tests can replace the whole transport in one place."""
+    from mcp import ClientSession
+
+    # streamable http yields (read, write, get_session_id); sse yields two.
+    async with (
+        _mcp_streams_cm(config) as streams,
+        ClientSession(streams[0], streams[1]) as session,
+    ):
+        await session.initialize()
+        yield session
+
+
+async def _mcp_call_tool(config: dict, tool_name: str, arguments: dict):
+    async for session in _mcp_session(config):
+        return await session.call_tool(tool_name, arguments)
+
+
+async def _mcp_list_tools(config: dict):
+    async for session in _mcp_session(config):
+        return await session.list_tools()
+
+
+def _block_text(block) -> str | None:
+    return getattr(block, "text", None) if getattr(block, "type", None) == "text" else None
+
+
+def _serialize_result(result) -> tuple[str, bool]:
+    """CallToolResult → (bytes to write, whether those bytes are the source's own
+    payload rather than a wrapper we built).
+
+    A single text block is written VERBATIM: a source that returns CSV should
+    leave a .csv on disk, not CSV wrapped in JSON that every reader must unwrap.
+    A multi-block result has no such faithful form, so it is written as an array
+    OF BLOCKS — and that array is ours, not data, which is why it comes back
+    flagged: counting its entries would report "2 rows" for a result that
+    contains a note and a chart.
+    """
+    structured = getattr(result, "structuredContent", None)
+    if structured is not None:
+        return json.dumps(structured, indent=2, default=str), True
+    blocks = list(getattr(result, "content", None) or [])
+    if len(blocks) == 1 and (text := _block_text(blocks[0])) is not None:
+        return text, True
+    payload = []
+    for block in blocks:
+        text = _block_text(block)
+        payload.append({"type": "text", "text": text} if text is not None
+                       else {"type": getattr(block, "type", type(block).__name__),
+                             "repr": repr(block)[:DATA_FETCH_ERROR_CHARS]})
+    return json.dumps(payload, indent=2, default=str), False
+
+
+def _row_count(body: str, countable: bool) -> int | None:
+    """Rows only when the file plainly IS a list of records — a number the agent
+    can trust without opening the file, or nothing at all. Never a guess: a
+    wrong count is worse than an absent one, because it gets reported."""
+    if not countable:
+        return None
+    try:
+        parsed = json.loads(body)
+    except (ValueError, TypeError):
+        return None
+    return len(parsed) if isinstance(parsed, list) else None
+
+
+@tool(
+    "data_fetch",
+    "Call a tool on one of your data sources and write the FULL result to a file in "
+    "your workspace WITHOUT it passing through your context. This is how bulk data is "
+    "handled: fetch once to disk, then process the file with code (python3 has pandas "
+    "and duckdb) or with Read/Grep slices, and report only the aggregate. "
+    "server: the data source name (see DATA SOURCES in your system prompt). "
+    "tool: that source's tool name, with or without its mcp__<server>__ prefix — OMIT "
+    "tool to list what the source offers (names, descriptions and input schemas), which "
+    "is how you discover a source that is not mounted as tools of your own. "
+    "arguments: that tool's arguments, verbatim — prefer its own filter, date-range or "
+    "pagination arguments over fetching everything and trimming later. "
+    "path: optional workspace-relative destination; pass a stable path when you want a "
+    "cache you can reuse, else it defaults to data/<server>/<tool>-<timestamp>.json. "
+    "Returns {path, bytes, sha256, lines, rows, preview} — the preview is the first 2 KB "
+    "ONLY; the answer is in the file, not the preview. Any mcp__* tools you do have are "
+    "for small lookups you will read in full; use this for anything larger. Your "
+    "workspace persists across runs, so check for an existing file before fetching "
+    "again, and leave the script that processed it behind for the next run.",
+    {"server": str, "tool": str, "arguments": dict, "path": str},
+)
+async def t_data_fetch(args):
+    specs = _data_source_specs()
+    name = (args.get("server") or "").strip()
+    if name not in specs:
+        known = ", ".join(sorted(specs)) or "none are configured for your role"
+        return _text({"status": 422, "body": {
+            "error": f"{name!r} is not one of your data sources. Configured: {known}."}})
+    config = specs[name]
+
+    tool_name = (args.get("tool") or "").strip()
+    if tool_name.startswith(f"mcp__{name}__"):
+        tool_name = tool_name[len(f"mcp__{name}__"):]
+
+    if not tool_name:
+        # Discovery. Schemas are small and the agent cannot call anything
+        # without them — the one thing here that may enter the context.
+        try:
+            listing = await asyncio.wait_for(_mcp_list_tools(config),
+                                             DATA_FETCH_TOTAL_TIMEOUT_S)
+        except Exception as exc:
+            return _text({"status": 0, "body": {
+                "error": f"data source {name!r} could not be reached: {exc!r}"}})
+        return _text({"status": 200, "body": {"server": name, "tools": [
+            {"name": t.name,
+             "description": (getattr(t, "description", "") or "")[:DATA_FETCH_ERROR_CHARS],
+             "input_schema": json.dumps(getattr(t, "inputSchema", None) or {},
+                                        default=str)[:DATA_FETCH_SCHEMA_CHARS]}
+            for t in (getattr(listing, "tools", None) or [])]}})
+
+    destination = (args.get("path") or "").strip()
+    if not destination:
+        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        destination = f"data/{name}/{tool_name}-{stamp}.json"
+    candidate = Path(destination)
+    resolved = (candidate if candidate.is_absolute() else WORKSPACE / candidate).resolve()
+    workspace = WORKSPACE.resolve()
+    if not resolved.is_relative_to(workspace):
+        return _text({"status": 422, "body": {
+            "error": f"{destination!r} is outside /workspace. Fetched data lands in "
+                     "your workspace; pass a path inside it."}})
+    if resolved == workspace or resolved.is_relative_to(STAGING.resolve()):
+        return _text({"status": 422, "body": {
+            "error": f"{destination!r} is not a writable destination: "
+                     f"{STAGING.name}/ holds this run's inputs. Pick another path."}})
+
+    try:
+        result = await asyncio.wait_for(
+            _mcp_call_tool(config, tool_name, args.get("arguments") or {}),
+            DATA_FETCH_TOTAL_TIMEOUT_S)
+    except Exception as exc:
+        return _text({"status": 0, "body": {
+            "error": f"data source {name!r} call to {tool_name!r} failed: {exc!r}"}})
+
+    if getattr(result, "isError", False):
+        detail = next((t for t in (_block_text(b) for b in
+                                   (getattr(result, "content", None) or [])) if t), "")
+        return _text({"status": 502, "body": {
+            "error": f"{name}.{tool_name} returned an error, nothing was written: "
+                     f"{detail[:DATA_FETCH_ERROR_CHARS]}"}})
+
+    body, countable = _serialize_result(result)
+    data = body.encode()
+    if len(data) > DATA_FETCH_MAX_BYTES:
+        return _text({"status": 413, "body": {
+            "error": f"the result is {len(data)} bytes; the limit is "
+                     f"{DATA_FETCH_MAX_BYTES // (1024 * 1024)} MB. Use the tool's own "
+                     "filter, date-range or pagination arguments and fetch a slice."}})
+    resolved.parent.mkdir(parents=True, exist_ok=True)
+    resolved.write_bytes(data)
+
+    preview = body[:DATA_FETCH_PREVIEW_CHARS]
+    return _text({"status": 200, "body": {
+        "path": str(resolved.relative_to(workspace)),
+        "bytes": len(data),
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "lines": body.count("\n") + (1 if body and not body.endswith("\n") else 0),
+        "rows": _row_count(body, countable),
+        "preview": preview,
+        "preview_truncated": len(body) > len(preview),
+        "note": "The complete result is on disk and did NOT enter your context. "
+                "Process the file — do not answer from the preview.",
+    }})
+
+
 ALL_TOOLS = [
     t_board, t_task_create, t_task_claim, t_task_complete, t_task_block, t_task_kill,
     t_requirement_propose, t_requirement_depends_on,
@@ -584,6 +829,15 @@ ALL_TOOLS = [
     t_side_effect_begin, t_side_effect_finish,
     t_artifact_put, t_artifact_list, t_artifact_get, t_env_list,
 ]
+
+
+def run_tools() -> list:
+    """ALL_TOOLS plus data_fetch when this role actually has a data source.
+
+    Gated for the same reason _builtin_tools() is: an undeclared schema is pure
+    input-token cost on every API call, and a fetch tool for a role with nothing
+    to fetch from is a schema nobody can use."""
+    return [*ALL_TOOLS, t_data_fetch] if _data_source_specs() else list(ALL_TOOLS)
 
 
 # ── hooks: the platform's ears inside the session, record-only ─────────────────
@@ -646,7 +900,12 @@ def _builtin_tools() -> list[str]:
     tools: list[str] = []
     if PERMS.get("files", True):
         tools += ["Read", "Write", "Edit", "Glob", "Grep"]
-    if PERMS.get("bash", False):
+    # data_processing is the same Bash tool under a narrower charter: it is
+    # granted so a role can aggregate bulk data with CODE instead of by reading
+    # every row into its own context, which costs tokens and gets arithmetic
+    # wrong. A python-only grant would be theatre (python shells out); the real
+    # containment is unchanged — the sandbox and the egress proxy.
+    if PERMS.get("bash", False) or PERMS.get("data_processing", False):
         tools.append("Bash")
     if PERMS.get("web", False):
         tools += ["WebFetch", "WebSearch"]
@@ -654,25 +913,28 @@ def _builtin_tools() -> list[str]:
 
 
 def _allowed_tools() -> list[str]:
-    allowed = [f"mcp__yaaf__{t.name}" for t in ALL_TOOLS]
+    allowed = [f"mcp__yaaf__{t.name}" for t in run_tools()]
     allowed += _builtin_tools()
-    # Server-level grant: every tool the external MCP server offers.
+    # Server-level grant: every tool the external MCP server offers. Bulk
+    # sources are deliberately absent — they are reached only through
+    # data_fetch, which never routes their results through the context.
     allowed += [f"mcp__{name}" for name in _external_mcp_servers()]
     return allowed
 
 
-def _external_mcp_servers(env: dict[str, str] | None = None) -> dict[str, dict]:
-    """The project data sources assigned to this role, merged into
-    tool_permissions.mcp_servers at lease time — roles never declare servers
-    of their own.
+def _data_source_specs(env: dict[str, str] | None = None) -> dict[str, dict]:
+    """EVERY project data source assigned to this role, mounted or not, keyed by
+    name — the set data_fetch may call.
 
-    Each entry: {"name": str, "url_env": str, optional "transport": "http"|"sse",
-    optional "bearer_env": str}. The URL (and any bearer token) come from role-
-    scoped secret env vars — so which roles can even see a data source is decided
-    by the chairman's credential grants, never by prompt text. An entry whose
-    env vars are missing is skipped: an ungranted role gets no server, silently,
-    the same way it gets no secret. Remember the sandbox's only network route is
-    the egress proxy — the server's host must be on this role's allowlist.
+    Each spec: {"name": str, "url_env": str, optional "transport": "http"|"sse",
+    optional "bearer_env": str, optional "access": "inline"|"bulk"}. The URL (and
+    any bearer token) come from role-scoped secret env vars — so which roles can
+    even see a data source is decided by the chairman's credential grants, never
+    by prompt text. An entry whose env vars are missing is skipped: an ungranted
+    role gets no server, silently, the same way it gets no secret. Remember the
+    sandbox's only network route is the egress proxy — the server's host must be
+    on this role's allowlist, which holds for data_fetch exactly as it does for
+    a native mount.
     """
     env = env if env is not None else dict(os.environ)
     MOUNT_PROBLEMS.clear()
@@ -694,12 +956,27 @@ def _external_mcp_servers(env: dict[str, str] | None = None) -> dict[str, dict]:
                 f"data source '{name}' NOT mounted: {url_env} is not a URL "
                 "(a full http(s)://host:port address is required)")
             continue
-        config: dict = {"type": spec.get("transport", "http"), "url": url}
+        config: dict = {"type": spec.get("transport", "http"), "url": url,
+                        "access": spec.get("access", "inline")}
         token = env.get(spec.get("bearer_env", ""))
         if token:
             config["headers"] = {"Authorization": f"Bearer {token}"}
         servers[name] = config
     return servers
+
+
+def _external_mcp_servers(env: dict[str, str] | None = None) -> dict[str, dict]:
+    """The data sources mounted as native MCP tools — the inline ones only.
+
+    A source marked ``bulk`` is NOT mounted: its results would land whole in the
+    model's context, and for a source that exists to serve rows that is the
+    expensive path we are removing. Leaving it unmounted is enforcement rather
+    than advice — the wrong call cannot be made, because the tool is not there.
+    Bulk sources stay reachable through data_fetch, which writes to disk.
+    """
+    return {name: {k: v for k, v in config.items() if k != "access"}
+            for name, config in _data_source_specs(env).items()
+            if config.get("access") != "bulk"}
 
 
 MOUNT_PROBLEMS: list[str] = []
@@ -757,7 +1034,7 @@ async def main() -> int:
     trace_path = STAGING / f"trace-{RUN_ID}.jsonl"
     result_path = STAGING / f"result-{RUN_ID}.json"
 
-    server = create_sdk_mcp_server(name="yaaf", version="1.0.0", tools=ALL_TOOLS)
+    server = create_sdk_mcp_server(name="yaaf", version="1.0.0", tools=run_tools())
     options = ClaudeAgentOptions(
         system_prompt=system_prompt,
         model=MODEL,

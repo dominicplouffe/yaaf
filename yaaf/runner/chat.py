@@ -42,6 +42,7 @@ from yaaf.core.tokens import mint
 from yaaf.runner import sandbox
 from yaaf.runner.daemon import (
     _billing_env,
+    _data_source_prompt,
     _merge_project_data_sources,
     _role_egress_url,
     _role_secret_env,
@@ -266,7 +267,10 @@ def _prepare_session(session: Session, project: Project, ceo: Agent) -> tuple[di
     run.model = job.model
     run.effort = job.effort
     job.tool_permissions = dict(role_version.tool_permissions) if role_version else {}
-    _merge_project_data_sources(session, project, role_version, job)
+    # Same sources, same cost lesson: the chat lane mounts them exactly as a run
+    # does, so it gets the same paragraph describing them.
+    job.system_prompt += _data_source_prompt(
+        _merge_project_data_sources(session, project, role_version, job))
     job.egress_proxy_url = _role_egress_url(session, role_version, job.tool_permissions)
     job.billing_env = {**_billing_env(session, project),
                        **_role_secret_env(session, project, role_version)}

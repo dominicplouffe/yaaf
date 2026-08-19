@@ -158,7 +158,13 @@ def build_system_prompt(session: Session, agent: Agent, project: Project) -> str
         "MECHANICS: you interact with the platform through the yaaf tools (board, tasks, "
         "messages, memory, evidence, approvals). Each run is stateless: read your context, "
         "do one unit of work, write down anything durable, and exit. Query memory before "
-        "repeating work you suspect has been tried.\n\n"
+        "repeating work you suspect has been tried. Your context window is the expensive "
+        "resource and /workspace is the cheap one: the workspace is a real directory that "
+        "PERSISTS with the project across runs and is shared by every agent on it. Keep "
+        "bulk material — data pulls, long documents, intermediate results — in files, "
+        "work on it with tools, and let only the small end of it (aggregates, samples, "
+        "conclusions) into messages, memory, or your own prose. Before fetching anything "
+        "twice, look in the workspace: a file a previous run left there is free.\n\n"
         f"{UNTRUSTED_NOTE}"
     )
 

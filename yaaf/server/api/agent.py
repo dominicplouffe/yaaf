@@ -1370,8 +1370,10 @@ def artifact_put(
 ) -> dict:
     """Persist a finished deliverable to the artifact store, AND as a row.
 
-    The workspace is ephemeral; this is where finished work goes to outlive
-    the run. The platform picks the location — projects/<project>/<run>/
+    The workspace persists with the project as shared working state; the
+    artifact store is the shipped, versioned record — where finished work goes
+    to be served, audited and read by others. The platform picks the location —
+    projects/<project>/<run>/
     <filename> — so an agent names a file, never a path. The row is the
     receipt: sha256 and version are computed here, published_at is a real
     timestamp instead of a filesystem mtime a restore would rewrite, and the

@@ -296,7 +296,7 @@ async def _serve(client: ClaudeSDKClient, channel_id: str, state: dict) -> int |
 
 async def main() -> int:
     global _cost_booked
-    server = create_sdk_mcp_server(name="yaaf", version="1.0.0", tools=base.ALL_TOOLS)
+    server = create_sdk_mcp_server(name="yaaf", version="1.0.0", tools=base.run_tools())
     options = ClaudeAgentOptions(
         system_prompt=(base.STAGING / "system_prompt.txt").read_text(),
         model=base.MODEL,
