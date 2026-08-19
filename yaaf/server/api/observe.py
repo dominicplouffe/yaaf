@@ -1199,6 +1199,37 @@ def suggestions(project_id: str, session: Session = Depends(db)) -> list[dict]:
              "consumed": s.consumed_at is not None} for s in rows]
 
 
+@router.get("/experiments")
+def experiments(session: Session = Depends(db)) -> list[dict]:
+    from yaaf.core.models import Experiment, ExperimentArm
+
+    rows = list(session.execute(
+        select(Experiment).order_by(Experiment.created_at.desc()).limit(50)
+    ).scalars())
+    counts = dict(session.execute(
+        select(ExperimentArm.experiment_id, func.count(ExperimentArm.id))
+        .group_by(ExperimentArm.experiment_id)
+    ).all())
+    return [
+        {"id": e.id, "name": e.name, "status": e.status,
+         "created_at": e.created_at.isoformat(),
+         "requirements": len(e.requirement_set or []),
+         "arms": int(counts.get(e.id, 0))}
+        for e in rows
+    ]
+
+
+@router.get("/experiments/{experiment_id}")
+def experiment_detail(experiment_id: str, session: Session = Depends(db)) -> dict:
+    from yaaf.core.models import Experiment
+    from yaaf.server.experiments import experiment_report
+
+    experiment = session.get(Experiment, experiment_id)
+    if experiment is None:
+        raise HTTPException(status_code=404, detail="unknown experiment")
+    return experiment_report(session, experiment)
+
+
 @router.get("/projects/{project_id}/cycles")
 def cycles(project_id: str, session: Session = Depends(db)) -> dict:
     """The rhythm's record: every turn, newest first, narratives whole. The

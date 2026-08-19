@@ -322,6 +322,12 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
 
     ceo_role_version = _latest_role_version(session, body.ceo_role_slug)
 
+    # The org shape as a recorded fact: solo (one brain), ceo_team (flat —
+    # every employee is a one-person team the CEO talks to directly), or
+    # ceo_leads_workers (any team big enough to have a real lead).
+    topology = ("solo" if body.solo
+                else "ceo_leads_workers" if any(len(t.employees) > 1 for t in body.teams)
+                else "ceo_team")
     project = Project(
         id=ids.new_id(ids.PROJECT),
         slug=body.slug,
@@ -333,6 +339,7 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
         controlled_domains=body.controlled_domains,
         integrations=body.integrations,
         deadline=deadline,
+        topology=topology,
     )
     session.add(project)
     session.flush()
@@ -1953,6 +1960,180 @@ def requirement_verdict(
     _audit(session, row.project_id, "requirement.verdict", "requirement", row.id,
            {"key": row.key, "ok": body.ok})
     return {"id": row.id, "key": row.key, "status": row.status}
+
+
+# ── the topology experiment: one variable, three arms, four numbers ─────────────
+
+TOPOLOGIES = ("solo", "ceo_team", "ceo_leads_workers")
+
+
+class ExperimentRequirementIn(BaseModel):
+    statement: str = Field(min_length=10, max_length=2000)
+    acceptance_test: dict
+    stage: int = Field(default=1, ge=1, le=50)
+    est_runs: int = Field(ge=1, le=10_000)
+
+
+class ExperimentCreate(BaseModel):
+    name: str = Field(min_length=3, max_length=200)
+    slug_base: str = Field(pattern="^[a-z0-9-]{2,48}$")
+    goal: str = Field(min_length=10)
+    chairman_email: str
+    requirements: list[ExperimentRequirementIn] = Field(min_length=1, max_length=30)
+    topologies: list[str] = Field(
+        default_factory=lambda: list(TOPOLOGIES), min_length=1, max_length=3)
+    ceo_role_slug: str = "ceo"
+    worker_role_slug: str
+    # Employees per arm, CEO excluded. Solo ignores it; ceo_team gets this
+    # many one-person teams; ceo_leads_workers one team of this many.
+    team_size: int = Field(default=2, ge=1, le=6)
+    constitution: dict = Field(default_factory=dict)
+    billing_mode: str = Field(default="api_key", pattern="^(api_key|subscription)$")
+    start: bool = True
+
+
+def _arm_teams(topology: str, worker_role: str, team_size: int) -> tuple[list[TeamSpec], bool]:
+    """The three shapes, and only these three — identical but for this."""
+    if topology == "solo":
+        return [TeamSpec(role_slug=worker_role, name="Solo", employees=[])], True
+    if topology == "ceo_team":
+        return [
+            TeamSpec(role_slug=worker_role, name=f"Member {i}",
+                     employees=[f"Member {i}"])
+            for i in range(1, team_size + 1)
+        ], False
+    return [TeamSpec(
+        role_slug=worker_role, name="Team",
+        employees=[f"Worker {i}" for i in range(1, team_size + 1)],
+        lead="Worker 1",
+    )], False
+
+
+@router.post("/experiments")
+def create_experiment(body: ExperimentCreate, session: Session = Depends(db)) -> dict:
+    """One goal, one chairman-authored requirement set, one constitution — N
+    projects differing in exactly one variable. The set and the constitution
+    freeze on the experiment row, so "the arms were identical" is a checkable
+    fact rather than a claim about setup care. Scope is chairman-authored and
+    accepted at birth in every arm: the CEOs plan HOW, never WHAT, which is
+    what keeps the denominator identical across topologies."""
+    from yaaf.core.models import Experiment, ExperimentArm
+
+    unknown = sorted(set(body.topologies) - set(TOPOLOGIES))
+    if unknown or len(set(body.topologies)) != len(body.topologies):
+        raise HTTPException(
+            status_code=422,
+            detail=f"topologies must be distinct picks from {', '.join(TOPOLOGIES)}")
+    if "ceo_leads_workers" in body.topologies and body.team_size < 2:
+        raise HTTPException(
+            status_code=422,
+            detail="ceo_leads_workers needs team_size >= 2 — a lead with no workers "
+                   "is just ceo_team wearing a hat")
+    try:
+        doc = ConstitutionDoc.model_validate(
+            {**ConstitutionDoc().model_dump(), **body.constitution})
+        for req in body.requirements:
+            policy.validate_success_test(doc, req.acceptance_test)
+    except policy.Refusal as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    chairman = session.execute(
+        select(User).where(User.email == body.chairman_email)).scalar_one_or_none()
+    if chairman is None:
+        raise HTTPException(status_code=422, detail="chairman user does not exist")
+
+    experiment = Experiment(
+        id=ids.new_id(ids.EXPERIMENT),
+        name=body.name,
+        goal=body.goal,
+        requirement_set=[r.model_dump() for r in body.requirements],
+        constitution=doc.model_dump(),
+        chairman_user_id=chairman.id,
+    )
+    session.add(experiment)
+    session.flush()
+
+    arms_out = []
+    for topology in body.topologies:
+        teams, solo = _arm_teams(topology, body.worker_role_slug, body.team_size)
+        created = create_project(ProjectCreate(
+            slug=f"{body.slug_base}-{topology.replace('_', '-')}",
+            name=f"{body.name} — {topology}",
+            goal=body.goal,
+            chairman_email=body.chairman_email,
+            billing_mode=body.billing_mode,
+            mode="deliver",
+            constitution=body.constitution,
+            integrations={"experiment": {"id": experiment.id, "topology": topology}},
+            ceo_role_slug=body.ceo_role_slug,
+            teams=teams,
+            solo=solo,
+        ), session)
+        for req in body.requirements:
+            add_requirement(created["id"], ChairmanRequirementIn(
+                statement=req.statement,
+                acceptance_test=req.acceptance_test,
+                stage=req.stage,
+                est_runs=req.est_runs,
+                note=f"experiment '{body.name}': identical scope in every arm",
+            ), session)
+        if body.start:
+            start_project(created["id"], session)
+        session.add(ExperimentArm(
+            id=ids.new_id(ids.EXPERIMENT_ARM),
+            experiment_id=experiment.id,
+            project_id=created["id"],
+            topology=topology,
+        ))
+        arms_out.append({"topology": topology, "project_id": created["id"],
+                         "slug": f"{body.slug_base}-{topology.replace('_', '-')}"})
+
+    _audit(session, None, "experiment.create", "experiment", experiment.id,
+           {"name": body.name, "topologies": body.topologies,
+            "requirements": len(body.requirements)})
+    return {"id": experiment.id, "name": experiment.name, "arms": arms_out,
+            "note": ("Arms run concurrently under identical constitutions and "
+                     "identical chairman-authored scope. Compared on cost per "
+                     "requirement met, wall-clock to first attested evidence, share "
+                     "of spend producing nothing, and words per delivered byte — "
+                     "the report is on the Experiments page.")}
+
+
+class ExperimentClose(BaseModel):
+    reason: str = Field(default="", max_length=2000)
+
+
+@router.post("/experiments/{experiment_id}/close")
+def close_experiment(
+    experiment_id: str, body: ExperimentClose, session: Session = Depends(db)
+) -> dict:
+    """Stop every still-running arm and freeze the reading. The report stays
+    readable forever — closing ends the spend, not the record."""
+    from yaaf.core.models import Experiment, ExperimentArm
+
+    experiment = session.get(Experiment, experiment_id)
+    if experiment is None:
+        raise HTTPException(status_code=404, detail="unknown experiment")
+    if experiment.status != "running":
+        raise HTTPException(status_code=409, detail=f"already {experiment.status}")
+    stopped = 0
+    for arm in session.execute(
+        select(ExperimentArm).where(ExperimentArm.experiment_id == experiment.id)
+    ).scalars():
+        project = session.get(Project, arm.project_id)
+        if project is not None and not ProjectStatus(project.status).is_terminal:
+            project.status = ProjectStatus.STOPPED
+            project.status_reason = (
+                "experiment closed" + (f": {body.reason}" if body.reason else ""))
+            _revoke_running(session, project.id)
+            stopped += 1
+    experiment.status = "closed"
+    experiment.closed_at = utcnow()
+    _audit(session, None, "experiment.close", "experiment", experiment.id,
+           {"reason": body.reason, "arms_stopped": stopped})
+    return {"id": experiment.id, "status": experiment.status, "arms_stopped": stopped}
 
 
 # ── the review: six levers, each recorded with a reason ─────────────────────────
