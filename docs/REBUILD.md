@@ -51,7 +51,7 @@ session preferred, twice over, which is why this table names objects.
 |---|---|---|
 | 0 | Fresh database, one baseline, one place for rules | **done** — reset run, seed restored |
 | 1 | Requirements as the spine; done is true by construction | **done** — migration 0002 |
-| 2 | The plan is the CEO's first task, and it has to add up | not started |
+| 2 | The plan is the CEO's first task, and it has to add up | **done** |
 | 3 | The plan screen — stage board and dependency graph | not started |
 | 4 | Velocity, cost attribution, error load | not started |
 | 5 | Commitment, and a forecast that refuses things | not started |
@@ -115,6 +115,35 @@ twice, and dropped both times.
 - `projects.mode` lands here rather than at stage 8, because the requirement
   rules differ by mode. Stage 8 still owns the machinery: cycles, the picker,
   the completion receipt.
+
+## Stage 2, as built
+
+- **R-00**, created by the platform when a Deliver or Operate project starts.
+  No task may be created until it closes. Its acceptance test is
+  `{"type": "plan"}` — structural, evaluated in the server, and an agent
+  proposing that kind is refused.
+- **The feasibility gate is back.** The modes design deleted it — *"the
+  feasibility check, replaced by a definition of done you set yourself"* —
+  because per-phase budgets were a guess the CEO could satisfy by writing
+  smaller numbers. The objection was right and it is answerable: settled
+  requirements are compared against the runs they actually took, and the next
+  plan is read at the CEO's own ratio. Lowball by 3× and you are planned for at
+  3×. **Never below 1×**, or a CEO could buy headroom by over-estimating once.
+- Refusals show their working — runs needed, runs affordable, the multiplier
+  and where it came from — so the CEO can cut rather than guess.
+- **Two sums, not one.** While planning, unaccepted proposals count; when the
+  platform decides whether the plan *holds*, only accepted scope counts.
+  Otherwise a CEO could freeze its own board by thinking out loud.
+- R-00 closes and reopens **in the janitor**, because a plan stops being true
+  when the chairman lowers a budget or the month's spend accumulates — nobody
+  touches a requirement, and a gate that only re-checked when poked would let a
+  project build all month against arithmetic that broke on the 3rd.
+- **Stages are enforced**: work for a requirement whose stage is not open yet is
+  refused, and the open stage advances by itself when the last one settles.
+- Runs stamp the requirement they spent against, planning runs included — which
+  is what makes estimate-vs-actual a comparison rather than a hope.
+- `mode` is settable at creation (`explore` / `deliver` / `operate`). Stage 8
+  still owns the picker, cycles and the completion receipt.
 
 ## The reset — done, 18 Aug
 
