@@ -49,8 +49,8 @@ session preferred, twice over, which is why this table names objects.
 
 | | Stage | Status |
 |---|---|---|
-| 0 | Fresh database, one baseline, one place for rules | **code done** — reset not yet run |
-| 1 | Requirements as the spine; done is true by construction | not started |
+| 0 | Fresh database, one baseline, one place for rules | **done** — reset run, seed restored |
+| 1 | Requirements as the spine; done is true by construction | **done** — migration 0002 |
 | 2 | The plan is the CEO's first task, and it has to add up | not started |
 | 3 | The plan screen — stage board and dependency graph | not started |
 | 4 | Velocity, cost attribution, error load | not started |
@@ -97,17 +97,48 @@ twice, and dropped both times.
 - `yaaf save-seed` / `yaaf seed`, with the logic in `yaaf/core/seed.py` so it is
   testable. Roles survive a wipe on their own; a page-long goal does not.
 
-## The reset, when it runs
+## Stage 1, as built
 
-A full dump is already taken, so this is reversible:
-`~/yaaf-backup/pre-rebuild-2026-08-18.sql.gz` (29 tables), and the new-format
-seed is at `~/yaaf-seed/` (15 roles, 9 projects), dry-run restored against the
-new schema with zero failures.
+- `requirements`, `requirement_events`, `requirement_edges`. Tasks carry
+  `requirement_id`, required outside Explore.
+- **The CEO proposes, the chairman accepts.** No agent route writes scope.
+- **No agent route writes `met`.** Command acceptance tests run through the
+  same platform path as task success checks; observables go to the chairman.
+  The strongest form of "done is never self-graded" is an absent verb.
+- **Work is refused for a requirement with unmet dependencies**, which is what
+  makes the graph a gate rather than a picture. An edge closing a loop is
+  refused with the loop drawn out.
+- **The requester owns the test:** a claimant may not claim work whose success
+  test it wrote. Solo mode is exempt — with one agent there is nobody to hand
+  it to. That is a real difference between topologies and stage 9 should
+  measure it as a cost of solo, not paper over it.
+- `projects.mode` lands here rather than at stage 8, because the requirement
+  rules differ by mode. Stage 8 still owns the machinery: cycles, the picker,
+  the completion receipt.
+
+## The reset — done, 18 Aug
+
+Reversible: `~/yaaf-backup/pre-rebuild-2026-08-18.sql.gz` (29 tables, verified),
+seed at `~/yaaf-seed/` (15 roles, 9 projects).
 
 ```bash
-./kill_single_server.sh --wipe      # destroys the database volume; type DESTROY
-./deploy_single_server.sh           # fresh stack, 0001_baseline, roles loaded
-yaaf seed ~/yaaf-seed --chairman dplouffe@gmail.com
+./kill_single_server.sh --wipe --yes
+./deploy_single_server.sh --skip-roles
+# then restore roles + projects from ~/yaaf-seed over the admin API
 ```
 
-Projects come back in **draft**. Restoring a backup must not start spending.
+Restored: 15 roles, 9 projects, all in **draft** — restoring a backup does not
+start spending. The limits that used to be config came back as constitution
+rules (ai-blog-writer kept its `America/Toronto` 09:00 daily wake).
+
+## One thing this stage got wrong, on the record
+
+Stage 1 was deployed and the new tables were not there. `0001` is `create_all`,
+so a database that ran it before requirements existed reports head and quietly
+lacks three tables and four columns — the API then answers against a schema
+that cannot serve it. Caught by looking at the live database after the deploy,
+not in review. `0002_requirements.py` fixes it, and
+`tests/selftest_invariants/test_migration_chain.py` now fails if a model is
+added without a revision: it builds the pre-stage-1 schema, stamps `0001`,
+upgrades, and diffs against the models. Verified to fail when `0002` is
+removed.
