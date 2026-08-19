@@ -57,6 +57,17 @@ interface PlanView {
   };
   open_stage?: number;
   critical_path?: { keys: string[]; adjusted_runs: number; multiplier?: number };
+  velocity?: {
+    met_3w: number;
+    per_week_3w: number;
+    met_12w: number;
+    per_week_12w: number;
+    remaining: number;
+    weeks_left_at_pace: number | null;
+    runs_3w: { total: number; dead: number; failure_share: number;
+      attributed_share: number; usd: number };
+    worst_failure: { key: string; failure_load: number; statement: string } | null;
+  };
   requirements?: PlanRequirement[];
 }
 
@@ -424,6 +435,33 @@ export default function Plan({ ctx }: { ctx: ProjectCtx }) {
               <div className="label">At the daily cap</div>
               <div className="value">{sums.days_at_the_daily_cap}<small> days</small></div>
               <div className="sub">if every run went to plan</div>
+            </div>
+          )}
+          {data.velocity && (
+            <div className="tile">
+              <div className="label">Pace</div>
+              <div className="value">{data.velocity.per_week_3w}<small> /wk</small></div>
+              <div className="sub">
+                {data.velocity.weeks_left_at_pace != null
+                  ? `${data.velocity.remaining} left — ~${data.velocity.weeks_left_at_pace} weeks at this pace`
+                  : data.velocity.met_3w === 0
+                    ? "nothing met in 3 weeks yet"
+                    : `${data.velocity.remaining} requirements left`}
+              </div>
+            </div>
+          )}
+          {data.velocity && data.velocity.runs_3w.total > 0 && (
+            <div className="tile">
+              <div className="label">Waste</div>
+              <div className="value">
+                {Math.round(data.velocity.runs_3w.failure_share * 100)}<small>%</small>
+              </div>
+              <div className="sub">
+                {data.velocity.runs_3w.dead} of {data.velocity.runs_3w.total} runs died
+                {data.velocity.worst_failure
+                  ? ` — ${data.velocity.worst_failure.key} worst at ${data.velocity.worst_failure.failure_load}`
+                  : ""}
+              </div>
             </div>
           )}
           {sums.budget.known ? (

@@ -497,6 +497,8 @@ def finalize(job: RunJob, result: RunResult, was_revoked: bool = False) -> None:
         else:
             run.status = RunStatus.DONE if result.ok else RunStatus.FAILED
         run.finished_at = utcnow()
+        if run.status != RunStatus.DONE:
+            policy.charge_failure(session, run)
         run.tokens_in = result.tokens_in
         run.tokens_out = result.tokens_out
         run.cache_creation_tokens = result.cache_creation_tokens

@@ -523,6 +523,13 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
                 r for r in policy.scope_requirements(session, project.id)
                 if r.status == RequirementStatus.MET
             ])
+            from yaaf.server.velocity import project_velocity
+
+            # The pace, in the pack. The audited CEO's board view carried six
+            # fields per task and not one timestamp, so it could not answer
+            # "are we faster than last week" — and a planner that cannot see
+            # its own pace can only plan by optimism.
+            pack["velocity"] = project_velocity(session, project.id)
             pack["scope"] = {
                 "met": int(met),
                 "open": len([r for r in requirements

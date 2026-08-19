@@ -53,7 +53,7 @@ session preferred, twice over, which is why this table names objects.
 | 1 | Requirements as the spine; done is true by construction | **done** — migration 0002 |
 | 2 | The plan is the CEO's first task, and it has to add up | **done** |
 | 3 | The plan screen — stage board and dependency graph | **done** |
-| 4 | Velocity, cost attribution, error load | not started |
+| 4 | Velocity, cost attribution, error load | **done** |
 | 5 | Commitment, and a forecast that refuses things | not started |
 | 6 | Deliverables, attestation, the sampled audit | not started |
 | 7 | The status meeting, and six levers | not started |
@@ -161,6 +161,31 @@ twice, and dropped both times.
 - **Scope decisions happen on the screen**: accept, cut, and the observable
   verdict are buttons on the requirement they concern. Explore projects get no
   Plan tab at all — a tab that only ever explains its own absence is clutter.
+
+## Stage 4, as built
+
+- `yaaf/server/velocity.py` — **one producer** for the pace: requirements met
+  per week over trailing 3 and 12 weeks, from `requirement_events`. The CEO's
+  context pack and the chairman's Plan screen read the same dict, so they can
+  never quote different speeds.
+- **R-00 opening is not pace.** The gate lifting is excluded from the MET
+  count, or every project would start with one free unit of velocity and the
+  forecast would open optimistic by exactly one requirement.
+- **Errors have a number and a name.** A run that dies — failed, killed,
+  refusal-terminated, or reaped — charges `failure_load` on the requirement it
+  was stamped against, from both death paths (`finalize` and the reaper). The
+  velocity block names the single worst offender, so a falling pace reads
+  "R-07 has eaten N runs", not "we got slower".
+- **Attribution is measured, not assumed**: the window reports what share of
+  runs (and dollars) were stamped against any requirement at all. In the audit
+  62% of runs carried nothing; now overhead is a visible line instead of a
+  smear.
+- Plan screen grows **Pace** ("2.3/wk — 7 left, ~3 weeks at this pace") and
+  **Waste** ("12% of runs died — R-07 worst at 9") tiles.
+- Also this session, out of order: the **mode picker on New project** — stage
+  3's Plan tab was unreachable from the UI because mode was API-only until
+  stage 8's picker. A screen nobody can reach is not shipped; a compact
+  three-card picker landed the day the screens behind it existed.
 
 ## The reset — done, 18 Aug
 

@@ -46,6 +46,7 @@ from yaaf.core.models import (
     utcnow,
 )
 from yaaf.server import policy, typing_state
+from yaaf.server.velocity import project_velocity
 from yaaf.server.deps import admin_auth, db
 from yaaf.server.dispatcher import (
     activity_state,
@@ -627,6 +628,7 @@ def plan_view(project_id: str, session: Session = Depends(db)) -> dict:
         },
         "open_stage": policy.open_stage(session, project.id),
         "critical_path": policy.critical_path(session, project.id),
+        "velocity": project_velocity(session, project.id),
         "requirements": [
             {
                 "id": r.id,

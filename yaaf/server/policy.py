@@ -1101,6 +1101,24 @@ def evaluate_plan(session: Session, project: Project, cons: ConstitutionDoc) -> 
     return missing
 
 
+def charge_failure(session: Session, run: Run) -> None:
+    """A run that died charges the requirement it was serving.
+
+    This is the "errors" third of the chairman's ask — "adaptable to plan
+    changes, parameter changes, errors" — as a number instead of a vibe. It is
+    what lets a review say "the rate fell because one requirement ate fifty
+    dead runs" rather than "we got slower". Called exactly once, at the run's
+    terminal transition, from both places a run can die: finalize (failed,
+    killed, refusal-terminated) and the janitor (reaped).
+    """
+    if not run.requirement_id:
+        return
+    requirement = session.get(Requirement, run.requirement_id)
+    if requirement is None or requirement.status in CLOSED_REQUIREMENT_STATUSES:
+        return
+    requirement.failure_load += 1
+
+
 def requirement_edges(session: Session, project_id: str) -> list[RequirementEdge]:
     return list(
         session.execute(

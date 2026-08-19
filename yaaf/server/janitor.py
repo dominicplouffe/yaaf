@@ -280,6 +280,7 @@ def reap_stale_runs(session: Session, project: Project, cons: ConstitutionDoc) -
         run.status = RunStatus.REAPED
         run.token_revoked = True
         run.finished_at = now
+        policy.charge_failure(session, run)
         _harvest_reaped_usage(session, project, run)
         _release_claims_of_run(session, run.id, "run reaped: lease expired")
         if run.agent_id is not None and run.kind != RunKind.CHAT_SESSION:
