@@ -57,7 +57,7 @@ session preferred, twice over, which is why this table names objects.
 | 5 | Commitment, and a forecast that refuses things | **done** — migration 0003 |
 | 6 | Deliverables, attestation, the sampled audit | **done** — migration 0004 |
 | 7 | The status meeting, and six levers | **done** — migration 0005 |
-| 8 | Explore / Deliver / Operate, and the learning loop | not started |
+| 8 | Explore / Deliver / Operate, and the learning loop | **done** — migration 0006 |
 | 9 | The topology experiment | not started |
 
 Stage 3 is early on purpose. The visual was asked for twice, deferred to last
@@ -288,6 +288,40 @@ twice, and dropped both times.
   beside what they bought — requirements met since, pace then vs pace now.
 - **The Review tab** is the meeting: frozen tiles, the narrative, prior
   decisions with their price, six buttons, close.
+
+## Stage 8, as built
+
+- **Explore carries a window**: `projects.deadline`, settable only there — a
+  bare date is refused for Deliver (commitments) and Operate (cycles). When
+  it passes, CEO notice + chairman email exactly once; nothing pauses itself,
+  because an Explore project's worth was always his call. Overview counts it
+  down; the New-project form takes it beside the mode picker.
+- **Deliver completes through his gate.** The janitor detects "everything
+  true" and emails once (`delivery_outstanding` is one function, so the email
+  and the refusal can never disagree); the Overview button decides; the
+  receipt's load-bearing row is **"failed once before"** — per requirement,
+  est vs actual runs and the failure load it ate on the way to true.
+  `COMPLETED` is terminal.
+- **Operate runs on the constitution's rhythm**: `cycle_frequency` +
+  `cycle_day` via `_rule()` (29th–31st refused at validation, never clamped),
+  read in the one `timezone`. Cycles roll in the **janitor**; a roll closes
+  the cycle (completed / missed / skipped), carries unsettled scope forward by
+  `requirements.cycle_id`, and reopens R-00 — **each cycle plans fresh**, on
+  a governance-classed `cycle_plan` wake. At most one open cycle ever: a
+  three-week pause resumes into ONE (janitor never touches paused projects,
+  and `start` opens exactly one). Two consecutive SKIPPED cycles pause the
+  project and email him.
+- **The learning loop**: closing a review on an Operate project writes the
+  cycle's `narrative` (frozen numbers + the chairman's decisions + the CEO's
+  words, uncapped); the next cycle's pack carries the last three **verbatim**
+  — proven by the cycle-7-carries-4/5/6 test. Rolls without a review get an
+  honest platform stub, never a silent gap. Cycle history with whole
+  narratives is on the Plan tab.
+- Scope became cycle-aware in ONE place (`policy.scope_requirements`), so the
+  plan gate, feasibility, critical path, velocity-remaining and the Plan
+  screen all read the open cycle for free; `estimate_bias` deliberately reads
+  ALL cycles, or a CEO that lowballs every cycle would start each one
+  forgiven.
 
 ## The reset — done, 18 Aug
 
