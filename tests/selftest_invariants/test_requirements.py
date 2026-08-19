@@ -34,11 +34,21 @@ OBS_TEST = {"type": "observable", "target": "https://example.org/report.pdf exis
 
 
 def deliver_project(client, slug: str = "acme", **kwargs) -> dict:
-    """A Deliver project: the mode where a task must serve a requirement."""
-    project = make_project(client, slug=slug, **kwargs)
+    """A Deliver project: a task must serve a requirement, and the project
+    starts owing a plan, so R-00 is created at start."""
+    return make_project(client, slug=slug, mode=ProjectMode.DELIVER, **kwargs)
+
+
+def tick(project: dict) -> None:
+    """One janitor pass. In production this runs every 15 seconds; the plan
+    gate opens and closes there rather than on a route, because the plan can
+    stop adding up without anyone touching a requirement."""
+    from yaaf.core.constitution import effective
+    from yaaf.server import janitor
+
     with db_session() as session:
-        session.get(Project, project["id"]).mode = ProjectMode.DELIVER
-    return project
+        row = session.get(Project, project["id"])
+        janitor.check_plan(session, row, effective(session, row.id))
 
 
 def ceo_token(project: dict) -> str:
@@ -47,20 +57,21 @@ def ceo_token(project: dict) -> str:
 
 
 def propose(client, token: str, statement="A report exists, sourced and dated",
-            test=None, **extra) -> dict:
-    response = client.post(
-        "/agent/requirements",
-        json={"statement": statement, "acceptance_test": test or CMD_TEST, **extra},
-        headers=bearer(token),
-    )
+            test=None, est_runs=5, **extra) -> dict:
+    body = {"statement": statement, "acceptance_test": test or CMD_TEST, **extra}
+    if est_runs is not None:
+        body["est_runs"] = est_runs
+    response = client.post("/agent/requirements", json=body, headers=bearer(token))
     assert response.status_code == 200, response.text
     return response.json()
 
 
-def accept(client, requirement_id: str, **body) -> dict:
+def accept(client, requirement_id: str, project: dict | None = None, **body) -> dict:
     response = client.post(f"/admin/requirements/{requirement_id}/accept",
                            json=body, headers=ADMIN)
     assert response.status_code == 200, response.text
+    if project is not None:
+        tick(project)   # the plan may now hold, which opens the board
     return response.json()
 
 
@@ -86,7 +97,7 @@ def test_a_proposal_is_not_scope_until_the_chairman_accepts(client):
     assert refused.status_code == 409
     assert "not accepted" in refused.json()["error"] or "proposed" in refused.json()["error"]
 
-    accept(client, proposed["requirement_id"])
+    accept(client, proposed["requirement_id"], project)
     allowed = make_task(client, token, project, proposed["requirement_id"])
     assert allowed.status_code == 200, allowed.text
 
@@ -125,6 +136,7 @@ def test_only_the_ceo_proposes_requirements(client):
 def test_a_task_must_serve_a_requirement(client):
     project = deliver_project(client)
     token = ceo_token(project)
+    accept(client, propose(client, token)["requirement_id"], project)   # opens the board
     refused = make_task(client, token, project, None)
     assert refused.status_code == 422
     assert "requirement_id" in refused.json()["error"]
@@ -148,8 +160,8 @@ def test_no_route_lets_an_agent_mark_a_requirement_met(client):
     project = deliver_project(client)
     token = ceo_token(project)
     requirement = propose(client, token)
-    accept(client, requirement["requirement_id"])
     rid = requirement["requirement_id"]
+    accept(client, rid, project)
 
     attempts = [
         ("POST", f"/agent/requirements/{rid}/complete", {"evidence": "it is done"}),
@@ -177,7 +189,7 @@ def test_closing_every_task_moves_a_requirement_to_checking_not_to_met(client):
     token = ceo_token(project)
     requirement = propose(client, token, test=OBS_TEST)
     rid = requirement["requirement_id"]
-    accept(client, rid)
+    accept(client, rid, project)
 
     created = make_task(client, token, project, rid)
     assert created.status_code == 200, created.text
@@ -209,7 +221,7 @@ def test_the_chairman_verdict_is_the_only_thing_that_meets_an_observable(client)
     project = deliver_project(client)
     token = ceo_token(project)
     rid = propose(client, token, test=OBS_TEST)["requirement_id"]
-    accept(client, rid)
+    accept(client, rid, project)
     task_id = make_task(client, token, project, rid).json()["id"]
     lead = agent_by_name(project, "Lead")
     _, lead_token = live_token(project["id"], lead)
@@ -248,10 +260,10 @@ def test_work_is_refused_while_a_dependency_is_unmet(client):
     project = deliver_project(client)
     token = ceo_token(project)
     first = propose(client, token, statement="The data exists and is sourced")
-    accept(client, first["requirement_id"])
+    accept(client, first["requirement_id"], project)
     second = propose(client, token, statement="The report is built from that data",
                      depends_on=[first["requirement_id"]])
-    accept(client, second["requirement_id"])
+    accept(client, second["requirement_id"], project)
 
     refused = make_task(client, token, project, second["requirement_id"])
     assert refused.status_code == 409
@@ -309,7 +321,7 @@ def test_a_lead_cannot_assign_itself_the_check_it_wrote(client):
     project = deliver_project(client)
     token = ceo_token(project)
     rid = propose(client, token)["requirement_id"]
-    accept(client, rid)
+    accept(client, rid, project)
     parent_id = make_task(client, token, project, rid).json()["id"]
 
     lead = agent_by_name(project, "Lead")
@@ -342,7 +354,7 @@ def test_every_transition_lands_in_requirement_events(client):
     project = deliver_project(client)
     token = ceo_token(project)
     rid = propose(client, token)["requirement_id"]
-    accept(client, rid)
+    accept(client, rid, project)
     make_task(client, token, project, rid)
 
     with db_session() as session:
@@ -358,7 +370,8 @@ def test_every_transition_lands_in_requirement_events(client):
 
 def test_keys_are_stable_and_human(client):
     """The chairman says "cut R-09". An opaque id would make him quote a hash
-    back at his own CEO."""
+    back at his own CEO. R-00 is the plan and is reserved, so the CEO's own
+    first requirement is always R-01."""
     project = deliver_project(client)
     token = ceo_token(project)
     keys = [propose(client, token, statement=f"Thing number {n} is true")["key"]
@@ -367,7 +380,7 @@ def test_keys_are_stable_and_human(client):
 
     listed = client.get(f"/admin/projects/{project['id']}/requirements", headers=ADMIN)
     assert listed.status_code == 200
-    assert [r["key"] for r in listed.json()] == ["R-01", "R-02", "R-03"]
+    assert [r["key"] for r in listed.json()] == ["R-00", "R-01", "R-02", "R-03"]
 
 
 def test_the_ceo_is_told_its_scope_and_what_is_blocked(client):
@@ -380,7 +393,7 @@ def test_the_ceo_is_told_its_scope_and_what_is_blocked(client):
     project = deliver_project(client)
     token = ceo_token(project)
     first = propose(client, token, statement="The data exists and is sourced")
-    accept(client, first["requirement_id"])
+    accept(client, first["requirement_id"], project)
     second = propose(client, token, statement="The report is built from that data",
                      depends_on=[first["requirement_id"]])
     accept(client, second["requirement_id"])

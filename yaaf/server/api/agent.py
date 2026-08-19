@@ -852,6 +852,15 @@ def propose_requirement(
 ) -> dict:
     cons = effective(session, ctx.project.id)
     policy.check_requirement_propose(cons, ctx.agent, body.acceptance_test)
+    if policy.requires_requirements(ctx.project) and not body.est_runs:
+        raise Refusal(
+            "This project plans before it builds, so a requirement needs est_runs: your "
+            "honest guess at how many runs it will take. It is checked against the budget "
+            "now and against what the work actually costs later — a guess you stand "
+            "behind is worth more here than a small number.",
+            status_code=422,
+        )
+    policy.check_plan_affordable(session, ctx.project, cons, body.est_runs or 0)
     requirement = Requirement(
         id=ids.new_id(ids.REQUIREMENT),
         project_id=ctx.project.id,

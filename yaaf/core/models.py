@@ -105,6 +105,13 @@ class TaskStatus(enum.StrEnum):
 class SuccessTestKind(enum.StrEnum):
     COMMAND = "command"        # platform-executed in the task's sandbox
     OBSERVABLE = "observable"  # names a checkable artifact/URL/metric; spot-audited
+    # Only ever on R-00, the planning requirement, and only ever written by the
+    # platform: the test is a structural check of the plan itself — is there
+    # scope, is it staged, is it estimated, does it fit the money — evaluated
+    # in the server rather than in a sandbox. An agent proposing this kind is
+    # refused, because a company that can author its own planning gate does not
+    # have one.
+    PLAN = "plan"
 
 
 class ProjectMode(enum.StrEnum):

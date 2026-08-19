@@ -94,6 +94,7 @@ def janitor_once(session: Session) -> None:
         expire_approvals(session, project, cons)
         enforce_budget(session, project, cons)
         release_dead_claims(session, project, cons)
+        check_plan(session, project, cons)
         check_finished_requirements(session, project)
         warn_drought(session, project, cons)
         warn_memory_pressure(session, project, cons)
@@ -117,6 +118,67 @@ def _notice_agent(session: Session, project: Project, agent_id: str, kind: str, 
         Notice(id=ids.new_id(ids.NOTICE), project_id=project.id, agent_id=agent_id,
                kind=kind, body=body)
     )
+
+
+# ── the plan: does it hold yet? ─────────────────────────────────────────────────
+
+
+def check_plan(session: Session, project: Project, cons: ConstitutionDoc) -> bool:
+    """R-00 closes itself the moment the plan holds, and reopens if it stops.
+
+    In the janitor rather than on the accept route because the plan can become
+    true or false without anyone touching a requirement: the chairman lowers a
+    budget, a month's spend accumulates, an estimate is priced in at the CEO's
+    historical ratio. A gate that only re-checked when someone poked it would
+    let a project build all month against a plan that stopped adding up on the
+    3rd.
+    """
+    plan = policy.plan_requirement(session, project.id)
+    if plan is None:
+        return False
+
+    outstanding = policy.evaluate_plan(session, project, cons)
+    holds = not outstanding
+
+    if holds and plan.status != RequirementStatus.MET:
+        from_status = plan.status
+        plan.status = RequirementStatus.MET
+        plan.met_at = utcnow()
+        plan.check_output = "the plan holds: accepted, staged, estimated and affordable"
+        policy.record_requirement_event(session, plan, RequirementStatus.MET, "platform",
+                                        note=plan.check_output, from_status=from_status)
+        sums = policy.plan_arithmetic(session, project, cons)
+        _notice_ceo(
+            session, project, NoticeKind.GOAL_CHANGED,
+            f"The plan holds, so R-00 is met and the board is open — you may create work "
+            f"now.\n\nIt comes to about {sums['adjusted_runs']} runs across "
+            f"{sums['requirements']} requirements"
+            + (f", roughly {sums['days_at_the_daily_cap']} days at the daily cap"
+               if sums["days_at_the_daily_cap"] else "")
+            + ". Work stage by stage: the platform refuses work for a requirement whose "
+              "stage is not open yet, and for one whose dependencies are unsettled.",
+        )
+        return True
+
+    if not holds and plan.status == RequirementStatus.MET:
+        # It stopped adding up. Reopening is not a punishment — it is the
+        # difference between a company that notices and one that spends to the
+        # cap and calls it a surprise.
+        from_status = plan.status
+        plan.status = RequirementStatus.PENDING
+        plan.met_at = None
+        policy.record_requirement_event(session, plan, RequirementStatus.PENDING, "platform",
+                                        note="; ".join(outstanding)[:2000],
+                                        from_status=from_status)
+        _notice_ceo(
+            session, project, NoticeKind.GOAL_CHANGED,
+            "The plan no longer holds, so R-00 is open again and no new work may be "
+            "created until it does.\n\n" + " ".join(outstanding)
+            + "\n\nNothing already on the board is cancelled. Finish or cut what is "
+              "there, and re-plan the rest.",
+        )
+        return True
+    return False
 
 
 # ── requirements: is it true yet? ───────────────────────────────────────────────

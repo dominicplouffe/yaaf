@@ -212,6 +212,7 @@ def _dispatch_project(session: Session, project: Project, cons: ConstitutionDoc)
             continue
         if governance_only and not _is_governance(reasons):
             continue
+        task_id = _primary_task(reasons)
         session.add(
             RunQueue(
                 id=ids.new_id(ids.RUN),
@@ -219,12 +220,38 @@ def _dispatch_project(session: Session, project: Project, cons: ConstitutionDoc)
                 agent_id=agent.id,
                 kind=RunKind.AGENT_RUN,
                 trigger={"type": "wake", "reasons": reasons},
-                task_id=_primary_task(reasons),
+                task_id=task_id,
+                # What this run is FOR, resolved at wake time. 62% of runs in
+                # the audit carried no task id and consumed half the spend, so
+                # cost per deliverable was not computable — and an estimate you
+                # cannot compare with an actual is a number nobody is held to.
+                requirement_id=_requirement_for_wake(session, project, agent, task_id),
             )
         )
         notify(session, "yaaf_run_queue", project.id)
         enqueued += 1
     return enqueued
+
+
+def _requirement_for_wake(session: Session, project: Project, agent: Agent,
+                          task_id: str | None) -> str | None:
+    """Which requirement this wake is spending against.
+
+    A working run inherits its task's requirement. A planning run has no task
+    by construction — that is the half of spend the audit found unattributable
+    — so it is stamped against the open plan while there is one, which is the
+    honest answer to "what did planning cost" and makes R-00's own runs visible
+    rather than free.
+    """
+    if task_id:
+        task = session.get(Task, task_id)
+        if task is not None and task.requirement_id:
+            return task.requirement_id
+    if agent.kind == AgentKind.CEO and policy.requires_requirements(project):
+        plan = policy.plan_requirement(session, project.id)
+        if plan is not None and plan.status not in policy.CLOSED_REQUIREMENT_STATUSES:
+            return plan.id
+    return None
 
 
 def _unread_for(session: Session, project: Project, agent: Agent) -> int:

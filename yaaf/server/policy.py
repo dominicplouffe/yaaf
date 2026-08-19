@@ -322,6 +322,20 @@ def check_task_create(
     # thing that exists — a pipeline with no terminus, because the CEO's
     # standing instruction was "keep the queue fed but small".
     if requires_requirements(project):
+        # Nothing gets built before there is a plan. The chairman's words were
+        # that the CEO's FIRST task is the plan; this is that, as a refusal
+        # rather than an instruction it could read past.
+        plan = plan_requirement(session, project.id)
+        if plan is not None and plan.status not in CLOSED_REQUIREMENT_STATUSES:
+            cons_now = cons
+            outstanding = evaluate_plan(session, project, cons_now)
+            raise Refusal(
+                "No work yet — this project has no plan. " + " ".join(outstanding)
+                + " Propose requirements with requirement_propose; the chairman accepts "
+                "them; the moment the plan holds, R-00 closes by itself and the board "
+                "opens.",
+                status_code=409,
+            )
         if requirement is None:
             raise Refusal(
                 "Every task must serve a requirement. Name the one this makes true with "
@@ -788,6 +802,303 @@ def check_work_allowed_for(session: Session, project: Project, requirement: Requ
             "here would be starting in the middle. Work the blockers first.",
             status_code=409,
         )
+
+    # The waterfall, enforced. Stages are the chairman's sequencing of his own
+    # requirements — which is what the first design of this got wrong: its
+    # phases were CEO-authored and CEO-estimated, so the gate measured nothing
+    # but the CEO's ability to write a number that fit.
+    current = open_stage(session, requirement.project_id)
+    if requirement.stage > current:
+        raise Refusal(
+            f"{requirement.key} is in stage {requirement.stage} and stage {current} is "
+            "still open. The chairman owns this order. Finish or cut what is left in "
+            f"stage {current} and this opens by itself.",
+            status_code=409,
+        )
+
+
+# ── the plan: R-00, stages, and arithmetic that has to close ────────────────────
+#
+# The chairman asked that a Deliver or Operate project's FIRST task be a
+# waterfall-type plan "built from the budget, team, and all the arguments that
+# have been set by the user (i.e. number of daily runs, budget, number of open
+# tasks allowed, and so on)."
+#
+# An earlier design deleted the arithmetic half of that — "the feasibility
+# check, replaced by a definition of done you set yourself" — on the correct
+# grounds that per-phase budgets were a guess the CEO could satisfy by writing
+# smaller numbers. That objection is answerable, and this is the answer: the
+# estimate is recorded, compared against what the work actually cost, and the
+# next plan is judged at the CEO's own historical ratio. Writing smaller
+# numbers buys one round and is then priced in.
+
+PLAN_KEY = "R-00"
+
+# Below this many priced runs there is no honest cost-per-run, so the money
+# half of feasibility is skipped and said to be skipped rather than guessed.
+MIN_PRICED_RUNS = 5
+
+# Two settled requirements is not a trend, but it is enough to stop treating a
+# 3x under-estimate as noise. Below it the multiplier is 1.0.
+MIN_SETTLED_FOR_BIAS = 2
+
+
+def plan_requirement(session: Session, project_id: str) -> Requirement | None:
+    """R-00, the planning requirement. Platform-created, platform-judged."""
+    return session.execute(
+        select(Requirement).where(
+            Requirement.project_id == project_id, Requirement.key == PLAN_KEY
+        )
+    ).scalar_one_or_none()
+
+
+def scope_requirements(session: Session, project_id: str) -> list[Requirement]:
+    """Everything except R-00. Planning is work, but it is not the deliverable,
+    and counting it as scope would put the plan in its own denominator."""
+    return [
+        r
+        for r in session.execute(
+            select(Requirement)
+            .where(Requirement.project_id == project_id)
+            .order_by(Requirement.stage, Requirement.key)
+        ).scalars()
+        if r.key != PLAN_KEY
+    ]
+
+
+def create_plan_requirement(session: Session, project: Project) -> Requirement:
+    """The obligation a Deliver or Operate project starts with.
+
+    It is accepted on creation rather than proposed, because it is not scope
+    the chairman chose — it is the platform saying "before you spend anything,
+    say what you are going to do and show that it fits".
+    """
+    requirement = Requirement(
+        id=ids.new_id(ids.REQUIREMENT),
+        project_id=project.id,
+        key=PLAN_KEY,
+        statement=(
+            "A plan exists: requirements the chairman has accepted, each in a stage, "
+            "each with a run estimate, sequenced without a loop, and adding up to "
+            "something this project can afford."
+        ),
+        acceptance_test={"type": SuccessTestKind.PLAN},
+        status=RequirementStatus.PENDING,
+        stage=0,
+        accepted_at=utcnow(),
+    )
+    session.add(requirement)
+    session.flush()
+    record_requirement_event(session, requirement, RequirementStatus.PENDING,
+                             "platform", note="project started in "
+                                              f"{project.mode} mode", from_status=None)
+    return requirement
+
+
+def open_stage(session: Session, project_id: str) -> int:
+    """The lowest stage that still has unsettled accepted work.
+
+    This is the waterfall, enforced. Stages are the chairman's sequencing of
+    his own requirements, so the gate cannot be gamed the way CEO-authored
+    phases could: the CEO proposes an order, he owns it, and the platform
+    refuses work that jumps ahead of it.
+    """
+    stages = [
+        r.stage
+        for r in scope_requirements(session, project_id)
+        if r.status in OPEN_REQUIREMENT_STATUSES
+    ]
+    return min(stages) if stages else 1
+
+
+def runs_spent_on(session: Session, requirement_id: str) -> int:
+    """Every run stamped against this requirement — including the planning and
+    supervision runs that carried no single task, which is the half of spend
+    that used to be unattributable by construction."""
+    return session.execute(
+        select(func.count(Run.id)).where(Run.requirement_id == requirement_id)
+    ).scalar_one()
+
+
+def estimate_bias(session: Session, project_id: str) -> tuple[float, dict]:
+    """How wrong this CEO's estimates have been, as a multiplier ≥ 1.
+
+    Never below 1. A ratio that could shrink an estimate would let a CEO buy
+    headroom by over-estimating once and then under-estimating everything
+    after — the same gaming the multiplier exists to price in, run backwards.
+    """
+    settled = [
+        r
+        for r in scope_requirements(session, project_id)
+        if r.status in CLOSED_REQUIREMENT_STATUSES and r.est_runs
+    ]
+    pairs = [(r.est_runs, runs_spent_on(session, r.id)) for r in settled]
+    pairs = [(est, actual) for est, actual in pairs if actual > 0]
+    if len(pairs) < MIN_SETTLED_FOR_BIAS:
+        return 1.0, {"basis": "no history yet", "settled": len(pairs)}
+    estimated = sum(est for est, _ in pairs)
+    actual = sum(a for _, a in pairs)
+    ratio = max(1.0, actual / estimated) if estimated else 1.0
+    return ratio, {
+        "basis": f"{len(pairs)} settled requirements",
+        "estimated": estimated,
+        "actual": actual,
+        "multiplier": round(ratio, 2),
+    }
+
+
+def avg_usd_per_run(session: Session, project_id: str) -> float | None:
+    """Trailing cost of a run, this project first and the whole box as a
+    fallback. None when there is not enough priced history to be honest."""
+    for scope in ({Run.project_id: project_id}, None):
+        stmt = select(func.avg(Run.cost_usd), func.count(Run.id)).where(
+            Run.cost_usd.is_not(None), Run.cost_usd > 0
+        )
+        if scope is not None:
+            stmt = stmt.where(Run.project_id == project_id)
+        average, count = session.execute(stmt).one()
+        if count and count >= MIN_PRICED_RUNS and average:
+            return float(average)
+    return None
+
+
+def affordable_runs(session: Session, project: Project, cons: ConstitutionDoc) -> dict:
+    """How many runs the money left will actually buy.
+
+    Under subscription billing there is no per-run price to divide by, so this
+    says so instead of inventing one — the honest answer to "can we afford it"
+    is sometimes "that is not a question this billing mode can answer".
+    """
+    from yaaf.server.janitor import month_to_date
+
+    if project.billing_mode != "api_key":
+        return {"known": False, "why": "subscription billing prices no individual run"}
+    spent, _ = month_to_date(session, project.id)
+    remaining = max(0.0, cons.monthly_usd_cap - spent)
+    per_run = avg_usd_per_run(session, project.id)
+    if per_run is None:
+        return {"known": False, "why": f"fewer than {MIN_PRICED_RUNS} priced runs so far",
+                "usd_remaining": round(remaining, 2)}
+    return {
+        "known": True,
+        "usd_remaining": round(remaining, 2),
+        "usd_per_run": round(per_run, 4),
+        "runs": int(remaining // per_run),
+    }
+
+
+def plan_arithmetic(session: Session, project: Project, cons: ConstitutionDoc,
+                    extra_est: int = 0, include_proposed: bool = False) -> dict:
+    """The whole sum, in one place, so a refusal can show its working.
+
+    Two callers ask slightly different questions and the difference matters.
+    While the CEO is *planning*, unaccepted proposals count — that is the
+    feedback that makes it cut something now rather than discover the wall
+    later. When the platform decides whether the plan HOLDS, only what the
+    chairman actually accepted counts: otherwise a CEO could freeze its own
+    board by proposing ten speculative requirements nobody ever took.
+    """
+    live = [
+        r
+        for r in scope_requirements(session, project.id)
+        if r.status not in CLOSED_REQUIREMENT_STATUSES
+        and (include_proposed or r.status != RequirementStatus.PROPOSED)
+    ]
+    estimated = sum(r.est_runs or 0 for r in live) + extra_est
+    multiplier, bias = estimate_bias(session, project.id)
+    adjusted = int(round(estimated * multiplier))
+    budget = affordable_runs(session, project, cons)
+    return {
+        "requirements": len(live) + (1 if extra_est else 0),
+        "estimated_runs": estimated,
+        "multiplier": round(multiplier, 2),
+        "adjusted_runs": adjusted,
+        "bias": bias,
+        "budget": budget,
+        "days_at_the_daily_cap": round(adjusted / cons.runs_per_project_per_day, 1)
+        if cons.runs_per_project_per_day else None,
+        "affordable": (not budget["known"]) or adjusted <= budget["runs"],
+    }
+
+
+def check_plan_affordable(session: Session, project: Project, cons: ConstitutionDoc,
+                          extra_est: int) -> None:
+    """Refuse a proposal the project cannot pay for, showing the arithmetic.
+
+    The CEO is not asked to guess what it can afford; it is told, in runs, with
+    its own historical over-run priced in. That turns "we ran out of money"
+    from a thing discovered at 100% of the cap into a thing decided at planning
+    time, when cutting is still cheap.
+    """
+    if not requires_requirements(project):
+        return
+    sums = plan_arithmetic(session, project, cons, extra_est=extra_est,
+                           include_proposed=True)
+    if sums["affordable"]:
+        return
+    budget = sums["budget"]
+    over = sums["adjusted_runs"] - budget["runs"]
+    bias_note = ""
+    if sums["multiplier"] > 1.0:
+        bias_note = (
+            f" That is your {sums['estimated_runs']} estimated runs at ×"
+            f"{sums['multiplier']}, because {sums['bias']['basis']} came in at "
+            f"{sums['bias']['actual']} runs against {sums['bias']['estimated']} estimated."
+        )
+    raise Refusal(
+        f"This plan does not fit the money. It needs about {sums['adjusted_runs']} runs "
+        f"and ${budget['usd_remaining']} at ${budget['usd_per_run']} a run buys about "
+        f"{budget['runs']} — you are over by roughly {over}.{bias_note} "
+        "Cut something, estimate it smaller only if you actually believe it, or put the "
+        "budget to the chairman as an approval. Adding scope you cannot pay for is how a "
+        "company arrives at 100% of its cap with nothing finished.",
+        status_code=409,
+    )
+
+
+def evaluate_plan(session: Session, project: Project, cons: ConstitutionDoc) -> list[str]:
+    """What is still missing before R-00 can be met. Empty means the plan holds.
+
+    Structural, not a judgement: the platform is not deciding whether the plan
+    is any good — that is the chairman's call when he accepts requirements. It
+    is checking that a plan exists at all, is ordered, is estimated, and adds
+    up. Every one of those is a thing an agent could otherwise skip and still
+    report itself ready.
+    """
+    missing: list[str] = []
+    scope = scope_requirements(session, project.id)
+    accepted = [r for r in scope if r.status not in (RequirementStatus.PROPOSED,)]
+    live = [r for r in accepted if r.status not in CLOSED_REQUIREMENT_STATUSES]
+
+    if not accepted:
+        proposed = [r for r in scope if r.status == RequirementStatus.PROPOSED]
+        if proposed:
+            missing.append(
+                f"{len(proposed)} requirement(s) proposed and none accepted yet — the "
+                "chairman decides what is in scope, so this is waiting on him, not on you."
+            )
+        else:
+            missing.append(
+                "no requirements proposed yet. Say what must be TRUE at the end, one "
+                "statement at a time, with an acceptance test for each."
+            )
+        return missing
+
+    unestimated = [r.key for r in live if not r.est_runs]
+    if unestimated:
+        missing.append(
+            f"no run estimate on {', '.join(sorted(unestimated))}. An estimate is what "
+            "makes the plan checkable against the budget; it is compared with what the "
+            "work actually costs and your next plan is read at that ratio."
+        )
+
+    sums = plan_arithmetic(session, project, cons)
+    if not sums["affordable"]:
+        missing.append(
+            f"the plan needs about {sums['adjusted_runs']} runs and the budget buys about "
+            f"{sums['budget']['runs']}. Cut scope or ask the chairman for budget."
+        )
+    return missing
 
 
 # ── message rules ───────────────────────────────────────────────────────────────

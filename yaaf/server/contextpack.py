@@ -484,18 +484,25 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
         # moving; this tells it what any of that is FOR — and which
         # requirements it may not touch yet, so the dependency gate is
         # something it can plan around rather than discover as a refusal.
-        requirements = list(
-            session.execute(
-                select(Requirement)
-                .where(
-                    Requirement.project_id == project.id,
-                    Requirement.status.in_(
-                        [RequirementStatus.PROPOSED, *policy.OPEN_REQUIREMENT_STATUSES]
-                    ),
-                )
-                .order_by(Requirement.stage, Requirement.key)
-            ).scalars()
-        )
+        requirements = [
+            r
+            for r in policy.scope_requirements(session, project.id)
+            if r.status == RequirementStatus.PROPOSED
+            or r.status in policy.OPEN_REQUIREMENT_STATUSES
+        ]
+        # R-00 is not scope — it is the gate in front of scope — so it gets its
+        # own block rather than sitting in the denominator of its own plan.
+        plan = policy.plan_requirement(session, project.id)
+        if plan is not None and plan.status not in policy.CLOSED_REQUIREMENT_STATUSES:
+            pack["plan"] = {
+                "status": plan.status,
+                "blocking": True,
+                "outstanding": policy.evaluate_plan(session, project, cons),
+                "note": ("No task may be created until this closes. It closes by itself "
+                         "the moment the plan holds — you do not mark it done, and "
+                         "nobody here can."),
+                "arithmetic": policy.plan_arithmetic(session, project, cons),
+            }
         if requirements:
             blocked = {
                 r.id: [d.key for d in policy.unmet_dependencies(session, r)]
@@ -512,12 +519,10 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
                 }
                 for r in requirements
             ]
-            met = session.execute(
-                select(func.count(Requirement.id)).where(
-                    Requirement.project_id == project.id,
-                    Requirement.status == RequirementStatus.MET,
-                )
-            ).scalar_one()
+            met = len([
+                r for r in policy.scope_requirements(session, project.id)
+                if r.status == RequirementStatus.MET
+            ])
             pack["scope"] = {
                 "met": int(met),
                 "open": len([r for r in requirements

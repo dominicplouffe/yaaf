@@ -249,6 +249,11 @@ class ProjectCreate(BaseModel):
     goal: str = Field(min_length=10)
     chairman_email: str
     billing_mode: str = Field(default="api_key", pattern="^(api_key|subscription)$")
+    # Explore chases a goal with no fixed end; Deliver ships one thing and
+    # finishes; Operate is a Deliver that starts again on a rhythm. Outside
+    # Explore a task must serve a requirement, and the project starts owing a
+    # plan.
+    mode: str = Field(default="explore", pattern="^(explore|deliver|operate)$")
     controlled_domains: list[str] = Field(default_factory=list)
     constitution: dict = Field(default_factory=dict)  # overrides onto defaults
     integrations: dict = Field(default_factory=dict)
@@ -299,6 +304,7 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
         goal=body.goal,
         chairman_user_id=chairman.id,
         billing_mode=body.billing_mode,
+        mode=body.mode,
         controlled_domains=body.controlled_domains,
         integrations=body.integrations,
     )
@@ -460,6 +466,7 @@ def export_project(project_id: str, session: Session = Depends(db)) -> dict:
             "name": project.name,
             "goal": project.goal,
             "billing_mode": project.billing_mode,
+            "mode": project.mode,
             "controlled_domains": project.controlled_domains,
             "constitution": effective(session, project.id).model_dump(),
             "integrations": integrations,
@@ -1180,6 +1187,12 @@ def start_project(project_id: str, session: Session = Depends(db)) -> dict:
         raise HTTPException(status_code=409, detail="a stopped project is terminal")
     project.status = ProjectStatus.RUNNING
     project.status_reason = None
+    # A Deliver or Operate project starts owing a plan. The chairman's words
+    # were that the CEO's first task is the plan; R-00 is that obligation as a
+    # row, and until it closes no task may be created.
+    if policy.requires_requirements(project) and \
+            policy.plan_requirement(session, project.id) is None:
+        policy.create_plan_requirement(session, project)
     _audit(session, project.id, "project.start", "project", project.id)
     notify(session, WAKE_CHANNEL, project.id)
     return {"id": project.id, "status": project.status}

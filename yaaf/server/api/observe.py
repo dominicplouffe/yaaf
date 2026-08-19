@@ -361,6 +361,7 @@ def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
         "pending_approvals": pending_approvals,
         "ceo_judgment": policy.ceo_judgment(session, project.id),
         "constitution": cons.model_dump(),
+        "mode": project.mode,
         "integrations": project.integrations or {},
         "github_repo": project.github_repo,
         "billing_secret_id": project.billing_secret_id,
