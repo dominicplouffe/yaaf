@@ -13,6 +13,7 @@ interface. The platform separately counts them and revokes the token at the cap.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 from pathlib import Path
@@ -24,6 +25,7 @@ from claude_agent_sdk import (
     ClaudeAgentOptions,
     HookMatcher,
     ResultMessage,
+    SystemMessage,
     TextBlock,
     create_sdk_mcp_server,
     query,
@@ -44,6 +46,7 @@ MAX_USD = float(os.environ.get("YAAF_MAX_USD", "0") or 0)
 TASK_BUDGET = int(os.environ.get("YAAF_TASK_BUDGET", "0") or 0)
 PERMS = json.loads(os.environ.get("YAAF_TOOL_PERMISSIONS", "{}"))
 
+WORKSPACE = Path("/workspace")
 STAGING = Path("/workspace/.yaaf")
 
 _client = httpx.Client(
@@ -387,17 +390,50 @@ async def t_side_effect_finish(args):
     "artifact_put",
     "Persist a finished deliverable (report, dataset, document) to the platform's "
     "artifact store — the durable home for finished work; your workspace is ephemeral "
-    "and vanishes after the run. filename is a plain file name (no paths), "
-    "content_base64 is the file's bytes base64-encoded, max 5 MB decoded. Returns the "
-    "artifact's uri, key, size and sha256 — cite the uri in evidence, task completions "
-    "and messages. The uri is NOT a path in your sandbox: read it back with "
-    "artifact_get, never with a file tool.",
-    {"filename": str, "content_base64": str},
+    "and vanishes after the run. Pass path: a file under /workspace (absolute or "
+    "workspace-relative) — the platform reads and uploads the bytes itself. NEVER "
+    "base64-encode a file or route its contents through your own output to ship it; "
+    "write it to the workspace and hand over the path. filename optionally renames "
+    "the artifact (plain name, no path separators; defaults to the file's own name). "
+    "content_base64 is a fallback for small payloads you have in hand and nowhere on "
+    "disk; filename is required with it. Max 5 MB decoded either way. Returns the "
+    "artifact's uri, key, size and sha256 — cite the uri in evidence, task "
+    "completions and messages. The uri is NOT a path in your sandbox: read it back "
+    "with artifact_get, never with a file tool.",
+    {"path": str, "filename": str, "content_base64": str},
 )
 async def t_artifact_put(args):
+    path = (args.get("path") or "").strip()
+    filename = (args.get("filename") or "").strip()
+    encoded = args.get("content_base64") or ""
+    if path:
+        candidate = Path(path)
+        resolved = (candidate if candidate.is_absolute() else WORKSPACE / candidate).resolve()
+        if not resolved.is_relative_to(WORKSPACE.resolve()):
+            return _text({"status": 422, "body": {
+                "error": f"{path!r} is outside /workspace. Artifacts ship from your "
+                         "workspace; write the file there and pass that path."}})
+        if not resolved.is_file():
+            return _text({"status": 404, "body": {
+                "error": f"{path!r} is not a file in your workspace. Write the "
+                         "deliverable to disk first, then pass its path."}})
+        size = resolved.stat().st_size
+        if size > 5 * 1024 * 1024:
+            return _text({"status": 413, "body": {
+                "error": f"{path!r} is {size} bytes; the limit is 5 MB. Store large "
+                         "deliverables somewhere addressable and record the URL as "
+                         "evidence instead."}})
+        encoded = base64.b64encode(resolved.read_bytes()).decode()
+        filename = filename or resolved.name
+    if not encoded:
+        return _text({"status": 422, "body": {
+            "error": "pass path (a workspace file, preferred) or content_base64."}})
+    if not filename:
+        return _text({"status": 422, "body": {
+            "error": "filename is required with content_base64."}})
     return _text(
         _call("POST", "/agent/artifacts",
-              {"filename": args["filename"], "content_base64": args["content_base64"]})
+              {"filename": filename, "content_base64": encoded})
     )
 
 
@@ -675,6 +711,44 @@ def _usage_int(usage, key: str) -> int:
     return int(getattr(usage, key, 0) or 0)
 
 
+# The model API stream dies mid-response sometimes (network blips, proxy
+# resets, an overloaded upstream). Failing the run makes that error expensive
+# twice over: the turn's tokens are already spent AND the daemon's retry redoes
+# the whole turn from scratch in a fresh session. So transient errors are
+# retried HERE instead, resuming the same CLI session in place — completed
+# tool calls, context, and prompt cache all survive; only the interrupted
+# response is redone. Anything not clearly transient still fails the run, and
+# credential errors must fail verbatim: the daemon reads them off the summary.
+# MAX_USD and TASK_BUDGET are enforced per attempt (each resume is a fresh CLI
+# process); the attempt cap bounds the total.
+TRANSIENT_API_MARKERS = (
+    "connection lost", "connection error", "connection reset", "connection closed",
+    "econnreset", "econnrefused", "etimedout", "epipe", "socket hang up",
+    "server disconnected", "overloaded", "internal server error",
+    "request timed out", "timed out",
+)
+FATAL_API_MARKERS = (
+    "not logged in", "please run /login", "invalid x-api-key",
+    "authentication_error", "invalid bearer token", "oauth token has expired",
+    "credit balance",
+)
+RESUME_ATTEMPTS = 3  # total query() calls: the first + up to 2 in-place resumes
+RESUME_BACKOFF_S = (5.0, 20.0)  # indexed by attempt - 1
+RESUME_PROMPT = (
+    "Your previous response was interrupted by a transient network error "
+    "mid-stream; the run has been resumed in the same session. Check what your "
+    "last tool call actually returned, re-issue any call that never got a "
+    "result, and finish the SAME unit of work. Do not start over."
+)
+
+
+def _looks_transient(exc: BaseException) -> bool:
+    text = repr(exc).lower()
+    if any(marker in text for marker in FATAL_API_MARKERS):
+        return False
+    return any(marker in text for marker in TRANSIENT_API_MARKERS)
+
+
 async def main() -> int:
     # Run-keyed: the workspace is shared by every agent on the project, so a
     # fixed name is another run's file half the time.
@@ -747,38 +821,72 @@ async def main() -> int:
             while HOOK_LOG:
                 trace.write(json.dumps(HOOK_LOG.pop(0)) + "\n")
 
-        try:
-            async for message in query(prompt=prompt, options=options):
-                drain_hooks()
-                if isinstance(message, AssistantMessage):
-                    for block in message.content:
-                        if isinstance(block, TextBlock):
-                            summary_parts.append(block.text)
-                            trace.write(json.dumps({"type": "text", "text": block.text}) + "\n")
-                        else:
-                            trace.write(json.dumps({"type": type(block).__name__,
-                                                    "repr": repr(block)[:2000]}) + "\n")
-                elif isinstance(message, ResultMessage):
-                    cost_usd = message.total_cost_usd
-                    if message.usage is not None:
-                        usage = message.usage
-                        # input_tokens is only the uncached remainder; the cache
-                        # fields carry the rest of the real prompt.
-                        tokens_in = _usage_int(usage, "input_tokens")
-                        tokens_out = _usage_int(usage, "output_tokens")
-                        cache_creation = _usage_int(usage, "cache_creation_input_tokens")
-                        cache_read = _usage_int(usage, "cache_read_input_tokens")
-                    trace.write(json.dumps({"type": "result", "subtype": message.subtype,
-                                            "cost_usd": cost_usd}) + "\n")
-                else:
-                    trace.write(json.dumps({"type": type(message).__name__,
-                                            "repr": repr(message)[:2000]}) + "\n")
+        session_id: str | None = None
+        next_prompt = prompt
+        for attempt in range(1, RESUME_ATTEMPTS + 1):
+            try:
+                async for message in query(prompt=next_prompt, options=options):
+                    drain_hooks()
+                    sid = getattr(message, "session_id", None)
+                    if not sid and isinstance(message, SystemMessage):
+                        sid = (message.data or {}).get("session_id")
+                    if sid:
+                        session_id = sid
+                    if isinstance(message, AssistantMessage):
+                        for block in message.content:
+                            if isinstance(block, TextBlock):
+                                summary_parts.append(block.text)
+                                trace.write(json.dumps({"type": "text",
+                                                        "text": block.text}) + "\n")
+                            else:
+                                trace.write(json.dumps({"type": type(block).__name__,
+                                                        "repr": repr(block)[:2000]}) + "\n")
+                    elif isinstance(message, ResultMessage):
+                        # Accumulated, not assigned: a resumed run yields one
+                        # ResultMessage per attempt and every attempt's tokens
+                        # were billed. The per-attempt figures land in the trace
+                        # so the sum stays auditable.
+                        if message.total_cost_usd is not None:
+                            cost_usd = (cost_usd or 0.0) + message.total_cost_usd
+                        if message.usage is not None:
+                            usage = message.usage
+                            # input_tokens is only the uncached remainder; the cache
+                            # fields carry the rest of the real prompt.
+                            tokens_in += _usage_int(usage, "input_tokens")
+                            tokens_out += _usage_int(usage, "output_tokens")
+                            cache_creation += _usage_int(usage, "cache_creation_input_tokens")
+                            cache_read += _usage_int(usage, "cache_read_input_tokens")
+                        trace.write(json.dumps({
+                            "type": "result", "subtype": message.subtype,
+                            "attempt": attempt, "cost_usd": message.total_cost_usd,
+                            "tokens_out": _usage_int(message.usage, "output_tokens")
+                            if message.usage is not None else 0,
+                        }) + "\n")
+                    else:
+                        trace.write(json.dumps({"type": type(message).__name__,
+                                                "repr": repr(message)[:2000]}) + "\n")
+                    trace.flush()
+                    write_result(partial=True)
+                break
+            except Exception as exc:
+                if attempt >= RESUME_ATTEMPTS or not _looks_transient(exc):
+                    ok = False
+                    summary_parts.append(f"[sandbox_entry error: {exc!r}]")
+                    trace.write(json.dumps({"type": "error", "attempt": attempt,
+                                            "error": repr(exc)}) + "\n")
+                    break
+                summary_parts.append(
+                    f"[transient API error on attempt {attempt}; resuming in place]")
+                trace.write(json.dumps({"type": "transient_error", "attempt": attempt,
+                                        "resume": session_id, "error": repr(exc)}) + "\n")
                 trace.flush()
-                write_result(partial=True)
-        except Exception as exc:
-            ok = False
-            summary_parts.append(f"[sandbox_entry error: {exc!r}]")
-            trace.write(json.dumps({"type": "error", "error": repr(exc)}) + "\n")
+                await asyncio.sleep(
+                    RESUME_BACKOFF_S[min(attempt - 1, len(RESUME_BACKOFF_S) - 1)])
+                if session_id:
+                    options.resume = session_id
+                    next_prompt = RESUME_PROMPT
+                # No session yet means the stream died before the model did
+                # anything; rerunning the original prompt fresh loses nothing.
         drain_hooks()
 
     write_result(partial=False)
