@@ -128,12 +128,25 @@ export function paceDate(spent: number, cap: number): Date | null {
 /** A run that stopped without finishing. Each of these was paid for and
     produced nothing, which is why they are counted apart from failures of the
     work itself. */
-const ENDED_EARLY: Record<string, string> = {
+/** Runs that ended early because something went WRONG. These drive the alarm. */
+const FAULTS: Record<string, string> = {
   reaped: "timed out",
-  killed: "killed for looping",
   failed: "failed outright",
   terminated_refusals: "hit the refusal cap",
 };
+
+/** Runs that ended early because someone stopped them ON PURPOSE — a revoked
+    token with no refusals behind it is the chairman pausing the project, the
+    kill switch, or a budget trip. They are counted (the run did not finish and
+    its tokens were still spent) but they are never evidence of a fault: telling
+    somebody who just pressed pause that a tool mount is dead sends them hunting
+    for a problem they created deliberately, which is the opposite of what this
+    panel is for. It read "killed for looping", which no killed run ever means. */
+const DELIBERATE: Record<string, string> = {
+  killed: "stopped by a pause, kill switch or budget",
+};
+
+const ENDED_EARLY: Record<string, string> = { ...FAULTS, ...DELIBERATE };
 
 /** The day's run outcomes. A third of runs ending early is the single loudest
     signal that something is in the way, and it used to be a grey aside. */
@@ -165,8 +178,10 @@ export function runHealth(runs: RunRow[]) {
     .filter((r) => r.count > 0)
     .sort((a, b) => b.count - a.count);
 
-  const ratio = todays.length > 0 ? early.length / todays.length : 0;
-  return { todays, clean, running, early, byReason, usd, tokens, ratio };
+  // The alarm counts faults only — see DELIBERATE above.
+  const faults = todays.filter((r) => r.status in FAULTS);
+  const ratio = todays.length > 0 ? faults.length / todays.length : 0;
+  return { todays, clean, running, early, faults, byReason, usd, tokens, ratio };
 }
 
 /** The breakdown as a sentence, because "12 failures" tells nobody what to do. */

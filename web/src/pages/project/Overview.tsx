@@ -535,9 +535,11 @@ export default function Overview({
               <div className="label">Ended early</div>
               <div className="value">{health.early.length}</div>
               <div className="sub">
-                {health.todays.length > 0
-                  ? `${Math.round(health.ratio * 100)}% of what you paid for`
-                  : "—"}
+                {health.todays.length === 0
+                  ? "—"
+                  : health.faults.length === 0
+                    ? "none faulted — stopped on purpose"
+                    : `${Math.round(health.ratio * 100)}% of what you paid for`}
               </div>
             </div>
             <div className="tile">
@@ -559,9 +561,11 @@ export default function Overview({
             <div className="card" style={{ marginTop: 12 }}>
               <div style={{ fontSize: 13.5, lineHeight: 1.6 }}>
                 <strong>{earlyRunSentence(health)}</strong>{" "}
-                {health.ratio >= 0.2
-                  ? "Under one in five is normal wear. This much means something is standing in the way — a dead tool mount, a wrong credential, or work an agent cannot actually do."
-                  : "That is within normal wear for unattended work."}
+                {health.faults.length === 0
+                  ? "Every one of them was stopped on purpose, so nothing here points at a fault — though their tokens were still spent."
+                  : health.ratio >= 0.2
+                    ? "Under one in five is normal wear. This much means something is standing in the way — a dead tool mount, a wrong credential, or work an agent cannot actually do."
+                    : "That is within normal wear for unattended work."}
               </div>
               <div className="actions" style={{ marginTop: 10 }}>
                 <Link to={`/projects/${projectId}/records/runs`}>see what happened →</Link>
