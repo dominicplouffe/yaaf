@@ -122,6 +122,7 @@ export default function Roles() {
   }
 
   const perms = editing?.tool_permissions ?? {};
+  const openWeb = perms["egress_unrestricted"] === true;
   // The edit's blast radius, for the panel inside the editor.
   const editingUsage = editing ? roles.find((r) => r.slug === editing.slug)?.usage ?? [] : [];
 
@@ -175,9 +176,16 @@ export default function Roles() {
               <div className="pill-row" style={{ marginTop: 8 }}>
                 <span className="chip accent">{shortModel(role.model)}</span>
                 {role.effort && <span className="chip">{role.effort} effort</span>}
-                {role.tools.map((tool) => (
-                  <span key={tool} className="chip">{tool}</span>
-                ))}
+                {role.tools
+                  .filter((tool) => tool !== "egress_unrestricted")
+                  .map((tool) => (
+                    <span key={tool} className="chip">{tool}</span>
+                  ))}
+                {/* Not a tool like the others — the one permission whose blast
+                    radius is the whole internet reads as a warning, not a chip. */}
+                {role.tools.includes("egress_unrestricted") && (
+                  <span className="chip warn">open web</span>
+                )}
               </div>
               <div className="help" style={{ marginTop: 8 }}>
                 {role.is_ceo_role ? (
@@ -330,11 +338,36 @@ export default function Roles() {
             <label className="field">
               Egress allowlist — one domain per line; blank = role uses the global allowlist
             </label>
+            {/* Open web is a checkbox, not a magic "*" line in the list below:
+                a hole that big has to be visible without reading the domains. */}
+            <label style={{ display: "block", fontWeight: "normal", marginBottom: 8 }}>
+              <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <input
+                  type="checkbox"
+                  style={{ width: "auto" }}
+                  checked={openWeb}
+                  onChange={(e) => {
+                    const next = { ...perms };
+                    if (e.target.checked) next["egress_unrestricted"] = true;
+                    else delete next["egress_unrestricted"];
+                    setEditing({ ...editing, tool_permissions: next });
+                  }}
+                />
+                Open web — this role may reach any host
+              </span>
+              <span className="help" style={{ marginLeft: 22 }}>
+                For work whose sources cannot be listed in advance: checking a claim, chasing
+                a citation, validating against whatever the answer turns out to name. Removes
+                the destination allowlist for this role only; every other role stays
+                default-deny, and ports are still 80/443 plus the list below.
+              </span>
+            </label>
             <textarea
               className="mono"
               style={{ minHeight: 70 }}
               value={egressText}
-              placeholder={"api.wordpress.com\nen.wikipedia.org"}
+              disabled={openWeb}
+              placeholder={openWeb ? "any host — allowlist not consulted" : "api.wordpress.com\nen.wikipedia.org"}
               onChange={(e) => {
                 setEgressText(e.target.value);
                 const domains = e.target.value
@@ -348,9 +381,21 @@ export default function Roles() {
               }}
             />
             <p className="help" style={{ margin: "4px 0 0" }}>
-              Per-role egress scoping, enforced by the proxy config generator — this role's
-              sandboxes can reach only these hosts, whatever the global list allows. Ports
-              beyond 80/443 need an entry in egress ports below.
+              {openWeb ? (
+                <>
+                  Ignored while open web is on — the role's port carries no destination ACL.
+                  The list is kept, so unticking the box restores exactly this scope.
+                </>
+              ) : (
+                <>
+                  Per-role egress scoping, enforced by the proxy config generator — this role's
+                  sandboxes can reach only these hosts, whatever the global list allows. Ports
+                  beyond 80/443 need an entry in egress ports below. Write the bare domain
+                  (<code>livefpl.net</code>, not <code>www.livefpl.net</code>): it covers every
+                  subdomain, and listing a domain alongside its own subdomain is a config error
+                  squid refuses.
+                </>
+              )}
             </p>
             <p className="help" style={{ margin: "4px 0 0" }}>
               Looking for MCP servers? Data sources live on each project (Settings → Data

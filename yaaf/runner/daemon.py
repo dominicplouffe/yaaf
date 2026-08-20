@@ -420,10 +420,18 @@ def _scrub_remote(workspace: Path, full_name: str) -> None:
 
 
 def _role_egress_url(session: Session, role_version, tool_permissions: dict) -> str | None:
-    """A role with its own egress_allow talks to its own squid port (a pure
-    function of the role slug — see yaaf/server/egress.py). Everyone else uses
-    the default port and the global allowlist."""
-    if role_version is None or not tool_permissions.get("egress_allow"):
+    """A role with its own egress_allow — or marked egress_unrestricted, which
+    scopes to everything — talks to its own squid port (a pure function of the
+    role slug, see yaaf/server/egress.py). Everyone else uses the default port
+    and the global allowlist.
+
+    Read from the PINNED version, not the latest: turning a role open-web only
+    reaches a running team once that team adopts the version carrying the flag.
+    """
+    if role_version is None:
+        return None
+    if not (tool_permissions.get("egress_allow")
+            or tool_permissions.get("egress_unrestricted")):
         return None
     from yaaf.core.models import Role
     from yaaf.server.egress import role_port

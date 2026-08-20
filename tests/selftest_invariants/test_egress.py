@@ -36,6 +36,59 @@ def test_generator_writes_ports_and_allowlists(client, tmp_path):
     assert "unscoped" not in conf
 
 
+def test_unrestricted_role_gets_a_port_with_no_destination_acl(client, tmp_path):
+    """Open web: every host, still only 80/443. The role needs a port of its
+    own even with no domains — without one the runner would fall back to the
+    default port, which is the *most* restricted place to land."""
+    seed_role(client, "openweb", tool_permissions={
+        "bash": True, "egress_unrestricted": True, "egress_ports": [8443]})
+    out = tmp_path / "generated"
+    with db_session() as session:
+        assignments = generate(session, out)
+
+    assert assignments["openweb"] == role_port("openweb")
+    conf = (out / "roles.conf").read_text()
+    assert "http_access allow port_openweb\n" in conf + "\n"
+    # No destination ACL, and therefore no allowlist file to point one at.
+    assert "dst_openweb" not in conf
+    assert not (out / "allowlist_openweb.txt").exists()
+    # Port discipline survives: open web is not open ports.
+    assert "acl ok_ports_openweb port 80 443 8443" in conf
+    assert conf.index("deny port_openweb !ok_ports_openweb") < conf.index(
+        "allow port_openweb")
+
+
+def test_unrestricted_wins_over_a_domain_list(client, tmp_path):
+    """Both set is a legible state, not a contradiction to refuse: the list is
+    kept so unticking the box restores the old scope exactly."""
+    seed_role(client, "both", tool_permissions={
+        "egress_allow": ["api.example.com"], "egress_unrestricted": True})
+    out = tmp_path / "generated"
+    with db_session() as session:
+        generate(session, out)
+    conf = (out / "roles.conf").read_text()
+    assert "dst_both" not in conf
+    assert not (out / "allowlist_both.txt").exists()
+
+
+def test_unrestricted_role_reaches_its_own_port(client):
+    """The runner reads the PINNED version's permissions — a role that is only
+    open-web (no domain list) must still route to its scoped port."""
+    from yaaf.runner.daemon import _role_egress_url
+
+    seed_role(client, "openweb2", tool_permissions={"egress_unrestricted": True})
+    with db_session() as session:
+        from sqlalchemy import select
+
+        from yaaf.core.models import Role, RoleVersion
+        role = session.execute(select(Role).where(Role.slug == "openweb2")).scalar_one()
+        version = session.execute(
+            select(RoleVersion).where(RoleVersion.role_id == role.id)
+        ).scalar_one()
+        url = _role_egress_url(session, version, version.tool_permissions)
+    assert url is not None and url.endswith(f":{role_port('openweb2')}")
+
+
 def test_generator_is_idempotent_and_stable(client, tmp_path):
     seed_role(client, "scoped", tool_permissions={"egress_allow": ["a.example"]})
     with db_session() as session:
