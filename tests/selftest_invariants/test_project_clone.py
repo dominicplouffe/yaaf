@@ -159,7 +159,10 @@ def test_slack_tokens_travel_but_rooms_do_not(client):
         assert wiring["slack"]["channel_map"] == {}
         assert wiring["slack"]["bot_token_secret"] == "slack-bot"  # still wired
         assert wiring["slack"]["chairman_slack_user"] == "U123"
-        assert "webhook_secret" not in wiring  # this project's own signing key
+        # Its own signing key, never the source's — sharing one would let either
+        # company's senders attest evidence for the other. Absent is not the
+        # answer though: see test_a_twin_can_attest_inbound_evidence.
+        assert wiring["webhook_secret"] != "whsec-not-portable"
         token = session.query(Secret).filter_by(project_id=twin["id"],
                                                 name="slack-bot").one()
         assert decrypt(token.ciphertext) == "xoxb-token"  # no re-pasting
@@ -273,3 +276,61 @@ def test_solo_twin_keeps_the_ceo_inside_its_team(client):
                                              kind=AgentKind.CEO).one()
         assert ceo.team_id == team.id
     assert [a["name"] for a in twin["teams"][0]["agents"]] == ["CEO"]
+
+
+def test_a_twin_records_the_shape_it_actually_has(client):
+    """Topology is stored rather than inferred precisely so the stage-9
+    experiment compares a recorded fact that cannot drift. The clone left it out
+    of the constructor and the model default is 'ceo_leads_workers', so every
+    solo twin came back claiming a hierarchy of one — the same omission that
+    turned Deliver twins into Explore ones, on the field the experiment reads.
+
+    The twin rebuilds the source's teams and people exactly, so the source's
+    recorded shape is true of the twin by construction. All three shapes, since
+    only the third one happened to match the default that was masking the bug.
+    """
+    solo = make_project(
+        client, slug="solo-src", solo=True,
+        teams=[{"role_slug": "worker", "name": "Solo", "employees": []}], start=False,
+    )
+    flat = make_project(
+        client, slug="flat-src", start=False,
+        teams=[{"role_slug": "worker", "name": "Alpha", "employees": ["One"]},
+               {"role_slug": "worker", "name": "Beta", "employees": ["Two"]}],
+    )
+    deep = make_project(client, slug="deep-src", start=False)  # default: a real lead
+
+    with db_session() as session:
+        assert [session.get(Project, p["id"]).topology for p in (solo, flat, deep)] \
+            == ["solo", "ceo_team", "ceo_leads_workers"]
+
+    for source, slug in ((solo, "solo-twin"), (flat, "flat-twin"), (deep, "deep-twin")):
+        twin = _clone(client, source["id"], slug=slug)
+        assert twin.status_code == 200, twin.text
+        with db_session() as session:
+            assert session.get(Project, twin.json()["id"]).topology == \
+                session.get(Project, source["id"]).topology
+
+
+def test_a_twin_can_attest_inbound_evidence(client):
+    """Not inheriting the source's signing keys is right — one key across two
+    companies would let either one's senders attest evidence for the other. But
+    the clone dropped them without minting replacements, and github_repo and the
+    controlled domains *do* come across: the twin looked wired to GitHub while
+    no inbound event could ever be attested, which is the whole point of the
+    connector. Every other birth mints these; a twin is no less born."""
+    source = make_project(client, start=False, controlled_domains=["github:acme-co"])
+    provisioned = client.post(f"/admin/projects/{source['id']}/webhook_secrets",
+                              headers=ADMIN).json()
+
+    twin = _clone(client, source["id"]).json()
+    with db_session() as session:
+        wiring = session.get(Project, twin["id"]).integrations or {}
+        assert wiring["github_webhook_secret"] and wiring["webhook_secret"]
+        # Its own, not the source's — that is what "not inherited" has to mean.
+        assert wiring["github_webhook_secret"] != provisioned["github_webhook_secret"]
+        assert wiring["webhook_secret"] != provisioned["webhook_secret"]
+
+    # And the twin is born ready rather than born with a finding against it.
+    health = client.get(f"/observe/projects/{twin['id']}/health", headers=ADMIN).json()
+    assert not [c for c in health["checks"] if c["key"] == "connectors"], health["checks"]

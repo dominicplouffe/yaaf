@@ -577,6 +577,16 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
         # nowhere until the chairman maps rooms — with the tokens already there.
         integrations["slack"] = {**integrations["slack"], "channel_map": {}}
 
+    # Not inheriting the source's signing keys is right — they are its own, and
+    # sharing them would let either company's senders attest evidence for the
+    # other. Leaving the twin with *none* is not: github_repo and the controlled
+    # domains do come across, so the twin looks wired to GitHub while no inbound
+    # event could ever be attested. Every other birth mints these (see
+    # create_project); a twin is no less born. The values are readable any time
+    # from the twin's own Settings, so nothing here has to be shown once.
+    integrations["github_webhook_secret"] = pysecrets.token_hex(32)
+    integrations["webhook_secret"] = pysecrets.token_hex(32)
+
     # A twin of a Deliver company that comes back as an Explore one is not a
     # twin: mode decides whether the company has requirements at all, and it is
     # frozen at creation — so getting it wrong here cannot be corrected later,
@@ -594,6 +604,13 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
         goal=body.goal or source.goal,
         chairman_user_id=source.chairman_user_id,
         mode=source.mode,
+        # The org shape, for the same reason mode is here: the twin rebuilds the
+        # source's teams and people exactly, so the source's recorded shape is
+        # true of it by construction — but omitting it let the model default
+        # ("ceo_leads_workers") overwrite that truth, and a solo twin came back
+        # claiming a hierarchy it does not have. This is the fact the topology
+        # experiment compares, and it is frozen at creation like the rest.
+        topology=source.topology,
         deadline=None if deadline_expired else source.deadline,
         billing_mode=source.billing_mode,
         controlled_domains=list(source.controlled_domains or []),
