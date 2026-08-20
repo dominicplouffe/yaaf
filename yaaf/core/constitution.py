@@ -240,6 +240,14 @@ class ConstitutionDoc(BaseModel):
              "finish. It blocks and becomes a question for whoever planned it, instead of "
              "buying another wake to fail the same way. Counts across re-claims; only a "
              "passing check resets it.")
+    requirement_check_failures_before_escalation: int = _rule(
+        3, ge=1, group="Wake-loop brakes",
+        label="Failed acceptance tests before a requirement escalates",
+        help="The same idea one level up. A requirement whose acceptance test has failed "
+             "this many times — each after work closed under it — is not a thing more "
+             "work will fix on its own: the test and the plan disagree about what done "
+             "means. Past this the CEO gets one escalation instead of another copy of the "
+             "same traceback. 0 turns it off.")
     max_task_gate_hours: int = _rule(
         6, ge=1, group="Wake-loop brakes", label="Furthest ahead work may be scheduled",
         help="Hours. A task may carry a start time before which nobody may claim it, "

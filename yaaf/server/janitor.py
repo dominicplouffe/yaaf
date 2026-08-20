@@ -430,6 +430,34 @@ def check_commitments(session: Session, project: Project, cons: ConstitutionDoc)
 # ── requirements: is it true yet? ───────────────────────────────────────────────
 
 
+def _work_closed_since_last_check(session: Session, requirement, tasks) -> bool:
+    """Has any task under this requirement moved since the platform last ruled?
+
+    The marker is the checker's own event, written in the same transaction as
+    the verdict, so it cannot drift from it. Never checked before → True: the
+    first ruling is always owed.
+
+    Only the *checker* counts, never a chairman verdict on an observable. That
+    loop has a human in it and paces itself; gating on it would mean a chairman
+    who rejected an observable could never look at it again without ordering
+    fresh work first.
+
+    Deliberately keyed on task movement rather than a timer or a retry budget.
+    A retry budget still spends N containers proving the same thing; a clock
+    still re-tests a workspace nobody touched. What makes a re-test worth
+    running is that the work under it changed.
+    """
+    last = session.execute(
+        select(func.max(RequirementEvent.at)).where(
+            RequirementEvent.requirement_id == requirement.id,
+            RequirementEvent.actor == "checker",
+        )
+    ).scalar()
+    if last is None:
+        return True
+    return any(t.updated_at and t.updated_at > last for t in tasks)
+
+
 def check_finished_requirements(session: Session, project: Project) -> int:
     """A requirement whose work has all closed goes to the platform to be
     judged — never to the agents who did it.
@@ -464,6 +492,16 @@ def check_finished_requirements(session: Session, project: Project) -> int:
         # requirement is not a candidate — it goes back to waiting for a plan
         # rather than being tested against an empty workspace.
         if not any(t.status == TaskStatus.DONE for t in tasks):
+            continue
+        # ...and the work must have MOVED since the platform last ruled. A
+        # failing test returns the requirement to exactly the state that got it
+        # tested, so without this the two halves make a loop: one project ran
+        # the same acceptance test 297 times in 80 minutes against a workspace
+        # nobody had touched since the first. The test is a pure function of
+        # that workspace — re-running it unchanged cannot produce a new answer,
+        # it can only burn a container every fifteen seconds and bury the CEO
+        # in identical notices.
+        if not _work_closed_since_last_check(session, requirement, tasks):
             continue
 
         from_status = requirement.status

@@ -519,3 +519,163 @@ def test_an_explore_project_is_not_told_about_scope_it_cannot_have(client):
         )
     assert "requirements" not in pack
     assert "scope" not in pack
+
+
+# ── a failing acceptance test must not become a machine ─────────────────────────
+
+
+def _complete_a_task(client, project, rid) -> str:
+    """CEO plans it, the lead does it, it closes. Returns the task id."""
+    token = ceo_token(project)
+    task_id = make_task(client, token, project, rid).json()["id"]
+    lead = agent_by_name(project, "Lead")
+    _, lead_token = live_token(project["id"], lead)
+    assert client.post(f"/agent/tasks/{task_id}/claim",
+                       headers=bearer(lead_token)).status_code == 200
+    assert client.post(f"/agent/tasks/{task_id}/complete",
+                       json={"evidence": "https://example.org/report.pdf is up"},
+                       headers=bearer(lead_token)).status_code == 200
+    return task_id
+
+
+def _fail_the_check(project: dict, rid: str, output: str = "boom") -> None:
+    """Run the real checker path against a failing exit code."""
+    from yaaf.runner import daemon
+    from yaaf.runner.types import RunJob, RunResult
+
+    with db_session() as session:
+        session.get(Requirement, rid).status = RequirementStatus.CHECKING
+    with db_session() as session:
+        daemon._finalize_requirement_check(
+            session,
+            RunJob(run_id="run_chk", project_id=project["id"], agent_id=None,
+                   kind=RunKind.REQUIREMENT_CHECK, trigger={}, task_id=None,
+                   requirement_id=rid),
+            RunResult(ok=True, summary="acceptance test exit=1",
+                      check_exit_code=1, check_output=output),
+        )
+
+
+def _queued_checks(project_id: str) -> int:
+    from yaaf.core.models import RunQueue
+
+    with db_session() as session:
+        return session.query(RunQueue).filter(
+            RunQueue.project_id == project_id,
+            RunQueue.kind == RunKind.REQUIREMENT_CHECK,
+        ).count()
+
+
+def test_a_failing_acceptance_test_is_not_retried_until_the_work_moves(client):
+    """The loop that ate a company.
+
+    A failed acceptance test returns the requirement to `in_progress`, which is
+    the exact state that got it tested — so the janitor tested it again fifteen
+    seconds later, and again, 297 times in eighty minutes, against a workspace
+    nobody had touched since the first attempt. Every one launched a container
+    and spent a run against the ceilings, until the trailing hour held 237
+    checks against a cap of 15 and no agent could be dispatched at all. The
+    company was locked out of the runs it needed to repair the requirement.
+
+    The test is a pure function of the workspace. Re-running it unchanged
+    cannot produce a new answer.
+    """
+    from yaaf.server import janitor
+
+    project = deliver_project(client, slug="loopy")
+    rid = propose(client, ceo_token(project), test=CMD_TEST)["requirement_id"]
+    accept(client, rid, project)
+    _complete_a_task(client, project, rid)
+
+    with db_session() as session:
+        janitor.check_finished_requirements(session, session.get(Project, project["id"]))
+    assert _queued_checks(project["id"]) == 1, "the first ruling is always owed"
+
+    _fail_the_check(project, rid)
+    with db_session() as session:
+        assert session.get(Requirement, rid).status == RequirementStatus.IN_PROGRESS
+
+    # Nothing has changed in the workspace. Ten janitor passes, no new checks.
+    for _ in range(10):
+        with db_session() as session:
+            janitor.check_finished_requirements(
+                session, session.get(Project, project["id"]))
+    assert _queued_checks(project["id"]) == 1, \
+        "a re-test of an unchanged workspace can only burn a container"
+
+    # New work closes under it — now the answer really could be different.
+    _complete_a_task(client, project, rid)
+    with db_session() as session:
+        janitor.check_finished_requirements(session, session.get(Project, project["id"]))
+    assert _queued_checks(project["id"]) == 2, \
+        "work moved, so the platform owes a fresh ruling"
+
+
+def test_repeated_acceptance_failures_escalate_once_and_then_go_quiet(client):
+    """305 unconsumed notices — 116k characters of identical traceback — were
+    queued for one CEO, all to be delivered into a single run. Past the cap the
+    CEO gets one escalation that names the repetition, and then silence until
+    something changes."""
+    from yaaf.core.models import Notice
+
+    project = deliver_project(client, slug="noisy")
+    rid = propose(client, ceo_token(project), test=CMD_TEST)["requirement_id"]
+    accept(client, rid, project)
+    _complete_a_task(client, project, rid)
+
+    def ceo_notices() -> list[str]:
+        with db_session() as session:
+            return [n.body for n in session.query(Notice).filter(
+                Notice.agent_id == project["ceo_agent_id"]).all()]
+
+    before = len(ceo_notices())
+    for _ in range(6):                      # cap is 3 by default
+        _fail_the_check(project, rid)
+
+    bodies = ceo_notices()[before:]
+    assert len(bodies) == 3, \
+        f"one notice per failure up to the cap, then one escalation: got {len(bodies)}"
+    assert "has now failed its acceptance test 3 times" in bodies[-1]
+    assert "Deciding which is yours" in bodies[-1]
+
+    with db_session() as session:
+        assert session.get(Requirement, rid).failure_load == 6, \
+            "the failures still count for the record; only the noise stops"
+
+
+def test_platform_checks_do_not_spend_the_companys_run_allowance(client):
+    """The ceilings bound agent spend. A check is the platform running a
+    command in a container — no model, no token, no dollar — and counting it
+    here is what let a verification storm starve the company of the runs it
+    needed to end one."""
+    from yaaf.core import ids
+    from yaaf.core.models import Run, RunStatus
+    from yaaf.server import dispatcher
+    from yaaf.server.policy import utcnow
+
+    project = deliver_project(client, slug="metered")
+
+    def add_run(kind: str) -> None:
+        with db_session() as session:
+            session.add(Run(id=ids.new_id(ids.RUN), project_id=project["id"],
+                            agent_id=None, kind=kind, trigger={}, attempt=1,
+                            status=RunStatus.DONE, token_revoked=False,
+                            refusal_count=0, tokens_in=0, tokens_out=0,
+                            cache_creation_tokens=0, cache_read_tokens=0,
+                            created_at=utcnow()))
+
+    def used() -> int:
+        with db_session() as session:
+            return dispatcher.daily_runs_used(
+                session, session.get(Project, project["id"]),
+                dispatcher.day_start(utcnow()))
+
+    baseline = used()
+    for _ in range(50):
+        add_run(RunKind.REQUIREMENT_CHECK)
+    add_run(RunKind.SUCCESS_CHECK)
+    add_run(RunKind.CHAT_SESSION)
+    assert used() == baseline, "fifty checks must not close the board"
+
+    add_run(RunKind.AGENT_RUN)
+    assert used() == baseline + 1, "agent runs are still exactly what is metered"

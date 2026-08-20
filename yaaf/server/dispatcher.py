@@ -158,16 +158,35 @@ def day_start(now):
     return now.replace(hour=0, minute=0, second=0, microsecond=0)
 
 
+# Kinds that do not spend the company's run allowance. Chat is the talk lane,
+# not work. The two check kinds are the PLATFORM verifying a claim: a command
+# in a container, no model, no token, no dollar — the thing these ceilings
+# exist to bound is agent spend, and a check is none of it.
+#
+# Counting checks here was not a rounding error. A requirement whose acceptance
+# test kept failing re-queued one every fifteen seconds, and the trailing hour
+# reached 237 checks against a ceiling of 15: the dispatcher returned 0 for
+# eighty minutes straight. The only actor who could have repaired the
+# requirement was the CEO, and the failure had eaten the runs it needed to wake.
+# A verification storm must never be able to starve the company of the work it
+# takes to end one.
+UNMETERED_RUN_KINDS = (
+    RunKind.CHAT_SESSION,
+    RunKind.SUCCESS_CHECK,
+    RunKind.REQUIREMENT_CHECK,
+)
+
+
 def daily_runs_used(session: Session, project: Project, since) -> int:
-    """Runs created today, queued or historical. Chat sessions are the talk
-    lane, not work — they never count against the ceilings enforced here."""
+    """Runs created today, queued or historical, that spend the allowance."""
     used = session.execute(
         select(func.count(Run.id)).where(Run.project_id == project.id,
-                                         Run.kind != RunKind.CHAT_SESSION,
+                                         Run.kind.not_in(UNMETERED_RUN_KINDS),
                                          Run.created_at >= since)
     ).scalar_one()
     used += session.execute(
         select(func.count(RunQueue.id)).where(RunQueue.project_id == project.id,
+                                              RunQueue.kind.not_in(UNMETERED_RUN_KINDS),
                                               RunQueue.created_at >= since)
     ).scalar_one()
     return used

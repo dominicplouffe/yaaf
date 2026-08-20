@@ -882,6 +882,32 @@ def _finalize_requirement_check(session: Session, job: RunJob, result: RunResult
         note=f"acceptance test FAILED (exit {result.check_exit_code})",
         from_status=from_status,
     )
+    try:
+        cap = effective(
+            session, requirement.project_id
+        ).requirement_check_failures_before_escalation
+    except LookupError:  # no constitution: never worse than the old behaviour
+        cap = 0
+
+    if cap and requirement.failure_load > cap:
+        # Escalated once already, and nothing has been decided since. Another
+        # copy of the same traceback is not new information — one project piled
+        # up 305 unconsumed notices, 116k characters of them, all waiting to be
+        # delivered into a single CEO run.
+        return
+
+    if cap and requirement.failure_load == cap:
+        _notice_ceo_requirement(
+            session, requirement,
+            f"{requirement.key} has now failed its acceptance test {cap} times, each one "
+            f"after work closed under it. Stop sending work at it and read the test: "
+            f"either the plan is not building what the test asserts, or the test asserts "
+            f"something the plan was never going to build. Deciding which is yours.\n\n"
+            f"The requirement: {requirement.statement[:300]}\n\n"
+            f"What the test printed:\n{output[:1200]}",
+        )
+        return
+
     _notice_ceo_requirement(
         session, requirement,
         f"{requirement.key} is NOT met: its acceptance test failed (exit "
