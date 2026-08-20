@@ -217,9 +217,18 @@ export interface ConstitutionField {
   label: string;
   help: string;
   group: string;
+  /** The tab this rule sits under. Decided server-side beside the model, so the
+      editor never keeps a list of its own to go stale. */
+  theme: string;
+  /** Tab order — declaration order would open on work discipline, not Money. */
+  theme_rank: number;
   type: "integer" | "number" | "boolean" | "string";
   minimum: number | null;
   maximum: number | null;
+  /** The values a string rule accepts — a menu instead of a guess. */
+  choices: string[] | null;
+  /** What the rule would be if nobody had touched it. */
+  default: unknown;
 }
 
 /** One row of GET /observe/projects/{id}/health — a way the configuration can

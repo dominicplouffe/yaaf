@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   AmendmentRow,
   CloneResult,
@@ -978,59 +978,121 @@ function CredentialsManager({
   );
 }
 
-/** The rules a chairman reaches for from the Money page. Everything else — and
-    these too — is editable under "Rules in force", which is generated from the
-    server's schema. This list orders the money view; it never gates what can be
-    changed. That distinction is the whole point: the old hand-kept list *was*
-    the gate, and the rules a stuck company needed were not on it. */
-const MONEY_GROUPS = ["Budgets", "Autonomy"];
-const API_KEY_ONLY = new Set(["monthly_usd_cap"]);
+/** A rule the platform is not currently reading, and why.
+ *
+ *  Only one budget cap is ever enforced — `policy.check_budget` picks it from
+ *  the project's billing mode — and the cycle rhythm exists for Operate
+ *  projects only. The old page *hid* the unused USD cap, which is the same
+ *  mistake as a hand-kept editable list: a rule you cannot see is a rule you
+ *  cannot change. These stay on screen, dimmed, saying why they are asleep. */
+function dormantReason(key: string, dash: Dashboard): string | null {
+  if (key === "monthly_usd_cap" && dash.billing_mode !== "api_key")
+    return "Not enforced right now — this project bills by subscription, so the token cap is the live budget.";
+  if (key === "monthly_token_cap" && dash.billing_mode === "api_key")
+    return "Not enforced right now — this project bills by API key, so the USD cap is the live budget.";
+  if ((key === "cycle_frequency" || key === "cycle_day") && dash.mode !== "operate")
+    return `Operate projects only — this one is in ${dash.mode} mode, so no cycle rolls.`;
+  return null;
+}
 
-/** One rule, typed from the schema. Numbers get their real bounds, booleans a
-    checkbox, strings a text box — and every row says when it takes effect. */
+/** Two rules move money but live on other tabs by their group. Naming them
+    beats copying them onto Money: a rule editable in two places with one shared
+    edit state is exactly what this page is being dug out of. */
+const MONEY_ELSEWHERE = [
+  { key: "max_usd_per_run", theme: "Pace & brakes" },
+  { key: "approval_threshold_usd", theme: "Autonomy" },
+];
+
+/** The IANA zones this browser knows. `timezone` is validated server-side
+    against exactly this list, so typing it blind was a guessing game. */
+function timezoneList(): string[] {
+  const intl = Intl as unknown as { supportedValuesOf?: (k: string) => string[] };
+  try {
+    return intl.supportedValuesOf?.("timeZone") ?? [];
+  } catch {
+    return [];
+  }
+}
+
+/** One rule, one row: the sentence on the left, the value on the right.
+    Numbers get their real bounds, booleans a checkbox, a rule with a fixed set
+    of answers gets that set — and every row says what it was and what it is
+    about to become. */
 function RuleField({
-  field, value, onChange, current,
+  field, value, onChange, current, dormant, flash,
 }: {
   field: ConstitutionField;
   value: string;
   onChange: (raw: string) => void;
   current: unknown;
+  dormant: string | null;
+  flash: boolean;
 }) {
   const changed = value !== String(current ?? "");
+  // "Changed from default" is the only cheap way to see what this company has
+  // actually been tuned away from stock without diffing against the docs.
+  const stock = field.default === null || field.default === undefined
+    ? "" : String(field.default);
+  const offStock = String(current ?? "") !== stock;
   return (
-    <div>
-      <label className="field">{field.label}</label>
-      {field.type === "boolean" ? (
-        <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
-          <input
-            type="checkbox"
-            style={{ width: "auto" }}
-            checked={value === "true"}
-            onChange={(e) => onChange(String(e.target.checked))}
-          />
-          {value === "true" ? "yes" : "no"}
-        </label>
-      ) : field.type === "string" ? (
-        <input value={value} onChange={(e) => onChange(e.target.value)} />
-      ) : (
-        <input
-          type="number"
-          value={value}
-          min={field.minimum ?? undefined}
-          max={field.maximum ?? undefined}
-          step={field.type === "integer" ? 1 : "any"}
-          onChange={(e) => onChange(e.target.value)}
-        />
-      )}
-      <p className="help" style={{ margin: "4px 0 0" }}>
-        {field.help}
-        {changed && (
+    <div className={`rule${changed ? " dirty" : ""}${dormant ? " dimmed" : ""}` +
+                    `${flash ? " flash" : ""}`} id={`rule-${field.key}`}>
+      <div>
+        <div className="lbl">
+          {field.label}
+          {offStock && !changed && (
+            <span className="badge" style={{ marginLeft: 8 }}>changed from default</span>
+          )}
+        </div>
+        <p className="help">
+          {field.help}
+          {stock !== "" && <> <span className="mono">default {stock}</span></>}
+          {dormant && <><br /><i>{dormant}</i></>}
+          {changed && (
+            <>
+              <br />
+              <b>{String(current) || "(blank)"} → {value || "(blank)"}</b>
+            </>
+          )}
+        </p>
+      </div>
+      <div className="ctl">
+        {field.type === "boolean" ? (
+          <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <input
+              type="checkbox"
+              style={{ width: "auto" }}
+              checked={value === "true"}
+              onChange={(e) => onChange(String(e.target.checked))}
+            />
+            {value === "true" ? "yes" : "no"}
+          </label>
+        ) : field.choices ? (
+          <select value={value} onChange={(e) => onChange(e.target.value)}>
+            {field.choices.map((choice) => (
+              <option key={choice} value={choice}>{choice}</option>
+            ))}
+          </select>
+        ) : field.key === "timezone" ? (
           <>
-            <br />
-            <b>{String(current)} → {value || "(blank)"}</b>
+            <input list="tzlist" value={value} onChange={(e) => onChange(e.target.value)} />
+            <datalist id="tzlist">
+              {timezoneList().map((zone) => <option key={zone} value={zone} />)}
+            </datalist>
           </>
+        ) : field.type === "string" ? (
+          <input value={value} onChange={(e) => onChange(e.target.value)} />
+        ) : (
+          <input
+            type="number"
+            value={value}
+            min={field.minimum ?? undefined}
+            max={field.maximum ?? undefined}
+            step={field.type === "integer" ? 1 : "any"}
+            onChange={(e) => onChange(e.target.value)}
+          />
         )}
-      </p>
+      </div>
     </div>
   );
 }
@@ -1038,9 +1100,15 @@ function RuleField({
 /** The reason box, the save button, and the confirmation that stands between
     them. A constitution change is in force from the next agent call, so the
     last thing before it lands should be a plain statement of what is about to
-    be different — not a button that quietly did it. */
+    be different — not a button that quietly did it.
+
+    It rides in a tray pinned to the bottom of the pane, because edits span
+    tabs: the question the old flat page could not answer was "what have I
+    actually touched?", and scrolling thirty-nine fields to find out is not an
+    answer. Nothing pending, no tray. */
 function AmendmentSave({
-  projectId, changes, reason, setReason, act, busy, onSaved, extraJson, schema, cons,
+  projectId, changes, reason, setReason, act, busy, onSaved, onDiscard,
+  extraJson, schema, cons,
 }: {
   projectId: string;
   changes: Record<string, unknown>;
@@ -1049,6 +1117,7 @@ function AmendmentSave({
   act: Act;
   busy: boolean;
   onSaved: () => void;
+  onDiscard: () => void;
   extraJson?: string;
   schema: ConstitutionField[];
   cons: Record<string, unknown>;
@@ -1084,27 +1153,48 @@ function AmendmentSave({
     }, (result) => (result as { note: string }).note);
   }
 
+  // No pending edit, no tray — the bar only exists to answer a question the
+  // chairman has actually asked by typing in a box.
+  if (nothing && !badJson) return null;
+
   return (
     <>
-      <label className="field">Why this change? (required — recorded, shown to the CEO)</label>
-      <input
-        value={reason}
-        placeholder="e.g. this is a memory-heavy job and forty facts is not enough"
-        onChange={(e) => setReason(e.target.value)}
-      />
-
-      <div className="actions">
-        <button
-          className="primary"
-          disabled={busy || reason.trim().length < 10 || nothing || badJson}
-          onClick={() => setConfirming(true)}
-        >
-          {count > 0 ? `Review ${count} change${count === 1 ? "" : "s"}` : "Review change"}
-        </button>
-        {reason.trim().length > 0 && reason.trim().length < 10 && (
-          <span className="help">the reason needs a real sentence (10+ characters)</span>
+      <div className="rule-tray">
+        <b>
+          {count > 0
+            ? `${count} pending change${count === 1 ? "" : "s"}`
+            : "A pending change from the JSON overlay"}
+        </b>
+        {count > 0 && (
+          <p className="diffs">
+            {Object.entries(changes).map(([key, value], i) => (
+              <Fragment key={key}>
+                {i > 0 && " · "}
+                {labelOf(key)} <span className="mono">{String(cons[key])}→{String(value)}</span>
+              </Fragment>
+            ))}
+          </p>
         )}
-        {badJson && <span className="help">the JSON overlay is not valid JSON</span>}
+        <label className="field">Why this change? (required — recorded, shown to the CEO)</label>
+        <input
+          value={reason}
+          placeholder="e.g. this is a memory-heavy job and forty facts is not enough"
+          onChange={(e) => setReason(e.target.value)}
+        />
+        <div className="actions">
+          <button
+            className="primary"
+            disabled={busy || reason.trim().length < 10 || nothing || badJson}
+            onClick={() => setConfirming(true)}
+          >
+            {count > 0 ? `Review ${count} change${count === 1 ? "" : "s"}` : "Review change"}
+          </button>
+          <button type="button" disabled={busy} onClick={onDiscard}>Discard</button>
+          {reason.trim().length > 0 && reason.trim().length < 10 && (
+            <span className="help">the reason needs a real sentence (10+ characters)</span>
+          )}
+          {badJson && <span className="help">the JSON overlay is not valid JSON</span>}
+        </div>
       </div>
 
       {confirming && (
@@ -1274,7 +1364,14 @@ export default function Settings({
 }) {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [section, setSection] = useState<string>("brief");
+  // In the URL, not in a useState: half a dozen places across the app say
+  // "Settings → Rules in force", and every one of them used to land the
+  // chairman on Brief with no way to link any deeper.
+  const [params, setParams] = useSearchParams();
+  const section = params.get("s") ?? "brief";
+  const theme = params.get("t") ?? "";
+  const go = (next: string, tab?: string) =>
+    setParams(tab ? { s: next, t: tab } : { s: next }, { replace: true });
 
   const [billingChoice, setBillingChoice] = useState<"api_key" | "subscription">(
     dash.billing_mode === "subscription" ? "subscription" : "api_key",
@@ -1313,7 +1410,32 @@ export default function Settings({
   }, [projectId]);
   const setRule = (key: string, raw: string) => setEdits((prev) => ({ ...prev, [key]: raw }));
   const changedGuardrails = changedRules(schema, edits, cons);
-  const groups = [...new Set(schema.map((f) => f.group))];
+  const discardEdits = () => {
+    setEdits(Object.fromEntries(schema.map((f) => [f.key, String(cons[f.key] ?? "")])));
+    setAmendChanges("{}");
+    setAmendReason("");
+  };
+  // The tabs, ordered by the server. Fourteen groups become six headings a
+  // chairman recognises; the groups survive as subheads inside one.
+  const themes = [...new Set(
+    [...schema].sort((a, b) => a.theme_rank - b.theme_rank).map((f) => f.theme),
+  )];
+  const activeTheme = themes.includes(theme) ? theme : themes[0] ?? "";
+  const dirtyPerTheme = (name: string) =>
+    schema.filter((f) => f.theme === name && f.key in changedGuardrails).length;
+  // A rule linked to from another tab gets a moment of highlight, otherwise
+  // "Most one run may spend is over on Pace & brakes" just moves the hunt.
+  const [flashKey, setFlashKey] = useState<string | null>(null);
+  function jumpToRule(key: string, tab: string) {
+    go("rules", tab);
+    setFlashKey(key);
+    window.setTimeout(() => {
+      document.getElementById(`rule-${key}`)?.scrollIntoView({
+        behavior: "smooth", block: "center",
+      });
+    }, 0);
+    window.setTimeout(() => setFlashKey(null), 1600);
+  }
   const { data: amendments, reload: reloadAmendments } = usePoll(
     () => get<AmendmentRow[]>(`/admin/projects/${projectId}/amendments`),
     10000,
@@ -1449,7 +1571,7 @@ export default function Settings({
             <button
               key={item.key}
               className={section === item.key ? "active" : ""}
-              onClick={() => setSection(item.key)}
+              onClick={() => go(item.key)}
             >
               {item.label}
             </button>
@@ -1861,77 +1983,68 @@ export default function Settings({
           limits, and you always can.
         </p>
         {schema.length === 0 && <p className="help">Loading the rulebook…</p>}
-        {groups.map((group) => (
-          <div key={group}>
-            <label className="field" style={{ marginTop: 14 }}>{group}</label>
-            <div className="row">
+
+        {/* Six tabs rather than fourteen headings on one scroll. The dot says
+            which tab holds an edit, so a pending change is never somewhere you
+            have to remember. */}
+        <div className="tabs">
+          {themes.map((name) => {
+            const dirty = dirtyPerTheme(name);
+            return (
+              <button
+                key={name}
+                className={`tab${name === activeTheme ? " active" : ""}`}
+                onClick={() => go("rules", name)}
+              >
+                {name}
+                {dirty > 0 && <span className="badge accent" style={{ marginLeft: 6 }}>{dirty}</span>}
+              </button>
+            );
+          })}
+        </div>
+
+        {[...new Set(schema.filter((f) => f.theme === activeTheme).map((f) => f.group))]
+          .map((group, _i, all) => (
+            <div key={group}>
+              {/* One group on the tab means the subhead only repeats the tab. */}
+              {all.length > 1 && <div className="rule-grp">{group}</div>}
               {schema
-                .filter((f) => f.group === group)
-                .filter((f) => !API_KEY_ONLY.has(f.key) || dash.billing_mode === "api_key")
+                .filter((f) => f.theme === activeTheme && f.group === group)
                 .map((f) => (
                   <RuleField
                     key={f.key}
                     field={f}
                     value={edits[f.key] ?? ""}
                     current={cons[f.key]}
+                    dormant={dormantReason(f.key, dash)}
+                    flash={flashKey === f.key}
                     onChange={(raw) => setRule(f.key, raw)}
                   />
                 ))}
             </div>
-          </div>
-        ))}
-        <AmendmentSave
-          projectId={projectId}
-          changes={changedGuardrails}
-          reason={amendReason}
-          setReason={setAmendReason}
-          act={act}
-          busy={busy}
-          schema={schema}
-          cons={cons}
-          onSaved={reloadAmendments}
-        />
-      </div>
+          ))}
 
-      </Section>
+        {activeTheme === "Money" && (
+          <p className="help" style={{ marginTop: 14 }}>
+            Two more rules move money, filed under what they brake rather than what they
+            cost:{" "}
+            {MONEY_ELSEWHERE.map((item, i) => {
+              const field = schema.find((f) => f.key === item.key);
+              if (!field) return null;
+              return (
+                <Fragment key={item.key}>
+                  {i > 0 && " and "}
+                  <button className="small" onClick={() => jumpToRule(item.key, item.theme)}>
+                    {field.label}
+                  </button>{" "}
+                  ({item.theme})
+                </Fragment>
+              );
+            })}
+            .
+          </p>
+        )}
 
-      <Section on={section === "money"}>
-      <h2>Budgets &amp; guardrails</h2>
-      <div className="card">
-        <p className="help">
-          The money limits the platform enforces right now. Edit what you need and confirm —
-          they are in force on the next agent call, recorded with your reason, and disclosed
-          to the CEO.
-        </p>
-        <div className="row">
-          {schema
-            .filter((f) => MONEY_GROUPS.includes(f.group))
-            .filter((f) => !API_KEY_ONLY.has(f.key) || dash.billing_mode === "api_key")
-            .map((f) => (
-              <RuleField
-                key={f.key}
-                field={f}
-                value={edits[f.key] ?? ""}
-                current={cons[f.key]}
-                onChange={(raw) => setRule(f.key, raw)}
-              />
-            ))}
-        </div>
-        <p className="help">
-          Every other rule — memory, work discipline, wake brakes, reporting — is under{" "}
-          <button className="small" onClick={() => setSection("rules")}>Rules in force</button>.
-        </p>
-        <details style={{ margin: "10px 0" }}>
-          <summary className="help">
-            Advanced: amend by raw JSON overlay (an escape hatch; every rule has a box now)
-          </summary>
-          <textarea
-            className="mono"
-            style={{ marginTop: 8 }}
-            value={amendChanges}
-            onChange={(e) => setAmendChanges(e.target.value)}
-          />
-        </details>
         <AmendmentSave
           projectId={projectId}
           changes={changedGuardrails}
@@ -1942,19 +2055,22 @@ export default function Settings({
           schema={schema}
           cons={cons}
           extraJson={amendChanges}
+          onDiscard={discardEdits}
           onSaved={() => {
             setAmendChanges("{}");
             reloadAmendments();
           }}
         />
 
-        {amendments && amendments.length > 0 && (
-          <>
-            {/* The history of the rulebook. Nothing new lands here as pending
-                any more, but rows written while the old cooling-off existed can
-                still be waiting, so the countdown and cancel stay. */}
-            <label className="field">Every change made to these rules</label>
-            <table>
+        <details style={{ marginTop: 16 }}>
+          <summary className="help">
+            Change history — every amendment ever made to these rules
+          </summary>
+          {amendments && amendments.length > 0 ? (
+            /* Nothing new lands here as pending any more, but rows written
+               while the old cooling-off existed can still be waiting, so the
+               countdown and cancel stay. */
+            <table style={{ marginTop: 8 }}>
               <thead>
                 <tr>
                   <th>Status</th>
@@ -2005,9 +2121,54 @@ export default function Settings({
                 ))}
               </tbody>
             </table>
-          </>
-        )}
+          ) : (
+            <p className="help">Nothing amended yet — this company runs on the rules it was born with.</p>
+          )}
+        </details>
+
+        <details>
+          <summary className="help">
+            Advanced: amend by raw JSON overlay (an escape hatch; every rule has a box now)
+          </summary>
+          <textarea
+            className="mono"
+            style={{ marginTop: 8 }}
+            value={amendChanges}
+            onChange={(e) => setAmendChanges(e.target.value)}
+          />
+        </details>
       </div>
+
+      </Section>
+
+      <Section on={section === "money"}>
+      <h2>Budget in force</h2>
+      <div className="card">
+        <p className="help" style={{ marginTop: 0 }}>
+          What the platform is enforcing on this project's spending right now. These are
+          constitution rules, so they are changed in one place — with a written reason that
+          is recorded and shown to the CEO.
+        </p>
+        <dl className="kv">
+          {schema
+            .filter((f) => f.theme === "Money" || MONEY_ELSEWHERE.some((m) => m.key === f.key))
+            .filter((f) => !dormantReason(f.key, dash))
+            // The budget itself leads; the two levers filed elsewhere follow.
+            .sort((a, b) => Number(a.theme !== "Money") - Number(b.theme !== "Money"))
+            .map((f) => (
+              <Fragment key={f.key}>
+                <dt>{f.label}</dt>
+                <dd className="mono">{String(cons[f.key])}</dd>
+              </Fragment>
+            ))}
+        </dl>
+        <div className="actions">
+          <button className="primary" onClick={() => go("rules", "Money")}>
+            Change these rules →
+          </button>
+        </div>
+      </div>
+
       </Section>
       </div>
     </div>

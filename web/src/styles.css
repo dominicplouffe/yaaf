@@ -251,8 +251,15 @@ button.eye:hover { color: var(--ink); }
 /* ── misc ── */
 .list-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
   gap: 14px; }
-.kv { display: grid; grid-template-columns: 180px 1fr; gap: 4px 12px; font-size: 13px; }
-.kv dt { color: var(--muted); } .kv dd { margin: 0; }
+/* min-width:0 on both children is load-bearing: grid items default to
+   min-width:auto, so one unbreakable token — an agent's `python3 -c "…"`
+   success test — refused to shrink, pushed the value column past the card edge
+   and painted over the neighbouring card. */
+.kv { display: grid; grid-template-columns: minmax(0, 150px) minmax(0, 1fr);
+  gap: 4px 12px; font-size: 13px; }
+.kv dt { color: var(--muted); min-width: 0; }
+.kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+@media (max-width: 620px) { .kv { grid-template-columns: minmax(0, 1fr); } }
 details { margin: 6px 0; }
 summary { cursor: pointer; color: var(--ink-2); }
 pre.block {
@@ -401,6 +408,23 @@ pre.block {
 
 /* portfolio cards (Projects) & role library */
 .list-grid.wide { grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); }
+
+/* Audit cards hold a wall of agent prose next to a shell command; 300px tracks
+   were never going to hold that. align-items:start keeps a short card short
+   instead of stretching it to a tall neighbour. */
+.audit-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(440px, 1fr));
+  gap: 14px; align-items: start; margin-top: 12px; }
+.audit-h { font-size: 12px; font-weight: 600; color: var(--ink-2); margin: 16px 0 -2px; }
+.audit-card .ab { margin-top: 10px; }
+/* One agent's success test runs eight lines of shell. Capped and scrollable,
+   so a long command does not decide how tall the whole row is. */
+.audit-card .ab pre.block { max-height: 170px; }
+.audit-card .ab-h { font-size: 11px; font-family: var(--mono); letter-spacing: 1px;
+  text-transform: uppercase; color: var(--muted); margin-bottom: 3px; }
+.audit-card .ab-b { font-size: 13px; overflow-wrap: anywhere; }
+.audit-card .more { font-size: 12px; padding: 2px 0; margin-top: 2px;
+  background: none; border: 0; color: var(--accent); }
+.audit-card .more:hover { text-decoration: underline; }
 .pcard-vitals {
   display: flex; gap: 16px; flex-wrap: wrap; align-items: center;
   border-top: 1px solid var(--grid); margin-top: 12px; padding-top: 10px;
@@ -531,6 +555,41 @@ tr.subtask td:first-child { padding-left: 28px; color: var(--ink-2); }
   .srail { position: static; flex-direction: row; flex-wrap: wrap; }
   .srail .grp { display: none; }
 }
+
+/* ── the rulebook: one rule per row ──
+   Thirty-nine rules used to render as one flex row per group, so "Wake-loop
+   brakes" was nine number boxes shoulder to shoulder and the group heading
+   wore the same class as the field labels under it. A rule is a sentence with
+   a value on the end; this lays it out that way. */
+.rule { display: grid; grid-template-columns: minmax(0, 1fr) 200px;
+  gap: 10px 20px; align-items: start;
+  padding: 12px 2px; border-bottom: 1px solid var(--grid); }
+.rule:last-child { border-bottom: 0; }
+.rule .lbl { font-size: 13.5px; color: var(--ink); }
+.rule .help { margin: 3px 0 0; }
+.rule .ctl { min-width: 0; }
+.rule .ctl input, .rule .ctl select { width: 100%; }
+.rule.dirty { background: rgba(57, 135, 229, 0.07); border-radius: 6px; }
+/* A rule the current billing or project mode does not enforce. Dimmed, never
+   hidden: a rule you cannot see is a rule you cannot change. */
+.rule.dimmed .lbl, .rule.dimmed .ctl { opacity: 0.5; }
+.rule.flash { animation: rule-flash 1.4s ease-out; }
+@keyframes rule-flash {
+  from { background: rgba(57, 135, 229, 0.3); }
+  to { background: transparent; }
+}
+.rule-grp { font-size: 12px; font-weight: 600; letter-spacing: 0.3px;
+  color: var(--ink-2); margin: 20px 0 2px; }
+.rule-grp:first-child { margin-top: 6px; }
+
+/* The pending-changes tray. Edits span tabs, so the one question the old page
+   could not answer — "what have I actually touched?" — gets a permanent
+   answer at the bottom of the pane. */
+.rule-tray { position: sticky; bottom: 0; z-index: 2;
+  background: var(--surface-2); border: 1px solid var(--accent);
+  border-radius: 8px; padding: 10px 14px; margin-top: 16px; }
+.rule-tray .diffs { font-size: 12px; color: var(--ink-2); margin: 4px 0 0; }
+.rule-tray .actions { margin-top: 10px; }
 
 /* Agent prose is unbounded; a table cell is not. */
 .clamp { display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3;

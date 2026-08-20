@@ -21,6 +21,29 @@ interface SpotAudit {
     audit_status: string | null; audit_note: string | null }[];
 }
 
+/** A labelled block of agent prose, clamped to three lines until asked.
+    Evidence text is unbounded — one claim in the wild runs forty lines — and a
+    card that long next to a card of four made the row look broken and buried
+    the one question being asked. */
+function Block({ title, children, clampable = true }: {
+  title: string;
+  children: React.ReactNode;
+  clampable?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="ab">
+      <div className="ab-h">{title}</div>
+      <div className={`ab-b${clampable && !open ? " clamp" : ""}`}>{children}</div>
+      {clampable && (
+        <button className="more" onClick={() => setOpen(!open)}>
+          {open ? "show less" : "show all"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function taskBadge(status: string) {
   const cls =
     status === "done"
@@ -287,8 +310,12 @@ export default function Work({ ctx }: { ctx: ProjectCtx }) {
         <summary className="help">details</summary>
         <dl className="kv" style={{ margin: "8px 0" }}>
           <dt>success test</dt>
-          <dd className="mono">
-            [{task.success_test.type}] {task.success_test.command ?? task.success_test.target}
+          <dd>
+            {/* pre.block wraps and scrolls; a bare mono cell could not shrink
+                below one long `python3 -c "…"` and pushed the row wide. */}
+            <pre className="block" style={{ margin: 0 }}>
+              [{task.success_test.type}] {task.success_test.command ?? task.success_test.target}
+            </pre>
           </dd>
           {task.evidence && (
             <>
@@ -360,7 +387,149 @@ export default function Work({ ctx }: { ctx: ProjectCtx }) {
         evidence decides whether any of it counted.
       </p>
 
+      {/* ── the human layer: prompted, measured, still random ──
+          Two audits used to sit at opposite ends of this page, separated by
+          the whole task board, asking the chairman the same question. One
+          zone: the platform's samples first because they expire, then the
+          draw he asks for himself. */}
+      <h2 className="zone" ref={auditRef}>Check the agents' work</h2>
       <AuditSamples projectId={projectId} />
+      <div className="arow">
+        <div className="grow">
+          <div className="tt">
+            {completed.length === 0
+              ? "Nothing finished yet — there is nothing to check"
+              : `You have checked ${audited} of ${completed.length} finished tasks${
+                  coveragePct !== null ? ` (${coveragePct}%)` : ""
+                }`}
+          </div>
+          <div className="sb">
+            Agents mark their own work finished and write their own evidence for it. This
+            picks {completed.length > 0 ? "5" : "a few"} at random and shows you what each task
+            had to prove next to what the agent claimed — you say whether you believe it. Two
+            minutes. Nothing breaks if you skip it.
+          </div>
+        </div>
+        <button className="primary" onClick={runSpotAudit} disabled={completed.length === 0 && rows.length === 0}>
+          Show me 5 to check
+        </button>
+      </div>
+      {audit && (
+        <p className="help" style={{ margin: "10px 0 0" }}>
+          For each one: <b>does the claim actually prove what the test asked for?</b> Passing
+          records that you looked. Failing needs one line saying why, and the CEO is woken with
+          it — that is the only one of the two that changes what the company does next.
+        </p>
+      )}
+      {/* Two different objects, two grids. A completed task carries a success
+          test and a claim; a piece of evidence carries only a claim — mixed in
+          one grid the rows never lined up, and half a row sat empty under the
+          short card. */}
+      {audit && audit.evidence.length > 0 && (
+        <>
+        <div className="audit-h">
+          Evidence — {audit.evidence.length}: does the claim hold up?
+        </div>
+        <div className="audit-grid">
+          {audit.evidence.map((row) => (
+            <div className="card audit-card" key={row.id}>
+              <div className="pill-row">
+                <span className="badge accent">evidence</span>
+                {verifyBadge(row.verification)}
+              </div>
+              <Block title="what the agent claimed">{row.description}</Block>
+              {row.source_url && (
+                <a href={row.source_url} target="_blank" rel="noreferrer">
+                  source ↗
+                </a>
+              )}
+              <div className="actions">
+                <NoteAction
+                  label="✓ passes audit"
+                  className="small"
+                  placeholder="Note (optional)"
+                  onSubmit={(note) => auditEvidence(row.id, true, note)}
+                />
+                <NoteAction
+                  label="✕ fails"
+                  className="small danger"
+                  placeholder="Why does this fail? — the CEO is told"
+                  requireNote
+                  onSubmit={(note) => auditEvidence(row.id, false, note)}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+        </>
+      )}
+      {audit && audit.completed_tasks.length > 0 && (
+        <>
+        <div className="audit-h">
+          Finished tasks — {audit.completed_tasks.length}: does the claim prove the test?
+        </div>
+        <div className="audit-grid">
+          {audit.completed_tasks.map((task) => (
+            <div className="card audit-card" key={task.id}>
+              <div className="pill-row">
+                <span className="badge accent">completed task</span>
+                {task.audit_status && (
+                  <span className={`badge ${task.audit_status === "passed" ? "good" : "critical"}`}>
+                    audit: {task.audit_status}
+                  </span>
+                )}
+              </div>
+              <strong>{task.title}</strong>
+              {/* The gap between what the test asked for and what the agent
+                  says it did is the whole judgement, so those two sit adjacent
+                  and equally weighted. The platform's own check is corroboration
+                  and folds away. */}
+              <Block title="what it had to prove" clampable={false}>
+                <pre className="block" style={{ margin: 0 }}>
+                  [{task.success_test.type}]{" "}
+                  {task.success_test.command ?? task.success_test.target}
+                </pre>
+              </Block>
+              <Block title="what the agent claimed">{task.evidence ?? "—"}</Block>
+              {(task.check_output || task.audit_note) && (
+                <details style={{ marginTop: 8 }}>
+                  <summary className="help">platform check &amp; notes</summary>
+                  <dl className="kv" style={{ marginTop: 6 }}>
+                    {task.check_output && (
+                      <>
+                        <dt>check output</dt>
+                        <dd><pre className="block">{task.check_output}</pre></dd>
+                      </>
+                    )}
+                    {task.audit_note && (
+                      <>
+                        <dt>audit note</dt>
+                        <dd>{task.audit_note}</dd>
+                      </>
+                    )}
+                  </dl>
+                </details>
+              )}
+              <div className="actions">
+                <NoteAction
+                  label="✓ passes audit"
+                  className="small"
+                  placeholder="Note (optional)"
+                  onSubmit={(note) => auditTask(task.id, true, note)}
+                />
+                <NoteAction
+                  label="✕ fails"
+                  className="small danger"
+                  placeholder="Why? — flags this agent's stream to the CEO"
+                  requireNote
+                  onSubmit={(note) => auditTask(task.id, false, note)}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+        </>
+      )}
 
       <div className="pills">
         {FILTERS.map((f) => {
@@ -468,121 +637,6 @@ export default function Work({ ctx }: { ctx: ProjectCtx }) {
         marks command-tested work done. Redirect the plan from the{" "}
         <Link to={`/projects/${projectId}/boardroom`}>Boardroom →</Link>
       </p>
-
-      {/* ── the human layer: prompted, measured, still random ── */}
-      <h2 className="zone" ref={auditRef}>Spot-check the agents' work</h2>
-      <div className="arow">
-        <div className="grow">
-          <div className="tt">
-            {completed.length === 0
-              ? "Nothing finished yet — there is nothing to check"
-              : `You have checked ${audited} of ${completed.length} finished tasks${
-                  coveragePct !== null ? ` (${coveragePct}%)` : ""
-                }`}
-          </div>
-          <div className="sb">
-            Agents mark their own work finished and write their own evidence for it. This
-            picks {completed.length > 0 ? "5" : "a few"} at random and shows you what each task
-            had to prove next to what the agent claimed — you say whether you believe it. Two
-            minutes. Nothing breaks if you skip it.
-          </div>
-        </div>
-        <button className="primary" onClick={runSpotAudit} disabled={completed.length === 0 && rows.length === 0}>
-          Show me 5 to check
-        </button>
-      </div>
-      {audit && (
-        <p className="help" style={{ margin: "10px 0 0" }}>
-          For each one: <b>does the claim actually prove what the test asked for?</b> Passing
-          records that you looked. Failing needs one line saying why, and the CEO is woken with
-          it — that is the only one of the two that changes what the company does next.
-        </p>
-      )}
-      {audit && (
-        <div className="list-grid" style={{ marginTop: 12 }}>
-          {audit.evidence.map((row) => (
-            <div className="card" key={row.id}>
-              <div className="pill-row">
-                <span className="badge accent">evidence</span>
-                {verifyBadge(row.verification)}
-              </div>
-              <p>{row.description}</p>
-              {row.source_url && (
-                <a href={row.source_url} target="_blank" rel="noreferrer">
-                  source ↗
-                </a>
-              )}
-              <div className="actions">
-                <NoteAction
-                  label="✓ passes audit"
-                  className="small"
-                  placeholder="Note (optional)"
-                  onSubmit={(note) => auditEvidence(row.id, true, note)}
-                />
-                <NoteAction
-                  label="✕ fails"
-                  className="small danger"
-                  placeholder="Why does this fail? — the CEO is told"
-                  requireNote
-                  onSubmit={(note) => auditEvidence(row.id, false, note)}
-                />
-              </div>
-            </div>
-          ))}
-          {audit.completed_tasks.map((task) => (
-            <div className="card" key={task.id}>
-              <div className="pill-row">
-                <span className="badge accent">completed task</span>
-                {task.audit_status && (
-                  <span className={`badge ${task.audit_status === "passed" ? "good" : "critical"}`}>
-                    audit: {task.audit_status}
-                  </span>
-                )}
-              </div>
-              <strong>{task.title}</strong>
-              {/* Test, claim, and platform check stacked — the gap between
-                  them is what the chairman is judging. */}
-              <dl className="kv" style={{ marginTop: 8 }}>
-                <dt>test</dt>
-                <dd className="mono">
-                  [{task.success_test.type}] {task.success_test.command ?? task.success_test.target}
-                </dd>
-                <dt>claimed</dt>
-                <dd>{task.evidence ?? "—"}</dd>
-                {task.check_output && (
-                  <>
-                    <dt>check output</dt>
-                    <dd>
-                      <pre className="block">{task.check_output}</pre>
-                    </dd>
-                  </>
-                )}
-                {task.audit_note && (
-                  <>
-                    <dt>audit note</dt>
-                    <dd>{task.audit_note}</dd>
-                  </>
-                )}
-              </dl>
-              <div className="actions">
-                <NoteAction
-                  label="✓ passes audit"
-                  className="small"
-                  placeholder="Note (optional)"
-                  onSubmit={(note) => auditTask(task.id, true, note)}
-                />
-                <NoteAction
-                  label="✕ fails"
-                  className="small danger"
-                  placeholder="Why? — flags this agent's stream to the CEO"
-                  requireNote
-                  onSubmit={(note) => auditTask(task.id, false, note)}
-                />
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
 
       <h2 className="zone">All proof <span className="cnt">{rows.length}</span></h2>
       <p className="subtitle" style={{ marginBottom: 8 }}>

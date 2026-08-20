@@ -22,6 +22,8 @@ from sqlalchemy.orm import Session
 
 from yaaf.core import ids
 from yaaf.core.constitution import (
+    GROUP_THEMES,
+    THEME_ORDER,
     ConstitutionDoc,
     create_initial,
     effective,
@@ -1592,14 +1594,28 @@ def constitution_schema() -> list[dict]:
         # `str | None` fields arrive as anyOf; the real type is the non-null arm.
         arms = spec.get("anyOf") or [spec]
         typed = next((a for a in arms if a.get("type") != "null"), arms[0])
+        group = spec.get("group", "Other")
+        theme = GROUP_THEMES.get(group, "Other")
         fields.append({
             "key": key,
             "label": spec.get("title") or key.replace("_", " "),
             "help": spec.get("description", ""),
-            "group": spec.get("group", "Other"),
+            "group": group,
+            # The tab this rule sits under. Groups are the taxonomy; themes are
+            # the navigation, and both are decided here so the editor never
+            # keeps a list of its own to go stale. The rank rides along because
+            # declaration order puts work discipline first, and the tab a stuck
+            # company opens is Money.
+            "theme": theme,
+            "theme_rank": THEME_ORDER.index(theme) if theme in THEME_ORDER else len(THEME_ORDER),
             "type": typed.get("type", "string"),
             "minimum": typed.get("minimum", typed.get("exclusiveMinimum")),
             "maximum": typed.get("maximum", typed.get("exclusiveMaximum")),
+            "choices": spec.get("choices"),
+            # What the rule would be if nobody had touched it — the editor
+            # marks anything that differs, so "what is this company actually
+            # running under" is a glance instead of a diff against the docs.
+            "default": spec.get("default"),
         })
     return fields
 

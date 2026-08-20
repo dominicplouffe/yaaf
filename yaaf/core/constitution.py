@@ -55,7 +55,15 @@ def parse_hhmm(raw: object) -> time | None:
         return None
 
 
-def _rule(default: Any, *, group: str, label: str, help: str, **constraints: Any) -> Any:
+def _rule(
+    default: Any,
+    *,
+    group: str,
+    label: str,
+    help: str,
+    choices: list[str] | None = None,
+    **constraints: Any,
+) -> Any:
     """A constitution field that can describe itself.
 
     Every rule carries its own group, label and help text, so the settings page
@@ -63,9 +71,50 @@ def _rule(default: Any, *, group: str, label: str, help: str, **constraints: Any
     That list existed and went stale exactly as you would expect: six of
     twenty-four rules were editable, and the memory caps — the ones a full
     company actually needs — were not among them.
+
+    ``choices`` names the values a string rule accepts. The validators below
+    already refuse anything else; this only lets the editor draw a menu instead
+    of a text box you have to guess into.
     """
+    extra: dict[str, Any] = {"group": group}
+    if choices is not None:
+        extra["choices"] = choices
     return Field(default=default, title=label, description=help,
-                 json_schema_extra={"group": group}, **constraints)
+                 json_schema_extra=extra, **constraints)
+
+
+# Fourteen groups is a taxonomy, not navigation: rendered flat it is a wall of
+# thirty-nine boxes, and "Wake-loop brakes" alone is nine of them. Themes are
+# what a chairman actually reaches for; the groups survive as the subheads
+# inside one. This lives here rather than in the settings page because the last
+# hand-kept list on that side went stale — see the note in `_rule`.
+GROUP_THEMES = {
+    "Budgets": "Money",
+    "Wake-loop brakes": "Pace & brakes",
+    "Runs": "Pace & brakes",
+    "Work discipline": "How work is run",
+    "Evidence": "How work is run",
+    "Sampled audit": "How work is run",
+    "Autonomy": "Autonomy",
+    "Memory": "Memory",
+    "CEO cadence": "Rhythm & reporting",
+    "Reporting to you": "Rhythm & reporting",
+    "Your timezone": "Rhythm & reporting",
+    "Operate rhythm": "Rhythm & reporting",
+    "The review": "Rhythm & reporting",
+    "The commitment": "Rhythm & reporting",
+}
+
+#: Tab order on the rules screen — money first, because that is what a stuck
+#: company comes here to change.
+THEME_ORDER = [
+    "Money",
+    "Pace & brakes",
+    "How work is run",
+    "Autonomy",
+    "Memory",
+    "Rhythm & reporting",
+]
 
 
 class ConstitutionDoc(BaseModel):
@@ -129,6 +178,7 @@ class ConstitutionDoc(BaseModel):
              "chairman degrades the company instead of deadlocking it.")
     approval_timeout_decision: str = _rule(
         "deny", group="Autonomy", label="What an expired approval decides",
+        choices=["deny", "approve"],
         help="'deny' or 'approve'. Default-deny: silence is not consent.")
 
     # Budgets — native unit of the project's billing mode
@@ -245,6 +295,7 @@ class ConstitutionDoc(BaseModel):
     # times read the constitution's one timezone.
     cycle_frequency: str = _rule(
         "weekly", group="Operate rhythm", label="How often a cycle rolls",
+        choices=["daily", "weekly", "monthly", "quarterly"],
         help="Operate projects only: 'daily', 'weekly', 'monthly' or 'quarterly'. Each "
              "roll closes the cycle, carries unfinished scope forward, reopens the plan "
              "gate, and hands the CEO the last three cycles' narratives verbatim.")
