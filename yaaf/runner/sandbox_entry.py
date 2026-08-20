@@ -93,12 +93,20 @@ async def t_board(args):
     "under a team task they claimed. success_test must be "
     '{"type":"command","command":...} (platform-executed) or '
     '{"type":"observable","target":...}. '
-    "not_before is an ISO 8601 datetime before which the task cannot be claimed and "
-    "wakes nobody — use it to lay work out in time (a weekly rhythm, a step that only "
-    "makes sense after another lands) instead of creating it all at once. "
+    "assignee_agent_id IS ONLY FOR SUBTASKS. A team task names a TEAM, never a person: "
+    "the team's lead claims it and decides who does what. Setting assignee_agent_id "
+    "without parent_task_id is refused every time — it is the single most common "
+    "refusal on this platform, so check yourself before you send it. "
+    "not_before is an ISO 8601 datetime before which the task cannot be claimed. It "
+    "wakes nobody and shows on no screen as work in progress, so a company gated on one "
+    "looks stopped: use it only for a genuine calendar rhythm, never to express 'after "
+    "the other task finishes'. For that, create this task WHEN that one lands — you are "
+    "woken for it. Gates beyond the constitution's limit are refused. "
     "requirement_id names what this work is FOR and is required outside Explore "
     "projects: a task that serves no requirement is refused, because work that makes "
-    "nothing true is how a company stays busy without finishing.",
+    "nothing true is how a company stays busy without finishing. Your context pack's "
+    "`board` and `roster` carry the team ids, agent ids and requirement ids you need — "
+    "read them rather than guessing at an id.",
     {
         "team_id": str,
         "title": str,

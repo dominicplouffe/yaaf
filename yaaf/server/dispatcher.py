@@ -83,6 +83,9 @@ MESSAGE_COALESCE_COUNT = 3
 URGENT_NOTICE_KINDS = {NoticeKind.BUDGET_WARNING, NoticeKind.BUDGET_EXHAUSTED,
                        NoticeKind.APPROVAL_DECIDED, NoticeKind.AUDIT_FAILED,
                        NoticeKind.MEMORY_FULL,
+                       # A stall notice that waited out a batching window would
+                       # be extending the exact silence it exists to report.
+                       NoticeKind.STALLED,
                        NoticeKind.COMMITMENT_AT_RISK, NoticeKind.COMMITMENT_BREACHED}
 
 # A commitment that stopped holding needs a re-forecast wake even on a day
@@ -91,18 +94,52 @@ URGENT_NOTICE_KINDS = {NoticeKind.BUDGET_WARNING, NoticeKind.BUDGET_EXHAUSTED,
 COMMITMENT_NOTICE_KINDS = {NoticeKind.COMMITMENT_AT_RISK, NoticeKind.COMMITMENT_BREACHED}
 
 
-def dispatcher_loop() -> None:  # pragma: no cover - thin loop around dispatch_once
+def dispatcher_loop() -> None:  # pragma: no cover - thin loop around dispatch_all
     while True:
-        try:
-            with db_session() as session:
-                dispatch_once(session)
-        except Exception:
-            log.exception("dispatch tick failed")
+        dispatch_all()
         time.sleep(settings().dispatch_poll_s)
 
 
+def dispatch_all() -> int:
+    """One tick, with each project in its own transaction.
+
+    The whole tick used to share one, so an exception anywhere — one project
+    with a broken row — rolled back and abandoned the tick for *every* company
+    on the box. The only evidence was a line on stderr, and a platform-wide
+    stall reads to a chairman exactly like his own project going quiet. A
+    project that raises now loses its own tick and nothing else.
+    """
+    with db_session() as session:
+        project_ids = [
+            row for (row,) in session.execute(
+                select(Project.id).where(Project.status == ProjectStatus.RUNNING)
+            )
+        ]
+    enqueued = 0
+    for project_id in project_ids:
+        try:
+            with db_session() as session:
+                project = session.get(Project, project_id)
+                if project is None or project.status != ProjectStatus.RUNNING:
+                    continue  # paused between the listing and now
+                enqueued += _dispatch_project(
+                    session, project, effective(session, project_id))
+        except LookupError:
+            # No constitution row. Both loops skip such a project entirely, so
+            # it is stopped in the most complete way we have; project_health
+            # raises it as a hard failure rather than leaving it silent.
+            log.warning("project %s has no constitution; skipping dispatch", project_id)
+        except Exception:
+            log.exception("dispatch failed for project %s", project_id)
+    return enqueued
+
+
 def dispatch_once(session: Session) -> int:
-    """One tick over all running projects. Returns the number of runs enqueued."""
+    """One tick over all running projects inside the caller's transaction.
+
+    The test harness's entry point, and the honest single-transaction reading
+    of a tick. Production uses `dispatch_all`, which gives each project its own.
+    """
     enqueued = 0
     for project in session.execute(
         select(Project).where(Project.status == ProjectStatus.RUNNING)
@@ -484,6 +521,8 @@ def _hhmm(iso: str | None) -> str:
 
 
 def _listed(names: list[str]) -> str:
+    if not names:
+        return "something"
     if len(names) == 1:
         return names[0]
     return ", ".join(names[:-1]) + f" and {names[-1]}"

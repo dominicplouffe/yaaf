@@ -777,6 +777,10 @@ def board(project_id: str, session: Session = Depends(db)) -> list[dict]:
             "external": t.produces_external_evidence,
             "success_test": t.success_test, "evidence": t.completion_evidence,
             "check_output": t.check_output, "blocked_reason": t.blocked_reason,
+            # A gated task is READY and unclaimable, and rendering it as plain
+            # "ready" is what let a company sit silent behind a start time
+            # nobody could see.
+            "not_before": t.not_before.isoformat() if t.not_before else None,
             "hypothesis_id": t.hypothesis_id, "audit_status": t.audit_status,
         }
         for t in rows

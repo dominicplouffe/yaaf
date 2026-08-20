@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -19,10 +20,36 @@ from fastapi.staticfiles import StaticFiles
 
 from yaaf.core.constitution import effective
 from yaaf.core.db import db_session
-from yaaf.core.models import Run
+from yaaf.core.models import Run, RunKind
 from yaaf.server.policy import Refusal
 
 log = logging.getLogger("yaaf.api")
+
+#: Refusal timestamps per resident chat session, newest last. A chat run row
+#: lives for days, so the lifetime count on the row is the wrong number to cap:
+#: five mistakes spread across a week would revoke the boardroom, drop the
+#: chairman's reply into stderr and leave the room silent with no explanation.
+#: Loop protection wants a rate. Held in the process rather than the database
+#: because it is a backstop, not a record — the durable count stays on the run
+#: row for the Runs page, and a restart forgiving an old window is the failure
+#: direction we want.
+_CHAT_REFUSALS: dict[str, list[float]] = {}
+CHAT_REFUSAL_WINDOW_S = 3600.0
+
+
+def _recent_refusals(run_id: str) -> int:
+    """Refusals this chat session has hit inside the trailing window, counting
+    the one being handled now."""
+    now = time.monotonic()
+    hits = [t for t in _CHAT_REFUSALS.get(run_id, []) if now - t < CHAT_REFUSAL_WINDOW_S]
+    hits.append(now)
+    _CHAT_REFUSALS[run_id] = hits
+    # Sessions end; their windows should not outlive the process for them.
+    if len(_CHAT_REFUSALS) > 256:
+        for stale in [k for k, v in _CHAT_REFUSALS.items()
+                      if not v or now - v[-1] > CHAT_REFUSAL_WINDOW_S]:
+            _CHAT_REFUSALS.pop(stale, None)
+    return len(hits)
 
 
 def _web_dist() -> Path | None:
@@ -58,9 +85,22 @@ def create_app() -> FastAPI:
                         cap = effective(session, run.project_id).refusal_cap_per_run
                     except LookupError:
                         cap = 5
-                    remaining = max(0, cap - run.refusal_count)
-                    if run.refusal_count >= cap:
-                        run.token_revoked = True
+                    # The cap is "refusals this run", and a chat session is one
+                    # run row that lives for days. Counted over a lifetime it
+                    # meant five mistakes spread across a week revoked the
+                    # boardroom — the chairman's reply was then dropped into
+                    # stderr and the room went silent. Loop protection wants a
+                    # rate, not a total; the lifetime count stays on the row
+                    # because the Runs page is right to show it.
+                    if run.kind == RunKind.CHAT_SESSION:
+                        hits = _recent_refusals(run.id)
+                        remaining = max(0, cap - hits)
+                        if hits >= cap:
+                            run.token_revoked = True
+                    else:
+                        remaining = max(0, cap - run.refusal_count)
+                        if run.refusal_count >= cap:
+                            run.token_revoked = True
         # Every wall an agent hits, in the operator's log. Until this line, a
         # refusal existed only inside the run that died of it — the platform
         # could refuse the same agent the same way for a week and the only

@@ -292,6 +292,17 @@ class NoticeKind(enum.StrEnum):
     TASK_CHECK_FAILED = "task_check_failed"
     TASK_BLOCKED = "task_blocked"
     AGENT_RUN_REAPED = "agent_run_reaped"
+    # The company is running, has work, and has started nothing for hours. Urgent
+    # by construction: the whole point is that the silence already went on too
+    # long, so batching this notice behind another would extend the fault it
+    # exists to report.
+    STALLED = "stalled"
+    # Scope that quietly stopped moving: every task it ever had is closed and
+    # none of them succeeded, so its acceptance test will never run.
+    REQUIREMENT_STALLED = "requirement_stalled"
+    # A team of two or more with nobody named as lead cannot claim its own
+    # queue. The platform names the earliest member and says so.
+    LEAD_ELECTED = "lead_elected"
     AUDIT_FAILED = "audit_failed"  # chairman spot-audit failed an evidence row or completion
     # Memory pressure warns the scope's curator early enough to curate on a wake
     # it was having anyway; MEMORY_FULL is urgent because the scope has stopped

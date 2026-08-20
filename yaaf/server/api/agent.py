@@ -77,6 +77,10 @@ def _task_view(task: Task) -> dict:
         "blocked_reason": task.blocked_reason,
         "claimed_by_agent_id": task.claimed_by_agent_id,
         "hypothesis_id": task.hypothesis_id,
+        # What this work is FOR. Outside Explore a task must name a requirement,
+        # and there was no read anywhere that returned one — so the only way to
+        # supply the mandatory field was to guess an id and eat the 404.
+        "requirement_id": task.requirement_id,
         "not_before": task.not_before.isoformat() if task.not_before else None,
     }
 
@@ -183,6 +187,7 @@ def create_task(
         produces_external_evidence=body.produces_external_evidence,
         hypothesis_id=body.hypothesis_id,
         requirement=requirement,
+        not_before=body.not_before,
     )
     if body.parent_task_id is not None:
         if body.assignee_agent_id is None:

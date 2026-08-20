@@ -302,6 +302,34 @@ def tasks_dead_on_check(
     ]
 
 
+def check_task_gate(cons: ConstitutionDoc, not_before: datetime | None) -> None:
+    """How far ahead work may be laid out.
+
+    `not_before` is a real and useful verb — it is how a CEO sequences a weekly
+    rhythm, or a step that only makes sense after another lands. It is also how
+    a company goes silent for no visible reason: one CEO gated its only open
+    task two hours out, the dispatcher correctly woke nobody, and the chairman
+    paused the project with the reason "been idle and I have no idea why".
+
+    The rule is not "never schedule" — it is "sequence on the predecessor
+    landing, not on a clock you guessed at". A gate you can see the end of from
+    here is fine; a gate that outlives the chairman's patience is not.
+    """
+    if not_before is None or cons.max_task_gate_hours <= 0:
+        return
+    gate = not_before if not_before.tzinfo else not_before.replace(tzinfo=UTC)
+    limit = utcnow() + timedelta(hours=cons.max_task_gate_hours)
+    if gate > limit:
+        raise Refusal(
+            f"not_before is {(gate - utcnow()).total_seconds() / 3600:.1f}h out and the "
+            f"limit is {cons.max_task_gate_hours}h. Work gated on a clock wakes nobody "
+            "and explains itself to no one: if this task depends on another finishing, "
+            "create it when that one lands (you will be woken) rather than guessing at "
+            "a time. If it genuinely belongs to a later date, say so to the chairman.",
+            status_code=422,
+        )
+
+
 def check_task_create(
     session: Session,
     cons: ConstitutionDoc,
@@ -314,9 +342,11 @@ def check_task_create(
     produces_external_evidence: bool,
     hypothesis_id: str | None,
     requirement: Requirement | None = None,
+    not_before: datetime | None = None,
 ) -> None:
     require_project_running(project)
     validate_success_test(cons, success_test)
+    check_task_gate(cons, not_before)
 
     # What is this work FOR? Outside Explore, a task that serves nothing is a
     # refusal rather than a smell. The audit's diagnosis in one line was that

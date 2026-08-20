@@ -44,7 +44,13 @@ function Block({ title, children, clampable = true }: {
   );
 }
 
-function taskBadge(status: string) {
+/** A gated task is stored as READY, and rendering it as "ready" is exactly how
+    a company sat silent for two hours behind a start time nobody could see:
+    the row said work was in hand, and it was — just not yet claimable by
+    anyone. "scheduled" is the honest word for it. */
+function taskBadge(status: string, notBefore?: string | null) {
+  if (status === "ready" && notBefore && new Date(notBefore) > new Date())
+    return <span className="badge warn">scheduled</span>;
   const cls =
     status === "done"
       ? "good"
@@ -351,12 +357,18 @@ export default function Work({ ctx }: { ctx: ProjectCtx }) {
         </td>
         <td>{sub ? "" : task.team_name ?? "—"}</td>
         <td>
-          {taskBadge(task.status)}
+          {taskBadge(task.status, task.not_before)}
           {/* Blocked reasons on the row, in plain words — a blocked task is
               precisely the row that must be understood without clicking. */}
           {task.blocked_reason && (
             <div className="help" style={{ marginTop: 2 }}>{task.blocked_reason}</div>
           )}
+          {task.status === "ready" && task.not_before &&
+            new Date(task.not_before) > new Date() && (
+              <div className="help" style={{ marginTop: 2 }}>
+                nobody may claim it until {fmtWhen(task.not_before)}
+              </div>
+            )}
         </td>
         <td>{sub ? "" : task.external ? "✓ external" : "internal"}</td>
         <td>{task.holder_name ?? "—"}</td>

@@ -131,7 +131,34 @@ def role_version_for(session: Session, agent: Agent) -> RoleVersion | None:
     return None
 
 
-def build_system_prompt(session: Session, agent: Agent, project: Project) -> str:
+#: What /workspace is, per lane. The chat session mounts its own scratch there
+#: and the company's tree read-only at /company; a work run mounts the company's
+#: tree directly. Telling both the same story is how a boardroom CEO came to
+#: announce that a project had lost its data — it had run `ls /workspace`,
+#: found its own empty scratch, and believed the paragraph over the disk.
+WORKSPACE_RUN = (
+    "Your context window is the expensive resource and /workspace is the cheap "
+    "one: the workspace is a real directory that PERSISTS with the project "
+    "across runs and is shared by every agent on it. Keep bulk material — data "
+    "pulls, long documents, intermediate results — in files, work on it with "
+    "tools, and let only the small end of it (aggregates, samples, conclusions) "
+    "into messages, memory, or your own prose. Before fetching anything twice, "
+    "look in the workspace: a file a previous run left there is free."
+)
+WORKSPACE_CHAT = (
+    "TWO DIRECTORIES, and the difference matters. /company is the company's real "
+    "workspace, READ-ONLY: everything every agent has ever produced is in there, "
+    "and it is the same tree their runs write to. Look there before you tell the "
+    "chairman what does or does not exist — `ls /company` is cheap and being "
+    "wrong out loud is not. /workspace is your own scratch, writable, and empty "
+    "by design; nothing in it is the company's work and its emptiness means "
+    "nothing about the company. If you need to write a file, write it in "
+    "/workspace, and remember no agent run will ever see it."
+)
+
+
+def build_system_prompt(session: Session, agent: Agent, project: Project,
+                        lane: str = "run") -> str:
     cons = effective(session, project.id)
     role_version = role_version_for(session, agent)
     role_prompt = role_version.system_prompt if role_version else ""
@@ -158,13 +185,8 @@ def build_system_prompt(session: Session, agent: Agent, project: Project) -> str
         "MECHANICS: you interact with the platform through the yaaf tools (board, tasks, "
         "messages, memory, evidence, approvals). Each run is stateless: read your context, "
         "do one unit of work, write down anything durable, and exit. Query memory before "
-        "repeating work you suspect has been tried. Your context window is the expensive "
-        "resource and /workspace is the cheap one: the workspace is a real directory that "
-        "PERSISTS with the project across runs and is shared by every agent on it. Keep "
-        "bulk material — data pulls, long documents, intermediate results — in files, "
-        "work on it with tools, and let only the small end of it (aggregates, samples, "
-        "conclusions) into messages, memory, or your own prose. Before fetching anything "
-        "twice, look in the workspace: a file a previous run left there is free.\n\n"
+        "repeating work you suspect has been tried. "
+        f"{WORKSPACE_CHAT if lane == 'chat' else WORKSPACE_RUN}\n\n"
         f"{UNTRUSTED_NOTE}"
     )
 
@@ -414,6 +436,51 @@ def _memory_usage(session: Session, agent: Agent, cons: ConstitutionDoc) -> dict
     return usage
 
 
+def _situation(session: Session, project: Project, cons: ConstitutionDoc) -> dict:
+    """Whether this company is moving, and if not, why — the platform's own
+    answer rather than the CEO's reconstruction of one.
+
+    The constitution prose already tells the CEO what the caps *are* and
+    instructs it to say plainly when one has stopped the work "rather than
+    inventing a cause". It was never given any way to observe whether a cap was
+    hit. Asked why the company was idle it did the only thing it could: it
+    guessed, from an empty directory, out loud, to the chairman.
+    """
+    from yaaf.server.dispatcher import activity_state
+    from yaaf.server.janitor import month_to_date
+
+    state = activity_state(session, project, cons)
+    usd, tokens = month_to_date(session, project.id)
+    usd_mode = project.billing_mode == "api_key"
+    return {
+        "blocked_by": state["blocked_by"],
+        # The sentence the chairman is reading on his own screen right now. Say
+        # this, do not re-derive it: two different answers to "why are we idle"
+        # is worse than one imperfect answer.
+        "why": f"{state['brief']['headline']} {state['brief']['detail']}",
+        "clears_at": state["brief"]["clears_at"],
+        "runs_today": {"used": state["daily_runs"]["used"],
+                       "cap": state["daily_runs"]["cap"]},
+        "runs_this_hour": {"used": state["pacing"]["used"],
+                           "cap": state["pacing"]["cap"]},
+        "budget": {
+            "unit": "usd" if usd_mode else "tokens",
+            "spent": round(usd, 2) if usd_mode else tokens,
+            "cap": cons.monthly_usd_cap if usd_mode else cons.monthly_token_cap,
+        },
+        "waiting": state["waiting"],
+        "unreachable_work": {k: v for k, v in state["board"].items()
+                             if k in ("gated", "next_gate_at", "leaderless_teams",
+                                      "paused_agents", "stalled_requirements",
+                                      "proposed_requirements", "observable_checking")
+                             and v},
+        "note": ("This is the platform's own reading, computed by the same code that "
+                 "decides whether to start a run. If the chairman asks why nothing is "
+                 "happening, this is the answer — quote it rather than reasoning from "
+                 "what you can see in a directory."),
+    }
+
+
 def build_context_pack(session: Session, run: Run, agent: Agent, project: Project) -> dict:
     cons = effective(session, project.id)
 
@@ -472,15 +539,24 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
 
     if agent.kind == AgentKind.CEO:
         pack["chairman"] = _chairman_state(session, project, agent, now)
+        pack["situation"] = _situation(session, project, cons)
         open_tasks = policy.open_top_level_tasks(session, project.id)
         pack["board"] = {
             # failed_checks is here because "claimed" reads as healthy: a task
             # failing its checker every twenty minutes looks exactly like one
             # being worked, and the planner planned around it for a day.
+            #
+            # not_before for the same reason one layer up: a gated task reads as
+            # ready on this board, so a CEO asked why the company was idle
+            # looked at its own context, saw open work, and invented a cause.
             "open": [
                 {"id": t.id, "title": t.title, "status": t.status, "team_id": t.team_id,
                  "external": t.produces_external_evidence,
-                 "failed_checks": t.check_failures}
+                 "failed_checks": t.check_failures,
+                 "requirement_id": t.requirement_id,
+                 "claimed_by_agent_id": t.claimed_by_agent_id,
+                 "blocked_reason": t.blocked_reason,
+                 "not_before": t.not_before.isoformat() if t.not_before else None}
                 for t in open_tasks
             ],
             "ceiling": cons.queue_ceiling,

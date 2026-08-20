@@ -18,6 +18,7 @@ definitions and HTTP plumbing; do not import from the yaaf package here.
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 import time
 
@@ -123,6 +124,42 @@ def _usage_tokens(message: ResultMessage) -> tuple[int, int, int, int]:
             base._usage_int(usage, "output_tokens"),
             base._usage_int(usage, "cache_creation_input_tokens"),
             base._usage_int(usage, "cache_read_input_tokens"))
+
+
+def _situation_block() -> str:
+    """What is true right now, fetched fresh before every answer.
+
+    A chat session is one container that lives for days, and its system prompt
+    is written once at boot and never re-read. So the boardroom CEO held no
+    board, no roster, no notices, no budget and no idea whether a cap had
+    stopped the company — while being told, in that same frozen prompt, not to
+    invent a cause when work had stopped. It guessed, and the guesses reached
+    the chairman as fact. This is the fix: a work run gets a context pack on
+    every wake, and now so does every turn of the conversation.
+
+    Undelivered notices ride along and are marked delivered by the same call,
+    so "your run was reaped" and "budget exhausted" finally reach the one agent
+    the chairman actually talks to.
+    """
+    result = base._call("GET", "/agent/context")
+    if result["status"] != 200:
+        # Never block a reply on this: an unanswered chairman is worse than an
+        # under-briefed one. Say which it is rather than pretending.
+        return ("[The platform did not return the current state this turn "
+                f"({result['status']}). Read the board with your tools before making "
+                "any claim about what is or is not happening.]\n\n")
+    pack = result["body"]
+    keep = {k: pack[k] for k in
+            ("situation", "board", "plan", "chairman", "notices", "roster", "cycles",
+             "review", "commitment", "velocity", "scope")
+            if pack.get(k)}
+    return (
+        "CURRENT STATE (fetched just now — this is the platform's own reading, not a "
+        "summary. `situation.why` is the exact sentence the chairman can see on his "
+        "screen; if he asks why nothing is happening, that is the answer. Do not "
+        "reason about the company's state from what you can see in a directory):\n"
+        f"{json.dumps(keep, indent=2, default=str)}\n\n"
+    )
 
 
 def _transcript_block(messages: list[dict]) -> str:
@@ -257,8 +294,10 @@ async def _serve(client: ClaudeSDKClient, channel_id: str, state: dict) -> int |
         # only write it down and hope the next run reads the note.
         prompt_lines = [f"Chairman [{m['id']}]: {m['body']}" for m in fresh]
         prompt = "\n".join(prompt_lines)
+        # Every turn, not just the first: this session outlives amendments,
+        # budget changes, finished tasks and its own answers.
+        preamble = _situation_block()
         if first_turn:
-            preamble = ""
             if state["history"]:
                 preamble += ("Boardroom conversation so far (you may have replied via "
                              "earlier runs — do not re-answer it):\n"
@@ -266,8 +305,8 @@ async def _serve(client: ClaudeSDKClient, channel_id: str, state: dict) -> int |
             if base.MOUNT_PROBLEMS:
                 preamble += "Data source problems this session:\n" + \
                     "\n".join(base.MOUNT_PROBLEMS) + "\n\n"
-            prompt = preamble + "The chairman just said:\n" + prompt
             first_turn = False
+        prompt = preamble + "The chairman just said:\n" + prompt
 
         try:
             reply = await _run_turn(client, channel_id, prompt)
@@ -289,6 +328,11 @@ async def _serve(client: ClaudeSDKClient, channel_id: str, state: dict) -> int |
 
         _set_typing(channel_id, 0)
         if reply and not _post_reply(channel_id, reply):
+            # Composed and undeliverable — a revoked token, a refused post. The
+            # reply itself is lost, but the chairman is not left guessing: the
+            # supervisor sees the session end and says so in the boardroom
+            # (chat._end_session). It cannot be said from in here, because the
+            # thing that stopped the post also stops this.
             _log("reply post refused or failed; leaving it in the logs:\n" + reply[:500])
         # Anything the chairman sent while we were composing is picked up
         # on the next poll — immediately, not next tick.

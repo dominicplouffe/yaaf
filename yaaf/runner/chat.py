@@ -31,6 +31,9 @@ from yaaf.core.models import (
     Agent,
     AgentKind,
     AgentStatus,
+    Channel,
+    ChannelKind,
+    Message,
     Project,
     ProjectStatus,
     Run,
@@ -49,6 +52,7 @@ from yaaf.runner.daemon import (
     stash_context_doc,
 )
 from yaaf.runner.types import RunJob
+from yaaf.server import policy
 from yaaf.server.contextpack import build_system_prompt, role_version_for
 
 log = logging.getLogger("yaaf.chat")
@@ -169,6 +173,7 @@ def _supervise_project(session: Session, project: Project) -> tuple[dict | None,
     if live_run is not None:
         if live_run.token_revoked:
             _end_session(session, project, live_run, "chat session ended: token revoked")
+            say_session_broke(session, project, "its access token was revoked")
             return None, None
         # Liveness means THE container for THIS run — a running container whose
         # run died (deploy-time reap race) is a zombie polling with a dead
@@ -194,6 +199,7 @@ def _supervise_project(session: Session, project: Project) -> tuple[dict | None,
         live_run.status = RunStatus.FAILED
         live_run.finished_at = utcnow()
         live_run.summary = why[:4000]
+        say_session_broke(session, project, "its container stopped")
         log.warning("chat session for %s lost its container; restarting. Last logs:\n%s",
                     project.slug, logs[-2000:] or "(none)")
     elif running_ids:
@@ -229,6 +235,36 @@ def _end_session(session: Session, project: Project, live_run: Run | None,
     log.info("chat session for %s ended: %s", project.slug, why)
 
 
+def say_session_broke(session: Session, project: Project, why: str) -> None:
+    """Tell the boardroom when a session dies with the chairman mid-question.
+
+    Every abnormal end wrote its forensics to `run.summary` and stopped there,
+    so a chairman who had just asked something got silence — indistinguishable
+    from a CEO still thinking, for as long as it took him to give up. Only when
+    he is actually waiting: a routine restart between conversations is nobody's
+    business and a room that announces its own plumbing stops being read.
+    """
+    ceo = policy.ceo_of(session, project.id)
+    boardroom = session.execute(
+        select(Channel).where(Channel.project_id == project.id,
+                              Channel.kind == ChannelKind.BOARDROOM)
+    ).scalars().first()
+    if ceo is None or boardroom is None:
+        return
+    last_ceo, last_chairman = policy.boardroom_turns(session, boardroom.id, ceo.id)
+    if last_chairman is None or (last_ceo is not None and last_ceo >= last_chairman):
+        return  # nobody is waiting on an answer
+    session.add(Message(
+        id=ids.new_id(ids.MESSAGE), project_id=project.id, channel_id=boardroom.id,
+        sender_agent_id=None, sender_user_id=None,
+        body=(f"_The CEO's session ended before it could answer you ({why}). "
+              "A new session is starting and will pick your message up — you do not "
+              "need to repeat it._"),
+        created_at=utcnow(),
+    ))
+    log.warning("boardroom left unanswered in %s: %s", project.slug, why)
+
+
 def _prepare_session(session: Session, project: Project, ceo: Agent) -> tuple[dict, str]:
     """Everything a session start needs EXCEPT the container start: the run
     row, token, staged prompt, and launch kwargs. The caller starts the
@@ -261,7 +297,7 @@ def _prepare_session(session: Session, project: Project, ceo: Agent) -> tuple[di
         api_base_url=settings().api_base_url,
         api_token=token_plain,
     )
-    job.system_prompt = build_system_prompt(session, ceo, project) + CHAT_ADDENDUM
+    job.system_prompt = build_system_prompt(session, ceo, project, lane="chat") + CHAT_ADDENDUM
     job.model = ceo.model_override or (role_version.model if role_version else "claude-sonnet-5")
     job.effort = role_version.effort if role_version else "high"
     run.model = job.model
@@ -275,13 +311,17 @@ def _prepare_session(session: Session, project: Project, ceo: Agent) -> tuple[di
     job.billing_env = {**_billing_env(session, project),
                        **_role_secret_env(session, project, role_version)}
 
-    # Chat gets its own workspace: a run's staging must never race a resident
-    # session's, and the session never needs the project's working tree.
+    # Chat gets its own scratch at /workspace: a run's staging must never race
+    # a resident session's. It also gets the company's working tree read-only
+    # at /company — without that the boardroom CEO could see nothing the
+    # company had made, and reasoned from an empty directory out loud.
     workspace = Path(settings().workspaces_root) / f"{project.slug}-chat"
     staging = workspace / ".yaaf"
     staging.mkdir(parents=True, exist_ok=True)
     workspace.chmod(0o777)
     staging.chmod(0o777)
+    company = Path(settings().workspaces_root) / project.slug
+    company.mkdir(parents=True, exist_ok=True)
     (staging / "system_prompt.txt").write_text(job.system_prompt)
     # A resident session has no context.json — stash the prompt at start so the
     # chairman can see what the session was primed with. Best-effort.
@@ -304,6 +344,7 @@ def _prepare_session(session: Session, project: Project, ceo: Agent) -> tuple[di
         run_id=run.id,
         name=sandbox.chat_container_name(project.slug),
         workspace_dir=str(workspace),
+        company_dir=str(company),
         env=env,
         proxy_url=job.egress_proxy_url,
     )

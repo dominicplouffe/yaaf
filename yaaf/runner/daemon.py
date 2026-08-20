@@ -147,7 +147,18 @@ def lease_and_prepare(limit: int = 1) -> list[RunJob]:
         for queued in rows:
             project = session.get(Project, queued.project_id)
             if project is None or project.status != ProjectStatus.RUNNING:
-                session.delete(queued)  # paused/stopped mid-queue: drop silently
+                # Paused/stopped mid-queue. Dropping the row is correct and not
+                # a lost wake: every wake reason is derived from durable state —
+                # a ready task, an unconsumed notice, an unread message, a due
+                # heartbeat — so the dispatcher re-decides this within one tick
+                # of the project resuming. Holding the row instead would put a
+                # paused project at the head of a queue shared by every project
+                # on the box. It is logged because "the run I saw queued is
+                # gone" deserves an answer somewhere.
+                log.info("dropping queued %s for %s: project is %s", queued.kind,
+                         queued.project_id,
+                         project.status if project else "missing")
+                session.delete(queued)
                 continue
             job = _materialize(session, queued, project)
             if job is not None:
@@ -976,6 +987,12 @@ def _block_on_repeated_check_failure(
     prior = policy.tasks_dead_on_check(session, task.project_id, task.success_test,
                                        exclude_task_id=task.id)
     planner = policy.planner_of(session, task)
+    # A subtask's planner is its parent's claimant, and that agent can be gone —
+    # or be the very claimant we are blocking. Either way the notice used to go
+    # nowhere at all: the task sat BLOCKED and no one in the company was told.
+    # The CEO is the correct fallback; it owns the board.
+    if planner is None or planner.id == claimant_id:
+        planner = policy.ceo_of(session, task.project_id)
     if planner is not None and planner.id != claimant_id:
         session.add(
             Notice(

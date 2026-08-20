@@ -110,21 +110,87 @@ export interface ProjectSummary {
   goal: string;
 }
 
+/** The one sentence for why this company is quiet, written server-side beside
+    the ladder that decided it.
+
+    It used to be written here instead, in three separate switch statements. The
+    backend grew a `pacing` gate; none of the three learned about it, so a brake
+    that stops work every hour rendered as "nothing blocking — a run should
+    start shortly". Nothing in the browser decides this any more. */
+export interface ActivityBrief {
+  tone: "ok" | "warn" | "serious" | "critical";
+  chip: string;
+  /** Tile-sized, lowercase, no trailing period. */
+  short: string;
+  headline: string;
+  detail: string;
+  /** Does this deserve the box above the tabs? False when the company is
+      simply working — a banner that fires when things are fine teaches the
+      reader to stop reading it. */
+  banner: boolean;
+  /** Set only on briefs that are waiting out a clock, and only those: together
+      with `clears_at` it is what makes a banner dismissible. */
+  sig: string | null;
+  clears_at: string | null;
+}
+
 /** Why work is or isn't starting — the dispatcher's own gates, read-only.
-    `blocked_by` names the first gate stopping a run, and is null when nothing
-    is waiting (an idle project with an empty board is working correctly). */
+    `blocked_by` names the first gate stopping a run, and is null only when
+    there is genuinely nothing to do. Prefer `brief` for anything you render;
+    `blocked_by` is for highlighting the tile the gate belongs to. */
 export interface Activity {
-  blocked_by: "daily_runs" | "concurrency" | "agents_busy" | "wake_ceiling" | null;
+  blocked_by:
+    | "daily_runs"
+    | "pacing"
+    | "governance_reserve"
+    | "concurrency"
+    | "agents_busy"
+    | "wake_ceiling"
+    | "coalescing"
+    | "scheduled"
+    | "no_lead"
+    | "paused_agents"
+    | "stalled_requirement"
+    | "awaiting_chairman"
+    | "blocked_tasks"
+    | null;
+  brief: ActivityBrief;
   daily_runs: { used: number; cap: number; resets_at: string };
+  /** The trailing-hour brake. Clears run by run rather than resetting. */
+  pacing: { used: number; cap: number; frees_at: string | null };
+  /** The slice of the day only a review or a re-forecast may spend. */
+  governance_reserve: { reserved: number; ordinary_cap: number; active: boolean };
   /** When the hourly ceiling next lets someone through. `frees_at` is null
       when nothing is actually held behind it. */
   wake_ceiling: { cap: number; frees_at: string | null; agents_held: number };
+  /** Notices and messages waiting for a third, or for the oldest to age out. */
+  coalescing: { ripe_at: string | null; agents_held: number };
   concurrency: { in_flight: number; cap: number };
   waiting: {
+    /** claimable + gated. Kept because "how much is open" is still a question;
+        never render it as "ready to run" — that was the original lie. */
     ready_tasks: number;
+    claimable_tasks: number;
+    /** Ready, but carrying a start time that has not arrived. */
+    gated_tasks: number;
     claimed_tasks: number;
+    blocked_tasks: number;
     notices: number;
     agents_with_work: number;
+  };
+  /** Work that exists but the dispatcher cannot reach. */
+  board: {
+    claimable: number;
+    gated: number;
+    next_gate_at: string | null;
+    blocked: number;
+    leaderless_teams: string[];
+    paused_agents: string[];
+    stalled_requirements: string[];
+    proposed_requirements: string[];
+    observable_checking: string[];
+    plan_open: boolean;
+    unreachable: string | null;
   };
   agents: {
     id: string;
@@ -135,6 +201,8 @@ export interface Activity {
     wake_cap: number;
     wake_slot_frees_at: string | null;
     pending: number;
+    /** When this agent's batched wake lands, if one is being held. */
+    batching_until: string | null;
   }[];
 }
 
@@ -278,6 +346,10 @@ export interface TaskRow {
   evidence: string | null;
   check_output: string | null;
   blocked_reason: string | null;
+  /** A start time the CEO set. Until it passes the task is READY but nobody
+      may claim it and nobody is woken for it — so it must never render as
+      plain "ready". */
+  not_before: string | null;
   /** The bet this work serves; tasks inherit meaning — and mortality — from it. */
   hypothesis_id: string | null;
   /** Chairman spot-audit verdict on the completion; null = never audited. */

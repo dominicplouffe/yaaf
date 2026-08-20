@@ -240,6 +240,18 @@ class ConstitutionDoc(BaseModel):
              "finish. It blocks and becomes a question for whoever planned it, instead of "
              "buying another wake to fail the same way. Counts across re-claims; only a "
              "passing check resets it.")
+    max_task_gate_hours: int = _rule(
+        6, ge=1, group="Wake-loop brakes", label="Furthest ahead work may be scheduled",
+        help="Hours. A task may carry a start time before which nobody may claim it, "
+             "which is how the CEO lays work out in a sequence. Past this many hours it "
+             "is refused: a company should wait for the previous step to land, not for "
+             "a clock. One CEO gated its only open task two hours out and the company "
+             "sat silent until the chairman paused it.")
+    stall_hours: float = _rule(
+        3.0, ge=0, group="Wake-loop brakes", label="Hours of silence before you are told",
+        help="A running company with work on its board and no run started for this long "
+             "is stalled, whatever the board says. You get one notice naming the exact "
+             "cause. 0 turns the watchdog off.")
     max_concurrent_runs: int = _rule(
         3, ge=1, group="Wake-loop brakes", label="Runs in flight at once",
         help="How many agents may be working simultaneously. Protects the provider rate "

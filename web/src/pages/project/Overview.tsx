@@ -510,10 +510,18 @@ export default function Overview({
             </div>
             {/* The denominator is the whole point: 55 means nothing on its own,
                 and showing it without "of 55" is exactly how a company that had
-                spent its entire day's allowance read as a busy one. */}
+                spent its entire day's allowance read as a busy one.
+
+                Three separate gates count runs — the day, the trailing hour,
+                and the slice reserved for governance — and any of them can be
+                the reason this tile is the answer. */}
             <div
               className={`tile${
-                dash.activity.blocked_by === "daily_runs" ? " alert" : ""
+                ["daily_runs", "pacing", "governance_reserve"].includes(
+                  dash.activity.blocked_by ?? "",
+                )
+                  ? " alert"
+                  : ""
               }`}
             >
               <div className="label">Runs today</div>
@@ -526,7 +534,11 @@ export default function Overview({
               <div className="sub">
                 {dash.activity.blocked_by === "daily_runs"
                   ? `capped — resets at ${dash.activity.daily_runs.resets_at.slice(11, 16)} UTC`
-                  : `${health.clean} finished cleanly`}
+                  : dash.activity.blocked_by === "pacing"
+                    ? `pacing — ${dash.activity.pacing.used} of ${dash.activity.pacing.cap} this hour`
+                    : dash.activity.blocked_by === "governance_reserve"
+                      ? `ordinary work done — last ${dash.activity.governance_reserve.reserved} reserved`
+                      : `${health.clean} finished cleanly`}
                 {/* Never let a cap read as a total. */}
                 {(runs ?? []).length >= 200 && " · newest 200 runs"}
               </div>

@@ -39,6 +39,7 @@ from yaaf.core.constitution import (
 from yaaf.core.db import db_session, notify
 from yaaf.core.models import (
     Agent,
+    AgentStatus,
     Approval,
     ApprovalStatus,
     AuditLog,
@@ -78,58 +79,90 @@ from yaaf.server.verifier import verify_pending_evidence
 log = logging.getLogger("yaaf.janitor")
 
 
-def janitor_loop() -> None:  # pragma: no cover - thin loop around janitor_once
+def janitor_loop() -> None:  # pragma: no cover - thin loop around janitor_all
     while True:
-        try:
-            with db_session() as session:
-                janitor_once(session)
-        except Exception:
-            log.exception("janitor tick failed")
+        janitor_all()
         time.sleep(settings().janitor_poll_s)
 
 
-def janitor_once(session: Session) -> None:
-    for project in session.execute(select(Project)).scalars():
-        applied = apply_due_amendments(session, project.id)
-        for amendment in applied:
-            _notice_ceo(
-                session, project,
-                NoticeKind.CONSTITUTION_AMENDED,
-                f"The chairman amended the constitution (reason: {amendment.reason}). "
-                f"Changes now in force: {amendment.changes}. Plan accordingly.",
-            )
-        # The experiment stop rule watches PAUSED projects too: budget
-        # exhaustion pauses first, and the rule is the verdict on top.
-        from yaaf.server.experiments import check_experiment_arms
+def janitor_all() -> None:
+    """One sweep, with each project in its own transaction.
 
-        check_experiment_arms(session, project)
-        if project.status != ProjectStatus.RUNNING:
-            continue
+    The tick used to share one across every company on the box, so a single bad
+    row rolled back the enforcement pass for all of them — no reaping, no budget
+    check, no approval expiry anywhere, reported by one line on stderr. See the
+    twin of this in `dispatcher.dispatch_all`.
+    """
+    with db_session() as session:
+        project_ids = [row for (row,) in session.execute(select(Project.id))]
+    for project_id in project_ids:
         try:
-            cons = effective(session, project.id)
-        except LookupError:
-            continue
-        reap_stale_runs(session, project, cons)
-        expire_hypotheses(session, project)
-        nag_approvals(session, project, cons)
-        expire_approvals(session, project, cons)
-        enforce_budget(session, project, cons)
-        release_dead_claims(session, project, cons)
-        check_plan(session, project, cons)
-        check_finished_requirements(session, project)
-        check_commitments(session, project, cons)
-        draw_audit_samples(session, project, cons)
-        expire_audit_samples(session, project)
-        open_reviews(session, project, cons)
-        nag_reviews(session, project)
-        roll_cycles(session, project, cons)
-        check_explore_deadline(session, project)
-        check_delivery_ready(session, project)
-        warn_drought(session, project, cons)
-        warn_memory_pressure(session, project, cons)
+            with db_session() as session:
+                project = session.get(Project, project_id)
+                if project is not None:
+                    _janitor_project(session, project)
+        except Exception:
+            log.exception("janitor failed for project %s", project_id)
+    try:
+        with db_session() as session:
+            verify_pending_evidence(session)
+    except Exception:
+        log.exception("evidence verification failed")
+
+
+def janitor_once(session: Session) -> None:
+    """One sweep inside the caller's transaction — the test harness's entry
+    point. Production uses `janitor_all`, which isolates each project."""
+    for project in session.execute(select(Project)).scalars():
+        _janitor_project(session, project)
     verify_pending_evidence(session)
     # Slack mirroring moved to its own 2s loop (slack.socket.fast_mirror_loop):
     # chat-grade latency, and no double-post race with an enforcement tick.
+
+
+def _janitor_project(session: Session, project: Project) -> None:
+    """Every enforcement rule this project is due, in order."""
+    applied = apply_due_amendments(session, project.id)
+    for amendment in applied:
+        _notice_ceo(
+            session, project,
+            NoticeKind.CONSTITUTION_AMENDED,
+            f"The chairman amended the constitution (reason: {amendment.reason}). "
+            f"Changes now in force: {amendment.changes}. Plan accordingly.",
+        )
+    # The experiment stop rule watches PAUSED projects too: budget
+    # exhaustion pauses first, and the rule is the verdict on top.
+    from yaaf.server.experiments import check_experiment_arms
+
+    check_experiment_arms(session, project)
+    if project.status != ProjectStatus.RUNNING:
+        return
+    try:
+        cons = effective(session, project.id)
+    except LookupError:
+        return
+    reap_stale_runs(session, project, cons)
+    expire_hypotheses(session, project)
+    nag_approvals(session, project, cons)
+    expire_approvals(session, project, cons)
+    enforce_budget(session, project, cons)
+    release_dead_claims(session, project, cons)
+    elect_missing_leads(session, project)
+    check_plan(session, project, cons)
+    check_finished_requirements(session, project)
+    check_stalled_requirements(session, project)
+    nag_observable_requirements(session, project, cons)
+    check_commitments(session, project, cons)
+    draw_audit_samples(session, project, cons)
+    expire_audit_samples(session, project)
+    open_reviews(session, project, cons)
+    nag_reviews(session, project)
+    roll_cycles(session, project, cons)
+    check_explore_deadline(session, project)
+    check_delivery_ready(session, project)
+    warn_drought(session, project, cons)
+    warn_stall(session, project, cons)
+    warn_memory_pressure(session, project, cons)
 
 
 def _notice_ceo(session: Session, project: Project, kind: str, body: str) -> None:
@@ -1432,6 +1465,205 @@ def warn_memory_pressure(session: Session, project: Project, cons: ConstitutionD
             "full" if full else "pressure", project.slug, scope, team_id, live, cap,
             curator.name if curator else "NONE (leaderless)",
         )
+
+
+# ── the stall watchdog and the three silences it used to miss ─────────────────
+
+
+def elect_missing_leads(session: Session, project: Project) -> None:
+    """A team of two or more with nobody named as lead cannot claim its own
+    queue: only the lead may claim a team task, and only the lead is woken for
+    one. Nothing reported it, so such a team's board sat READY forever while
+    every screen showed a healthy company with work in hand.
+
+    The earliest-created member is the safe answer — it is the same agent
+    `effective_lead` already picks when a team has exactly one — and the
+    election is disclosed rather than done quietly.
+    """
+    for team in session.execute(
+        select(Team).where(Team.project_id == project.id)
+    ).scalars():
+        if policy.effective_lead(session, team) is not None:
+            continue
+        members = policy.team_agents(session, team.id)
+        active = [a for a in members if a.status == AgentStatus.ACTIVE]
+        if len(active) < 2:
+            continue  # no members, or a sole member who is already the de-facto lead
+        lead = active[0]  # team_agents orders by created_at
+        team.lead_agent_id = lead.id
+        session.add(AuditLog(
+            id=ids.new_id(ids.AUDIT), project_id=project.id, actor="system:janitor",
+            action="team.lead_elected", entity="team", entity_id=team.id,
+            detail={"agent_id": lead.id, "name": lead.name},
+        ))
+        _notice_ceo(
+            session, project, NoticeKind.LEAD_ELECTED,
+            f"Team {team.name} had ready work and no lead, so nobody could claim it and "
+            f"nobody was woken for it. The platform named {lead.name} — its earliest "
+            "member — so the queue can move. Change it in Settings if you meant someone "
+            "else.",
+        )
+        log.warning("elected lead %s for leaderless team %s (%s)",
+                    lead.name, team.name, project.slug)
+
+
+def check_stalled_requirements(session: Session, project: Project) -> None:
+    """Scope whose every task is closed and none of them succeeded.
+
+    `check_finished_requirements` returns early here — correctly, since there is
+    nothing to test — so the requirement stays IN_PROGRESS forever with an empty
+    board. And an empty board is exactly what suppresses the CEO's planning
+    heartbeat, so the company goes completely silent over work that is still
+    formally open. Told once per requirement.
+    """
+    for req in session.execute(
+        select(Requirement).where(Requirement.project_id == project.id,
+                                  Requirement.status == RequirementStatus.IN_PROGRESS)
+    ).scalars():
+        total = session.execute(
+            select(func.count(Task.id)).where(Task.requirement_id == req.id)
+        ).scalar_one()
+        if not total:
+            continue
+        open_now = session.execute(
+            select(func.count(Task.id)).where(
+                Task.requirement_id == req.id,
+                Task.status.in_(policy.OPEN_TASK_STATUSES))
+        ).scalar_one()
+        done = session.execute(
+            select(func.count(Task.id)).where(Task.requirement_id == req.id,
+                                              Task.status == TaskStatus.DONE)
+        ).scalar_one()
+        if open_now or done:
+            continue
+        already = session.execute(
+            select(func.count(Notice.id)).where(
+                Notice.project_id == project.id,
+                Notice.kind == NoticeKind.REQUIREMENT_STALLED,
+                Notice.body.like(f"%{req.key}%"))
+        ).scalar_one()
+        if already:
+            continue
+        _notice_ceo(
+            session, project, NoticeKind.REQUIREMENT_STALLED,
+            f"{req.key} has stalled: every task it ever had is closed and none of them "
+            "succeeded, so its acceptance test will never run and it can never be met. "
+            "It needs new work or it needs proposing for a cut — it will not resolve "
+            "itself.",
+        )
+        log.warning("requirement %s stalled with no surviving work (%s)",
+                    req.key, project.slug)
+
+
+def nag_observable_requirements(
+    session: Session, project: Project, cons: ConstitutionDoc
+) -> None:
+    """A requirement whose acceptance test only the chairman can judge parks in
+    CHECKING and waits. There was no expiry, no nag and no email — one notice to
+    the CEO at the moment it parked, and then silence for as long as it took.
+    Nagged on the approval cadence, because it is the same kind of wait.
+    """
+    cutoff = utcnow() - timedelta(days=1)
+    for req in session.execute(
+        select(Requirement).where(Requirement.project_id == project.id,
+                                  Requirement.status == RequirementStatus.CHECKING)
+    ).scalars():
+        if (req.acceptance_test or {}).get("type") != "observable":
+            continue
+        # The nag's own cadence lives in the audit trail rather than a column:
+        # it is the same "told once, then once a day" shape as the completion
+        # receipt, and it wants to be readable as a record either way.
+        sent = session.execute(
+            select(func.count(AuditLog.id)).where(
+                AuditLog.project_id == project.id,
+                AuditLog.action == "requirement.verdict_nag",
+                AuditLog.entity_id == req.id,
+                AuditLog.at >= cutoff)
+        ).scalar_one()
+        if sent:
+            continue
+        first = not session.execute(
+            select(func.count(AuditLog.id)).where(
+                AuditLog.project_id == project.id,
+                AuditLog.action == "requirement.verdict_nag",
+                AuditLog.entity_id == req.id)
+        ).scalar_one()
+        session.add(AuditLog(
+            id=ids.new_id(ids.AUDIT), project_id=project.id, actor="system:janitor",
+            action="requirement.verdict_nag", entity="requirement", entity_id=req.id,
+            detail={"key": req.key, "first": first},
+        ))
+        chairman_notify(
+            session, project, f"{req.key} is waiting on your verdict",
+            f"{req.key} — {req.statement}\n\n"
+            "Its acceptance test is one the platform cannot run: "
+            f"{(req.acceptance_test or {}).get('target', 'an observable outcome')}.\n\n"
+            "Nothing downstream of it can start until you rule. Open the Plan tab and "
+            "record met or not met."
+            + ("" if first else "\n\nThis is a repeat — it has been waiting since it "
+                                "entered checking."),
+        )
+        log.info("nagged chairman on observable requirement %s (%s)",
+                 req.key, project.slug)
+
+
+def warn_stall(session: Session, project: Project, cons: ConstitutionDoc) -> None:
+    """A running company with work in hand that has started nothing for hours.
+
+    Every gate below this is individually correct and individually invisible;
+    what nobody had was the fact that they add up to a company doing nothing.
+    The notice carries the dispatcher's own diagnosis verbatim, so the CEO reads
+    the same sentence the chairman does instead of guessing at a cause.
+    """
+    if cons.stall_hours <= 0:
+        return
+    from yaaf.server.dispatcher import activity_state
+
+    state = activity_state(session, project, cons)
+    waiting = state["waiting"]
+    if not (waiting["ready_tasks"] or waiting["claimed_tasks"]
+            or waiting["blocked_tasks"] or waiting["notices"]):
+        return  # nothing on the board: quiet is the right answer, not a stall
+    # A gate that names its own clearing time is a wait, not a stall — the
+    # watchdog exists for silence nobody can explain, not for one the product
+    # already explains with a moment attached.
+    brief = state["brief"]
+    if brief["clears_at"]:
+        return
+
+    since = utcnow() - timedelta(hours=float(cons.stall_hours))
+    started = session.execute(
+        select(func.count(Run.id)).where(Run.project_id == project.id,
+                                         Run.kind != RunKind.CHAT_SESSION,
+                                         Run.created_at >= since)
+    ).scalar_one()
+    if started:
+        return
+
+    already = session.execute(
+        select(func.count(Notice.id)).where(
+            Notice.project_id == project.id,
+            Notice.kind == NoticeKind.STALLED,
+            Notice.created_at >= since,
+        )
+    ).scalar_one()
+    if already:
+        return
+
+    _notice_ceo(
+        session, project, NoticeKind.STALLED,
+        f"This company has started no run in {cons.stall_hours:g}h and still has work "
+        f"open. The platform's own reading: {brief['headline']} {brief['detail']} "
+        "Do not guess at a different cause — that sentence is the dispatcher's, not a "
+        "summary. Act on it or tell the chairman what you need.",
+    )
+    chairman_notify(
+        session, project, "the company has gone quiet",
+        f"No run has started in {cons.stall_hours:g}h and there is still work open.\n\n"
+        f"{brief['headline']} {brief['detail']}",
+    )
+    log.warning("stall in %s after %sh: %s", project.slug, cons.stall_hours,
+                state["blocked_by"])
 
 
 # ── drought (informational; enforcement is at task creation) ───────────────────
