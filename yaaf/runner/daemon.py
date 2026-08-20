@@ -497,8 +497,13 @@ def execute_job(job: RunJob, backend=None) -> RunResult:
     )
     beat.start()
     try:
-        if job.kind == RunKind.SUCCESS_CHECK:
-            result = _run_success_check(job)
+        # Both check kinds are COMMANDS the platform runs and reads the exit
+        # code of — never model runs. Sending one to the model backend launches
+        # a sandbox with no token, no prompt and no billing credential, which
+        # dies as "Not logged in" and returns no exit code at all: the
+        # requirement then fails a test that never ran, forever.
+        if job.kind in (RunKind.SUCCESS_CHECK, RunKind.REQUIREMENT_CHECK):
+            result = _run_check_command(job)
         else:
             backend = backend or _backend_for(job)
             # The revoked event reaches the sandbox layer so a kill switch,
@@ -1004,19 +1009,33 @@ def _block_on_repeated_check_failure(
         )
 
 
-def _run_success_check(job: RunJob) -> RunResult:
-    """Execute a command-type success test. The agent never self-reports this;
-    the platform runs it and reads the exit code."""
+def _run_check_command(job: RunJob) -> RunResult:
+    """Execute a command-type test — a task's success test or a requirement's
+    acceptance test. The agent never self-reports either; the platform runs the
+    command and reads the exit code."""
     from yaaf.runner.sandbox import run_check_command
 
+    label = "success check" if job.kind == RunKind.SUCCESS_CHECK else "acceptance test"
+    command = (job.check_command or "").strip()
+    if not command:
+        # An empty command run by a shell exits 0, and exit 0 is what marks a
+        # requirement MET. Nothing may pass by being blank — that is the exact
+        # unearned "done" the checker exists to prevent.
+        return RunResult(
+            ok=False,
+            summary=f"{label} has no command to run",
+            check_exit_code=None,
+            check_output=f"the {label} is a command test but its command is empty",
+        )
+
     exit_code, output = run_check_command(
-        command=job.check_command or "",
+        command=command,
         workspace_dir=job.workspace_dir,
         timeout_s=job.timeout_s,
     )
     return RunResult(
         ok=True,
-        summary=f"success check exit={exit_code}",
+        summary=f"{label} exit={exit_code}",
         check_exit_code=exit_code,
         check_output=output,
     )

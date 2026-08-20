@@ -26,6 +26,7 @@ from yaaf.core.models import (
     Requirement,
     RequirementEvent,
     RequirementStatus,
+    RunKind,
 )
 
 CMD_TEST = {"type": "command", "command": "test -s out/report.pdf"}
@@ -249,6 +250,51 @@ def test_closing_every_task_moves_a_requirement_to_checking_not_to_met(client):
         assert row.status == RequirementStatus.CHECKING, \
             "an observable requirement must wait for the chairman, never self-close"
         assert row.met_at is None
+
+
+def test_an_acceptance_test_is_run_as_a_command_not_as_a_model(client):
+    """A requirement check IS the command, and the platform runs it.
+
+    It was dispatched to the model backend instead, which launches a sandbox
+    with no token, no prompt and no billing credential — so every acceptance
+    test died as "Not logged in · Please run /login", returned no exit code,
+    and left its requirement failing a test that had never executed. A
+    requirement that cannot be met is worse than one with no test at all: it
+    burns a container per attempt and reports the failure as the work's.
+    """
+    from yaaf.runner import daemon
+    from yaaf.runner.types import RunJob
+
+    ran: list[str] = []
+
+    def fake_command(command, workspace_dir, timeout_s):
+        ran.append(command)
+        return 0, "ok"
+
+    job = RunJob(run_id="run_x", project_id="proj_x", agent_id=None,
+                 kind=RunKind.REQUIREMENT_CHECK, trigger={}, task_id=None, attempt=1,
+                 check_command="test -s out/report.pdf", workspace_dir="/tmp")
+
+    import yaaf.runner.sandbox as sandbox_mod
+
+    original = sandbox_mod.run_check_command
+    sandbox_mod.run_check_command = fake_command
+    try:
+        result = daemon._run_check_command(job)
+    finally:
+        sandbox_mod.run_check_command = original
+
+    assert ran == ["test -s out/report.pdf"], "the acceptance test must actually run"
+    assert result.check_exit_code == 0
+    assert "acceptance test" in result.summary
+
+    # And a command test with no command never passes: an empty string handed
+    # to a shell exits 0, and exit 0 is precisely what writes `met`.
+    blank = RunJob(run_id="run_y", project_id="proj_x", agent_id=None,
+                   kind=RunKind.REQUIREMENT_CHECK, trigger={}, task_id=None, attempt=1,
+                   check_command="   ", workspace_dir="/tmp")
+    empty = daemon._run_check_command(blank)
+    assert empty.check_exit_code is None and empty.ok is False
 
 
 def test_the_chairman_verdict_is_the_only_thing_that_meets_an_observable(client):
