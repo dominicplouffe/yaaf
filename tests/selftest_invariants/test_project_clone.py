@@ -165,6 +165,46 @@ def test_slack_tokens_travel_but_rooms_do_not(client):
         assert decrypt(token.ciphertext) == "xoxb-token"  # no re-pasting
 
 
+def test_a_twin_is_the_same_SHAPE_of_company(client):
+    """Mode decides whether a company has requirements at all, and it is frozen
+    at creation — so a twin that comes back in the wrong one cannot be
+    corrected, only deleted and rebuilt. The clone left mode out of the
+    constructor and the model default is Explore, so every twin of a Deliver
+    company silently became an Explore company with no Plan tab and nowhere to
+    put its scope. Seen live: a Deliver project twinned, and its plan was gone.
+    """
+    from datetime import timedelta
+
+    from yaaf.core.models import ProjectMode, utcnow
+
+    source = make_project(client, slug="deliverer", mode="deliver")
+    twin = _clone(client, source["id"], slug="deliverer-twin")
+    assert twin.status_code == 200, twin.text
+    assert twin.json()["mode"] == "deliver"
+    with db_session() as session:
+        assert session.get(Project, twin.json()["id"]).mode == ProjectMode.DELIVER
+
+    # An Explore window that is still open comes across as it is...
+    future = utcnow() + timedelta(days=30)
+    explorer = make_project(client, slug="explorer", mode="explore")
+    with db_session() as session:
+        session.get(Project, explorer["id"]).deadline = future
+    live = _clone(client, explorer["id"], slug="explorer-twin")
+    assert live.json()["copied"]["deadline_dropped"] is False
+    with db_session() as session:
+        assert session.get(Project, live.json()["id"]).deadline is not None
+
+    # ...but a spent one is not inherited: a deadline in the past would have
+    # the janitor close the window on a company that never opened it.
+    with db_session() as session:
+        session.get(Project, explorer["id"]).deadline = utcnow() - timedelta(days=1)
+    stale = _clone(client, explorer["id"], slug="explorer-twin-2")
+    assert stale.json()["copied"]["deadline_dropped"] is True
+    with db_session() as session:
+        twin_row = session.get(Project, stale.json()["id"])
+        assert twin_row.deadline is None and twin_row.mode == ProjectMode.EXPLORE
+
+
 def test_a_taken_slug_is_refused_before_anything_is_written(client):
     project = make_project(client, start=False)
     refused = _clone(client, project["id"], slug="acme")  # the source's own slug

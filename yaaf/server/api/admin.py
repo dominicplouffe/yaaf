@@ -575,12 +575,24 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
         # nowhere until the chairman maps rooms — with the tokens already there.
         integrations["slack"] = {**integrations["slack"], "channel_map": {}}
 
+    # A twin of a Deliver company that comes back as an Explore one is not a
+    # twin: mode decides whether the company has requirements at all, and it is
+    # frozen at creation — so getting it wrong here cannot be corrected later,
+    # only deleted and redone. It defaults to EXPLORE on the model, which is
+    # what an omission silently produced.
+    #
+    # The deadline is Explore's window, and copying one verbatim can hand the
+    # twin a date that has already passed — a company the janitor closes at
+    # birth. A future window carries; a spent one is reported, not inherited.
+    deadline_expired = (source.deadline is not None and source.deadline <= utcnow())
     project = Project(
         id=ids.new_id(ids.PROJECT),
         slug=body.slug,
         name=body.name or f"{source.name} (clone)",
         goal=body.goal or source.goal,
         chairman_user_id=source.chairman_user_id,
+        mode=source.mode,
+        deadline=None if deadline_expired else source.deadline,
         billing_mode=source.billing_mode,
         controlled_domains=list(source.controlled_domains or []),
         github_repo=source.github_repo,
@@ -690,10 +702,12 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
         "ceo_agent_id": ceo.id,
         "teams": team_out,
         "status": project.status,
+        "mode": project.mode,
         "copied": {
             "secrets": len(ciphertexts),
             "data_sources": [{"name": e["name"], "check": e["last_check"]} for e in checked],
             "slack_rooms_dropped": slack_rooms_dropped,
+            "deadline_dropped": deadline_expired,
         },
     }
 

@@ -538,9 +538,15 @@ export interface CloneResult {
   slug: string;
   name: string;
   status: string;
+  /** The twin's shape. Frozen at creation like any project's, so it is worth
+      reading back rather than assuming. */
+  mode: string;
   copied: {
     secrets: number;
     data_sources: { name: string; check: { ok: boolean; detail: string } }[];
     slack_rooms_dropped: boolean;
+    /** The source's Explore window had already passed, so the twin starts
+        without one rather than being closed at birth. */
+    deadline_dropped: boolean;
   };
 }

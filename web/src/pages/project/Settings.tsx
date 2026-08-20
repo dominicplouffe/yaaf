@@ -1405,6 +1405,16 @@ export default function Settings({
             "Fix the address in the twin's Settings → Data sources before starting it.",
         );
       }
+      // An Explore twin whose source window had already passed starts without
+      // one. Silence here would read as "it kept the deadline", and mode is
+      // frozen — so the window is the only part of the shape still settable.
+      if (twin.copied.deadline_dropped) {
+        alert(
+          `Twin "${twin.slug}" created without a deadline: the window it was copied from ` +
+            "has already passed, and inheriting it would have closed this company at birth. " +
+            "Set a new one in the twin's Settings.",
+        );
+      }
       navigate(`/projects/${twin.id}`);
     } catch (e) {
       setError((e as Error).message);
