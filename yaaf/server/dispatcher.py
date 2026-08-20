@@ -22,7 +22,7 @@ import logging
 import time
 from datetime import UTC, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from yaaf.core import ids
@@ -44,6 +44,8 @@ from yaaf.core.models import (
     NoticeKind,
     Project,
     ProjectStatus,
+    Requirement,
+    RequirementStatus,
     Run,
     RunKind,
     RunQueue,
@@ -260,11 +262,27 @@ def _requirement_for_wake(session: Session, project: Project, agent: Agent,
     return None
 
 
-def _unread_for(session: Session, project: Project, agent: Agent) -> int:
-    """Messages this agent would wake for. Mirrors the filter in _wake_reasons
-    (not self-authored, not under a frozen root, boardroom skipped for a CEO
-    whose chat session is live) minus the pair-breaker, which is a trip
-    detector rather than a filter and cannot run from a read path."""
+def _utc(value):
+    """Timestamps read back from SQLite come home naive. Comparing one of those
+    against an aware `now` raises, and a raise inside a read path is a blank
+    page where a reason should be."""
+    if value is not None and value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value
+
+
+def _unread_detail_for(
+    session: Session, project: Project, agent: Agent
+) -> tuple[int, object | None, bool]:
+    """Messages this agent would wake for, plus the two facts the coalescing
+    window turns on: when the oldest of them arrived, and whether any is urgent
+    enough to skip the window entirely.
+
+    Mirrors the filter in _wake_reasons (not self-authored, not under a frozen
+    root, boardroom skipped for a CEO whose chat session is live) minus the
+    pair-breaker, which is a trip detector rather than a filter and cannot run
+    from a read path.
+    """
     skip: set[str] = set()
     if agent.kind == AgentKind.CEO and chat_session_live(session, project):
         skip = {
@@ -274,9 +292,12 @@ def _unread_for(session: Session, project: Project, agent: Agent) -> int:
             ).scalars()
         }
     total = 0
+    oldest = None
+    urgent = False
     for channel_id in policy.agent_channel_ids(session, agent):
         if channel_id in skip:
             continue
+        channel = session.get(Channel, channel_id)
         cursor = session.execute(
             select(ChannelRead).where(ChannelRead.agent_id == agent.id,
                                       ChannelRead.channel_id == channel_id)
@@ -291,7 +312,367 @@ def _unread_for(session: Session, project: Project, agent: Agent) -> int:
             if root is not None and root.frozen_at is not None:
                 continue
             total += 1
-    return total
+            # Same urgency rule as _wake_reasons: the chairman never waits out
+            # a batching window, and neither does anything said in his room.
+            if (message.sender_user_id is not None
+                    or (channel is not None and channel.kind == ChannelKind.BOARDROOM)):
+                urgent = True
+            at = _utc(message.created_at)
+            if oldest is None or at < oldest:
+                oldest = at
+    return total, oldest, urgent
+
+
+def _unread_for(session: Session, project: Project, agent: Agent) -> int:
+    return _unread_detail_for(session, project, agent)[0]
+
+
+def _notices_detail_for(session: Session, agent: Agent) -> tuple[int, object | None, bool]:
+    """Undelivered notices for this agent, shaped like `_unread_detail_for` so
+    the same coalescing arithmetic reads both."""
+    rows = session.execute(
+        select(Notice.kind, Notice.created_at).where(Notice.agent_id == agent.id,
+                                                     Notice.consumed_at.is_(None))
+    ).all()
+    if not rows:
+        return 0, None, False
+    return (
+        len(rows),
+        min(_utc(created_at) for _, created_at in rows),
+        any(kind in URGENT_NOTICE_KINDS for kind, _ in rows),
+    )
+
+
+def _coalesced_until(count: int, oldest, urgent: bool, now, minutes: float, threshold: int):
+    """When a batched wake stops being held, or None if nothing is being held.
+
+    The dispatcher deliberately refuses to buy a full-price run for one or two
+    notices, so it waits for a third or for the oldest to age out. That is
+    correct and it is also, on the clock, the single most common reason a
+    healthy company looks stopped — the wait is minutes long and named nowhere.
+    This is the same arithmetic as `_wake_reasons`, read-only, so a screen can
+    say which minute it ends.
+    """
+    if not count or urgent or count >= threshold or oldest is None:
+        return None
+    ripe = oldest + timedelta(minutes=minutes)
+    return ripe if ripe > now else None
+
+
+def _board_reachability(session: Session, project: Project, now) -> dict:
+    """The board as the dispatcher can actually reach it.
+
+    An empty board and a board nobody may touch both produce zero wakes, and
+    until now both rendered as "an idle project costs nothing". These are the
+    ways work can exist and still be unreachable, each with the fact a reader
+    needs to act on it.
+    """
+    ready = list(session.execute(
+        select(Task).where(Task.project_id == project.id,
+                           Task.status == TaskStatus.READY)
+    ).scalars())
+
+    claimable, gates = [], []
+    for task in ready:
+        gate = _utc(task.not_before)
+        if gate is not None and gate > now:
+            gates.append(gate)
+        else:
+            claimable.append(task)
+
+    # A team task is claimed by its lead. A team of two or more with no lead
+    # set is a team whose queue nobody may touch — silently, forever.
+    leaderless: list[str] = []
+    for team_id in {t.team_id for t in claimable if t.parent_task_id is None
+                    and t.assignee_agent_id is None}:
+        team = session.get(Team, team_id)
+        if team is not None and policy.effective_lead(session, team) is None:
+            leaderless.append(team.name or team_id)
+
+    # Work owned by an agent the chairman paused. The dispatcher skips those
+    # agents entirely, so their queue leaves no trace in any counter.
+    parked: list[str] = []
+    for agent in session.execute(
+        select(Agent).where(Agent.project_id == project.id,
+                           Agent.status != AgentStatus.ACTIVE)
+    ).scalars():
+        holds = session.execute(
+            select(func.count(Task.id)).where(
+                Task.project_id == project.id,
+                or_(and_(Task.assignee_agent_id == agent.id,
+                         Task.status == TaskStatus.READY),
+                    and_(Task.claimed_by_agent_id == agent.id,
+                         Task.status == TaskStatus.CLAIMED)),
+            )
+        ).scalar_one()
+        if holds:
+            parked.append(agent.name)
+
+    blocked = session.execute(
+        select(func.count(Task.id)).where(Task.project_id == project.id,
+                                          Task.status == TaskStatus.BLOCKED)
+    ).scalar_one()
+
+    # Scope waiting on the chairman, and scope that quietly stopped moving.
+    proposed, observable, stalled = [], [], []
+    for req in session.execute(
+        select(Requirement).where(Requirement.project_id == project.id)
+    ).scalars():
+        if req.status == RequirementStatus.PROPOSED:
+            proposed.append(req.key)
+        elif req.status == RequirementStatus.CHECKING and (
+                (req.acceptance_test or {}).get("type") == "observable"):
+            observable.append(req.key)
+        elif req.status == RequirementStatus.IN_PROGRESS:
+            counts = {
+                status: session.execute(
+                    select(func.count(Task.id)).where(Task.requirement_id == req.id,
+                                                      Task.status == status)
+                ).scalar_one()
+                for status in (*policy.OPEN_TASK_STATUSES, TaskStatus.DONE)
+            }
+            total = session.execute(
+                select(func.count(Task.id)).where(Task.requirement_id == req.id)
+            ).scalar_one()
+            open_now = sum(counts[s] for s in policy.OPEN_TASK_STATUSES)
+            # Every task it ever had is closed and none of them succeeded: the
+            # janitor's completion check returns early here, so it never
+            # becomes MET and never becomes anyone's problem.
+            if total and not open_now and not counts[TaskStatus.DONE]:
+                stalled.append(req.key)
+
+    plan = policy.plan_requirement(session, project.id)
+    plan_open = plan is not None and plan.status not in policy.CLOSED_REQUIREMENT_STATUSES
+
+    # Order matters: things that never clear on their own come before things
+    # that do, and "you have to decide" comes before "a clock has to pass".
+    if leaderless:
+        unreachable = "no_lead"
+    elif parked:
+        unreachable = "paused_agents"
+    elif stalled:
+        unreachable = "stalled_requirement"
+    elif proposed or observable or plan_open:
+        unreachable = "awaiting_chairman"
+    elif gates:
+        unreachable = "scheduled"
+    elif blocked:
+        unreachable = "blocked_tasks"
+    else:
+        unreachable = None
+
+    return {
+        "claimable": len(claimable),
+        "gated": len(gates),
+        "next_gate_at": min(gates).isoformat() if gates else None,
+        "blocked": blocked,
+        "leaderless_teams": sorted(leaderless),
+        "paused_agents": sorted(parked),
+        "stalled_requirements": sorted(stalled),
+        "proposed_requirements": sorted(proposed),
+        "observable_checking": sorted(observable),
+        "plan_open": plan_open,
+        "unreachable": unreachable,
+    }
+
+
+def _hhmm(iso: str | None) -> str:
+    """An ISO instant as the only part of it a reader acts on. Absolute rather
+    than relative on purpose: "in 4 minutes" is wrong the moment the response
+    is cached, and a time you can check against a clock is falsifiable."""
+    return f"{iso[11:16]} UTC" if iso else "shortly"
+
+
+def _listed(names: list[str]) -> str:
+    if len(names) == 1:
+        return names[0]
+    return ", ".join(names[:-1]) + f" and {names[-1]}"
+
+
+def _activity_brief(state: dict) -> dict:
+    """The one sentence, written once, next to the ladder that decided it.
+
+    This lives here rather than in the browser because it kept going stale
+    there: `pacing` was added to the ladder, and the three hand-written
+    switches in the UI carried on saying "a run should start shortly" for a
+    gate that stops work every hour. A new gate now cannot ship without a
+    sentence — `tests/selftest_invariants` fails the build if one is missing.
+
+    `banner` marks the briefs that deserve the box above the tabs. Concurrency
+    and busy agents mean the company is *working*; a banner that fires when
+    things are fine is how a reader learns to stop reading it. `sig` and
+    `clears_at` are set only on the briefs that are waiting out a clock, which
+    is what makes them dismissible.
+    """
+    gate = state["blocked_by"]
+    waiting = state["waiting"]
+    board = state["board"]
+    behind = []
+    if waiting["claimable_tasks"]:
+        behind.append(f"{waiting['claimable_tasks']} task(s) ready to claim")
+    if waiting["gated_tasks"]:
+        behind.append(f"{waiting['gated_tasks']} task(s) scheduled for later")
+    if waiting["notices"]:
+        behind.append(f"{waiting['notices']} notice(s) undelivered")
+    queue = f" {_listed(behind)} waiting behind it." if behind else ""
+
+    def brief(tone, chip, short, headline, detail, *, banner=True, sig=None, clears_at=None):
+        return {"tone": tone, "chip": chip, "short": short, "headline": headline,
+                "detail": detail, "banner": banner, "sig": sig, "clears_at": clears_at}
+
+    if gate == "daily_runs":
+        d = state["daily_runs"]
+        return brief(
+            "serious", "capped",
+            f"out of runs for today ({d['used']} of {d['cap']}), resumes 00:00 UTC",
+            f"Out of runs for today — {d['used']} of {d['cap']} used.",
+            f"Nothing starts until the count resets at 00:00 UTC.{queue} Runs that "
+            "died still spent the allowance. Raise 'Runs per day, whole project' in "
+            "Settings if this is tighter than you meant it to be.",
+            sig="daily_runs", clears_at=d["resets_at"])
+
+    if gate == "pacing":
+        p = state["pacing"]
+        return brief(
+            "serious", "pacing",
+            f"pacing itself ({p['used']} of {p['cap']} this hour), next run "
+            f"{_hhmm(p['frees_at'])}",
+            f"Pacing itself — {p['used']} of {p['cap']} runs used in the last hour.",
+            f"The next run may start at {_hhmm(p['frees_at'])}.{queue} This is the "
+            "brake that stops a whole day's runs going before lunch; it clears on "
+            "its own and usually needs nothing from you.",
+            sig="pacing", clears_at=p["frees_at"])
+
+    if gate == "governance_reserve":
+        g = state["governance_reserve"]
+        d = state["daily_runs"]
+        return brief(
+            "serious", "reserved",
+            f"ordinary work is done for today ({d['used']} of {g['ordinary_cap']})",
+            f"Ordinary work has spent its day — {d['used']} of {g['ordinary_cap']}.",
+            f"The last {g['reserved']} run(s) of the day are reserved so a status "
+            f"review or a re-forecast always has somewhere to run.{queue} Everything "
+            "else resumes at 00:00 UTC. Raise 'Runs per day, whole project', or lower "
+            "'Reserved governance runs', in Settings.",
+            sig="governance_reserve", clears_at=d["resets_at"])
+
+    if gate == "wake_ceiling":
+        w = state["wake_ceiling"]
+        return brief(
+            "serious", "throttled",
+            f"every agent with work has hit its hourly wake ceiling, clearing "
+            f"{_hhmm(w['frees_at'])}",
+            f"Every agent with work has hit its hourly wake ceiling ({w['cap']}/hour).",
+            f"The oldest wake ages out at {_hhmm(w['frees_at'])} and work starts again "
+            f"on its own — nothing here needs you.{queue} Raise 'Wakes per agent per "
+            "hour' in Settings only if the cap is tighter than you meant it to be.",
+            sig="wake_ceiling", clears_at=w["frees_at"])
+
+    if gate == "coalescing":
+        c = state["coalescing"]
+        return brief(
+            "warn", "batching",
+            f"batching a wake until it is worth a run, due {_hhmm(c['ripe_at'])}",
+            f"Holding a wake until it is worth the run — due {_hhmm(c['ripe_at'])}.",
+            "Waking an agent costs a full-price run, so one or two notices wait for a "
+            f"third or for the oldest to age out.{queue} Nothing is wrong and nothing "
+            "here needs you; anything you say yourself skips the wait entirely.",
+            sig="coalescing", clears_at=c["ripe_at"])
+
+    if gate == "scheduled":
+        return brief(
+            "warn", "scheduled",
+            f"the ready work is gated until {_hhmm(board['next_gate_at'])}",
+            f"The only work on the board is scheduled for {_hhmm(board['next_gate_at'])}.",
+            f"{board['gated']} task(s) carry a start time the CEO set, so nobody may "
+            "claim them yet and nobody is woken for them. Work resumes on its own at "
+            "that moment. If that is later than you meant, open the task and clear its "
+            "start time.",
+            sig="scheduled", clears_at=board["next_gate_at"])
+
+    if gate == "no_lead":
+        teams = _listed(board["leaderless_teams"])
+        return brief(
+            "critical", "no lead",
+            f"{teams} has no lead, so its tasks can never be claimed",
+            f"{teams} has ready work and no lead.",
+            "A team task is claimed by that team's lead. With two or more members and "
+            "nobody named, the queue is unclaimable and no one is ever woken for it — "
+            "this does not clear on its own. Name a lead in Settings.")
+
+    if gate == "paused_agents":
+        who = _listed(board["paused_agents"])
+        return brief(
+            "serious", "paused agent",
+            f"{who} holds the open work and is paused",
+            f"{who} is paused and holds the work.",
+            "A paused agent is skipped by the dispatcher entirely, so its tasks wake "
+            "nobody and show in no counter. Resume the agent, or reassign the work.")
+
+    if gate == "stalled_requirement":
+        keys = _listed(board["stalled_requirements"])
+        return brief(
+            "serious", "stalled",
+            f"{keys} has no live work left and was never met",
+            f"{keys}: every task it had was killed.",
+            "The requirement is still open, its board is empty, and its acceptance "
+            "test will never run because nothing succeeded. It needs new work or it "
+            "needs cutting — it will not resolve itself.")
+
+    if gate == "awaiting_chairman":
+        wants = []
+        if board["plan_open"]:
+            wants.append("the plan needs accepting")
+        if board["proposed_requirements"]:
+            wants.append(f"{_listed(board['proposed_requirements'])} proposed")
+        if board["observable_checking"]:
+            wants.append(
+                f"{_listed(board['observable_checking'])} waiting on your verdict")
+        asks = _listed(wants)
+        return brief(
+            "warn", "your call",
+            f"waiting on you — {asks}",
+            f"Waiting on you: {asks}.",
+            "No work may be created until this is settled, so the company will stay "
+            "quiet however much capacity it has. Decide it on the Plan tab.")
+
+    if gate == "blocked_tasks":
+        return brief(
+            "serious", "blocked",
+            f"{board['blocked']} task(s) blocked and nothing else on the board",
+            f"{board['blocked']} task(s) are blocked.",
+            "An agent stopped and asked a question rather than guessing. Read the "
+            "block reason on the Board tab and either answer it or kill the task.")
+
+    if gate == "concurrency":
+        c = state["concurrency"]
+        return brief(
+            "ok", "working",
+            f"at the concurrency cap ({c['in_flight']} of {c['cap']}) — working",
+            f"At the concurrency cap — {c['in_flight']} of {c['cap']} running.",
+            "The company is working flat out. Raise 'Concurrent runs' in Settings to "
+            "widen it.", banner=False)
+
+    if gate == "agents_busy":
+        return brief(
+            "ok", "working",
+            "every agent that has work is already running",
+            "Every agent with work is already running.",
+            "The company is working. Nothing here needs you.", banner=False)
+
+    if behind:
+        return brief(
+            "ok", "starting",
+            f"nothing blocking — a run should start shortly —{queue.rstrip('.')}",
+            "Nothing blocking — a run should start within seconds.",
+            f"There is capacity and there is work.{queue}", banner=False)
+
+    return brief(
+        "ok", "idle",
+        "nothing waiting; an idle project costs nothing",
+        "Nothing waiting.",
+        "The board is empty and nobody has unread work. An idle project costs exactly "
+        "nothing — that is the point.", banner=False)
 
 
 def activity_state(session: Session, project: Project, cons: ConstitutionDoc) -> dict:
@@ -309,9 +690,10 @@ def activity_state(session: Session, project: Project, cons: ConstitutionDoc) ->
     governance state. Message wakes are counted by `_unread_for` instead, so a
     reading can differ from a real wake by at most one tick.
 
-    `blocked_by` names the first gate that stops a run, and only when there is
-    work to stop — with nothing pending it stays None, because an idle project
-    with an empty board is working correctly, not stuck.
+    `blocked_by` names the first gate that stops a run. It is None only when
+    there is genuinely nothing to do: work that exists but cannot be reached —
+    gated by a clock, owned by a paused agent, sitting on a leaderless team —
+    now names its own wall rather than rendering as a healthy quiet.
     """
     now = utcnow()
     start = day_start(now)
@@ -319,6 +701,10 @@ def activity_state(session: Session, project: Project, cons: ConstitutionDoc) ->
     used_hour = hourly_runs_used(session, project, now)
     in_flight = _in_flight(session, project)
     max_concurrent = _max_concurrent(cons)
+    # The same clamp `_dispatch_project` enforces with: past this line ordinary
+    # work is done for the day and only governance may still spend.
+    reserved = min(cons.reserved_governance_runs, cons.runs_per_project_per_day // 2)
+    governance_only = used >= cons.runs_per_project_per_day - reserved
 
     agents = list(
         session.execute(
@@ -329,12 +715,22 @@ def activity_state(session: Session, project: Project, cons: ConstitutionDoc) ->
 
     rows: list[dict] = []
     for agent in agents:
-        notices = session.execute(
-            select(func.count(Notice.id)).where(Notice.agent_id == agent.id,
-                                                Notice.consumed_at.is_(None))
-        ).scalar_one()
-        pending = len(_work_reasons(session, agent, now)) + notices
-        pending += _unread_for(session, project, agent)
+        notice_n, notice_oldest, notice_urgent = _notices_detail_for(session, agent)
+        unread_n, unread_oldest, unread_urgent = _unread_detail_for(session, project, agent)
+        work = len(_work_reasons(session, agent, now))
+        pending = work + notice_n + unread_n
+        # A batching window only *holds* an agent that has nothing else to wake
+        # for. One with a claimable task is going to run regardless, so calling
+        # it coalesced would name the wrong wall.
+        ripe = [
+            r for r in (
+                _coalesced_until(notice_n, notice_oldest, notice_urgent, now,
+                                 NOTICE_COALESCE_MINUTES, NOTICE_COALESCE_COUNT),
+                _coalesced_until(unread_n, unread_oldest, unread_urgent, now,
+                                 MESSAGE_COALESCE_MINUTES, MESSAGE_COALESCE_COUNT),
+            ) if r is not None
+        ]
+        heartbeat_due = False
         if agent.kind == AgentKind.CEO:
             hours = float(cons.ceo_heartbeat_hours)
             beat = session.execute(
@@ -346,10 +742,14 @@ def activity_state(session: Session, project: Project, cons: ConstitutionDoc) ->
                         or cons.ceo_heartbeat_always
                         or _ceo_has_planning_material(session, project)):
                 pending += 1
+                heartbeat_due = True
         wakes = _wakes_last_hour(session, agent)
         at_ceiling = wakes >= cons.wakes_per_agent_per_hour
         frees_at = (_wake_slot_frees_at(session, agent, cons.wakes_per_agent_per_hour)
                     if at_ceiling and pending else None)
+        # Everything this agent is waiting on is sitting in a batching window.
+        held = (min(ripe) if ripe and not work and not heartbeat_due
+                and notice_n + unread_n == pending else None)
         rows.append({
             "id": agent.id,
             "name": agent.name,
@@ -359,9 +759,14 @@ def activity_state(session: Session, project: Project, cons: ConstitutionDoc) ->
             "wake_cap": cons.wakes_per_agent_per_hour,
             "wake_slot_frees_at": frees_at.isoformat() if frees_at else None,
             "pending": pending,
+            "batching_until": held.isoformat() if held else None,
         })
 
+    board = _board_reachability(session, project, now)
+
     with_work = [r for r in rows if r["pending"]]
+    free = [r for r in with_work
+            if not r["busy"] and r["wakes_last_hour"] < r["wake_cap"]]
     if used >= cons.runs_per_project_per_day:
         blocked_by = "daily_runs"
     elif used_hour >= cons.runs_per_project_per_hour:
@@ -369,18 +774,24 @@ def activity_state(session: Session, project: Project, cons: ConstitutionDoc) ->
     elif in_flight >= max_concurrent:
         blocked_by = "concurrency"
     elif not with_work:
-        blocked_by = None  # nothing waiting: idle is the correct answer
+        # Nobody has anything to do. That is either correct, or there is work
+        # on the board that nobody can reach — and those two used to render
+        # identically, as an empty, reassuring sentence.
+        blocked_by = board["unreachable"]
     elif all(r["busy"] for r in with_work):
         blocked_by = "agents_busy"
     elif all(r["busy"] or r["wakes_last_hour"] >= r["wake_cap"] for r in with_work):
         blocked_by = "wake_ceiling"
+    elif free and all(r["batching_until"] for r in free):
+        blocked_by = "coalescing"
+    elif governance_only:
+        # Ordinary work is done for the day; only a review, a cycle plan or a
+        # re-forecast may still spend. Nothing said this out loud before, so
+        # the last three runs of every day looked like an unexplained stop.
+        blocked_by = "governance_reserve"
     else:
         blocked_by = None  # a run should start on the next tick
 
-    ready = session.execute(
-        select(func.count(Task.id)).where(Task.project_id == project.id,
-                                          Task.status == TaskStatus.READY)
-    ).scalar_one()
     claimed = session.execute(
         select(func.count(Task.id)).where(Task.project_id == project.id,
                                           Task.status == TaskStatus.CLAIMED)
@@ -397,7 +808,9 @@ def activity_state(session: Session, project: Project, cons: ConstitutionDoc) ->
              if not r["busy"] and r["wake_slot_frees_at"]]
     frees_at = min(slots) if slots else None
 
-    return {
+    batches = [r["batching_until"] for r in free if r["batching_until"]]
+
+    state = {
         "blocked_by": blocked_by,
         "daily_runs": {
             "used": used,
@@ -410,6 +823,11 @@ def activity_state(session: Session, project: Project, cons: ConstitutionDoc) ->
             # A trailing window, so it thaws run by run rather than resetting.
             "frees_at": _pacing_frees_at(session, project, cons, now),
         },
+        "governance_reserve": {
+            "reserved": reserved,
+            "ordinary_cap": max(0, cons.runs_per_project_per_day - reserved),
+            "active": governance_only,
+        },
         "wake_ceiling": {
             "cap": cons.wakes_per_agent_per_hour,
             # The trailing hour never "rolls over" on a clock, so this is the
@@ -418,15 +836,28 @@ def activity_state(session: Session, project: Project, cons: ConstitutionDoc) ->
             "agents_held": len([r for r in with_work
                                 if not r["busy"] and r["wake_slot_frees_at"]]),
         },
+        "coalescing": {
+            "ripe_at": min(batches) if batches else None,
+            "agents_held": len(batches),
+        },
         "concurrency": {"in_flight": in_flight, "cap": max_concurrent},
         "waiting": {
-            "ready_tasks": ready,
+            # Split, because the old single number was the lie at the heart of
+            # this: a board whose only task was gated until 03:00 reported "1
+            # task ready" beside "a run should start shortly", for two hours.
+            "ready_tasks": board["claimable"] + board["gated"],
+            "claimable_tasks": board["claimable"],
+            "gated_tasks": board["gated"],
             "claimed_tasks": claimed,
+            "blocked_tasks": board["blocked"],
             "notices": notices_total,
             "agents_with_work": len(with_work),
         },
+        "board": board,
         "agents": rows,
     }
+    state["brief"] = _activity_brief(state)
+    return state
 
 
 def _agent_busy(session: Session, agent: Agent) -> bool:

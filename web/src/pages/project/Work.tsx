@@ -531,6 +531,11 @@ export default function Work({ ctx }: { ctx: ProjectCtx }) {
         </>
       )}
 
+      {/* The board was the page's first section and needed no heading. Now that
+          the audit sits above it, these filter pills butted straight against the
+          last audit card — two borders on one line, and nothing saying the
+          filters belong to the tasks below rather than the check above. */}
+      <h2 className="zone">The board <span className="cnt">{all.length}</span></h2>
       <div className="pills">
         {FILTERS.map((f) => {
           const count = all.filter((t) => f.match(t.status)).length;

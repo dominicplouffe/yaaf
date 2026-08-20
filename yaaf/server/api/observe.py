@@ -544,49 +544,33 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
     # runs looks exactly like one with nothing to do on every screen we ship,
     # which is how a hard stop reads as a healthy quiet.
     #
-    # Only the two gates that mean *stopped* warn here. Hitting the concurrency
-    # cap or finding every agent busy means the company is working, which is not
-    # a finding.
+    # The sentence comes from the dispatcher, beside the ladder that decided
+    # it. This page used to re-write three of the gates by hand and knew
+    # nothing of the rest, so a company held by pacing, a batching window or a
+    # leaderless team reported perfect health while doing nothing at all.
     if project.status == "running":
-        live_cons = effective(session, project.id)
-        act = activity_state(session, project, live_cons)
-        waiting = act["waiting"]
-        held_up = (f"{waiting['ready_tasks']} task(s) and {waiting['notices']} "
-                   f"notice(s) are waiting behind it")
-        if act["blocked_by"] == "daily_runs":
-            daily = act["daily_runs"]
-            add("activity", "warn",
-                f"out of runs for today — {daily['used']} of {daily['cap']} used, "
-                f"and nothing will start until {daily['resets_at'][11:16]} UTC. "
-                f"{held_up}. Raise 'Runs per day, whole project' if this is too "
-                "tight, or leave it and the work resumes on its own.",
-                "settings")
-        elif act["blocked_by"] == "pacing":
-            # Distinct from the daily ceiling on purpose: this one clears
-            # within the hour on its own, and telling the two apart is the
-            # difference between "wait" and "raise a limit".
-            pace = act["pacing"]
-            frees = pace["frees_at"]
-            when = (f"the next run may start at {frees[11:16]} UTC"
-                    if frees else "runs free up as the trailing hour advances")
-            add("activity", "warn",
-                f"pacing itself — {pace['used']} of {pace['cap']} runs used in the last "
-                f"hour, so {when}. {held_up}. This is the brake that stops a whole day's "
-                "runs going before lunch; it clears on its own and usually needs nothing "
-                "from you.",
-                "settings")
-        elif act["blocked_by"] == "wake_ceiling":
-            # Name the moment. "As the hour rolls forward" is unfalsifiable, so
-            # a throttle that clears on its own read as a permanent fault.
-            frees = act["wake_ceiling"]["frees_at"]
-            when = (f"the next agent is free to wake at {frees[11:16]} UTC"
-                    if frees else "slots free as the trailing hour advances")
-            add("activity", "warn",
-                "every agent with work to do has hit its hourly wake ceiling "
-                f"({live_cons.wakes_per_agent_per_hour}/hour) — {when}. {held_up}. "
-                "This clears itself; raise 'Wakes per agent per hour' only if the "
-                "cap is tighter than you meant it to be.",
-                "settings")
+        try:
+            live_cons = effective(session, project.id)
+        except LookupError:
+            # Both loops `continue` past a project in this state, so it is
+            # stopped in the most complete way the platform has and there was
+            # no trace of it anywhere. Say so.
+            add("activity", "fail",
+                "this project has no constitution row, so the dispatcher and the "
+                "janitor both skip it entirely — nothing will ever run. This is a "
+                "broken record, not a setting; it needs restoring from a backup or "
+                "the project recreating.", "settings")
+            live_cons = None
+        if live_cons is not None:
+            act = activity_state(session, project, live_cons)
+            brief = act["brief"]
+            # Only the briefs that mean *stopped* are findings. Concurrency and
+            # busy agents mean the company is working, which is not news.
+            if brief["banner"]:
+                add("activity",
+                    "fail" if brief["tone"] == "critical" else "warn",
+                    f"{brief['headline']} {brief['detail']}",
+                    "settings")
 
     # Connectors: controlled GitHub accounts registered but webhooks unprovisioned.
     if any(str(d).startswith("github:") for d in (project.controlled_domains or [])) \
