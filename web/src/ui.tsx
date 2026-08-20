@@ -128,12 +128,25 @@ export function paceDate(spent: number, cap: number): Date | null {
 /** A run that stopped without finishing. Each of these was paid for and
     produced nothing, which is why they are counted apart from failures of the
     work itself. */
-const ENDED_EARLY: Record<string, string> = {
+/** Runs that ended early because something went WRONG. These drive the alarm. */
+const FAULTS: Record<string, string> = {
   reaped: "timed out",
-  killed: "killed for looping",
   failed: "failed outright",
   terminated_refusals: "hit the refusal cap",
 };
+
+/** Runs that ended early because someone stopped them ON PURPOSE — a revoked
+    token with no refusals behind it is the chairman pausing the project, the
+    kill switch, or a budget trip. They are counted (the run did not finish and
+    its tokens were still spent) but they are never evidence of a fault: telling
+    somebody who just pressed pause that a tool mount is dead sends them hunting
+    for a problem they created deliberately, which is the opposite of what this
+    panel is for. It read "killed for looping", which no killed run ever means. */
+const DELIBERATE: Record<string, string> = {
+  killed: "stopped by a pause, kill switch or budget",
+};
+
+const ENDED_EARLY: Record<string, string> = { ...FAULTS, ...DELIBERATE };
 
 /** The day's run outcomes. A third of runs ending early is the single loudest
     signal that something is in the way, and it used to be a grey aside. */
@@ -165,8 +178,10 @@ export function runHealth(runs: RunRow[]) {
     .filter((r) => r.count > 0)
     .sort((a, b) => b.count - a.count);
 
-  const ratio = todays.length > 0 ? early.length / todays.length : 0;
-  return { todays, clean, running, early, byReason, usd, tokens, ratio };
+  // The alarm counts faults only — see DELIBERATE above.
+  const faults = todays.filter((r) => r.status in FAULTS);
+  const ratio = todays.length > 0 ? faults.length / todays.length : 0;
+  return { todays, clean, running, early, faults, byReason, usd, tokens, ratio };
 }
 
 /** The breakdown as a sentence, because "12 failures" tells nobody what to do. */
@@ -184,29 +199,14 @@ export function earlyRunSentence(h: ReturnType<typeof runHealth>): string {
     cause, so a company that had spent its whole daily allowance by 01:22 and a
     company with an empty board looked identical. They are not the same thing:
     one needs nothing from you, the other has work piled up behind a wall and a
-    known time it comes down. */
-export function idleSentence(a: Activity): string {
-  const waiting: string[] = [];
-  if (a.waiting.ready_tasks) waiting.push(`${a.waiting.ready_tasks} task(s) ready`);
-  if (a.waiting.notices) waiting.push(`${a.waiting.notices} notice(s) undelivered`);
-  const behind = waiting.length ? ` — ${waiting.join(", ")}` : "";
+    known time it comes down.
 
-  switch (a.blocked_by) {
-    case "daily_runs":
-      return `out of runs for today (${a.daily_runs.used} of ${a.daily_runs.cap})` +
-        `, resumes ${fmtLeft(a.daily_runs.resets_at).replace(" left", "")} from now${behind}`;
-    case "wake_ceiling":
-      return `every agent with work has hit its hourly wake ceiling, clearing ` +
-        `${fmtSoon(a.wake_ceiling.frees_at)}${behind}`;
-    case "concurrency":
-      return `at the concurrency cap (${a.concurrency.in_flight} of ${a.concurrency.cap}) — working`;
-    case "agents_busy":
-      return "every agent that has work is already running";
-    default:
-      return waiting.length
-        ? `nothing blocking — a run should start shortly${behind}`
-        : "nothing waiting; an idle project costs nothing";
-  }
+    The sentence itself now comes from the dispatcher. This function used to
+    write it here, from a switch that knew four of the backend's gates — so
+    `pacing`, a brake that stops work every hour, fell through to "a run should
+    start shortly" and stayed there. */
+export function idleSentence(a: Activity): string {
+  return a.brief.short;
 }
 
 /** The reasons the platform writes for itself when it pauses a project. A
@@ -264,52 +264,22 @@ export function statusBrief(dash: Dashboard): StatusBrief | null {
 
   if (dash.status !== "running") return null;
 
-  const a = dash.activity;
-  const waiting: string[] = [];
-  if (a.waiting.ready_tasks) waiting.push(`${a.waiting.ready_tasks} ready task(s)`);
-  if (a.waiting.claimed_tasks) waiting.push(`${a.waiting.claimed_tasks} claimed task(s)`);
-  if (a.waiting.notices) waiting.push(`${a.waiting.notices} undelivered notice(s)`);
-  const behind = waiting.length
-    ? `${waiting.join(", ")} waiting behind it.`
-    : "Nothing is waiting behind it.";
-
-  if (a.blocked_by === "daily_runs")
-    return {
-      tone: "serious",
-      chip: "capped",
-      headline: `Out of runs for today — ${a.daily_runs.used} of ${a.daily_runs.cap} used.`,
-      detail:
-        `Nothing starts until the count resets at 00:00 UTC, ` +
-        `${fmtLeft(a.daily_runs.resets_at).replace(" left", "")} from now. ${behind} ` +
-        "Runs that died still spent the allowance. Raise 'Runs per day, whole " +
-        "project' in Settings if this is tighter than you meant it to be.",
-      sig: "daily_runs",
-      clearsAt: a.daily_runs.resets_at,
-    };
-
-  // The ceiling is a trailing hour per agent, not a clock hour, so "resumes as
-  // the hour rolls forward" named no moment anyone could check — and a warning
-  // with nothing falsifiable in it reads as a fault that will never go away.
-  if (a.blocked_by === "wake_ceiling")
-    return {
-      tone: "serious",
-      chip: "throttled",
-      headline:
-        `Every agent with work has hit its hourly wake ceiling ` +
-        `(${a.wake_ceiling.cap}/hour).`,
-      detail:
-        `The oldest wake ages out ${fmtSoon(a.wake_ceiling.frees_at)} and work ` +
-        `starts again on its own — nothing here needs you. ${behind} ` +
-        "Raise 'Wakes per agent per hour' in Settings only if the cap is tighter " +
-        "than you meant it to be.",
-      sig: "wake_ceiling",
-      clearsAt: a.wake_ceiling.frees_at,
-    };
-
-  // concurrency and agents_busy both mean the company is working. Saying
-  // nothing is the correct answer; a brief that fires when things are fine is
-  // how a reader learns to stop reading it.
-  return null;
+  // Everything below this line is the dispatcher's own words. Three switches
+  // used to live here, each knowing a different subset of the backend's gates;
+  // the one that mattered most — a company quietly waiting out a clock — was
+  // the one none of them covered. `banner` is the server saying whether this
+  // deserves the box at all: concurrency and busy agents mean the company is
+  // working, and a brief that fires when things are fine stops being read.
+  const brief = dash.activity.brief;
+  if (!brief?.banner) return null;
+  return {
+    tone: brief.tone,
+    chip: brief.chip,
+    headline: brief.headline,
+    detail: brief.detail,
+    sig: brief.sig ?? undefined,
+    clearsAt: brief.clears_at,
+  };
 }
 
 /** Where the money stands, in whichever unit this project actually bills in.

@@ -82,8 +82,8 @@ def test_credentials_come_across_with_their_values(client):
     check = twin["copied"]["data_sources"][0]["check"]
     assert check["ok"] and check["detail"] == "reachable (https://data.example.com:3845/mcp)"
     with db_session() as session:
-        source_entry = session.get(Project, project["id"]).config["mcp_servers"][0]
-        twin_entry = session.get(Project, twin["id"]).config["mcp_servers"][0]
+        source_entry = session.get(Project, project["id"]).integrations["mcp_servers"][0]
+        twin_entry = session.get(Project, twin["id"]).integrations["mcp_servers"][0]
         assert twin_entry["last_check"]["at"] > source_entry["last_check"]["at"]
 
 
@@ -140,11 +140,12 @@ def test_slack_tokens_travel_but_rooms_do_not(client):
     re-pasting the tokens to avoid it is a chore nobody asked for either."""
     project = make_project(client, start=False)
     client.patch(f"/admin/projects/{project['id']}", json={
-        "config": {"slack": {"bot_token_secret": "slack-bot",
-                             "signing_secret": "slack-signing",
-                             "chairman_slack_user": "U123",
-                             "channel_map": {"boardroom": "C0BQ", "leadership": "C0BR"}},
-                   "webhook_secret": "whsec-not-portable"},
+        "integrations": {
+            "slack": {"bot_token_secret": "slack-bot",
+                      "signing_secret": "slack-signing",
+                      "chairman_slack_user": "U123",
+                      "channel_map": {"boardroom": "C0BQ", "leadership": "C0BR"}},
+            "webhook_secret": "whsec-not-portable"},
     }, headers=ADMIN)
     client.post("/admin/secrets", json={
         "project_id": project["id"], "name": "slack-bot", "value": "xoxb-token",
@@ -154,14 +155,57 @@ def test_slack_tokens_travel_but_rooms_do_not(client):
     assert twin["copied"]["slack_rooms_dropped"] is True
 
     with db_session() as session:
-        config = session.get(Project, twin["id"]).config
-        assert config["slack"]["channel_map"] == {}
-        assert config["slack"]["bot_token_secret"] == "slack-bot"  # still wired
-        assert config["slack"]["chairman_slack_user"] == "U123"
-        assert "webhook_secret" not in config  # this project's own signing key
+        wiring = session.get(Project, twin["id"]).integrations
+        assert wiring["slack"]["channel_map"] == {}
+        assert wiring["slack"]["bot_token_secret"] == "slack-bot"  # still wired
+        assert wiring["slack"]["chairman_slack_user"] == "U123"
+        # Its own signing key, never the source's — sharing one would let either
+        # company's senders attest evidence for the other. Absent is not the
+        # answer though: see test_a_twin_can_attest_inbound_evidence.
+        assert wiring["webhook_secret"] != "whsec-not-portable"
         token = session.query(Secret).filter_by(project_id=twin["id"],
                                                 name="slack-bot").one()
         assert decrypt(token.ciphertext) == "xoxb-token"  # no re-pasting
+
+
+def test_a_twin_is_the_same_SHAPE_of_company(client):
+    """Mode decides whether a company has requirements at all, and it is frozen
+    at creation — so a twin that comes back in the wrong one cannot be
+    corrected, only deleted and rebuilt. The clone left mode out of the
+    constructor and the model default is Explore, so every twin of a Deliver
+    company silently became an Explore company with no Plan tab and nowhere to
+    put its scope. Seen live: a Deliver project twinned, and its plan was gone.
+    """
+    from datetime import timedelta
+
+    from yaaf.core.models import ProjectMode, utcnow
+
+    source = make_project(client, slug="deliverer", mode="deliver")
+    twin = _clone(client, source["id"], slug="deliverer-twin")
+    assert twin.status_code == 200, twin.text
+    assert twin.json()["mode"] == "deliver"
+    with db_session() as session:
+        assert session.get(Project, twin.json()["id"]).mode == ProjectMode.DELIVER
+
+    # An Explore window that is still open comes across as it is...
+    future = utcnow() + timedelta(days=30)
+    explorer = make_project(client, slug="explorer", mode="explore")
+    with db_session() as session:
+        session.get(Project, explorer["id"]).deadline = future
+    live = _clone(client, explorer["id"], slug="explorer-twin")
+    assert live.json()["copied"]["deadline_dropped"] is False
+    with db_session() as session:
+        assert session.get(Project, live.json()["id"]).deadline is not None
+
+    # ...but a spent one is not inherited: a deadline in the past would have
+    # the janitor close the window on a company that never opened it.
+    with db_session() as session:
+        session.get(Project, explorer["id"]).deadline = utcnow() - timedelta(days=1)
+    stale = _clone(client, explorer["id"], slug="explorer-twin-2")
+    assert stale.json()["copied"]["deadline_dropped"] is True
+    with db_session() as session:
+        twin_row = session.get(Project, stale.json()["id"])
+        assert twin_row.deadline is None and twin_row.mode == ProjectMode.EXPLORE
 
 
 def test_a_taken_slug_is_refused_before_anything_is_written(client):
@@ -232,3 +276,61 @@ def test_solo_twin_keeps_the_ceo_inside_its_team(client):
                                              kind=AgentKind.CEO).one()
         assert ceo.team_id == team.id
     assert [a["name"] for a in twin["teams"][0]["agents"]] == ["CEO"]
+
+
+def test_a_twin_records_the_shape_it_actually_has(client):
+    """Topology is stored rather than inferred precisely so the stage-9
+    experiment compares a recorded fact that cannot drift. The clone left it out
+    of the constructor and the model default is 'ceo_leads_workers', so every
+    solo twin came back claiming a hierarchy of one — the same omission that
+    turned Deliver twins into Explore ones, on the field the experiment reads.
+
+    The twin rebuilds the source's teams and people exactly, so the source's
+    recorded shape is true of the twin by construction. All three shapes, since
+    only the third one happened to match the default that was masking the bug.
+    """
+    solo = make_project(
+        client, slug="solo-src", solo=True,
+        teams=[{"role_slug": "worker", "name": "Solo", "employees": []}], start=False,
+    )
+    flat = make_project(
+        client, slug="flat-src", start=False,
+        teams=[{"role_slug": "worker", "name": "Alpha", "employees": ["One"]},
+               {"role_slug": "worker", "name": "Beta", "employees": ["Two"]}],
+    )
+    deep = make_project(client, slug="deep-src", start=False)  # default: a real lead
+
+    with db_session() as session:
+        assert [session.get(Project, p["id"]).topology for p in (solo, flat, deep)] \
+            == ["solo", "ceo_team", "ceo_leads_workers"]
+
+    for source, slug in ((solo, "solo-twin"), (flat, "flat-twin"), (deep, "deep-twin")):
+        twin = _clone(client, source["id"], slug=slug)
+        assert twin.status_code == 200, twin.text
+        with db_session() as session:
+            assert session.get(Project, twin.json()["id"]).topology == \
+                session.get(Project, source["id"]).topology
+
+
+def test_a_twin_can_attest_inbound_evidence(client):
+    """Not inheriting the source's signing keys is right — one key across two
+    companies would let either one's senders attest evidence for the other. But
+    the clone dropped them without minting replacements, and github_repo and the
+    controlled domains *do* come across: the twin looked wired to GitHub while
+    no inbound event could ever be attested, which is the whole point of the
+    connector. Every other birth mints these; a twin is no less born."""
+    source = make_project(client, start=False, controlled_domains=["github:acme-co"])
+    provisioned = client.post(f"/admin/projects/{source['id']}/webhook_secrets",
+                              headers=ADMIN).json()
+
+    twin = _clone(client, source["id"]).json()
+    with db_session() as session:
+        wiring = session.get(Project, twin["id"]).integrations or {}
+        assert wiring["github_webhook_secret"] and wiring["webhook_secret"]
+        # Its own, not the source's — that is what "not inherited" has to mean.
+        assert wiring["github_webhook_secret"] != provisioned["github_webhook_secret"]
+        assert wiring["webhook_secret"] != provisioned["webhook_secret"]
+
+    # And the twin is born ready rather than born with a finding against it.
+    health = client.get(f"/observe/projects/{twin['id']}/health", headers=ADMIN).json()
+    assert not [c for c in health["checks"] if c["key"] == "connectors"], health["checks"]

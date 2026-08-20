@@ -36,7 +36,7 @@ def test_garbage_is_unstorable(client):
     assert refused.status_code == 422
     assert "not a URL" in refused.json()["detail"]
     with db_session() as session:
-        assert "mcp_servers" not in (session.get(Project, project["id"]).config or {})
+        assert "mcp_servers" not in (session.get(Project, project["id"]).integrations or {})
         assert session.query(Secret).filter(Secret.name.like("mcp-%")).count() == 0
 
     unknown_role = _save(client, project["id"], roles=["nonexistent"])
@@ -50,7 +50,7 @@ def test_one_save_wires_config_secrets_and_runner(client):
     assert saved.json()["check"]["ok"] is True
 
     with db_session() as session:
-        entry = session.get(Project, project["id"]).config["mcp_servers"][0]
+        entry = session.get(Project, project["id"]).integrations["mcp_servers"][0]
         assert (entry["url_host"], entry["url_port"]) == ("data.example.com", 3845)
         assert entry["last_check"]["ok"] is True
         url_secret = session.query(Secret).filter_by(name="mcp-ppc-url").one()
@@ -66,10 +66,12 @@ def test_one_save_wires_config_secrets_and_runner(client):
     assert len(jobs) == 1
     job = jobs[0]
     specs = job.tool_permissions["mcp_servers"]
-    assert {"name": "ppc", "url_env": "MCP_PPC_URL",
+    assert {"name": "ppc", "url_env": "MCP_PPC_URL", "access": "inline",
             "bearer_env": "MCP_PPC_TOKEN"} in specs
     assert job.billing_env["MCP_PPC_URL"] == "http://data.example.com:3845/mcp"
-    assert "DATA SOURCES: ppc (tools mcp__ppc__*)" in job.system_prompt
+    assert "Mounted as tools: ppc (mcp__ppc__*)" in job.system_prompt
+    # The cost lesson rides with the sources, not with every run.
+    assert "DATA HANDLING:" in job.system_prompt and "data_fetch" in job.system_prompt
     # The role routes through its scoped egress port because a host is mapped.
     assert job.egress_proxy_url is not None
     assert job.egress_proxy_url.endswith(str(egress.role_port("worker")))
@@ -89,6 +91,39 @@ def test_egress_derives_hosts_and_ports(client):
     assert 'acl dst_floor dstdomain "/etc/squid/allowlist.txt"' in rules
     assert rules.index("http_access allow port_worker dst_floor") \
         < rules.index("http_access deny port_worker")
+
+
+def test_a_bulk_source_reaches_the_sandbox_marked_and_documented(client):
+    """The cost lever, end to end: a source saved as `bulk` carries that mark
+    all the way to the sandbox spec, where it decides that the source is NOT
+    mounted as tools — its rows can only reach an agent through a file. The
+    prompt must say so plainly, because a bulk source's tools are absent by
+    design and an agent hunting for them would be hunting for nothing."""
+    project = make_project(client)
+    assert _save(client, project["id"], access="bulk").status_code == 200
+
+    with db_session() as session:
+        entry = session.get(Project, project["id"]).integrations["mcp_servers"][0]
+        assert entry["access"] == "bulk"
+
+    employee = project["teams"][0]["agents"][0]["id"]
+    with db_session() as session:
+        session.add(RunQueue(id=ids.new_id(ids.RUN), project_id=project["id"],
+                             agent_id=employee, kind=RunKind.AGENT_RUN,
+                             trigger={"reasons": []}, attempt=1))
+    job = daemon.lease_and_prepare(limit=1)[0]
+    assert job.tool_permissions["mcp_servers"][0]["access"] == "bulk"
+    # Described as bulk, and NOT advertised as tools that do not exist.
+    assert "Bulk-only" in job.system_prompt and "ppc" in job.system_prompt
+    assert "mcp__ppc__*" not in job.system_prompt
+    # Egress still opens for it — data_fetch reaches it over the same proxy.
+    assert job.egress_proxy_url.endswith(str(egress.role_port("worker")))
+
+    # Saving without the field keeps every existing source exactly as it was.
+    assert _save(client, project["id"], name="crm").status_code == 200
+    with db_session() as session:
+        sources = session.get(Project, project["id"]).integrations["mcp_servers"]
+        assert next(s for s in sources if s["name"] == "crm")["access"] == "inline"
 
 
 def test_stale_role_declared_servers_are_never_mounted(client):
@@ -174,7 +209,7 @@ def test_editing_the_url_alone_keeps_the_token(client, monkeypatch):
     assert moved.status_code == 200, moved.text
     assert seen == ["tok-123"], "the carried token must be used to preflight"
     with db_session() as session:
-        entry = session.get(Project, project["id"]).config["mcp_servers"][0]
+        entry = session.get(Project, project["id"]).integrations["mcp_servers"][0]
         assert entry["url_port"] == 9999
         assert entry["bearer_secret"] == "mcp-ppc-token"
         token = session.query(Secret).filter_by(name="mcp-ppc-token").one()
@@ -189,7 +224,7 @@ def test_editing_the_url_alone_keeps_the_token(client, monkeypatch):
     # Empty string is the explicit removal, and leaves no orphan row behind.
     _save(client, project["id"], bearer="")
     with db_session() as session:
-        entry = session.get(Project, project["id"]).config["mcp_servers"][0]
+        entry = session.get(Project, project["id"]).integrations["mcp_servers"][0]
         assert "bearer_secret" not in entry
         assert session.query(Secret).filter_by(name="mcp-ppc-token").count() == 0
 
@@ -214,7 +249,7 @@ def test_delete_cleans_up_completely(client):
                             headers=ADMIN)
     assert deleted.status_code == 200
     with db_session() as session:
-        assert session.get(Project, project["id"]).config["mcp_servers"] == []
+        assert session.get(Project, project["id"]).integrations["mcp_servers"] == []
         assert session.query(Secret).filter(Secret.name.like("mcp-ppc%")).count() == 0
     assert client.delete(f"/admin/projects/{project['id']}/mcp_servers/ppc",
                          headers=ADMIN).status_code == 404

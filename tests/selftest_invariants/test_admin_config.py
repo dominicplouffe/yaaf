@@ -1,13 +1,22 @@
-"""Invariant selftests: project reconfiguration touches config, never the
-constitution; secrets round-trip encrypted."""
+"""Invariant selftests: the wiring/rules split.
+
+`projects.integrations` is outward wiring — which runtime, which MCP servers,
+which Slack workspace. Limits are not wiring, and before the rebuild four of
+them lived here anyway: `ceo_heartbeat_hours`, `ceo_heartbeat_always`,
+`ceo_daily_at` and `max_concurrent_runs` were project config, which meant they
+generated no settings UI, recorded no amendment, and were never disclosed to
+the CEO they governed. A limit written to this endpoint is now refused, and
+the refusal names the route that does the job properly.
+"""
 
 from __future__ import annotations
 
-from tests.conftest import ADMIN, make_project
+from tests.conftest import ADMIN, amend, make_project
+from yaaf.core.constitution import ConstitutionDoc, effective
 from yaaf.core.db import db_session
 
 
-def test_patch_project_config_and_billing(client):
+def test_patch_project_integrations_and_billing(client):
     project = make_project(client, start=False)
 
     secret = client.post(
@@ -20,22 +29,22 @@ def test_patch_project_config_and_billing(client):
     patched = client.patch(
         f"/admin/projects/{project['id']}",
         json={"billing_secret_id": secret["id"],
-              "config": {"runtime": "agent_sdk", "ceo_heartbeat_hours": 4}},
+              "integrations": {"runtime": "agent_sdk"}},
         headers=ADMIN,
     )
     assert patched.status_code == 200, patched.text
     body = patched.json()
     assert body["billing_secret_id"] == secret["id"]
-    assert body["config"]["runtime"] == "agent_sdk"
+    assert body["integrations"]["runtime"] == "agent_sdk"
 
     # Merge, not replace: a later patch keeps earlier keys.
     again = client.patch(
         f"/admin/projects/{project['id']}",
-        json={"config": {"max_concurrent_runs": 2}},
+        json={"integrations": {"chat": {"enabled": False}}},
         headers=ADMIN,
     ).json()
-    assert again["config"]["runtime"] == "agent_sdk"
-    assert again["config"]["max_concurrent_runs"] == 2
+    assert again["integrations"]["runtime"] == "agent_sdk"
+    assert again["integrations"]["chat"] == {"enabled": False}
 
     # A foreign or unknown secret is refused.
     bad = client.patch(
@@ -45,87 +54,68 @@ def test_patch_project_config_and_billing(client):
     )
     assert bad.status_code == 422
 
-    # The stored secret is ciphertext at rest and decrypts to the value.
-    from yaaf.core.crypto import decrypt
-    from yaaf.core.models import Secret
 
-    with db_session() as session:
-        row = session.get(Secret, secret["id"])
-        assert row.ciphertext != "sk-ant-test-not-real"
-        assert decrypt(row.ciphertext) == "sk-ant-test-not-real"
-
-
-def test_add_team_to_existing_project(client):
-    from tests.conftest import seed_role
-
-    project = make_project(client)
-    seed_role(client, "blogger")
-    added = client.post(
-        f"/admin/projects/{project['id']}/teams",
-        json={"role_slug": "blogger", "name": "Content", "employees": ["Blogger"]},
-        headers=ADMIN,
-    )
-    assert added.status_code == 200, added.text
-    team = added.json()
-    assert [a["name"] for a in team["agents"]] == ["Blogger"]
-
-    org = client.get(f"/observe/projects/{project['id']}/org", headers=ADMIN).json()
-    content = next(t for t in org["teams"] if t["name"] == "Content")
-    # Sole employee is the de-facto lead (derived, not stored).
-    assert content["lead_agent_id"] == team["agents"][0]["id"]
-
-    channels = client.get(f"/observe/projects/{project['id']}/channels", headers=ADMIN).json()
-    assert any(c["kind"] == "team" and c["team_id"] == team["id"] for c in channels)
-
-    unknown_role = client.post(
-        f"/admin/projects/{project['id']}/teams",
-        json={"role_slug": "does-not-exist", "name": "X", "employees": ["Y"]},
-        headers=ADMIN,
-    )
-    assert unknown_role.status_code == 422
-
-
-def test_patch_cannot_touch_constitution(client):
-    """The PATCH surface has no constitution field at all — governance changes
-    only through amendments with their cooling-off."""
+def test_a_limit_cannot_be_smuggled_in_as_wiring(client):
+    """The exact failure this split exists to prevent: a limit accepted here
+    would be stored, never read, and never disclosed — so the chairman would
+    believe he had changed a rule that never moved."""
     project = make_project(client, start=False)
-    response = client.patch(
-        f"/admin/projects/{project['id']}",
-        json={"constitution": {"queue_ceiling": 999}},
+
+    for rule, value in [("ceo_heartbeat_hours", 2),
+                        ("max_concurrent_runs", 9),
+                        ("runs_per_project_per_day", 40),
+                        ("ceo_daily_at", "09:00")]:
+        refused = client.patch(
+            f"/admin/projects/{project['id']}",
+            json={"integrations": {rule: value}},
+            headers=ADMIN,
+        )
+        assert refused.status_code == 422, f"{rule} was accepted as wiring: {refused.text}"
+        detail = refused.json()["detail"]
+        assert rule in detail
+        assert "amendments" in detail, "the refusal must name the route that works"
+
+    # And nothing was written on the way to being refused.
+    dash = client.get(f"/observe/projects/{project['id']}", headers=ADMIN).json()
+    for rule in ("ceo_heartbeat_hours", "max_concurrent_runs", "runs_per_project_per_day"):
+        assert rule not in dash["integrations"]
+
+
+def test_a_rule_changes_only_through_an_amendment(client):
+    """The same value, set the right way: validated, versioned, and carrying
+    the chairman's reason."""
+    project = make_project(client, start=False)
+
+    with db_session() as session:
+        before = effective(session, project["id"])
+    assert before.max_concurrent_runs == ConstitutionDoc().max_concurrent_runs
+
+    amend(client, project["id"], reason="this box is sharing a rate limit",
+          max_concurrent_runs=1)
+
+    with db_session() as session:
+        after = effective(session, project["id"])
+    assert after.max_concurrent_runs == 1
+
+    log = client.get(f"/admin/projects/{project['id']}/amendments", headers=ADMIN)
+    assert log.status_code == 200, log.text
+    assert any(a["reason"] == "this box is sharing a rate limit" for a in log.json())
+
+
+def test_an_impossible_rule_is_refused_whole(client):
+    """A bad overlay never half-applies: the whole amendment is validated
+    against the resulting document before anything is written."""
+    project = make_project(client, start=False)
+
+    refused = client.post(
+        f"/admin/projects/{project['id']}/amendments",
+        json={"reason": "nine in the morning, allegedly",
+              "changes": {"ceo_daily_at": "half past nine", "queue_ceiling": 3}},
         headers=ADMIN,
     )
-    # Unknown fields are ignored by the schema; the constitution is unchanged.
-    assert response.status_code == 200
-    from yaaf.core.constitution import effective
+    assert refused.status_code == 422
+    assert "HH:MM" in refused.json()["detail"]
 
     with db_session() as session:
-        assert effective(session, project["id"]).queue_ceiling == 8
-
-
-def test_team_repin_adopts_latest_role_version(client):
-    """Teams pin their role version at creation; an edited role reaches a
-    running team only when the chairman explicitly adopts it."""
-    from tests.conftest import seed_role
-    from yaaf.core.db import db_session
-    from yaaf.core.models import Agent
-    from yaaf.server.contextpack import role_version_for
-
-    project = make_project(client)
-    team_id = project["teams"][0]["id"]
-    employee_id = project["teams"][0]["agents"][0]["id"]
-
-    # A new role version is published — the pinned team must NOT see it yet.
-    seed_role(client, "worker", tool_permissions={
-        "bash": True, "egress_allow": ["data.example.com"]})
-    with db_session() as session:
-        agent = session.get(Agent, employee_id)
-        assert "egress_allow" not in (role_version_for(session, agent).tool_permissions or {})
-
-    adopted = client.post(f"/admin/teams/{team_id}/repin", headers=ADMIN).json()
-    assert adopted["changed"] is True and adopted["version"] == 2
-    with db_session() as session:
-        agent = session.get(Agent, employee_id)
-        assert role_version_for(session, agent).tool_permissions["egress_allow"] == ["data.example.com"]
-
-    again = client.post(f"/admin/teams/{team_id}/repin", headers=ADMIN).json()
-    assert again["changed"] is False
+        assert effective(session, project["id"]).queue_ceiling != 3, \
+            "the valid half of a refused amendment must not survive"

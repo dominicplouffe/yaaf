@@ -93,12 +93,13 @@ lead. Use two or three per team when there's genuinely parallel work.
 caps, how many tasks can be open at once, how long the CEO can go without
 real evidence before the system pushes back. The defaults are sensible;
 set the **monthly budget cap** to what you're actually willing to spend.
-Everything here freezes at creation: changing it later is a formal amendment,
-made in Settings → Rules in force, with a written reason the CEO is shown. Most
-rules then wait out a 72-hour cooling-off — that's a feature, since nobody
-(including 2am-you) quietly loosens a forcing function. The exceptions are the
-ones where waiting is itself the hazard: budgets, your reporting cadence, and
-the memory caps take effect the moment you save.
+Changing one later is a formal amendment, made in Settings → Rules in force,
+with a written reason the CEO is shown. There is no waiting period: a rule you
+decide on binds from the very next agent call. What stands in for the old
+cooling-off is the accounting — a written reason, an audit entry, a new
+constitution version, and mandatory disclosure to the CEO. The company still
+cannot move its own goalposts; you never needed to be stopped from moving
+yours.
 
 **Service credentials (optional).** If you already know the keys the agents
 will need, add them here: a name, the value, and tick which roles receive

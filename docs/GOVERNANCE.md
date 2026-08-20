@@ -1,12 +1,12 @@
 # Governance — the constitution, rule by rule
 
-Each project runs under a **constitution**: 24 numbers and switches the agents
+Each project runs under a **constitution**: 39 numbers and switches the agents
 cannot edit, argue with, or talk their way around. Every one is enforced
 server-side in [`yaaf/server/policy.py`](../yaaf/server/policy.py) as an HTTP
 refusal or an automatic state change. The schema itself lives in
 [`yaaf/core/constitution.py`](../yaaf/core/constitution.py), and the settings
 editor is *generated* from it — a rule added to the model is editable the
-moment it exists.
+moment it exists, on the tab its group maps to in `GROUP_THEMES`.
 
 **Constitution vs. configuration.** The constitution is what binds the agents
 (caps, ratios, thresholds). Configuration is operational and changes freely
@@ -17,8 +17,13 @@ moment it exists.
 
 ## Changing a rule
 
-**In the dashboard:** Settings → **Rules in force** (all 24, grouped), or
-Settings → **Money** for the budget subset. Edit, give a reason, save.
+**In the dashboard:** Settings → **Rules in force**. All 39 sit behind six tabs
+— Money, Pace & brakes, How work is run, Autonomy, Memory, Rhythm & reporting —
+one rule per row, with the group as a subhead. Edit anything on any tab; a tray
+at the foot of the pane lists every pending change across all of them, takes
+your reason, and shows you the before/after before it lands. Settings → **Money**
+displays the budget read-only and links here; rules are changed in one place
+only. Deep link with `?s=rules&t=<tab>`.
 
 **Over the API / CLI:**
 
@@ -107,8 +112,41 @@ Memory-heavy roles (research desks, support) need more room than the defaults.
 |---|---|---|
 | `wakes_per_agent_per_hour` | 6 | The runaway-loop brake. Every wake is a paid model call. |
 | `runs_per_project_per_day` | 150 | Daily activity ceiling across every agent. |
+| `runs_per_project_per_hour` | 15 | The pacing brake, on a trailing hour. Without it a company spends the day's allowance by lunch and sits dead until midnight. |
 | `pair_breaker_messages` | 10 | Two agents this deep in one thread with nothing landing are talking, not working — the thread **freezes** until you unfreeze it. |
+| `max_usd_per_run` | 2.0 | USD one run may spend. It is warned as it approaches and stopped at the line. 0 turns it off. |
 | `refusal_cap_per_run` | 5 | Past this the run's token is revoked. Rephrasing a refused request is not a strategy. |
+| `task_check_failures_before_block` | 3 | A task whose success test fails this often **blocks** and becomes a question for whoever planned it. Counts across re-claims; only a pass resets it. |
+| `max_concurrent_runs` | 3 | Agents working simultaneously. Protects the provider rate limit every project on the box shares. |
+| `reserved_governance_runs` | 3 | Runs held out of the daily ceiling so a review, a cycle plan or a re-forecast can always happen. Ordinary work stops at the cap minus this. 0 turns it off. |
+
+### Sampled audit
+
+Gates ask you at commitment, review and completion. Between them the platform
+samples observable closes at a rate you set — and draws **after** the close, so
+no agent knows which claim will be checked. Sampling never blocks.
+
+| Rule | Default | What it does |
+|---|---|---|
+| `audit_sample_rate` | 0.2 | Chance an observable close lands on your desk. 0 turns sampling off; 1 samples everything. Command-checked closes are never sampled — the platform already ran those. |
+| `audit_response_hours` | 48 | A sample you have not answered is recorded "not reviewed" and counted in the next review's coverage line. |
+
+### CEO cadence
+
+| Rule | Default | What it does |
+|---|---|---|
+| `ceo_heartbeat_hours` | 6.0 | Hours between planning wakes when nothing else has woken the CEO. Every wake is a full-price run. |
+| `ceo_heartbeat_always` | false | Off, a planning wake is skipped with an empty board and no live bet — it would buy a run to conclude "nothing to do". |
+| `ceo_daily_at` | none | `"09:00"` in `timezone`, or blank. Fires once per local day. The standup pattern. |
+
+### Operate rhythm, review, commitment
+
+| Rule | Default | What it does |
+|---|---|---|
+| `cycle_frequency` | `"weekly"` | Operate projects only: `daily`, `weekly`, `monthly` or `quarterly`. Each roll closes the cycle, carries unfinished scope forward and reopens the plan gate. |
+| `cycle_day` | 0 | Weekly: 0=Monday … 6=Sunday. Monthly/quarterly: day 1–28 — the 29th to 31st are refused rather than quietly moved. |
+| `review_interval_days` | 7 | The standing meeting. The janitor opens it on schedule regardless of budget or an empty board and emails you the numbers; the CEO files its variance narrative on a reserved governance run. |
+| `commitment_failure_reforecast` | 5 | Dead runs against the plan before the platform re-projects the date and tells the CEO the ground moved. 0 turns this trigger off. |
 
 ### Reporting to you
 
@@ -120,7 +158,7 @@ remember is a suggestion. It's a refusal now.
 |---|---|---|
 | `chairman_report_interval_hours` | 0.0 | Hours between unprompted status reports. **0 = you never asked for a cadence and nothing is refused.** |
 | `chairman_report_window_local` | none | `"09:00-20:00"`, or blank for any hour. Must not wrap midnight. |
-| `chairman_report_timezone` | `"UTC"` | IANA name, e.g. `America/New_York`. The window is read in this zone. |
+| `timezone` | `"UTC"` | IANA name, e.g. `America/New_York`. **One zone for the whole rulebook** — the reporting window, the daily CEO wake and every recurring rhythm are read in it. (Was `chairman_report_timezone`, and was also set a second time in project config; one place too many to get wrong.) |
 
 Replying to something you actually said is always allowed and is not a status.
 
@@ -128,7 +166,8 @@ Replying to something you actually said is always allowed and is not a status.
 
 | Rule | Default | What it does |
 |---|---|---|
-| `run_timeout_s` | 1800 | A run past this is reaped and its task claim released. |
+| `run_timeout_s` | 1800 | A run past this is reaped and its task claim released. The CEO's resident chat session is exempt — it dies only when its heartbeat stops. |
+| `run_token_budget` | 0 | Handed to the model as a task budget so it paces itself and wraps up before the line instead of being cut off mid-thought. 0 turns it off. |
 
 ---
 

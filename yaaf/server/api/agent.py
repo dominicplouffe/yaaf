@@ -13,7 +13,7 @@ import hashlib
 from datetime import datetime
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
@@ -27,6 +27,8 @@ from yaaf.core.models import (
     AuditLog,
     Channel,
     ChannelRead,
+    Commitment,
+    CommitmentStatus,
     Decision,
     Evidence,
     EvidenceKind,
@@ -36,6 +38,11 @@ from yaaf.core.models import (
     LedgerEntry,
     Memory,
     Message,
+    Requirement,
+    RequirementEdge,
+    RequirementStatus,
+    Review,
+    ReviewStatus,
     RunKind,
     RunQueue,
     SideEffect,
@@ -70,6 +77,10 @@ def _task_view(task: Task) -> dict:
         "blocked_reason": task.blocked_reason,
         "claimed_by_agent_id": task.claimed_by_agent_id,
         "hypothesis_id": task.hypothesis_id,
+        # What this work is FOR. Outside Explore a task must name a requirement,
+        # and there was no read anywhere that returned one — so the only way to
+        # supply the mandatory field was to guess an id and eat the 404.
+        "requirement_id": task.requirement_id,
         "not_before": task.not_before.isoformat() if task.not_before else None,
     }
 
@@ -145,6 +156,7 @@ class TaskCreate(BaseModel):
     parent_task_id: str | None = None
     assignee_agent_id: str | None = None
     hypothesis_id: str | None = None
+    requirement_id: str | None = None
     not_before: datetime | None = None
 
 
@@ -153,6 +165,17 @@ def create_task(
     body: TaskCreate, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
 ) -> dict:
     cons = effective(session, ctx.project.id)
+    requirement = None
+    if body.requirement_id is not None:
+        requirement = session.get(Requirement, body.requirement_id)
+        if requirement is None or requirement.project_id != ctx.project.id:
+            raise Refusal("Unknown requirement.", status_code=404)
+    # A subtask inherits what its parent is for: a lead decomposing work cannot
+    # quietly point half of it at something else.
+    if requirement is None and body.parent_task_id is not None:
+        parent = session.get(Task, body.parent_task_id)
+        if parent is not None and parent.requirement_id:
+            requirement = session.get(Requirement, parent.requirement_id)
     policy.check_task_create(
         session,
         cons,
@@ -163,6 +186,8 @@ def create_task(
         success_test=body.success_test,
         produces_external_evidence=body.produces_external_evidence,
         hypothesis_id=body.hypothesis_id,
+        requirement=requirement,
+        not_before=body.not_before,
     )
     if body.parent_task_id is not None:
         if body.assignee_agent_id is None:
@@ -184,6 +209,7 @@ def create_task(
         assignee_agent_id=body.assignee_agent_id,
         created_by_agent_id=ctx.agent.id,
         hypothesis_id=body.hypothesis_id,
+        requirement_id=requirement.id if requirement else None,
         title=body.title,
         goal=body.goal,
         success_test=body.success_test,
@@ -193,6 +219,12 @@ def create_task(
     session.add(task)
     policy.record_task_event(session, task, TaskStatus.READY, f"agent:{ctx.agent.id}",
                              from_status=None)
+    # Accepted scope becomes live scope the moment work exists for it, so the
+    # burn-up and the review can tell "nobody has started" from "in flight".
+    if requirement is not None and requirement.status == RequirementStatus.PENDING:
+        policy.record_requirement_event(session, requirement, RequirementStatus.IN_PROGRESS,
+                                        f"agent:{ctx.agent.id}", note=f"work created: {task.id}")
+        requirement.status = RequirementStatus.IN_PROGRESS
     notify(session, WAKE_CHANNEL, ctx.project.id)
     return _task_view(task)
 
@@ -625,6 +657,7 @@ def memory_search(
     scope: str | None = None,
     limit: int = 15,
     include_superseded: bool = False,
+    memory_id: str | None = None,
     ctx: RunContext = Depends(run_auth),
     session: Session = Depends(db),
 ) -> list[dict]:
@@ -633,6 +666,10 @@ def memory_search(
     # fetches back something it folded too eagerly — without it, "nothing is
     # ever deleted" would be a claim the agent has no way to act on.
     stmt = select(Memory).where(Memory.project_id == ctx.project.id)
+    if memory_id:
+        # Fetch-one for the memory-tool-shaped view: an id is an exact address,
+        # and making it ride the text search would cap it at the search limit.
+        stmt = stmt.where(Memory.id == memory_id)
     if not include_superseded:
         stmt = stmt.where(Memory.superseded_at.is_(None))
     if scope == "project":
@@ -807,6 +844,210 @@ def memory_forget(
     return {"forgotten": old.id}
 
 
+# ── requirements: the CEO proposes, the chairman accepts ────────────────────────
+#
+# Note what is absent: there is no route here that writes `met`. That is the
+# strongest available form of "done is never self-graded" — not a rule an agent
+# could argue with, but a verb it was never given. The platform runs the
+# acceptance test and writes the result itself.
+
+
+class RequirementPropose(BaseModel):
+    statement: str = Field(min_length=10, max_length=2000)
+    acceptance_test: dict
+    stage: int = Field(default=1, ge=1, le=50)
+    est_runs: int | None = Field(default=None, ge=1, le=10_000)
+    depends_on: list[str] = Field(default_factory=list)
+
+
+@router.post("/requirements")
+def propose_requirement(
+    body: RequirementPropose, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
+) -> dict:
+    cons = effective(session, ctx.project.id)
+    policy.check_requirement_propose(cons, ctx.project, ctx.agent, body.acceptance_test)
+    if policy.requires_requirements(ctx.project) and not body.est_runs:
+        raise Refusal(
+            "This project plans before it builds, so a requirement needs est_runs: your "
+            "honest guess at how many runs it will take. It is checked against the budget "
+            "now and against what the work actually costs later — a guess you stand "
+            "behind is worth more here than a small number.",
+            status_code=422,
+        )
+    # The commitment's guarantee: while the promised date does not hold, new
+    # scope is refused before affordability is even asked.
+    policy.check_scope_within_commitment(session, ctx.project, cons)
+    policy.check_plan_affordable(session, ctx.project, cons, body.est_runs or 0)
+    cycle = policy.current_cycle(session, ctx.project.id)
+    requirement = Requirement(
+        id=ids.new_id(ids.REQUIREMENT),
+        project_id=ctx.project.id,
+        cycle_id=cycle.id if cycle is not None else None,
+        key=policy.next_requirement_key(session, ctx.project.id),
+        statement=body.statement.strip(),
+        acceptance_test=body.acceptance_test,
+        status=RequirementStatus.PROPOSED,
+        stage=body.stage,
+        est_runs=body.est_runs,
+        proposed_by_agent_id=ctx.agent.id,
+    )
+    session.add(requirement)
+    session.flush()
+    policy.record_requirement_event(session, requirement, RequirementStatus.PROPOSED,
+                                    f"agent:{ctx.agent.id}", from_status=None)
+    for source_id in body.depends_on:
+        source = session.get(Requirement, source_id)
+        if source is None or source.project_id != ctx.project.id:
+            raise Refusal(f"Unknown requirement in depends_on: {source_id}", status_code=404)
+        policy.check_requirement_edge(session, ctx.project, source, requirement)
+        session.add(RequirementEdge(
+            id=ids.new_id(ids.REQUIREMENT_EDGE),
+            project_id=ctx.project.id,
+            from_requirement_id=source.id,
+            to_requirement_id=requirement.id,
+        ))
+    return {
+        "requirement_id": requirement.id,
+        "key": requirement.key,
+        "status": requirement.status,
+        "note": ("Proposed, not scope. The chairman accepts requirements; until he does, "
+                 "no work may be created for this one."),
+    }
+
+
+class RequirementDependency(BaseModel):
+    requirement_id: str
+    depends_on_requirement_id: str
+
+
+@router.post("/requirement_edges")
+def add_requirement_edge(
+    body: RequirementDependency,
+    ctx: RunContext = Depends(run_auth),
+    session: Session = Depends(db),
+) -> dict:
+    if ctx.agent.kind != AgentKind.CEO:
+        raise Refusal("Only the CEO sequences requirements.", status_code=403)
+    target = session.get(Requirement, body.requirement_id)
+    source = session.get(Requirement, body.depends_on_requirement_id)
+    if target is None or source is None:
+        raise Refusal("Unknown requirement.", status_code=404)
+    policy.check_requirement_edge(session, ctx.project, source, target)
+    session.add(RequirementEdge(
+        id=ids.new_id(ids.REQUIREMENT_EDGE),
+        project_id=ctx.project.id,
+        from_requirement_id=source.id,
+        to_requirement_id=target.id,
+    ))
+    return {"ok": True, "note": f"{target.key} now waits for {source.key}."}
+
+
+# ── the commitment: the CEO asks, the platform computes, the chairman decides ──
+#
+# Note what is absent, again: there is no date field in the proposal — extra
+# fields are a validation error, so a smuggled deliver_by dies at the schema —
+# and no agent route accepts, moves or closes a commitment. The projection is
+# computed by the platform, the transitions are the janitor's, and the date is
+# the chairman's.
+
+
+class CommitmentPropose(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    note: str | None = Field(default=None, max_length=2000)
+
+
+@router.post("/commitments")
+def propose_commitment(
+    body: CommitmentPropose, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
+) -> dict:
+    cons = effective(session, ctx.project.id)
+    projection = policy.check_commitment_propose(session, ctx.project, cons, ctx.agent)
+    projected = projection["projected_done_at"]
+    # A promise is day-shaped — "by the 30th", never "by 14:07:22" — so the
+    # proposed date is the end of the projected day. It also keeps a promise
+    # accepted at exactly the projection from reading as late one tick later,
+    # when the sliding projection has moved past it by seconds.
+    deliver_by = projected.replace(hour=23, minute=59, second=59, microsecond=0)
+    commitment = Commitment(
+        id=ids.new_id(ids.COMMITMENT),
+        project_id=ctx.project.id,
+        status=CommitmentStatus.PROPOSED,
+        deliver_by=deliver_by,
+        proposed_by_agent_id=ctx.agent.id,
+        note=(body.note or "").strip() or None,
+        projected_done_at=projected,
+        projection={"method": projection["method"], "note": projection["basis"]},
+    )
+    session.add(commitment)
+    session.flush()
+    return {
+        "commitment_id": commitment.id,
+        "status": commitment.status,
+        "deliver_by": deliver_by.isoformat(),
+        "basis": projection["basis"],
+        "note": ("Proposed to the chairman. The date is the platform's own projection "
+                 "— you did not write it and cannot. He accepts it (with this date or "
+                 "his own), or declines; nothing binds until he does."),
+    }
+
+
+# ── the review: the CEO's half of the meeting ───────────────────────────────────
+
+
+class ReviewNarrativeIn(BaseModel):
+    narrative: str = Field(min_length=50, max_length=20_000)
+    recommended: str | None = Field(default=None, max_length=10_000)
+
+
+@router.post("/review_narrative")
+def file_review_narrative(
+    body: ReviewNarrativeIn, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
+) -> dict:
+    """The variance narrative, into the open review. Note the shape of the
+    verb: the CEO explains the numbers, it does not produce them — the
+    platform's snapshot was frozen when the janitor opened the meeting, so
+    there is nothing here for a narrative to massage."""
+    if ctx.agent.kind != AgentKind.CEO:
+        raise Refusal(
+            "The review narrative is the CEO's. If you have variance to explain, "
+            "tell the CEO — your channel for that is a message or a suggestion.",
+            status_code=403,
+        )
+    review = session.execute(
+        select(Review).where(Review.project_id == ctx.project.id,
+                             Review.status == ReviewStatus.OPEN)
+    ).scalar_one_or_none()
+    if review is None:
+        raise Refusal(
+            "No review is open. The janitor opens them on the constitution's "
+            "cadence; you will be woken when one is.",
+            status_code=409,
+        )
+    if review.narrative is not None:
+        raise Refusal(
+            f"Review #{review.number} already has your narrative. The meeting is "
+            "with the chairman now — his decisions arrive as notices.",
+            status_code=409,
+        )
+    review.narrative = body.narrative.strip()
+    review.recommended = (body.recommended or "").strip() or None
+    review.narrative_run_id = ctx.run.id
+    review.narrative_filed_at = utcnow()
+    from yaaf.server.notify import chairman_notify
+
+    chairman_notify(
+        session, ctx.project, f"review #{review.number}: the CEO's narrative is in",
+        body.narrative[:2000]
+        + (f"\n\nRecommends: {review.recommended[:1000]}" if review.recommended else "")
+        + "\n\nTake the meeting on the Review tab.",
+    )
+    return {"review_number": review.number,
+            "note": ("Filed. The chairman decides from here — cut, add, reword, "
+                     "move the date, raise the budget, or accept the slip. Each "
+                     "decision reaches you as a notice with his reason.")}
+
+
 # ── evidence, hypotheses, decisions ─────────────────────────────────────────────
 
 
@@ -822,7 +1063,8 @@ class EvidenceAdd(BaseModel):
 def evidence_add(
     body: EvidenceAdd, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
 ) -> dict:
-    policy.check_evidence_add(ctx.project, body.kind, body.source_url)
+    policy.check_evidence_add(session, ctx.project, body.kind, body.source_url,
+                              body.task_id)
     row = Evidence(
         id=ids.new_id(ids.EVIDENCE),
         project_id=ctx.project.id,
@@ -1101,6 +1343,9 @@ MAX_ARTIFACT_READ_BYTES = 64 * 1024
 class ArtifactPut(BaseModel):
     filename: str = Field(min_length=1, max_length=200)
     content_base64: str
+    # Requirement ids or keys this deliverable claims to satisfy. A claim,
+    # not a verdict — met is still only ever written by the platform.
+    satisfies: list[str] = Field(default_factory=list, max_length=20)
 
 
 def _artifact_key(ctx: RunContext, ref: str) -> str:
@@ -1125,12 +1370,21 @@ def _artifact_key(ctx: RunContext, ref: str) -> str:
 
 
 @router.post("/artifacts")
-def artifact_put(body: ArtifactPut, ctx: RunContext = Depends(run_auth)) -> dict:
-    """Persist a finished deliverable to the artifact store. The workspace is
-    ephemeral; this is where finished work goes to outlive the run. The
-    platform picks the location — projects/<project>/<run>/<filename> — so an
-    agent names a file, never a path."""
+def artifact_put(
+    body: ArtifactPut, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
+) -> dict:
+    """Persist a finished deliverable to the artifact store, AND as a row.
+
+    The workspace persists with the project as shared working state; the
+    artifact store is the shipped, versioned record — where finished work goes
+    to be served, audited and read by others. The platform picks the location —
+    projects/<project>/<run>/
+    <filename> — so an agent names a file, never a path. The row is the
+    receipt: sha256 and version are computed here, published_at is a real
+    timestamp instead of a filesystem mtime a restore would rewrite, and the
+    requirements it claims to satisfy are validated against this project."""
     from yaaf.core.artifacts import store
+    from yaaf.core.models import Artifact
 
     filename = body.filename.strip()
     if "/" in filename or "\\" in filename or filename in (".", "..") or "\x00" in filename:
@@ -1149,12 +1403,54 @@ def artifact_put(body: ArtifactPut, ctx: RunContext = Depends(run_auth)) -> dict
             "somewhere addressable and record the URL as evidence instead.",
             status_code=413,
         )
+    # Satisfies: keys ("R-03") or ids, resolved and validated — an id from
+    # another project or thin air is refused, not stored as decoration.
+    satisfied: list[Requirement] = []
+    if body.satisfies:
+        scope = {r.id: r for r in policy.scope_requirements(session, ctx.project.id)}
+        by_key = {r.key: r for r in scope.values()}
+        for ref in body.satisfies:
+            requirement = scope.get(ref) or by_key.get(ref)
+            if requirement is None:
+                raise Refusal(
+                    f"satisfies names {ref!r}, which is not a requirement of this "
+                    "project. Cite real scope or cite nothing — a deliverable that "
+                    "claims to satisfy an invented requirement satisfies less than "
+                    "one that claims nothing.",
+                    status_code=404,
+                )
+            satisfied.append(requirement)
+    elif ctx.run.requirement_id:
+        stamped = session.get(Requirement, ctx.run.requirement_id)
+        if stamped is not None and stamped.key != policy.PLAN_KEY:
+            satisfied.append(stamped)
+
     key = f"projects/{ctx.project.id}/{ctx.run.id}/{filename}"
     uri = store().put_bytes(key, data)
+    digest = hashlib.sha256(data).hexdigest()
+    version = 1 + (session.execute(
+        select(func.max(Artifact.version)).where(
+            Artifact.project_id == ctx.project.id, Artifact.name == filename)
+    ).scalar_one() or 0)
+    row = Artifact(
+        id=ids.new_id(ids.ARTIFACT),
+        project_id=ctx.project.id,
+        name=filename,
+        version=version,
+        sha256=digest,
+        size_bytes=len(data),
+        storage_key=key,
+        uri=uri,
+        published_by_agent_id=ctx.agent.id if ctx.agent else None,
+        run_id=ctx.run.id,
+        requirement_ids=[r.id for r in satisfied],
+    )
+    session.add(row)
     # The digest is returned at write time so the author can record what it
     # shipped and a later reader can prove the store still holds those bytes.
-    return {"uri": uri, "key": key, "size": len(data),
-            "sha256": hashlib.sha256(data).hexdigest()}
+    return {"uri": uri, "key": key, "size": len(data), "sha256": digest,
+            "artifact_id": row.id, "version": version,
+            "satisfies": [r.key for r in satisfied]}
 
 
 @router.get("/artifacts")

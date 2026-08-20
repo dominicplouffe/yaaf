@@ -104,9 +104,23 @@ reap-and-retry safe: no duplicate tweet, PR, or payment after a crash.
 
 | Endpoint | Body | Notes |
 |---|---|---|
-| `POST /artifacts` | `filename`, `content_base64` | Persist a finished deliverable to the artifact store. |
+| `POST /artifacts` | `filename`, `content_base64` | Persist a finished deliverable to the artifact store. Agents reach this through the `artifact_put` tool, which takes a workspace **path** and reads the bytes itself — a deliverable must never be base64'd through a model's own output. |
 | `GET /artifacts` | — | Everything this project has actually shipped. |
 | `GET /artifacts/content` | `ref` | Read one back. A run token is scoped to its own project's artifacts, never the whole store. |
+
+## Bulk data
+
+The sandbox tool `data_fetch(server, tool, arguments, path)` calls a project
+data source and writes the **whole** result to a workspace file, returning only
+a path, size, digest and a 2 KB preview. Omit `tool` to list what a source
+offers. It exists because an MCP tool result otherwise lands in the model's
+context in full, billed by the token on that turn and every turn after — and
+because counting and summing are things code does exactly and a model does
+approximately. The sandbox ships `pandas` and `duckdb` for the processing half.
+
+A data source marked `access: "bulk"` is **not mounted as tools at all**, so its
+rows cannot reach a context by accident; `data_fetch` is the only way in. Mark
+sources that serve rows as bulk and leave small-lookup sources `inline`.
 
 ---
 
@@ -123,6 +137,7 @@ A role is a JSON file in [`roles/`](../roles):
   "model": "claude-sonnet-5",
   "effort": "xhigh",
   "tool_permissions": {"files": true, "bash": true, "web": true,
+                       "data_processing": true,
                        "egress_allow": ["api.github.com", "pypi.org"]},
   "secret_scopes": ["github"],
   "system_prompt": "…"
@@ -130,9 +145,13 @@ A role is a JSON file in [`roles/`](../roles):
 ```
 
 - `model` / `effort` — per role, so your writer isn't paying engineer prices.
-- `tool_permissions` — `files`, `bash`, `web`, and `egress_allow` (the hosts
-  this role's sandbox may reach; a role that declares any gets its **own proxy
-  port**).
+- `tool_permissions` — `files`, `bash`, `data_processing`, `web`, and
+  `egress_allow` (the hosts this role's sandbox may reach; a role that declares
+  any gets its **own proxy port**). `data_processing` grants the same shell
+  `bash` does; it is separate so that a role which has one in order to aggregate
+  data with code says so, rather than looking like it builds software. Grant it
+  to any role that reads a data source — one that can fetch bulk data but not
+  process it is worse off than one that never fetched it.
 - `secret_scopes` — which named secrets get injected per run.
 - `mcp_servers` is **refused here.** Data sources are project-owned and
   assigned to roles, so a server frozen into a template can't follow the role

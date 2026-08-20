@@ -33,6 +33,8 @@ from yaaf.core.models import (
     NoticeKind,
     Project,
     ProjectStatus,
+    Requirement,
+    RequirementStatus,
     Run,
     RunKind,
     RunQueue,
@@ -145,7 +147,18 @@ def lease_and_prepare(limit: int = 1) -> list[RunJob]:
         for queued in rows:
             project = session.get(Project, queued.project_id)
             if project is None or project.status != ProjectStatus.RUNNING:
-                session.delete(queued)  # paused/stopped mid-queue: drop silently
+                # Paused/stopped mid-queue. Dropping the row is correct and not
+                # a lost wake: every wake reason is derived from durable state —
+                # a ready task, an unconsumed notice, an unread message, a due
+                # heartbeat — so the dispatcher re-decides this within one tick
+                # of the project resuming. Holding the row instead would put a
+                # paused project at the head of a queue shared by every project
+                # on the box. It is logged because "the run I saw queued is
+                # gone" deserves an answer somewhere.
+                log.info("dropping queued %s for %s: project is %s", queued.kind,
+                         queued.project_id,
+                         project.status if project else "missing")
+                session.delete(queued)
                 continue
             job = _materialize(session, queued, project)
             if job is not None:
@@ -163,6 +176,7 @@ def _materialize(session: Session, queued: RunQueue, project: Project) -> RunJob
         kind=queued.kind,
         trigger=queued.trigger,
         task_id=queued.task_id,
+        requirement_id=queued.requirement_id,
         attempt=queued.attempt,
         prior_run_id=queued.prior_run_id,
         status=RunStatus.RUNNING,
@@ -180,6 +194,7 @@ def _materialize(session: Session, queued: RunQueue, project: Project) -> RunJob
         kind=queued.kind,
         trigger=queued.trigger or {},
         task_id=queued.task_id,
+        requirement_id=queued.requirement_id,
         attempt=queued.attempt,
         timeout_s=cons.run_timeout_s,
         api_base_url=settings().api_base_url,
@@ -197,6 +212,18 @@ def _materialize(session: Session, queued: RunQueue, project: Project) -> RunJob
         job.timeout_s = min(cons.run_timeout_s, 300)
         return job
 
+    if queued.kind == RunKind.REQUIREMENT_CHECK:
+        requirement = session.get(Requirement, queued.requirement_id)
+        if requirement is None or requirement.status != RequirementStatus.CHECKING:
+            run.status = RunStatus.FAILED
+            run.summary = "requirement check job with no requirement in checking state"
+            run.finished_at = utcnow()
+            return None
+        job.check_command = (requirement.acceptance_test or {}).get("command", "")
+        job.requirement_id = requirement.id
+        job.timeout_s = min(cons.run_timeout_s, 300)
+        return job
+
     agent = session.get(Agent, queued.agent_id)
     if agent is None or agent.status != "active":
         run.status = RunStatus.FAILED
@@ -211,6 +238,8 @@ def _materialize(session: Session, queued: RunQueue, project: Project) -> RunJob
     job.context_pack = build_context_pack(session, run, agent, project)
 
     role_version = role_version_for(session, agent)
+    job.max_usd = cons.max_usd_per_run
+    job.task_budget_tokens = cons.run_token_budget
     job.model = agent.model_override or (role_version.model if role_version else "claude-sonnet-5")
     job.effort = role_version.effort if role_version else "high"
     # Pinned on the run row at lease time, not finalize: reaped and killed runs
@@ -218,7 +247,7 @@ def _materialize(session: Session, queued: RunQueue, project: Project) -> RunJob
     run.model = job.model
     run.effort = job.effort
     job.tool_permissions = dict(role_version.tool_permissions) if role_version else {}
-    source_names = _merge_project_data_sources(session, project, role_version, job)
+    source_specs = _merge_project_data_sources(session, project, role_version, job)
     job.egress_proxy_url = _role_egress_url(session, role_version, job.tool_permissions)
     role_secrets = _role_secret_env(session, project, role_version)
     job.billing_env = {**_billing_env(session, project), **role_secrets}
@@ -228,13 +257,58 @@ def _materialize(session: Session, queued: RunQueue, project: Project) -> RunJob
             f"role: {', '.join(sorted(role_secrets))}. Use them for their purpose; never "
             "print, log, or write them to files."
         )
-    if source_names:
-        job.system_prompt += (
-            "\n\nDATA SOURCES: " + ", ".join(f"{n} (tools mcp__{n}__*)" for n in source_names)
-            + " — MCP servers mounted for your role. If a listed source's tools are absent "
-            "from your toolset, report that plainly instead of guessing at causes."
-        )
+    job.system_prompt += _data_source_prompt(source_specs)
     return job
+
+
+def _data_source_prompt(specs: list[dict]) -> str:
+    """The DATA SOURCES paragraph — what is connected, and how to use it without
+    setting money on fire.
+
+    The cost lesson is stated here rather than in the always-on prompt because
+    it is only payable when a source exists: a run with nothing connected should
+    not carry a paragraph about pulls it cannot make. Both lanes (scheduled runs
+    and the resident chat) build it from the same specs.
+    """
+    if not specs:
+        return ""
+    inline = [s.get("name", "?") for s in specs if s.get("access", "inline") != "bulk"]
+    bulk = [s.get("name", "?") for s in specs if s.get("access", "inline") == "bulk"]
+    lines = ["\n\nDATA SOURCES: MCP servers connected to this project for your role."]
+    if inline:
+        lines.append(
+            " Mounted as tools: "
+            + ", ".join(f"{n} (mcp__{n}__*)" for n in inline)
+            + ". If a listed source's tools are absent from your toolset, report that "
+            "plainly instead of guessing at causes."
+        )
+    if bulk:
+        lines.append(
+            " Bulk-only (deliberately NOT mounted as tools, because their results "
+            "belong in files rather than in your context): "
+            + ", ".join(bulk)
+            + ". Reach them with data_fetch — call data_fetch(server=\"<name>\") with no "
+            "tool to see what each one offers."
+        )
+    lines.append(
+        "\n\nDATA HANDLING: every result a mounted mcp__* tool returns is copied into "
+        "your context and paid for by the token, on that turn and on every turn after "
+        "it. Use those tools only for small lookups you intend to read in full. For "
+        "anything that could exceed a screenful — exports, row-level data, logs, "
+        "listings — call data_fetch(server, tool, arguments) instead: it makes the same "
+        "call but writes the complete result to a file in your workspace and returns "
+        "only the path, size and a short preview. Then process the FILE with code "
+        "(python3 has pandas and duckdb; use Bash if you have it, otherwise Read and "
+        "Grep slices of the file) and report only the aggregate. Three habits follow "
+        "from this: prefer a source tool's own filter, date-range or pagination "
+        "arguments over fetching everything; check your workspace before fetching "
+        "anything twice, because it persists across runs and yesterday's file is free; "
+        "and leave the script that produced an answer behind under scripts/, so the "
+        "next run of the same analysis re-executes it instead of re-deriving it. "
+        "Counting, summing, sorting and joining are things code does exactly and "
+        "cheaply — doing them by reading rows costs tokens and gets answers wrong."
+    )
+    return "".join(lines)
 
 
 def _merge_project_data_sources(session: Session, project: Project, role_version,
@@ -243,7 +317,7 @@ def _merge_project_data_sources(session: Session, project: Project, role_version
     roles they are assigned to — roles never declare their own servers. The
     mapping lives on the project and is applied at lease time, which is why
     connecting a source needs no role-library edit and no team repin. Returns
-    the mounted source names."""
+    the merged specs (name + access), which the prompt paragraph describes."""
     # Pinned versions minted before data sources became project-owned may still
     # freeze a legacy mcp_servers key; it is dead weight, never mounted.
     job.tool_permissions.pop("mcp_servers", None)
@@ -253,11 +327,15 @@ def _merge_project_data_sources(session: Session, project: Project, role_version
 
         role = session.get(Role, role_version.role_id)
         hosts = list(job.tool_permissions.get("egress_allow", []))
-        for source in (project.config or {}).get("mcp_servers", []):
+        for source in (project.integrations or {}).get("mcp_servers", []):
             if role is None or role.slug not in source.get("roles", []):
                 continue
             spec = {"name": source["name"],
-                    "url_env": _env_var_name(source["url_secret"])}
+                    "url_env": _env_var_name(source["url_secret"]),
+                    # bulk sources are reachable only through data_fetch (which
+                    # writes to a workspace file); the sandbox never mounts them
+                    # as tools, so their rows cannot enter a model's context.
+                    "access": source.get("access", "inline")}
             if source.get("bearer_secret"):
                 spec["bearer_env"] = _env_var_name(source["bearer_secret"])
             specs.append(spec)
@@ -269,7 +347,7 @@ def _merge_project_data_sources(session: Session, project: Project, role_version
             # role version's dict and must not mutate its nested lists.
             job.tool_permissions = {**job.tool_permissions, "mcp_servers": specs,
                                     **({"egress_allow": hosts} if hosts else {})}
-    return [s.get("name", "?") for s in specs]
+    return specs
 
 
 def _prepare_workspace(session: Session, project: Project) -> str:
@@ -430,8 +508,13 @@ def execute_job(job: RunJob, backend=None) -> RunResult:
     )
     beat.start()
     try:
-        if job.kind == RunKind.SUCCESS_CHECK:
-            result = _run_success_check(job)
+        # Both check kinds are COMMANDS the platform runs and reads the exit
+        # code of — never model runs. Sending one to the model backend launches
+        # a sandbox with no token, no prompt and no billing credential, which
+        # dies as "Not logged in" and returns no exit code at all: the
+        # requirement then fails a test that never ran, forever.
+        if job.kind in (RunKind.SUCCESS_CHECK, RunKind.REQUIREMENT_CHECK):
+            result = _run_check_command(job)
         else:
             backend = backend or _backend_for(job)
             # The revoked event reaches the sandbox layer so a kill switch,
@@ -449,7 +532,7 @@ def execute_job(job: RunJob, backend=None) -> RunResult:
 def _backend_for(job: RunJob):
     with db_session() as session:
         project = session.get(Project, job.project_id)
-        runtime = (project.config or {}).get("runtime", "agent_sdk")
+        runtime = (project.integrations or {}).get("runtime", "agent_sdk")
     return get_backend(runtime)
 
 
@@ -480,6 +563,8 @@ def finalize(job: RunJob, result: RunResult, was_revoked: bool = False) -> None:
         else:
             run.status = RunStatus.DONE if result.ok else RunStatus.FAILED
         run.finished_at = utcnow()
+        if run.status != RunStatus.DONE:
+            policy.charge_failure(session, run)
         run.tokens_in = result.tokens_in
         run.tokens_out = result.tokens_out
         run.cache_creation_tokens = result.cache_creation_tokens
@@ -516,6 +601,8 @@ def finalize(job: RunJob, result: RunResult, was_revoked: bool = False) -> None:
 
         if job.kind == RunKind.SUCCESS_CHECK:
             _finalize_success_check(session, job, result)
+        elif job.kind == RunKind.REQUIREMENT_CHECK:
+            _finalize_requirement_check(session, job, result)
         elif run.status == RunStatus.FAILED:
             if project is not None and _looks_like_credential_failure(run.summary):
                 _flag_credential_failure(session, project, run)
@@ -679,19 +766,30 @@ MAX_RUN_ATTEMPTS = 3
 
 
 def _retry_failed_run(session: Session, run: Run) -> None:
-    """A failed run consumed its trigger (notices marked read, message cursors
-    advanced) without a model ever acting on it. Give the notices back and
-    requeue the wake with backoff; the retry's context pack re-includes recent
-    messages (see contextpack) so nothing said gets silently eaten."""
+    """A failed run consumed its trigger (notices marked read, suggestions
+    marked read, message cursors advanced) without a model ever acting on it.
+    Give them back and requeue the wake with backoff; the retry's context pack
+    re-includes recent messages (see contextpack) so nothing said gets silently
+    eaten."""
     from datetime import timedelta
 
-    from yaaf.core.models import Notice
+    from yaaf.core.models import Notice, Suggestion
 
     for notice in session.execute(
         select(Notice).where(Notice.consumed_by_run_id == run.id)
     ).scalars():
         notice.consumed_at = None
         notice.consumed_by_run_id = None
+
+    # Suggestions are consumed by pack construction the same way notices are,
+    # and are an employee's ONLY authority over the backlog. Losing one to a
+    # crash silently deletes the single thing a non-CEO agent may say about
+    # what should be worked on.
+    for suggestion in session.execute(
+        select(Suggestion).where(Suggestion.consumed_by_run_id == run.id)
+    ).scalars():
+        suggestion.consumed_at = None
+        suggestion.consumed_by_run_id = None
 
     if run.attempt >= MAX_RUN_ATTEMPTS:
         log.warning("run %s failed at attempt %s; giving up", run.id, run.attempt)
@@ -733,6 +831,69 @@ def _record_check_attempt(task: Task, output: str) -> None:
         "output": output[:CHECK_HISTORY_OUTPUT_CHARS],
     })
     task.check_history = history[-CHECK_HISTORY_KEEP:]
+
+
+def _finalize_requirement_check(session: Session, job: RunJob, result: RunResult) -> None:
+    """The only place `met` is ever written by a command test.
+
+    A requirement is not done because an agent says so and not because its
+    tasks are done — five deliverables in the audited week were marked DONE
+    while failing their own stated success test, each with a confident status
+    report attached. It is done because the platform ran the acceptance test
+    and read the exit code itself.
+
+    A failure does not block or nag: it reopens the requirement and adds to its
+    failure load, which is what lets a review say the rate fell because one
+    requirement ate fifty runs rather than that the company got slower.
+    """
+    requirement = session.get(Requirement, job.requirement_id)
+    if requirement is None or requirement.status != RequirementStatus.CHECKING:
+        return
+    output = (result.check_output or "")[:4000]
+    requirement.check_output = output
+    from_status = requirement.status
+
+    if result.check_exit_code == 0:
+        requirement.status = RequirementStatus.MET
+        requirement.met_at = utcnow()
+        requirement.met_by_run_id = job.run_id
+        policy.record_requirement_event(session, requirement, RequirementStatus.MET,
+                                        "checker", note="acceptance test passed",
+                                        from_status=from_status)
+        _notice_ceo_requirement(
+            session, requirement,
+            f"{requirement.key} is MET. The platform ran its acceptance test and it "
+            f"passed (exit 0). {requirement.statement[:300]}",
+        )
+        return
+
+    requirement.status = RequirementStatus.IN_PROGRESS
+    requirement.failure_load += 1
+    policy.record_requirement_event(
+        session, requirement, RequirementStatus.IN_PROGRESS, "checker",
+        note=f"acceptance test FAILED (exit {result.check_exit_code})",
+        from_status=from_status,
+    )
+    _notice_ceo_requirement(
+        session, requirement,
+        f"{requirement.key} is NOT met: its acceptance test failed (exit "
+        f"{result.check_exit_code}) even though every task under it closed. That gap is "
+        f"the thing worth looking at — the work was reported done and the requirement is "
+        f"still false.\n\nWhat the test printed:\n{output[:1200]}",
+    )
+
+
+def _notice_ceo_requirement(session: Session, requirement, body: str) -> None:
+    ceo = policy.ceo_of(session, requirement.project_id)
+    if ceo is None:
+        return
+    session.add(Notice(
+        id=ids.new_id(ids.NOTICE),
+        project_id=requirement.project_id,
+        agent_id=ceo.id,
+        kind=NoticeKind.GOAL_CHANGED,
+        body=body,
+    ))
 
 
 def _finalize_success_check(session: Session, job: RunJob, result: RunResult) -> None:
@@ -826,6 +987,12 @@ def _block_on_repeated_check_failure(
     prior = policy.tasks_dead_on_check(session, task.project_id, task.success_test,
                                        exclude_task_id=task.id)
     planner = policy.planner_of(session, task)
+    # A subtask's planner is its parent's claimant, and that agent can be gone —
+    # or be the very claimant we are blocking. Either way the notice used to go
+    # nowhere at all: the task sat BLOCKED and no one in the company was told.
+    # The CEO is the correct fallback; it owns the board.
+    if planner is None or planner.id == claimant_id:
+        planner = policy.ceo_of(session, task.project_id)
     if planner is not None and planner.id != claimant_id:
         session.add(
             Notice(
@@ -859,19 +1026,33 @@ def _block_on_repeated_check_failure(
         )
 
 
-def _run_success_check(job: RunJob) -> RunResult:
-    """Execute a command-type success test. The agent never self-reports this;
-    the platform runs it and reads the exit code."""
+def _run_check_command(job: RunJob) -> RunResult:
+    """Execute a command-type test — a task's success test or a requirement's
+    acceptance test. The agent never self-reports either; the platform runs the
+    command and reads the exit code."""
     from yaaf.runner.sandbox import run_check_command
 
+    label = "success check" if job.kind == RunKind.SUCCESS_CHECK else "acceptance test"
+    command = (job.check_command or "").strip()
+    if not command:
+        # An empty command run by a shell exits 0, and exit 0 is what marks a
+        # requirement MET. Nothing may pass by being blank — that is the exact
+        # unearned "done" the checker exists to prevent.
+        return RunResult(
+            ok=False,
+            summary=f"{label} has no command to run",
+            check_exit_code=None,
+            check_output=f"the {label} is a command test but its command is empty",
+        )
+
     exit_code, output = run_check_command(
-        command=job.check_command or "",
+        command=command,
         workspace_dir=job.workspace_dir,
         timeout_s=job.timeout_s,
     )
     return RunResult(
         ok=True,
-        summary=f"success check exit={exit_code}",
+        summary=f"{label} exit={exit_code}",
         check_exit_code=exit_code,
         check_output=output,
     )

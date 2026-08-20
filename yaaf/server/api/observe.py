@@ -21,7 +21,11 @@ from yaaf.core.models import (
     Agent,
     Approval,
     ApprovalStatus,
+    Artifact,
+    AuditSample,
+    AuditSampleStatus,
     Channel,
+    Commitment,
     Evidence,
     EvidenceKind,
     Hypothesis,
@@ -30,6 +34,11 @@ from yaaf.core.models import (
     MemoryScope,
     Message,
     Project,
+    Requirement,
+    RequirementEvent,
+    RequirementStatus,
+    Review,
+    ReviewStatus,
     Role,
     RoleVersion,
     Run,
@@ -52,6 +61,7 @@ from yaaf.server.dispatcher import (
     daily_runs_used,
     day_start,
 )
+from yaaf.server.velocity import commitment_projection, project_velocity
 
 router = APIRouter(dependencies=[Depends(admin_auth)])
 
@@ -300,6 +310,21 @@ def desk(session: Session = Depends(db)) -> dict:
     return {"as_of": now.isoformat(), "away": away, "projects": projects_out}
 
 
+def _delivery_outstanding(session: Session, project: Project) -> list[str]:
+    from yaaf.server.janitor import delivery_outstanding
+
+    return delivery_outstanding(session, project)
+
+
+def _current_cycle_view(session: Session, project: Project) -> dict | None:
+    if project.mode != "operate":
+        return None
+    cycle = policy.current_cycle(session, project.id)
+    if cycle is None:
+        return None
+    return {"ordinal": cycle.ordinal, "opened_at": cycle.opened_at.isoformat()}
+
+
 @router.get("/projects/{project_id}")
 def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
     project = _project(session, project_id)
@@ -333,6 +358,15 @@ def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
             Approval.project_id == project.id, Approval.status == ApprovalStatus.PENDING
         )
     ).scalar_one()
+    # Proposed scope is the CEO parked on a decision only the chairman can
+    # make. It rides the dashboard so every tab can say so — a CEO report that
+    # reads "waiting on R-01 acceptance" never says where accepting happens.
+    requirements_proposed = session.execute(
+        select(func.count(Requirement.id)).where(
+            Requirement.project_id == project.id,
+            Requirement.status == RequirementStatus.PROPOSED,
+        )
+    ).scalar_one()
     return {
         "id": project.id,
         "slug": project.slug,
@@ -359,9 +393,19 @@ def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
         "activity": activity_state(session, project, cons),
         "chat_live": chat_session_live(session, project),
         "pending_approvals": pending_approvals,
+        "requirements_proposed": requirements_proposed,
         "ceo_judgment": policy.ceo_judgment(session, project.id),
         "constitution": cons.model_dump(),
-        "config": project.config or {},
+        "mode": project.mode,
+        # Explore's window; Deliver's completion readiness; Operate's current
+        # turn. Mode-shaped facts, one each, so the Overview can show the one
+        # that applies without three extra requests.
+        "deadline": project.deadline.isoformat() if project.deadline else None,
+        "delivery_outstanding": (
+            _delivery_outstanding(session, project)
+            if project.mode == "deliver" and project.status == "running" else None),
+        "cycle": _current_cycle_view(session, project),
+        "integrations": project.integrations or {},
         "github_repo": project.github_repo,
         "billing_secret_id": project.billing_secret_id,
         "billing_secret_name": _secret_name(session, project.billing_secret_id),
@@ -389,7 +433,7 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
     from yaaf.server.api.admin import _billing_shape_error
 
     project = _project(session, project_id)
-    config = project.config or {}
+    integrations = project.integrations or {}
     checks: list[dict] = []
 
     def add(key: str, status: str, detail: str, where: str | None = None,
@@ -420,7 +464,7 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
     secrets_by_name = {s.name: s for s in secrets}
 
     # Project data sources: secrets present, granted, and last check green.
-    for source in config.get("mcp_servers", []):
+    for source in integrations.get("mcp_servers", []):
         name = source.get("name", "?")
         url_secret = secrets_by_name.get(source.get("url_secret", ""))
         if url_secret is None:
@@ -467,7 +511,7 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
                 "overview", {"kind": "repin", "team_id": team.id})
 
     # Slack: config present implies its secrets exist.
-    slack = config.get("slack") or {}
+    slack = integrations.get("slack") or {}
     if slack:
         missing = [slack.get(k) for k in ("bot_token_secret", "signing_secret",
                                           "app_token_secret")
@@ -482,7 +526,7 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
     # The chat lane: a running project with billing should have its CEO chat
     # session live (the supervisor restarts it within seconds; a persistent
     # absence means the runner is down or the session is boot-looping).
-    chat_on = ((project.config or {}).get("chat") or {}).get("enabled", True)
+    chat_on = ((project.integrations or {}).get("chat") or {}).get("enabled", True)
     if project.status == "running" and project.billing_secret_id is not None and chat_on:
         if chat_session_live(session, project):
             add("chat", "ok", "CEO chat session is live — the boardroom answers "
@@ -500,39 +544,37 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
     # runs looks exactly like one with nothing to do on every screen we ship,
     # which is how a hard stop reads as a healthy quiet.
     #
-    # Only the two gates that mean *stopped* warn here. Hitting the concurrency
-    # cap or finding every agent busy means the company is working, which is not
-    # a finding.
+    # The sentence comes from the dispatcher, beside the ladder that decided
+    # it. This page used to re-write three of the gates by hand and knew
+    # nothing of the rest, so a company held by pacing, a batching window or a
+    # leaderless team reported perfect health while doing nothing at all.
     if project.status == "running":
-        live_cons = effective(session, project.id)
-        act = activity_state(session, project, live_cons)
-        waiting = act["waiting"]
-        held_up = (f"{waiting['ready_tasks']} task(s) and {waiting['notices']} "
-                   f"notice(s) are waiting behind it")
-        if act["blocked_by"] == "daily_runs":
-            daily = act["daily_runs"]
-            add("activity", "warn",
-                f"out of runs for today — {daily['used']} of {daily['cap']} used, "
-                f"and nothing will start until {daily['resets_at'][11:16]} UTC. "
-                f"{held_up}. Raise 'Runs per day, whole project' if this is too "
-                "tight, or leave it and the work resumes on its own.",
-                "settings")
-        elif act["blocked_by"] == "wake_ceiling":
-            # Name the moment. "As the hour rolls forward" is unfalsifiable, so
-            # a throttle that clears on its own read as a permanent fault.
-            frees = act["wake_ceiling"]["frees_at"]
-            when = (f"the next agent is free to wake at {frees[11:16]} UTC"
-                    if frees else "slots free as the trailing hour advances")
-            add("activity", "warn",
-                "every agent with work to do has hit its hourly wake ceiling "
-                f"({live_cons.wakes_per_agent_per_hour}/hour) — {when}. {held_up}. "
-                "This clears itself; raise 'Wakes per agent per hour' only if the "
-                "cap is tighter than you meant it to be.",
-                "settings")
+        try:
+            live_cons = effective(session, project.id)
+        except LookupError:
+            # Both loops `continue` past a project in this state, so it is
+            # stopped in the most complete way the platform has and there was
+            # no trace of it anywhere. Say so.
+            add("activity", "fail",
+                "this project has no constitution row, so the dispatcher and the "
+                "janitor both skip it entirely — nothing will ever run. This is a "
+                "broken record, not a setting; it needs restoring from a backup or "
+                "the project recreating.", "settings")
+            live_cons = None
+        if live_cons is not None:
+            act = activity_state(session, project, live_cons)
+            brief = act["brief"]
+            # Only the briefs that mean *stopped* are findings. Concurrency and
+            # busy agents mean the company is working, which is not news.
+            if brief["banner"]:
+                add("activity",
+                    "fail" if brief["tone"] == "critical" else "warn",
+                    f"{brief['headline']} {brief['detail']}",
+                    "settings")
 
     # Connectors: controlled GitHub accounts registered but webhooks unprovisioned.
     if any(str(d).startswith("github:") for d in (project.controlled_domains or [])) \
-            and not config.get("github_webhook_secret"):
+            and not integrations.get("github_webhook_secret"):
         add("connectors", "warn",
             "controlled GitHub accounts are registered but webhook secrets are not "
             "provisioned — GitHub events cannot become attested evidence yet",
@@ -542,6 +584,145 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
         "ok": not any(c["status"] == "fail" for c in checks),
         "all_ok": all(c["status"] == "ok" for c in checks) if checks else True,
         "checks": checks,
+    }
+
+
+@router.get("/projects/{project_id}/plan")
+def plan_view(project_id: str, session: Session = Depends(db)) -> dict:
+    """Everything the Plan screen draws, in one request.
+
+    One dataset for both views — the stage board and the dependency graph read
+    the same rows, so they cannot disagree with each other, and the critical
+    path arrives computed rather than being re-derived in the browser where it
+    could drift from the refusals' arithmetic.
+    """
+    from yaaf.core.constitution import effective as effective_constitution
+
+    project = _project(session, project_id)
+    if not policy.requires_requirements(project):
+        return {"mode": project.mode, "planless": True}
+
+    cons = effective_constitution(session, project.id)
+    agents, _ = _name_maps(session, project.id)
+
+    plan = policy.plan_requirement(session, project.id)
+    scope = policy.scope_requirements(session, project.id)
+    edges = policy.requirement_edges(session, project.id)
+    key_of = {r.id: r.key for r in scope}
+    if plan is not None:
+        key_of[plan.id] = plan.key
+
+    depends_on: dict[str, list[str]] = {}
+    for edge in edges:
+        depends_on.setdefault(edge.to_requirement_id, []).append(
+            key_of.get(edge.from_requirement_id, edge.from_requirement_id))
+
+    tasks_by_requirement: dict[str, list[dict]] = {}
+    for task in session.execute(
+        select(Task).where(Task.project_id == project.id,
+                           Task.requirement_id.is_not(None))
+    ).scalars():
+        tasks_by_requirement.setdefault(task.requirement_id, []).append({
+            "id": task.id,
+            "title": task.title,
+            "status": task.status,
+            "holder": agents.get(task.claimed_by_agent_id),
+            "failed_checks": task.check_failures,
+        })
+
+    # Runs and dollars actually spent, per requirement — planning runs
+    # included, which is the half of spend that used to be unattributable.
+    spend = {
+        requirement_id: {"runs": int(runs), "usd": round(float(usd or 0), 2)}
+        for requirement_id, runs, usd in session.execute(
+            select(Run.requirement_id, func.count(Run.id), func.sum(Run.cost_usd))
+            .where(Run.project_id == project.id, Run.requirement_id.is_not(None))
+            .group_by(Run.requirement_id)
+        )
+    }
+
+    # The promise and the line toward it. The projection is computed live from
+    # the same producer the janitor stamps and the refusals quote; the status
+    # is the janitor's (it owns the transitions and the disclosure).
+    commitment_row = session.execute(
+        select(Commitment).where(Commitment.project_id == project.id)
+        .order_by(Commitment.created_at.desc()).limit(1)
+    ).scalar_one_or_none()
+    commitment = None
+    burnup = None
+    if commitment_row is not None:
+        projection = commitment_projection(session, project, cons)
+        commitment = {
+            "id": commitment_row.id,
+            "status": commitment_row.status,
+            "deliver_by": commitment_row.deliver_by.isoformat(),
+            "projected_done_at": (
+                projection["projected_done_at"].isoformat()
+                if projection["known"] else None),
+            "projection_basis": projection.get("basis") or projection.get("why"),
+            "accepted_at": (commitment_row.accepted_at.isoformat()
+                            if commitment_row.accepted_at else None),
+            "constitution_version": commitment_row.constitution_version,
+            "scope_snapshot": commitment_row.scope_snapshot or [],
+            "status_reason": commitment_row.status_reason,
+            "note": commitment_row.note,
+            "met_at": (commitment_row.met_at.isoformat()
+                       if commitment_row.met_at else None),
+        }
+        # Cumulative MET over time — the burn-up's line. R-00 excluded for the
+        # same reason velocity excludes it: the gate lifting is not scope
+        # landing.
+        met_stmt = (
+            select(RequirementEvent.at)
+            .where(RequirementEvent.project_id == project.id,
+                   RequirementEvent.to_status == RequirementStatus.MET)
+            .order_by(RequirementEvent.at)
+        )
+        if plan is not None:
+            met_stmt = met_stmt.where(RequirementEvent.requirement_id != plan.id)
+        met_at = [at for (at,) in session.execute(met_stmt)]
+        burnup = {
+            "scope_total": len(policy.commitment_scope_keys(session, project.id)),
+            "met_points": [
+                {"at": at.isoformat(), "count": i + 1} for i, at in enumerate(met_at)
+            ],
+        }
+
+    return {
+        "mode": project.mode,
+        "planless": False,
+        "plan": {
+            "status": plan.status if plan else None,
+            "holds": plan is not None and plan.status == RequirementStatus.MET,
+            "outstanding": policy.evaluate_plan(session, project, cons),
+            "arithmetic": policy.plan_arithmetic(session, project, cons),
+            "planning_spend": spend.get(plan.id, {"runs": 0, "usd": 0}) if plan else None,
+        },
+        "commitment": commitment,
+        "burnup": burnup,
+        "open_stage": policy.open_stage(session, project.id),
+        "critical_path": policy.critical_path(session, project.id),
+        "velocity": project_velocity(session, project.id),
+        "requirements": [
+            {
+                "id": r.id,
+                "key": r.key,
+                "statement": r.statement,
+                "status": r.status,
+                "stage": r.stage,
+                "test_kind": (r.acceptance_test or {}).get("type"),
+                "acceptance_test": r.acceptance_test,
+                "est_runs": r.est_runs,
+                "spent": spend.get(r.id, {"runs": 0, "usd": 0}),
+                "failure_load": r.failure_load,
+                "depends_on": sorted(depends_on.get(r.id, [])),
+                "tasks": tasks_by_requirement.get(r.id, []),
+                "met_at": r.met_at.isoformat() if r.met_at else None,
+                "cut_reason": r.cut_reason,
+                "check_output": r.check_output,
+            }
+            for r in scope
+        ],
     }
 
 
@@ -596,6 +777,10 @@ def board(project_id: str, session: Session = Depends(db)) -> list[dict]:
             "external": t.produces_external_evidence,
             "success_test": t.success_test, "evidence": t.completion_evidence,
             "check_output": t.check_output, "blocked_reason": t.blocked_reason,
+            # A gated task is READY and unclaimable, and rendering it as plain
+            # "ready" is what let a company sit silent behind a start time
+            # nobody could see.
+            "not_before": t.not_before.isoformat() if t.not_before else None,
             "hypothesis_id": t.hypothesis_id, "audit_status": t.audit_status,
         }
         for t in rows
@@ -938,7 +1123,24 @@ def project_files(project_id: str, session: Session = Depends(db)) -> dict:
         rows.append({**entry,
                      "run_id": parts[2] if len(parts) > 3 else None,
                      "name": parts[-1]})
-    return {"workspace": workspace, "artifacts": rows}
+    # The receipts: published rows with a real hash, a real timestamp, and the
+    # requirements each claims to satisfy. The listing above is what the store
+    # HOLDS; this is what was formally shipped, and the two can differ.
+    key_of = {r.id: r.key for r in policy.scope_requirements(session, project.id)}
+    published = [
+        {
+            "id": a.id, "name": a.name, "version": a.version, "sha256": a.sha256,
+            "size": a.size_bytes, "key": a.storage_key,
+            "published_at": a.published_at.isoformat(),
+            "published_by": a.published_by_agent_id,
+            "satisfies": sorted(key_of.get(rid, rid) for rid in a.requirement_ids or []),
+        }
+        for a in session.execute(
+            select(Artifact).where(Artifact.project_id == project.id)
+            .order_by(Artifact.published_at.desc()).limit(200)
+        ).scalars()
+    ]
+    return {"workspace": workspace, "artifacts": rows, "published": published}
 
 
 @router.get("/projects/{project_id}/files/content")
@@ -994,6 +1196,140 @@ def suggestions(project_id: str, session: Session = Depends(db)) -> list[dict]:
     ).scalars()
     return [{"id": s.id, "by": s.by_agent_id, "text": s.text,
              "consumed": s.consumed_at is not None} for s in rows]
+
+
+@router.get("/experiments")
+def experiments(session: Session = Depends(db)) -> list[dict]:
+    from yaaf.core.models import Experiment, ExperimentArm
+
+    rows = list(session.execute(
+        select(Experiment).order_by(Experiment.created_at.desc()).limit(50)
+    ).scalars())
+    counts = dict(session.execute(
+        select(ExperimentArm.experiment_id, func.count(ExperimentArm.id))
+        .group_by(ExperimentArm.experiment_id)
+    ).all())
+    return [
+        {"id": e.id, "name": e.name, "status": e.status,
+         "created_at": e.created_at.isoformat(),
+         "requirements": len(e.requirement_set or []),
+         "arms": int(counts.get(e.id, 0))}
+        for e in rows
+    ]
+
+
+@router.get("/experiments/{experiment_id}")
+def experiment_detail(experiment_id: str, session: Session = Depends(db)) -> dict:
+    from yaaf.core.models import Experiment
+    from yaaf.server.experiments import experiment_report
+
+    experiment = session.get(Experiment, experiment_id)
+    if experiment is None:
+        raise HTTPException(status_code=404, detail="unknown experiment")
+    return experiment_report(session, experiment)
+
+
+@router.get("/projects/{project_id}/cycles")
+def cycles(project_id: str, session: Session = Depends(db)) -> dict:
+    """The rhythm's record: every turn, newest first, narratives whole. The
+    narratives are the learning loop's storage — clipping them here would
+    show the chairman less than his own CEO reads."""
+    from yaaf.core.models import Cycle, CycleStatus
+
+    project = _project(session, project_id)
+    rows = list(session.execute(
+        select(Cycle).where(Cycle.project_id == project.id)
+        .order_by(Cycle.ordinal.desc()).limit(50)
+    ).scalars())
+    return {
+        "current": next(
+            ({"ordinal": c.ordinal, "opened_at": c.opened_at.isoformat()}
+             for c in rows if c.status == CycleStatus.OPEN), None),
+        "history": [
+            {"ordinal": c.ordinal, "status": c.status,
+             "opened_at": c.opened_at.isoformat(),
+             "closed_at": c.closed_at.isoformat() if c.closed_at else None,
+             "narrative": c.narrative}
+            for c in rows if c.status != CycleStatus.OPEN
+        ],
+    }
+
+
+@router.get("/projects/{project_id}/reviews")
+def reviews(project_id: str, session: Session = Depends(db)) -> dict:
+    """The standing meeting's record: the open one (if any) and the history,
+    newest first. The numbers on each are the janitor's frozen snapshot from
+    the moment it opened — the meeting's record does not drift."""
+    project = _project(session, project_id)
+    rows = list(session.execute(
+        select(Review).where(Review.project_id == project.id)
+        .order_by(Review.number.desc()).limit(50)
+    ).scalars())
+
+    def view(r: Review) -> dict:
+        return {
+            "id": r.id, "number": r.number, "status": r.status,
+            "scheduled_for": r.scheduled_for.isoformat(),
+            "opened_at": r.opened_at.isoformat(),
+            "numbers": r.numbers,
+            "narrative": r.narrative,
+            "recommended": r.recommended,
+            "narrative_filed_at": (r.narrative_filed_at.isoformat()
+                                   if r.narrative_filed_at else None),
+            "decisions": r.decisions or [],
+            "closed_at": r.closed_at.isoformat() if r.closed_at else None,
+        }
+
+    open_review = next((view(r) for r in rows if r.status == ReviewStatus.OPEN), None)
+    return {
+        "open": open_review,
+        "history": [view(r) for r in rows if r.status != ReviewStatus.OPEN],
+    }
+
+
+@router.get("/projects/{project_id}/audit_samples")
+def audit_samples(project_id: str, session: Session = Depends(db)) -> dict:
+    """The sampled audit's desk: pending draws first, then the recent record.
+    Chairman-only by router auth — no agent route serves any of this, because
+    a sample an agent can see coming is a sample that audits nothing."""
+    project = _project(session, project_id)
+    tasks = {
+        t.id: t for t in session.execute(
+            select(Task).where(Task.project_id == project.id)
+        ).scalars()
+    }
+    rows = list(session.execute(
+        select(AuditSample).where(AuditSample.project_id == project.id)
+        .order_by(AuditSample.drawn_at.desc()).limit(200)
+    ).scalars())
+
+    def view(s: AuditSample) -> dict:
+        task = tasks.get(s.task_id)
+        return {
+            "id": s.id, "task_id": s.task_id, "status": s.status,
+            "drawn_at": s.drawn_at.isoformat(),
+            "expires_at": s.expires_at.isoformat() if s.expires_at else None,
+            "decided_at": s.decided_at.isoformat() if s.decided_at else None,
+            "note": s.note,
+            "task_title": task.title if task else "(task gone)",
+            "test_target": ((task.success_test or {}).get("target", "") if task else ""),
+            "claimed_evidence": (task.completion_evidence if task else None),
+        }
+
+    pending = [view(s) for s in rows if s.status == AuditSampleStatus.PENDING]
+    decided = [view(s) for s in rows if s.status != AuditSampleStatus.PENDING
+               and s.status != AuditSampleStatus.SKIPPED]
+    considered = len(rows)
+    return {
+        "pending": pending,
+        "recent": decided[:50],
+        "coverage": {
+            "considered": considered,
+            "sampled": len([s for s in rows if s.status != AuditSampleStatus.SKIPPED]),
+            "expired_unreviewed": len(
+                [s for s in rows if s.status == AuditSampleStatus.EXPIRED]),
+        },
+    }
 
 
 @router.get("/projects/{project_id}/spot_audit")

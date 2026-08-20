@@ -36,9 +36,30 @@ const EMPTY: RoleDetail = {
   system_prompt: "",
   model: "claude-sonnet-5",
   effort: "high",
-  tool_permissions: { files: true, bash: false, web: true },
+  tool_permissions: { files: true, bash: false, data_processing: true, web: true },
   secret_scopes: [],
 };
+
+/** The permissions a role can hold, with what each actually buys. A bare
+    checkbox row reads as jargon, and two of these grant the same tool for
+    different reasons — which is exactly the thing a label has to say out loud. */
+const PERMISSIONS = [
+  { key: "files", label: "Files", help: "Read, write and search files in the workspace." },
+  {
+    key: "data_processing",
+    label: "Data processing",
+    help:
+      "Aggregate data with code instead of by reading it: python3 with pandas and " +
+      "duckdb, over files fetched into the workspace. Grants a shell, like Bash — " +
+      "kept separate so a role's reason for having one is legible.",
+  },
+  {
+    key: "bash",
+    label: "Bash",
+    help: "Any shell command, for roles whose craft is building and running things.",
+  },
+  { key: "web", label: "Web", help: "Fetch and search the web, within the egress allowlist." },
+] as const;
 
 export default function Roles() {
   const [roles, setRoles] = useState<RoleSummary[]>([]);
@@ -274,23 +295,37 @@ export default function Roles() {
           <div className="fs">
             <div className="fs-h">Sandbox walls</div>
             <label className="field">Tool permissions</label>
-            <div className="pill-row">
-              {(["files", "bash", "web"] as const).map((perm) => (
-                <label key={perm} style={{ display: "flex", gap: 5, alignItems: "center" }}>
-                  <input
-                    type="checkbox"
-                    style={{ width: "auto" }}
-                    checked={!!perms[perm]}
-                    onChange={(e) =>
-                      setEditing({
-                        ...editing,
-                        tool_permissions: { ...perms, [perm]: e.target.checked },
-                      })
-                    }
-                  />
-                  {perm}
-                </label>
-              ))}
+            <div>
+              {PERMISSIONS.map((perm) => {
+                // Bash already includes the shell data processing asks for, so
+                // say so rather than leaving a tick that appears to do nothing.
+                const covered = perm.key === "data_processing" && !!perms["bash"];
+                return (
+                  <label
+                    key={perm.key}
+                    style={{ display: "block", marginBottom: 8, fontWeight: "normal" }}
+                  >
+                    <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                      <input
+                        type="checkbox"
+                        style={{ width: "auto" }}
+                        checked={!!perms[perm.key] || covered}
+                        disabled={covered}
+                        onChange={(e) =>
+                          setEditing({
+                            ...editing,
+                            tool_permissions: { ...perms, [perm.key]: e.target.checked },
+                          })
+                        }
+                      />
+                      {perm.label}
+                    </span>
+                    <span className="help" style={{ marginLeft: 22 }}>
+                      {covered ? "already granted by Bash." : perm.help}
+                    </span>
+                  </label>
+                );
+              })}
             </div>
             <label className="field">
               Egress allowlist — one domain per line; blank = role uses the global allowlist

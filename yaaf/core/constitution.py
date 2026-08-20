@@ -20,7 +20,7 @@ from datetime import UTC, datetime, time
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -43,7 +43,27 @@ def parse_report_window(raw: object) -> tuple[time, time] | None:
     return (start, end) if start < end else None
 
 
-def _rule(default: Any, *, group: str, label: str, help: str, **constraints: Any) -> Any:
+def parse_hhmm(raw: object) -> time | None:
+    """``"09:00"`` → 09:00. None for absent or malformed, which the validator
+    below turns into a refusal when a value was actually given."""
+    if not raw:
+        return None
+    try:
+        hour, minute = (int(part) for part in str(raw).strip().split(":", 1))
+        return time(hour, minute)
+    except (TypeError, ValueError):
+        return None
+
+
+def _rule(
+    default: Any,
+    *,
+    group: str,
+    label: str,
+    help: str,
+    choices: list[str] | None = None,
+    **constraints: Any,
+) -> Any:
     """A constitution field that can describe itself.
 
     Every rule carries its own group, label and help text, so the settings page
@@ -51,9 +71,50 @@ def _rule(default: Any, *, group: str, label: str, help: str, **constraints: Any
     That list existed and went stale exactly as you would expect: six of
     twenty-four rules were editable, and the memory caps — the ones a full
     company actually needs — were not among them.
+
+    ``choices`` names the values a string rule accepts. The validators below
+    already refuse anything else; this only lets the editor draw a menu instead
+    of a text box you have to guess into.
     """
+    extra: dict[str, Any] = {"group": group}
+    if choices is not None:
+        extra["choices"] = choices
     return Field(default=default, title=label, description=help,
-                 json_schema_extra={"group": group}, **constraints)
+                 json_schema_extra=extra, **constraints)
+
+
+# Fourteen groups is a taxonomy, not navigation: rendered flat it is a wall of
+# thirty-nine boxes, and "Wake-loop brakes" alone is nine of them. Themes are
+# what a chairman actually reaches for; the groups survive as the subheads
+# inside one. This lives here rather than in the settings page because the last
+# hand-kept list on that side went stale — see the note in `_rule`.
+GROUP_THEMES = {
+    "Budgets": "Money",
+    "Wake-loop brakes": "Pace & brakes",
+    "Runs": "Pace & brakes",
+    "Work discipline": "How work is run",
+    "Evidence": "How work is run",
+    "Sampled audit": "How work is run",
+    "Autonomy": "Autonomy",
+    "Memory": "Memory",
+    "CEO cadence": "Rhythm & reporting",
+    "Reporting to you": "Rhythm & reporting",
+    "Your timezone": "Rhythm & reporting",
+    "Operate rhythm": "Rhythm & reporting",
+    "The review": "Rhythm & reporting",
+    "The commitment": "Rhythm & reporting",
+}
+
+#: Tab order on the rules screen — money first, because that is what a stuck
+#: company comes here to change.
+THEME_ORDER = [
+    "Money",
+    "Pace & brakes",
+    "How work is run",
+    "Autonomy",
+    "Memory",
+    "Rhythm & reporting",
+]
 
 
 class ConstitutionDoc(BaseModel):
@@ -80,6 +141,23 @@ class ConstitutionDoc(BaseModel):
         help="Characters. A success test shorter than this is not falsifiable, so the "
              "platform refuses the task.")
 
+    # The sampled audit. Gates ask the chairman at commitment, review and
+    # completion; between them the platform samples observable closes at a
+    # rate he sets. Sampling never blocks — an expired sample records "not
+    # reviewed" and moves on — but the draw happens server-side AFTER the
+    # close, so no agent can know which claim will be checked.
+    audit_sample_rate: float = _rule(
+        0.2, ge=0, le=1, group="Sampled audit", label="Share of observable closes sampled",
+        help="When a task closes on an observable success test (one the platform cannot "
+             "run itself), this is the chance it lands on your desk for a look. 0 turns "
+             "sampling off; 1 samples everything. Command-checked closes are never "
+             "sampled — the platform already ran those.")
+    audit_response_hours: int = _rule(
+        48, ge=1, group="Sampled audit", label="Hours before a sample expires",
+        help="A sample you have not answered by then is recorded as 'not reviewed' and "
+             "counted in the next review's coverage line. It never blocks the work — "
+             "sampling is a thermometer, not a gate.")
+
     # Evidence discipline (lana §4) — drought counts verified/attested external only
     drought_hours: int = _rule(
         24, ge=1, group="Evidence", label="Hours without proof before a drought",
@@ -100,6 +178,7 @@ class ConstitutionDoc(BaseModel):
              "chairman degrades the company instead of deadlocking it.")
     approval_timeout_decision: str = _rule(
         "deny", group="Autonomy", label="What an expired approval decides",
+        choices=["deny", "approve"],
         help="'deny' or 'approve'. Default-deny: silence is not consent.")
 
     # Budgets — native unit of the project's billing mode
@@ -135,10 +214,22 @@ class ConstitutionDoc(BaseModel):
     runs_per_project_per_day: int = _rule(
         150, ge=1, group="Wake-loop brakes", label="Runs per day, whole project",
         help="The daily activity ceiling across every agent.")
+    runs_per_project_per_hour: int = _rule(
+        15, ge=1, group="Wake-loop brakes", label="Runs per hour, whole project",
+        help="The pacing brake. The daily ceiling refills all at once, so without this a "
+             "company can spend a whole day's allowance in the first hour and then sit "
+             "dead until midnight with work stranded on the board. This is a trailing "
+             "hour, not a clock hour, so it clears continuously rather than in a lump.")
     pair_breaker_messages: int = _rule(
         10, ge=2, group="Wake-loop brakes", label="Messages before a thread freezes",
         help="Two agents talking this many times in one thread with nothing landing are "
              "talking, not working; the thread freezes.")
+    max_usd_per_run: float = _rule(
+        2.0, ge=0, group="Wake-loop brakes", label="Most one run may spend",
+        help="USD. A single run that spends this much has stopped working and started "
+             "looping; it is told as it approaches and stopped at the line. 0 turns it "
+             "off. One task once cost $8.05 across 53 runs, and nothing bounded any of "
+             "them individually.")
     refusal_cap_per_run: int = _rule(
         5, ge=1, group="Wake-loop brakes", label="Refusals a run may hit",
         help="Past this the run's token is revoked. Rephrasing a refused request is not a "
@@ -149,6 +240,46 @@ class ConstitutionDoc(BaseModel):
              "finish. It blocks and becomes a question for whoever planned it, instead of "
              "buying another wake to fail the same way. Counts across re-claims; only a "
              "passing check resets it.")
+    max_task_gate_hours: int = _rule(
+        6, ge=1, group="Wake-loop brakes", label="Furthest ahead work may be scheduled",
+        help="Hours. A task may carry a start time before which nobody may claim it, "
+             "which is how the CEO lays work out in a sequence. Past this many hours it "
+             "is refused: a company should wait for the previous step to land, not for "
+             "a clock. One CEO gated its only open task two hours out and the company "
+             "sat silent until the chairman paused it.")
+    stall_hours: float = _rule(
+        3.0, ge=0, group="Wake-loop brakes", label="Hours of silence before you are told",
+        help="A running company with work on its board and no run started for this long "
+             "is stalled, whatever the board says. You get one notice naming the exact "
+             "cause. 0 turns the watchdog off.")
+    max_concurrent_runs: int = _rule(
+        3, ge=1, group="Wake-loop brakes", label="Runs in flight at once",
+        help="How many agents may be working simultaneously. Protects the provider rate "
+             "limit that every project on the box shares.")
+    reserved_governance_runs: int = _rule(
+        3, ge=0, group="Wake-loop brakes", label="Runs held back for governance",
+        help="Runs kept out of the daily ceiling so a status review, a cycle plan or a "
+             "commitment re-forecast can always happen. Ordinary work stops at the daily "
+             "cap minus this number; governance runs may use the full cap. Without it the "
+             "day the company burns its allowance by lunch is the day it cannot report "
+             "that it did. 0 turns the reservation off.")
+
+    # The CEO's own cadence. These were project config until the rebuild, which
+    # meant they generated no settings UI, recorded no amendment, and were never
+    # disclosed to the CEO that they governed. They are limits; limits live here.
+    ceo_heartbeat_hours: float = _rule(
+        6.0, gt=0, group="CEO cadence", label="Hours between planning wakes",
+        help="How often the CEO wakes to plan when nothing else has woken it. Every wake "
+             "is a full-price run.")
+    ceo_heartbeat_always: bool = _rule(
+        False, group="CEO cadence", label="Plan even with an empty board",
+        help="Off, a planning wake is skipped when there is no open task and no live bet — "
+             "it would buy a full-price run to conclude 'nothing to do'. On for a project "
+             "you want thinking anyway.")
+    ceo_daily_at: str | None = _rule(
+        None, group="CEO cadence", label="A daily wake at this time",
+        help="'09:00' in your timezone, or blank for none. Fires once per local day, at or "
+             "after the time. The standup pattern.")
 
     # The chairman's reporting cadence. A wake ceiling stops the company
     # burning money on itself; this stops it burning money on *him* — the CEO
@@ -162,9 +293,50 @@ class ConstitutionDoc(BaseModel):
     chairman_report_window_local: str | None = _rule(
         None, group="Reporting to you", label="Only report during these hours",
         help="'09:00-20:00' in your local time, or blank for any hour.")
-    chairman_report_timezone: str = _rule(
-        "UTC", group="Reporting to you", label="Your timezone",
-        help="IANA name, e.g. 'America/New_York'. The window above is read in this zone.")
+
+    # One timezone, read by the reporting window, the daily CEO wake and every
+    # recurring rhythm. It used to be set twice — once here and once in project
+    # config for the daily wake — which is one place too many to get it wrong.
+    timezone: str = _rule(
+        "UTC", group="Your timezone", label="Your timezone",
+        help="IANA name, e.g. 'America/New_York'. Every local time in these rules — the "
+             "reporting window, the daily wake, a recurring rhythm — is read in this zone.")
+
+    # The Operate rhythm. Cycles roll in the janitor — a rhythm firing while
+    # the company is busy or broke must still be recorded — and all local
+    # times read the constitution's one timezone.
+    cycle_frequency: str = _rule(
+        "weekly", group="Operate rhythm", label="How often a cycle rolls",
+        choices=["daily", "weekly", "monthly", "quarterly"],
+        help="Operate projects only: 'daily', 'weekly', 'monthly' or 'quarterly'. Each "
+             "roll closes the cycle, carries unfinished scope forward, reopens the plan "
+             "gate, and hands the CEO the last three cycles' narratives verbatim.")
+    cycle_day: int = _rule(
+        0, ge=0, le=28, group="Operate rhythm", label="Which day the cycle rolls",
+        help="Weekly: 0=Monday … 6=Sunday. Monthly and quarterly: the day of the month, "
+             "1–28 — the 29th to 31st do not exist in every month and are refused "
+             "rather than quietly moved. Daily ignores this.")
+
+    # The review. Opened, numbered and emailed by the janitor with zero
+    # tokens; the CEO's narrative rides the governance reserve.
+    review_interval_days: int = _rule(
+        7, ge=1, group="The review", label="Days between status reviews",
+        help="The standing meeting: the janitor opens it on schedule regardless of "
+             "budgets or an empty board, emails you the numbers, and the CEO files its "
+             "variance narrative on a reserved governance run. Your six levers — cut, "
+             "add, reword, move the date, raise the budget, accept the slip — are "
+             "recorded with your reasons and shown at the next review beside what "
+             "they bought.")
+
+    # The commitment. The projection itself refreshes every janitor tick; this
+    # governs the third re-validation trigger — the "errors" one.
+    commitment_failure_reforecast: int = _rule(
+        5, ge=0, group="The commitment", label="Dead runs before the promise is re-checked",
+        help="Once this many runs have died against the plan since the commitment was "
+             "last validated, the platform re-projects the date and tells the CEO the "
+             "ground moved. Rule changes and scope changes always re-validate; this "
+             "catches the failure-storm case where neither moved but the pace did. "
+             "0 turns this trigger off.")
 
     # Runs
     run_timeout_s: int = _rule(
@@ -172,6 +344,12 @@ class ConstitutionDoc(BaseModel):
         help="A run past this is reaped and its task claim released. The CEO's "
              "resident chat session is exempt — it is meant to stay open for "
              "hours and dies only when its heartbeat stops.")
+    run_token_budget: int = _rule(
+        0, ge=0, group="Runs", label="Tokens one run may spend",
+        help="Handed to the model as a task budget so it paces itself and wraps up "
+             "before the line, instead of being cut off mid-thought. Complements the "
+             "per-run dollar ceiling: dollars stop the bleeding, this tells the agent "
+             "where the tourniquet is. 0 turns it off.")
 
     @field_validator("chairman_report_window_local")
     @classmethod
@@ -182,13 +360,41 @@ class ConstitutionDoc(BaseModel):
                 "chairman's local time, with the start before the end")
         return raw
 
-    @field_validator("chairman_report_timezone")
+    @field_validator("timezone")
     @classmethod
     def _timezone_exists(cls, raw: str) -> str:
         try:
             ZoneInfo(raw)
         except Exception as exc:
             raise ValueError(f"{raw!r} is not an IANA timezone (e.g. 'America/New_York')") from exc
+        return raw
+
+    @field_validator("cycle_frequency")
+    @classmethod
+    def _frequency_is_known(cls, raw: str) -> str:
+        if raw not in ("daily", "weekly", "monthly", "quarterly"):
+            raise ValueError(
+                f"{raw!r} is not a cycle frequency: daily, weekly, monthly or quarterly")
+        return raw
+
+    @model_validator(mode="after")
+    def _cycle_day_fits_the_frequency(self) -> ConstitutionDoc:
+        if self.cycle_frequency == "weekly" and not 0 <= self.cycle_day <= 6:
+            raise ValueError("weekly cycles take cycle_day 0 (Monday) through 6 (Sunday)")
+        if self.cycle_frequency in ("monthly", "quarterly") and not 1 <= self.cycle_day <= 28:
+            raise ValueError(
+                "monthly and quarterly cycles take cycle_day 1-28: the 29th to 31st do "
+                "not exist in every month, and a rhythm that quietly moves is not a "
+                "rhythm — pick a day every month has")
+        return self
+
+    @field_validator("ceo_daily_at")
+    @classmethod
+    def _daily_time_is_readable(cls, raw: str | None) -> str | None:
+        if raw is not None and parse_hhmm(raw) is None:
+            raise ValueError(
+                f"{raw!r} is not a time of day: write it 'HH:MM' in your timezone, or "
+                "leave it blank for no daily wake")
         return raw
 
     def overlay(self, changes: dict[str, Any]) -> ConstitutionDoc:
@@ -213,6 +419,20 @@ def effective(session: Session, project_id: str, at: datetime | None = None) -> 
     return ConstitutionDoc.model_validate(row.body)
 
 
+def effective_version(session: Session, project_id: str, at: datetime | None = None) -> int:
+    """The version number behind :func:`effective` — same filter, so the two
+    can never describe different documents. The commitment freezes this at
+    acceptance and the janitor diffs it to notice an amendment landed."""
+    at = at or utcnow()
+    version = session.execute(
+        select(Constitution.version)
+        .where(Constitution.project_id == project_id, Constitution.effective_at <= at)
+        .order_by(Constitution.version.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    return int(version or 0)
+
+
 def create_initial(session: Session, project_id: str, doc: ConstitutionDoc) -> Constitution:
     row = Constitution(
         id=ids.new_id(ids.CONSTITUTION),
@@ -231,7 +451,7 @@ def create_initial(session: Session, project_id: str, doc: ConstitutionDoc) -> C
 # the chairman's alone to change.
 CADENCE_FIELDS = frozenset({"chairman_report_interval_hours",
                             "chairman_report_window_local",
-                            "chairman_report_timezone"})
+                            "timezone"})
 
 
 def propose_amendment(

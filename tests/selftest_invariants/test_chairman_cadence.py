@@ -36,7 +36,7 @@ from yaaf.server import contextpack, policy
 
 CADENCE = {"chairman_report_interval_hours": 4,
            "chairman_report_window_local": "09:00-20:00",
-           "chairman_report_timezone": "America/New_York"}
+           "timezone": "America/New_York"}
 
 
 def _with_cadence(client, constitution: dict | None = None) -> dict:
@@ -155,7 +155,7 @@ def test_a_slot_that_lands_out_of_hours_waits_for_the_morning(client):
     assert parse_report_window("nonsense") is None
     for bad in ({"chairman_report_window_local": "20:00-09:00"},
                 {"chairman_report_window_local": "nonsense"},
-                {"chairman_report_timezone": "Mars/Olympus"}):
+                {"timezone": "Mars/Olympus"}):
         with pytest.raises(ValidationError):
             ConstitutionDoc.model_validate(bad)
 

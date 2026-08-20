@@ -317,7 +317,7 @@ def test_every_rule_describes_itself(client):
     so a new rule that forgets one fails here rather than going quietly missing."""
     fields = client.get("/admin/constitution/schema", headers=ADMIN).json()
 
-    from yaaf.core.constitution import ConstitutionDoc
+    from yaaf.core.constitution import THEME_ORDER, ConstitutionDoc
     assert {f["key"] for f in fields} == set(ConstitutionDoc().model_dump())
 
     for field in fields:
@@ -325,9 +325,43 @@ def test_every_rule_describes_itself(client):
         assert len(field["help"]) > 20, f"{field['key']} needs help a chairman can read"
         assert field["group"] != "Other", f"{field['key']} belongs in a named group"
         assert field["type"] in ("integer", "number", "boolean", "string"), field["key"]
+        # A group with no theme lands on no tab, so the rule is unreachable in
+        # the UI even though the schema describes it perfectly — the same
+        # failure the hand-kept list used to cause, one layer up.
+        assert field["theme"] in THEME_ORDER, (
+            f"{field['key']}: group {field['group']!r} has no theme in GROUP_THEMES")
 
     assert {f["key"] for f in fields if f["group"] == "Memory"} == {
         "memory_cap_project", "memory_cap_team", "memory_warn_ratio"}
+
+    # Every tab has something on it; an empty tab is a heading that lies.
+    assert {f["theme"] for f in fields} == set(THEME_ORDER)
+
+
+def test_string_rules_with_a_fixed_set_offer_it(client):
+    """A rule whose validator accepts four words should not be a free text box.
+    The choices ride the schema so the editor draws a menu, and the validator
+    stays the authority — a value off the list is still refused server-side."""
+    fields = {f["key"]: f for f in
+              client.get("/admin/constitution/schema", headers=ADMIN).json()}
+
+    assert fields["approval_timeout_decision"]["choices"] == ["deny", "approve"]
+    assert fields["cycle_frequency"]["choices"] == [
+        "daily", "weekly", "monthly", "quarterly"]
+
+    # Defaults ride along too: the editor flags a rule that differs from stock.
+    assert fields["queue_ceiling"]["default"] == 8
+    assert fields["require_evidence_verification"]["default"] is True
+    assert fields["ceo_daily_at"]["default"] is None
+
+    project = make_project(client)
+    refused = client.post(
+        f"/admin/projects/{project['id']}/amendments",
+        json={"reason": "trying a frequency that is not on the list",
+              "changes": {"cycle_frequency": "fortnightly"}},
+        headers=ADMIN,
+    )
+    assert refused.status_code == 422
 
 
 def test_evidence_verifier_rules(client):

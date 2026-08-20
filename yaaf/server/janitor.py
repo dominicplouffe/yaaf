@@ -18,21 +18,36 @@ happened — never the mechanism itself.
 
 from __future__ import annotations
 
+import json
 import logging
+import random
 import time
 from datetime import timedelta
+from pathlib import Path
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from yaaf.core import ids
 from yaaf.core.config import settings
-from yaaf.core.constitution import ConstitutionDoc, apply_due_amendments, effective
-from yaaf.core.db import db_session
+from yaaf.core.constitution import (
+    ConstitutionDoc,
+    apply_due_amendments,
+    effective,
+    effective_version,
+)
+from yaaf.core.db import db_session, notify
 from yaaf.core.models import (
     Agent,
+    AgentStatus,
     Approval,
     ApprovalStatus,
+    AuditLog,
+    AuditSample,
+    AuditSampleStatus,
+    CommitmentStatus,
+    Cycle,
+    CycleStatus,
     Hypothesis,
     HypothesisStatus,
     LedgerEntry,
@@ -40,11 +55,18 @@ from yaaf.core.models import (
     Notice,
     NoticeKind,
     Project,
+    ProjectMode,
     ProjectStatus,
+    Requirement,
+    RequirementEvent,
+    RequirementStatus,
+    Review,
+    ReviewStatus,
     Run,
     RunKind,
     RunQueue,
     RunStatus,
+    SuccessTestKind,
     Task,
     TaskStatus,
     Team,
@@ -57,43 +79,90 @@ from yaaf.server.verifier import verify_pending_evidence
 log = logging.getLogger("yaaf.janitor")
 
 
-def janitor_loop() -> None:  # pragma: no cover - thin loop around janitor_once
+def janitor_loop() -> None:  # pragma: no cover - thin loop around janitor_all
     while True:
-        try:
-            with db_session() as session:
-                janitor_once(session)
-        except Exception:
-            log.exception("janitor tick failed")
+        janitor_all()
         time.sleep(settings().janitor_poll_s)
 
 
-def janitor_once(session: Session) -> None:
-    for project in session.execute(select(Project)).scalars():
-        applied = apply_due_amendments(session, project.id)
-        for amendment in applied:
-            _notice_ceo(
-                session, project,
-                NoticeKind.CONSTITUTION_AMENDED,
-                f"The chairman amended the constitution (reason: {amendment.reason}). "
-                f"Changes now in force: {amendment.changes}. Plan accordingly.",
-            )
-        if project.status != ProjectStatus.RUNNING:
-            continue
+def janitor_all() -> None:
+    """One sweep, with each project in its own transaction.
+
+    The tick used to share one across every company on the box, so a single bad
+    row rolled back the enforcement pass for all of them — no reaping, no budget
+    check, no approval expiry anywhere, reported by one line on stderr. See the
+    twin of this in `dispatcher.dispatch_all`.
+    """
+    with db_session() as session:
+        project_ids = [row for (row,) in session.execute(select(Project.id))]
+    for project_id in project_ids:
         try:
-            cons = effective(session, project.id)
-        except LookupError:
-            continue
-        reap_stale_runs(session, project, cons)
-        expire_hypotheses(session, project)
-        nag_approvals(session, project, cons)
-        expire_approvals(session, project, cons)
-        enforce_budget(session, project, cons)
-        release_dead_claims(session, project, cons)
-        warn_drought(session, project, cons)
-        warn_memory_pressure(session, project, cons)
+            with db_session() as session:
+                project = session.get(Project, project_id)
+                if project is not None:
+                    _janitor_project(session, project)
+        except Exception:
+            log.exception("janitor failed for project %s", project_id)
+    try:
+        with db_session() as session:
+            verify_pending_evidence(session)
+    except Exception:
+        log.exception("evidence verification failed")
+
+
+def janitor_once(session: Session) -> None:
+    """One sweep inside the caller's transaction — the test harness's entry
+    point. Production uses `janitor_all`, which isolates each project."""
+    for project in session.execute(select(Project)).scalars():
+        _janitor_project(session, project)
     verify_pending_evidence(session)
     # Slack mirroring moved to its own 2s loop (slack.socket.fast_mirror_loop):
     # chat-grade latency, and no double-post race with an enforcement tick.
+
+
+def _janitor_project(session: Session, project: Project) -> None:
+    """Every enforcement rule this project is due, in order."""
+    applied = apply_due_amendments(session, project.id)
+    for amendment in applied:
+        _notice_ceo(
+            session, project,
+            NoticeKind.CONSTITUTION_AMENDED,
+            f"The chairman amended the constitution (reason: {amendment.reason}). "
+            f"Changes now in force: {amendment.changes}. Plan accordingly.",
+        )
+    # The experiment stop rule watches PAUSED projects too: budget
+    # exhaustion pauses first, and the rule is the verdict on top.
+    from yaaf.server.experiments import check_experiment_arms
+
+    check_experiment_arms(session, project)
+    if project.status != ProjectStatus.RUNNING:
+        return
+    try:
+        cons = effective(session, project.id)
+    except LookupError:
+        return
+    reap_stale_runs(session, project, cons)
+    expire_hypotheses(session, project)
+    nag_approvals(session, project, cons)
+    expire_approvals(session, project, cons)
+    enforce_budget(session, project, cons)
+    release_dead_claims(session, project, cons)
+    elect_missing_leads(session, project)
+    check_plan(session, project, cons)
+    check_finished_requirements(session, project)
+    check_stalled_requirements(session, project)
+    nag_observable_requirements(session, project, cons)
+    check_commitments(session, project, cons)
+    draw_audit_samples(session, project, cons)
+    expire_audit_samples(session, project)
+    open_reviews(session, project, cons)
+    nag_reviews(session, project)
+    roll_cycles(session, project, cons)
+    check_explore_deadline(session, project)
+    check_delivery_ready(session, project)
+    warn_drought(session, project, cons)
+    warn_stall(session, project, cons)
+    warn_memory_pressure(session, project, cons)
 
 
 def _notice_ceo(session: Session, project: Project, kind: str, body: str) -> None:
@@ -111,6 +180,868 @@ def _notice_agent(session: Session, project: Project, agent_id: str, kind: str, 
         Notice(id=ids.new_id(ids.NOTICE), project_id=project.id, agent_id=agent_id,
                kind=kind, body=body)
     )
+
+
+# ── the plan: does it hold yet? ─────────────────────────────────────────────────
+
+
+def check_plan(session: Session, project: Project, cons: ConstitutionDoc) -> bool:
+    """R-00 closes itself the moment the plan holds, and reopens if it stops.
+
+    In the janitor rather than on the accept route because the plan can become
+    true or false without anyone touching a requirement: the chairman lowers a
+    budget, a month's spend accumulates, an estimate is priced in at the CEO's
+    historical ratio. A gate that only re-checked when someone poked it would
+    let a project build all month against a plan that stopped adding up on the
+    3rd.
+    """
+    plan = policy.plan_requirement(session, project.id)
+    if plan is None:
+        return False
+
+    outstanding = policy.evaluate_plan(session, project, cons)
+    holds = not outstanding
+
+    if holds and plan.status != RequirementStatus.MET:
+        from_status = plan.status
+        plan.status = RequirementStatus.MET
+        plan.met_at = utcnow()
+        plan.check_output = "the plan holds: accepted, staged, estimated and affordable"
+        policy.record_requirement_event(session, plan, RequirementStatus.MET, "platform",
+                                        note=plan.check_output, from_status=from_status)
+        sums = policy.plan_arithmetic(session, project, cons)
+        _notice_ceo(
+            session, project, NoticeKind.GOAL_CHANGED,
+            f"The plan holds, so R-00 is met and the board is open — you may create work "
+            f"now.\n\nIt comes to about {sums['adjusted_runs']} runs across "
+            f"{sums['requirements']} requirements"
+            + (f", roughly {sums['days_at_the_daily_cap']} days at the daily cap"
+               if sums["days_at_the_daily_cap"] else "")
+            + ". Work stage by stage: the platform refuses work for a requirement whose "
+              "stage is not open yet, and for one whose dependencies are unsettled.",
+        )
+        return True
+
+    if not holds and plan.status == RequirementStatus.MET:
+        # It stopped adding up. Reopening is not a punishment — it is the
+        # difference between a company that notices and one that spends to the
+        # cap and calls it a surprise.
+        from_status = plan.status
+        plan.status = RequirementStatus.PENDING
+        plan.met_at = None
+        policy.record_requirement_event(session, plan, RequirementStatus.PENDING, "platform",
+                                        note="; ".join(outstanding)[:2000],
+                                        from_status=from_status)
+        _notice_ceo(
+            session, project, NoticeKind.GOAL_CHANGED,
+            "The plan no longer holds, so R-00 is open again and no new work may be "
+            "created until it does.\n\n" + " ".join(outstanding)
+            + "\n\nNothing already on the board is cancelled. Finish or cut what is "
+              "there, and re-plan the rest.",
+        )
+        return True
+    return False
+
+
+# ── the commitment: does the date still hold? ───────────────────────────────────
+
+
+# Only re-stamp the row when the projection has genuinely moved; the naive
+# projection slides forward every second and stamping it every tick would turn
+# an idle project into a write-per-15s heartbeat on its own promise.
+PROJECTION_STAMP_TOLERANCE = timedelta(hours=1)
+
+
+def check_commitments(session: Session, project: Project, cons: ConstitutionDoc) -> None:
+    """The forecast, recomputed; the promise, re-validated; every transition,
+    disclosed.
+
+    In the janitor for the same reason check_plan is: the promise can stop
+    holding without anyone touching a commitment — the trailing pace slides, a
+    run dies, the chairman amends a rule. Re-validation is STATE-BASED, a diff
+    of {constitution version, scope keys, failure load} against what this
+    function last recorded on the row. Never event hooks: amendments apply
+    inline from three different callers, and a hook misses every one it was
+    not wired to.
+    """
+    commitment = policy.live_commitment(session, project.id)
+    if commitment is None:
+        return
+    from yaaf.server.velocity import commitment_projection
+
+    now = utcnow()
+    scope = [
+        r for r in policy.scope_requirements(session, project.id)
+        if r.status not in (RequirementStatus.PROPOSED, RequirementStatus.CUT)
+    ]
+    scope_keys = sorted(r.key for r in scope)
+    failure_load = sum(r.failure_load for r in scope)
+    version = effective_version(session, project.id)
+    projection = commitment_projection(session, project, cons)
+    projected = projection["projected_done_at"] if projection["known"] else None
+
+    # The three re-validation triggers, as diffs against the recorded basis.
+    basis = dict(commitment.projection or {})
+    moved: list[str] = []
+    if basis.get("constitution_version") != version:
+        if basis.get("constitution_version") is not None:
+            moved.append(
+                f"the rules moved (constitution v{basis['constitution_version']} → "
+                f"v{version}; the promise was accepted under "
+                f"v{commitment.constitution_version})"
+            )
+        basis["constitution_version"] = version
+    if basis.get("scope_keys") != scope_keys:
+        if basis.get("scope_keys") is not None:
+            old, new = set(basis["scope_keys"]), set(scope_keys)
+            delta = [f"+{k}" for k in sorted(new - old)] + \
+                    [f"−{k}" for k in sorted(old - new)]
+            moved.append("the scope changed (" + ", ".join(delta) + ")")
+        basis["scope_keys"] = scope_keys
+    prior_load = int(basis.get("failure_load") or 0)
+    if failure_load < prior_load:
+        basis["failure_load"] = failure_load  # scope was cut out from under it
+    elif cons.commitment_failure_reforecast and \
+            failure_load - prior_load >= cons.commitment_failure_reforecast:
+        moved.append(
+            f"{failure_load - prior_load} run(s) have died against the plan since the "
+            "promise was last validated"
+        )
+        basis["failure_load"] = failure_load
+    basis["method"] = projection.get("method")
+    basis["note"] = projection.get("basis") or projection.get("why")
+
+    # Where the promise stands now. Breach outranks risk; met outranks both.
+    met = bool(scope) and all(r.status == RequirementStatus.MET for r in scope)
+    if met:
+        status = CommitmentStatus.MET
+    elif now > commitment.deliver_by:
+        status = CommitmentStatus.BREACHED
+    elif projected is not None and projection["remaining"] > 0 \
+            and projected > commitment.deliver_by:
+        status = CommitmentStatus.AT_RISK
+    else:
+        status = CommitmentStatus.ACCEPTED
+
+    stamp = (
+        status != commitment.status
+        or bool(moved)
+        or (projected is None) != (commitment.projected_done_at is None)
+        or (projected is not None and commitment.projected_done_at is not None
+            and abs(projected - commitment.projected_done_at) > PROJECTION_STAMP_TOLERANCE)
+    )
+    if not stamp:
+        return
+    commitment.projected_done_at = projected
+    if projected is not None:
+        basis["projected_done_at"] = projected.isoformat()
+    commitment.projection = basis
+
+    if status == commitment.status:
+        if moved:
+            _notice_ceo(
+                session, project, NoticeKind.COMMITMENT_REVALIDATED,
+                "The ground under the commitment moved: " + "; ".join(moved) + ". "
+                "The platform re-projected the date"
+                + (f": the work now lands about {projected:%Y-%m-%d} against the "
+                   f"promised {commitment.deliver_by:%Y-%m-%d}." if projected
+                   else f", and there is currently no arithmetic to project from "
+                        f"({basis['note']}).")
+                + " Nothing is frozen — this is the promise being re-checked, "
+                  "which is what a promise is for.",
+            )
+        return
+
+    landing = (f"the projection lands about {projected:%Y-%m-%d}" if projected
+               else f"there is no arithmetic to project from ({basis['note']})")
+    ground = (" The ground moved first: " + "; ".join(moved) + ".") if moved else ""
+    commitment.status, from_status = status, commitment.status
+
+    if status == CommitmentStatus.MET:
+        commitment.met_at = now
+        commitment.status_reason = (
+            f"every requirement in scope is true ({len(scope_keys)} of them)"
+        )
+        _notice_ceo(
+            session, project, NoticeKind.COMMITMENT_MET,
+            f"The commitment is MET: all {len(scope_keys)} requirement(s) in scope are "
+            f"true, against a promise of {commitment.deliver_by:%Y-%m-%d}. The chairman "
+            "has been told. Do not invent new work to fill the quiet — if something "
+            "more is worth doing, it is a proposal for him, not a task.",
+        )
+        chairman_notify(
+            session, project, "commitment met",
+            f"Every requirement in scope is true — {len(scope_keys)} requirement(s), "
+            f"promised by {commitment.deliver_by:%Y-%m-%d}, finished "
+            f"{now:%Y-%m-%d %H:%M} UTC.",
+        )
+    elif status == CommitmentStatus.BREACHED:
+        commitment.status_reason = (
+            f"{commitment.deliver_by:%Y-%m-%d} passed with "
+            f"{projection['remaining']} requirement(s) still open"
+        )
+        _notice_ceo(
+            session, project, NoticeKind.COMMITMENT_BREACHED,
+            f"The commitment is BREACHED: {commitment.deliver_by:%Y-%m-%d} has passed "
+            f"and {projection['remaining']} requirement(s) are still open.{ground} "
+            "New scope is frozen — requirement proposals will be refused. Existing "
+            "work continues; finish it. The date is the chairman's to move and the "
+            "scope his to cut, and he has been emailed the numbers.",
+        )
+        chairman_notify(
+            session, project, "commitment BREACHED",
+            f"The promised date {commitment.deliver_by:%Y-%m-%d} has passed with "
+            f"{projection['remaining']} requirement(s) still open; {landing}. "
+            "New scope is frozen until you act: move the date, cut scope, or let it "
+            "stand and hold the company to finishing what is open.",
+        )
+    elif status == CommitmentStatus.AT_RISK:
+        days = max(1, (projected - commitment.deliver_by).days)
+        commitment.status_reason = f"{landing}, ~{days} day(s) past the promise"
+        _notice_ceo(
+            session, project, NoticeKind.COMMITMENT_AT_RISK,
+            f"The commitment is AT RISK: you promised {commitment.deliver_by:%Y-%m-%d} "
+            f"and {landing} — about {days} day(s) late ({basis['note']}).{ground} "
+            "New scope is frozen while this holds: proposals will be refused. Your "
+            "moves are the ones that change the arithmetic — finish what is open, or "
+            "propose cuts to the chairman. He has been emailed.",
+        )
+        chairman_notify(
+            session, project, "commitment at risk",
+            f"The projection now lands about {projected:%Y-%m-%d} against the promised "
+            f"{commitment.deliver_by:%Y-%m-%d} ({basis['note']}).{ground}\n\n"
+            "New scope is frozen for the CEO. Your levers: cut scope on the Plan "
+            "screen, move the date, or wait — the freeze lifts by itself if the pace "
+            "recovers.",
+        )
+    else:  # recovered to ACCEPTED
+        commitment.status_reason = None
+        _notice_ceo(
+            session, project, NoticeKind.COMMITMENT_RECOVERED,
+            f"The commitment holds again: {landing}, inside the promised "
+            f"{commitment.deliver_by:%Y-%m-%d}.{ground} New scope is no longer frozen. "
+            "It unfroze because the arithmetic changed, not because anyone relented — "
+            "keep it that way.",
+        )
+    log.info("commitment %s: %s → %s (project %s)",
+             commitment.id, from_status, status, project.slug)
+
+
+# ── requirements: is it true yet? ───────────────────────────────────────────────
+
+
+def check_finished_requirements(session: Session, project: Project) -> int:
+    """A requirement whose work has all closed goes to the platform to be
+    judged — never to the agents who did it.
+
+    This lives in the janitor and not the dispatcher on purpose. Deciding that
+    a requirement is ready to test costs no tokens and must happen whether or
+    not the company has runs left today: a project that spent its allowance is
+    still allowed to have finished something, and a `met` that waited for
+    budget would make the burn-up lie for a day at a time.
+
+    Command tests queue a REQUIREMENT_CHECK the runner executes. Observable
+    ones stop here and wait for the chairman — a script cannot tell him the
+    memo reads well, and the agent that wrote it is the last thing that should
+    be asked.
+    """
+    moved = 0
+    live = session.execute(
+        select(Requirement).where(
+            Requirement.project_id == project.id,
+            Requirement.status == RequirementStatus.IN_PROGRESS,
+        )
+    ).scalars().all()
+    for requirement in live:
+        tasks = session.execute(
+            select(Task).where(Task.requirement_id == requirement.id)
+        ).scalars().all()
+        if not tasks:
+            continue
+        if any(t.status in policy.OPEN_TASK_STATUSES for t in tasks):
+            continue
+        # Every task closed. If they were ALL killed, nothing was built and the
+        # requirement is not a candidate — it goes back to waiting for a plan
+        # rather than being tested against an empty workspace.
+        if not any(t.status == TaskStatus.DONE for t in tasks):
+            continue
+
+        from_status = requirement.status
+        requirement.status = RequirementStatus.CHECKING
+        kind = (requirement.acceptance_test or {}).get("type")
+        if kind == SuccessTestKind.COMMAND:
+            run_id = ids.new_id(ids.RUN)
+            session.add(RunQueue(
+                id=run_id,
+                project_id=project.id,
+                agent_id=None,
+                kind=RunKind.REQUIREMENT_CHECK,
+                trigger={"type": "requirement_check", "requirement_id": requirement.id},
+                requirement_id=requirement.id,
+            ))
+            note = "all work closed; the platform is running the acceptance test"
+        else:
+            note = "all work closed; waiting on the chairman to confirm the observable"
+            _notice_ceo(
+                session, project, NoticeKind.GOAL_CHANGED,
+                f"{requirement.key} has no work left open and its acceptance test is an "
+                f"observable, so it is with the chairman: {requirement.statement[:300]}\n"
+                "You cannot mark it met and neither can anyone here. Do not create more "
+                "work for it while he is looking.",
+            )
+        policy.record_requirement_event(session, requirement, RequirementStatus.CHECKING,
+                                        "janitor", note=note, from_status=from_status)
+        moved += 1
+    if moved:
+        notify(session, "yaaf_run_queue", project.id)
+    return moved
+
+
+# ── the Operate rhythm: cycles roll here, and the learning loop rides them ──────
+
+
+def next_cycle_roll(opened_at, cons: ConstitutionDoc):
+    """When the cycle that opened at `opened_at` rolls, in UTC.
+
+    All local arithmetic happens in the constitution's one timezone. Monthly
+    and quarterly days are 1-28 by validation — the 29th-31st were refused at
+    the rule, not clamped here, so this never has to guess what the chairman
+    meant by "the 30th" in February.
+    """
+    from zoneinfo import ZoneInfo
+
+    try:
+        tz = ZoneInfo(cons.timezone)
+    except Exception:
+        from datetime import UTC as tz  # noqa: N813 - a body written before validation
+
+    local = opened_at.astimezone(tz)
+    midnight = {"hour": 0, "minute": 0, "second": 0, "microsecond": 0}
+    if cons.cycle_frequency == "daily":
+        boundary = (local + timedelta(days=1)).replace(**midnight)
+    elif cons.cycle_frequency == "weekly":
+        ahead = (cons.cycle_day - local.weekday()) % 7
+        boundary = (local + timedelta(days=ahead)).replace(**midnight)
+        if boundary <= local:
+            boundary += timedelta(days=7)
+    else:
+        anchors = (list(range(1, 13)) if cons.cycle_frequency == "monthly"
+                   else [1, 4, 7, 10])
+        boundary = None
+        for months_ahead in range(0, 16):
+            month = (local.month - 1 + months_ahead) % 12 + 1
+            year = local.year + (local.month - 1 + months_ahead) // 12
+            if month not in anchors:
+                continue
+            candidate = local.replace(year=year, month=month,
+                                      day=cons.cycle_day, **midnight)
+            if candidate > local:
+                boundary = candidate
+                break
+    from datetime import UTC
+
+    return boundary.astimezone(UTC)
+
+
+def _open_cycle(session: Session, project: Project, ordinal: int) -> Cycle:
+    cycle = Cycle(id=ids.new_id(ids.CYCLE), project_id=project.id, ordinal=ordinal)
+    session.add(cycle)
+    session.flush()
+    return cycle
+
+
+def roll_cycles(session: Session, project: Project, cons: ConstitutionDoc) -> None:
+    """Close the cycle whose time came, carry the unfinished scope, reopen the
+    plan gate, and hand the CEO the last three narratives.
+
+    In the janitor because a rhythm firing while the company is busy or broke
+    must still be recorded, and opening a cycle costs nothing. At most one
+    cycle is ever open: close-and-open is one transition, and a project
+    paused across many boundaries resumes into ONE new cycle — the janitor
+    never touches paused projects, so no boundaries "queue up".
+    """
+    if project.mode != ProjectMode.OPERATE:
+        return
+    cycle = policy.current_cycle(session, project.id)
+    now = utcnow()
+    if cycle is None:
+        last = session.execute(
+            select(func.max(Cycle.ordinal)).where(Cycle.project_id == project.id)
+        ).scalar_one() or 0
+        opened = _open_cycle(session, project, last + 1)
+        log.info("opened cycle #%s for %s", opened.ordinal, project.slug)
+        return
+    if now < next_cycle_roll(cycle.opened_at, cons):
+        return
+
+    scope = policy.scope_requirements(session, project.id)  # the open cycle's
+    accepted = [r for r in scope if r.status != RequirementStatus.PROPOSED]
+    unsettled = [r for r in accepted
+                 if r.status not in policy.CLOSED_REQUIREMENT_STATUSES]
+    met = [r for r in accepted if r.status == RequirementStatus.MET]
+
+    if unsettled:
+        cycle.status = CycleStatus.MISSED
+    elif met:
+        cycle.status = CycleStatus.COMPLETED
+    else:
+        cycle.status = CycleStatus.SKIPPED  # nothing accepted, or nothing made true
+    cycle.closed_at = now
+    if not cycle.narrative:
+        # No review wrote one this cycle; the platform leaves an honest stub
+        # so the next cycle's pack never carries a silent gap.
+        cycle.narrative = (
+            f"Cycle {cycle.ordinal} closed {cycle.status}: "
+            f"{len(met)} met" + (f" ({', '.join(r.key for r in met)})" if met else "")
+            + f", {len(unsettled)} carried forward. No review narrative was "
+              "written this cycle."
+        )
+
+    # Two consecutive cycles with nothing made true pause the project: a
+    # rhythm nobody dances to is a bill, not a company.
+    if cycle.status == CycleStatus.SKIPPED:
+        previous = session.execute(
+            select(Cycle).where(Cycle.project_id == project.id,
+                                Cycle.ordinal == cycle.ordinal - 1)
+        ).scalar_one_or_none()
+        if previous is not None and previous.status == CycleStatus.SKIPPED:
+            project.status = ProjectStatus.PAUSED
+            project.status_reason = (
+                f"two consecutive cycles ({previous.ordinal} and {cycle.ordinal}) "
+                "closed with nothing made true"
+            )
+            for run in session.execute(
+                select(Run).where(Run.project_id == project.id,
+                                  Run.status == RunStatus.RUNNING)
+            ).scalars():
+                run.token_revoked = True
+            chairman_notify(
+                session, project, "project paused: two skipped cycles",
+                f"Cycles {previous.ordinal} and {cycle.ordinal} both closed with "
+                "nothing made true. The platform paused the project rather than "
+                "billing you for a third. Resume from the project page when you have "
+                "decided what changes — the next cycle opens on resume.",
+            )
+            log.warning("project %s paused: two skipped cycles", project.slug)
+            return
+
+    new = _open_cycle(session, project, cycle.ordinal + 1)
+    carried = unsettled + [r for r in scope if r.status == RequirementStatus.PROPOSED]
+    for requirement in carried:
+        requirement.cycle_id = new.id
+
+    plan = policy.plan_requirement(session, project.id)
+    if plan is not None and plan.status == RequirementStatus.MET:
+        from_status = plan.status
+        plan.status = RequirementStatus.PENDING
+        plan.met_at = None
+        policy.record_requirement_event(
+            session, plan, RequirementStatus.PENDING, "janitor",
+            note=f"cycle {new.ordinal} opened; each cycle plans fresh",
+            from_status=from_status)
+
+    _notice_ceo(
+        session, project, NoticeKind.CYCLE_ROLLED,
+        f"Cycle {cycle.ordinal} closed {cycle.status.upper()} "
+        f"({len(met)} met, {len(unsettled)} carried forward"
+        + (f": {', '.join(r.key for r in unsettled)}" if unsettled else "") + "). "
+        f"Cycle {new.ordinal} is open. Your FIRST act: read the last three cycles' "
+        "narratives in your pack, then plan — R-00 reopened, and no work may be "
+        "created until the new cycle's plan holds. A lesson still true several "
+        "cycles out goes to memory; everything else lives in the narratives.",
+    )
+    log.info("rolled cycle #%s → #%s for %s (%s)",
+             cycle.ordinal, new.ordinal, project.slug, cycle.status)
+
+
+# ── explore: a window, not a scope ──────────────────────────────────────────────
+
+
+def check_explore_deadline(session: Session, project: Project) -> None:
+    """The chairman's own example: "one sale in the next 60 days" — open
+    scope, bounded time. When the window closes, both parties are told ONCE
+    and the judgment is his; nothing pauses by itself, because an Explore
+    project's worth was always his call, not a date's."""
+    if project.mode != ProjectMode.EXPLORE or project.deadline is None:
+        return
+    if utcnow() < project.deadline:
+        return
+    already = session.execute(
+        select(func.count(Notice.id)).where(
+            Notice.project_id == project.id,
+            Notice.kind == NoticeKind.EXPLORE_DEADLINE)
+    ).scalar_one()
+    if already:
+        return
+    usd, tokens = month_to_date(session, project.id)
+    _notice_ceo(
+        session, project, NoticeKind.EXPLORE_DEADLINE,
+        f"The window closed: {project.deadline:%Y-%m-%d} has passed. Say plainly, "
+        "in the boardroom, what was earned and what was learned — the chairman is "
+        "deciding whether this project earned its keep, and spending on as if the "
+        "date had not existed is the one answer that decides it against you.",
+    )
+    chairman_notify(
+        session, project, "explore window closed",
+        f"The deadline you set ({project.deadline:%Y-%m-%d}) has passed. "
+        f"This month's spend so far: ${usd:,.2f} / {tokens:,} tokens.\n\n"
+        "Your call, as it always was: stop it, extend the window (set a new date in "
+        "Settings), or convert what worked into a Deliver project with real "
+        "requirements. The company keeps working until you decide.",
+    )
+
+
+# ── deliver: completion is detected here, confirmed by the chairman ─────────────
+
+
+def delivery_outstanding(session: Session, project: Project) -> list[str]:
+    """What still stands between this Deliver project and COMPLETED. Empty
+    means ready — the same list the complete route refuses with, so the
+    email and the refusal can never disagree."""
+    outstanding: list[str] = []
+    plan = policy.plan_requirement(session, project.id)
+    if plan is None or plan.status != RequirementStatus.MET:
+        outstanding.append("the plan gate is open")
+    scope = [r for r in policy.scope_requirements(session, project.id)
+             if r.status != RequirementStatus.PROPOSED]
+    if not scope:
+        outstanding.append("no requirements were ever accepted")
+    open_scope = [r for r in scope if r.status not in policy.CLOSED_REQUIREMENT_STATUSES]
+    if open_scope:
+        outstanding.append(
+            "still open: " + ", ".join(f"{r.key} ({r.status})" for r in open_scope[:8]))
+    if scope and not any(r.status == RequirementStatus.MET for r in scope):
+        outstanding.append("nothing was made true — everything was cut")
+    open_tasks = policy.open_top_level_tasks(session, project.id)
+    if open_tasks:
+        outstanding.append(f"{len(open_tasks)} task(s) still open")
+    return outstanding
+
+
+def check_delivery_ready(session: Session, project: Project) -> None:
+    """Tell the chairman ONCE that everything is true. Completion itself is
+    his gate — one of the three moments he chose to be asked at — so the
+    janitor detects and the button on the project page decides."""
+    if project.mode != ProjectMode.DELIVER:
+        return
+    if delivery_outstanding(session, project):
+        return
+    already = session.execute(
+        select(func.count(AuditLog.id)).where(
+            AuditLog.project_id == project.id,
+            AuditLog.action == "project.completion_ready")
+    ).scalar_one()
+    if already:
+        return
+    met = [r for r in policy.scope_requirements(session, project.id)
+           if r.status == RequirementStatus.MET]
+    session.add(AuditLog(
+        id=ids.new_id(ids.AUDIT), project_id=project.id, actor="system:janitor",
+        action="project.completion_ready", entity="project", entity_id=project.id,
+        detail={"met": [r.key for r in met]},
+    ))
+    chairman_notify(
+        session, project, "ready to complete",
+        f"Every requirement is settled and {len(met)} of them are true: "
+        f"{', '.join(r.key for r in met)}. Confirm completion on the project page — "
+        "it writes the delivery receipt and closes the company down cleanly. "
+        "Until you do, it keeps running (and spending).",
+    )
+
+
+# ── the review: opened, numbered and emailed with zero tokens ───────────────────
+
+REVIEW_NAG_HOURS = 24       # an open review the chairman has not closed is chased once
+REVIEW_ESCALATE_HOURS = 72  # and chased harder here — but the work never stops for it
+
+
+def review_numbers(session: Session, project: Project, cons: ConstitutionDoc,
+                   prior: Review | None) -> dict:
+    """The platform's half of the meeting, from the same producers every
+    screen reads — velocity, the commitment projection, month-to-date spend,
+    audit coverage — frozen into the review row so the record cannot drift as
+    the week moves on. The prior review's decisions ride along beside what
+    they bought, which is what makes a lever accountable next time."""
+    from yaaf.server.velocity import commitment_projection, project_velocity
+
+    now = utcnow()
+    velocity = project_velocity(session, project.id)
+    usd, tokens = month_to_date(session, project.id)
+    scope = policy.scope_requirements(session, project.id)
+    since = prior.opened_at if prior is not None else project.created_at
+
+    commitment = policy.live_commitment(session, project.id)
+    commitment_block = None
+    if commitment is not None:
+        projection = commitment_projection(session, project, cons)
+        commitment_block = {
+            "status": commitment.status,
+            "deliver_by": commitment.deliver_by.isoformat(),
+            "projected_done_at": (projection["projected_done_at"].isoformat()
+                                  if projection["known"] else None),
+            "basis": projection.get("basis") or projection.get("why"),
+        }
+
+    samples = session.execute(
+        select(AuditSample).where(AuditSample.project_id == project.id,
+                                  AuditSample.drawn_at >= since)
+    ).scalars().all()
+    met_since = session.execute(
+        select(func.count(RequirementEvent.id)).where(
+            RequirementEvent.project_id == project.id,
+            RequirementEvent.to_status == RequirementStatus.MET,
+            RequirementEvent.at >= since,
+        )
+    ).scalar_one()
+
+    numbers = {
+        "as_of": now.isoformat(),
+        "goal": project.goal[:2000],
+        "velocity": velocity,
+        "commitment": commitment_block,
+        "budget": {
+            "unit": "USD" if project.billing_mode == "api_key" else "tokens",
+            "spent_mtd": usd if project.billing_mode == "api_key" else tokens,
+            "cap": (cons.monthly_usd_cap if project.billing_mode == "api_key"
+                    else cons.monthly_token_cap),
+        },
+        "scope": {
+            "open": len([r for r in scope if r.status in policy.OPEN_REQUIREMENT_STATUSES]),
+            "proposed": len([r for r in scope if r.status == RequirementStatus.PROPOSED]),
+            "met": len([r for r in scope if r.status == RequirementStatus.MET]),
+            "cut": len([r for r in scope if r.status == RequirementStatus.CUT]),
+            "met_since_last_review": int(met_since),
+        },
+        "hypotheses": [
+            {"statement": h.statement[:300], "kill_date": h.kill_date.isoformat(),
+             "status": h.status}
+            for h in session.execute(
+                select(Hypothesis).where(
+                    Hypothesis.project_id == project.id,
+                    Hypothesis.status.in_([HypothesisStatus.ACTIVE,
+                                           HypothesisStatus.EXPIRED]))
+            ).scalars()
+        ],
+        "audit_coverage": {
+            "considered": len(samples),
+            "sampled": len([s for s in samples if s.status != AuditSampleStatus.SKIPPED]),
+            "failed": len([s for s in samples if s.status == AuditSampleStatus.FAILED]),
+            "expired_unreviewed": len(
+                [s for s in samples if s.status == AuditSampleStatus.EXPIRED]),
+        },
+    }
+    if prior is not None:
+        numbers["prior"] = {
+            "number": prior.number,
+            "opened_at": prior.opened_at.isoformat(),
+            "decisions": prior.decisions or [],
+            # What the week's levers bought, in the only currencies that
+            # count here: things made true, and the pace they happened at.
+            "bought": {
+                "met_since": int(met_since),
+                "pace_then": (prior.numbers or {}).get("velocity", {}).get("per_week_3w"),
+                "pace_now": velocity["per_week_3w"],
+            },
+        }
+    return numbers
+
+
+def open_reviews(session: Session, project: Project, cons: ConstitutionDoc) -> Review | None:
+    """Open the standing meeting when it is due — with zero tokens, regardless
+    of budgets, board state, or anything else. A review with an empty board
+    still fires: that is the one the chairman most needs."""
+    latest = session.execute(
+        select(Review).where(Review.project_id == project.id)
+        .order_by(Review.number.desc()).limit(1)
+    ).scalar_one_or_none()
+    if latest is not None and latest.status == ReviewStatus.OPEN:
+        return None  # one meeting at a time; an unattended one nags instead
+    interval = timedelta(days=cons.review_interval_days)
+    if latest is None:
+        due = project.created_at + interval
+        number = 1
+    else:
+        due = max(latest.scheduled_for + interval,
+                  (latest.closed_at or latest.opened_at))
+        number = latest.number + 1
+    now = utcnow()
+    if now < due:
+        return None
+
+    numbers = review_numbers(session, project, cons, latest)
+    review = Review(
+        id=ids.new_id(ids.REVIEW),
+        project_id=project.id,
+        number=number,
+        scheduled_for=due,
+        numbers=numbers,
+    )
+    session.add(review)
+    session.flush()
+
+    velocity = numbers["velocity"]
+    commitment = numbers["commitment"]
+    prior_lines = ""
+    if numbers.get("prior", {}).get("decisions"):
+        bought = numbers["prior"]["bought"]
+        prior_lines = (
+            f"\nLast review's decisions ({len(numbers['prior']['decisions'])}): "
+            + "; ".join(f"{d['kind']} — {d['reason'][:80]}"
+                        for d in numbers["prior"]["decisions"])
+            + f"\nWhat they bought: {bought['met_since']} requirement(s) met since, "
+              f"pace {bought['pace_then']} → {bought['pace_now']}/wk.\n"
+        )
+    chairman_notify(
+        session, project, f"review #{number} is open",
+        f"The standing review for {project.name} is open. The numbers:\n\n"
+        f"  goal: {project.goal[:300]}\n"
+        f"  pace: {velocity['per_week_3w']}/wk (3w), {velocity['per_week_12w']}/wk (12w); "
+        f"{velocity['remaining']} requirement(s) open\n"
+        f"  met since last review: {numbers['scope']['met_since_last_review']}\n"
+        + (f"  commitment: {commitment['status']} — promised "
+           f"{commitment['deliver_by'][:10]}, projected "
+           f"{(commitment['projected_done_at'] or 'unknown')[:10]}\n" if commitment else "")
+        + f"  budget: {numbers['budget']['spent_mtd']:,.0f} of "
+          f"{numbers['budget']['cap']:,.0f} {numbers['budget']['unit']} this month\n"
+        f"  audit coverage since last review: "
+        f"{numbers['audit_coverage']['sampled']} sampled, "
+        f"{numbers['audit_coverage']['failed']} failed, "
+        f"{numbers['audit_coverage']['expired_unreviewed']} expired unreviewed\n"
+        f"{prior_lines}\n"
+        "The CEO is filing its variance narrative on a reserved governance run. "
+        "Take the meeting on the Review tab — your levers there are cut, add, "
+        "reword, move the date, raise the budget, and accept the slip; each is "
+        "recorded with your reason and shown at the next review beside what it "
+        "bought.",
+    )
+    _notice_ceo(
+        session, project, NoticeKind.REVIEW_OPENED,
+        f"Review #{number} is open. File your variance narrative with "
+        "review_narrative: what moved against the plan since last review, the "
+        "SINGLE largest cause by name, and what you recommend he cut or move. "
+        "This wake may spend the governance reserve — the narrative is why the "
+        "reserve exists. The platform's numbers are in your pack; do not restate "
+        "them, explain them.",
+    )
+    log.info("opened review #%s for %s", number, project.slug)
+    return review
+
+
+def nag_reviews(session: Session, project: Project) -> None:
+    """An unattended meeting chases the chairman — once politely, once loudly —
+    and never stops the work. The escalation is a louder email and an audit
+    row, not a brake: a governance meeting that could halt the company would
+    be a new failure mode, not a fix."""
+    review = session.execute(
+        select(Review).where(Review.project_id == project.id,
+                             Review.status == ReviewStatus.OPEN)
+    ).scalar_one_or_none()
+    if review is None:
+        return
+    now = utcnow()
+    age_hours = (now - review.opened_at).total_seconds() / 3600
+    if review.nag_sent_at is None and age_hours >= REVIEW_NAG_HOURS:
+        chairman_notify(
+            session, project, f"review #{review.number} is waiting on you",
+            f"It opened {age_hours:.0f}h ago"
+            + (" and the CEO's narrative is in" if review.narrative else
+               " (the CEO has not filed its narrative yet)")
+            + ". The company keeps working either way — but decisions deferred "
+              "are decisions the arithmetic makes for you.",
+        )
+        review.nag_sent_at = now
+    elif review.escalated_at is None and age_hours >= REVIEW_ESCALATE_HOURS:
+        chairman_notify(
+            session, project, f"review #{review.number} has been open {age_hours / 24:.0f} days",
+            "This is the second reminder; there will not be a third. Close it with "
+            "no decisions if that is the decision — an explicit 'no change' is a "
+            "record, an open meeting is a hole.",
+        )
+        review.escalated_at = now
+        session.add(AuditLog(
+            id=ids.new_id(ids.AUDIT),
+            project_id=project.id,
+            actor="system:janitor",
+            action="review.escalated",
+            entity="review",
+            entity_id=review.id,
+            detail={"number": review.number, "open_hours": round(age_hours)},
+        ))
+
+
+# ── the sampled audit: drawn after the fact, never blocking ─────────────────────
+
+
+def draw_audit_samples(session: Session, project: Project, cons: ConstitutionDoc) -> int:
+    """Roll the dice on every observable close that has not been considered.
+
+    Observable closes are the ones taken on the claimant's word — a command
+    test the platform already ran needs no audit. The draw happens HERE,
+    server-side, after the close, at the constitution's rate: no run token can
+    know which claim will be checked, and that unpredictability is the entire
+    mechanism. Every considered close gets a row — drawn or skipped — so
+    nothing is ever re-rolled and the review's coverage line has a
+    denominator.
+    """
+    if cons.audit_sample_rate <= 0:
+        return 0
+    considered = {
+        task_id for (task_id,) in session.execute(
+            select(AuditSample.task_id).where(AuditSample.project_id == project.id))
+    }
+    drawn = 0
+    for task in session.execute(
+        select(Task).where(Task.project_id == project.id, Task.status == TaskStatus.DONE)
+    ).scalars():
+        if task.id in considered:
+            continue
+        if (task.success_test or {}).get("type") != SuccessTestKind.OBSERVABLE:
+            continue
+        sampled = random.random() < cons.audit_sample_rate
+        session.add(AuditSample(
+            id=ids.new_id(ids.AUDIT_SAMPLE),
+            project_id=project.id,
+            task_id=task.id,
+            status=AuditSampleStatus.PENDING if sampled else AuditSampleStatus.SKIPPED,
+            expires_at=(utcnow() + timedelta(hours=cons.audit_response_hours)
+                        if sampled else None),
+        ))
+        if sampled:
+            drawn += 1
+            chairman_notify(
+                session, project,
+                f"audit sample: {task.title[:80]}",
+                f"The platform drew this observable close for your look "
+                f"({cons.audit_sample_rate:.0%} sample rate):\n\n"
+                f"  task: {task.title}\n"
+                f"  test: {(task.success_test or {}).get('target', '')[:300]}\n"
+                f"  claimed evidence: {(task.completion_evidence or '')[:500]}\n\n"
+                f"Confirm or fail it on the Work screen within "
+                f"{cons.audit_response_hours}h; after that it is recorded as "
+                "'not reviewed' and nothing blocks either way.",
+            )
+    return drawn
+
+
+def expire_audit_samples(session: Session, project: Project) -> int:
+    """A sample the chairman never answered records "not reviewed" and moves
+    on. It NEVER blocks — the whole design is gates at the moments he chose
+    plus a thermometer in between, and a thermometer that stops the line is a
+    gate he did not choose."""
+    now = utcnow()
+    expired = 0
+    for sample in session.execute(
+        select(AuditSample).where(
+            AuditSample.project_id == project.id,
+            AuditSample.status == AuditSampleStatus.PENDING,
+            AuditSample.expires_at <= now,
+        )
+    ).scalars():
+        sample.status = AuditSampleStatus.EXPIRED
+        sample.decided_at = now
+        sample.note = "not reviewed in time"
+        expired += 1
+    return expired
 
 
 # ── reaping ─────────────────────────────────────────────────────────────────────
@@ -142,6 +1073,8 @@ def reap_stale_runs(session: Session, project: Project, cons: ConstitutionDoc) -
         run.status = RunStatus.REAPED
         run.token_revoked = True
         run.finished_at = now
+        policy.charge_failure(session, run)
+        _harvest_reaped_usage(session, project, run)
         _release_claims_of_run(session, run.id, "run reaped: lease expired")
         if run.agent_id is not None and run.kind != RunKind.CHAT_SESSION:
             # A dead chat session is restarted quietly by its supervisor — a
@@ -154,6 +1087,62 @@ def reap_stale_runs(session: Session, project: Project, cons: ConstitutionDoc) -
             )
         log.warning("reaped run %s (project %s)", run.id, project.slug)
     return len(stale)
+
+
+def _harvest_reaped_usage(session: Session, project: Project, run: Run) -> bool:
+    """Book what a reaped run actually spent, from the checkpoint it left behind.
+
+    The sandbox writes usage to result-<run>.json after every message precisely
+    so that a hard kill is metered rather than free — but only `finalize` ever
+    read it, and a reaped run never reaches finalize. The lease expiring means
+    the *runner* died or lost the row, not that the model did no work.
+
+    So 244 runs across the fleet — 22% of them, burning ~86 wall-hours — were
+    booked at $0.00 and zero tokens. "Non-DONE runs are only 7% of spend" was a
+    metering artefact, and every budget decision made on it was wrong by an
+    unknown margin. Recovering it here makes failure cost what it costs.
+    """
+    slug = f"{project.slug}-chat" if run.kind == RunKind.CHAT_SESSION else project.slug
+    path = Path(settings().workspaces_root) / slug / ".yaaf" / f"result-{run.id}.json"
+    try:
+        data = json.loads(path.read_text())
+    except FileNotFoundError:
+        return False  # died before its first checkpoint, or the workspace is gone
+    except Exception:
+        log.warning("unreadable usage checkpoint for reaped run %s", run.id)
+        return False
+
+    run.tokens_in = int(data.get("tokens_in", 0) or 0)
+    run.tokens_out = int(data.get("tokens_out", 0) or 0)
+    run.cache_creation_tokens = int(data.get("cache_creation_tokens", 0) or 0)
+    run.cache_read_tokens = int(data.get("cache_read_tokens", 0) or 0)
+    # Subscription projects meter in tokens; booking the SDK's list price there
+    # would distort a budget that is not denominated in dollars. Same rule the
+    # runner applies at finalize.
+    subscription = project.billing_mode == "subscription"
+    run.cost_usd = None if subscription else data.get("cost_usd")
+
+    total = (run.tokens_in + run.tokens_out
+             + run.cache_creation_tokens + run.cache_read_tokens)
+    if not total and not run.cost_usd:
+        return False
+
+    session.add(
+        LedgerEntry(
+            id=ids.new_id(ids.LEDGER),
+            project_id=project.id,
+            kind="model_usage",
+            tokens_in=run.tokens_in,
+            tokens_out=run.tokens_out,
+            cache_creation_tokens=run.cache_creation_tokens,
+            cache_read_tokens=run.cache_read_tokens,
+            usd=run.cost_usd,
+            run_id=run.id,
+            note=f"{run.kind} reaped (usage recovered from checkpoint)",
+        )
+    )
+    log.info("recovered %s tokens from reaped run %s", total, run.id)
+    return True
 
 
 def _release_claims_of_run(session: Session, run_id: str, note: str) -> None:
@@ -476,6 +1465,205 @@ def warn_memory_pressure(session: Session, project: Project, cons: ConstitutionD
             "full" if full else "pressure", project.slug, scope, team_id, live, cap,
             curator.name if curator else "NONE (leaderless)",
         )
+
+
+# ── the stall watchdog and the three silences it used to miss ─────────────────
+
+
+def elect_missing_leads(session: Session, project: Project) -> None:
+    """A team of two or more with nobody named as lead cannot claim its own
+    queue: only the lead may claim a team task, and only the lead is woken for
+    one. Nothing reported it, so such a team's board sat READY forever while
+    every screen showed a healthy company with work in hand.
+
+    The earliest-created member is the safe answer — it is the same agent
+    `effective_lead` already picks when a team has exactly one — and the
+    election is disclosed rather than done quietly.
+    """
+    for team in session.execute(
+        select(Team).where(Team.project_id == project.id)
+    ).scalars():
+        if policy.effective_lead(session, team) is not None:
+            continue
+        members = policy.team_agents(session, team.id)
+        active = [a for a in members if a.status == AgentStatus.ACTIVE]
+        if len(active) < 2:
+            continue  # no members, or a sole member who is already the de-facto lead
+        lead = active[0]  # team_agents orders by created_at
+        team.lead_agent_id = lead.id
+        session.add(AuditLog(
+            id=ids.new_id(ids.AUDIT), project_id=project.id, actor="system:janitor",
+            action="team.lead_elected", entity="team", entity_id=team.id,
+            detail={"agent_id": lead.id, "name": lead.name},
+        ))
+        _notice_ceo(
+            session, project, NoticeKind.LEAD_ELECTED,
+            f"Team {team.name} had ready work and no lead, so nobody could claim it and "
+            f"nobody was woken for it. The platform named {lead.name} — its earliest "
+            "member — so the queue can move. Change it in Settings if you meant someone "
+            "else.",
+        )
+        log.warning("elected lead %s for leaderless team %s (%s)",
+                    lead.name, team.name, project.slug)
+
+
+def check_stalled_requirements(session: Session, project: Project) -> None:
+    """Scope whose every task is closed and none of them succeeded.
+
+    `check_finished_requirements` returns early here — correctly, since there is
+    nothing to test — so the requirement stays IN_PROGRESS forever with an empty
+    board. And an empty board is exactly what suppresses the CEO's planning
+    heartbeat, so the company goes completely silent over work that is still
+    formally open. Told once per requirement.
+    """
+    for req in session.execute(
+        select(Requirement).where(Requirement.project_id == project.id,
+                                  Requirement.status == RequirementStatus.IN_PROGRESS)
+    ).scalars():
+        total = session.execute(
+            select(func.count(Task.id)).where(Task.requirement_id == req.id)
+        ).scalar_one()
+        if not total:
+            continue
+        open_now = session.execute(
+            select(func.count(Task.id)).where(
+                Task.requirement_id == req.id,
+                Task.status.in_(policy.OPEN_TASK_STATUSES))
+        ).scalar_one()
+        done = session.execute(
+            select(func.count(Task.id)).where(Task.requirement_id == req.id,
+                                              Task.status == TaskStatus.DONE)
+        ).scalar_one()
+        if open_now or done:
+            continue
+        already = session.execute(
+            select(func.count(Notice.id)).where(
+                Notice.project_id == project.id,
+                Notice.kind == NoticeKind.REQUIREMENT_STALLED,
+                Notice.body.like(f"%{req.key}%"))
+        ).scalar_one()
+        if already:
+            continue
+        _notice_ceo(
+            session, project, NoticeKind.REQUIREMENT_STALLED,
+            f"{req.key} has stalled: every task it ever had is closed and none of them "
+            "succeeded, so its acceptance test will never run and it can never be met. "
+            "It needs new work or it needs proposing for a cut — it will not resolve "
+            "itself.",
+        )
+        log.warning("requirement %s stalled with no surviving work (%s)",
+                    req.key, project.slug)
+
+
+def nag_observable_requirements(
+    session: Session, project: Project, cons: ConstitutionDoc
+) -> None:
+    """A requirement whose acceptance test only the chairman can judge parks in
+    CHECKING and waits. There was no expiry, no nag and no email — one notice to
+    the CEO at the moment it parked, and then silence for as long as it took.
+    Nagged on the approval cadence, because it is the same kind of wait.
+    """
+    cutoff = utcnow() - timedelta(days=1)
+    for req in session.execute(
+        select(Requirement).where(Requirement.project_id == project.id,
+                                  Requirement.status == RequirementStatus.CHECKING)
+    ).scalars():
+        if (req.acceptance_test or {}).get("type") != "observable":
+            continue
+        # The nag's own cadence lives in the audit trail rather than a column:
+        # it is the same "told once, then once a day" shape as the completion
+        # receipt, and it wants to be readable as a record either way.
+        sent = session.execute(
+            select(func.count(AuditLog.id)).where(
+                AuditLog.project_id == project.id,
+                AuditLog.action == "requirement.verdict_nag",
+                AuditLog.entity_id == req.id,
+                AuditLog.at >= cutoff)
+        ).scalar_one()
+        if sent:
+            continue
+        first = not session.execute(
+            select(func.count(AuditLog.id)).where(
+                AuditLog.project_id == project.id,
+                AuditLog.action == "requirement.verdict_nag",
+                AuditLog.entity_id == req.id)
+        ).scalar_one()
+        session.add(AuditLog(
+            id=ids.new_id(ids.AUDIT), project_id=project.id, actor="system:janitor",
+            action="requirement.verdict_nag", entity="requirement", entity_id=req.id,
+            detail={"key": req.key, "first": first},
+        ))
+        chairman_notify(
+            session, project, f"{req.key} is waiting on your verdict",
+            f"{req.key} — {req.statement}\n\n"
+            "Its acceptance test is one the platform cannot run: "
+            f"{(req.acceptance_test or {}).get('target', 'an observable outcome')}.\n\n"
+            "Nothing downstream of it can start until you rule. Open the Plan tab and "
+            "record met or not met."
+            + ("" if first else "\n\nThis is a repeat — it has been waiting since it "
+                                "entered checking."),
+        )
+        log.info("nagged chairman on observable requirement %s (%s)",
+                 req.key, project.slug)
+
+
+def warn_stall(session: Session, project: Project, cons: ConstitutionDoc) -> None:
+    """A running company with work in hand that has started nothing for hours.
+
+    Every gate below this is individually correct and individually invisible;
+    what nobody had was the fact that they add up to a company doing nothing.
+    The notice carries the dispatcher's own diagnosis verbatim, so the CEO reads
+    the same sentence the chairman does instead of guessing at a cause.
+    """
+    if cons.stall_hours <= 0:
+        return
+    from yaaf.server.dispatcher import activity_state
+
+    state = activity_state(session, project, cons)
+    waiting = state["waiting"]
+    if not (waiting["ready_tasks"] or waiting["claimed_tasks"]
+            or waiting["blocked_tasks"] or waiting["notices"]):
+        return  # nothing on the board: quiet is the right answer, not a stall
+    # A gate that names its own clearing time is a wait, not a stall — the
+    # watchdog exists for silence nobody can explain, not for one the product
+    # already explains with a moment attached.
+    brief = state["brief"]
+    if brief["clears_at"]:
+        return
+
+    since = utcnow() - timedelta(hours=float(cons.stall_hours))
+    started = session.execute(
+        select(func.count(Run.id)).where(Run.project_id == project.id,
+                                         Run.kind != RunKind.CHAT_SESSION,
+                                         Run.created_at >= since)
+    ).scalar_one()
+    if started:
+        return
+
+    already = session.execute(
+        select(func.count(Notice.id)).where(
+            Notice.project_id == project.id,
+            Notice.kind == NoticeKind.STALLED,
+            Notice.created_at >= since,
+        )
+    ).scalar_one()
+    if already:
+        return
+
+    _notice_ceo(
+        session, project, NoticeKind.STALLED,
+        f"This company has started no run in {cons.stall_hours:g}h and still has work "
+        f"open. The platform's own reading: {brief['headline']} {brief['detail']} "
+        "Do not guess at a different cause — that sentence is the dispatcher's, not a "
+        "summary. Act on it or tell the chairman what you need.",
+    )
+    chairman_notify(
+        session, project, "the company has gone quiet",
+        f"No run has started in {cons.stall_hours:g}h and there is still work open.\n\n"
+        f"{brief['headline']} {brief['detail']}",
+    )
+    log.warning("stall in %s after %sh: %s", project.slug, cons.stall_hours,
+                state["blocked_by"])
 
 
 # ── drought (informational; enforcement is at task creation) ───────────────────

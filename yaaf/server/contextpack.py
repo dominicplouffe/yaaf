@@ -32,6 +32,8 @@ from yaaf.core.models import (
     Message,
     Notice,
     Project,
+    ProjectMode,
+    RequirementStatus,
     RoleVersion,
     Run,
     SideEffect,
@@ -78,10 +80,12 @@ def constitution_prose(cons: ConstitutionDoc, project: Project) -> str:
         # "we are out of runs" instead of "I am sorry".
         f"- Runs are rationed: at most {cons.runs_per_project_per_day} across the whole "
         f"company per day (the count resets at 00:00 UTC), at most "
+        f"{cons.runs_per_project_per_hour} in any trailing hour, at most "
         f"{cons.wakes_per_agent_per_hour} wakes per agent per hour, and one run per agent "
-        "at a time. Runs that die still spend the allowance. Spending a day's runs in an "
-        "hour leaves the company asleep until midnight with work stranded on the board, so "
-        "pace what you put there. If work has stopped because a cap is reached, that is the "
+        "at a time. Runs that die still spend the allowance. The hourly limit is what stops "
+        "a day's allowance going in the first hour; it clears continuously rather than at "
+        "midnight, so work paused by it resumes on its own within the hour. If work has "
+        "stopped because a cap is reached, that is the "
         "platform doing its job and not a failure of yours — say so plainly rather than "
         "apologising for it or inventing a cause.\n"
         f"- Memory caps: {cons.memory_cap_project} project / {cons.memory_cap_team} team. "
@@ -127,7 +131,34 @@ def role_version_for(session: Session, agent: Agent) -> RoleVersion | None:
     return None
 
 
-def build_system_prompt(session: Session, agent: Agent, project: Project) -> str:
+#: What /workspace is, per lane. The chat session mounts its own scratch there
+#: and the company's tree read-only at /company; a work run mounts the company's
+#: tree directly. Telling both the same story is how a boardroom CEO came to
+#: announce that a project had lost its data — it had run `ls /workspace`,
+#: found its own empty scratch, and believed the paragraph over the disk.
+WORKSPACE_RUN = (
+    "Your context window is the expensive resource and /workspace is the cheap "
+    "one: the workspace is a real directory that PERSISTS with the project "
+    "across runs and is shared by every agent on it. Keep bulk material — data "
+    "pulls, long documents, intermediate results — in files, work on it with "
+    "tools, and let only the small end of it (aggregates, samples, conclusions) "
+    "into messages, memory, or your own prose. Before fetching anything twice, "
+    "look in the workspace: a file a previous run left there is free."
+)
+WORKSPACE_CHAT = (
+    "TWO DIRECTORIES, and the difference matters. /company is the company's real "
+    "workspace, READ-ONLY: everything every agent has ever produced is in there, "
+    "and it is the same tree their runs write to. Look there before you tell the "
+    "chairman what does or does not exist — `ls /company` is cheap and being "
+    "wrong out loud is not. /workspace is your own scratch, writable, and empty "
+    "by design; nothing in it is the company's work and its emptiness means "
+    "nothing about the company. If you need to write a file, write it in "
+    "/workspace, and remember no agent run will ever see it."
+)
+
+
+def build_system_prompt(session: Session, agent: Agent, project: Project,
+                        lane: str = "run") -> str:
     cons = effective(session, project.id)
     role_version = role_version_for(session, agent)
     role_prompt = role_version.system_prompt if role_version else ""
@@ -154,7 +185,8 @@ def build_system_prompt(session: Session, agent: Agent, project: Project) -> str
         "MECHANICS: you interact with the platform through the yaaf tools (board, tasks, "
         "messages, memory, evidence, approvals). Each run is stateless: read your context, "
         "do one unit of work, write down anything durable, and exit. Query memory before "
-        "repeating work you suspect has been tried.\n\n"
+        "repeating work you suspect has been tried. "
+        f"{WORKSPACE_CHAT if lane == 'chat' else WORKSPACE_RUN}\n\n"
         f"{UNTRUSTED_NOTE}"
     )
 
@@ -269,6 +301,41 @@ def _unread_messages(session: Session, agent: Agent, include_recent: bool = Fals
     return out
 
 
+def _you(session: Session, agent: Agent) -> dict:
+    """Who this agent is, and the two things it kept guessing about.
+
+    655 refusals landed across 28% of runs and almost none were safety
+    refusals — they were agents not knowing the org chart. "Unknown channel"
+    33 times, and "Project-scope memory is the CEO's" 20 times. Both are
+    answerable from the pack for a handful of tokens, and every one of them
+    otherwise costs a full model turn to discover.
+    """
+    channels = []
+    for channel_id in policy.agent_channel_ids(session, agent):
+        channel = session.get(Channel, channel_id)
+        if channel is None:
+            continue
+        others = 0
+        if channel.kind == ChannelKind.TEAM and channel.team_id:
+            others = max(0, len(policy.team_agents(session, channel.team_id)) - 1)
+        channels.append({
+            "channel_id": channel.id,
+            "kind": channel.kind,
+            # A solo team room reads exactly like a real one and is a diary.
+            # Say so here rather than letting the post get refused later.
+            **({"note": "you are the only member — nobody will read this"}
+               if channel.kind == ChannelKind.TEAM and not others else {}),
+        })
+    return {
+        "agent_id": agent.id,
+        "name": agent.name,
+        "kind": agent.kind,
+        "team_id": agent.team_id,
+        "channels": channels,
+        "memory_scope": ("project" if agent.kind == AgentKind.CEO else "team"),
+    }
+
+
 def _roster(session: Session, project: Project) -> list[dict]:
     teams = []
     for team in session.execute(select(Team).where(Team.project_id == project.id)).scalars():
@@ -369,6 +436,51 @@ def _memory_usage(session: Session, agent: Agent, cons: ConstitutionDoc) -> dict
     return usage
 
 
+def _situation(session: Session, project: Project, cons: ConstitutionDoc) -> dict:
+    """Whether this company is moving, and if not, why — the platform's own
+    answer rather than the CEO's reconstruction of one.
+
+    The constitution prose already tells the CEO what the caps *are* and
+    instructs it to say plainly when one has stopped the work "rather than
+    inventing a cause". It was never given any way to observe whether a cap was
+    hit. Asked why the company was idle it did the only thing it could: it
+    guessed, from an empty directory, out loud, to the chairman.
+    """
+    from yaaf.server.dispatcher import activity_state
+    from yaaf.server.janitor import month_to_date
+
+    state = activity_state(session, project, cons)
+    usd, tokens = month_to_date(session, project.id)
+    usd_mode = project.billing_mode == "api_key"
+    return {
+        "blocked_by": state["blocked_by"],
+        # The sentence the chairman is reading on his own screen right now. Say
+        # this, do not re-derive it: two different answers to "why are we idle"
+        # is worse than one imperfect answer.
+        "why": f"{state['brief']['headline']} {state['brief']['detail']}",
+        "clears_at": state["brief"]["clears_at"],
+        "runs_today": {"used": state["daily_runs"]["used"],
+                       "cap": state["daily_runs"]["cap"]},
+        "runs_this_hour": {"used": state["pacing"]["used"],
+                           "cap": state["pacing"]["cap"]},
+        "budget": {
+            "unit": "usd" if usd_mode else "tokens",
+            "spent": round(usd, 2) if usd_mode else tokens,
+            "cap": cons.monthly_usd_cap if usd_mode else cons.monthly_token_cap,
+        },
+        "waiting": state["waiting"],
+        "unreachable_work": {k: v for k, v in state["board"].items()
+                             if k in ("gated", "next_gate_at", "leaderless_teams",
+                                      "paused_agents", "stalled_requirements",
+                                      "proposed_requirements", "observable_checking")
+                             and v},
+        "note": ("This is the platform's own reading, computed by the same code that "
+                 "decides whether to start a run. If the chairman asks why nothing is "
+                 "happening, this is the answer — quote it rather than reasoning from "
+                 "what you can see in a directory."),
+    }
+
+
 def build_context_pack(session: Session, run: Run, agent: Agent, project: Project) -> dict:
     cons = effective(session, project.id)
 
@@ -390,8 +502,7 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
         "trigger": run.trigger,
         "attempt": run.attempt,
         "project": {"name": project.name, "goal": project.goal, "status": project.status},
-        "you": {"agent_id": agent.id, "name": agent.name, "kind": agent.kind,
-                "team_id": agent.team_id},
+        "you": _you(session, agent),
         "roster": _roster(session, project),
         "notices": [{"kind": n.kind, "body": n.body, "at": n.created_at.isoformat()}
                     for n in notices],
@@ -428,20 +539,167 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
 
     if agent.kind == AgentKind.CEO:
         pack["chairman"] = _chairman_state(session, project, agent, now)
+        pack["situation"] = _situation(session, project, cons)
         open_tasks = policy.open_top_level_tasks(session, project.id)
         pack["board"] = {
             # failed_checks is here because "claimed" reads as healthy: a task
             # failing its checker every twenty minutes looks exactly like one
             # being worked, and the planner planned around it for a day.
+            #
+            # not_before for the same reason one layer up: a gated task reads as
+            # ready on this board, so a CEO asked why the company was idle
+            # looked at its own context, saw open work, and invented a cause.
             "open": [
                 {"id": t.id, "title": t.title, "status": t.status, "team_id": t.team_id,
                  "external": t.produces_external_evidence,
-                 "failed_checks": t.check_failures}
+                 "failed_checks": t.check_failures,
+                 "requirement_id": t.requirement_id,
+                 "claimed_by_agent_id": t.claimed_by_agent_id,
+                 "blocked_reason": t.blocked_reason,
+                 "not_before": t.not_before.isoformat() if t.not_before else None}
                 for t in open_tasks
             ],
             "ceiling": cons.queue_ceiling,
             "drought_active": policy.drought_active(session, project.id, cons),
         }
+        # Scope, if this company has any. The board tells the CEO what is
+        # moving; this tells it what any of that is FOR — and which
+        # requirements it may not touch yet, so the dependency gate is
+        # something it can plan around rather than discover as a refusal.
+        requirements = [
+            r
+            for r in policy.scope_requirements(session, project.id)
+            if r.status == RequirementStatus.PROPOSED
+            or r.status in policy.OPEN_REQUIREMENT_STATUSES
+        ]
+        # R-00 is not scope — it is the gate in front of scope — so it gets its
+        # own block rather than sitting in the denominator of its own plan.
+        plan = policy.plan_requirement(session, project.id)
+        if plan is not None and plan.status not in policy.CLOSED_REQUIREMENT_STATUSES:
+            pack["plan"] = {
+                "status": plan.status,
+                "blocking": True,
+                "outstanding": policy.evaluate_plan(session, project, cons),
+                "note": ("No task may be created until this closes. It closes by itself "
+                         "the moment the plan holds — you do not mark it done, and "
+                         "nobody here can."),
+                "arithmetic": policy.plan_arithmetic(session, project, cons),
+            }
+        # The learning loop: an Operate CEO opens every cycle by reading the
+        # last three cycles' narratives VERBATIM — uncapped, unclipped. Only a
+        # lesson still true several cycles out spends a memory slot; the rest
+        # lives here, and clipping it would amputate exactly the specifics
+        # that make a lesson usable.
+        if project.mode == ProjectMode.OPERATE:
+            from yaaf.core.models import Cycle, CycleStatus
+
+            cycle = policy.current_cycle(session, project.id)
+            recent = list(session.execute(
+                select(Cycle).where(Cycle.project_id == project.id,
+                                    Cycle.status != CycleStatus.OPEN)
+                .order_by(Cycle.ordinal.desc()).limit(3)
+            ).scalars())
+            pack["cycles"] = {
+                "current": ({"ordinal": cycle.ordinal,
+                             "opened_at": cycle.opened_at.isoformat()}
+                            if cycle is not None else None),
+                "recent_narratives": [
+                    {"ordinal": c.ordinal, "status": c.status,
+                     "narrative": c.narrative or ""}
+                    for c in reversed(recent)
+                ],
+                "note": ("Each cycle plans fresh: R-00 reopens when the rhythm "
+                         "rolls. Read these narratives FIRST — they are what the "
+                         "last three turns learned, verbatim — then propose this "
+                         "cycle's requirements."),
+            }
+
+        # The open review, if one is waiting on this CEO's narrative. The
+        # numbers are the janitor's frozen snapshot — the CEO explains them,
+        # it does not produce them.
+        from yaaf.core.models import Review, ReviewStatus
+
+        review = session.execute(
+            select(Review).where(Review.project_id == project.id,
+                                 Review.status == ReviewStatus.OPEN)
+        ).scalar_one_or_none()
+        if review is not None:
+            pack["review"] = {
+                "number": review.number,
+                "opened_at": review.opened_at.isoformat(),
+                "numbers": review.numbers,
+                "narrative_filed": review.narrative is not None,
+                "note": (
+                    "The meeting is with the chairman now; his decisions arrive "
+                    "as notices." if review.narrative is not None else
+                    "File your variance narrative with review_narrative: what "
+                    "moved against the plan, the SINGLE largest cause by name, "
+                    "and what you recommend cutting or moving. Explain the "
+                    "numbers above — do not restate them."
+                ),
+            }
+
+        # The promise, if one exists. The projection and status are read-only
+        # facts here — the enforcement (scope freeze) lives in policy, and the
+        # transitions in the janitor.
+        commitment = policy.open_commitment(session, project.id)
+        if commitment is not None:
+            frozen = commitment.status in ("at_risk", "breached")
+            pack["commitment"] = {
+                "status": commitment.status,
+                "deliver_by": commitment.deliver_by.isoformat(),
+                "projected_done_at": (commitment.projected_done_at.isoformat()
+                                      if commitment.projected_done_at else None),
+                "basis": (commitment.projection or {}).get("note"),
+                "note": (
+                    "Waiting on the chairman; nothing binds yet."
+                    if commitment.status == "proposed" else
+                    "New scope is FROZEN: requirement proposals are refused while the "
+                    "projection is past the date. Finish what is open or propose cuts."
+                    if frozen else
+                    "The platform recomputes the projection continuously. If it slips "
+                    "past the date, new scope freezes and the chairman is emailed."
+                ),
+            }
+        if requirements:
+            blocked = {
+                r.id: [d.key for d in policy.unmet_dependencies(session, r)]
+                for r in requirements
+            }
+            pack["requirements"] = [
+                {
+                    "id": r.id, "key": r.key, "stage": r.stage,
+                    "statement": _clip(r.statement, 400, "clipped"),
+                    "status": r.status,
+                    "acceptance_test": r.acceptance_test,
+                    "blocked_by": blocked[r.id],
+                    "failure_load": r.failure_load,
+                }
+                for r in requirements
+            ]
+            met = len([
+                r for r in policy.scope_requirements(session, project.id)
+                if r.status == RequirementStatus.MET
+            ])
+            from yaaf.server.velocity import project_velocity
+
+            # The pace, in the pack. The audited CEO's board view carried six
+            # fields per task and not one timestamp, so it could not answer
+            # "are we faster than last week" — and a planner that cannot see
+            # its own pace can only plan by optimism.
+            pack["velocity"] = project_velocity(session, project.id)
+            pack["scope"] = {
+                "met": int(met),
+                "open": len([r for r in requirements
+                             if r.status in policy.OPEN_REQUIREMENT_STATUSES]),
+                "awaiting_your_chairman": len(
+                    [r for r in requirements if r.status == RequirementStatus.PROPOSED]
+                ),
+                "note": ("A task must name the requirement it serves. You propose "
+                         "requirements; the chairman accepts them. Nothing here — "
+                         "including you — can mark one met: the platform runs the "
+                         "acceptance test itself."),
+            }
         pack["hypotheses"] = [
             {"id": h.id, "statement": h.statement, "kill_date": h.kill_date.isoformat(),
              "status": h.status}
@@ -461,6 +719,7 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
         )
         for s in suggestions:
             s.consumed_at = now
+            s.consumed_by_run_id = run.id
         pack["suggestions"] = [
             {"by": s.by_agent_id,
              "text": _clip(s.text, SUGGESTION_CHARS, "clipped at 1000 chars")}

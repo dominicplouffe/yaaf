@@ -238,7 +238,7 @@ def _provision(client: TestClient, scenario: Scenario) -> dict:
         "ceo_role_slug": "ceo",
         "ceo_name": "CEO",
         "constitution": spec.get("constitution") or {},
-        "config": spec.get("config") or {},
+        "integrations": spec.get("integrations") or spec.get("config") or {},
         "teams": teams,
     }
     project = _expect_ok(client.post("/admin/projects", json=body, headers=admin), "create project")

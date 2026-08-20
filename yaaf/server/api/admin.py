@@ -13,17 +13,21 @@ from __future__ import annotations
 import logging
 import secrets as pysecrets
 from datetime import datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from yaaf.core import ids
 from yaaf.core.constitution import (
+    GROUP_THEMES,
+    THEME_ORDER,
     ConstitutionDoc,
     create_initial,
     effective,
+    effective_version,
     propose_amendment,
 )
 from yaaf.core.db import notify
@@ -34,8 +38,13 @@ from yaaf.core.models import (
     Approval,
     ApprovalStatus,
     AuditLog,
+    AuditSample,
+    AuditSampleStatus,
     Channel,
     ChannelKind,
+    Commitment,
+    CommitmentStatus,
+    Cycle,
     Evidence,
     Hypothesis,
     HypothesisStatus,
@@ -44,7 +53,13 @@ from yaaf.core.models import (
     NoticeKind,
     Project,
     ProjectMember,
+    ProjectMode,
     ProjectStatus,
+    Requirement,
+    RequirementEdge,
+    RequirementStatus,
+    Review,
+    ReviewStatus,
     Role,
     RoleVersion,
     Run,
@@ -246,9 +261,14 @@ class ProjectCreate(BaseModel):
     goal: str = Field(min_length=10)
     chairman_email: str
     billing_mode: str = Field(default="api_key", pattern="^(api_key|subscription)$")
+    # Explore chases a goal with no fixed end; Deliver ships one thing and
+    # finishes; Operate is a Deliver that starts again on a rhythm. Outside
+    # Explore a task must serve a requirement, and the project starts owing a
+    # plan.
+    mode: str = Field(default="explore", pattern="^(explore|deliver|operate)$")
     controlled_domains: list[str] = Field(default_factory=list)
     constitution: dict = Field(default_factory=dict)  # overrides onto defaults
-    config: dict = Field(default_factory=dict)
+    integrations: dict = Field(default_factory=dict)
     ceo_role_slug: str = "ceo"
     ceo_name: str = "CEO"
     teams: list[TeamSpec] = Field(default_factory=list)
@@ -256,6 +276,9 @@ class ProjectCreate(BaseModel):
     # — hence derived lead — of the only team, so one brain plans AND executes
     # under byte-identical policy. Requires exactly one team with no employees.
     solo: bool = False
+    # Explore only: a bounded window on open scope ("one sale in 60 days").
+    # Deliver has commitments and Operate has cycles, so it is refused there.
+    deadline: datetime | None = None
 
 
 def _latest_role_version(session: Session, slug: str) -> RoleVersion:
@@ -286,9 +309,28 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
         )
     if not body.solo and any(not spec.employees for spec in body.teams):
         raise HTTPException(status_code=422, detail="every team needs at least one employee")
+    deadline = body.deadline
+    if deadline is not None:
+        if body.mode != "explore":
+            raise HTTPException(
+                status_code=422,
+                detail="a bare deadline is Explore's shape — open scope, bounded time. "
+                       "Deliver promises through a commitment; Operate runs on cycles.",
+            )
+        if deadline.tzinfo is None:
+            from datetime import UTC
+            deadline = deadline.replace(tzinfo=UTC)
+        if deadline <= utcnow():
+            raise HTTPException(status_code=422, detail="the deadline is already past")
 
     ceo_role_version = _latest_role_version(session, body.ceo_role_slug)
 
+    # The org shape as a recorded fact: solo (one brain), ceo_team (flat —
+    # every employee is a one-person team the CEO talks to directly), or
+    # ceo_leads_workers (any team big enough to have a real lead).
+    topology = ("solo" if body.solo
+                else "ceo_leads_workers" if any(len(t.employees) > 1 for t in body.teams)
+                else "ceo_team")
     project = Project(
         id=ids.new_id(ids.PROJECT),
         slug=body.slug,
@@ -296,8 +338,11 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
         goal=body.goal,
         chairman_user_id=chairman.id,
         billing_mode=body.billing_mode,
+        mode=body.mode,
         controlled_domains=body.controlled_domains,
-        config=body.config,
+        integrations=body.integrations,
+        deadline=deadline,
+        topology=topology,
     )
     session.add(project)
     session.flush()
@@ -306,6 +351,16 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
     # The constitution freezes at creation. Overrides are validated against the schema.
     doc = ConstitutionDoc.model_validate({**ConstitutionDoc().model_dump(), **body.constitution})
     create_initial(session, project.id, doc)
+
+    # Webhook secrets exist from birth. The platform_attested path was never
+    # the missing piece — provisioning was: 315 of 315 evidence rows in the
+    # audit said an agent claimed it, because no project ever had a secret.
+    # Generated here (unless the caller brought their own, e.g. a clone), and
+    # shown once in the response with the endpoint URL beside each.
+    integrations = dict(project.integrations or {})
+    integrations.setdefault("github_webhook_secret", pysecrets.token_hex(32))
+    integrations.setdefault("webhook_secret", pysecrets.token_hex(32))
+    project.integrations = integrations
 
     ceo = Agent(
         id=ids.new_id(ids.AGENT),
@@ -359,13 +414,22 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
 
     _audit(session, project.id, "project.create", "project", project.id)
     return {"id": project.id, "ceo_agent_id": ceo.id, "teams": team_out,
-            "constitution": doc.model_dump(), "status": project.status}
+            "constitution": doc.model_dump(), "status": project.status,
+            "webhooks": {
+                "github": {"url": f"/webhooks/github/{project.id}",
+                           "secret": integrations["github_webhook_secret"]},
+                "generic": {"url": f"/webhooks/generic/{project.id}",
+                            "secret": integrations["webhook_secret"]},
+                "note": ("Point senders at these now — evidence arriving signed with "
+                         "them is platform-attested, which no agent can forge. The "
+                         "secrets never enter a sandbox."),
+            }}
 
 
 # Config keys that are this install's plumbing, not the project's design:
 # Slack wiring, webhook signing secrets, experiment bookkeeping. Everything
-# else in config (runtime, cadences, data sources…) travels with the bundle.
-_NON_PORTABLE_CONFIG_KEYS = frozenset(
+# else in integrations (runtime, data sources…) travels with the bundle.
+_NON_PORTABLE_INTEGRATION_KEYS = frozenset(
     {"slack", "github_webhook_secret", "webhook_secret", "experiment"}
 )
 
@@ -427,12 +491,12 @@ def export_project(project_id: str, session: Session = Depends(db)) -> dict:
             "lead": next((a.name for a in members if a.id == team.lead_agent_id), None),
         })
 
-    config = {k: v for k, v in (project.config or {}).items()
-              if k not in _NON_PORTABLE_CONFIG_KEYS}
-    if "mcp_servers" in config:
-        config["mcp_servers"] = [
+    integrations = {k: v for k, v in (project.integrations or {}).items()
+                    if k not in _NON_PORTABLE_INTEGRATION_KEYS}
+    if "mcp_servers" in integrations:
+        integrations["mcp_servers"] = [
             {k: v for k, v in entry.items() if k != "last_check"}
-            for entry in config["mcp_servers"]
+            for entry in integrations["mcp_servers"]
         ]
 
     # Billing credentials stay out entirely: their values cannot travel, and
@@ -457,9 +521,10 @@ def export_project(project_id: str, session: Session = Depends(db)) -> dict:
             "name": project.name,
             "goal": project.goal,
             "billing_mode": project.billing_mode,
+            "mode": project.mode,
             "controlled_domains": project.controlled_domains,
             "constitution": effective(session, project.id).model_dump(),
-            "config": config,
+            "integrations": integrations,
             "ceo_role_slug": ceo_role_slug,
             "ceo_name": ceo.name,
             "teams": teams,
@@ -473,7 +538,7 @@ def export_project(project_id: str, session: Session = Depends(db)) -> dict:
 # Config a twin must not inherit: this project's own webhook signing keys and
 # its experiment bookkeeping. Slack is handled separately below — its tokens
 # travel, its room bindings do not.
-_NON_CLONABLE_CONFIG_KEYS = frozenset({"github_webhook_secret", "webhook_secret", "experiment"})
+_NON_CLONABLE_INTEGRATION_KEYS = frozenset({"github_webhook_secret", "webhook_secret", "experiment"})
 
 
 class ProjectCloneIn(BaseModel):
@@ -504,24 +569,53 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
     if session.execute(select(Project).where(Project.slug == body.slug)).scalar_one_or_none():
         raise HTTPException(status_code=409, detail="project slug already exists")
 
-    config = {k: v for k, v in (source.config or {}).items()
-              if k not in _NON_CLONABLE_CONFIG_KEYS}
-    slack_rooms_dropped = bool((config.get("slack") or {}).get("channel_map"))
-    if "slack" in config:
+    integrations = {k: v for k, v in (source.integrations or {}).items()
+                    if k not in _NON_CLONABLE_INTEGRATION_KEYS}
+    slack_rooms_dropped = bool((integrations.get("slack") or {}).get("channel_map"))
+    if "slack" in integrations:
         # The bridge is inert without a channel map, so the twin mirrors
         # nowhere until the chairman maps rooms — with the tokens already there.
-        config["slack"] = {**config["slack"], "channel_map": {}}
+        integrations["slack"] = {**integrations["slack"], "channel_map": {}}
 
+    # Not inheriting the source's signing keys is right — they are its own, and
+    # sharing them would let either company's senders attest evidence for the
+    # other. Leaving the twin with *none* is not: github_repo and the controlled
+    # domains do come across, so the twin looks wired to GitHub while no inbound
+    # event could ever be attested. Every other birth mints these (see
+    # create_project); a twin is no less born. The values are readable any time
+    # from the twin's own Settings, so nothing here has to be shown once.
+    integrations["github_webhook_secret"] = pysecrets.token_hex(32)
+    integrations["webhook_secret"] = pysecrets.token_hex(32)
+
+    # A twin of a Deliver company that comes back as an Explore one is not a
+    # twin: mode decides whether the company has requirements at all, and it is
+    # frozen at creation — so getting it wrong here cannot be corrected later,
+    # only deleted and redone. It defaults to EXPLORE on the model, which is
+    # what an omission silently produced.
+    #
+    # The deadline is Explore's window, and copying one verbatim can hand the
+    # twin a date that has already passed — a company the janitor closes at
+    # birth. A future window carries; a spent one is reported, not inherited.
+    deadline_expired = (source.deadline is not None and source.deadline <= utcnow())
     project = Project(
         id=ids.new_id(ids.PROJECT),
         slug=body.slug,
         name=body.name or f"{source.name} (clone)",
         goal=body.goal or source.goal,
         chairman_user_id=source.chairman_user_id,
+        mode=source.mode,
+        # The org shape, for the same reason mode is here: the twin rebuilds the
+        # source's teams and people exactly, so the source's recorded shape is
+        # true of it by construction — but omitting it let the model default
+        # ("ceo_leads_workers") overwrite that truth, and a solo twin came back
+        # claiming a hierarchy it does not have. This is the fact the topology
+        # experiment compares, and it is frozen at creation like the rest.
+        topology=source.topology,
+        deadline=None if deadline_expired else source.deadline,
         billing_mode=source.billing_mode,
         controlled_domains=list(source.controlled_domains or []),
         github_repo=source.github_repo,
-        config=config,
+        integrations=integrations,
     )
     session.add(project)
     session.flush()
@@ -601,7 +695,7 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
     # source that cannot answer is exactly what a clone exists to rule out —
     # and the source project's stale verdict would be a lie about this one.
     checked = []
-    for entry in config.get("mcp_servers") or []:
+    for entry in integrations.get("mcp_servers") or []:
         from yaaf.core.crypto import decrypt
 
         entry = {k: v for k, v in entry.items() if k != "last_check"}
@@ -615,7 +709,7 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
         entry["last_check"] = {**check, "at": utcnow().isoformat()}
         checked.append(entry)
     if checked:
-        project.config = {**config, "mcp_servers": checked}
+        project.integrations = {**integrations, "mcp_servers": checked}
 
     _audit(session, source.id, "project.clone", "project", project.id, {"slug": body.slug})
     _audit(session, project.id, "project.create", "project", project.id,
@@ -627,10 +721,12 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
         "ceo_agent_id": ceo.id,
         "teams": team_out,
         "status": project.status,
+        "mode": project.mode,
         "copied": {
             "secrets": len(ciphertexts),
             "data_sources": [{"name": e["name"], "check": e["last_check"]} for e in checked],
             "slack_rooms_dropped": slack_rooms_dropped,
+            "deadline_dropped": deadline_expired,
         },
     }
 
@@ -708,6 +804,13 @@ class DataSourceIn(BaseModel):
     url: str
     bearer: str | None = None
     roles: list[str] = Field(min_length=1)
+    # inline: mounted as mcp__<name>__* tools, so results land in the model's
+    # context — right for small lookups, ruinous for exports. bulk: not mounted
+    # at all; reachable only through data_fetch, which writes the result to a
+    # workspace file. Marking a source bulk is enforcement, not advice — the
+    # expensive path stops existing for it. Default inline: a source that was
+    # already connected keeps behaving exactly as it did.
+    access: Literal["inline", "bulk"] = "inline"
 
 
 def _upsert_project_secret(session: Session, project_id: str, name: str, value: str,
@@ -768,7 +871,7 @@ def _data_source_using(session: Session, project_id: str | None, secret_name: st
     project = session.get(Project, project_id)
     if project is None:
         return None
-    for source in (project.config or {}).get("mcp_servers", []):
+    for source in (project.integrations or {}).get("mcp_servers", []):
         if source.get("url_secret") == secret_name:
             return source.get("name")
     return None
@@ -784,7 +887,7 @@ def _data_source_owning(session: Session, project_id: str | None, secret_name: s
     project = session.get(Project, project_id)
     if project is None:
         return None
-    for source in (project.config or {}).get("mcp_servers", []):
+    for source in (project.integrations or {}).get("mcp_servers", []):
         if secret_name in (source.get("url_secret"), source.get("bearer_secret")):
             return source.get("name")
     return None
@@ -903,7 +1006,7 @@ def add_data_source(project_id: str, body: DataSourceIn, session: Session = Depe
     for slug in body.roles:
         _latest_role_version(session, slug)  # 422s on unknown role
 
-    servers = (project.config or {}).get("mcp_servers", [])
+    servers = (project.integrations or {}).get("mcp_servers", [])
     prior = next((s for s in servers if s.get("name") == body.name), None)
 
     url_secret = _upsert_project_secret(
@@ -916,6 +1019,7 @@ def add_data_source(project_id: str, body: DataSourceIn, session: Session = Depe
         # never needs to decrypt anything.
         "url_host": parsed.hostname,
         "url_port": parsed.port or (443 if parsed.scheme == "https" else 80),
+        "access": body.access,
     }
     # Three cases, because an edit that changes only the URL must not silently
     # disarm the auth header. Absent (None) keeps whatever the source already
@@ -940,10 +1044,10 @@ def add_data_source(project_id: str, body: DataSourceIn, session: Session = Depe
     entry["last_check"] = {**check, "at": utcnow().isoformat()}
 
     servers = [s for s in servers if s.get("name") != body.name]
-    project.config = {**(project.config or {}), "mcp_servers": [*servers, entry]}
+    project.integrations = {**(project.integrations or {}), "mcp_servers": [*servers, entry]}
     _audit(session, project.id, "mcp_server.save", "project", project.id,
            {"name": body.name, "roles": body.roles, "host": entry["url_host"],
-            "check_ok": check["ok"]})
+            "access": body.access, "check_ok": check["ok"]})
     return {"name": body.name, "check": check,
             "note": "Egress updates and the proxy reloads automatically within ~15s; "
                     "effective on each granted role's next run."}
@@ -952,14 +1056,14 @@ def add_data_source(project_id: str, body: DataSourceIn, session: Session = Depe
 @router.delete("/projects/{project_id}/mcp_servers/{name}")
 def delete_data_source(project_id: str, name: str, session: Session = Depends(db)) -> dict:
     project = _get_project(session, project_id)
-    servers = (project.config or {}).get("mcp_servers", [])
+    servers = (project.integrations or {}).get("mcp_servers", [])
     entry = next((s for s in servers if s.get("name") == name), None)
     if entry is None:
         raise HTTPException(status_code=404, detail="unknown data source")
     for secret_name in (entry.get("url_secret"), entry.get("bearer_secret")):
         if secret_name:
             _delete_project_secret(session, project.id, secret_name)
-    project.config = {**project.config,
+    project.integrations = {**project.integrations,
                       "mcp_servers": [s for s in servers if s.get("name") != name]}
     _audit(session, project.id, "mcp_server.delete", "project", project.id, {"name": name})
     return {"deleted": name}
@@ -968,7 +1072,7 @@ def delete_data_source(project_id: str, name: str, session: Session = Depends(db
 @router.post("/projects/{project_id}/mcp_servers/{name}/check")
 def check_data_source(project_id: str, name: str, session: Session = Depends(db)) -> dict:
     project = _get_project(session, project_id)
-    servers = (project.config or {}).get("mcp_servers", [])
+    servers = (project.integrations or {}).get("mcp_servers", [])
     entry = next((s for s in servers if s.get("name") == name), None)
     if entry is None:
         raise HTTPException(status_code=404, detail="unknown data source")
@@ -983,7 +1087,7 @@ def check_data_source(project_id: str, name: str, session: Session = Depends(db)
         raise HTTPException(status_code=422, detail="the data source's URL secret is missing")
     check = _check_data_source(url, value_of(entry.get("bearer_secret")))
     entry["last_check"] = {**check, "at": utcnow().isoformat()}
-    project.config = {**project.config, "mcp_servers": servers}
+    project.integrations = {**project.integrations, "mcp_servers": servers}
     _audit(session, project.id, "mcp_server.check", "project", project.id,
            {"name": name, "ok": check["ok"]})
     return check
@@ -1030,9 +1134,12 @@ class ProjectPatch(BaseModel):
     billing_mode: str | None = Field(default=None, pattern="^(api_key|subscription)$")
     billing_secret_id: str | None = None
     controlled_domains: list[str] | None = None
-    # Merged into the existing config (mutable configuration only — the
-    # constitution changes exclusively through amendments).
-    config: dict | None = None
+    # Merged into the existing integrations (outward wiring only — every
+    # limit lives in the constitution and changes only through amendments).
+    integrations: dict | None = None
+    # Explore only. Set a new window, or clear it with clear_deadline.
+    deadline: datetime | None = None
+    clear_deadline: bool = False
 
 
 def _billing_shape_error(mode: str, plaintext: str) -> str | None:
@@ -1098,14 +1205,53 @@ def patch_project(project_id: str, body: ProjectPatch, session: Session = Depend
     if body.controlled_domains is not None:
         project.controlled_domains = body.controlled_domains
         changed["controlled_domains"] = body.controlled_domains
-    if body.config is not None:
-        project.config = {**(project.config or {}), **body.config}
-        changed["config"] = body.config
+    if body.integrations is not None:
+        # A limit written here would be stored and never read — the silent
+        # failure that made `ceo_heartbeat_hours` invisible to the settings UI,
+        # to the amendment log and to the CEO it governed. Refuse it and say
+        # where it goes instead.
+        rules = set(ConstitutionDoc.model_fields) & set(body.integrations)
+        if rules:
+            raise HTTPException(
+                status_code=422,
+                detail=(f"{', '.join(sorted(rules))} "
+                        f"{'is a constitution rule' if len(rules) == 1 else 'are constitution rules'}, "
+                        "not wiring. Change it with POST "
+                        f"/admin/projects/{project.id}/amendments so it is validated, "
+                        "audited with your reason, and disclosed to the CEO."),
+            )
+        project.integrations = {**(project.integrations or {}), **body.integrations}
+        changed["integrations"] = body.integrations
+    if body.deadline is not None or body.clear_deadline:
+        if project.mode != ProjectMode.EXPLORE:
+            raise HTTPException(
+                status_code=422,
+                detail="a bare deadline is Explore's shape. Deliver promises through a "
+                       "commitment; Operate runs on cycles.",
+            )
+        if body.clear_deadline:
+            project.deadline = None
+            changed["deadline"] = None
+        else:
+            deadline = body.deadline
+            if deadline.tzinfo is None:
+                from datetime import UTC
+                deadline = deadline.replace(tzinfo=UTC)
+            project.deadline = deadline
+            changed["deadline"] = deadline.isoformat()
+        _notice_ceo(
+            session, project.id, NoticeKind.GOAL_CHANGED,
+            "The chairman "
+            + ("cleared the deadline — the window is open-ended again."
+               if body.clear_deadline else
+               f"set the window: {project.deadline:%Y-%m-%d}. Open scope, bounded "
+               "time — what exists by then is what this project will be judged on."),
+        )
     _audit(session, project.id, "project.patch", "project", project.id, changed)
     return {"id": project.id, "name": project.name, "goal": project.goal,
             "billing_mode": project.billing_mode,
             "billing_secret_id": project.billing_secret_id,
-            "controlled_domains": project.controlled_domains, "config": project.config,
+            "controlled_domains": project.controlled_domains, "integrations": project.integrations,
             "changed": changed}
 
 
@@ -1159,10 +1305,28 @@ def billing_check(project_id: str, session: Session = Depends(db)) -> dict:
 @router.post("/projects/{project_id}/start")
 def start_project(project_id: str, session: Session = Depends(db)) -> dict:
     project = _get_project(session, project_id)
-    if project.status == ProjectStatus.STOPPED:
-        raise HTTPException(status_code=409, detail="a stopped project is terminal")
+    if project.status in (ProjectStatus.STOPPED, ProjectStatus.COMPLETED):
+        raise HTTPException(status_code=409,
+                            detail=f"a {project.status} project is terminal")
     project.status = ProjectStatus.RUNNING
     project.status_reason = None
+    # A Deliver or Operate project starts owing a plan. The chairman's words
+    # were that the CEO's first task is the plan; R-00 is that obligation as a
+    # row, and until it closes no task may be created.
+    if policy.requires_requirements(project) and \
+            policy.plan_requirement(session, project.id) is None:
+        policy.create_plan_requirement(session, project)
+    # An Operate project always has exactly one open cycle while running.
+    # Opened here rather than waiting a janitor tick, so the first proposal
+    # lands inside it; on a resume after a long pause this is also what makes
+    # it ONE new cycle, never one per missed boundary.
+    if project.mode == ProjectMode.OPERATE and \
+            policy.current_cycle(session, project.id) is None:
+        last = session.execute(
+            select(func.max(Cycle.ordinal)).where(Cycle.project_id == project.id)
+        ).scalar_one() or 0
+        session.add(Cycle(id=ids.new_id(ids.CYCLE), project_id=project.id,
+                          ordinal=last + 1))
     _audit(session, project.id, "project.start", "project", project.id)
     notify(session, WAKE_CHANNEL, project.id)
     return {"id": project.id, "status": project.status}
@@ -1196,6 +1360,106 @@ def stop_project(
     _audit(session, project.id, "project.stop", "project", project.id,
            {"revoked_runs": revoked})
     return {"id": project.id, "status": project.status, "revoked_runs": revoked}
+
+
+@router.post("/projects/{project_id}/complete")
+def complete_project(project_id: str, session: Session = Depends(db)) -> dict:
+    """The chairman confirms a delivery. One of the three gates he chose to be
+    asked at — the janitor only detects readiness and emails; this button
+    decides. Refused with the same outstanding list the janitor checks, so
+    the email and the refusal can never disagree.
+
+    The receipt's load-bearing row is "failed once before": every requirement
+    that ate dead runs on its way to true says so, because a delivery that
+    looked effortless in the receipt would teach the wrong lesson about what
+    it cost.
+    """
+    from yaaf.server.janitor import delivery_outstanding
+
+    project = _get_project(session, project_id)
+    if project.mode != ProjectMode.DELIVER:
+        raise HTTPException(
+            status_code=422,
+            detail="only a Deliver project completes: Explore is judged and stopped, "
+                   "Operate finishes and starts again.",
+        )
+    if project.status == ProjectStatus.COMPLETED:
+        raise HTTPException(status_code=409, detail="already completed")
+    outstanding = delivery_outstanding(session, project)
+    if outstanding:
+        raise HTTPException(
+            status_code=409,
+            detail="not everything is true yet — " + "; ".join(outstanding),
+        )
+
+    scope = policy.scope_requirements(session, project.id)
+    accepted = [r for r in scope if r.status != RequirementStatus.PROPOSED]
+    rows = []
+    for r in accepted:
+        actual = policy.runs_spent_on(session, r.id)
+        rows.append({
+            "key": r.key, "statement": r.statement[:300], "status": r.status,
+            "est_runs": r.est_runs, "actual_runs": actual,
+            "failure_load": r.failure_load,
+            "failed_before": r.failure_load > 0,
+        })
+    runs_total, cost_total = session.execute(
+        select(func.count(Run.id), func.coalesce(func.sum(Run.cost_usd), 0.0))
+        .where(Run.project_id == project.id)
+    ).one()
+    commitment = session.execute(
+        select(Commitment).where(Commitment.project_id == project.id)
+        .order_by(Commitment.created_at.desc()).limit(1)
+    ).scalar_one_or_none()
+    now = utcnow()
+    receipt = {
+        "requirements": rows,
+        "met": len([r for r in rows if r["status"] == RequirementStatus.MET]),
+        "cut": len([r for r in rows if r["status"] == RequirementStatus.CUT]),
+        "runs_total": int(runs_total),
+        "cost_usd": round(float(cost_total), 2),
+        "duration_days": (now - project.created_at).days,
+        "commitment": ({
+            "deliver_by": commitment.deliver_by.isoformat(),
+            "met_at": commitment.met_at.isoformat() if commitment.met_at else None,
+            "kept": bool(commitment.met_at and commitment.met_at <= commitment.deliver_by),
+        } if commitment is not None else None),
+        "completed_at": now.isoformat(),
+    }
+    project.status = ProjectStatus.COMPLETED
+    project.status_reason = f"delivered: {receipt['met']} requirement(s) true"
+    revoked = _revoke_running(session, project.id)
+    for queued in session.execute(
+        select(RunQueue).where(RunQueue.project_id == project.id)
+    ).scalars():
+        session.delete(queued)
+
+    lines = []
+    for r in rows:
+        history = (f"met after {r['failure_load']} failed run(s)" if
+                   r["status"] == RequirementStatus.MET and r["failed_before"]
+                   else "met clean" if r["status"] == RequirementStatus.MET
+                   else f"cut ({r['failure_load']} failed run(s) first)"
+                   if r["failed_before"] else "cut")
+        est = f", est {r['est_runs']} vs {r['actual_runs']} actual" if r["est_runs"] else ""
+        lines.append(f"{r['key']} — {history}{est}")
+    from yaaf.core.models import Decision
+
+    session.add(Decision(
+        id=ids.new_id(ids.DECISION),
+        project_id=project.id,
+        by_user_id=project.chairman_user_id,
+        subject=f"delivery receipt: {receipt['met']} true, {receipt['cut']} cut",
+        body=("Confirmed complete by the chairman.\n\n" + "\n".join(lines)
+              + f"\n\nTotals: {receipt['runs_total']} runs, "
+                f"${receipt['cost_usd']:,.2f}, {receipt['duration_days']} days."
+              + (f"\nCommitment {'KEPT' if receipt['commitment']['kept'] else 'missed'}: "
+                 f"promised {receipt['commitment']['deliver_by'][:10]}."
+                 if receipt["commitment"] else "")),
+    ))
+    _audit(session, project.id, "project.complete", "project", project.id, receipt)
+    return {"id": project.id, "status": project.status, "receipt": receipt,
+            "revoked_runs": revoked}
 
 
 class AgentPause(BaseModel):
@@ -1347,14 +1611,28 @@ def constitution_schema() -> list[dict]:
         # `str | None` fields arrive as anyOf; the real type is the non-null arm.
         arms = spec.get("anyOf") or [spec]
         typed = next((a for a in arms if a.get("type") != "null"), arms[0])
+        group = spec.get("group", "Other")
+        theme = GROUP_THEMES.get(group, "Other")
         fields.append({
             "key": key,
             "label": spec.get("title") or key.replace("_", " "),
             "help": spec.get("description", ""),
-            "group": spec.get("group", "Other"),
+            "group": group,
+            # The tab this rule sits under. Groups are the taxonomy; themes are
+            # the navigation, and both are decided here so the editor never
+            # keeps a list of its own to go stale. The rank rides along because
+            # declaration order puts work discipline first, and the tab a stuck
+            # company opens is Money.
+            "theme": theme,
+            "theme_rank": THEME_ORDER.index(theme) if theme in THEME_ORDER else len(THEME_ORDER),
             "type": typed.get("type", "string"),
             "minimum": typed.get("minimum", typed.get("exclusiveMinimum")),
             "maximum": typed.get("maximum", typed.get("exclusiveMaximum")),
+            "choices": spec.get("choices"),
+            # What the rule would be if nobody had touched it — the editor
+            # marks anything that differs, so "what is this company actually
+            # running under" is a glance instead of a diff against the docs.
+            "default": spec.get("default"),
         })
     return fields
 
@@ -1529,6 +1807,819 @@ def audit_task(task_id: str, body: TaskAudit, session: Session = Depends(db)) ->
     return {"id": row.id, "audit_status": row.audit_status}
 
 
+class AuditSampleDecision(BaseModel):
+    ok: bool
+    note: str = Field(default="", max_length=4000)
+
+
+@router.post("/audit_samples/{sample_id}/decide")
+def decide_audit_sample(
+    sample_id: str, body: AuditSampleDecision, session: Session = Depends(db)
+) -> dict:
+    """The chairman's verdict on a drawn sample. Failing one lands on the
+    task's audit fields and in the CEO's next pack — the same disclosure path
+    as every other governance event. Passing one is recorded and life goes on.
+    An expired sample takes no verdict: the moment passed, and pretending
+    otherwise would make the coverage line lie."""
+    row = session.get(AuditSample, sample_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="unknown audit sample")
+    if row.status != AuditSampleStatus.PENDING:
+        raise HTTPException(
+            status_code=409,
+            detail=f"this sample is {row.status}; only a pending one takes a verdict.",
+        )
+    task = session.get(Task, row.task_id)
+    row.status = AuditSampleStatus.PASSED if body.ok else AuditSampleStatus.FAILED
+    row.decided_at = utcnow()
+    row.note = body.note or None
+    if task is not None:
+        task.audit_status = "passed" if body.ok else "failed"
+        task.audit_note = body.note or None
+        if not body.ok:
+            _notice_ceo(
+                session, row.project_id, NoticeKind.AUDIT_FAILED,
+                f"The chairman audited a sampled close and it FAILED: "
+                f"'{task.title[:200]}'. His note: {body.note[:1000] or '(none)'}\n"
+                "The task stays done — sampling never reopens work by itself — but "
+                "this is on the record, it will be on the next review, and a pattern "
+                "of failed samples is how a company loses the benefit of the doubt.",
+            )
+    _audit(session, row.project_id, "audit_sample.decide", "audit_sample", row.id,
+           {"task_id": row.task_id, "ok": body.ok})
+    return {"id": row.id, "status": row.status}
+
+
+# ── requirements: the chairman owns scope ───────────────────────────────────────
+
+
+@router.get("/projects/{project_id}/requirements")
+def list_requirements(project_id: str, session: Session = Depends(db)) -> list[dict]:
+    project = _get_project(session, project_id)
+    edges = list(session.execute(
+        select(RequirementEdge).where(RequirementEdge.project_id == project.id)
+    ).scalars())
+    blocked_by: dict[str, list[str]] = {}
+    for edge in edges:
+        blocked_by.setdefault(edge.to_requirement_id, []).append(edge.from_requirement_id)
+    rows = session.execute(
+        select(Requirement)
+        .where(Requirement.project_id == project.id)
+        .order_by(Requirement.stage, Requirement.key)
+    ).scalars()
+    return [
+        {
+            "id": r.id, "key": r.key, "statement": r.statement, "status": r.status,
+            "stage": r.stage, "acceptance_test": r.acceptance_test,
+            "est_runs": r.est_runs, "actual_runs": r.actual_runs,
+            "failure_load": r.failure_load,
+            "depends_on": blocked_by.get(r.id, []),
+            "proposed_by_agent_id": r.proposed_by_agent_id,
+            "accepted_at": r.accepted_at.isoformat() if r.accepted_at else None,
+            "met_at": r.met_at.isoformat() if r.met_at else None,
+            "check_output": r.check_output,
+            "cut_reason": r.cut_reason,
+        }
+        for r in rows
+    ]
+
+
+class RequirementDecision(BaseModel):
+    stage: int | None = Field(default=None, ge=1, le=50)
+    note: str = Field(default="", max_length=4000)
+
+
+@router.post("/requirements/{requirement_id}/accept")
+def accept_requirement(
+    requirement_id: str, body: RequirementDecision, session: Session = Depends(db)
+) -> dict:
+    """Scope becomes scope here and nowhere else.
+
+    The CEO proposes; only the chairman accepts. That split is the whole reason
+    the forecast means anything: remaining ÷ velocity is a number about the
+    CEO's work, and a CEO that could accept its own requirements would own both
+    sides of its own scoreboard.
+    """
+    row = session.get(Requirement, requirement_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="unknown requirement")
+    project = _get_project(session, row.project_id)
+    try:
+        policy.check_requirement_accept(row)
+    except policy.Refusal as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    from_status = row.status
+    row.status = RequirementStatus.PENDING
+    row.accepted_by_user_id = project.chairman_user_id
+    row.accepted_at = utcnow()
+    if body.stage is not None:
+        row.stage = body.stage
+    policy.record_requirement_event(session, row, RequirementStatus.PENDING,
+                                    f"user:{project.chairman_user_id}",
+                                    note=body.note or None, from_status=from_status)
+    _audit(session, row.project_id, "requirement.accept", "requirement", row.id,
+           {"key": row.key, "stage": row.stage})
+    _notice_ceo(
+        session, row.project_id, NoticeKind.GOAL_CHANGED,
+        f"The chairman ACCEPTED {row.key} into scope: {row.statement[:400]}\n"
+        f"Stage {row.stage}. It is now something you may create work for, and it counts "
+        "toward what has to be true before this project is finished.",
+    )
+    return {"id": row.id, "key": row.key, "status": row.status, "stage": row.stage}
+
+
+class RequirementCut(BaseModel):
+    reason: str = Field(min_length=5, max_length=4000)
+
+
+@router.post("/requirements/{requirement_id}/cut")
+def cut_requirement(
+    requirement_id: str, body: RequirementCut, session: Session = Depends(db)
+) -> dict:
+    """Cutting is how a date is met when the work will not fit. It is the
+    chairman's lever, never the CEO's — the party being measured does not get
+    to shrink the thing it is measured against."""
+    row = session.get(Requirement, requirement_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="unknown requirement")
+    project = _get_project(session, row.project_id)
+    try:
+        policy.check_requirement_cut(row)
+    except policy.Refusal as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    from_status = row.status
+    row.status = RequirementStatus.CUT
+    row.cut_reason = body.reason
+    row.cut_at = utcnow()
+    policy.record_requirement_event(session, row, RequirementStatus.CUT,
+                                    f"user:{project.chairman_user_id}",
+                                    note=body.reason, from_status=from_status)
+    _audit(session, row.project_id, "requirement.cut", "requirement", row.id,
+           {"key": row.key, "reason": body.reason})
+    _notice_ceo(
+        session, row.project_id, NoticeKind.GOAL_CHANGED,
+        f"The chairman CUT {row.key} from scope: {row.statement[:300]}\n"
+        f"His reason: {body.reason[:1000]}\nStop work on it. Anything that depended on it "
+        "is now unblocked — a cut requirement counts as settled, not as pending forever.",
+    )
+    return {"id": row.id, "key": row.key, "status": row.status}
+
+
+class RequirementVerdict(BaseModel):
+    ok: bool
+    note: str = Field(default="", max_length=4000)
+
+
+@router.post("/requirements/{requirement_id}/verdict")
+def requirement_verdict(
+    requirement_id: str, body: RequirementVerdict, session: Session = Depends(db)
+) -> dict:
+    """The chairman's answer on an *observable* acceptance test.
+
+    A command test is run by the platform and needs nobody. An observable one
+    names something a script cannot check — "the memo reads well" — so somebody
+    has to look. That somebody is never the agent whose work it judges, which
+    is why this route is here and not in the agent API.
+    """
+    row = session.get(Requirement, requirement_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="unknown requirement")
+    if row.status != RequirementStatus.CHECKING:
+        raise HTTPException(
+            status_code=409,
+            detail=f"{row.key} is {row.status}; only a requirement awaiting your verdict "
+                   "can take one.",
+        )
+    project = _get_project(session, row.project_id)
+    actor = f"user:{project.chairman_user_id}"
+    from_status = row.status
+    if body.ok:
+        row.status = RequirementStatus.MET
+        row.met_at = utcnow()
+        row.check_output = body.note or "chairman confirmed the observable"
+        policy.record_requirement_event(session, row, RequirementStatus.MET, actor,
+                                        note=body.note or None, from_status=from_status)
+    else:
+        row.status = RequirementStatus.IN_PROGRESS
+        row.failure_load += 1
+        policy.record_requirement_event(session, row, RequirementStatus.IN_PROGRESS, actor,
+                                        note=body.note or "chairman rejected the observable",
+                                        from_status=from_status)
+        _notice_ceo(
+            session, row.project_id, NoticeKind.AUDIT_FAILED,
+            f"The chairman looked at {row.key} and it does NOT hold: "
+            f"{body.note[:1000] or '(no note)'}\nIt is back in progress. Read what he said "
+            "before creating more work for it.",
+        )
+    _audit(session, row.project_id, "requirement.verdict", "requirement", row.id,
+           {"key": row.key, "ok": body.ok})
+    return {"id": row.id, "key": row.key, "status": row.status}
+
+
+# ── the topology experiment: one variable, three arms, four numbers ─────────────
+
+TOPOLOGIES = ("solo", "ceo_team", "ceo_leads_workers")
+
+
+class ExperimentRequirementIn(BaseModel):
+    statement: str = Field(min_length=10, max_length=2000)
+    acceptance_test: dict
+    stage: int = Field(default=1, ge=1, le=50)
+    est_runs: int = Field(ge=1, le=10_000)
+
+
+class ExperimentCreate(BaseModel):
+    name: str = Field(min_length=3, max_length=200)
+    slug_base: str = Field(pattern="^[a-z0-9-]{2,48}$")
+    goal: str = Field(min_length=10)
+    chairman_email: str
+    requirements: list[ExperimentRequirementIn] = Field(min_length=1, max_length=30)
+    topologies: list[str] = Field(
+        default_factory=lambda: list(TOPOLOGIES), min_length=1, max_length=3)
+    ceo_role_slug: str = "ceo"
+    worker_role_slug: str
+    # Employees per arm, CEO excluded. Solo ignores it; ceo_team gets this
+    # many one-person teams; ceo_leads_workers one team of this many.
+    team_size: int = Field(default=2, ge=1, le=6)
+    constitution: dict = Field(default_factory=dict)
+    billing_mode: str = Field(default="api_key", pattern="^(api_key|subscription)$")
+    start: bool = True
+
+
+def _arm_teams(topology: str, worker_role: str, team_size: int) -> tuple[list[TeamSpec], bool]:
+    """The three shapes, and only these three — identical but for this."""
+    if topology == "solo":
+        return [TeamSpec(role_slug=worker_role, name="Solo", employees=[])], True
+    if topology == "ceo_team":
+        return [
+            TeamSpec(role_slug=worker_role, name=f"Member {i}",
+                     employees=[f"Member {i}"])
+            for i in range(1, team_size + 1)
+        ], False
+    return [TeamSpec(
+        role_slug=worker_role, name="Team",
+        employees=[f"Worker {i}" for i in range(1, team_size + 1)],
+        lead="Worker 1",
+    )], False
+
+
+@router.post("/experiments")
+def create_experiment(body: ExperimentCreate, session: Session = Depends(db)) -> dict:
+    """One goal, one chairman-authored requirement set, one constitution — N
+    projects differing in exactly one variable. The set and the constitution
+    freeze on the experiment row, so "the arms were identical" is a checkable
+    fact rather than a claim about setup care. Scope is chairman-authored and
+    accepted at birth in every arm: the CEOs plan HOW, never WHAT, which is
+    what keeps the denominator identical across topologies."""
+    from yaaf.core.models import Experiment, ExperimentArm
+
+    unknown = sorted(set(body.topologies) - set(TOPOLOGIES))
+    if unknown or len(set(body.topologies)) != len(body.topologies):
+        raise HTTPException(
+            status_code=422,
+            detail=f"topologies must be distinct picks from {', '.join(TOPOLOGIES)}")
+    if "ceo_leads_workers" in body.topologies and body.team_size < 2:
+        raise HTTPException(
+            status_code=422,
+            detail="ceo_leads_workers needs team_size >= 2 — a lead with no workers "
+                   "is just ceo_team wearing a hat")
+    try:
+        doc = ConstitutionDoc.model_validate(
+            {**ConstitutionDoc().model_dump(), **body.constitution})
+        for req in body.requirements:
+            policy.validate_success_test(doc, req.acceptance_test)
+    except policy.Refusal as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    chairman = session.execute(
+        select(User).where(User.email == body.chairman_email)).scalar_one_or_none()
+    if chairman is None:
+        raise HTTPException(status_code=422, detail="chairman user does not exist")
+
+    experiment = Experiment(
+        id=ids.new_id(ids.EXPERIMENT),
+        name=body.name,
+        goal=body.goal,
+        requirement_set=[r.model_dump() for r in body.requirements],
+        constitution=doc.model_dump(),
+        chairman_user_id=chairman.id,
+    )
+    session.add(experiment)
+    session.flush()
+
+    arms_out = []
+    for topology in body.topologies:
+        teams, solo = _arm_teams(topology, body.worker_role_slug, body.team_size)
+        created = create_project(ProjectCreate(
+            slug=f"{body.slug_base}-{topology.replace('_', '-')}",
+            name=f"{body.name} — {topology}",
+            goal=body.goal,
+            chairman_email=body.chairman_email,
+            billing_mode=body.billing_mode,
+            mode="deliver",
+            constitution=body.constitution,
+            integrations={"experiment": {"id": experiment.id, "topology": topology}},
+            ceo_role_slug=body.ceo_role_slug,
+            teams=teams,
+            solo=solo,
+        ), session)
+        for req in body.requirements:
+            add_requirement(created["id"], ChairmanRequirementIn(
+                statement=req.statement,
+                acceptance_test=req.acceptance_test,
+                stage=req.stage,
+                est_runs=req.est_runs,
+                note=f"experiment '{body.name}': identical scope in every arm",
+            ), session)
+        if body.start:
+            start_project(created["id"], session)
+        session.add(ExperimentArm(
+            id=ids.new_id(ids.EXPERIMENT_ARM),
+            experiment_id=experiment.id,
+            project_id=created["id"],
+            topology=topology,
+        ))
+        arms_out.append({"topology": topology, "project_id": created["id"],
+                         "slug": f"{body.slug_base}-{topology.replace('_', '-')}"})
+
+    _audit(session, None, "experiment.create", "experiment", experiment.id,
+           {"name": body.name, "topologies": body.topologies,
+            "requirements": len(body.requirements)})
+    return {"id": experiment.id, "name": experiment.name, "arms": arms_out,
+            "note": ("Arms run concurrently under identical constitutions and "
+                     "identical chairman-authored scope. Compared on cost per "
+                     "requirement met, wall-clock to first attested evidence, share "
+                     "of spend producing nothing, and words per delivered byte — "
+                     "the report is on the Experiments page.")}
+
+
+class ExperimentClose(BaseModel):
+    reason: str = Field(default="", max_length=2000)
+
+
+@router.post("/experiments/{experiment_id}/close")
+def close_experiment(
+    experiment_id: str, body: ExperimentClose, session: Session = Depends(db)
+) -> dict:
+    """Stop every still-running arm and freeze the reading. The report stays
+    readable forever — closing ends the spend, not the record."""
+    from yaaf.core.models import Experiment, ExperimentArm
+
+    experiment = session.get(Experiment, experiment_id)
+    if experiment is None:
+        raise HTTPException(status_code=404, detail="unknown experiment")
+    if experiment.status != "running":
+        raise HTTPException(status_code=409, detail=f"already {experiment.status}")
+    stopped = 0
+    for arm in session.execute(
+        select(ExperimentArm).where(ExperimentArm.experiment_id == experiment.id)
+    ).scalars():
+        project = session.get(Project, arm.project_id)
+        if project is not None and not ProjectStatus(project.status).is_terminal:
+            project.status = ProjectStatus.STOPPED
+            project.status_reason = (
+                "experiment closed" + (f": {body.reason}" if body.reason else ""))
+            _revoke_running(session, project.id)
+            stopped += 1
+    experiment.status = "closed"
+    experiment.closed_at = utcnow()
+    _audit(session, None, "experiment.close", "experiment", experiment.id,
+           {"reason": body.reason, "arms_stopped": stopped})
+    return {"id": experiment.id, "status": experiment.status, "arms_stopped": stopped}
+
+
+# ── the review: six levers, each recorded with a reason ─────────────────────────
+
+
+class ChairmanRequirementIn(BaseModel):
+    statement: str = Field(min_length=10, max_length=2000)
+    acceptance_test: dict
+    stage: int = Field(default=1, ge=1, le=50)
+    est_runs: int = Field(ge=1, le=10_000)
+    note: str = Field(default="", max_length=4000)
+
+
+@router.post("/projects/{project_id}/requirements")
+def add_requirement(
+    project_id: str, body: ChairmanRequirementIn, session: Session = Depends(db)
+) -> dict:
+    """The ADD lever, also usable outside a review: chairman-authored scope,
+    accepted at birth because acceptance is his act and this is him acting.
+    The last design only let him delete — 'alter requirements' includes
+    adding one. His adds carry est_runs like everyone else's: the feasibility
+    arithmetic does not care whose idea the work was."""
+    project = _get_project(session, project_id)
+    if not policy.requires_requirements(project):
+        raise HTTPException(
+            status_code=422,
+            detail="An Explore project has no requirements, by design — its shape is "
+                   "bets and evidence.",
+        )
+    try:
+        policy.validate_success_test(effective(session, project.id), body.acceptance_test)
+    except policy.Refusal as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    cycle = policy.current_cycle(session, project.id)
+    requirement = Requirement(
+        id=ids.new_id(ids.REQUIREMENT),
+        project_id=project.id,
+        cycle_id=cycle.id if cycle is not None else None,
+        key=policy.next_requirement_key(session, project.id),
+        statement=body.statement.strip(),
+        acceptance_test=body.acceptance_test,
+        status=RequirementStatus.PENDING,
+        stage=body.stage,
+        est_runs=body.est_runs,
+        accepted_by_user_id=project.chairman_user_id,
+        accepted_at=utcnow(),
+    )
+    session.add(requirement)
+    session.flush()
+    policy.record_requirement_event(session, requirement, RequirementStatus.PENDING,
+                                    f"user:{project.chairman_user_id}",
+                                    note=body.note or "chairman-authored",
+                                    from_status=None)
+    _audit(session, project.id, "requirement.add", "requirement", requirement.id,
+           {"key": requirement.key, "stage": requirement.stage,
+            "est_runs": requirement.est_runs})
+    _notice_ceo(
+        session, project.id, NoticeKind.GOAL_CHANGED,
+        f"The chairman ADDED {requirement.key} to scope himself: "
+        f"{requirement.statement[:400]}\nStage {requirement.stage}, estimated "
+        f"{requirement.est_runs} runs. It is accepted — plan for it. If it breaks the "
+        "arithmetic, the plan gate will say so and that conversation is his to have "
+        "with himself; yours is to sequence it honestly.",
+    )
+    return {"id": requirement.id, "key": requirement.key,
+            "status": requirement.status, "stage": requirement.stage}
+
+
+class RequirementReword(BaseModel):
+    statement: str = Field(min_length=10, max_length=2000)
+    reason: str = Field(min_length=5, max_length=4000)
+
+
+@router.post("/requirements/{requirement_id}/reword")
+def reword_requirement(
+    requirement_id: str, body: RequirementReword, session: Session = Depends(db)
+) -> dict:
+    """The REWORD lever: the statement moves, the identity does not — key,
+    estimate, history and failure load stay put, so a reword can never be
+    used to launder a struggling requirement into a fresh-looking one."""
+    row = session.get(Requirement, requirement_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="unknown requirement")
+    if row.status in policy.CLOSED_REQUIREMENT_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail=f"{row.key} is {row.status}; settled scope is history. Add a new "
+                   "requirement instead of editing what already happened.",
+        )
+    project = _get_project(session, row.project_id)
+    old = row.statement
+    row.statement = body.statement.strip()
+    policy.record_requirement_event(
+        session, row, row.status, f"user:{project.chairman_user_id}",
+        note=f"reworded: {body.reason[:500]}", from_status=row.status)
+    _audit(session, project.id, "requirement.reword", "requirement", row.id,
+           {"key": row.key, "reason": body.reason})
+    _notice_ceo(
+        session, project.id, NoticeKind.GOAL_CHANGED,
+        f"The chairman REWORDED {row.key}.\nWas: {old[:300]}\nIs now: "
+        f"{row.statement[:300]}\nHis reason: {body.reason[:500]}\nThe key, estimate "
+        "and history are unchanged — read the new wording before working it.",
+    )
+    return {"id": row.id, "key": row.key, "statement": row.statement}
+
+
+class ReviewLeverIn(BaseModel):
+    kind: str = Field(pattern="^(cut|add|reword|move_date|raise_budget|accept_slip)$")
+    reason: str = Field(min_length=5, max_length=4000)
+    requirement_id: str | None = None
+    statement: str | None = None
+    acceptance_test: dict | None = None
+    stage: int = Field(default=1, ge=1, le=50)
+    est_runs: int | None = Field(default=None, ge=1, le=10_000)
+    deliver_by: datetime | None = None
+    amount: float | None = Field(default=None, gt=0)
+
+
+def _lever_needs(body: ReviewLeverIn, *fields: str) -> None:
+    missing = [f for f in fields if getattr(body, f) in (None, "")]
+    if missing:
+        raise HTTPException(
+            status_code=422,
+            detail=f"the {body.kind} lever needs {', '.join(missing)}",
+        )
+
+
+@router.post("/reviews/{review_id}/lever")
+def pull_review_lever(
+    review_id: str, body: ReviewLeverIn, session: Session = Depends(db)
+) -> dict:
+    """One lever, pulled: the action happens through the SAME routes it would
+    outside a review — cut, add, reword, move, amend — and the pull is
+    recorded on the review with the chairman's reason, so acting and
+    accounting cannot drift apart. accept_slip is the sixth: an explicit
+    'the date stands and I know it will slip', which is a decision, not an
+    absence of one."""
+    review = session.get(Review, review_id)
+    if review is None:
+        raise HTTPException(status_code=404, detail="unknown review")
+    if review.status != ReviewStatus.OPEN:
+        raise HTTPException(
+            status_code=409,
+            detail=f"review #{review.number} is {review.status}; the next meeting is "
+                   "the place for new decisions.",
+        )
+    project = _get_project(session, review.project_id)
+
+    if body.kind == "cut":
+        _lever_needs(body, "requirement_id")
+        result = cut_requirement(body.requirement_id,
+                                 RequirementCut(reason=body.reason), session)
+        detail = f"cut {result['key']}"
+    elif body.kind == "add":
+        _lever_needs(body, "statement", "acceptance_test", "est_runs")
+        result = add_requirement(
+            project.id,
+            ChairmanRequirementIn(statement=body.statement,
+                                  acceptance_test=body.acceptance_test,
+                                  stage=body.stage, est_runs=body.est_runs,
+                                  note=body.reason),
+            session)
+        detail = f"added {result['key']} (stage {body.stage}, {body.est_runs} runs)"
+    elif body.kind == "reword":
+        _lever_needs(body, "requirement_id", "statement")
+        result = reword_requirement(
+            body.requirement_id,
+            RequirementReword(statement=body.statement, reason=body.reason), session)
+        detail = f"reworded {result['key']}"
+    elif body.kind == "move_date":
+        _lever_needs(body, "deliver_by")
+        commitment = policy.live_commitment(session, project.id)
+        if commitment is None:
+            raise HTTPException(status_code=409,
+                                detail="no live commitment — there is no date to move")
+        result = move_commitment(
+            commitment.id,
+            CommitmentMove(deliver_by=body.deliver_by, reason=body.reason), session)
+        detail = f"moved the date to {result['deliver_by'][:10]}"
+    elif body.kind == "raise_budget":
+        _lever_needs(body, "amount")
+        changes = ({"monthly_usd_cap": body.amount}
+                   if project.billing_mode == "api_key"
+                   else {"monthly_token_cap": int(body.amount)})
+        amend_constitution(project.id,
+                           AmendmentIn(reason=body.reason, changes=changes), session)
+        detail = f"raised the monthly cap to {body.amount:,.0f}"
+    else:  # accept_slip
+        detail = "accepted the slip"
+        _notice_ceo(
+            session, project.id, NoticeKind.GOAL_CHANGED,
+            f"At review #{review.number} the chairman ACCEPTED THE SLIP: "
+            f"{body.reason[:800]}\nThe date stands; if scope is frozen it stays "
+            "frozen. This is him choosing lateness over churn — deliver.",
+        )
+
+    review.decisions = [*(review.decisions or []),
+                        {"kind": body.kind, "reason": body.reason,
+                         "detail": detail, "at": utcnow().isoformat()}]
+    _audit(session, project.id, "review.lever", "review", review.id,
+           {"number": review.number, "kind": body.kind, "detail": detail})
+    return {"review": review.number, "recorded": detail,
+            "decisions": len(review.decisions)}
+
+
+class ReviewClose(BaseModel):
+    note: str = Field(default="", max_length=4000)
+
+
+@router.post("/reviews/{review_id}/close")
+def close_review(
+    review_id: str, body: ReviewClose, session: Session = Depends(db)
+) -> dict:
+    """The meeting ends. Closing with zero decisions is itself a decision —
+    'no change' on the record beats an open meeting aging into a hole — and
+    everything decided is disclosed to the CEO in one summary notice."""
+    review = session.get(Review, review_id)
+    if review is None:
+        raise HTTPException(status_code=404, detail="unknown review")
+    if review.status != ReviewStatus.OPEN:
+        raise HTTPException(status_code=409,
+                            detail=f"review #{review.number} is already {review.status}")
+    project = _get_project(session, review.project_id)
+    review.status = ReviewStatus.CLOSED
+    review.closed_at = utcnow()
+    review.closed_by_user_id = project.chairman_user_id
+    decisions = review.decisions or []
+    summary = ("; ".join(f"{d['kind']}: {d['detail']} — {d['reason'][:120]}"
+                         for d in decisions)
+               if decisions else "no changes — the plan stands as it is")
+    # The learning loop: on an Operate project the review writes the cycle's
+    # narrative — platform-composed from the frozen numbers, the CEO's own
+    # words, and the chairman's decisions. The next cycle's pack carries the
+    # last three of these verbatim.
+    if project.mode == ProjectMode.OPERATE:
+        cycle = policy.current_cycle(session, project.id)
+        if cycle is not None:
+            numbers = review.numbers or {}
+            block = (
+                f"[review #{review.number}, {utcnow():%Y-%m-%d}] "
+                f"pace {numbers.get('velocity', {}).get('per_week_3w')}/wk; "
+                f"{numbers.get('scope', {}).get('met_since_last_review')} met since "
+                f"last review; decisions: {summary}."
+                + (f"\nThe CEO's variance narrative: {review.narrative}"
+                   if review.narrative else "\nNo variance narrative was filed.")
+            )
+            cycle.narrative = ((cycle.narrative + "\n\n") if cycle.narrative else "") + block
+    _notice_ceo(
+        session, project.id, NoticeKind.GOAL_CHANGED,
+        f"Review #{review.number} is closed. Decisions: {summary}."
+        + (f" His closing note: {body.note[:500]}" if body.note else "")
+        + " Each will be shown at the next review beside what it bought.",
+    )
+    _audit(session, project.id, "review.close", "review", review.id,
+           {"number": review.number, "decisions": len(decisions)})
+    return {"id": review.id, "number": review.number, "status": review.status,
+            "decisions": decisions}
+
+
+# ── the commitment: the chairman owns the date ──────────────────────────────────
+
+
+def _get_commitment(session: Session, commitment_id: str) -> Commitment:
+    row = session.get(Commitment, commitment_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="unknown commitment")
+    return row
+
+
+def _freeze_commitment_basis(session: Session, project: Project, row: Commitment,
+                             cons: ConstitutionDoc) -> None:
+    """Record what the promise was made under, and project from it fresh. The
+    janitor's three re-validation triggers diff against exactly this."""
+    from yaaf.server.velocity import commitment_projection
+
+    scope_keys = policy.commitment_scope_keys(session, project.id)
+    scope = [r for r in policy.scope_requirements(session, project.id)
+             if r.key in set(scope_keys)]
+    row.constitution_version = effective_version(session, project.id)
+    row.scope_snapshot = scope_keys
+    projection = commitment_projection(session, project, cons)
+    row.projected_done_at = (projection["projected_done_at"]
+                             if projection["known"] else None)
+    row.projection = {
+        "constitution_version": row.constitution_version,
+        "scope_keys": scope_keys,
+        "failure_load": sum(r.failure_load for r in scope),
+        "method": projection.get("method"),
+        "note": projection.get("basis") or projection.get("why"),
+    }
+
+
+class CommitmentAccept(BaseModel):
+    # The chairman's own date, if he wants one other than the projection the
+    # CEO proposed. His to write — the constraint runs on agents, not on him.
+    deliver_by: datetime | None = None
+    note: str = Field(default="", max_length=4000)
+
+
+@router.post("/commitments/{commitment_id}/accept")
+def accept_commitment(
+    commitment_id: str, body: CommitmentAccept, session: Session = Depends(db)
+) -> dict:
+    """The promise becomes a promise here and nowhere else.
+
+    Acceptance freezes two things — the constitution version and the scope
+    keys in force — so that later drift is detectable rather than deniable.
+    From this moment the janitor recomputes the projection continuously and
+    walks the status itself; nobody, including the chairman, edits it by hand.
+    """
+    row = _get_commitment(session, commitment_id)
+    project = _get_project(session, row.project_id)
+    try:
+        policy.check_commitment_accept(row)
+    except policy.Refusal as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    if body.deliver_by is not None:
+        deliver_by = body.deliver_by
+        if deliver_by.tzinfo is None:
+            from datetime import UTC
+            deliver_by = deliver_by.replace(tzinfo=UTC)
+        if deliver_by <= utcnow():
+            raise HTTPException(
+                status_code=422,
+                detail="deliver_by is in the past — a promise that starts breached "
+                       "is not a promise.",
+            )
+        row.deliver_by = deliver_by
+    cons = effective(session, project.id)
+    row.status = CommitmentStatus.ACCEPTED
+    row.accepted_by_user_id = project.chairman_user_id
+    row.accepted_at = utcnow()
+    _freeze_commitment_basis(session, project, row, cons)
+    _audit(session, project.id, "commitment.accept", "commitment", row.id,
+           {"deliver_by": row.deliver_by.isoformat(),
+            "constitution_version": row.constitution_version,
+            "scope": row.scope_snapshot})
+    _notice_ceo(
+        session, project.id, NoticeKind.COMMITMENT_ACCEPTED,
+        f"The chairman ACCEPTED the commitment: {len(row.scope_snapshot)} "
+        f"requirement(s) by {row.deliver_by:%Y-%m-%d}."
+        + (f" His note: {body.note[:500]}" if body.note else "")
+        + " From here the platform recomputes the projection continuously. If it "
+          "slips past the date, new scope freezes and he is emailed — the way to "
+          "keep the promise is to finish things, not to say reassuring words about "
+          "them.",
+    )
+    return {"id": row.id, "status": row.status,
+            "deliver_by": row.deliver_by.isoformat(),
+            "constitution_version": row.constitution_version,
+            "scope_snapshot": row.scope_snapshot}
+
+
+class CommitmentDecline(BaseModel):
+    reason: str = Field(min_length=5, max_length=4000)
+
+
+@router.post("/commitments/{commitment_id}/decline")
+def decline_commitment(
+    commitment_id: str, body: CommitmentDecline, session: Session = Depends(db)
+) -> dict:
+    """A proposal the chairman does not want is removed, with his reason on the
+    record and in front of the CEO. Only proposals — a live promise is not
+    something to disappear; move its date or cut its scope instead."""
+    row = _get_commitment(session, commitment_id)
+    if row.status != CommitmentStatus.PROPOSED:
+        raise HTTPException(
+            status_code=409,
+            detail=f"This commitment is {row.status}; only a proposal can be declined. "
+                   "A live promise is changed by moving the date or cutting scope, "
+                   "never by deleting it.",
+        )
+    project = _get_project(session, row.project_id)
+    _audit(session, project.id, "commitment.decline", "commitment", row.id,
+           {"reason": body.reason, "deliver_by": row.deliver_by.isoformat()})
+    _notice_ceo(
+        session, project.id, NoticeKind.GOAL_CHANGED,
+        f"The chairman DECLINED the proposed commitment ({row.deliver_by:%Y-%m-%d}). "
+        f"His reason: {body.reason[:1000]}\nNothing binds. Keep working the plan; "
+        "propose again when the arithmetic has changed enough to answer him.",
+    )
+    session.delete(row)
+    return {"declined": commitment_id}
+
+
+class CommitmentMove(BaseModel):
+    deliver_by: datetime
+    reason: str = Field(min_length=5, max_length=4000)
+
+
+@router.post("/commitments/{commitment_id}/move")
+def move_commitment(
+    commitment_id: str, body: CommitmentMove, session: Session = Depends(db)
+) -> dict:
+    """The chairman moves the date — the release valve on a promise that
+    stopped holding, and one of the six levers the stage-7 review will offer.
+    Recorded with his reason, disclosed to the CEO, re-projected on the spot
+    so at_risk/breached lift (or persist) immediately rather than on the next
+    janitor tick."""
+    row = _get_commitment(session, commitment_id)
+    if row.status not in policy.LIVE_COMMITMENT_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail=f"This commitment is {row.status}; only a live one has a date to move.",
+        )
+    project = _get_project(session, row.project_id)
+    deliver_by = body.deliver_by
+    if deliver_by.tzinfo is None:
+        from datetime import UTC
+        deliver_by = deliver_by.replace(tzinfo=UTC)
+    old = row.deliver_by
+    row.deliver_by = deliver_by
+    _audit(session, project.id, "commitment.move", "commitment", row.id,
+           {"from": old.isoformat(), "to": deliver_by.isoformat(),
+            "reason": body.reason})
+    _notice_ceo(
+        session, project.id, NoticeKind.GOAL_CHANGED,
+        f"The chairman MOVED the commitment date: {old:%Y-%m-%d} → "
+        f"{deliver_by:%Y-%m-%d}. His reason: {body.reason[:1000]}\nThe projection is "
+        "being re-checked against the new date; a freeze lifts only if the "
+        "arithmetic now fits inside it.",
+    )
+    # Re-walk the status now, through the same producer the janitor uses.
+    from yaaf.server import janitor
+
+    janitor.check_commitments(session, project, effective(session, project.id))
+    return {"id": row.id, "status": row.status,
+            "deliver_by": row.deliver_by.isoformat()}
+
+
 class SecretIn(BaseModel):
     project_id: str | None = None
     name: str = Field(min_length=2, max_length=120)
@@ -1610,15 +2701,15 @@ def delete_secret(secret_id: str, session: Session = Depends(db)) -> dict:
 @router.post("/projects/{project_id}/webhook_secrets")
 def provision_webhook_secrets(project_id: str, session: Session = Depends(db)) -> dict:
     """Generate the signing secrets for the inbound evidence connectors. The
-    secrets live only in project.config — never in a role scope — so no run
+    secrets live only in project.integrations — never in a role scope — so no run
     ever holds them, which is what makes webhook evidence unforgeable by
     agents."""
     project = _get_project(session, project_id)
     github_secret = pysecrets.token_hex(32)
     generic_secret = pysecrets.token_hex(32)
-    # Merge, never clobber: config also carries cadences, Slack mapping, etc.
-    project.config = {
-        **(project.config or {}),
+    # Merge, never clobber: integrations also carries the runtime, Slack mapping, etc.
+    project.integrations = {
+        **(project.integrations or {}),
         "github_webhook_secret": github_secret,
         "webhook_secret": generic_secret,
     }

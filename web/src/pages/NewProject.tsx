@@ -31,6 +31,18 @@ function isFullUrl(value: string): boolean {
   }
 }
 
+const MODES = [
+  { value: "explore", label: "Explore",
+    blurb: "Chase a goal with no fixed end. Bets, proof, and your call on when it has earned its keep.",
+    example: "\u201CFind an idea and get one sale in 60 days.\u201D" },
+  { value: "deliver", label: "Deliver",
+    blurb: "Ship one thing, then stop. You accept what done means; the platform proves it.",
+    example: "\u201CA security audit of our AWS estate.\u201D" },
+  { value: "operate", label: "Operate",
+    blurb: "Run the same play on a rhythm, and get better at it every cycle.",
+    example: "\u201CA weekly blog post, tracked and improved.\u201D" },
+] as const;
+
 export default function NewProject() {
   const navigate = useNavigate();
   const [roles, setRoles] = useState<RoleSummary[]>([]);
@@ -43,6 +55,12 @@ export default function NewProject() {
   const [chairmanEmail, setChairmanEmail] = useState("");
   const [chairmanName, setChairmanName] = useState("");
   const [billingMode, setBillingMode] = useState("api_key");
+  const [mode, setMode] = useState("explore");
+  // Set when a loaded setup file could not answer the shape question itself —
+  // the one prefill that must never be guessed silently, because a project's
+  // mode is frozen at creation and Explore hides the Plan tab by design.
+  const [modeNotice, setModeNotice] = useState<string | null>(null);
+  const [exploreDeadline, setExploreDeadline] = useState("");
   const [runtime, setRuntime] = useState("agent_sdk");
   const [controlledDomains, setControlledDomains] = useState("");
   const [teams, setTeams] = useState<TeamDraft[]>([
@@ -62,6 +80,12 @@ export default function NewProject() {
   // definitions the library lacks ride along at submit time.
   const [bundle, setBundle] = useState<ProjectBundle | null>(null);
   const [solo, setSolo] = useState(false);
+  const [done, setDone] = useState<string | null>(null);
+  const [webhooks, setWebhooks] = useState<{
+    projectId: string;
+    github: { url: string; secret: string };
+    generic: { url: string; secret: string };
+  } | null>(null);
 
   useEffect(() => {
     get<RoleSummary[]>("/admin/roles").then(setRoles).catch((e: Error) => setError(e.message));
@@ -98,7 +122,19 @@ export default function NewProject() {
       setSlug(p.slug);
       setGoal(p.goal);
       setBillingMode(p.billing_mode);
-      setRuntime(String(p.config["runtime"] ?? "agent_sdk"));
+      if (p.mode) {
+        setMode(p.mode);
+        setModeNotice(null);
+      } else {
+        // A file from before project shapes existed. Guessing Explore here
+        // once silently overwrote a chairman's Deliver choice — keep whatever
+        // is selected and say the file had no opinion.
+        setModeNotice(
+          "This setup file predates project shapes, so it does not say what kind of " +
+          "company it was. Nothing was changed — confirm the choice above is what you want.",
+        );
+      }
+      setRuntime(String(p.integrations["runtime"] ?? "agent_sdk"));
       setControlledDomains((p.controlled_domains ?? []).join(", "));
       setSolo(Boolean(p.solo));
       setTeams(
@@ -141,7 +177,7 @@ export default function NewProject() {
   // straight to an MCP client. Knowing which lets this page check them here,
   // rather than let an agent discover it three runs later. Secret name → source.
   const dataSourceUrls = new Map<string, string>(
-    ((bundle?.project.config["mcp_servers"] as McpServerEntry[] | undefined) ?? []).map(
+    ((bundle?.project.integrations["mcp_servers"] as McpServerEntry[] | undefined) ?? []).map(
       (source) => [source.url_secret, source.name] as [string, string],
     ),
   );
@@ -201,6 +237,9 @@ export default function NewProject() {
         goal: goal.trim(),
         chairman_email: chairmanEmail.trim(),
         billing_mode: billingMode,
+        mode,
+        ...(mode === "explore" && exploreDeadline
+          ? { deadline: `${exploreDeadline}T23:59:59Z` } : {}),
         controlled_domains: controlledDomains
           .split(",")
           .map((d) => d.trim())
@@ -214,7 +253,7 @@ export default function NewProject() {
           monthly_usd_cap: usdCap,
           approval_threshold_usd: approvalThreshold,
         },
-        config: { ...(bundle?.project.config ?? {}), runtime },
+        integrations: { ...(bundle?.project.integrations ?? {}), runtime },
         ceo_role_slug: ceoSlug,
         ceo_name: bundle?.project.ceo_name ?? "CEO",
         solo,
@@ -230,7 +269,12 @@ export default function NewProject() {
             };
           }),
       };
-      const created = await post<{ id: string }>("/admin/projects", body);
+      const created = await post<{
+        id: string;
+        webhooks?: { github: { url: string; secret: string };
+                     generic: { url: string; secret: string } };
+      }>("/admin/projects", body);
+      if (created.webhooks) setWebhooks({ projectId: created.id, ...created.webhooks });
       try {
         for (const cred of credentials) {
           if (!cred.name.trim() || !cred.value) continue;
@@ -266,16 +310,68 @@ export default function NewProject() {
             `answering:\n\n${unreachable.join("\n")}\n\nThe project was NOT started. Fix the ` +
             "address in Settings → Data sources — that form tests it — then start the project.",
         );
-        navigate(`/projects/${created.id}`);
+        if (created.webhooks) setDone(created.id);
+        else navigate(`/projects/${created.id}`);
         return;
       }
       if (startNow) await post(`/admin/projects/${created.id}/start`);
-      navigate(`/projects/${created.id}`);
+      if (created.webhooks) setDone(created.id);
+      else navigate(`/projects/${created.id}`);
     } catch (err) {
       setError((err as Error).message);
     } finally {
       setBusy(false);
     }
+  }
+
+  // The project exists; the one thing this screen still owes the chairman is
+  // the webhook secrets, shown exactly once with the endpoint beside each.
+  if (done && webhooks) {
+    const origin = window.location.origin;
+    return (
+      <>
+        <h1>Project created</h1>
+        <div className="card" style={{ maxWidth: 760 }}>
+          <p style={{ marginTop: 0 }}>
+            <b>Inbound evidence endpoints — copy the secrets now.</b> They are shown
+            only this once. Evidence arriving signed with them is platform-attested:
+            proof no agent can forge, because the secrets never enter a sandbox.
+          </p>
+          <table>
+            <tbody>
+              <tr>
+                <td>GitHub</td>
+                <td className="mono" style={{ wordBreak: "break-all" }}>
+                  {origin}{webhooks.github.url}</td>
+              </tr>
+              <tr>
+                <td>&nbsp;&nbsp;secret</td>
+                <td className="mono" style={{ userSelect: "all", wordBreak: "break-all" }}>
+                  {webhooks.github.secret}</td>
+              </tr>
+              <tr>
+                <td>Generic</td>
+                <td className="mono" style={{ wordBreak: "break-all" }}>
+                  {origin}{webhooks.generic.url}</td>
+              </tr>
+              <tr>
+                <td>&nbsp;&nbsp;secret</td>
+                <td className="mono" style={{ userSelect: "all", wordBreak: "break-all" }}>
+                  {webhooks.generic.secret}</td>
+              </tr>
+            </tbody>
+          </table>
+          <p className="help">
+            GitHub signs with HMAC-SHA256 in <code>X-Hub-Signature-256</code>; other
+            senders sign the raw body into <code>X-Yaaf-Signature</code>. Lost secrets
+            are regenerated in Settings → Integrations, which invalidates these.
+          </p>
+          <button className="primary" onClick={() => navigate(`/projects/${done}`)}>
+            I copied them — open the project
+          </button>
+        </div>
+      </>
+    );
   }
 
   return (
@@ -304,6 +400,58 @@ export default function NewProject() {
                   "address: a full URL, tested before this project starts."}
               {" "}Billing is connected afterwards in Settings.
             </p>
+          )}
+        </div>
+        <div className="card" style={{ marginBottom: 10 }}>
+          <label className="field">What kind of company is this?</label>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+            gap: 10, marginTop: 6 }}>
+            {MODES.map((m) => (
+              <button key={m.value} type="button"
+                onClick={() => { setMode(m.value); setModeNotice(null); }}
+                style={{
+                  font: "inherit", textAlign: "left", cursor: "pointer",
+                  background: mode === m.value ? "rgba(57,135,229,0.07)" : "var(--surface)",
+                  border: mode === m.value
+                    ? "1px solid var(--accent)" : "1px solid var(--border)",
+                  borderRadius: 8, padding: "12px 14px",
+                }}>
+                <div style={{ fontWeight: 650, fontSize: 15, color: "var(--ink)" }}>
+                  {mode === m.value ? "◉" : "○"} {m.label}
+                </div>
+                <div style={{ fontSize: 12.5, color: "var(--ink-2)", marginTop: 6 }}>{m.blurb}</div>
+                <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 8, fontStyle: "italic",
+                  borderTop: "1px solid var(--grid, var(--border))", paddingTop: 7 }}>
+                  {m.example}
+                </div>
+              </button>
+            ))}
+          </div>
+          {modeNotice && (
+            <p className="help" style={{ marginTop: 10, color: "var(--warn, var(--ink-2))" }}>
+              {modeNotice}
+            </p>
+          )}
+          {mode !== "explore" ? (
+            <p className="help" style={{ marginTop: 10 }}>
+              This project starts owing a plan: the CEO proposes requirements, you accept
+              them on the Plan tab, and no work may be created until the plan holds and
+              adds up against the budget.
+            </p>
+          ) : (
+            <div style={{ marginTop: 10, display: "flex", gap: 10, alignItems: "baseline",
+              flexWrap: "wrap" }}>
+              <label className="field" style={{ margin: 0 }}>
+                Window (optional)
+              </label>
+              <input type="date" value={exploreDeadline}
+                onChange={(e) => setExploreDeadline(e.target.value)}
+                style={{ width: 170 }} />
+              <span className="help">
+                Open scope, bounded time — “one sale in the next 60 days.” When it
+                passes you are told and the judgment is yours; nothing pauses itself.
+              </span>
+            </div>
           )}
         </div>
         <div className="card">

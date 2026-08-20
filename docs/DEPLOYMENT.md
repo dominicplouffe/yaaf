@@ -256,7 +256,7 @@ schema was never created. Check and fix:
 
 ```bash
 cd deploy
-docker compose exec -T api alembic current        # expect: 0007 (head)
+docker compose exec -T api alembic current        # expect: 0001 (head)
 docker compose exec -T api alembic upgrade head   # if it printed no revision
 ```
 

@@ -48,7 +48,7 @@ def _slack_project(client) -> dict:
     team_id = project["teams"][0]["id"]
     patched = client.patch(
         f"/admin/projects/{project['id']}",
-        json={"config": {"slack": {
+        json={"integrations": {"slack": {
             "bot_token_secret": "slack-bot-token",
             "signing_secret": "slack-signing-secret",
             "chairman_slack_user": "U-CHAIR",

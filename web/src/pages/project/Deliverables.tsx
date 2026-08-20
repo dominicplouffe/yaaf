@@ -17,9 +17,24 @@ interface ArtifactFile {
   modified: string | null;
 }
 
+interface PublishedRow {
+  id: string;
+  name: string;
+  version: number;
+  sha256: string;
+  size: number;
+  key: string;
+  published_at: string;
+  published_by: string | null;
+  satisfies: string[];
+}
+
 interface FilesView {
   workspace: WorkspaceFile[];
   artifacts: ArtifactFile[];
+  // The receipts: platform-written rows with a real hash, a real publish
+  // time, and the requirements each claims to satisfy.
+  published?: PublishedRow[];
 }
 
 function fmtSize(bytes: number): string {
@@ -113,6 +128,7 @@ export default function Deliverables({ projectId }: { projectId: string }) {
 
   const workspace = data?.workspace ?? [];
   const artifacts = data?.artifacts ?? [];
+  const receiptByKey = new Map((data?.published ?? []).map((p) => [p.key, p]));
 
   // The same name republished by a later run is a new version of one thing.
   // Listing every run's copy as its own row made five files look like five
@@ -166,6 +182,20 @@ export default function Deliverables({ projectId }: { projectId: string }) {
                   {fmtSize(latest.size)} ·{" "}
                   {latest.modified ? fmtWhen(latest.modified) : "—"}
                   {latest.run_id && ` · from run ${latest.run_id.slice(-8)}`}
+                  {(() => {
+                    const receipt = receiptByKey.get(latest.key);
+                    if (!receipt) return null;
+                    return (
+                      <>
+                        {receipt.satisfies.length > 0 &&
+                          ` · satisfies ${receipt.satisfies.join(", ")}`}
+                        {" · "}
+                        <span title={`sha256 ${receipt.sha256}`} className="mono">
+                          sha {receipt.sha256.slice(0, 10)}…
+                        </span>
+                      </>
+                    );
+                  })()}
                 </div>
                 <div className="pill-row" style={{ margin: 0 }}>
                   <button className="small primary" onClick={() => open(artifactUrl(latest.key), name, latest.size)}>

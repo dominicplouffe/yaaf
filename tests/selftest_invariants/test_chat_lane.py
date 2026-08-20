@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from tests.conftest import ADMIN, bearer, channel_of, live_token, make_project
+from tests.conftest import ADMIN, amend, bearer, channel_of, live_token, make_project
 from yaaf.core import ids
 from yaaf.core.config import settings
 from yaaf.core.db import db_session
@@ -77,9 +77,7 @@ def test_chat_session_burns_no_work_caps(client):
     against neither concurrency, nor busy, nor wakes/hour."""
     project = make_project(client)
     _drain_dispatcher()
-    assert client.patch(f"/admin/projects/{project['id']}",
-                        json={"config": {"max_concurrent_runs": 1}},
-                        headers=ADMIN).status_code == 200
+    amend(client, project["id"], max_concurrent_runs=1)
     live_token(project["id"], _ceo_id(project), kind="chat_session")
     with db_session() as session:
         session.add(Notice(id=ids.new_id(ids.NOTICE), project_id=project["id"],

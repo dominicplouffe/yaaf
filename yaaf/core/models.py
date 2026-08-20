@@ -68,8 +68,13 @@ class Base(DeclarativeBase):
 class ProjectStatus(enum.StrEnum):
     DRAFT = "draft"
     RUNNING = "running"
-    PAUSED = "paused"      # kill switch or budget trip; resumable
-    STOPPED = "stopped"    # terminal
+    PAUSED = "paused"        # kill switch or budget trip; resumable
+    STOPPED = "stopped"      # terminal: abandoned
+    COMPLETED = "completed"  # terminal: the work is finished and the platform proved it
+
+    @property
+    def is_terminal(self) -> bool:
+        return self in (ProjectStatus.STOPPED, ProjectStatus.COMPLETED)
 
 
 class AgentKind(enum.StrEnum):
@@ -100,6 +105,66 @@ class TaskStatus(enum.StrEnum):
 class SuccessTestKind(enum.StrEnum):
     COMMAND = "command"        # platform-executed in the task's sandbox
     OBSERVABLE = "observable"  # names a checkable artifact/URL/metric; spot-audited
+    # Only ever on R-00, the planning requirement, and only ever written by the
+    # platform: the test is a structural check of the plan itself — is there
+    # scope, is it staged, is it estimated, does it fit the money — evaluated
+    # in the server rather than in a sandbox. An agent proposing this kind is
+    # refused, because a company that can author its own planning gate does not
+    # have one.
+    PLAN = "plan"
+
+
+class ProjectMode(enum.StrEnum):
+    """What shape this company takes, chosen once at creation.
+
+    EXPLORE is the open-ended arm — a goal, bets, evidence, and the chairman's
+    judgement on when it has earned its keep. DELIVER ships one thing and then
+    finishes. OPERATE is a DELIVER that starts again on a rhythm.
+
+    The field exists from the first stage of the rebuild because the rules
+    differ by mode: outside EXPLORE a task must serve a requirement. What later
+    stages add is the machinery — cycles, the picker, the completion receipt —
+    not the distinction.
+    """
+
+    EXPLORE = "explore"
+    DELIVER = "deliver"
+    OPERATE = "operate"
+
+
+class RequirementStatus(enum.StrEnum):
+    """A requirement is a thing that must be true at the end.
+
+    PROPOSED is the CEO's suggestion and counts as nothing: it is not scope
+    until the chairman accepts it, which is what keeps the denominator of the
+    forecast out of the hands of the party the forecast grades. MET is written
+    only by the platform, after it has run the acceptance test itself.
+    """
+
+    PROPOSED = "proposed"        # the CEO's; not scope yet
+    PENDING = "pending"          # accepted, no work started
+    IN_PROGRESS = "in_progress"  # has live tasks
+    CHECKING = "checking"        # platform is running its acceptance test
+    MET = "met"                  # the platform ran the test and it passed
+    CUT = "cut"                  # the chairman removed it from scope
+
+
+class CommitmentStatus(enum.StrEnum):
+    """A delivery date, and what the promise is currently worth.
+
+    PROPOSED is the CEO asking to commit; it binds nothing. ACCEPTED is the
+    chairman's act, and from that moment the platform recomputes the projection
+    on every janitor tick and moves the status itself. There is no agent verb
+    behind any of these transitions — the strongest form of "the CEO never
+    states a date" is that the date is computed and the walls move by
+    themselves.
+    """
+
+    PROPOSED = "proposed"
+    ACCEPTED = "accepted"
+    AT_RISK = "at_risk"    # the projection lands past deliver_by
+    BREACHED = "breached"  # deliver_by passed with scope still open
+    MET = "met"            # every requirement in scope settled true
 
 
 class EvidenceProvenance(enum.StrEnum):
@@ -117,6 +182,44 @@ class VerificationStatus(enum.StrEnum):
     VERIFIED = "verified"
     FAILED = "failed"
     NOT_APPLICABLE = "not_applicable"  # internal evidence; attested evidence
+
+
+class AuditSampleStatus(enum.StrEnum):
+    """One observable close, drawn (or passed over) by the janitor.
+
+    PENDING waits for the chairman; PASSED/FAILED are his verdict; EXPIRED is
+    "not reviewed in time", recorded and counted in review coverage but never
+    blocking anything — sampling is a thermometer, not a gate. SKIPPED closes
+    are recorded too, so the draw is never re-rolled and the coverage line has
+    a denominator.
+    """
+
+    PENDING = "pending"
+    PASSED = "passed"
+    FAILED = "failed"
+    EXPIRED = "expired"
+    SKIPPED = "skipped"
+
+
+class CycleStatus(enum.StrEnum):
+    """One period of an Operate project's rhythm.
+
+    COMPLETED closed with its scope settled true; MISSED rolled with work
+    unfinished (the unsettled scope carries into the next cycle); SKIPPED
+    rolled with nothing ever accepted into it at all — and two consecutive
+    SKIPPEDs pause the project, because a rhythm nobody dances to is a bill,
+    not a company.
+    """
+
+    OPEN = "open"
+    COMPLETED = "completed"
+    MISSED = "missed"
+    SKIPPED = "skipped"
+
+
+class ReviewStatus(enum.StrEnum):
+    OPEN = "open"      # the janitor opened it; the meeting is in progress
+    CLOSED = "closed"  # the chairman closed it, with his decisions on it
 
 
 class HypothesisStatus(enum.StrEnum):
@@ -138,6 +241,12 @@ class RunStatus(enum.StrEnum):
 class RunKind(enum.StrEnum):
     AGENT_RUN = "agent_run"
     SUCCESS_CHECK = "success_check"  # platform executes a command-type success test
+    # The same thing one level up: the acceptance test on a requirement, run by
+    # the platform when the requirement's last task closes. Separate from
+    # SUCCESS_CHECK because it resolves a different row and finalizes
+    # differently — a failed requirement check reopens the requirement rather
+    # than handing a task back to a claimant.
+    REQUIREMENT_CHECK = "requirement_check"
     # The talk lane: a resident CEO conversation session, supervised by the
     # runner outside the run queue. Exempt from wake/concurrency/daily caps —
     # chat is not work — but it authenticates, meters, heartbeats, and revokes
@@ -183,12 +292,35 @@ class NoticeKind(enum.StrEnum):
     TASK_CHECK_FAILED = "task_check_failed"
     TASK_BLOCKED = "task_blocked"
     AGENT_RUN_REAPED = "agent_run_reaped"
+    # The company is running, has work, and has started nothing for hours. Urgent
+    # by construction: the whole point is that the silence already went on too
+    # long, so batching this notice behind another would extend the fault it
+    # exists to report.
+    STALLED = "stalled"
+    # Scope that quietly stopped moving: every task it ever had is closed and
+    # none of them succeeded, so its acceptance test will never run.
+    REQUIREMENT_STALLED = "requirement_stalled"
+    # A team of two or more with nobody named as lead cannot claim its own
+    # queue. The platform names the earliest member and says so.
+    LEAD_ELECTED = "lead_elected"
     AUDIT_FAILED = "audit_failed"  # chairman spot-audit failed an evidence row or completion
     # Memory pressure warns the scope's curator early enough to curate on a wake
     # it was having anyway; MEMORY_FULL is urgent because the scope has stopped
     # accepting writes and only the curator can restart it.
     MEMORY_PRESSURE = "memory_pressure"
     MEMORY_FULL = "memory_full"
+    # The commitment's transitions and re-validations, each disclosed to the
+    # CEO exactly once. AT_RISK and BREACHED also freeze new scope — the
+    # notice is the explanation, the refusal in policy is the enforcement.
+    REVIEW_OPENED = "review_opened"
+    EXPLORE_DEADLINE = "explore_deadline"
+    CYCLE_ROLLED = "cycle_rolled"
+    COMMITMENT_ACCEPTED = "commitment_accepted"
+    COMMITMENT_AT_RISK = "commitment_at_risk"
+    COMMITMENT_BREACHED = "commitment_breached"
+    COMMITMENT_RECOVERED = "commitment_recovered"
+    COMMITMENT_MET = "commitment_met"
+    COMMITMENT_REVALIDATED = "commitment_revalidated"
 
 
 # ── people & projects ───────────────────────────────────────────────────────────
@@ -214,6 +346,10 @@ class Project(Base):
     goal: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(16), default=ProjectStatus.DRAFT)
     status_reason: Mapped[str | None] = mapped_column(Text)
+    # What shape this company takes. Explore is the default and today's
+    # behaviour; outside it, a task must serve a requirement.
+    mode: Mapped[str] = mapped_column(String(16), default=ProjectMode.EXPLORE,
+                                      server_default=ProjectMode.EXPLORE)
     chairman_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
     # "api_key" | "subscription" — decides the budget's native unit (usd vs tokens)
     billing_mode: Mapped[str] = mapped_column(String(16), default="api_key")
@@ -221,8 +357,24 @@ class Project(Base):
     # Domains/accounts the project controls; evidence from these can never be external.
     controlled_domains: Mapped[list] = mapped_column(JSONVariant, default=list)
     github_repo: Mapped[str | None] = mapped_column(String(255))
-    # Mutable configuration (heartbeat cadences, concurrency, slack mapping).
-    config: Mapped[dict] = mapped_column(JSONVariant, default=dict)
+    # Wiring, not rules. Runtime backend, MCP servers, Slack mapping, webhook
+    # secrets — things that say *how to reach the outside*, never how much an
+    # agent may spend or how often it may wake. Every limit that used to live
+    # here (heartbeat cadence, concurrency, the daily wake time) moved into
+    # ConstitutionDoc in the rebuild: a limit kept here generated no settings
+    # UI, recorded no amendment, and was never disclosed to the CEO it bound.
+    integrations: Mapped[dict] = mapped_column(JSONVariant, default=dict)
+    # Explore only: the chairman's own example was "one sale in the next 60
+    # days" — open scope, bounded time. When it passes, he is told and the
+    # judgment is his; nothing pauses by itself. Deliver has commitments and
+    # Operate has cycles, so a bare date is refused there.
+    deadline: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # The org shape, computed at creation from the team specs: solo (one brain
+    # plans and executes), ceo_team (flat — the CEO talks to individuals), or
+    # ceo_leads_workers (the full hierarchy). Stored so the stage-9 experiment
+    # compares a recorded fact, never an inference that could drift.
+    topology: Mapped[str] = mapped_column(String(24), default="ceo_leads_workers",
+                                          server_default="ceo_leads_workers")
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 
@@ -385,6 +537,168 @@ class ChannelRead(Base):
     last_read_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 
+# ── scope: requirements ─────────────────────────────────────────────────────────
+
+
+class Requirement(Base):
+    """A thing that must be true at the end.
+
+    The root object of the rebuild. Before it, the board was the spine and the
+    CEO's standing instruction was "keep the queue fed but small" — a pipeline
+    with no terminus, so there was nothing to divide by velocity and nothing to
+    cut when a date slipped. A requirement gives the work a denominator, an
+    owner who is not the party being graded, and a test the platform runs.
+
+    Three properties are load-bearing and each is enforced elsewhere as a
+    refusal or an absent verb:
+
+    * The CEO **proposes**; only the chairman **accepts**. `accepted_by_user_id`
+      is set on a chairman-only route, so scope cannot be self-served.
+    * Nothing marks a requirement `met` except the platform. There is no agent
+      tool that writes it — the strongest form of "done is never self-graded"
+      is that the verb does not exist.
+    * `est_runs` is the CEO's estimate and is *scored*, not trusted: stage 2
+      compares it against `actual_runs` and multiplies future estimates by the
+      ratio, so writing smaller numbers buys nothing.
+    """
+
+    __tablename__ = "requirements"
+    __table_args__ = (
+        UniqueConstraint("project_id", "key"),
+        Index("ix_requirements_project_status", "project_id", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    # Operate only: which turn of the rhythm this scope belongs to. The plan
+    # gate, the Plan screen and the feasibility arithmetic read the OPEN
+    # cycle's scope; unsettled requirements carry forward when a cycle rolls.
+    cycle_id: Mapped[str | None] = mapped_column(String(40))
+    # Human-readable and stable: the chairman says "cut R-09", not an opaque id.
+    key: Mapped[str] = mapped_column(String(16))
+    statement: Mapped[str] = mapped_column(Text)
+    # Same shape as a task's: {"type": "command", ...} | {"type": "observable", ...}
+    acceptance_test: Mapped[dict] = mapped_column(JSONVariant)
+    status: Mapped[str] = mapped_column(String(16), default=RequirementStatus.PROPOSED)
+    # The waterfall axis. Ordered, chairman-owned, and gated: work may only be
+    # created for requirements in the open stage or earlier.
+    stage: Mapped[int] = mapped_column(Integer, default=1)
+    est_runs: Mapped[int | None] = mapped_column(Integer)
+    actual_runs: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # Runs that died and checks that failed against this requirement. The
+    # chairman asked the CEO to be adaptable to "plan changes, parameter
+    # changes, errors"; this is the errors half, and it is what lets a review
+    # say the rate fell because one requirement ate fifty runs.
+    failure_load: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    proposed_by_agent_id: Mapped[str | None] = mapped_column(String(40))
+    accepted_by_user_id: Mapped[str | None] = mapped_column(String(40))
+    accepted_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    met_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # Which platform-run check passed. Null met_at with a set met_by is
+    # impossible by construction; the pair is the receipt.
+    met_by_run_id: Mapped[str | None] = mapped_column(String(40))
+    check_output: Mapped[str | None] = mapped_column(Text)
+    cut_reason: Mapped[str | None] = mapped_column(Text)
+    cut_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
+
+
+class RequirementEvent(Base):
+    """Every requirement transition. The mirror of TaskEvent, and deliberately
+    so: velocity is measured on requirements because the forecast divides by
+    requirements, and a metric needs its own log rather than an inference from
+    somebody else's."""
+
+    __tablename__ = "requirement_events"
+    __table_args__ = (Index("ix_requirement_events_project_at", "project_id", "at"),)
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    requirement_id: Mapped[str] = mapped_column(ForeignKey("requirements.id"))
+    from_status: Mapped[str | None] = mapped_column(String(16))
+    to_status: Mapped[str] = mapped_column(String(16))
+    actor: Mapped[str] = mapped_column(String(64))  # agent id, user id, "janitor", "checker"
+    note: Mapped[str | None] = mapped_column(Text)
+    at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class RequirementEdge(Base):
+    """`from_requirement_id` must be met before `to_requirement_id` may be
+    worked. The graph the chairman asked to look at, and the one a previous
+    design declined to draw on the correct grounds that nothing had a
+    `depends_on`. Now something does.
+
+    Kept acyclic by a check on insert rather than by hope: a cycle would make
+    the critical path infinite and the stage gate unsatisfiable, and the
+    refusal names the loop it found.
+    """
+
+    __tablename__ = "requirement_edges"
+    __table_args__ = (
+        UniqueConstraint("from_requirement_id", "to_requirement_id"),
+        Index("ix_requirement_edges_to", "to_requirement_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    from_requirement_id: Mapped[str] = mapped_column(ForeignKey("requirements.id"))
+    to_requirement_id: Mapped[str] = mapped_column(ForeignKey("requirements.id"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class Commitment(Base):
+    """The delivery date, as a row the platform owns.
+
+    The chairman's ask: "it's impossible to get a delivery date or anything of
+    substance that can offer me some sort of guarantee." The guarantee is not
+    that the date holds — nobody can promise that. It is that when the date
+    stops holding the company cannot quietly add work: new scope is refused,
+    the chairman is emailed, and what happens next is his decision, made with
+    the projection in front of him.
+
+    The CEO proposes a commitment but never writes the date — `deliver_by` is
+    stamped by the platform from its own projection at proposal time, and the
+    chairman may replace it with his own date when he accepts. Two freezes at
+    acceptance make later drift *detectable*: `constitution_version` records
+    the rules the promise was made under, `scope_snapshot` the requirement
+    keys it covered. The janitor re-validates when either moves, or when
+    failure load crosses its constitution threshold — state-based diffs
+    against `projection`, never event hooks, because amendments apply inline
+    from three different callers and a hook misses every one it was not wired
+    to.
+    """
+
+    __tablename__ = "commitments"
+    __table_args__ = (Index("ix_commitments_project_status", "project_id", "status"),)
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    status: Mapped[str] = mapped_column(String(16), default=CommitmentStatus.PROPOSED)
+    deliver_by: Mapped[datetime] = mapped_column(UTCDateTime)
+    proposed_by_agent_id: Mapped[str | None] = mapped_column(String(40))
+    # The CEO's words with the proposal — why it believes the date.
+    note: Mapped[str | None] = mapped_column(Text)
+    accepted_by_user_id: Mapped[str | None] = mapped_column(String(40))
+    accepted_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # Frozen at acceptance and never updated: the rulebook the promise was
+    # made under. The current version lives in `projection`, where the
+    # janitor's trigger diff can see it move.
+    constitution_version: Mapped[int | None] = mapped_column(Integer)
+    # The requirement keys in force (accepted, not cut) at acceptance.
+    scope_snapshot: Mapped[list] = mapped_column(JSONVariant, default=list)
+    # Platform-computed, janitor-refreshed. No route writes this from input.
+    projected_done_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # What the janitor last read to project: constitution version, scope keys,
+    # failure load, method and basis sentence. The three re-validation
+    # triggers are diffs against this.
+    projection: Mapped[dict | None] = mapped_column(JSONVariant)
+    status_reason: Mapped[str | None] = mapped_column(Text)
+    met_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
+
+
 # ── work: tasks ─────────────────────────────────────────────────────────────────
 
 
@@ -404,6 +718,10 @@ class Task(Base):
     assignee_agent_id: Mapped[str | None] = mapped_column(String(40))
     created_by_agent_id: Mapped[str] = mapped_column(String(40))
     hypothesis_id: Mapped[str | None] = mapped_column(String(40))
+    # What this work is FOR. Nullable in the column because an Explore
+    # project has no requirements; required by policy everywhere else, where
+    # a task serving nothing is a refusal rather than a smell.
+    requirement_id: Mapped[str | None] = mapped_column(ForeignKey("requirements.id"))
     title: Mapped[str] = mapped_column(String(300))
     goal: Mapped[str] = mapped_column(Text)
     # {"type": "command", "command": "..."} | {"type": "observable", "target": "..."}
@@ -463,6 +781,11 @@ class Suggestion(Base):
     by_agent_id: Mapped[str] = mapped_column(String(40))
     text: Mapped[str] = mapped_column(Text)
     consumed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # Which run ate it — so a run that dies after building its pack gives it
+    # back, exactly as notices are given back. Without this a failed CEO run
+    # destroyed every suggestion it was handed, permanently: an employee's
+    # only channel to the backlog, lost to a crash it had no part in.
+    consumed_by_run_id: Mapped[str | None] = mapped_column(String(40))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 
@@ -491,7 +814,13 @@ class Evidence(Base):
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
-    task_id: Mapped[str | None] = mapped_column(String(40))
+    # A real foreign key since stage 6: it used to be an un-FK'd string that
+    # ceo_judgment joined on — paste any id and you inflate your own score.
+    # Still nullable, because the two legitimate taskless authors remain: a
+    # connector (webhooks carry no task) and an Explore-mode agent (bets and
+    # evidence, no board). Agent-written evidence in Deliver/Operate must name
+    # the task it came from — enforced as a Refusal in policy.
+    task_id: Mapped[str | None] = mapped_column(ForeignKey("tasks.id"))
     created_by_agent_id: Mapped[str | None] = mapped_column(String(40))  # null => connector
     kind: Mapped[str] = mapped_column(String(16))  # EvidenceKind
     provenance: Mapped[str] = mapped_column(String(24))  # EvidenceProvenance
@@ -518,6 +847,147 @@ class Decision(Base):
     subject: Mapped[str] = mapped_column(String(300))
     body: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class Artifact(Base):
+    """A deliverable as a row: named, versioned, hashed, and tied to the
+    requirements it claims to satisfy.
+
+    Before this, "published" meant a storage key started with ``projects/``
+    and the date was a filesystem mtime a restore would rewrite. The row is
+    the receipt: the platform computes the sha256 and the version at write
+    time, so what shipped, when, and what it was FOR are facts with an author
+    — not properties of a directory listing.
+    """
+
+    __tablename__ = "artifacts"
+    __table_args__ = (
+        UniqueConstraint("project_id", "name", "version"),
+        Index("ix_artifacts_project_published", "project_id", "published_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    name: Mapped[str] = mapped_column(String(255))
+    # Per (project, name), starting at 1. Publishing the same name again is a
+    # new version, never an overwrite — the store key is run-scoped anyway.
+    version: Mapped[int] = mapped_column(Integer)
+    sha256: Mapped[str] = mapped_column(String(64))
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    storage_key: Mapped[str] = mapped_column(Text)
+    uri: Mapped[str] = mapped_column(Text)
+    published_by_agent_id: Mapped[str | None] = mapped_column(String(40))
+    run_id: Mapped[str | None] = mapped_column(String(40))
+    # Requirement ids this deliverable claims to satisfy. Validated against
+    # the project at publish; a claim, not a verdict — met is still only ever
+    # written by the platform.
+    requirement_ids: Mapped[list] = mapped_column(JSONVariant, default=list)
+    published_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class Cycle(Base):
+    """One turn of an Operate project — a Deliver that finishes and starts
+    again on the constitution's rhythm (`cycle_frequency` + `cycle_day`, read
+    in the constitution's one timezone).
+
+    Cycles roll in the JANITOR: a rhythm firing while the company is busy or
+    broke must still be recorded, and opening a cycle costs nothing. At most
+    one is ever open — a project paused three weeks resumes into one new
+    cycle, not twenty-one.
+
+    ``narrative`` is the learning loop, the half the old plan dropped: the
+    review writes it (uncapped), and the next cycle's context pack carries
+    the last three VERBATIM. Only a lesson still true several cycles out
+    spends a memory slot; the narrative is where the rest lives.
+    """
+
+    __tablename__ = "cycles"
+    __table_args__ = (
+        UniqueConstraint("project_id", "ordinal"),
+        Index("ix_cycles_project_status", "project_id", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    ordinal: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(16), default=CycleStatus.OPEN)
+    opened_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    closed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    narrative: Mapped[str | None] = mapped_column(Text)  # uncapped, on purpose
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class Review(Base):
+    """The status meeting, owned by the janitor.
+
+    The chairman described it: "status meetings to discuss the goal and
+    hypothesis, alter requirements, and judge whether the deadline will be
+    met" — all three clauses. The janitor opens, numbers and emails it with
+    ZERO tokens, which is why it happens on exactly the days a busy company
+    most needs it. The CEO's variance narrative arrives on a reserved
+    governance run (wake reason kind ``review``). The chairman's six levers —
+    cut, add, reword, move the date, raise the budget, accept the slip — are
+    each recorded here with his reason, disclosed to the CEO, and shown at
+    the NEXT review beside what they bought.
+
+    A review with an empty board still fires: that is the one he most needs.
+    """
+
+    __tablename__ = "reviews"
+    __table_args__ = (
+        UniqueConstraint("project_id", "number"),
+        Index("ix_reviews_project_status", "project_id", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    number: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(16), default=ReviewStatus.OPEN)
+    scheduled_for: Mapped[datetime] = mapped_column(UTCDateTime)
+    opened_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    # The platform's snapshot at open: pace, commitment, budget, scope counts,
+    # audit coverage since the last review, and the prior review's decisions
+    # beside what they bought. Numbers come from the same producers every
+    # screen reads; this is a frozen copy so the meeting's record cannot
+    # drift as the week moves on.
+    numbers: Mapped[dict] = mapped_column(JSONVariant, default=dict)
+    narrative: Mapped[str | None] = mapped_column(Text)
+    recommended: Mapped[str | None] = mapped_column(Text)
+    narrative_run_id: Mapped[str | None] = mapped_column(String(40))
+    narrative_filed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # [{"kind", "reason", "detail", "at"}] — the levers pulled, in order.
+    decisions: Mapped[list] = mapped_column(JSONVariant, default=list)
+    closed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    closed_by_user_id: Mapped[str | None] = mapped_column(String(40))
+    nag_sent_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    escalated_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class AuditSample(Base):
+    """One observable task close, drawn for the chairman's sampled audit.
+
+    The janitor rolls the dice AFTER the close, server-side, at the rate the
+    constitution sets — so no run token can know which claim will be checked,
+    which is the entire mechanism. Every considered close gets a row (drawn or
+    skipped), so nothing is re-rolled and the review's coverage line has a
+    denominator. An expired sample records "not reviewed" and blocks nothing.
+    """
+
+    __tablename__ = "audit_samples"
+    __table_args__ = (
+        UniqueConstraint("task_id"),
+        Index("ix_audit_samples_project_status", "project_id", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"))
+    status: Mapped[str] = mapped_column(String(16), default=AuditSampleStatus.PENDING)
+    drawn_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    decided_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    note: Mapped[str | None] = mapped_column(Text)
 
 
 # ── memory ──────────────────────────────────────────────────────────────────────
@@ -579,6 +1049,7 @@ class RunQueue(Base):
     kind: Mapped[str] = mapped_column(String(24), default=RunKind.AGENT_RUN)
     trigger: Mapped[dict] = mapped_column(JSONVariant)
     task_id: Mapped[str | None] = mapped_column(String(40))
+    requirement_id: Mapped[str | None] = mapped_column(String(40))
     not_before: Mapped[datetime | None] = mapped_column(UTCDateTime)
     attempt: Mapped[int] = mapped_column(Integer, default=1)
     prior_run_id: Mapped[str | None] = mapped_column(String(40))
@@ -601,6 +1072,12 @@ class Run(Base):
     kind: Mapped[str] = mapped_column(String(24), default=RunKind.AGENT_RUN)
     trigger: Mapped[dict] = mapped_column(JSONVariant)
     task_id: Mapped[str | None] = mapped_column(String(40))
+    # What this run was FOR. 62% of runs in the audit carried no task id and
+    # consumed half the spend, because a planning run is unattributable by
+    # construction — so cost per deliverable was not computable, and the
+    # forecast needs it. A run stamps the requirement it served even when it
+    # served no single task.
+    requirement_id: Mapped[str | None] = mapped_column(String(40))
     attempt: Mapped[int] = mapped_column(Integer, default=1)
     prior_run_id: Mapped[str | None] = mapped_column(String(40))
     status: Mapped[str] = mapped_column(String(24), default=RunStatus.RUNNING)
@@ -729,6 +1206,48 @@ class Notice(Base):
     body: Mapped[str] = mapped_column(Text)
     consumed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     consumed_by_run_id: Mapped[str | None] = mapped_column(String(40))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class Experiment(Base):
+    """The chairman's suspicion, made answerable: is the employee layer worth
+    it? One goal, one chairman-authored requirement set, one constitution —
+    copied to N projects that differ in exactly one variable, the topology —
+    run concurrently and compared on cost per requirement met.
+
+    The requirement set and constitution are frozen here so "the arms were
+    identical" is a checkable fact about this row, not a claim about setup
+    care. One known asymmetry is reported rather than hidden: solo is exempt
+    from requester-owns-the-test, so a solo arm self-grades its observables —
+    a real cost of that topology, priced in the reading, not papered over.
+    """
+
+    __tablename__ = "experiments"
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    name: Mapped[str] = mapped_column(String(200))
+    goal: Mapped[str] = mapped_column(Text)
+    # [{statement, acceptance_test, stage, est_runs}] — chairman-authored,
+    # copied verbatim into every arm as accepted scope.
+    requirement_set: Mapped[list] = mapped_column(JSONVariant)
+    constitution: Mapped[dict] = mapped_column(JSONVariant)
+    chairman_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    status: Mapped[str] = mapped_column(String(16), default="running")
+    closed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class ExperimentArm(Base):
+    __tablename__ = "experiment_arms"
+    __table_args__ = (UniqueConstraint("experiment_id", "topology"),)
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    experiment_id: Mapped[str] = mapped_column(ForeignKey("experiments.id"))
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    topology: Mapped[str] = mapped_column(String(24))
+    # The stop rule's mark: budget breached with nothing met → halted and
+    # reported, never left burning.
+    stopped_reason: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 

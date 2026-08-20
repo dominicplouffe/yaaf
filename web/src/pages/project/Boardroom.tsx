@@ -80,6 +80,14 @@ export default function Boardroom({ projectId, dash }: { projectId: string; dash
   const ceoRun = (runs ?? []).find(
     (r) => r.status === "running" && !r.team_name && r.kind !== "success_check",
   );
+  // The wall the live session last hit. A refused task_create looks exactly
+  // like a CEO that decided not to bother, and the difference only existed in
+  // the run row nobody on this page was reading — which is how "add a task"
+  // could be answered with "done" and leave the board unchanged.
+  const chatSession = (runs ?? []).find(
+    (r) => r.kind === "chat_session" && r.status === "running",
+  );
+  const lastRefusal = chatSession?.last_refusal ?? null;
   const today = new Date().toDateString();
   const todayRuns = (runs ?? []).filter(
     (r) => r.started_at && new Date(r.started_at).toDateString() === today,
@@ -180,8 +188,38 @@ export default function Boardroom({ projectId, dash }: { projectId: string; dash
                   : `${fmtUnit(todayTokens, "tokens")} tokens`}{" "}
                 across {todayRuns.length} run{todayRuns.length === 1 ? "" : "s"}
               </div>
+              {lastRefusal && (
+                <div className="help" style={{ marginTop: 8 }}>
+                  <span className="chip serious">last refused</span>{" "}
+                  <span style={{ display: "block", marginTop: 4 }}>
+                    {clip(lastRefusal, 220)}
+                  </span>
+                  <span style={{ display: "block", marginTop: 4, opacity: 0.75 }}>
+                    A rule stopped something it tried. If it told you the thing was
+                    done, check the board before believing it.
+                  </span>
+                </div>
+              )}
             </div>
           </div>
+
+          {/* Why the company is quiet, in the room where that gets asked. It was
+              only ever on the Overview tab, so the chairman's way to find out
+              was to ask the CEO — which spends a run to get a guess. */}
+          {dash.status === "running" && dash.activity.brief.banner && (
+            <div className="card">
+              <div className="h">Why it is quiet</div>
+              <div style={{ fontSize: 13 }}>
+                <span className={`chip ${dash.activity.brief.tone}`}>
+                  {dash.activity.brief.chip}
+                </span>
+                <div style={{ marginTop: 6 }}>{dash.activity.brief.headline}</div>
+                <div className="help" style={{ marginTop: 4 }}>
+                  {dash.activity.brief.detail}
+                </div>
+              </div>
+            </div>
+          )}
 
           {pending.length > 0 && (
             <div className="card">

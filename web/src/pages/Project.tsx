@@ -23,10 +23,12 @@ import {
   statusBrief,
 } from "../ui";
 import Overview from "./project/Overview";
+import Plan from "./project/Plan";
 import Boardroom from "./project/Boardroom";
 import Work from "./project/Work";
 import Deliverables from "./project/Deliverables";
 import Records from "./project/Records";
+import Review from "./project/Review";
 import Settings from "./project/Settings";
 
 // Two groups, not one list of ten. Left is the daily job in the order it gets
@@ -35,7 +37,9 @@ import Settings from "./project/Settings";
 const TABS = [
   ["", "Overview"],
   ["boardroom", "Boardroom"],
+  ["plan", "Plan"],
   ["work", "Work"],
+  ["review", "Review"],
   ["deliverables", "Deliverables"],
 ] as const;
 
@@ -279,11 +283,13 @@ function ProjectBar({
     tab is the decision that runs out of time on its own. */
 function ActionStrip({
   projectId,
+  dash,
   approvals,
   hypotheses,
   onDecided,
 }: {
   projectId: string;
+  dash: Dashboard;
   approvals: ApprovalRow[];
   hypotheses: HypothesisRow[];
   onDecided: () => void;
@@ -292,10 +298,16 @@ function ActionStrip({
     .filter((a) => a.status === "pending")
     .sort((a, b) => a.expires_at.localeCompare(b.expires_at));
   const expiredBets = hypotheses.filter((h) => h.status === "expired" && !h.extended_once);
+  // Proposed scope is the CEO parked on the chairman: its report can say
+  // "waiting on R-01 acceptance" without saying where accepting happens, so
+  // this strip says it from every tab. Explore is excluded — it has no Plan
+  // tab to send anyone to, and proposals are refused there at the door.
+  const proposedScope = dash.mode !== "explore" && dash.requirements_proposed > 0
+    ? dash.requirements_proposed : 0;
 
-  if (pending.length === 0 && expiredBets.length === 0) return null;
+  if (pending.length === 0 && expiredBets.length === 0 && proposedScope === 0) return null;
 
-  const rest = pending.length - 1 + expiredBets.length;
+  const rest = pending.length - 1 + expiredBets.length + (proposedScope > 0 ? 1 : 0);
 
   if (pending.length > 0) {
     const a = pending[0];
@@ -319,6 +331,29 @@ function ActionStrip({
         </div>
         <DecideButtons approvalId={a.id} onDone={onDecided} />
         <NavLink to={`/projects/${projectId}/records/decisions`}>the full case →</NavLink>
+      </div>
+    );
+  }
+
+  if (proposedScope > 0) {
+    return (
+      <div className="strip">
+        <span className="chip warn">scope proposed</span>
+        <div className="grow">
+          <div>
+            <strong>
+              {proposedScope === 1
+                ? "A requirement awaits your acceptance"
+                : `${proposedScope} requirements await your acceptance`}
+            </strong>
+          </div>
+          <div className="sb">
+            The CEO proposed what “done” should mean and can create no work for it
+            until you accept or cut each one
+            {expiredBets.length > 0 && ` · ${expiredBets.length} more waiting on you`}
+          </div>
+        </div>
+        <NavLink to={`/projects/${projectId}/plan`}>decide on the Plan tab →</NavLink>
       </div>
     );
   }
@@ -478,6 +513,7 @@ export default function ProjectPage() {
 
       <ActionStrip
         projectId={projectId}
+        dash={dash}
         approvals={ctx.approvals}
         hypotheses={ctx.hypotheses}
         onDecided={() => {
@@ -509,7 +545,10 @@ export default function ProjectPage() {
       )}
 
       <nav className="tabs">
-        {TABS.map(([path, label]) => (
+        {/* Explore has no plan by design, so it gets no Plan tab — a tab that
+            only ever explains its own absence is clutter, not honesty. */}
+        {TABS.filter(([path]) => path !== "plan" || dash.mode !== "explore")
+          .map(([path, label]) => (
           <NavLink
             key={path}
             to={path === "" ? `/projects/${projectId}` : `/projects/${projectId}/${path}`}
@@ -531,7 +570,9 @@ export default function ProjectPage() {
       <Routes>
         <Route index element={<Overview ctx={ctx} asOf={at} error={error} />} />
         <Route path="boardroom" element={<Boardroom projectId={projectId} dash={dash} />} />
+        <Route path="plan" element={<Plan ctx={ctx} />} />
         <Route path="work" element={<Work ctx={ctx} />} />
+        <Route path="review" element={<Review ctx={ctx} />} />
         <Route path="deliverables" element={<Deliverables projectId={projectId} />} />
         <Route path="records/*" element={<Records ctx={ctx} />} />
         <Route path="settings" element={<Settings projectId={projectId} dash={dash} reload={reload} />} />

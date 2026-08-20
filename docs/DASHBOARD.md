@@ -137,11 +137,12 @@ Data; everything after is occasional.
 
 **The work**
 
-- **Brief** — the goal the CEO plans from, and the project's controlled domains
-  (the ones that can't count as external evidence).
-- **Money** — billing mode and credential, the budget caps and warn ratio, and
-  a live check that the credential actually works. Budget changes apply the
-  moment you save.
+- **Brief** — the goal the CEO plans from. (Controlled domains — the ones that
+  can't count as external evidence — are set when the project is created.)
+- **Money** — billing mode and credential, a live check that the credential
+  actually works, and the budget in force shown read-only. The numbers
+  themselves are constitution rules, so the card links to Rules in force rather
+  than offering a second editor for them.
 - **Data & credentials** — MCP data sources (one form: name, URL, roles, Save,
   plus a live check) and scoped variables/credentials for your teams.
 
@@ -151,19 +152,24 @@ Data; everything after is occasional.
 
 **Governance**
 
-- **Rules in force** — all 24 constitution rules, grouped and editable, each
-  with its own help text. Changes need a written reason and take effect from
-  the next agent call.
+- **Rules in force** — all 39 constitution rules, each with its own help text
+  and its stock default, behind six tabs: Money, Pace & brakes, How work is
+  run, Autonomy, Memory, Rhythm & reporting. Edits span tabs; a tray at the
+  foot of the pane lists every pending one, takes the required written reason,
+  and shows before/after before it lands. Changes take effect from the next
+  agent call. The change history and a raw-JSON escape hatch fold away at the
+  bottom. Deep link with `?s=rules&t=<tab>`.
 
 **Housekeeping**
 
 - **Duplicate & export** — **clone** into a running twin on this install
   (credentials and all, optionally aimed at a new goal), or **export** a
   portable setup file with secrets and plumbing stripped.
-- **Advanced** — runtime (`agent_sdk` or `mock`), the CEO's heartbeat cadence,
-  and the webhook signing secrets. Less common config — a daily wall-clock wake
-  (`ceo_daily_at` + `timezone`), `max_concurrent_runs` — is set through
-  `yaaf configure` or `PATCH /admin/projects/{id}`.
+- **Advanced** — runtime (`agent_sdk` or `mock`) and the webhook signing
+  secrets. The CEO's cadence (`ceo_heartbeat_hours`, `ceo_daily_at`,
+  `timezone`) and `max_concurrent_runs` are constitution rules, not config:
+  they live under Rules in force, and `PATCH /admin/projects/{id}` refuses them
+  with a 422 pointing at the amendments endpoint.
 
 ---
 

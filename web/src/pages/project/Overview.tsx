@@ -202,6 +202,76 @@ function SpendByTeam({ projectId, usdMode }: { projectId: string; usdMode: boole
 
 /** The first tab answers the daily question in order: needs you → is it
     working → what came out → what to watch → the money → the org. */
+/** The mode-shaped fact, one per mode: Explore counts its window down,
+    Deliver offers the completion gate the moment everything is true, Operate
+    names the turn of the rhythm it is on. */
+function ModeStrip({ dash, reload }: { dash: import("../../api").Dashboard;
+  reload: () => void }) {
+  const [confirming, setConfirming] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (dash.mode === "deliver" && dash.delivery_outstanding !== null
+      && dash.delivery_outstanding.length === 0) {
+    return (
+      <div className="strip" style={{ marginTop: 12, borderLeftColor: "var(--good)" }}>
+        <div className="grow">
+          <b>Everything is true. This delivery is ready for your confirmation.</b>
+          <div className="sb">
+            Completing writes the receipt — including which requirements failed before
+            they passed — and closes the company down cleanly. Until you do, it keeps
+            running and spending.
+          </div>
+          {error && <div className="error">{error}</div>}
+        </div>
+        {confirming ? (
+          <>
+            <button className="small primary" onClick={async () => {
+              try {
+                await post(`/admin/projects/${dash.id}/complete`);
+                reload();
+              } catch (e) { setError((e as Error).message); }
+            }}>✓ Yes, complete it</button>
+            <button className="small" onClick={() => setConfirming(false)}>not yet</button>
+          </>
+        ) : (
+          <button className="small primary" onClick={() => setConfirming(true)}>
+            Complete the project…
+          </button>
+        )}
+      </div>
+    );
+  }
+  if (dash.mode === "explore" && dash.deadline) {
+    const daysLeft = Math.ceil(
+      (new Date(dash.deadline).getTime() - Date.now()) / 86_400_000);
+    return (
+      <div className={`strip${daysLeft <= 0 ? " serious" : ""}`} style={{ marginTop: 12 }}>
+        <div className="grow">
+          <b>{daysLeft > 0
+            ? `${daysLeft} day${daysLeft === 1 ? "" : "s"} left in the window.`
+            : "The window has closed."}</b>
+          <div className="sb">
+            Open scope, bounded time — {daysLeft > 0
+              ? "what exists by then is what this project is judged on."
+              : "the judgment is yours: stop it, set a new date in Settings, or " +
+                "convert what worked into a Deliver project."}
+          </div>
+        </div>
+      </div>
+    );
+  }
+  if (dash.mode === "operate" && dash.cycle) {
+    return (
+      <p className="help" style={{ margin: "12px 0 0" }}>
+        Cycle {dash.cycle.ordinal}, open since {fmtWhen(dash.cycle.opened_at)} — each
+        cycle plans fresh, and the CEO opens it by reading the last three cycles'
+        narratives.
+      </p>
+    );
+  }
+  return null;
+}
+
 export default function Overview({
   ctx,
   asOf,
@@ -211,7 +281,7 @@ export default function Overview({
   asOf: Date | null;
   error: string | null;
 }) {
-  const { projectId, dash, approvals, hypotheses, org, reloadApprovals, reloadOrg } = ctx;
+  const { projectId, dash, approvals, hypotheses, org, reload, reloadApprovals, reloadOrg } = ctx;
   const { data: tasks } = usePoll(
     () => get<TaskRow[]>(`/observe/projects/${projectId}/board`),
     10000,
@@ -403,6 +473,8 @@ export default function Overview({
         <p className="help" style={{ margin: "10px 0 0" }}>Nothing waiting on you here.</p>
       )}
 
+      <ModeStrip dash={dash} reload={reload} />
+
       {/* Is it working? The question a chairman asks first and the product
           answered nowhere: runs that ended early were a grey aside on a tab
           three clicks away, in the same weight as everything else. */}
@@ -438,10 +510,18 @@ export default function Overview({
             </div>
             {/* The denominator is the whole point: 55 means nothing on its own,
                 and showing it without "of 55" is exactly how a company that had
-                spent its entire day's allowance read as a busy one. */}
+                spent its entire day's allowance read as a busy one.
+
+                Three separate gates count runs — the day, the trailing hour,
+                and the slice reserved for governance — and any of them can be
+                the reason this tile is the answer. */}
             <div
               className={`tile${
-                dash.activity.blocked_by === "daily_runs" ? " alert" : ""
+                ["daily_runs", "pacing", "governance_reserve"].includes(
+                  dash.activity.blocked_by ?? "",
+                )
+                  ? " alert"
+                  : ""
               }`}
             >
               <div className="label">Runs today</div>
@@ -454,7 +534,11 @@ export default function Overview({
               <div className="sub">
                 {dash.activity.blocked_by === "daily_runs"
                   ? `capped — resets at ${dash.activity.daily_runs.resets_at.slice(11, 16)} UTC`
-                  : `${health.clean} finished cleanly`}
+                  : dash.activity.blocked_by === "pacing"
+                    ? `pacing — ${dash.activity.pacing.used} of ${dash.activity.pacing.cap} this hour`
+                    : dash.activity.blocked_by === "governance_reserve"
+                      ? `ordinary work done — last ${dash.activity.governance_reserve.reserved} reserved`
+                      : `${health.clean} finished cleanly`}
                 {/* Never let a cap read as a total. */}
                 {(runs ?? []).length >= 200 && " · newest 200 runs"}
               </div>
@@ -463,9 +547,11 @@ export default function Overview({
               <div className="label">Ended early</div>
               <div className="value">{health.early.length}</div>
               <div className="sub">
-                {health.todays.length > 0
-                  ? `${Math.round(health.ratio * 100)}% of what you paid for`
-                  : "—"}
+                {health.todays.length === 0
+                  ? "—"
+                  : health.faults.length === 0
+                    ? "none faulted — stopped on purpose"
+                    : `${Math.round(health.ratio * 100)}% of what you paid for`}
               </div>
             </div>
             <div className="tile">
@@ -487,9 +573,11 @@ export default function Overview({
             <div className="card" style={{ marginTop: 12 }}>
               <div style={{ fontSize: 13.5, lineHeight: 1.6 }}>
                 <strong>{earlyRunSentence(health)}</strong>{" "}
-                {health.ratio >= 0.2
-                  ? "Under one in five is normal wear. This much means something is standing in the way — a dead tool mount, a wrong credential, or work an agent cannot actually do."
-                  : "That is within normal wear for unattended work."}
+                {health.faults.length === 0
+                  ? "Every one of them was stopped on purpose, so nothing here points at a fault — though their tokens were still spent."
+                  : health.ratio >= 0.2
+                    ? "Under one in five is normal wear. This much means something is standing in the way — a dead tool mount, a wrong credential, or work an agent cannot actually do."
+                    : "That is within normal wear for unattended work."}
               </div>
               <div className="actions" style={{ marginTop: 10 }}>
                 <Link to={`/projects/${projectId}/records/runs`}>see what happened →</Link>

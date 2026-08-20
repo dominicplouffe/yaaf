@@ -82,8 +82,19 @@ current token, `""` removes it, anything else rotates it.
 curl -X POST "$YAAF_API/admin/projects/$PROJECT/mcp_servers" \
   -H "Authorization: Bearer $YAAF_ADMIN_TOKEN" \
   -d '{"name": "warehouse", "url": "https://mcp.example.com/sse",
-       "bearer": "…", "roles": ["researcher", "engineer"]}'
+       "bearer": "…", "roles": ["researcher", "engineer"],
+       "access": "bulk"}'
 ```
+
+**`access` decides what a result costs.** `inline` (the default) mounts the
+source as `mcp__<name>__*` tools, so every result lands in the model's context
+and is billed by the token — right for a source you ask small questions of.
+`bulk` does not mount it at all: agents reach it through `data_fetch`, which
+writes the full result to a workspace file and hands back a path and a preview,
+and they aggregate that file with code. Mark anything that serves rows —
+exports, listings, logs — as bulk. It is enforcement, not advice: for a bulk
+source the expensive path does not exist, so no prompt has to talk an agent out
+of taking it.
 
 ## Slack
 

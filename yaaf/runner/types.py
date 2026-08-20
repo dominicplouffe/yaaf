@@ -13,7 +13,8 @@ class RunJob:
     kind: str  # RunKind
     trigger: dict
     task_id: str | None
-    attempt: int
+    requirement_id: str | None = None
+    attempt: int = 1
     # Assembled by the runner from the DB before execution:
     system_prompt: str = ""
     context_pack: dict = field(default_factory=dict)
@@ -21,6 +22,11 @@ class RunJob:
     effort: str = "high"
     tool_permissions: dict = field(default_factory=dict)
     timeout_s: int = 1800
+    # Hard per-run ceiling handed to the agent SDK. 0 = unbounded.
+    max_usd: float = 0.0
+    # Constitution run_token_budget: the model is told its token budget so it
+    # paces itself and wraps up before the line. 0 = off.
+    task_budget_tokens: int = 0
     # Per-role egress: set when the role has its own scoped proxy port
     # (yaaf/server/egress.py); None = default port + global allowlist.
     egress_proxy_url: str | None = None
