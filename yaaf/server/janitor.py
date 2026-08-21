@@ -51,6 +51,7 @@ from yaaf.core.models import (
     Hypothesis,
     HypothesisStatus,
     LedgerEntry,
+    LedgerKind,
     MemoryScope,
     Notice,
     NoticeKind,
@@ -149,7 +150,7 @@ def _janitor_project(session: Session, project: Project) -> None:
     release_dead_claims(session, project, cons)
     elect_missing_leads(session, project)
     check_plan(session, project, cons)
-    check_finished_requirements(session, project)
+    check_finished_requirements(session, project, cons)
     check_stalled_requirements(session, project)
     nag_observable_requirements(session, project, cons)
     check_commitments(session, project, cons)
@@ -464,7 +465,8 @@ def _work_closed_since_last_check(session: Session, requirement, tasks) -> bool:
     return any(t.updated_at and t.updated_at > last for t in tasks)
 
 
-def check_finished_requirements(session: Session, project: Project) -> int:
+def check_finished_requirements(session: Session, project: Project,
+                                cons: ConstitutionDoc) -> int:
     """A requirement whose work has all closed goes to the platform to be
     judged — never to the agents who did it.
 
@@ -524,6 +526,21 @@ def check_finished_requirements(session: Session, project: Project) -> int:
                 requirement_id=requirement.id,
             ))
             note = "all work closed; the platform is running the acceptance test"
+        elif cons.verdict_policy == "ceo_judgment":
+            # The dial hands unverifiable closes to the CEO's judgment: tell it
+            # to judge instead of parking on a desk nobody is required to
+            # check. Every self-judgment is disclosed to the chairman in full.
+            note = "all work closed; awaiting the CEO's judgment on the observable"
+            _notice_ceo(
+                session, project, NoticeKind.GOAL_CHANGED,
+                f"{requirement.key} has no work left open and its acceptance test is an "
+                f"observable the platform cannot run: {requirement.statement[:300]}\n"
+                "The constitution grants you the verdict (verdict_policy: "
+                "ceo_judgment). Look at what was actually produced and judge it "
+                "honestly with scope_act — kind 'verdict', ok true or false, and say "
+                "what you saw. Your judgment is disclosed to the chairman in full, "
+                "and the spot-audit exists for exactly this close.",
+            )
         else:
             note = "all work closed; waiting on the chairman to confirm the observable"
             _notice_ceo(
@@ -1175,7 +1192,7 @@ def _harvest_reaped_usage(session: Session, project: Project, run: Run) -> bool:
         LedgerEntry(
             id=ids.new_id(ids.LEDGER),
             project_id=project.id,
-            kind="model_usage",
+            kind=LedgerKind.MODEL_USAGE,
             tokens_in=run.tokens_in,
             tokens_out=run.tokens_out,
             cache_creation_tokens=run.cache_creation_tokens,
@@ -1371,7 +1388,12 @@ def month_to_date(session: Session, project_id: str) -> tuple[float, int]:
                          + LedgerEntry.cache_read_tokens),
                 0,
             ),
-        ).where(LedgerEntry.project_id == project_id, LedgerEntry.at >= month_start)
+        ).where(LedgerEntry.project_id == project_id,
+                LedgerEntry.at >= month_start,
+                # Revenue is money coming IN — summing it here once auto-paused
+                # a project for earning. Spend-by-default: any future kind
+                # counts as spend unless it is revenue.
+                LedgerEntry.kind != LedgerKind.REVENUE)
     ).one()
     return float(usd), int(tokens)
 
@@ -1422,6 +1444,40 @@ def enforce_budget(session: Session, project: Project, cons: ConstitutionDoc) ->
                 f"({spent:,.0f}/{cap:,.0f} {unit}). Decide what you are cutting and tell "
                 "the chairman the number — before the platform pauses the project for you.",
             )
+    _warn_external_envelope(session, project, cons)
+
+
+def _warn_external_envelope(session: Session, project: Project,
+                            cons: ConstitutionDoc) -> None:
+    """The real-world spend envelope, warned like the model budget — in every
+    billing mode, because a token-billed company still spends dollars in the
+    world. Never pauses anything: the wall itself is enforced where a purchase
+    is cleared and a spend is booked."""
+    cap = cons.external_monthly_usd_cap
+    if cap <= 0:
+        return
+    # Cheapest check first: once the month's warning exists, every subsequent
+    # 15s tick skips the ledger SUM entirely for the rest of the month.
+    month_start = utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    already = session.execute(
+        select(func.count(Notice.id)).where(
+            Notice.project_id == project.id,
+            Notice.kind == NoticeKind.EXTERNAL_SPEND_WARNING,
+            Notice.created_at >= month_start,
+        )
+    ).scalar_one()
+    if already:
+        return
+    spent = policy.external_spent_this_month(session, project.id)
+    if spent < cap * cons.budget_warn_ratio:
+        return
+    _notice_ceo(
+        session, project, NoticeKind.EXTERNAL_SPEND_WARNING,
+        f"${spent:,.2f} of the ${cap:,.0f} real-world spend envelope is used this "
+        "month. Purchases that would cross the wall will be refused with the "
+        "arithmetic — plan the remaining spend, or recommend an amendment to the "
+        "chairman with the numbers.",
+    )
 
 
 # ── memory pressure (informational; enforcement is at memory add) ──────────────

@@ -1,6 +1,6 @@
 """Invariant selftests: project-level data sources — one save wires the URL,
-the secrets, the runner merge, and the egress derivation; garbage is
-unstorable; delete cleans up completely."""
+the secrets, and the runner merge; garbage is unstorable; delete cleans up
+completely."""
 
 from __future__ import annotations
 
@@ -11,7 +11,6 @@ from yaaf.core import ids
 from yaaf.core.db import db_session
 from yaaf.core.models import Agent, Project, RunKind, RunQueue, Secret
 from yaaf.runner import daemon
-from yaaf.server import egress
 from yaaf.server.api import admin as admin_module
 from yaaf.server.contextpack import role_version_for
 
@@ -72,25 +71,6 @@ def test_one_save_wires_config_secrets_and_runner(client):
     assert "Mounted as tools: ppc (mcp__ppc__*)" in job.system_prompt
     # The cost lesson rides with the sources, not with every run.
     assert "DATA HANDLING:" in job.system_prompt and "data_fetch" in job.system_prompt
-    # The role routes through its scoped egress port because a host is mapped.
-    assert job.egress_proxy_url is not None
-    assert job.egress_proxy_url.endswith(str(egress.role_port("worker")))
-
-
-def test_egress_derives_hosts_and_ports(client):
-    project = make_project(client, start=False)
-    assert _save(client, project["id"]).status_code == 200
-    with db_session() as session:
-        assignments, files = egress.build(session)
-    assert "worker" in assignments
-    assert ".data.example.com" in files["allowlist_worker.txt"].splitlines()
-    assert "acl ok_ports_worker port 80 443 3845" in files["roles.conf"]
-    # The scoped port keeps the platform floor: without the global allowlist
-    # (where the model API lives) a scoped role's sandbox cannot run at all.
-    rules = files["roles.conf"].splitlines()
-    assert 'acl dst_floor dstdomain "/etc/squid/allowlist.txt"' in rules
-    assert rules.index("http_access allow port_worker dst_floor") \
-        < rules.index("http_access deny port_worker")
 
 
 def test_a_bulk_source_reaches_the_sandbox_marked_and_documented(client):
@@ -116,8 +96,6 @@ def test_a_bulk_source_reaches_the_sandbox_marked_and_documented(client):
     # Described as bulk, and NOT advertised as tools that do not exist.
     assert "Bulk-only" in job.system_prompt and "ppc" in job.system_prompt
     assert "mcp__ppc__*" not in job.system_prompt
-    # Egress still opens for it — data_fetch reaches it over the same proxy.
-    assert job.egress_proxy_url.endswith(str(egress.role_port("worker")))
 
     # Saving without the field keeps every existing source exactly as it was.
     assert _save(client, project["id"], name="crm").status_code == 200
@@ -254,27 +232,3 @@ def test_delete_cleans_up_completely(client):
     assert client.delete(f"/admin/projects/{project['id']}/mcp_servers/ppc",
                          headers=ADMIN).status_code == 404
 
-
-def test_egress_watch_applies_only_on_change(client, tmp_path, monkeypatch):
-    hups: list[bool] = []
-    monkeypatch.setattr(daemon, "_reload_proxy", lambda: hups.append(True))
-    project = make_project(client, start=False)
-    _save(client, project["id"])
-
-    with db_session() as session:
-        first = daemon.egress_watch_once(session, tmp_path, None)
-    assert (tmp_path / "roles.conf").exists() and len(hups) == 1
-
-    # Unchanged config: no rewrite, no HUP — even if the files vanished.
-    (tmp_path / "roles.conf").unlink()
-    with db_session() as session:
-        second = daemon.egress_watch_once(session, tmp_path, first)
-    assert second == first
-    assert not (tmp_path / "roles.conf").exists() and len(hups) == 1
-
-    # A config change re-applies.
-    client.delete(f"/admin/projects/{project['id']}/mcp_servers/ppc", headers=ADMIN)
-    with db_session() as session:
-        third = daemon.egress_watch_once(session, tmp_path, second)
-    assert third != second
-    assert (tmp_path / "roles.conf").exists() and len(hups) == 2

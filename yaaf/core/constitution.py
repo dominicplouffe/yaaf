@@ -164,9 +164,10 @@ class ConstitutionDoc(BaseModel):
         help="With no verified external evidence for this long, only evidence-producing "
              "tasks may be created until proof lands.")
     require_evidence_verification: bool = _rule(
-        True, group="Evidence", label="External evidence must be verified",
-        help="Evidence counts only once the platform has fetched and checked it. Evidence "
-             "nobody can check is opinion.")
+        False, group="Evidence", label="External evidence must be verified",
+        help="On, evidence counts only once the platform has fetched and checked it — "
+             "evidence nobody can check is opinion. Off by default: most projects verify "
+             "with the data at their disposal. The 'Show me proof' preset turns it on.")
 
     # Autonomy thresholds (lana §6)
     approval_threshold_usd: float = _rule(
@@ -181,6 +182,45 @@ class ConstitutionDoc(BaseModel):
         choices=["deny", "approve"],
         help="'deny' or 'approve'. Default-deny: silence is not consent.")
 
+    # The authority dial (CEO Charter, stage B — docs/AUTONOMY.md). Integrity
+    # rules never move; these decide only WHO holds each verb. 'chairman' is
+    # today's behavior; 'ceo' hands the verb to the CEO, exercised through the
+    # same machinery, with every use audited and disclosed. Autonomy is
+    # granted by the constitution — the CEO still cannot edit its own rulebook,
+    # and the chairman's routes, veto and pause never close.
+    plan_authority: str = _rule(
+        "chairman", group="Autonomy", label="Who accepts scope into the plan",
+        choices=["chairman", "ceo"],
+        help="'chairman': proposals wait for your click (today's behavior). 'ceo': the "
+             "CEO accepts its own proposals — the plan gate still runs the same "
+             "arithmetic, and every acceptance lands in your Decisions record.")
+    scope_authority: str = _rule(
+        "chairman", group="Autonomy", label="Who may change the plan",
+        choices=["chairman", "ceo"],
+        help="Cut, reopen, restage, reestimate, reword, unsequence. 'chairman': yours "
+             "alone (the CEO can still execute your boardroom orders as directives). "
+             "'ceo': the CEO wields them itself, on the record, reversibly.")
+    commitment_authority: str = _rule(
+        "chairman", group="Autonomy", label="Who signs the delivery date",
+        choices=["chairman", "ceo"],
+        help="'chairman': a proposed commitment waits for you. 'ceo': proposing adopts "
+             "the platform's own projected date immediately — the CEO still cannot "
+             "write a date, only accept the arithmetic's.")
+    verdict_policy: str = _rule(
+        "chairman", group="Autonomy", label="Who judges unverifiable closes",
+        choices=["chairman", "ceo_judgment"],
+        help="Observable acceptance tests a script cannot check. 'chairman': they park "
+             "on your desk. 'ceo_judgment': the CEO judges and keeps going — and every "
+             "self-judged close is disclosed to you in full, so nothing is quietly "
+             "trusted.")
+    capability_authority: str = _rule(
+        "chairman", group="Autonomy", label="Who delegates the credentials",
+        choices=["chairman", "ceo"],
+        help="Whatever you store, the company can use — this decides who scopes it to "
+             "roles. 'chairman': grants are yours (the CEO files needs). 'ceo': the "
+             "CEO re-scopes existing credentials across its own team itself, on the "
+             "record. Creating a credential is always yours — you hold the values.")
+
     # Budgets — native unit of the project's billing mode
     monthly_usd_cap: float = _rule(
         1000.0, ge=0, group="Budgets", label="Monthly budget (USD)",
@@ -192,6 +232,23 @@ class ConstitutionDoc(BaseModel):
         0.8, gt=0, lt=1, group="Budgets", label="Warn at this share of the budget",
         help="The CEO is told to cut burn at this point — before the platform pauses the "
              "project for it.")
+    # The spend envelope (CEO Charter, stage C — docs/AUTONOMY.md). Real-world
+    # purchases, as distinct from model spend. There is no spend_authority
+    # switch on purpose: the money dial IS these numbers, and a switch would
+    # only duplicate them. Inside the envelope an autonomous CEO buys without
+    # asking; outside it, the existing approval machinery answers.
+    external_monthly_usd_cap: float = _rule(
+        500.0, ge=0, group="Budgets", label="Monthly real-world spend (USD)",
+        help="USD the company may spend in the world per month — purchases, "
+             "subscriptions, services — separate from the model budget and enforced "
+             "in EVERY billing mode (token-billed projects used to meter this and "
+             "never cap it). A purchase that would cross it is refused with the "
+             "arithmetic; raising it is an amendment. 0 turns it off.")
+    max_usd_per_purchase: float = _rule(
+        100.0, ge=0, group="Budgets", label="Most one purchase may be, unasked",
+        help="USD. A single purchase above this needs an approval even below the "
+             "approval threshold — the line between running the company and "
+             "surprising its owner. 0 turns the per-purchase line off.")
 
     # Memory (lana §6b) — caps are refusals; curation is explicit, never auto-evict
     memory_cap_project: int = _rule(

@@ -57,7 +57,7 @@ _client = httpx.Client(
     base_url=API,
     timeout=30,
     headers={"Authorization": f"Bearer {TOKEN}"},
-    # The platform API is reached directly, never through the egress proxy.
+    # The platform API is reached directly, ignoring any ambient proxy env.
     trust_env=False,
 )
 
@@ -221,8 +221,11 @@ async def t_messages_read(args):
     "Post to one of your channels. Boardroom: CEO<->chairman. Leadership: CEO+leads. "
     "Team room: your team. Use thread_id to reply in a thread. An unprompted boardroom "
     "status is refused between the chairman's cadence slots (see the `chairman` block in "
-    "your context); set override to 'blocker', 'budget' or 'approval' only when it truly "
-    "cannot wait — overrides are recorded and he sees them.",
+    "your context); set override to 'blocker', 'budget', 'approval' or 'question' only "
+    "when it truly cannot wait — overrides are recorded and he sees them. 'question' is "
+    "the ask verb: when you feel strongly enough that you want his answer before "
+    "deciding, ask him plainly. Allowed always, required never — when in doubt, decide "
+    "and report.",
     {"channel_id": str, "body": str, "thread_id": str, "override": str},
 )
 async def t_message_post(args):
@@ -236,20 +239,66 @@ async def t_message_post(args):
 
 @tool(
     "directive_file",
-    "CEO: turn a standing instruction the chairman gave you in the boardroom into enforced "
-    "policy, instead of a memory you have to remember. Cite the message he wrote it in. Use "
-    "this the moment he changes how or how often he wants to be reported to — a rule kept in "
-    "memory does not survive into the next run. Settable: "
-    "chairman_report_interval_hours (0 disables), chairman_report_window_local ('09:00-20:00'), "
-    "timezone (IANA name).",
-    {"from_message_id": str, "changes": dict, "reason": str},
+    "CEO: turn something the chairman said in the boardroom into something the platform "
+    "does, citing the message he wrote it in. Two shapes, pass exactly one. "
+    "`changes` files reporting policy the moment he changes how or how often he wants to "
+    "be reported to — a rule kept in memory does not survive into the next run. Settable: "
+    "chairman_report_interval_hours (0 disables), chairman_report_window_local "
+    "('09:00-20:00'), timezone (IANA name). "
+    "`action` EXECUTES a plan order he gave — 'cut R-07', 'reopen R-04', 'move R-02 to "
+    "stage 1', 'accept R-09', 'that estimate should be 12 runs', 'reword R-03 to …', "
+    "'R-05 should not wait on R-02' — as "
+    '{"kind": "accept|cut|reopen|restage|reestimate|reword|unsequence", '
+    '"requirement_key": "R-07", and for restage "stage", for reestimate "est_runs", '
+    'for reword "statement", for unsequence "depends_on_key"}. '
+    "It runs on HIS cited authority through the same machinery as his own buttons, and is "
+    "echoed back to him threaded to his message — use it the moment he gives an order "
+    "instead of asking him to click it himself.",
+    {"from_message_id": str, "changes": dict, "action": dict, "reason": str},
 )
 async def t_directive_file(args):
-    return _text(_call("POST", "/agent/directives", {
-        "from_message_id": args["from_message_id"],
-        "changes": args["changes"],
-        "reason": args["reason"],
-    }))
+    payload = {"from_message_id": args["from_message_id"], "reason": args["reason"]}
+    if args.get("changes"):
+        payload["changes"] = args["changes"]
+    if args.get("action"):
+        payload["action"] = args["action"]
+    return _text(_call("POST", "/agent/directives", payload))
+
+
+@tool(
+    "scope_act",
+    "CEO only, and only where the constitution's authority dial grants it (your "
+    "constitution prose says which verbs you hold; everything you don't hold is a 403 "
+    "with the legitimate path named). Exercise a scope verb as YOUR OWN authority: "
+    '{"kind": "accept|cut|reopen|restage|reestimate|reword|unsequence|verdict", '
+    '"requirement_key": "R-07", plus for restage "stage", for reestimate "est_runs", '
+    'for reword "statement", for unsequence "depends_on_key", for verdict "ok" (bool)}. '
+    "verdict is for an UNVERIFIABLE observable in checking — judge it honestly and keep "
+    "going; every self-judgment is disclosed to the chairman in full. Every use is "
+    "audited and sent to the chairman; all of it is reversible. Spend this authority "
+    "the way you would want it audited. This is not the tool for executing a chairman "
+    "boardroom order — that is directive_file, citing his message, and works in every "
+    "mode.",
+    {"action": dict, "reason": str},
+)
+async def t_scope_act(args):
+    return _text(_call("POST", "/agent/scope",
+                       {"action": args["action"], "reason": args["reason"]}))
+
+
+@tool(
+    "commitment_propose",
+    "CEO only. Ask to commit to a delivery date. You do not and cannot write the date: "
+    "the platform stamps its own projection from pace and scope, and the chairman "
+    "accepts it (with that date or his own) or declines. Nothing binds until he does. "
+    "Optional note travels with the proposal.",
+    {"note": str},
+)
+async def t_commitment_propose(args):
+    payload = {}
+    if args.get("note"):
+        payload["note"] = args["note"]
+    return _text(_call("POST", "/agent/commitments", payload))
 
 
 @tool("memory_search", "Search durable memory. Query it before repeating work. "
@@ -370,13 +419,142 @@ async def t_approvals_list(args):
 
 @tool(
     "spend_book",
-    "Book an external dollar spend to the ledger. Spends at/above the approval threshold "
-    "need an approved approval_id.",
+    "Book a real-world dollar spend you made with your own tooling. Every spend faces "
+    "the same envelope as purchase_begin: the monthly external cap is a hard wall, and "
+    "amounts over the per-purchase line or the approval threshold need an approved "
+    "approval_id. For a purchase you are ABOUT to make, prefer purchase_begin/"
+    "purchase_finish — it checks the envelope before money moves and books itself. "
+    "Every real purchase gets booked, one way or the other: an unbooked spend is what "
+    "the chairman's spot-audit exists to catch.",
     {"usd": float, "note": str, "approval_id": str},
 )
 async def t_spend_book(args):
     payload = {k: v for k, v in args.items() if v not in (None, "")}
     return _text(_call("POST", "/agent/ledger/spend", payload))
+
+
+@tool(
+    "assist_request",
+    "Any agent. A step only a HUMAN can do is blocking you — a captcha, a 2FA code, a "
+    "KYC form, a signature, an account only the chairman can touch. Never try to defeat "
+    "a security challenge; hand it over. Before calling: save your session state to the "
+    "workspace (playwright storage_state / cookies, the URL you were on, what remains "
+    "to do) — the workspace persists across runs, so the next run resumes where you "
+    "stopped. Say exactly WHAT you need ('the 6-digit code SMS'd to your phone', "
+    "'solve the captcha at this URL and tell me done') and WHERE. His answer arrives "
+    "verbatim in the decision that wakes you; unanswered it expires to no, so also "
+    "plan the work that does not depend on it.",
+    {"what": str, "where": str},
+)
+async def t_assist_request(args):
+    payload = {k: v for k, v in args.items() if v not in (None, "")}
+    return _text(_call("POST", "/agent/assists", payload))
+
+
+@tool(
+    "account_record",
+    "REQUIRED whenever you create an account/identity anywhere in the world — a signup, "
+    "a registration, a service login. Record: service, username, owner ('project' when "
+    "it hangs off an identity the project owns like its own email/domain; 'chairman' "
+    "when a responsible human is the name behind it — when unsure, ask in the "
+    "boardroom), the NAME of the stored credential (never a value — store values as "
+    "secrets via a need, or note where they live), url, and a note with what matters "
+    "at wind-down (plan tier, renewal date, how to cancel). An account nobody wrote "
+    "down is an orphan the owner discovers on a bill.",
+    {"service": str, "username": str, "owner": str, "credential_name": str,
+     "url": str, "requirement_id": str, "note": str},
+)
+async def t_account_record(args):
+    payload = {k: v for k, v in args.items() if v not in (None, "")}
+    return _text(_call("POST", "/agent/accounts", payload))
+
+
+@tool(
+    "accounts_list",
+    "The account registry: every identity the company has created in the world. Read "
+    "it before signing up anywhere (it may already exist) and when winding anything "
+    "down.",
+    {},
+)
+async def t_accounts_list(args):
+    return _text(_call("GET", "/agent/accounts"))
+
+
+@tool(
+    "need_request",
+    "CEO only. File a NEED with the chairman: a capability the company lacks — 'I need "
+    "AWS access, give me a key', 'we need a Stripe account', 'SMTP credentials for the "
+    "writer'. It reaches him where he reads (boardroom, Slack, email) and he fulfills "
+    "it in one motion: the credential lands as an env var for the roles you name, and "
+    "you are woken with the decision. Unanswered, it expires to no — plan the work "
+    "that does not depend on it rather than waiting. Say WHY (what work it unblocks), "
+    "suggest a credential name, name the roles, and estimate monthly cost honestly.",
+    {"title": str, "why": str, "est_usd_per_month": float,
+     "suggested_secret_name": str, "roles": list},
+)
+async def t_need_request(args):
+    payload = {k: v for k, v in args.items() if v not in (None, "", [])}
+    return _text(_call("POST", "/agent/needs", payload))
+
+
+@tool(
+    "credentials_list",
+    "CEO only. The credential roster: every service credential the company holds and "
+    "which roles receive it — names and scopes only, never values. Read it before "
+    "filing a need (the capability may already exist) or delegating one.",
+    {},
+)
+async def t_credentials_list(args):
+    return _text(_call("GET", "/agent/credentials"))
+
+
+@tool(
+    "credential_scope",
+    "CEO only, and only where the constitution grants capability_authority: ceo — "
+    "otherwise a 403 naming the paths (file a need, or the chairman's boardroom order "
+    "as a directive). Delegate an existing credential across your team: add_roles / "
+    "remove_roles by role slug, with a reason. The value never moves — only who "
+    "receives it at run time. Audited and sent to the chairman; effective on each "
+    "role's next run.",
+    {"name": str, "add_roles": list, "remove_roles": list, "reason": str},
+)
+async def t_credential_scope(args):
+    payload = {k: v for k, v in dict(args).items()
+               if k != "name" and v not in (None, "", [])}
+    return _text(_call("POST", f"/agent/credentials/{args['name']}/scope", payload))
+
+
+@tool(
+    "purchase_begin",
+    "Clear a real-world purchase against the spend envelope BEFORE paying — a refusal "
+    "here costs nothing; the same refusal after paying costs the money. Records the "
+    "purchase with a stable idempotency_key so a crash or retry can never buy twice: "
+    "if the response says duplicate/completed, the money already moved — do NOT pay "
+    "again. Then pay with whatever tool fits (the platform never holds the card for "
+    "you), and call purchase_finish with the receipt. usd over the per-purchase line "
+    "or the approval threshold needs an approved approval_id; the monthly external "
+    "cap is a wall no approval overrides — recommend an amendment instead.",
+    {"vendor": str, "description": str, "usd": float, "idempotency_key": str,
+     "requirement_id": str, "approval_id": str},
+)
+async def t_purchase_begin(args):
+    payload = {k: v for k, v in args.items() if v not in (None, "")}
+    return _text(_call("POST", "/agent/purchases", payload))
+
+
+@tool(
+    "purchase_finish",
+    "Close a purchase opened with purchase_begin. ok=true books the ledger entry and "
+    "keeps the receipt (quote the vendor's own confirmation — what was bought, from "
+    "whom, for how much); ok=false records the failure and books nothing. Finishing "
+    "twice never double-books.",
+    {"purchase_id": str, "ok": bool, "receipt": str, "external_ref": str},
+)
+async def t_purchase_finish(args):
+    payload = {k: v for k, v in dict(args).items()
+               if k != "purchase_id" and v not in (None, "")}
+    payload["ok"] = bool(args.get("ok"))
+    return _text(_call("POST", f"/agent/purchases/{args['purchase_id']}/finish", payload))
 
 
 @tool(
@@ -615,10 +793,8 @@ def _mcp_streams_cm(config: dict):
 
     The transport client is imported by BOTH names it has carried across mcp
     releases: the older ``streamablehttp_client`` (which builds its own httpx
-    client, honouring HTTPS_PROXY through trust_env — the sandbox's only route
-    out is the egress proxy) and the newer ``streamable_http_client`` (which
-    takes a client we must build). Trying the old name first keeps the proxy
-    behaviour we want by default.
+    client) and the newer ``streamable_http_client`` (which takes a client we
+    must build). Trying the old name first keeps the default behaviour stable.
     """
     headers = dict(config.get("headers") or {})
     if config.get("type") == "sse":
@@ -849,8 +1025,12 @@ ALL_TOOLS = [
     t_suggest, t_channels, t_messages_read, t_message_post, t_directive_file,
     t_memory_search, t_memory_add, t_memory_supersede, t_memory_compact, t_memory_forget,
     t_memory_tool,
-    t_evidence_add, t_review_narrative, t_hypothesis_add, t_hypothesis_kill, t_decision_add,
+    t_evidence_add, t_review_narrative, t_commitment_propose, t_scope_act,
+    t_hypothesis_add, t_hypothesis_kill, t_decision_add,
     t_approval_request, t_approvals_list, t_spend_book,
+    t_need_request, t_credentials_list, t_credential_scope,
+    t_assist_request, t_account_record, t_accounts_list,
+    t_purchase_begin, t_purchase_finish,
     t_side_effect_begin, t_side_effect_finish,
     t_artifact_put, t_artifact_list, t_artifact_get, t_env_list,
 ]
@@ -929,7 +1109,7 @@ def _builtin_tools() -> list[str]:
     # granted so a role can aggregate bulk data with CODE instead of by reading
     # every row into its own context, which costs tokens and gets arithmetic
     # wrong. A python-only grant would be theatre (python shells out); the real
-    # containment is unchanged — the sandbox and the egress proxy.
+    # containment is unchanged — the sandbox, the scoped secrets and the audit.
     if PERMS.get("bash", False) or PERMS.get("data_processing", False):
         tools.append("Bash")
     if PERMS.get("web", False):
@@ -956,10 +1136,7 @@ def _data_source_specs(env: dict[str, str] | None = None) -> dict[str, dict]:
     any bearer token) come from role-scoped secret env vars — so which roles can
     even see a data source is decided by the chairman's credential grants, never
     by prompt text. An entry whose env vars are missing is skipped: an ungranted
-    role gets no server, silently, the same way it gets no secret. Remember the
-    sandbox's only network route is the egress proxy — the server's host must be
-    on this role's allowlist, which holds for data_fetch exactly as it does for
-    a native mount.
+    role gets no server, silently, the same way it gets no secret.
     """
     env = env if env is not None else dict(os.environ)
     MOUNT_PROBLEMS.clear()

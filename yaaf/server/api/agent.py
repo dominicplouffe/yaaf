@@ -10,7 +10,7 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict, Field
@@ -21,11 +21,12 @@ from yaaf.core import ids
 from yaaf.core.constitution import effective, propose_amendment
 from yaaf.core.db import notify
 from yaaf.core.models import (
+    Account,
     AgentKind,
     Approval,
-    ApprovalStatus,
     AuditLog,
     Channel,
+    ChannelKind,
     ChannelRead,
     Commitment,
     CommitmentStatus,
@@ -36,6 +37,7 @@ from yaaf.core.models import (
     Hypothesis,
     HypothesisStatus,
     LedgerEntry,
+    LedgerKind,
     Memory,
     Message,
     Requirement,
@@ -45,6 +47,7 @@ from yaaf.core.models import (
     ReviewStatus,
     RunKind,
     RunQueue,
+    Secret,
     SideEffect,
     SideEffectStatus,
     SuccessTestKind,
@@ -56,6 +59,7 @@ from yaaf.core.models import (
 )
 from yaaf.server import policy, typing_state
 from yaaf.server.deps import RunContext, db, run_auth
+from yaaf.server.notify import chairman_notify
 from yaaf.server.policy import Refusal
 
 router = APIRouter()
@@ -483,35 +487,45 @@ def post_message(
 
 class DirectiveIn(BaseModel):
     """A standing instruction the chairman gave in the boardroom, filed by the
-    CEO as policy instead of as a memory."""
+    CEO — as policy (changes) or as an executed plan order (action) — instead
+    of as a memory."""
 
     from_message_id: str
-    changes: dict
-    reason: str = Field(min_length=10)
+    changes: dict | None = None
+    action: dict | None = None
+    # Capped below the 4000-char reason columns so the citation suffix the
+    # platform appends can never push a valid request over a wall mid-write.
+    reason: str = Field(min_length=10, max_length=3800)
 
 
 @router.post("/directives")
 def file_directive(
     body: DirectiveIn, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
 ) -> dict:
-    """Turn something the chairman said into something the platform enforces.
+    """Turn something the chairman said into something the platform does.
 
-    The gap this closes: on 16 Aug he wrote "change your updates to every 4
-    hours" in the boardroom, and *nothing structural happened*. The CEO wrote
-    itself a memory and hoped — so the next stateless run, which never read
-    that memory, carried on reporting. A directive that lives in prose is a
-    directive the company can forget.
+    Two shapes. `changes` files reporting-cadence policy (the original gap: on
+    16 Aug he wrote "change your updates to every 4 hours" and nothing
+    structural happened). `action` executes a plan order — the chairman writes
+    "cut R-07" or "reopen R-04, it wasn't actually done" in the boardroom, and
+    the CEO carries it out through the same machinery as the chairman's own
+    buttons, instead of the order waiting for him to click it himself.
 
     The platform cannot check what a message *meant*, so it checks what it can
     and makes the rest loud: the citation must be a real, recent boardroom
-    message from the chairman himself, newer than the rule it replaces; the
-    change may only touch fields that constrain the company's demands on him;
-    and every filing is audited, disclosed to the CEO, and echoed back to him
-    in the boardroom where a misreading is one sentence away from correction.
+    message from the chairman himself; the authority exercised is his, proven
+    by that citation; and every filing is audited, disclosed, and echoed back
+    to him in the boardroom where a misreading is one sentence away from
+    correction — and every scope verb is reversible.
     """
     if ctx.agent.kind != AgentKind.CEO:
         raise Refusal("Only the CEO files directives — nobody else speaks to the chairman.",
                       status_code=403)
+    if (body.changes is None) == (body.action is None):
+        raise Refusal("A directive carries exactly one of `changes` (a cadence rule) or "
+                      "`action` (a plan order).", status_code=422)
+    if body.action is not None:
+        return _file_scope_directive(body, ctx, session)
     policy.check_directive_scope(body.changes)
     cited = policy.check_directive_citation(session, ctx.project, body.from_message_id)
     try:
@@ -535,6 +549,187 @@ def file_directive(
                  "the chairman has been told in the boardroom so he can correct you if you "
                  "read him wrong. Stop carrying this rule in memory; it is policy."),
     }
+
+
+def _requirement_by_key(session: Session, project_id: str, key: str) -> Requirement:
+    row = session.execute(
+        select(Requirement).where(
+            Requirement.project_id == project_id, Requirement.key == key.strip().upper()
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        raise Refusal(f"No requirement {key} in this project.", status_code=404)
+    return row
+
+
+def _execute_scope_action(session: Session, ctx: RunContext, action: dict,
+                          reason: str, actor: str, by_user: str | None,
+                          notify_ceo: bool) -> tuple[dict, str]:
+    """ONE implementation of every scope verb, whoever's authority carries it.
+
+    Both the directive path (the chairman's cited word) and the self-exercise
+    path (the dial) land here, on the apply_* helpers directly — so a Refusal
+    reaches the app-level handler and counts against the run's refusal cap on
+    both paths, field validation happened in policy (typed, ranged, same walls
+    as the chairman's own routes), and adding a verb is one branch plus one
+    entry in the policy tables. Reasons are length-capped at the request
+    models, so nothing here can outgrow a column."""
+    # Local import: admin imports this module at load; one-way at import time.
+    from yaaf.server.api import admin as admin_api
+
+    kind = action["kind"]
+    project = ctx.project
+    row = _requirement_by_key(session, project.id, action["requirement_key"])
+    if kind == "accept":
+        result = admin_api.apply_accept(session, project, row, actor,
+                                        action.get("stage"), reason,
+                                        by_user=by_user, notify=notify_ceo)
+        detail = f"accepted {row.key} into scope (stage {result['stage']})"
+    elif kind == "cut":
+        result = admin_api.apply_cut(session, project, row, actor, reason,
+                                     notify=notify_ceo)
+        detail = f"cut {row.key}"
+    elif kind == "reopen":
+        result = admin_api.apply_reopen(session, project, row, actor, reason,
+                                        notify=notify_ceo)
+        detail = f"reopened {row.key} (was {result['was']})"
+    elif kind == "restage":
+        result = admin_api.apply_restage(session, project, row, actor,
+                                         action["stage"], reason, notify=notify_ceo)
+        detail = f"moved {row.key} to stage {result['stage']} (was {result['was']})"
+    elif kind == "reestimate":
+        result = admin_api.apply_reestimate(session, project, row, actor,
+                                            action["est_runs"], reason,
+                                            notify=notify_ceo)
+        detail = (f"reestimated {row.key} at {result['est_runs']} runs "
+                  f"(was {result['was']}; scored estimate stays "
+                  f"{result['est_runs_first']})")
+    elif kind == "reword":
+        result = admin_api.apply_reword(session, project, row, actor,
+                                        action["statement"], reason,
+                                        notify=notify_ceo)
+        detail = f"reworded {row.key}"
+    elif kind == "verdict":
+        result = admin_api.apply_verdict(session, project, row, actor,
+                                         bool(action["ok"]), reason,
+                                         notify=notify_ceo)
+        detail = (f"judged {row.key} {'MET' if action['ok'] else 'NOT met'} "
+                  "(unverifiable observable, CEO judgment)")
+    else:  # unsequence
+        source = _requirement_by_key(session, project.id, action["depends_on_key"])
+        result = admin_api.apply_edge_remove(session, project, actor,
+                                             source.id, row.id, reason,
+                                             notify=notify_ceo)
+        detail = f"removed the dependency {source.key} → {row.key}"
+    return result, detail
+
+
+def _file_scope_directive(body: DirectiveIn, ctx: RunContext, session: Session) -> dict:
+    """Execute a plan order the chairman gave in the boardroom, on his cited
+    authority — the same apply helpers his own buttons drive."""
+    action = body.action or {}
+    policy.check_directive_action(action)
+    cited = policy.check_directive_citation(
+        session, ctx.project, body.from_message_id, for_rules=False)
+    reason = (f"{body.reason} [chairman's order, boardroom message {cited.id} at "
+              f"{cited.created_at.isoformat(timespec='minutes')}]")
+    result, detail = _execute_scope_action(
+        session, ctx, action, reason,
+        actor=f"user:{ctx.project.chairman_user_id}",
+        by_user=ctx.project.chairman_user_id,
+        notify_ceo=True,
+    )
+    session.add(
+        AuditLog(
+            id=ids.new_id(ids.AUDIT),
+            project_id=ctx.project.id,
+            actor=f"agent:{ctx.agent.id}",
+            action="scope.directive",
+            entity="message",
+            entity_id=cited.id,
+            detail={"action": action, "detail": detail,
+                    "cited_at": cited.created_at.isoformat()},
+        )
+    )
+    policy.confirm_directive(session, ctx.project, ctx.agent, cited, action_detail=detail)
+    return {
+        "executed": detail,
+        "result": result,
+        "note": ("Executed on the chairman's cited authority and echoed back to him in "
+                 "the boardroom, threaded to his message. If you read him wrong, he will "
+                 "say so — every scope verb is reversible."),
+    }
+
+
+# ── self-held scope authority ──────────────────────────────────────────────────
+
+
+class ScopeActIn(BaseModel):
+    action: dict
+    reason: str = Field(min_length=10, max_length=3800)
+
+
+@router.post("/scope")
+def scope_act(
+    body: ScopeActIn, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
+) -> dict:
+    """Exercise a scope verb the constitution's authority dial grants the CEO.
+
+    Under the default dial every verb here is a 403 — the chairman holds them
+    all, and the CEO's paths are proposing, or executing his boardroom orders
+    as directives. When the chairman turns `plan_authority`, `scope_authority`
+    or `verdict_policy` to the CEO, the same verbs run through the same apply
+    helpers as his own buttons — the only differences are the actor on the
+    record and where the disclosure goes: every self-exercise lands in the
+    audit log and is sent to the chairman, so autonomy is never quiet.
+    """
+    if ctx.agent.kind != AgentKind.CEO:
+        raise Refusal("Scope authority, where granted at all, is granted to the CEO.",
+                      status_code=403)
+    cons = effective(session, ctx.project.id)
+    policy.check_self_scope_action(cons, body.action)
+    result, detail = _execute_scope_action(
+        session, ctx, body.action,
+        f"{body.reason} [self-exercised under the constitution's authority dial]",
+        actor=f"agent:{ctx.agent.id}",
+        by_user=None,
+        notify_ceo=False,
+    )
+    _disclose_self_action(session, ctx, body.action["kind"], detail, body.reason)
+    return {
+        "executed": detail,
+        "result": result,
+        "note": ("Done under the authority the constitution grants you. It is on the "
+                 "record and the chairman has been told — he can reverse any of it, "
+                 "and turning the dial back is one amendment. Spend this authority "
+                 "the way you would want it audited."),
+    }
+
+
+def _disclose_self_action(session: Session, ctx: RunContext, kind: str,
+                          detail: str, reason: str) -> None:
+    """Autonomy is never quiet: every self-exercise is audited and sent to the
+    chairman out-of-band. Self-judged verdicts in particular are disclosed
+    every single time — stronger than sampling, and the reason `ceo_judgment`
+    does not bend 'nothing is quietly trusted'."""
+    session.add(
+        AuditLog(
+            id=ids.new_id(ids.AUDIT),
+            project_id=ctx.project.id,
+            actor=f"agent:{ctx.agent.id}",
+            action="scope.self",
+            entity="project",
+            entity_id=ctx.project.id,
+            detail={"kind": kind, "detail": detail, "reason": reason},
+        )
+    )
+    chairman_notify(
+        session, ctx.project,
+        f"CEO decision: {detail}",
+        f"{detail}\n\nIts reason: {reason}\n\nExercised under the authority dial you "
+        "set in the constitution. Everything here is reversible — reopen what was "
+        "cut, cut what was accepted — and the dial itself is yours to turn back.",
+    )
 
 
 def _audit_directive(session: Session, ctx: RunContext, cited: Message, changes: dict) -> None:
@@ -606,7 +801,7 @@ def book_chat_usage(
         session.add(LedgerEntry(
             id=ids.new_id(ids.LEDGER),
             project_id=ctx.project.id,
-            kind="model_usage",
+            kind=LedgerKind.MODEL_USAGE,
             tokens_in=body.tokens_in,
             tokens_out=body.tokens_out,
             cache_creation_tokens=body.cache_creation_tokens,
@@ -889,6 +1084,7 @@ def propose_requirement(
         status=RequirementStatus.PROPOSED,
         stage=body.stage,
         est_runs=body.est_runs,
+        est_runs_first=body.est_runs,
         proposed_by_agent_id=ctx.agent.id,
     )
     session.add(requirement)
@@ -981,6 +1177,43 @@ def propose_commitment(
     )
     session.add(commitment)
     session.flush()
+    if cons.commitment_authority == "ceo":
+        # The dial holds the date's signature too. Self-acceptance is only ever
+        # adopting the platform's own projection — the CEO still cannot write a
+        # date — so what the grant really covers is the *commitment to it*.
+        # Same freeze as the chairman's accept, disclosed the same loud way.
+        from yaaf.server.api import admin as admin_api
+
+        commitment.status = CommitmentStatus.ACCEPTED
+        commitment.accepted_at = utcnow()
+        admin_api._freeze_commitment_basis(session, ctx.project, commitment, cons)
+        session.add(AuditLog(
+            id=ids.new_id(ids.AUDIT), project_id=ctx.project.id,
+            actor=f"agent:{ctx.agent.id}", action="commitment.self_accept",
+            entity="commitment", entity_id=commitment.id,
+            detail={"deliver_by": commitment.deliver_by.isoformat(),
+                    "scope": commitment.scope_snapshot},
+        ))
+        chairman_notify(
+            session, ctx.project,
+            f"CEO committed to {commitment.deliver_by:%Y-%m-%d}",
+            f"The CEO committed to delivering {len(commitment.scope_snapshot)} "
+            f"requirement(s) by {commitment.deliver_by:%Y-%m-%d} — the platform's own "
+            "projection, which the CEO cannot write, only adopt. From here the "
+            "projection recomputes continuously; a slip freezes new scope and emails "
+            "you, exactly as if you had signed it yourself. Move or decline it any "
+            "time — those buttons never close.",
+        )
+        return {
+            "commitment_id": commitment.id,
+            "status": commitment.status,
+            "deliver_by": deliver_by.isoformat(),
+            "basis": projection["basis"],
+            "note": ("Committed. The constitution grants you the signature, so the "
+                     "platform's projected date is now the promise — it is frozen, "
+                     "audited, and the chairman has been told. A slip freezes new "
+                     "scope on you the same as on anyone."),
+        }
     return {
         "commitment_id": commitment.id,
         "status": commitment.status,
@@ -1034,8 +1267,6 @@ def file_review_narrative(
     review.recommended = (body.recommended or "").strip() or None
     review.narrative_run_id = ctx.run.id
     review.narrative_filed_at = utcnow()
-    from yaaf.server.notify import chairman_notify
-
     chairman_notify(
         session, ctx.project, f"review #{review.number}: the CEO's narrative is in",
         body.narrative[:2000]
@@ -1171,6 +1402,26 @@ def decision_add(
 # ── approvals & spend ───────────────────────────────────────────────────────────
 
 
+
+def _file_approval(session: Session, ctx: RunContext, kind: str, title: str,
+                   body: str, amount_usd: float | None = None) -> Approval:
+    """ONE way an agent puts something on the chairman's desk: same id, same
+    expiry arithmetic, same default-deny clock, whichever lane filed it."""
+    cons = effective(session, ctx.project.id)
+    row = Approval(
+        id=ids.new_id(ids.APPROVAL),
+        project_id=ctx.project.id,
+        kind=kind,
+        requested_by_agent_id=ctx.agent.id,
+        title=title,
+        body=body,
+        amount_usd=amount_usd,
+        expires_at=utcnow() + timedelta(days=cons.approval_timeout_days),
+    )
+    session.add(row)
+    return row
+
+
 class ApprovalRequest(BaseModel):
     kind: str
     title: str = Field(min_length=4, max_length=300)
@@ -1183,19 +1434,8 @@ def approval_request(
     body: ApprovalRequest, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
 ) -> dict:
     cons = effective(session, ctx.project.id)
-    from datetime import timedelta
-
-    row = Approval(
-        id=ids.new_id(ids.APPROVAL),
-        project_id=ctx.project.id,
-        kind=body.kind,
-        requested_by_agent_id=ctx.agent.id,
-        title=body.title,
-        body=body.body,
-        amount_usd=body.amount_usd,
-        expires_at=utcnow() + timedelta(days=cons.approval_timeout_days),
-    )
-    session.add(row)
+    row = _file_approval(session, ctx, body.kind, body.title, body.body,
+                         body.amount_usd)
     return {
         "id": row.id,
         "expires_at": row.expires_at.isoformat(),
@@ -1236,32 +1476,484 @@ class SpendIn(BaseModel):
 def book_spend(
     body: SpendIn, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
 ) -> dict:
+    """Book a real-world spend made with raw tooling. The approval lines are
+    the same as the purchase actuator's — they were yours to clear BEFORE
+    paying — but the monthly wall is not enforced here: this money already
+    moved, and refusing the record would un-report real spending, which is
+    worse than any overshoot. An overshoot is booked AND disclosed loudly."""
     cons = effective(session, ctx.project.id)
-    if body.usd >= cons.approval_threshold_usd:
-        approval = session.get(Approval, body.approval_id) if body.approval_id else None
-        ok = (
-            approval is not None
-            and approval.project_id == ctx.project.id
-            and approval.status == ApprovalStatus.APPROVED
-            and (approval.amount_usd or 0) >= body.usd
-        )
-        if not ok:
-            raise Refusal(
-                f"Spends of ${cons.approval_threshold_usd:,.0f} or more need an approved "
-                "chairman approval covering the amount. Request one at POST /agent/approvals "
-                "with kind='spend' — as a recommendation you would defend.",
-                status_code=403,
-            )
+    approval = session.get(Approval, body.approval_id) if body.approval_id else None
+    committed = policy.check_external_spend(session, ctx.project, cons, body.usd,
+                                            approval, enforce_wall=False)
     row = LedgerEntry(
         id=ids.new_id(ids.LEDGER),
         project_id=ctx.project.id,
-        kind="external_spend",
+        kind=LedgerKind.EXTERNAL_SPEND,
         usd=body.usd,
         run_id=ctx.run.id,
         note=body.note,
     )
     session.add(row)
+    cap = cons.external_monthly_usd_cap
+    if cap > 0 and committed + body.usd > cap:
+        session.add(AuditLog(
+            id=ids.new_id(ids.AUDIT), project_id=ctx.project.id,
+            actor=f"agent:{ctx.agent.id}", action="spend.over_envelope",
+            entity="ledger", entity_id=row.id,
+            detail={"usd": body.usd, "committed_after": committed + body.usd,
+                    "cap": cap, "note": body.note[:300]},
+        ))
+        chairman_notify(
+            session, ctx.project, "Real-world spend crossed the envelope",
+            f"${body.usd:,.2f} was spent with raw tooling and booked, putting the "
+            f"month at ${committed + body.usd:,.2f} of the ${cap:,.0f} envelope. "
+            "Booked rather than refused — the money had already moved, and an "
+            "unrecorded spend is worse than an overshot one. Further purchases are "
+            "walled; the spend itself is on the ledger and the audit.",
+        )
+        return {"id": row.id,
+                "warning": (f"Booked, and the month is now over the "
+                            f"${cap:,.0f} envelope. The chairman has been told. "
+                            "Clear purchases with purchase_begin BEFORE paying — "
+                            "that is where the wall can still save you.")}
     return {"id": row.id}
+
+
+# ── needs and credential delegation ─────────────────────────────────────────────
+#
+# Credentials are capabilities (CEO Charter, stage D). A capability the
+# company LACKS becomes a need: a structured ask that lands where the chairman
+# actually is — the boardroom (which the Slack bridge mirrors when connected)
+# plus his out-of-band notification — and is fulfilled in one motion on his
+# side (value stored, roles scoped, need approved). A capability the company
+# HAS is delegated by whoever holds capability_authority: the chairman's
+# tickbox by default, the CEO's own verb when the dial grants it.
+
+
+def _boardroom_system_line(session: Session, project_id: str, body: str) -> None:
+    """A platform-authored boardroom line: no sender, so it spends no cadence
+    and reads the same in the dashboard and in Slack (the bridge mirrors the
+    boardroom) — the one channel that reaches the chairman wherever he is."""
+    boardroom = session.execute(
+        select(Channel).where(Channel.project_id == project_id,
+                              Channel.kind == ChannelKind.BOARDROOM)
+    ).scalar_one_or_none()
+    if boardroom is not None:
+        session.add(Message(
+            id=ids.new_id(ids.MESSAGE),
+            project_id=project_id,
+            channel_id=boardroom.id,
+            body=body,
+        ))
+
+
+class AccountIn(BaseModel):
+    service: str = Field(min_length=2, max_length=200)
+    username: str = Field(min_length=1, max_length=200)
+    owner: str = Field(default="project", pattern="^(project|chairman)$")
+    credential_name: str | None = Field(default=None, max_length=120)
+    url: str | None = Field(default=None, max_length=500)
+    requirement_id: str | None = None
+    note: str | None = Field(default=None, max_length=4000)
+
+
+@router.post("/accounts")
+def account_record(
+    body: AccountIn, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
+) -> dict:
+    """Record an identity the company created in the world. Record-only, and
+    REQUIRED discipline rather than machinery: an account nobody wrote down is
+    an orphan the owner discovers on a bill. Store the credential as a secret
+    (or file it in your assist/need) and link its NAME here — the registry
+    links, it never holds."""
+    existing = session.execute(
+        select(Account).where(Account.project_id == ctx.project.id,
+                              Account.service == body.service.strip(),
+                              Account.username == body.username.strip())
+    ).scalar_one_or_none()
+    if existing is not None:
+        return {"account_id": existing.id, "duplicate": True,
+                "note": "Already on the registry."}
+    row = Account(
+        id=ids.new_id(ids.ACCOUNT),
+        project_id=ctx.project.id,
+        service=body.service.strip(),
+        username=body.username.strip(),
+        owner=body.owner,
+        credential_name=body.credential_name,
+        url=body.url,
+        requirement_id=body.requirement_id,
+        note=body.note,
+        created_by_agent_id=ctx.agent.id,
+    )
+    session.add(row)
+    session.add(AuditLog(
+        id=ids.new_id(ids.AUDIT), project_id=ctx.project.id,
+        actor=f"agent:{ctx.agent.id}", action="account.record",
+        entity="account", entity_id=row.id,
+        detail={"service": row.service, "username": row.username,
+                "owner": row.owner},
+    ))
+    return {"account_id": row.id, "duplicate": False,
+            "note": "On the registry. The chairman sees everything the company "
+                    "answers to, which is what makes winding down a reading "
+                    "instead of an archaeology."}
+
+
+@router.get("/accounts")
+def accounts_list(
+    ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
+) -> list[dict]:
+    rows = session.execute(
+        select(Account).where(Account.project_id == ctx.project.id)
+        .order_by(Account.created_at)
+    ).scalars()
+    return [{"service": a.service, "username": a.username, "owner": a.owner,
+             "credential_name": a.credential_name, "url": a.url,
+             "note": a.note} for a in rows]
+
+
+class AssistIn(BaseModel):
+    what: str = Field(min_length=10, max_length=2000)
+    # Where the human picks up: a URL, "the SMS sent to your phone", a form.
+    where: str | None = Field(default=None, max_length=500)
+
+
+@router.post("/assists")
+def assist_request(
+    body: AssistIn, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
+) -> dict:
+    """The human-assist protocol: a step only a human can do.
+
+    A captcha, a 2FA code, a KYC form, a signature — the platform never tries
+    to defeat a security challenge at any autonomy level; it hands it over.
+    ANY agent may file one (a worker mid-signup should not relay a captcha
+    through the CEO), and it rides the approval machinery: it nags, it
+    expires default-deny, and the chairman's answer — the code, the 'done',
+    the 'no' — arrives in the decision note, which wakes you. Save your
+    session state to the workspace BEFORE ending the run (playwright
+    storage_state, cookies, the URL you were on): the workspace persists, so
+    the next run resumes where this one stopped."""
+    approval = _file_approval(
+        session, ctx, "assist", f"Assist: {body.what[:120]}",
+        body.what + (f"\nWhere: {body.where}" if body.where else ""))
+    _boardroom_system_line(
+        session, ctx.project.id,
+        f"🤝 ASSIST NEEDED ({ctx.agent.name}): {body.what[:400]}"
+        + (f"\nWhere: {body.where}" if body.where else "")
+        + "\nAnswer on the Decisions screen — your note travels back verbatim "
+          "(a code, a 'done', a 'no') and wakes the agent.")
+    session.add(AuditLog(
+        id=ids.new_id(ids.AUDIT), project_id=ctx.project.id,
+        actor=f"agent:{ctx.agent.id}", action="assist.request",
+        entity="approval", entity_id=approval.id,
+        detail={"what": body.what[:300], "where": body.where},
+    ))
+    chairman_notify(
+        session, ctx.project, f"Human needed: {body.what[:120]}",
+        approval.body + "\n\nAnswer on the Decisions screen — your note travels "
+        "back verbatim and wakes the agent. This is the one step autonomy never "
+        "takes from you: the platform hands over security challenges, it never "
+        "defeats them.",
+    )
+    notify(session, WAKE_CHANNEL, ctx.project.id)
+    return {
+        "assist_id": approval.id,
+        "expires_at": approval.expires_at.isoformat(),
+        "note": ("Filed and sent to the chairman where he reads. Save your session "
+                 "state to the workspace now (cookies, storage state, the URL), "
+                 "record what you were doing, and end the run — his answer wakes "
+                 "you, and the workspace persists."),
+    }
+
+
+class NeedIn(BaseModel):
+    title: str = Field(min_length=4, max_length=200)
+    why: str = Field(min_length=10, max_length=4000)
+    est_usd_per_month: float | None = Field(default=None, ge=0)
+    suggested_secret_name: str | None = Field(default=None, max_length=120)
+    roles: list[str] = Field(default_factory=list)
+
+
+@router.post("/needs")
+def need_request(
+    body: NeedIn, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
+) -> dict:
+    """File a need: 'I need access to AWS — give me a key.'
+
+    Rides the approval machinery (kind=tool_request: it nags, it expires
+    default-deny, the chairman decides), and additionally lands as a boardroom
+    line so it reaches him wherever he reads — the dashboard, Slack, any
+    connected messenger. Fulfilling it stores the credential and scopes the
+    roles in one motion on his side."""
+    if ctx.agent.kind != AgentKind.CEO:
+        raise Refusal("Needs go to the chairman, and only the CEO speaks to him. "
+                      "Tell the CEO what you are missing — a suggestion survives.",
+                      status_code=403)
+    cons = effective(session, ctx.project.id)
+    detail_lines = [body.why]
+    if body.suggested_secret_name:
+        detail_lines.append(f"Suggested credential name: {body.suggested_secret_name}")
+    if body.roles:
+        detail_lines.append(f"For roles: {', '.join(body.roles)}")
+    if body.est_usd_per_month is not None:
+        detail_lines.append(f"Estimated cost: ~${body.est_usd_per_month:,.2f}/month")
+    approval = _file_approval(
+        session, ctx, "tool_request", f"Need: {body.title}",
+        "\n".join(detail_lines), body.est_usd_per_month)
+    cost = (f" (~${body.est_usd_per_month:,.0f}/mo)"
+            if body.est_usd_per_month is not None else "")
+    _boardroom_system_line(
+        session, ctx.project.id,
+        f"📋 NEED: {body.title}{cost} — {body.why[:400]}\n"
+        f"Fulfill it on the Decisions screen (one motion: value stored, "
+        f"roles scoped, need approved), or decline it there. Unanswered, "
+        f"it expires to no in {cons.approval_timeout_days} days.")
+    session.add(AuditLog(
+        id=ids.new_id(ids.AUDIT), project_id=ctx.project.id,
+        actor=f"agent:{ctx.agent.id}", action="need.request",
+        entity="approval", entity_id=approval.id,
+        detail={"title": body.title, "roles": body.roles,
+                "est_usd_per_month": body.est_usd_per_month},
+    ))
+    chairman_notify(
+        session, ctx.project, f"The company needs: {body.title}",
+        "\n".join(detail_lines) + "\n\nFulfill or decline it on the Decisions screen "
+        "— fulfilling stores the credential and scopes the roles in one motion.",
+    )
+    notify(session, WAKE_CHANNEL, ctx.project.id)
+    return {
+        "need_id": approval.id,
+        "expires_at": approval.expires_at.isoformat(),
+        "note": (f"Filed and sent to the chairman where he reads. Unanswered, it "
+                 f"expires to DENIED in {cons.approval_timeout_days} days — plan the "
+                 "work that does not depend on it rather than waiting."),
+    }
+
+
+@router.get("/credentials")
+def credentials_list(
+    ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
+) -> list[dict]:
+    """Names and scopes only, service credentials only — what the company
+    holds and who may use it. Values never ride any agent surface, and the
+    billing credential is not listed at all."""
+    if ctx.agent.kind != AgentKind.CEO:
+        raise Refusal("The credential roster is the CEO's to read.", status_code=403)
+    rows = session.execute(
+        select(Secret).where(Secret.project_id == ctx.project.id,
+                             Secret.kind == "service").order_by(Secret.name)
+    ).scalars()
+    return [{"name": s.name, "role_scopes": s.role_scopes or []} for s in rows]
+
+
+class CredentialScope(BaseModel):
+    add_roles: list[str] = Field(default_factory=list)
+    remove_roles: list[str] = Field(default_factory=list)
+    reason: str = Field(min_length=10)
+
+
+@router.post("/credentials/{name}/scope")
+def credential_scope(
+    name: str,
+    body: CredentialScope,
+    ctx: RunContext = Depends(run_auth),
+    session: Session = Depends(db),
+) -> dict:
+    """Delegate a capability: re-scope an existing credential across the
+    team's roles — the chairman's tickbox, exercised by the CEO where the
+    dial grants it. Values never move; only who receives them at run time.
+    Creating a credential is always the chairman's — he holds the values."""
+    if ctx.agent.kind != AgentKind.CEO:
+        raise Refusal("Delegation, where granted at all, is granted to the CEO.",
+                      status_code=403)
+    cons = effective(session, ctx.project.id)
+    if cons.capability_authority != "ceo":
+        raise Refusal(
+            "The constitution holds capability_authority = 'chairman': scoping "
+            "credentials is his tickbox on this project. File a need, or ask him in "
+            "the boardroom — his order executes as a directive. The dial itself is "
+            "his amendment to turn, and yours to recommend.",
+            status_code=403,
+        )
+    if not body.add_roles and not body.remove_roles:
+        raise Refusal("Nothing to change.", status_code=422)
+    if body.add_roles:
+        # A grant to a role that does not exist grants nothing while telling
+        # everyone it did — the worst kind of success.
+        policy.check_roles_exist(session, body.add_roles)
+    row = session.execute(
+        select(Secret).where(Secret.project_id == ctx.project.id, Secret.name == name)
+    ).scalar_one_or_none()
+    if row is None or row.kind != "service":
+        raise Refusal(f"No service credential named {name!r} on this project.",
+                      status_code=404)
+    scopes = list(row.role_scopes or [])
+    was = list(scopes)
+    for slug in body.add_roles:
+        if slug not in scopes:
+            scopes.append(slug)
+    scopes = [s for s in scopes if s not in body.remove_roles]
+    row.role_scopes = scopes
+    session.add(AuditLog(
+        id=ids.new_id(ids.AUDIT), project_id=ctx.project.id,
+        actor=f"agent:{ctx.agent.id}", action="credential.scope",
+        entity="secret", entity_id=row.id,
+        detail={"name": name, "was": was, "now": scopes, "reason": body.reason},
+    ))
+    chairman_notify(
+        session, ctx.project, f"CEO re-scoped credential {name}",
+        f"{name}: {', '.join(was) or '(nobody)'} → {', '.join(scopes) or '(nobody)'}\n"
+        f"Its reason: {body.reason}\nExercised under capability_authority: ceo. "
+        "Effective on each role's next run; reverse it any time in Settings.",
+    )
+    return {"name": name, "role_scopes": scopes, "was": was,
+            "note": "Effective on each granted role's next run. On the record, and "
+                    "the chairman has been told."}
+
+
+# ── the purchase actuator ───────────────────────────────────────────────────────
+#
+# The convenient path for real-world buying (CEO Charter, stage C). A purchase
+# that runs through here gets its bookkeeping for free and atomically: the
+# envelope is checked BEFORE money moves, the side-effect row makes a
+# crash-retry unable to buy twice, and finishing books the ledger and keeps
+# the receipt. It is never the only path — a stored card is a credential like
+# any other, usable by any tool the CEO points at a checkout — but a purchase
+# made outside it must still be booked with spend_book, against the same
+# envelope, and an unbooked purchase is exactly what the spot-audit catches.
+
+
+class PurchaseBegin(BaseModel):
+    vendor: str = Field(min_length=2, max_length=200)
+    description: str = Field(min_length=5, max_length=2000)
+    usd: float = Field(gt=0)
+    idempotency_key: str = Field(min_length=4, max_length=200)
+    requirement_id: str | None = None
+    approval_id: str | None = None
+
+
+@router.post("/purchases")
+def purchase_begin(
+    body: PurchaseBegin, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
+) -> dict:
+    """Clear a purchase against the envelope and record it before paying.
+
+    Call this BEFORE money moves. A refusal here costs nothing; the same
+    refusal discovered after paying costs the money and an apology."""
+    cons = effective(session, ctx.project.id)
+    existing = session.execute(
+        select(SideEffect).where(
+            SideEffect.project_id == ctx.project.id,
+            SideEffect.idempotency_key == body.idempotency_key,
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return {
+            "purchase_id": existing.id,
+            "status": existing.status,
+            "duplicate": True,
+            "result": existing.result,
+            "note": ("This purchase was already recorded (possibly by a prior attempt). "
+                     "If status is 'completed', the money already moved — DO NOT pay "
+                     "again. If 'recorded', a prior attempt died mid-purchase: check "
+                     "with the vendor before retrying."),
+        }
+    approval = session.get(Approval, body.approval_id) if body.approval_id else None
+    committed = policy.check_external_spend(session, ctx.project, cons, body.usd,
+                                            approval)
+    row = SideEffect(
+        id=ids.new_id(ids.SIDE_EFFECT),
+        project_id=ctx.project.id,
+        run_id=ctx.run.id,
+        kind="purchase",
+        idempotency_key=body.idempotency_key,
+        payload={"vendor": body.vendor, "description": body.description,
+                 "usd": body.usd, "requirement_id": body.requirement_id,
+                 "approval_id": body.approval_id},
+    )
+    session.add(row)
+    session.add(AuditLog(
+        id=ids.new_id(ids.AUDIT), project_id=ctx.project.id,
+        actor=f"agent:{ctx.agent.id}", action="purchase.begin",
+        entity="side_effect", entity_id=row.id,
+        detail={"vendor": body.vendor, "usd": body.usd,
+                "description": body.description[:300]},
+    ))
+    # `committed` came back from the envelope check — no second ledger scan.
+    # This purchase now reserves the envelope too, until finish closes it.
+    remaining = (cons.external_monthly_usd_cap - committed - body.usd
+                 if cons.external_monthly_usd_cap > 0 else None)
+    return {
+        "purchase_id": row.id,
+        "status": row.status,
+        "duplicate": False,
+        "cleared_usd": body.usd,
+        "envelope_remaining_after": round(remaining, 2) if remaining is not None else None,
+        "note": ("Cleared. Pay with whatever tool fits, then call purchase_finish with "
+                 "the receipt — the ledger entry is written there, not here, so a "
+                 "purchase that falls through costs nothing on the books."),
+    }
+
+
+class PurchaseFinish(BaseModel):
+    ok: bool
+    # The receipt is the point: what was bought, from whom, for how much, in
+    # the vendor's own words. Ten characters of "it worked" is not a receipt.
+    receipt: str = Field(min_length=10, max_length=8000)
+    external_ref: str | None = Field(default=None, max_length=300)
+
+
+@router.post("/purchases/{purchase_id}/finish")
+def purchase_finish(
+    purchase_id: str,
+    body: PurchaseFinish,
+    ctx: RunContext = Depends(run_auth),
+    session: Session = Depends(db),
+) -> dict:
+    row = session.get(SideEffect, purchase_id)
+    if row is None or row.project_id != ctx.project.id or row.kind != "purchase":
+        raise Refusal("Unknown purchase.", status_code=404)
+    if row.status != SideEffectStatus.RECORDED:
+        return {
+            "purchase_id": row.id,
+            "status": row.status,
+            "duplicate": True,
+            "note": "This purchase is already finished; the books did not change.",
+        }
+    usd = float((row.payload or {}).get("usd") or 0)
+    if body.ok:
+        # Money moved: book it even if the envelope shifted since begin — a
+        # refusal here would un-record real spending, which is worse than any
+        # overshoot. The overshoot itself shows in the meter and the audit.
+        ledger = LedgerEntry(
+            id=ids.new_id(ids.LEDGER),
+            project_id=ctx.project.id,
+            kind=LedgerKind.EXTERNAL_SPEND,
+            usd=usd,
+            run_id=ctx.run.id,
+            note=(f"purchase: {(row.payload or {}).get('vendor', '?')} — "
+                  f"{(row.payload or {}).get('description', '')[:200]}"
+                  + (f" [ref {body.external_ref}]" if body.external_ref else "")),
+        )
+        session.add(ledger)
+        row.status = SideEffectStatus.COMPLETED
+        row.result = {"receipt": body.receipt, "external_ref": body.external_ref,
+                      "ledger_id": ledger.id}
+    else:
+        row.status = SideEffectStatus.FAILED
+        row.result = {"receipt": body.receipt, "external_ref": body.external_ref}
+    row.completed_at = utcnow()
+    session.add(AuditLog(
+        id=ids.new_id(ids.AUDIT), project_id=ctx.project.id,
+        actor=f"agent:{ctx.agent.id}", action="purchase.finish",
+        entity="side_effect", entity_id=row.id,
+        detail={"ok": body.ok, "usd": usd,
+                "vendor": (row.payload or {}).get("vendor"),
+                "receipt": body.receipt[:500]},
+    ))
+    return {"purchase_id": row.id, "status": row.status,
+            "booked_usd": usd if body.ok else 0.0}
 
 
 # ── side effects (idempotency ledger) ───────────────────────────────────────────

@@ -43,6 +43,16 @@ function envVarName(name: string): string {
   return name.replace(/[^A-Za-z0-9]+/g, "_").replace(/^_+|_+$/g, "").toUpperCase();
 }
 
+/** Live-normalize a data source name to the API's slug rule (^[a-z0-9-]{2,32}$):
+    the name becomes an env var, a tool prefix and secret names, so "SEMRush"
+    must land as "semrush" here rather than bounce off the server as a regex.
+    Trailing hyphens survive typing ("my-" on the way to "my-source"); leading
+    ones never; the save handler strips the trailing ones. */
+function slugifyName(raw: string): string {
+  return raw.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/-+/g, "-")
+    .replace(/^-+/, "").slice(0, 32);
+}
+
 /** Config addresses a secret by name (`slack.bot_token_secret`, a data source's
     `url_secret`); revealing one needs its id. One lookup, used by every card. */
 function secretByName(secrets: SecretRow[], name: string | null | undefined) {
@@ -301,6 +311,7 @@ function SlackBridge({
 interface DataSourceSaveResult {
   name: string;
   check: { ok: boolean; detail: string };
+  needs_connect?: boolean;
   note: string;
 }
 
@@ -311,6 +322,35 @@ function checkBadge(last: McpServerEntry["last_check"]) {
   ) : (
     <span className="badge critical">unreachable</span>
   );
+}
+
+type SourceAuth = "none" | "bearer" | "oauth";
+
+/** The stored mode, with the legacy inference the server also applies: entries
+    saved before OAuth existed carry no `auth`, and for them a token means bearer. */
+function sourceAuthOf(source: McpServerEntry): SourceAuth {
+  return source.auth ?? (source.bearer_secret ? "bearer" : "none");
+}
+
+function oauthBadge(source: McpServerEntry) {
+  const status = source.oauth?.status;
+  if (status === "connected") return <span className="badge good">connected</span>;
+  if (status === "pending") return <span className="badge warn">sign-in pending</span>;
+  if (status === "needs_reauth") return <span className="badge critical">needs re-auth</span>;
+  return <span className="badge warn">not connected</span>;
+}
+
+/** Start the browser sign-in for an OAuth source. The tab must be opened by
+    the click itself (popup blockers kill anything opened after an await), so
+    callers pass one pre-opened blank and we point it at the provider. */
+async function startOAuthSignIn(projectId: string, name: string, tab: Window | null) {
+  const started = await post<{ authorize_url: string; note: string }>(
+    `/admin/projects/${projectId}/mcp_servers/${name}/oauth/start`,
+    {},
+  );
+  if (tab) tab.location.href = started.authorize_url;
+  else window.open(started.authorize_url, "_blank");
+  return started;
 }
 
 type RoleOption = { slug: string; teams: string[] };
@@ -383,8 +423,82 @@ function AccessPicker({ value, onChange }: {
   );
 }
 
+/** How a source authenticates. "oauth" trades the pasted credential for a
+    browser sign-in: Connect opens the provider's consent screen, and from then
+    on the platform stores and refreshes the tokens itself. */
+function AuthPicker({ value, onChange }: {
+  value: SourceAuth;
+  onChange: (next: SourceAuth) => void;
+}) {
+  return (
+    <>
+      <label className="field">How it authenticates</label>
+      <select value={value} onChange={(e) => onChange(e.target.value as SourceAuth)}>
+        <option value="none">none — the server is open</option>
+        <option value="bearer">bearer token — paste a credential</option>
+        <option value="oauth">OAuth — sign in through the provider</option>
+      </select>
+      {value === "oauth" && (
+        <div className="help" style={{ marginTop: 4 }}>
+          For hosted servers like Notion, Linear or Atlassian: saving opens the
+          provider's sign-in in a new tab; finish it there and the source connects.
+          Tokens are stored encrypted and refreshed automatically.
+        </div>
+      )}
+    </>
+  );
+}
+
+/** Manual OAuth client fields — needed only by providers without dynamic
+    client registration, so they hide behind a disclosure. */
+function OAuthClientFields({ clientId, clientSecret, scope, onClientId, onClientSecret, onScope }: {
+  clientId: string;
+  clientSecret: string;
+  scope: string;
+  onClientId: (v: string) => void;
+  onClientSecret: (v: string) => void;
+  onScope: (v: string) => void;
+}) {
+  return (
+    <details style={{ marginTop: 6 }}>
+      <summary className="help" style={{ cursor: "pointer" }}>
+        Advanced — leave blank; most servers register yaaf automatically
+      </summary>
+      <div className="row" style={{ marginTop: 6 }}>
+        <div>
+          <label className="field">Client ID (optional)</label>
+          <input
+            value={clientId}
+            onChange={(e) => onClientId(e.target.value)}
+            placeholder="from the provider's developer console"
+          />
+        </div>
+        <div>
+          <label className="field">Client secret (optional)</label>
+          <SecretInput
+            value={clientSecret}
+            onChange={onClientSecret}
+            placeholder="only if the provider issued one"
+          />
+        </div>
+        <div>
+          <label className="field">Scope (optional)</label>
+          <input
+            value={scope}
+            onChange={(e) => onScope(e.target.value)}
+            placeholder="blank = the server's default"
+          />
+        </div>
+      </div>
+    </details>
+  );
+}
+
 function savedMessage(result: unknown): string {
   const saved = result as DataSourceSaveResult;
+  if (saved.needs_connect)
+    return `Saved '${saved.name}' — finish the provider's sign-in in the opened tab; ` +
+      "this page will show it connect.";
   return (
     `Saved '${saved.name}' — ${saved.check.ok ? "" : "warning: "}` +
     `${saved.check.detail}. ${saved.note}`
@@ -413,6 +527,14 @@ function DataSourceEditor({
   const [dropToken, setDropToken] = useState(false);
   const [roles, setRoles] = useState<string[]>(source.roles);
   const [access, setAccess] = useState<SourceAccess>(source.access ?? "inline");
+  const [auth, setAuth] = useState<SourceAuth>(sourceAuthOf(source));
+  // Not prefilled from source.oauth.client_id: that id may be a dynamic
+  // registration the server owns, and re-submitting it while a URL change
+  // resets the connection would keep a client whose secret was just dropped.
+  // The Advanced box is for a client the chairman pastes by hand.
+  const [clientId, setClientId] = useState("");
+  const [clientSecret, setClientSecret] = useState("");
+  const [scope, setScope] = useState(source.oauth?.scope ?? "");
 
   useEffect(() => {
     setLoadError(null);
@@ -439,19 +561,25 @@ function DataSourceEditor({
           />
         </div>
         <div>
+          <AuthPicker value={auth} onChange={setAuth} />
+        </div>
+      </div>
+      {auth === "bearer" && (
+        <div style={{ maxWidth: 420 }}>
           <label className="field">
             Bearer token —{" "}
-            {source.bearer_secret
+            {source.bearer_secret && sourceAuthOf(source) === "bearer"
               ? dropToken ? "will be removed" : "blank keeps the current one"
               : "none stored"}
           </label>
           <SecretInput
             value={bearer}
             disabled={dropToken}
-            placeholder={source.bearer_secret ? "blank = keep current" : "blank = no auth header"}
+            placeholder={source.bearer_secret && sourceAuthOf(source) === "bearer"
+              ? "blank = keep current" : "paste the credential"}
             onChange={setBearer}
           />
-          {source.bearer_secret && (
+          {source.bearer_secret && sourceAuthOf(source) === "bearer" && (
             <label className="help" style={{ display: "flex", gap: 5, alignItems: "center" }}>
               <input
                 type="checkbox"
@@ -463,7 +591,17 @@ function DataSourceEditor({
             </label>
           )}
         </div>
-      </div>
+      )}
+      {auth === "oauth" && (
+        <OAuthClientFields
+          clientId={clientId}
+          clientSecret={clientSecret}
+          scope={scope}
+          onClientId={setClientId}
+          onClientSecret={setClientSecret}
+          onScope={setScope}
+        />
+      )}
       <AccessPicker value={access} onChange={setAccess} />
       <label className="field">Which roles get this source</label>
       <RoleTicks options={roleOptions} selected={roles} onChange={setRoles} />
@@ -471,23 +609,42 @@ function DataSourceEditor({
         <button
           className="small primary"
           disabled={busy || !url.trim() || roles.length === 0}
-          onClick={() =>
+          onClick={() => {
+            // Pre-open the tab in the click itself, before any await, or the
+            // popup blocker eats the provider's sign-in page. Editing a
+            // connected source's URL resets it server-side and answers
+            // needs_connect, so an OAuth save may need the tab even when the
+            // pre-save status was 'connected' — open it whenever auth is oauth.
+            const tab = auth === "oauth" ? window.open("", "_blank") : null;
             act(async () => {
-              const result = await post<DataSourceSaveResult>(
-                `/admin/projects/${projectId}/mcp_servers`,
-                {
-                  name: source.name,
-                  url: url.trim(),
-                  // Omitted keeps the stored token; "" removes it; a value rotates.
-                  bearer: dropToken ? "" : bearer.trim() || undefined,
-                  roles,
-                  access,
-                },
-              );
-              onDone();
-              return result;
-            }, savedMessage)
-          }
+              try {
+                const result = await post<DataSourceSaveResult>(
+                  `/admin/projects/${projectId}/mcp_servers`,
+                  {
+                    name: source.name,
+                    url: url.trim(),
+                    // Omitted keeps the stored token; "" removes it; a value rotates.
+                    bearer:
+                      auth === "bearer" ? (dropToken ? "" : bearer.trim() || undefined)
+                      : auth === "none" && source.bearer_secret ? "" : undefined,
+                    roles,
+                    access,
+                    auth,
+                    client_id: auth === "oauth" ? clientId.trim() || undefined : undefined,
+                    client_secret: auth === "oauth" ? clientSecret.trim() || undefined : undefined,
+                    scope: auth === "oauth" ? scope.trim() || undefined : undefined,
+                  },
+                );
+                if (result.needs_connect) await startOAuthSignIn(projectId, source.name, tab);
+                else tab?.close();
+                onDone();
+                return result;
+              } catch (e) {
+                tab?.close();
+                throw e;
+              }
+            }, savedMessage);
+          }}
         >
           Save changes
         </button>
@@ -508,12 +665,14 @@ function DataSources({
   secrets,
   act,
   busy,
+  reload,
 }: {
   projectId: string;
   dash: Dashboard;
   secrets: SecretRow[];
   act: Act;
   busy: boolean;
+  reload: () => void;
 }) {
   const sources = (dash.integrations["mcp_servers"] as McpServerEntry[] | undefined) ?? [];
   const [org, setOrg] = useState<OrgView | null>(null);
@@ -523,10 +682,33 @@ function DataSources({
   const [bearer, setBearer] = useState("");
   const [roles, setRoles] = useState<string[]>([]);
   const [access, setAccess] = useState<SourceAccess>("inline");
+  const [auth, setAuth] = useState<SourceAuth>("none");
+  const [clientId, setClientId] = useState("");
+  const [clientSecret, setClientSecret] = useState("");
+  const [scope, setScope] = useState("");
+  // The source whose sign-in tab is open right now. While set, the dash is
+  // re-polled so the page notices the callback landing without a refresh.
+  const [connecting, setConnecting] = useState<string | null>(null);
 
   useEffect(() => {
     get<OrgView>(`/observe/projects/${projectId}/org`).then(setOrg).catch(() => {});
   }, [projectId]);
+
+  useEffect(() => {
+    if (!connecting) return;
+    const startedAt = Date.now();
+    const timer = window.setInterval(() => {
+      if (Date.now() - startedAt > 120_000) setConnecting(null);
+      else reload();
+    }, 3000);
+    return () => window.clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connecting]);
+  useEffect(() => {
+    if (connecting &&
+        sources.find((s) => s.name === connecting)?.oauth?.status === "connected")
+      setConnecting(null);
+  }, [sources, connecting]);
 
   const roleOptions = roleOptionsOf(org);
 
@@ -541,9 +723,8 @@ function DataSources({
       </p>
       <p className="help">
         One save does all of it: validates the URL, stores it and any token encrypted, grants
-        them to the roles you tick, opens the firewall for that host, reloads the proxy (~15s),
-        and calls the server to confirm it answers. To change one, press <b>edit</b> — no role
-        editing, no repin, no CLI.
+        them to the roles you tick, and calls the server to confirm it answers. To change one,
+        press <b>edit</b> — no role editing, no repin, no CLI.
       </p>
 
       {sources.length > 0 && (
@@ -595,7 +776,13 @@ function DataSources({
                     </div>
                   </td>
                   <td>
+                    {sourceAuthOf(source) === "oauth" && <>{oauthBadge(source)}{" "}</>}
                     {checkBadge(source.last_check)}
+                    {source.oauth?.status === "connected" && source.oauth.expires_at && (
+                      <div className="help">
+                        token refreshes before {fmtWhen(source.oauth.expires_at)}
+                      </div>
+                    )}
                     {source.last_check && (
                       <div className="help">
                         {source.last_check.detail} — {fmtWhen(source.last_check.at)}
@@ -604,6 +791,32 @@ function DataSources({
                   </td>
                   <td>
                     <div className="actions" style={{ margin: 0 }}>
+                      {sourceAuthOf(source) === "oauth" && (
+                        <button
+                          className={`small${source.oauth?.status === "connected" ? "" : " primary"}`}
+                          disabled={busy}
+                          onClick={() => {
+                            // Opened in the click itself — see startOAuthSignIn.
+                            const tab = window.open("", "_blank");
+                            act(async () => {
+                              try {
+                                const started = await startOAuthSignIn(
+                                  projectId, source.name, tab);
+                                setConnecting(source.name);
+                                return started;
+                              } catch (e) {
+                                tab?.close();
+                                throw e;
+                              }
+                            }, `Sign-in opened for '${source.name}' — finish it in the ` +
+                               "new tab; this page will show it connect.");
+                          }}
+                        >
+                          {source.oauth?.status === "connected" ||
+                           source.oauth?.status === "needs_reauth"
+                            ? "reconnect" : "connect"}
+                        </button>
+                      )}
                       <button
                         className="small"
                         disabled={busy}
@@ -638,14 +851,16 @@ function DataSources({
                           if (
                             !confirm(
                               `Remove data source '${source.name}'? Its stored URL and token ` +
-                                "secrets are deleted too; granted roles lose these tools on " +
-                                "their next run.",
+                                "secrets are deleted too" +
+                                (sourceAuthOf(source) === "oauth"
+                                  ? " (including its OAuth tokens)" : "") +
+                                "; granted roles lose these tools on their next run.",
                             )
                           )
                             return;
                           act(
                             () => del(`/admin/projects/${projectId}/mcp_servers/${source.name}`),
-                            `Removed '${source.name}'. Egress and the proxy update themselves within ~15s.`,
+                            `Removed '${source.name}'. Granted roles lose it on their next run.`,
                           );
                         }}
                       >
@@ -681,7 +896,7 @@ function DataSources({
           <label className="field">Name (lowercase slug)</label>
           <input
             value={name}
-            onChange={(e) => setName(e.target.value)}
+            onChange={(e) => setName(slugifyName(e.target.value))}
             placeholder="figma, analytics, crm…"
           />
           {name.trim() && (
@@ -700,41 +915,79 @@ function DataSources({
           />
         </div>
         <div>
-          <label className="field">Bearer token (optional)</label>
+          <AuthPicker value={auth} onChange={setAuth} />
+        </div>
+      </div>
+      {auth === "bearer" && (
+        <div style={{ maxWidth: 420 }}>
+          <label className="field">Bearer token</label>
           <SecretInput
             value={bearer}
             onChange={setBearer}
-            placeholder="blank = no auth header"
+            placeholder="paste the credential"
           />
         </div>
-      </div>
+      )}
+      {auth === "oauth" && (
+        <OAuthClientFields
+          clientId={clientId}
+          clientSecret={clientSecret}
+          scope={scope}
+          onClientId={setClientId}
+          onClientSecret={setClientSecret}
+          onScope={setScope}
+        />
+      )}
       <AccessPicker value={access} onChange={setAccess} />
       <label className="field">Which roles get this source (nobody, until you tick)</label>
       <RoleTicks options={roleOptions} selected={roles} onChange={setRoles} />
       <div className="actions">
         <button
           className="small primary"
-          disabled={busy || !name.trim() || !url.trim() || roles.length === 0}
-          onClick={() =>
+          disabled={busy || name.replace(/-+$/, "").length < 2 || !url.trim()
+            || roles.length === 0}
+          onClick={() => {
+            const savedName = name.replace(/-+$/, "");
+            // Pre-open the sign-in tab inside the click, before any await —
+            // a tab opened after the network round-trip is popup-blocked.
+            const tab = auth === "oauth" ? window.open("", "_blank") : null;
             act(async () => {
-              const result = await post<DataSourceSaveResult>(
-                `/admin/projects/${projectId}/mcp_servers`,
-                {
-                  name: name.trim(),
-                  url: url.trim(),
-                  bearer: bearer.trim() || undefined,
-                  roles,
-                  access,
-                },
-              );
-              setName("");
-              setUrl("");
-              setBearer("");
-              setRoles([]);
-              setAccess("inline");
-              return result;
-            }, savedMessage)
-          }
+              try {
+                const result = await post<DataSourceSaveResult>(
+                  `/admin/projects/${projectId}/mcp_servers`,
+                  {
+                    name: savedName,
+                    url: url.trim(),
+                    bearer: auth === "bearer" ? bearer.trim() || undefined : undefined,
+                    roles,
+                    access,
+                    auth,
+                    client_id: auth === "oauth" ? clientId.trim() || undefined : undefined,
+                    client_secret:
+                      auth === "oauth" ? clientSecret.trim() || undefined : undefined,
+                    scope: auth === "oauth" ? scope.trim() || undefined : undefined,
+                  },
+                );
+                if (result.needs_connect) {
+                  await startOAuthSignIn(projectId, savedName, tab);
+                  setConnecting(savedName);
+                } else tab?.close();
+                setName("");
+                setUrl("");
+                setBearer("");
+                setRoles([]);
+                setAccess("inline");
+                setAuth("none");
+                setClientId("");
+                setClientSecret("");
+                setScope("");
+                return result;
+              } catch (e) {
+                tab?.close();
+                throw e;
+              }
+            }, savedMessage);
+          }}
         >
           Save data source
         </button>
@@ -1775,6 +2028,7 @@ export default function Settings({
           secrets={secrets}
           act={act}
           busy={busy}
+          reload={reload}
         />
       </div>
 

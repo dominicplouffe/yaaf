@@ -351,7 +351,9 @@ def test_string_rules_with_a_fixed_set_offer_it(client):
 
     # Defaults ride along too: the editor flags a rule that differs from stock.
     assert fields["queue_ceiling"]["default"] == 8
-    assert fields["require_evidence_verification"]["default"] is True
+    # False by default (chairman's ruling): most projects verify with the data
+    # at their disposal; the "Show me proof" creation preset turns it on.
+    assert fields["require_evidence_verification"]["default"] is False
     assert fields["ceo_daily_at"]["default"] is None
 
     project = make_project(client)

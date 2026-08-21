@@ -29,6 +29,7 @@ from yaaf.core.db import db_session
 from yaaf.core.models import (
     Agent,
     LedgerEntry,
+    LedgerKind,
     Notice,
     NoticeKind,
     Project,
@@ -62,7 +63,6 @@ def main() -> None:  # pragma: no cover - process entrypoint
     logging.basicConfig(level=logging.INFO)
     pool = ThreadPoolExecutor(max_workers=MAX_PARALLEL)
     log.info("runner %s starting", settings().worker_name)
-    threading.Thread(target=_egress_watch_loop, daemon=True).start()
     threading.Thread(target=chat_supervisor_loop, daemon=True).start()
     while True:
         leased = lease_and_prepare(limit=MAX_PARALLEL)
@@ -70,60 +70,6 @@ def main() -> None:  # pragma: no cover - process entrypoint
             pool.submit(execute_job, job)
         if not leased:
             time.sleep(settings().runner_poll_s)
-
-
-def egress_watch_once(session: Session, out_dir: Path, last_hash: str | None) -> str:
-    """One tick of egress auto-apply: regenerate, and only on change write the
-    files and reload the proxy. A config edit in the UI reaches squid within
-    one tick — no CLI, no manual reload."""
-    import hashlib
-    import json
-
-    from yaaf.server.egress import build
-
-    _, files = build(session)
-    digest = hashlib.sha256(json.dumps(files, sort_keys=True).encode()).hexdigest()
-    if digest == last_hash:
-        return digest
-    out_dir.mkdir(parents=True, exist_ok=True)
-    for name, content in files.items():
-        (out_dir / name).write_text(content)
-    _reload_proxy()
-    log.info("egress config applied; proxy reload requested")
-    return digest
-
-
-def _reload_proxy() -> None:
-    container = settings().proxy_container
-    if not container:
-        return
-    try:
-        import docker
-
-        proxy = docker.from_env().containers.get(container)
-        # `squid -k reconfigure` signals the squid master directly. A container
-        # HUP goes to PID 1, which in the stock ubuntu/squid image is a bash
-        # entrypoint that never forwards signals — the reload silently dies
-        # there (found live: role ports stayed closed for hours).
-        code, output = proxy.exec_run(["squid", "-k", "reconfigure"])
-        if code != 0:
-            raise RuntimeError(f"squid -k reconfigure exited {code}: {output[:200]!r}")
-    except Exception:
-        log.warning("could not reload proxy container %r", container, exc_info=True)
-
-
-def _egress_watch_loop() -> None:  # pragma: no cover - thin loop
-    if not settings().proxy_generated_dir:
-        return  # manual `yaaf egress-sync` mode (multi-box setups)
-    out_dir = Path(settings().proxy_generated_dir)
-    last: str | None = None
-    while True:
-        try:
-            with db_session() as session:
-                last = egress_watch_once(session, out_dir, last)
-        except Exception:
-            log.exception("egress watch tick failed")
-        time.sleep(15)
 
 
 # ── leasing ─────────────────────────────────────────────────────────────────────
@@ -248,15 +194,13 @@ def _materialize(session: Session, queued: RunQueue, project: Project) -> RunJob
     run.effort = job.effort
     job.tool_permissions = dict(role_version.tool_permissions) if role_version else {}
     source_specs = _merge_project_data_sources(session, project, role_version, job)
-    job.egress_proxy_url = _role_egress_url(session, role_version, job.tool_permissions)
     role_secrets = _role_secret_env(session, project, role_version)
     job.billing_env = {**_billing_env(session, project), **role_secrets}
-    if role_secrets:
-        job.system_prompt += (
-            "\n\nCREDENTIALS: these environment variables are set in your sandbox for your "
-            f"role: {', '.join(sorted(role_secrets))}. Use them for their purpose; never "
-            "print, log, or write them to files."
-        )
+    # Credentials are capabilities: each variable arrives with what it is and
+    # how to use it, where the recognizer library knows (docs/AUTONOMY.md).
+    from yaaf.server.recognizers import credentials_prompt
+
+    job.system_prompt += credentials_prompt(list(role_secrets))
     job.system_prompt += _data_source_prompt(source_specs)
     return job
 
@@ -326,10 +270,19 @@ def _merge_project_data_sources(session: Session, project: Project, role_version
         from yaaf.core.models import Role
 
         role = session.get(Role, role_version.role_id)
-        hosts = list(job.tool_permissions.get("egress_allow", []))
         for source in (project.integrations or {}).get("mcp_servers", []):
             if role is None or role.slug not in source.get("roles", []):
                 continue
+            if source.get("auth") == "oauth":
+                # An OAuth access token expires; renew it (into the same
+                # mcp-<name>-token secret row) before this run inherits it, so
+                # a long-lived source never mounts with yesterday's token. A
+                # failed renewal keeps the stale token mounted and marks the
+                # source needs_reauth — the health page says why, the agent
+                # sees a named auth error instead of a silently absent source.
+                from yaaf.server.mcp_oauth import ensure_fresh_token
+
+                ensure_fresh_token(session, project, source)
             spec = {"name": source["name"],
                     "url_env": _env_var_name(source["url_secret"]),
                     # bulk sources are reachable only through data_fetch (which
@@ -339,14 +292,10 @@ def _merge_project_data_sources(session: Session, project: Project, role_version
             if source.get("bearer_secret"):
                 spec["bearer_env"] = _env_var_name(source["bearer_secret"])
             specs.append(spec)
-            host = source.get("url_host")
-            if host and host not in hosts:
-                hosts.append(host)  # routes this role via its scoped proxy port
         if specs:
-            # New lists, never in-place: job.tool_permissions shallow-copies the
+            # New dict, never in-place: job.tool_permissions shallow-copies the
             # role version's dict and must not mutate its nested lists.
-            job.tool_permissions = {**job.tool_permissions, "mcp_servers": specs,
-                                    **({"egress_allow": hosts} if hosts else {})}
+            job.tool_permissions = {**job.tool_permissions, "mcp_servers": specs}
     return specs
 
 
@@ -419,37 +368,10 @@ def _scrub_remote(workspace: Path, full_name: str) -> None:
         log.warning("could not scrub the clone credential for %s; dropped .git", full_name)
 
 
-def _role_egress_url(session: Session, role_version, tool_permissions: dict) -> str | None:
-    """A role with its own egress_allow — or marked egress_unrestricted, which
-    scopes to everything — talks to its own squid port (a pure function of the
-    role slug, see yaaf/server/egress.py). Everyone else uses the default port
-    and the global allowlist.
-
-    Read from the PINNED version, not the latest: turning a role open-web only
-    reaches a running team once that team adopts the version carrying the flag.
-    """
-    if role_version is None:
-        return None
-    if not (tool_permissions.get("egress_allow")
-            or tool_permissions.get("egress_unrestricted")):
-        return None
-    from yaaf.core.models import Role
-    from yaaf.server.egress import role_port
-
-    role = session.get(Role, role_version.role_id)
-    base = settings().egress_proxy_url
-    if role is None or not base:
-        return None
-    host, _, port = base.rpartition(":")
-    if not port.isdigit():
-        host = base  # no explicit port in the configured URL
-    return f"{host}:{role_port(role.slug)}"
-
-
 def _env_var_name(secret_name: str) -> str:
-    import re
+    from yaaf.core.naming import env_var_name
 
-    return re.sub(r"[^A-Za-z0-9]+", "_", secret_name).strip("_").upper()
+    return env_var_name(secret_name)
 
 
 def _role_secret_env(session: Session, project: Project, role_version) -> dict:
@@ -595,7 +517,7 @@ def finalize(job: RunJob, result: RunResult, was_revoked: bool = False) -> None:
                 LedgerEntry(
                     id=ids.new_id(ids.LEDGER),
                     project_id=job.project_id,
-                    kind="model_usage",
+                    kind=LedgerKind.MODEL_USAGE,
                     tokens_in=result.tokens_in,
                     tokens_out=result.tokens_out,
                     cache_creation_tokens=result.cache_creation_tokens,

@@ -9,7 +9,7 @@ an audit row behind it, and no agent principal can reach it or anything like it.
 
 from __future__ import annotations
 
-from tests.conftest import ADMIN, make_project
+from tests.conftest import ADMIN, bearer, live_token, make_project
 from yaaf.core.db import db_session
 from yaaf.core.models import AuditLog, Secret
 
@@ -66,19 +66,41 @@ def test_reveal_needs_the_admin_token(client):
     assert client.get(f"/admin/secrets/{wp['id']}/value", headers=ADMIN).status_code == 200
 
 
-def test_no_agent_route_serves_a_secret(client):
+def test_no_agent_route_serves_a_secret_value(client):
     """Agents authenticate against /agent/* with per-run tokens. Reveal must
-    never acquire a sibling there — the run principal is not the chairman."""
+    never acquire a sibling there — the run principal is not the chairman.
+
+    Stage D gave agents /agent/credentials (the roster: names and scopes, the
+    CEO's to read and — dial permitting — re-scope), so the invariant is now
+    stated as what it always meant: no agent path reaches a VALUE. The words
+    'secret', 'value' and 'credential' are banned in /agent paths except the
+    two roster routes named below — a new credential-flavored route must be
+    added here deliberately, with a value-free proof beside it — and the
+    roster route is proven value-free by calling it."""
     from yaaf.server.app import create_app
 
     paths = create_app().openapi()["paths"]
     assert "/admin/secrets/{secret_id}/value" in paths, "sanity: reveal is mounted"
 
+    # The only agent routes allowed to say 'credential' — both value-free.
+    roster_routes = {"/agent/credentials", "/agent/credentials/{name}/scope"}
     agent_paths = [path for path in paths if path.startswith("/agent")]
     assert agent_paths, "sanity: the agent router is mounted"
+    assert roster_routes <= set(agent_paths), "sanity: the roster is mounted"
     for path in agent_paths:
         assert "secret" not in path
-        assert "credential" not in path
+        assert "value" not in path
+        if path not in roster_routes:
+            assert "credential" not in path, f"unvetted credential route: {path}"
+
+    project = make_project(client, slug="roster")
+    _store(client, project["id"], "wp-pass", role_scopes=["worker"])
+    _, token = live_token(project["id"], project["ceo_agent_id"])
+    roster = client.get("/agent/credentials", headers=bearer(token))
+    assert roster.status_code == 200
+    for row in roster.json():
+        assert set(row) == {"name", "role_scopes"}, "the roster must stay value-free"
+        assert "s3cret-value" not in str(row)
 
 
 def test_delete_removes_a_credential(client):

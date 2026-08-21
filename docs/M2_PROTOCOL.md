@@ -18,7 +18,7 @@ salvage path (governance harness for single agents) takes over. Decision due
 ## 2. Arms
 
 Both arms run on the same yaaf instance, under the same constitution, with the
-same role toolset, model tier, egress allowlist, and token budget. The only
+same role toolset, model tier, and token budget. The only
 variable is org structure.
 
 - **Arm S (single):** one agent with CEO-class permissions (it creates its own
@@ -36,7 +36,7 @@ workspaces/accounts so their external evidence cannot mingle.
 - Same model tier per role class in both arms (frozen at approval time).
 - Same token budget per arm per goal (proposed: **15M tokens**; chairman sets).
 - Same wall-clock window per goal (proposed: **14 days** from first run).
-- Same tools and egress allowlist; any connector available to one arm is
+- Same tools; any connector available to one arm is
   available to the other.
 - Same constitution: queue ceiling, evidence floor, drought rule, approval
   defaults identical across arms.

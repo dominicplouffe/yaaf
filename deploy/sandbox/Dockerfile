@@ -21,17 +21,27 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN npm install -g @anthropic-ai/claude-code
 
-# pandas and duckdb are baked in because PyPI is NOT reachable at run time (the
-# egress allowlist ends at the model API), and because the alternative to having
-# them is an agent reading ten thousand rows into its own context to count them.
-# duckdb queries csv/parquet/json with SQL straight off disk; pandas is what a
-# model reaches for by reflex. Both land in /opt/venv, which PATH puts first —
-# so the `python3` an agent runs through Bash is this interpreter. The mcp pin
-# bounds client-API drift for data_fetch, which imports it.
+# pandas and duckdb are baked in because the alternative to having them is an
+# agent reading ten thousand rows into its own context to count them. duckdb
+# queries csv/parquet/json with SQL straight off disk; pandas is what a model
+# reaches for by reflex. Both land in /opt/venv, which PATH puts first — so
+# the `python3` an agent runs through Bash is this interpreter. The mcp pin
+# bounds client-API drift for data_fetch, which imports it. (The network is
+# open, so an agent can pip install more at run time — these are baked so the
+# common cases cost zero setup.)
 RUN python3 -m venv /opt/venv \
     && /opt/venv/bin/pip install --no-cache-dir \
-        claude-agent-sdk httpx pandas duckdb "mcp<2"
+        claude-agent-sdk httpx pandas duckdb "mcp<2" playwright
 ENV PATH="/opt/venv/bin:${PATH}"
+
+# The browser lane (CEO Charter, stage E): Chromium via playwright, for the
+# services that have no API — signups, dashboards, checkouts. Installed with
+# system deps at build time because a browser is the one dependency an agent
+# cannot cheaply fetch mid-run. PLAYWRIGHT_BROWSERS_PATH is world-readable so
+# the non-root agent user finds it.
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers
+RUN /opt/venv/bin/playwright install --with-deps chromium \
+    && chmod -R a+rX /opt/pw-browsers
 # ENV alone is not enough: /etc/profile OVERWRITES PATH (it does not prepend),
 # so every LOGIN shell loses the venv — and success tests run under `bash -lc`.
 # Without this, an agent's own `python3 -c "import pandas"` check fails with a

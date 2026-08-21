@@ -2,7 +2,7 @@
 
 Everything here is **optional** and configured per project from the dashboard.
 Nothing below requires editing a role, redeploying, or touching the CLI, with
-one exception noted for multi-box egress.
+no exceptions.
 
 The rule that governs all of it: **agents get capabilities, never credentials
 they could exfiltrate.** Secrets are envelope-encrypted, scoped to roles, and
@@ -63,9 +63,7 @@ What happens on save:
    is rejected now, not hours later inside an agent run.
 2. The URL (and optional bearer token) are stored as role-granted secrets.
 3. The mapping is recorded in project config.
-4. **Egress and the proxy update themselves** — the runner regenerates the
-   per-role squid config and reloads it.
-5. The granted roles' sandboxes mount the server as **real tools**.
+4. The granted roles' sandboxes mount the server as **real tools**.
 
 **Check it.** The check button actually speaks MCP — `initialize`, then
 `tools/list` — and tells you which tools came back. (A plain GET was useless:
@@ -95,6 +93,38 @@ and they aggregate that file with code. Mark anything that serves rows —
 exports, listings, logs — as bulk. It is enforcement, not advice: for a bulk
 source the expensive path does not exist, so no prompt has to talk an agent out
 of taking it.
+
+### OAuth servers — Notion, Linear, Atlassian and friends
+
+Hosted MCP servers usually hand out no pastable token: they are OAuth
+resource servers, and the client is expected to walk the MCP authorization
+spec — discovery, client registration, the authorization-code flow with PKCE,
+refresh-token renewal. yaaf does all of that on the control plane. Pick
+**OAuth — sign in through the provider** in the auth dropdown, save, and press
+**Connect**: a tab opens on the provider's consent screen, and when you finish
+there the source connects. The tokens are stored as encrypted project secrets
+and **refreshed automatically** — before every health check and before every
+run that mounts the source — so sandboxes keep receiving the same
+`MCP_<NAME>_TOKEN` variable a pasted bearer would produce, always holding a
+current access token. If renewal ever stops working (a revoked grant, a
+provider reset), the source shows **needs re-auth** on the health page and the
+fix is one **Reconnect** click.
+
+Most providers register yaaf as a client automatically (RFC 7591). The few
+that don't get an **Advanced** disclosure on the form: paste a client ID (and
+secret, if issued) from the provider's developer console.
+
+Two operational notes:
+
+- Set `YAAF_PUBLIC_BASE_URL` to the browser-facing origin of your install
+  (e.g. `https://yaaf.example.com`). The sign-in redirects back to
+  `<that origin>/oauth/mcp/callback`, and providers generally refuse
+  non-https redirect URIs — behind a TLS-terminating proxy the derived
+  fallback reports plain http.
+- OAuth tokens never travel: a **clone** carries the registered client but
+  asks you to press Connect on the twin (refresh tokens rotate on use, so two
+  projects sharing one would invalidate each other), and an **export** carries
+  only the `auth: "oauth"` marker.
 
 ## Slack
 
@@ -216,21 +246,27 @@ docker compose --profile s3 up      # bundled MinIO for local use
 The bucket is created on first use. The base install stays boto3-free — it's
 imported lazily, only when the endpoint is set.
 
-## Egress allowlists
+## Waking on the world
 
-Each role declares the hosts it may reach (`egress_allow` in the role
-definition). The sandbox network is `internal: true`, so containers reach the
-world **only** through the squid proxy on that role's port. Your writer can
-reach WordPress and nothing else.
+A signed generic webhook may carry `wake`: `"ceo"` or an agent's exact name.
+The named agent gets an urgent notice and wakes on the next dispatcher tick —
+under every wake-rate brake, so the world can knock but never stampede. This
+is how a customer email, an order, or a monitoring alert reaches an agent
+before its next heartbeat.
 
-On a single-box deploy this is automatic: the runner watches the generated
-config, writes it, and reloads squid (`YAAF_PROXY_GENERATED_DIR` +
-`YAAF_PROXY_CONTAINER` in `deploy/docker-compose.yml`). No CLI step.
+## Revenue
 
-For multi-box setups, run it by hand on the box hosting `deploy/`:
+A signed generic webhook whose JSON body carries `revenue_usd` books a
+`revenue` ledger row alongside its evidence. This is the ONLY path that writes
+revenue — no agent verb exists for it — so income can be reported without ever
+being inventable, and the CEO can build a P&L on ledger rows instead of
+claims. Point your payment processor's webhook (via a small signing relay) at
+`/webhooks/generic/{project_id}`.
 
-```bash
-yaaf egress-sync --proxy-container deploy-proxy-1
-```
+## Network
 
-Data sources add their host to the granted roles' allowlists automatically.
+The sandbox network is open — no allowlist, no per-role proxy. The chairman's
+decision, on the record in docs/AUTONOMY.md: capability should never be a
+firewall ticket. What contains an agent is the fresh container, the
+role-scoped secrets it was or wasn't granted, the budgets, the loop brakes and
+the audit trail.

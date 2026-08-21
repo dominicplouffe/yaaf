@@ -15,6 +15,8 @@ function whyYours(kind: string): string {
       return "The CEO judged this a direction change, not an execution detail.";
     case "tool_request":
       return "An agent is asking for a capability it does not have. Only you can grant one.";
+    case "assist":
+      return "A step only a human can do — a captcha, a 2FA code, a form. Your note travels back verbatim (a code, a 'done', a 'no') and wakes the agent. The platform hands over security challenges; it never defeats them.";
     default:
       return "The constitution routes this kind of decision to the chairman.";
   }
@@ -46,6 +48,11 @@ function DecisionCard({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState("");
+  // The one-motion fulfillment for a need (kind=tool_request): credential
+  // stored, roles scoped, need approved — one form instead of three screens.
+  const [secretName, setSecretName] = useState("");
+  const [secretValue, setSecretValue] = useState("");
+  const [roles, setRoles] = useState("");
 
   const usdMode = dash.billing_mode === "api_key";
   const spent = dash.month_to_date.usd;
@@ -109,6 +116,51 @@ function DecisionCard({
           the clock runs out — a vacationing chairman degrades the project, never deadlocks it.
         </dd>
       </dl>
+      {approval.kind === "tool_request" && (
+        <div style={{ marginTop: 12, padding: "10px 12px", borderRadius: 8,
+          border: "1px solid var(--border)", background: "var(--surface)" }}>
+          <div style={{ fontWeight: 650, fontSize: 13, marginBottom: 6 }}>
+            Fulfill in one motion
+          </div>
+          <p className="help" style={{ marginTop: 0 }}>
+            Store the credential, scope the roles, approve the need — one press. The
+            value is encrypted, reaches only the named roles as an environment
+            variable, and never appears in chat.
+          </p>
+          <div className="row">
+            <input value={secretName} placeholder="Credential name (e.g. aws-key)"
+              onChange={(e) => setSecretName(e.target.value)} />
+            <input value={secretValue} type="password" placeholder="Value"
+              onChange={(e) => setSecretValue(e.target.value)} />
+            <input value={roles} placeholder="Role slugs, comma-separated"
+              onChange={(e) => setRoles(e.target.value)} />
+          </div>
+          <div className="actions" style={{ marginTop: 8 }}>
+            <button className="primary"
+              disabled={busy || !secretName.trim() || !secretValue
+                || !roles.trim()}
+              onClick={async () => {
+                setBusy(true);
+                setError(null);
+                try {
+                  await post(`/admin/approvals/${approval.id}/fulfill`, {
+                    secret_name: secretName.trim(),
+                    value: secretValue,
+                    roles: roles.split(",").map((r) => r.trim()).filter(Boolean),
+                    note: note.trim(),
+                  });
+                  onDecided();
+                } catch (e) {
+                  setError((e as Error).message);
+                  setBusy(false);
+                }
+              }}>
+              🔑 Fulfill the need
+            </button>
+            <span className="help">Or approve/deny below without a credential.</span>
+          </div>
+        </div>
+      )}
       <input
         style={{ marginTop: 12 }}
         value={note}

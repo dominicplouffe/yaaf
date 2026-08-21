@@ -93,18 +93,6 @@ Amending the constitution is deliberately not a one-liner — it needs a written
 reason. Use Settings → Rules in force, or `POST
 /admin/projects/{id}/amendments` (see [GOVERNANCE.md](GOVERNANCE.md#changing-a-rule)).
 
-## Egress
-
-```bash
-yaaf egress-sync [--out deploy/proxy/generated] [--proxy-container deploy-proxy-1]
-```
-
-Fetches the per-role squid config from the API, writes it, and reloads the
-proxy. **Only needed on multi-box setups** — the single-box compose file has
-the runner do this automatically. Run it on the box that hosts `deploy/`.
-
-Without `--proxy-container` it prints the reload command for you to run.
-
 ## Spend analysis
 
 ```bash

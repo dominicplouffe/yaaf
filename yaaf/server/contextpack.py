@@ -72,6 +72,13 @@ def constitution_prose(cons: ConstitutionDoc, project: Project) -> str:
         f"- Spends of ${cons.approval_threshold_usd:,.0f}+ and anything legally ambiguous "
         f"need chairman approval; approvals expire to DENIED after "
         f"{cons.approval_timeout_days} days, so re-plan rather than wait.\n"
+        f"{_envelope_clause(cons)}"
+        "- A capability the company lacks — an account, an API key, a service — is a "
+        "NEED. The CEO checks credentials_list, then files it with need_request (why, "
+        "roles, honest monthly cost); it reaches the chairman where he reads, and he "
+        "fulfills it in one motion. Unanswered it expires to no, so plan the work that "
+        "does not depend on it. Anyone else: tell the CEO what you are missing — a "
+        "suggestion survives.\n"
         f"- Budget: {budget}. At 100% the project auto-pauses.\n"
         # The wake-loop brakes were the one enforced group never stated here,
         # so a company that had spent its daily runs by 01:22 had a CEO with no
@@ -95,10 +102,73 @@ def constitution_prose(cons: ConstitutionDoc, project: Project) -> str:
         f"- Each run may hit at most {cons.refusal_cap_per_run} policy refusals before its "
         "token is revoked. A refusal is the system working; do not rephrase and retry.\n"
         f"{_cadence_clause(cons)}"
-        "- Do not ask the chairman questions. Decide and report, or file an approval as a "
-        "recommendation you would defend. When in doubt about WHAT to tell him, tell; about "
-        "asking, decide. That is about candour, never about frequency — it is not licence to "
-        "post more often than the cadence allows."
+        f"{_authority_clause(cons)}"
+        "- Asking the chairman is allowed, never required. Default to deciding and "
+        "reporting ('I decided X because Y — say so if you disagree'), or file an approval "
+        "as a recommendation you would defend. When you feel strongly enough that you want "
+        "his answer before deciding, ask him plainly (override='question' if between "
+        "cadence slots — it is recorded and he sees it). A company that waits on answers "
+        "it did not need is stalled; a company that never asks is guessing.\n"
+        "- When the chairman gives you a plan order in the boardroom — cut this, reopen "
+        "that, move a stage, change an estimate — EXECUTE it with directive_file citing "
+        "his message, rather than asking him to press the button himself. His word is the "
+        "authority; the citation proves it; the echo lets him correct you."
+    )
+
+
+def _envelope_clause(cons: ConstitutionDoc) -> str:
+    """The real-world spend envelope, stated where every other money rule is
+    stated. Silent when both lines are off."""
+    parts: list[str] = []
+    if cons.max_usd_per_purchase > 0:
+        parts.append(f"a single purchase over ${cons.max_usd_per_purchase:,.0f} needs "
+                     "an approval even below the threshold")
+    if cons.external_monthly_usd_cap > 0:
+        parts.append(f"the month's real-world total is walled at "
+                     f"${cons.external_monthly_usd_cap:,.0f} — no approval overrides "
+                     "it, only an amendment")
+    if not parts:
+        return ""
+    return (
+        "- Real-world purchases (separate from the model budget): "
+        + "; ".join(parts)
+        + ". Inside those lines, buy what the work needs without asking. Clear a "
+          "purchase with purchase_begin BEFORE paying and close it with the receipt; "
+          "a spend made with raw tooling is booked with spend_book against the same "
+          "walls. Every real purchase ends up on the ledger — an unbooked one is what "
+          "the spot-audit catches.\n"
+    )
+
+
+def _authority_clause(cons: ConstitutionDoc) -> str:
+    """Which verbs the authority dial grants this CEO, stated where every other
+    enforced limit is stated. Silent under the default (Supervised) dial — a
+    paragraph about authority nobody granted is pure token cost."""
+    held: list[str] = []
+    if cons.plan_authority == "ceo":
+        held.append("ACCEPT your own proposed requirements into scope (scope_act)")
+    if cons.scope_authority == "ceo":
+        held.append("change the plan yourself — cut, reopen, restage, reestimate, "
+                    "reword, unsequence (scope_act)")
+    if cons.commitment_authority == "ceo":
+        held.append("sign the delivery date: commitment_propose adopts the platform's "
+                    "projection as the promise immediately")
+    if cons.verdict_policy == "ceo_judgment":
+        held.append("judge unverifiable observable closes yourself (scope_act verdict) "
+                    "— judge honestly and keep going; every self-judgment is disclosed "
+                    "to the chairman in full")
+    if cons.capability_authority == "ceo":
+        held.append("delegate the company's credentials across your team yourself "
+                    "(credentials_list, credential_scope) — creating one stays the "
+                    "chairman's, so file a need for what the company lacks")
+    if not held:
+        return ""
+    return (
+        "- AUTHORITY THE CONSTITUTION GRANTS YOU: "
+        + "; ".join(held)
+        + ". Every exercise is audited and sent to the chairman; all of it is "
+          "reversible, and the dial is his to turn back. Decide like an executive: "
+          "act, record the reason, and never wait on an answer you did not need.\n"
     )
 
 
@@ -143,7 +213,14 @@ WORKSPACE_RUN = (
     "pulls, long documents, intermediate results — in files, work on it with "
     "tools, and let only the small end of it (aggregates, samples, conclusions) "
     "into messages, memory, or your own prose. Before fetching anything twice, "
-    "look in the workspace: a file a previous run left there is free."
+    "look in the workspace: a file a previous run left there is free. "
+    "The sandbox also carries Chromium with playwright (python) for services "
+    "that have no API — signups, dashboards, checkouts. Screenshot the moments "
+    "that matter into the workspace as your evidence trail; save session state "
+    "(storage_state, cookies) there so the next run resumes logged in; record "
+    "every account you create with account_record; and when a captcha, 2FA "
+    "code, or human-only step blocks you, save state and file assist_request — "
+    "never try to defeat a security challenge."
 )
 WORKSPACE_CHAT = (
     "TWO DIRECTORIES, and the difference matters. /company is the company's real "

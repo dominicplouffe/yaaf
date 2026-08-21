@@ -1,9 +1,10 @@
-"""Sandbox execution: Docker containers behind the egress proxy.
+"""Sandbox execution: fresh Docker containers per run.
 
 Every agent run gets a fresh container: no privileges, resource caps, the
-project workspace mounted, and ALL egress forced through the allowlist proxy
-(untrusted content + secrets + open network is the standard lethal
-combination — the proxy ships with the sandbox, not in some later milestone).
+project workspace mounted, and the open network — the chairman's decision
+(docs/AUTONOMY.md): the per-role egress allowlist solved one problem at the
+price of making every capability a firewall ticket. Containment is the fresh
+container, role-scoped secrets, budgets, and the audit trail.
 
 ``sandbox_mode = "subprocess"`` exists for dev machines and CI without Docker.
 It provides NO isolation and is refused unless explicitly configured.
@@ -69,7 +70,6 @@ def _docker_check(command: str, workspace_dir: str, timeout_s: int) -> tuple[int
     container = client.containers.run(
         settings().sandbox_image,
         command=["bash", "-lc", command],
-        environment=_proxy_env(),
         labels=_stack_labels(),
         volumes={workspace_dir: {"bind": "/workspace", "mode": "rw"}},
         working_dir="/workspace",
@@ -100,7 +100,6 @@ def run_agent_container(
     timeout_s: int,
     memory: str = "2g",
     stop_event=None,
-    proxy_url: str | None = None,
 ) -> tuple[int, str]:
     """Launch the sandbox entrypoint for an agent run; return (exit_code, logs).
     The entry script reads its inputs from /workspace/.yaaf/ and writes
@@ -116,7 +115,7 @@ def run_agent_container(
     container = client.containers.run(
         settings().sandbox_image,
         command=["python3", "/opt/yaaf/sandbox_entry.py"],
-        environment={**_proxy_env(proxy_url), **env},
+        environment=env,
         labels=_stack_labels(),
         volumes={workspace_dir: {"bind": "/workspace", "mode": "rw"}},
         working_dir="/workspace",
@@ -183,8 +182,7 @@ def _chat_filters(project_id: str) -> dict:
 
 def start_chat_container(*, project_id: str, run_id: str, name: str,
                          workspace_dir: str, env: dict[str, str],
-                         company_dir: str | None = None,
-                         proxy_url: str | None = None, memory: str = "2g") -> str:
+                         company_dir: str | None = None, memory: str = "2g") -> str:
     """Launch the resident chat entrypoint, detached; returns the container id.
     Same image, network and limits as an agent run — the talk lane gets no extra
     privileges, only a different entrypoint and no timeout.
@@ -217,7 +215,7 @@ def start_chat_container(*, project_id: str, run_id: str, name: str,
         command=["python3", "/opt/yaaf/chat_entry.py"],
         name=name,
         labels=_stack_labels({CHAT_LABEL: project_id, CHAT_RUN_LABEL: run_id}),
-        environment={**_proxy_env(proxy_url), **env},
+        environment=env,
         volumes=volumes,
         working_dir="/workspace",
         network=settings().sandbox_network,
@@ -280,17 +278,3 @@ def _container_logs(container) -> str:
         return container.logs(stdout=True, stderr=True, tail=1000).decode(errors="replace")[-16000:]
     return ""
 
-
-def _proxy_env(proxy_url: str | None = None) -> dict[str, str]:
-    proxy = proxy_url or settings().egress_proxy_url
-    if not proxy:
-        return {}
-    return {
-        "HTTP_PROXY": proxy,
-        "HTTPS_PROXY": proxy,
-        "http_proxy": proxy,
-        "https_proxy": proxy,
-        # The platform API and the proxy itself are reached directly.
-        "NO_PROXY": "api,localhost,127.0.0.1,proxy",
-        "no_proxy": "api,localhost,127.0.0.1,proxy",
-    }

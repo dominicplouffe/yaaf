@@ -56,6 +56,8 @@ from yaaf.core.models import (
     EvidenceKind,
     Hypothesis,
     HypothesisStatus,
+    LedgerEntry,
+    LedgerKind,
     Memory,
     MemoryScope,
     Message,
@@ -769,6 +771,47 @@ def check_requirement_cut(requirement: Requirement) -> None:
         )
 
 
+def check_requirement_reopen(requirement: Requirement) -> None:
+    """Only settled scope can be reopened. Reopening is the undo that never
+    existed: a wrong verdict or a premature cut used to be permanent for
+    everyone, the chairman included."""
+    if requirement.key == PLAN_KEY:
+        raise Refusal(
+            "R-00 is the plan gate; the janitor opens and closes it by arithmetic. "
+            "It is not scope to reopen.",
+            status_code=409,
+        )
+    if requirement.status not in CLOSED_REQUIREMENT_STATUSES:
+        raise Refusal(
+            f"{requirement.key} is {requirement.status} — it is already open. Only a "
+            "met or cut requirement can be reopened.",
+            status_code=409,
+        )
+
+
+def check_requirement_restage(requirement: Requirement) -> None:
+    if requirement.status in CLOSED_REQUIREMENT_STATUSES:
+        raise Refusal(
+            f"{requirement.key} is {requirement.status}; settled scope is history. "
+            "Reopen it first if it truly belongs back in the plan.",
+            status_code=409,
+        )
+    if requirement.key == PLAN_KEY:
+        raise Refusal("R-00 has no stage to move.", status_code=409)
+
+
+def check_requirement_reestimate(requirement: Requirement) -> None:
+    if requirement.status in CLOSED_REQUIREMENT_STATUSES:
+        raise Refusal(
+            f"{requirement.key} is {requirement.status}; what it actually took is "
+            "already on the record, and an estimate revised after the fact would "
+            "only exist to flatter the ratio.",
+            status_code=409,
+        )
+    if requirement.key == PLAN_KEY:
+        raise Refusal("R-00 carries no estimate.", status_code=409)
+
+
 def unmet_dependencies(session: Session, requirement: Requirement) -> list[Requirement]:
     """Everything that must be true before this one may be worked."""
     rows = session.execute(
@@ -1024,9 +1067,12 @@ def estimate_bias(session: Session, project_id: str) -> tuple[float, dict]:
     settled = [
         r
         for r in scope_requirements(session, project_id, all_cycles=True)
-        if r.status in CLOSED_REQUIREMENT_STATUSES and r.est_runs
+        if r.status in CLOSED_REQUIREMENT_STATUSES and (r.est_runs_first or r.est_runs)
     ]
-    pairs = [(r.est_runs, runs_spent_on(session, r.id)) for r in settled]
+    # Scored against the FIRST estimate, always: reestimate moves est_runs for
+    # the plan arithmetic, never the number the ratio judges.
+    pairs = [(r.est_runs_first or r.est_runs, runs_spent_on(session, r.id))
+             for r in settled]
     pairs = [(est, actual) for est, actual in pairs if actual > 0]
     if len(pairs) < MIN_SETTLED_FOR_BIAS:
         return 1.0, {"basis": "no history yet", "settled": len(pairs)}
@@ -1501,7 +1547,7 @@ def check_thread_not_frozen(session: Session, thread_id: str | None) -> None:
 # limit here.
 
 DEFAULT_REPORT_INTERVAL_HOURS = 0.0  # off unless the chairman sets a cadence
-REPORT_OVERRIDES = ("blocker", "budget", "approval")
+REPORT_OVERRIDES = ("blocker", "budget", "approval", "question")
 
 
 class ReportCadence(NamedTuple):
@@ -1538,15 +1584,18 @@ def report_cadence(session: Session, project: Project) -> ReportCadence:
 def boardroom_turns(
     session: Session, channel_id: str, ceo_agent_id: str
 ) -> tuple[datetime | None, datetime | None]:
-    """(CEO's last boardroom post, chairman's last). The chairman is the only
-    non-agent sender in there, so a null sender_agent_id identifies him."""
+    """(CEO's last boardroom post, chairman's last). The chairman is identified
+    by a set sender_user_id — NOT merely by a null sender_agent_id, because
+    platform-authored boardroom lines (needs/assist announcements, the
+    session-ended notice) have BOTH sender columns null. Counting those as the
+    chairman would let filing a need mint a free bypass of his report cadence."""
     last_ceo = session.execute(
         select(func.max(Message.created_at)).where(
             Message.channel_id == channel_id, Message.sender_agent_id == ceo_agent_id)
     ).scalar_one()
     last_chairman = session.execute(
         select(func.max(Message.created_at)).where(
-            Message.channel_id == channel_id, Message.sender_agent_id.is_(None))
+            Message.channel_id == channel_id, Message.sender_user_id.is_not(None))
     ).scalar_one()
     return last_ceo, last_chairman
 
@@ -1628,8 +1677,8 @@ def _check_report_override(
 ) -> None:
     if override not in REPORT_OVERRIDES:
         raise Refusal(
-            f"'{override}' is not a break-glass reason. The cadence breaks for exactly three "
-            f"things: {', '.join(REPORT_OVERRIDES)}.")
+            f"'{override}' is not a break-glass reason. The cadence breaks for exactly "
+            f"these: {', '.join(REPORT_OVERRIDES)}.")
     if override == "approval":
         pending = session.execute(
             select(func.count(Approval.id)).where(
@@ -1652,9 +1701,12 @@ def _check_report_override(
             raise Refusal(
                 f"override='budget' but spend is not at the warning line yet ({spent:,.0f} of "
                 f"{cap:,.0f}). The platform raises the budget warning itself when it lands.")
-    # 'blocker' is a judgment call the platform cannot check. It passes — and
-    # it is recorded, so a CEO that cries blocker four times a day is visible
-    # to the chairman rather than merely irritating.
+    # 'blocker' is a judgment call the platform cannot check. So is 'question'
+    # — the ask verb: the CEO may put a real question to the chairman when it
+    # feels strongly, at any dial setting, and asking never spends the report
+    # cadence. Both pass — and both are recorded, so a CEO that cries blocker
+    # or asks four times a day is visible to the chairman rather than merely
+    # irritating.
     session.add(
         AuditLog(
             id=ids.new_id(ids.AUDIT),
@@ -1668,15 +1720,264 @@ def _check_report_override(
     )
 
 
+# ── the spend envelope ──────────────────────────────────────────────────────────
+#
+# Real-world money (CEO Charter, stage C — docs/AUTONOMY.md). The dial for
+# money is three numbers, not a switch: `approval_threshold_usd` (the line
+# above which the chairman is asked regardless), `max_usd_per_purchase` (the
+# line above which a single purchase is asked even below the threshold), and
+# `external_monthly_usd_cap` (the month's hard wall, enforced in EVERY billing
+# mode — token-billed projects used to meter real dollars and never cap them).
+# Inside the envelope an autonomous CEO buys without asking; the ledger and
+# the spot-audit are how the owner trusts the envelope after the fact.
+
+
+def external_spent_this_month(session: Session, project_id: str) -> float:
+    month_start = utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    return float(session.execute(
+        select(func.coalesce(func.sum(LedgerEntry.usd), 0.0)).where(
+            LedgerEntry.project_id == project_id,
+            LedgerEntry.kind == LedgerKind.EXTERNAL_SPEND,
+            LedgerEntry.at >= month_start,
+        )
+    ).scalar_one())
+
+
+def pending_purchase_usd(session: Session, project_id: str) -> float:
+    """Cleared-but-unfinished purchases. They reserve the envelope: money the
+    company has been told it may move is committed the moment it is cleared,
+    or two overlapping purchases could each clear against the same headroom
+    and together bust the wall. A failed finish releases the reservation; a
+    stale one can be released by finishing it ok=false after checking with
+    the vendor."""
+    from yaaf.core.models import SideEffect, SideEffectStatus
+
+    month_start = utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    rows = session.execute(
+        select(SideEffect.payload).where(
+            SideEffect.project_id == project_id,
+            SideEffect.kind == "purchase",
+            SideEffect.status == SideEffectStatus.RECORDED,
+            SideEffect.created_at >= month_start,
+        )
+    ).scalars()
+    return float(sum(float((p or {}).get("usd") or 0) for p in rows))
+
+
+def check_external_spend(
+    session: Session,
+    project: Project,
+    cons: ConstitutionDoc,
+    usd: float,
+    approval: Approval | None,
+    enforce_wall: bool = True,
+) -> float:
+    """The envelope, refused with its arithmetic. Returns the month's
+    committed real-world USD (booked + cleared-but-unfinished) so callers can
+    quote headroom without re-running the aggregates.
+
+    `enforce_wall=False` is for booking money that ALREADY moved (spend_book):
+    refusing the record would un-report real spending, which is worse than any
+    overshoot — the caller discloses the overshoot loudly instead. The
+    approval lines still apply on both paths: they were the agent's to clear
+    BEFORE paying."""
+    committed = 0.0
+    if cons.external_monthly_usd_cap > 0:
+        committed = (external_spent_this_month(session, project.id)
+                     + pending_purchase_usd(session, project.id))
+        if enforce_wall and committed + usd > cons.external_monthly_usd_cap:
+            raise Refusal(
+                f"This would put the month's real-world spend at "
+                f"${committed + usd:,.2f}, over the "
+                f"${cons.external_monthly_usd_cap:,.0f} envelope "
+                f"(${committed:,.2f} already booked or cleared — an unfinished "
+                "purchase reserves the envelope until purchase_finish closes it). "
+                "The wall does not take approvals — raising it is a constitution "
+                "amendment, which is the chairman's, and yours to recommend with "
+                "the arithmetic.",
+                status_code=403,
+            )
+    over_purchase = 0 < cons.max_usd_per_purchase < usd
+    over_threshold = usd >= cons.approval_threshold_usd
+    if not (over_purchase or over_threshold):
+        return committed
+    ok = (
+        approval is not None
+        and approval.project_id == project.id
+        and approval.status == ApprovalStatus.APPROVED
+        and (approval.amount_usd or 0) >= usd
+    )
+    if not ok:
+        line = (f"${cons.approval_threshold_usd:,.0f} (the approval threshold)"
+                if over_threshold
+                else f"${cons.max_usd_per_purchase:,.0f} (the per-purchase line)")
+        raise Refusal(
+            f"A spend of ${usd:,.2f} crosses {line} and needs an approved chairman "
+            "approval covering the amount. Request one at POST /agent/approvals with "
+            "kind='spend' — as a recommendation you would defend.",
+            status_code=403,
+        )
+    return committed
+
+
+def check_roles_exist(session: Session, slugs: list[str]) -> None:
+    """One IN query; refused with the unknown names spelled out."""
+    from yaaf.core.models import Role
+
+    known = set(session.execute(
+        select(Role.slug).where(Role.slug.in_(slugs))
+    ).scalars())
+    missing = sorted(set(slugs) - known)
+    if missing:
+        raise Refusal(
+            f"No such role(s): {', '.join(missing)}. A grant to a role that does "
+            "not exist grants nothing — check the roster and use exact slugs.",
+            status_code=422,
+        )
+
+
+# ── the authority dial, in one place ────────────────────────────────────────────
+#
+# Every "does the CEO hold this?" question routes through here, so the day the
+# Advised setting (announce, wait a window, silence means go) lands, it is one
+# function's change instead of a hunt across five files.
+
+def ceo_holds(cons: ConstitutionDoc, switch: str) -> bool:
+    value = getattr(cons, switch)
+    return value == ("ceo_judgment" if switch == "verdict_policy" else "ceo")
+
+
 # ── chairman directives ─────────────────────────────────────────────────────────
 #
-# The CEO may turn something the chairman said into enforced policy. Two things
-# keep that from being a hole: it may only touch rules that constrain what the
-# company asks of *him* (there is nobody such a rule could be used against),
-# and it must cite a real, recent message he actually wrote.
+# The CEO may turn something the chairman said into something the platform
+# does. Two shapes: a RULE directive files reporting-cadence policy, and a
+# SCOPE directive executes a plan order — accept, cut, reopen, restage,
+# reestimate, reword, unsequence — through the same admin machinery the
+# chairman's own buttons drive. What keeps either from being a hole: it must
+# cite a real, recent boardroom message he actually wrote, the authority
+# exercised is his (proven by the citation), and every execution is echoed
+# back threaded to his words, where a misreading is one sentence from
+# correction — and every one of these verbs is reversible.
 
 DIRECTIVE_FIELDS = CADENCE_FIELDS
 DIRECTIVE_MAX_AGE_HOURS = 24
+
+# The scope verbs a directive may execute, and the fields each one needs
+# beyond the requirement it names. `accept` covers "add" too: the CEO
+# proposes, then files the chairman's yes from the message where he said it.
+DIRECTIVE_ACTIONS: dict[str, tuple[str, ...]] = {
+    "accept": (),
+    "cut": (),
+    "reopen": (),
+    "restage": ("stage",),
+    "reestimate": ("est_runs",),
+    "reword": ("statement",),
+    "unsequence": ("depends_on_key",),
+}
+
+
+def check_directive_action(action: dict) -> None:
+    _check_action_shape(action, DIRECTIVE_ACTIONS,
+                        "a scope order a directive can carry",
+                        "Anything else is the chairman's own button to press.")
+
+
+# The verbs the CEO may exercise as ITS OWN authority when the constitution's
+# dial grants them (stage B — docs/AUTONOMY.md). Same shapes as directive
+# orders, plus the verdict; the difference is whose authority is exercised:
+# a directive runs on the chairman's cited word, a self-action on a rule he
+# wrote into the constitution. `verdict` requires `ok` (bool) and is gated on
+# verdict_policy rather than scope_authority.
+SELF_SCOPE_ACTIONS: dict[str, tuple[str, ...]] = {
+    **DIRECTIVE_ACTIONS,
+    "verdict": ("ok",),
+}
+
+# Which constitution switch holds each verb.
+_ACTION_AUTHORITY: dict[str, str] = {
+    "accept": "plan_authority",
+    "verdict": "verdict_policy",
+    **{kind: "scope_authority"
+       for kind in ("cut", "reopen", "restage", "reestimate", "reword", "unsequence")},
+}
+
+
+def check_self_scope_action(cons: ConstitutionDoc, action: dict) -> None:
+    """Validate the shape, then the authority. A verb the dial has not granted
+    is a 403 that names the two legitimate paths: the chairman's own button,
+    or a directive citing his boardroom order."""
+    _check_action_shape(action, SELF_SCOPE_ACTIONS,
+                        "a scope verb the CEO can hold",
+                        "Anything else is the chairman's own button to press.")
+    kind = action["kind"]
+    switch = _ACTION_AUTHORITY[kind]
+    held = getattr(cons, switch)
+    if not ceo_holds(cons, switch):
+        raise Refusal(
+            f"The constitution holds {switch} = '{held}': '{kind}' is not yours to "
+            "exercise on this project. Two paths remain — the chairman's own button, "
+            "or, if he ordered it in the boardroom, file it as a directive citing his "
+            "message. The dial itself is his amendment to turn, and yours to recommend.",
+            status_code=403,
+        )
+
+
+def _check_action_shape(action: dict, allowed: dict[str, tuple[str, ...]],
+                        what: str, tail: str) -> None:
+    kind = action.get("kind")
+    if kind not in allowed:
+        raise Refusal(
+            f"'{kind}' is not {what}. The verbs are: "
+            f"{', '.join(sorted(allowed))}. {tail}",
+            status_code=422,
+        )
+    if not action.get("requirement_key"):
+        raise Refusal("A scope action names the requirement by key (e.g. R-07).",
+                      status_code=422)
+    missing = [f for f in allowed[kind] if action.get(f) in (None, "")]
+    if missing:
+        raise Refusal(f"The {kind} action needs {', '.join(missing)}.", status_code=422)
+    _coerce_action_fields(action)
+
+
+def _coerce_action_fields(action: dict) -> None:
+    """Type- and range-check the action's fields, refusing instead of letting
+    a bad value 500 mid-transaction or write a stage the chairman's own routes
+    would never accept. Mutates the dict so callers read coerced values. The
+    bounds mirror the admin Pydantic models exactly — the same verb must face
+    the same walls whichever hand exercises it."""
+    def _int_field(name: str, lo: int, hi: int, required: bool) -> None:
+        value = action.get(name)
+        if value in (None, ""):
+            if required:
+                raise Refusal(f"'{name}' is required here.", status_code=422)
+            return
+        if isinstance(value, bool) or not isinstance(value, (int, str)):
+            raise Refusal(f"'{name}' must be a whole number, got {value!r}.",
+                          status_code=422)
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            raise Refusal(f"'{name}' must be a whole number, got {value!r}.",
+                          status_code=422) from None
+        if not lo <= number <= hi:
+            raise Refusal(f"'{name}' must be between {lo} and {hi}, got {number}. "
+                          "Stage 0 is R-00's, the plan gate's, and nobody else's.",
+                          status_code=422)
+        action[name] = number
+
+    kind = action["kind"]
+    if kind in ("accept", "restage"):
+        _int_field("stage", 1, 50, required=(kind == "restage"))
+    if kind == "reestimate":
+        _int_field("est_runs", 1, 10_000, required=True)
+    if kind == "reword":
+        statement = action.get("statement")
+        if not isinstance(statement, str) or not 10 <= len(statement.strip()) <= 2000:
+            raise Refusal("'statement' must be 10-2000 characters.", status_code=422)
+        action["statement"] = statement.strip()
+    if kind == "verdict" and not isinstance(action.get("ok"), bool):
+        raise Refusal("'ok' must be true or false.", status_code=422)
 
 
 def check_directive_scope(changes: dict) -> None:
@@ -1694,10 +1995,14 @@ def check_directive_scope(changes: dict) -> None:
         )
 
 
-def check_directive_citation(session: Session, project: Project, message_id: str) -> Message:
+def check_directive_citation(
+    session: Session, project: Project, message_id: str, for_rules: bool = True
+) -> Message:
     """The cited message must be the chairman's own words, in the boardroom,
-    recent, and newer than the rule it replaces — otherwise a stale message
-    could be re-cited to undo a fresher instruction."""
+    recent — and, for a rule directive, newer than the rule it replaces, so a
+    stale message cannot be re-cited to undo a fresher instruction. A scope
+    order skips that last check: it executes an act, it does not replace a
+    standing rule."""
     message = session.get(Message, message_id)
     if message is None or message.project_id != project.id:
         raise Refusal(f"No message {message_id} in this project to cite.", status_code=404)
@@ -1706,13 +2011,21 @@ def check_directive_citation(session: Session, project: Project, message_id: str
         raise Refusal(
             "Cite something the chairman said in the BOARDROOM. Instructions relayed through "
             "leadership are not his, however confidently they are repeated.")
-    if message.sender_agent_id is not None:
-        raise Refusal("That message is an agent's, not the chairman's. You cannot cite yourself.")
+    # The chairman is identified by his own user id, not by the mere absence of
+    # an agent sender: platform-authored boardroom lines (a filed need, an
+    # assist announcement, the session-ended notice) carry NEITHER sender, and
+    # accepting one as "the chairman's words" would let a CEO cite a line it
+    # caused to execute scope actions recorded as the chairman's own act.
+    if message.sender_agent_id is not None or message.sender_user_id != project.chairman_user_id:
+        raise Refusal("That message is not the chairman's own words in the boardroom. "
+                      "You cannot cite an agent, or a line the platform posted.")
     age = utcnow() - message.created_at
     if age > timedelta(hours=DIRECTIVE_MAX_AGE_HOURS):
         raise Refusal(
             f"That message is {age.days}d old. File a directive when he gives it, not from "
             f"history — anything older than {DIRECTIVE_MAX_AGE_HOURS}h is his to restate.")
+    if not for_rules:
+        return message
     newest = session.execute(
         select(func.max(Amendment.effective_at)).where(
             Amendment.project_id == project.id,
@@ -1728,16 +2041,28 @@ def check_directive_citation(session: Session, project: Project, message_id: str
 
 
 def confirm_directive(
-    session: Session, project: Project, agent: Agent, cited: Message, changes: dict
+    session: Session,
+    project: Project,
+    agent: Agent,
+    cited: Message,
+    changes: dict | None = None,
+    action_detail: str | None = None,
 ) -> None:
     """Say it back to him. The platform can verify that he spoke and when, but
     never what he meant — so the safeguard against a misread directive is that
     he sees it land, in his own channel, threaded to the words it came from."""
-    readable = ", ".join(f"{key.removeprefix('chairman_report_')} = {value}"
-                         for key, value in sorted(changes.items()))
-    body = (f"Recorded as policy, effective now: **{readable}**. I took this from your message "
-            f"above and the platform enforces it from here — it is no longer something I have "
-            f"to remember between runs. Say so if I read you wrong.")
+    if action_detail is not None:
+        body = (f"Done, from your message above: **{action_detail}**. Executed on your "
+                f"authority and on the record. Say so if I read you wrong — every one of "
+                f"these is reversible.")
+        title = "Plan changed on your order"
+    else:
+        readable = ", ".join(f"{key.removeprefix('chairman_report_')} = {value}"
+                             for key, value in sorted((changes or {}).items()))
+        body = (f"Recorded as policy, effective now: **{readable}**. I took this from your "
+                f"message above and the platform enforces it from here — it is no longer "
+                f"something I have to remember between runs. Say so if I read you wrong.")
+        title = "Reporting cadence changed"
     session.add(
         Message(
             id=ids.new_id(ids.MESSAGE),
@@ -1748,11 +2073,11 @@ def confirm_directive(
             body=body,
         )
     )
-    # Best-effort out-of-band: a rule change he did not ask for is exactly the
+    # Best-effort out-of-band: a change he did not watch happen is exactly the
     # thing he should not have to be watching Slack to catch.
     from yaaf.server.notify import chairman_notify
 
-    chairman_notify(session, project, "Reporting cadence changed", body)
+    chairman_notify(session, project, title, body)
 
 
 def _ago(delta: timedelta) -> str:

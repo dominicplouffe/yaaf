@@ -19,6 +19,7 @@ each is attacked here with a live run token, over HTTP, the way an agent would:
 from __future__ import annotations
 
 from tests.conftest import ADMIN, agent_by_name, bearer, live_token, make_project
+from yaaf.core.constitution import effective
 from yaaf.core.db import db_session
 from yaaf.core.models import (
     Project,
@@ -244,7 +245,8 @@ def test_closing_every_task_moves_a_requirement_to_checking_not_to_met(client):
                        headers=bearer(lead_token)).status_code == 200
 
     with db_session() as session:
-        janitor.check_finished_requirements(session, session.get(Project, project["id"]))
+        row = session.get(Project, project["id"])
+        janitor.check_finished_requirements(session, row, effective(session, row.id))
     with db_session() as session:
         row = session.get(Requirement, rid)
         assert row.status == RequirementStatus.CHECKING, \
@@ -314,7 +316,8 @@ def test_the_chairman_verdict_is_the_only_thing_that_meets_an_observable(client)
         headers=bearer(lead_token))
     assert completed.status_code == 200, completed.text
     with db_session() as session:
-        janitor.check_finished_requirements(session, session.get(Project, project["id"]))
+        row = session.get(Project, project["id"])
+        janitor.check_finished_requirements(session, row, effective(session, row.id))
 
     rejected = client.post(f"/admin/requirements/{rid}/verdict",
                            json={"ok": False, "note": "the dates are wrong"}, headers=ADMIN)
@@ -327,13 +330,14 @@ def test_the_chairman_verdict_is_the_only_thing_that_meets_an_observable(client)
     # He is not asked again until the rework lands — see
     # `test_a_rejected_observable_is_not_re_asked_until_the_work_moves`.
     with db_session() as session:
-        janitor.check_finished_requirements(session, session.get(Project, project["id"]))
+        janitor.check_finished_requirements(session, session.get(Project, project["id"]), effective(session, project["id"]))
     with db_session() as session:
         assert session.get(Requirement, rid).status == RequirementStatus.IN_PROGRESS
 
     _complete_a_task(client, project, rid)
     with db_session() as session:
-        janitor.check_finished_requirements(session, session.get(Project, project["id"]))
+        row = session.get(Project, project["id"])
+        janitor.check_finished_requirements(session, row, effective(session, row.id))
     passed = client.post(f"/admin/requirements/{rid}/verdict",
                          json={"ok": True, "note": "checked it myself"}, headers=ADMIN)
     assert passed.status_code == 200
@@ -596,7 +600,7 @@ def test_a_failing_acceptance_test_is_not_retried_until_the_work_moves(client):
     _complete_a_task(client, project, rid)
 
     with db_session() as session:
-        janitor.check_finished_requirements(session, session.get(Project, project["id"]))
+        janitor.check_finished_requirements(session, session.get(Project, project["id"]), effective(session, project["id"]))
     assert _queued_checks(project["id"]) == 1, "the first ruling is always owed"
 
     _fail_the_check(project, rid)
@@ -607,14 +611,14 @@ def test_a_failing_acceptance_test_is_not_retried_until_the_work_moves(client):
     for _ in range(10):
         with db_session() as session:
             janitor.check_finished_requirements(
-                session, session.get(Project, project["id"]))
+                session, session.get(Project, project["id"]), effective(session, project["id"]))
     assert _queued_checks(project["id"]) == 1, \
         "a re-test of an unchanged workspace can only burn a container"
 
     # New work closes under it — now the answer really could be different.
     _complete_a_task(client, project, rid)
     with db_session() as session:
-        janitor.check_finished_requirements(session, session.get(Project, project["id"]))
+        janitor.check_finished_requirements(session, session.get(Project, project["id"]), effective(session, project["id"]))
     assert _queued_checks(project["id"]) == 2, \
         "work moved, so the platform owes a fresh ruling"
 
@@ -628,7 +632,7 @@ def _park_an_observable(client, project: dict, slug_note: str = "") -> str:
     accept(client, rid, project)
     _complete_a_task(client, project, rid)
     with db_session() as session:
-        janitor.check_finished_requirements(session, session.get(Project, project["id"]))
+        janitor.check_finished_requirements(session, session.get(Project, project["id"]), effective(session, project["id"]))
     with db_session() as session:
         assert session.get(Requirement, rid).status == RequirementStatus.CHECKING, slug_note
     return rid
@@ -665,7 +669,7 @@ def test_a_rejected_observable_is_not_re_asked_until_the_work_moves(client):
     for _ in range(10):
         with db_session() as session:
             janitor.check_finished_requirements(
-                session, session.get(Project, project["id"]))
+                session, session.get(Project, project["id"]), effective(session, project["id"]))
         with db_session() as session:
             assert session.get(Requirement, rid).status == RequirementStatus.IN_PROGRESS, \
                 "re-asking the chairman about an unchanged deliverable is not a question"
@@ -673,7 +677,7 @@ def test_a_rejected_observable_is_not_re_asked_until_the_work_moves(client):
     # The rework closes — now the answer really could be different.
     _complete_a_task(client, project, rid)
     with db_session() as session:
-        janitor.check_finished_requirements(session, session.get(Project, project["id"]))
+        janitor.check_finished_requirements(session, session.get(Project, project["id"]), effective(session, project["id"]))
     with db_session() as session:
         assert session.get(Requirement, rid).status == RequirementStatus.CHECKING, \
             "work moved, so the chairman is owed a fresh look"

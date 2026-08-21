@@ -5,9 +5,9 @@
 # re-seeds a role library that already exists, and never widens an exposed
 # port you did not ask for.
 #
-# Everything runs here: Postgres, the API + dashboard, the runner, the egress
-# proxy. Splitting Postgres onto its own host is a later variant — the seam is
-# marked EXTERNAL-DB below.
+# Everything runs here: Postgres, the API + dashboard, the runner. Splitting
+# Postgres onto its own host is a later variant — the seam is marked
+# EXTERNAL-DB below.
 #
 # Usage:
 #   ./deploy_single_server.sh                  # dashboard on 127.0.0.1:8080
@@ -57,9 +57,6 @@ for d in "$YAAF_STATE_ROOT/workspaces" "$YAAF_STATE_ROOT/artifacts"; do
     sudo mkdir -p "$d" && ok "created $d"
   fi
 done
-# The proxy's generated config lives out here too, and needs a seed file before
-# squid's first start — its `include` is fatal when the target is missing.
-ensure_proxy_generated; ok "$PROXY_GENERATED_DIR seeded"
 
 # ── 3. secrets ────────────────────────────────────────────────────────────────
 # YAAF_ADMIN_TOKEN is any opaque string. YAAF_MASTER_KEY must be a Fernet key
@@ -115,7 +112,10 @@ $DOCKER build -f deploy/sandbox/Dockerfile -t yaaf-sandbox:latest . \
   || die "sandbox image build failed"
 ok "yaaf-sandbox:latest built"
 
-compose up -d --build || die "compose up failed"
+migrate_sandbox_network
+# --remove-orphans: the proxy service was removed with the egress allowlist;
+# an orphaned squid container would sit there advertising containment nothing uses.
+compose up -d --build --remove-orphans || die "compose up failed"
 ok "control plane up"
 
 # ── 6. wait for the API ───────────────────────────────────────────────────────
@@ -174,11 +174,11 @@ fi
 # To move Postgres off this box: drop the `db` service, point
 # YAAF_DATABASE_URL at the real host on both `api` and `runner`, and keep
 # YAAF_MASTER_KEY identical to whatever encrypted the secrets already there.
-# The runner needs the database and the proxy; it does not need the API.
+# The runner needs the database; it does not need the API.
 
 say "Running"
 cat <<EOF
-  Postgres, the API + dashboard, the runner and the egress proxy, all in
+  Postgres, the API + dashboard and the runner, all in
   Docker on this box. Postgres publishes no port — only the other containers
   can reach it, and compose passes them YAAF_DATABASE_URL directly, so there
   is nothing for you to set.

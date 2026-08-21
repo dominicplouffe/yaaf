@@ -27,14 +27,31 @@ log = logging.getLogger("yaaf.notify")
 
 
 def chairman_notify(session: Session, project: Project, subject: str, body: str) -> None:
-    """Send subject/body to the project's chairman via every configured channel."""
+    """Send subject/body to the project's chairman via every configured channel.
+
+    Delivery happens on a fire-and-forget thread: SMTP and webhook I/O carry
+    15s timeouts each, and several agent request handlers call this with a DB
+    transaction open — a slow mail host must never hold row locks or pin a
+    request worker. Everything the thread needs is resolved from the session
+    BEFORE it starts; the thread itself never touches the database."""
     chairman = session.get(User, project.chairman_user_id)
     log.info("chairman notify [%s] %s: %s", project.slug, subject, body)
     cfg = settings()
-    if cfg.smtp_host and chairman is not None:
-        _send_email(chairman.email, f"[yaaf/{project.slug}] {subject}", body)
-    if cfg.chairman_webhook_url:
-        _send_webhook(cfg.chairman_webhook_url, project.slug, subject, body)
+    email = chairman.email if chairman is not None else None
+    slug = project.slug
+
+    def _deliver() -> None:
+        try:
+            if cfg.smtp_host and email:
+                _send_email(email, f"[yaaf/{slug}] {subject}", body)
+            if cfg.chairman_webhook_url:
+                _send_webhook(cfg.chairman_webhook_url, slug, subject, body)
+        except Exception:  # pragma: no cover - best-effort by contract
+            log.warning("chairman notify delivery failed for %s", slug, exc_info=True)
+
+    import threading
+
+    threading.Thread(target=_deliver, daemon=True).start()
 
 
 def _send_email(to: str, subject: str, body: str) -> None:

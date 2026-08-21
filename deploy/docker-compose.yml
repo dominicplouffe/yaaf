@@ -14,7 +14,7 @@
 # stack beside a live one (a worktree testing a branch, or a staging box):
 #
 #   YAAF_STACK=modes                        # containers, volumes, network suffix
-#   YAAF_STATE_ROOT=/var/lib/yaaf-modes     # workspaces, artifacts, proxy config
+#   YAAF_STATE_ROOT=/var/lib/yaaf-modes     # workspaces, artifacts
 #   YAAF_SANDBOX_NETWORK=yaaf_sandbox_modes # sandboxes must not share a network
 #   YAAF_SANDBOX_IMAGE=yaaf-sandbox:modes   # or the live stack's next run uses
 #                                           # this branch's code, silently
@@ -53,6 +53,11 @@ services:
       YAAF_ADMIN_TOKEN: ${YAAF_ADMIN_TOKEN:-dev-admin-token}
       YAAF_MASTER_KEY: ${YAAF_MASTER_KEY:-}
       YAAF_API_BASE_URL: http://api:8080
+      # Browser-facing origin (https://yaaf.example.com) for OAuth-protected
+      # MCP data sources — their sign-in redirects back to it. Unset, the
+      # redirect URI is derived per request, which breaks behind a
+      # TLS-terminating proxy.
+      # YAAF_PUBLIC_BASE_URL: ${YAAF_PUBLIC_BASE_URL:-}
       # Host path == container path, here as well as on the runner: the two
       # services share these directories and store absolute paths in the
       # database, so they have to agree on what a path means.
@@ -94,14 +99,8 @@ services:
       YAAF_STACK: ${YAAF_STACK:-deploy}
       YAAF_SANDBOX_IMAGE: ${YAAF_SANDBOX_IMAGE:-yaaf-sandbox:latest}
       YAAF_SANDBOX_NETWORK: ${YAAF_SANDBOX_NETWORK:-yaaf_sandbox}
-      YAAF_EGRESS_PROXY_URL: http://proxy:3128
       YAAF_WORKSPACES_ROOT: ${YAAF_STATE_ROOT:-/var/lib/yaaf}/workspaces
       YAAF_ARTIFACTS_ROOT: ${YAAF_STATE_ROOT:-/var/lib/yaaf}/artifacts
-      # Egress auto-apply: the runner regenerates the per-role squid config on
-      # change and reloads squid (exec `squid -k reconfigure`; a container HUP
-      # dies in the image's bash entrypoint) — UI edits reach squid, no CLI.
-      YAAF_PROXY_GENERATED_DIR: ${YAAF_STATE_ROOT:-/var/lib/yaaf}/proxy-generated
-      YAAF_PROXY_CONTAINER: ${YAAF_STACK:-deploy}-proxy-1
       # S3 artifact store (optional): keep in lockstep with the api service above.
       # YAAF_ARTIFACT_S3_ENDPOINT: http://minio:9000
       # YAAF_ARTIFACT_S3_BUCKET: yaaf-artifacts
@@ -118,10 +117,6 @@ services:
       - ${YAAF_STATE_ROOT:-/var/lib/yaaf}/workspaces:${YAAF_STATE_ROOT:-/var/lib/yaaf}/workspaces
       # Shared with the api service: run traces are stashed here at finalize.
       - ${YAAF_STATE_ROOT:-/var/lib/yaaf}/artifacts:${YAAF_STATE_ROOT:-/var/lib/yaaf}/artifacts
-      # Egress auto-apply writes here; the proxy reads the same dir read-only.
-      # Outside the checkout on purpose: this is regenerated machine state, and
-      # a running container must never dirty the working tree it was built from.
-      - ${YAAF_STATE_ROOT:-/var/lib/yaaf}/proxy-generated:${YAAF_STATE_ROOT:-/var/lib/yaaf}/proxy-generated
     depends_on:
       db:
         condition: service_healthy
@@ -149,21 +144,6 @@ services:
       timeout: 3s
       retries: 20
 
-  proxy:
-    restart: unless-stopped
-    image: ubuntu/squid:latest
-    # The image's default entrypoint exits silently with a custom config;
-    # run the daemon in foreground explicitly.
-    command: ["squid", "--foreground", "-f", "/etc/squid/squid.conf"]
-    volumes:
-      - ./proxy/squid.conf:/etc/squid/squid.conf:ro
-      - ./proxy/allowlist.txt:/etc/squid/allowlist.txt:ro
-      # Per-role ports + allowlists, written by `yaaf egress sync`; reload with
-      # `docker exec <this container> squid -k reconfigure` after a sync
-      # (NOT a container HUP — PID 1 is a bash entrypoint that swallows it).
-      - ${YAAF_STATE_ROOT:-/var/lib/yaaf}/proxy-generated:/etc/squid/generated:ro
-    networks: [default, sandbox]
-
 networks:
   default: {}
   sandbox:
@@ -173,7 +153,10 @@ networks:
     # resolve the API by the hostname `api`: on a shared network a run from one
     # stack can reach the other stack's server.
     name: ${YAAF_SANDBOX_NETWORK:-yaaf_sandbox}
-    internal: true   # sandbox containers reach the world ONLY through the proxy
+    # Open by the chairman's decision (docs/AUTONOMY.md): the per-role egress
+    # allowlist made every capability a firewall ticket. Containment is the
+    # fresh container per run, role-scoped secrets, budgets, and the audit
+    # trail. The network still isolates stacks from each other by name.
 
 volumes:
   pgdata: {}

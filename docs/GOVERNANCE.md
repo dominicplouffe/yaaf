@@ -78,7 +78,7 @@ Also enforced here, and not tunable because they're structural:
 | Rule | Default | What it does |
 |---|---|---|
 | `drought_hours` | 24 | With no verified external evidence for this long, only `produces_external_evidence=true` tasks may be created. |
-| `require_evidence_verification` | true | External evidence counts only after the platform fetches, checks, and snapshots it. Evidence nobody can check is opinion. |
+| `require_evidence_verification` | false | On, external evidence counts only after the platform fetches, checks, and snapshots it. Off by default — most projects verify with the data at their disposal; the "Show me proof" creation preset turns it on. |
 
 ### Autonomy
 
@@ -87,6 +87,17 @@ Also enforced here, and not tunable because they're structural:
 | `approval_threshold_usd` | 250.0 | Spends at or above this — and anything legally ambiguous — wait for you. |
 | `approval_timeout_days` | 7 | An unanswered approval decides itself here, so a vacationing chairman degrades the company instead of deadlocking it. |
 | `approval_timeout_decision` | `"deny"` | What that expiry decides. Default-deny: silence is not consent. |
+| `plan_authority` | `"chairman"` | Who accepts proposed scope. `"ceo"`: the CEO accepts its own proposals — the plan gate runs the same arithmetic, every acceptance is audited and sent to you. |
+| `scope_authority` | `"chairman"` | Who may cut, reopen, restage, reestimate, reword and unsequence. `"ceo"` hands the verbs to the CEO, on the record, reversibly. Your routes never close. |
+| `commitment_authority` | `"chairman"` | Who signs the delivery date. `"ceo"`: proposing adopts the platform's own projection immediately — the CEO still cannot write a date, only accept the arithmetic's. |
+| `verdict_policy` | `"chairman"` | Who judges unverifiable observable closes. `"ceo_judgment"`: the CEO judges and keeps going, and every self-judgment is disclosed to you in full — stronger than sampling. |
+| `capability_authority` | `"chairman"` | Who scopes credentials to roles. `"ceo"`: the CEO re-scopes existing service credentials across its team itself, on the record, disclosed to you. Creating a credential is always yours — you hold the values. |
+
+The five authority switches are the dial (docs/AUTONOMY.md): they decide *who
+holds a verb*, never whether the record is honest. Every self-exercise runs
+through the same machinery as your own buttons, lands in the audit log, and is
+sent to you out-of-band. The dial itself is chairman-only — a directive
+touching it is refused like any other constitution grab.
 
 ### Budgets
 
@@ -94,7 +105,16 @@ Also enforced here, and not tunable because they're structural:
 |---|---|---|
 | `monthly_usd_cap` | 1000.0 | The unit under `api_key` billing. At 100% the project **pauses itself** and you're emailed. |
 | `monthly_token_cap` | 200,000,000 | The unit under `subscription` billing. Same hard stop. |
-| `budget_warn_ratio` | 0.8 | The CEO is told to cut burn here — before the platform pauses the project for it. |
+| `budget_warn_ratio` | 0.8 | The CEO is told to cut burn here — before the platform pauses the project for it. Also warns on the external envelope. |
+| `external_monthly_usd_cap` | 500.0 | The month's real-world spend wall (purchases, services) — separate from the model budget and enforced in **every** billing mode. A purchase that would cross it is refused with the arithmetic; no approval overrides it, only an amendment. 0 turns it off. |
+| `max_usd_per_purchase` | 100.0 | The most one purchase may be without an approval, even below the approval threshold. 0 turns the line off. |
+
+There is deliberately no `spend_authority` switch: the money dial **is** these
+numbers plus `approval_threshold_usd` — a switch would only duplicate them.
+Inside the envelope an autonomous CEO buys without asking; every purchase is
+cleared before money moves (`purchase_begin`), booked with its receipt
+(`purchase_finish`), and crash-retries can never buy twice. A spend made with
+raw tooling is booked with `spend_book` against the same walls.
 
 ### Memory
 

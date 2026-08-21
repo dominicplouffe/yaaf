@@ -49,8 +49,8 @@ break a rule, it doesn't get a stern reminder — it gets a 403.
   email. Circuit breakers kill message loops and refusal storms before they
   cost anything.
 - **Agents are contained, not trusted.** Each run happens in a fresh Docker
-  container whose only network route is an allowlist proxy — per role, so your
-  writer can reach WordPress and nothing else. Secrets are encrypted, scoped
+  container with the open internet — the chairman's call: capability should
+  never be a firewall ticket. Secrets are encrypted, scoped
   to roles, and injected per-run; agents never see the values in chat.
 - **Everything is on the record.** Every message, task transition, run, dollar,
   and rule enforcement is in Postgres and visible in the dashboard. The
@@ -78,7 +78,7 @@ Everything yaaf does, and where it's documented. Full reference:
 | **Verification** | Platform-run success tests, server-side evidence fetching + hashing + snapshotting, unforgeable webhook evidence, human spot-audit, a CEO-judgment metric. |
 | **Money** | Per-run metering (killed runs and cache traffic included), USD or token budgets, warn-then-auto-pause, approval thresholds, `yaaf spend-report`. |
 | **Loop brakes** | Wake and run ceilings, pair circuit breaker that freezes ping-pong threads, refusal caps, an enforced reporting cadence, suppressed idle wakes. |
-| **Containment** | Fresh container per run, internal-only network behind a per-role allowlist proxy, encrypted role-scoped secrets, an idempotency ledger so retries never double-fire. |
+| **Containment** | Fresh container per run, encrypted role-scoped secrets, an idempotency ledger so retries never double-fire. |
 | **Memory** | Project and team scopes with a curator, caps as refusals rather than silent eviction, explicit supersede/compact/forget. |
 | **Audit** | Every message, task transition, run, dollar, decision, amendment, and refusal — queryable and on screen. |
 | **Chat** | A resident CEO session per project: the Boardroom answers in seconds, and so does Slack. Chatting never consumes the work queue's caps. |
@@ -115,7 +115,7 @@ workforce" than to an orchestration SDK:
 | Where rules live | In prompts and your code | In the server, as refusals it's not possible to bypass |
 | "Task complete" | The model says so | Platform-run success tests, verified evidence, human spot-audit |
 | Cost control | You watch the meter | Metered runs, hard budget pauses, loop circuit breakers |
-| Isolation | Your process, your network | Container per run, egress allowlist per role, scoped secrets |
+| Isolation | Your process, your network | Container per run, scoped secrets |
 | After a crash | Re-run the script | Leases reaped, work released, side-effects ledger prevents double-firing (no duplicate tweet, PR, or payment) |
 | Paper trail | Your logs | Full audit: every message, decision, dollar, and enforcement |
 
@@ -163,7 +163,7 @@ git clone <your-yaaf-remote> yaaf && cd yaaf
 ```
 
 It generates both secrets, builds both images, brings up Postgres + the API +
-the runner + the egress proxy, applies migrations, loads the role library, and
+the runner, applies migrations, loads the role library, and
 finishes by printing the token you log in with. It is safe to re-run: it never
 overwrites secrets and never re-seeds a role library that already exists.
 
@@ -221,7 +221,7 @@ Index: **[docs/](docs/)**.
 
 ```
 yaaf/server     the platform: API, policy engine (the refusals), dispatcher,
-                janitor, evidence verifier, Slack bridge, egress generator
+                janitor, evidence verifier, Slack bridge
 yaaf/runner     leases runs, launches sandbox containers, meters everything
 yaaf/cli        `yaaf` — admin/observe CLI, incl. `yaaf experiment`
 web/            the chairman's dashboard (React, served at /app)

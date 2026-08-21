@@ -259,6 +259,12 @@ class ApprovalKind(enum.StrEnum):
     LEGAL = "legal"
     OWNER_DECISION = "owner_decision"
     TOOL_REQUEST = "tool_request"
+    # The human-assist protocol (CEO Charter, stage E): a step only a human
+    # can do — a captcha, a 2FA code, a KYC form, an account only he can
+    # touch. Any agent may file one; the chairman's answer rides the decision
+    # note and wakes the asker. The platform never tries to defeat a security
+    # challenge at any autonomy level — it hands it over.
+    ASSIST = "assist"
 
 
 class ApprovalStatus(enum.StrEnum):
@@ -279,11 +285,35 @@ class SideEffectStatus(enum.StrEnum):
     FAILED = "failed"
 
 
+class LedgerKind(enum.StrEnum):
+    """What a ledger row's dollars (or tokens) mean. The distinction is
+    load-bearing arithmetic, not taxonomy: the budget meter sums everything
+    that is NOT revenue, the external envelope sums exactly EXTERNAL_SPEND,
+    and REVENUE is written only by signed webhooks — no agent verb exists.
+    A new kind added here must decide which sums it belongs to."""
+
+    MODEL_USAGE = "model_usage"
+    EXTERNAL_SPEND = "external_spend"
+    INFRA = "infra"
+    REVENUE = "revenue"
+
+
 class NoticeKind(enum.StrEnum):
     DROUGHT = "drought"
     HYPOTHESIS_EXPIRED = "hypothesis_expired"
     BUDGET_WARNING = "budget_warning"
     BUDGET_EXHAUSTED = "budget_exhausted"
+    # The real-world spend envelope (external_monthly_usd_cap) — warned at the
+    # same ratio as the model budget, but never pausing anything: the wall is
+    # enforced where money is cleared and booked, not by stopping the company.
+    EXTERNAL_SPEND_WARNING = "external_spend_warning"
+    # Money came IN — booked only by a signed webhook, never by an agent, so
+    # income can be reported without ever being inventable.
+    REVENUE = "revenue"
+    # The world talked back (stage E): a signed webhook asked that an agent be
+    # woken — a customer email, an order, a monitoring alert. Urgent-classed,
+    # still under every wake-rate brake: the world can knock, never stampede.
+    EXTERNAL_EVENT = "external_event"
     APPROVAL_DECIDED = "approval_decided"
     APPROVAL_EXPIRED = "approval_expired"
     THREAD_FROZEN = "thread_frozen"
@@ -451,7 +481,7 @@ class RoleVersion(Base):
     system_prompt: Mapped[str] = mapped_column(Text)
     model: Mapped[str] = mapped_column(String(64), default="claude-sonnet-5")
     effort: Mapped[str] = mapped_column(String(8), default="high")
-    # {"bash": true, "web": true, "github": false, "egress_allow": ["api.example.com"]}
+    # {"bash": true, "web": true, "github": false}
     tool_permissions: Mapped[dict] = mapped_column(JSONVariant, default=dict)
     secret_scopes: Mapped[list] = mapped_column(JSONVariant, default=list)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
@@ -485,6 +515,11 @@ class Agent(Base):
     role_version_id: Mapped[str | None] = mapped_column(String(40))
     status: Mapped[str] = mapped_column(String(16), default=AgentStatus.ACTIVE)
     model_override: Mapped[str | None] = mapped_column(String(64))
+    # Per-agent daily wake, "HH:MM" in the constitution's timezone (stage E).
+    # The CEO's standup generalized: a support agent that checks the inbox
+    # every morning, a metrics agent that reports at close. Chairman-set;
+    # fires through the same heartbeat dedup and wake-rate brakes as the CEO's.
+    daily_at: Mapped[str | None] = mapped_column(String(8))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 
@@ -512,8 +547,11 @@ class Message(Base):
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
     channel_id: Mapped[str] = mapped_column(ForeignKey("channels.id"))
-    # Exactly one of sender_agent_id / sender_user_id is set. System notices use
-    # the notices table, not messages.
+    # At most one of sender_agent_id / sender_user_id is set. Agent-directed
+    # system notices use the notices table; the one sender-less shape is a
+    # PLATFORM BOARDROOM LINE (a need or assist announced to the chairman),
+    # which mirrors to Slack like any boardroom message and is deliberately
+    # never a wake reason — the dispatcher skips sender-less messages.
     sender_agent_id: Mapped[str | None] = mapped_column(String(40))
     sender_user_id: Mapped[str | None] = mapped_column(String(40))
     thread_id: Mapped[str | None] = mapped_column(String(40))  # root message id
@@ -584,6 +622,12 @@ class Requirement(Base):
     # created for requirements in the open stage or earlier.
     stage: Mapped[int] = mapped_column(Integer, default=1)
     est_runs: Mapped[int | None] = mapped_column(Integer)
+    # The first estimate ever given, never updated. Reestimating moves
+    # est_runs so the plan arithmetic stays honest about the work ahead, but
+    # the bias multiplier is always scored against the number the CEO first
+    # stood behind — discovering a task grew gets a channel, and lowballing
+    # still cannot be laundered by revising afterwards.
+    est_runs_first: Mapped[int | None] = mapped_column(Integer)
     actual_runs: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     # Runs that died and checks that failed against this requirement. The
     # chairman asked the CEO to be adaptable to "plan changes, parameter
@@ -1022,7 +1066,7 @@ class LedgerEntry(Base):
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
-    kind: Mapped[str] = mapped_column(String(24))  # model_usage|external_spend|infra
+    kind: Mapped[str] = mapped_column(String(24))  # LedgerKind
     tokens_in: Mapped[int] = mapped_column(Integer, default=0)
     tokens_out: Mapped[int] = mapped_column(Integer, default=0)
     # The API's input_tokens is only the uncached remainder; the real prompt is
@@ -1105,6 +1149,38 @@ class Run(Base):
     # sent to the model, stashed beside the trace.
     context_path: Mapped[str | None] = mapped_column(Text)
     summary: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class Account(Base):
+    """The account registry (CEO Charter, stage E): every identity the company
+    creates out in the world, on the record — record-only by the chairman's
+    decision. No orphan signups: when a project is stopped for good, this is
+    how its owner sees what exists and settles it. `owner` is situational —
+    'project' when the account hangs off an identity the project owns (its
+    email, its domain), 'chairman' when a responsible human is the name behind
+    it — decided per account, in the boardroom, and written down here."""
+
+    __tablename__ = "accounts"
+    __table_args__ = (
+        UniqueConstraint("project_id", "service", "username"),
+        Index("ix_accounts_project", "project_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    service: Mapped[str] = mapped_column(String(200))       # "namecheap.com"
+    username: Mapped[str] = mapped_column(String(200))      # login / email used
+    owner: Mapped[str] = mapped_column(String(16), default="project")  # project|chairman
+    # The stored secret holding this account's credential, when one exists —
+    # a name, never a value; the registry links, it does not hold.
+    credential_name: Mapped[str | None] = mapped_column(String(120))
+    url: Mapped[str | None] = mapped_column(String(500))
+    # What justified it: the requirement served, and anything worth knowing
+    # at wind-down (plan tier, renewal date, "cancel via support email").
+    requirement_id: Mapped[str | None] = mapped_column(String(40))
+    note: Mapped[str | None] = mapped_column(Text)
+    created_by_agent_id: Mapped[str | None] = mapped_column(String(40))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 

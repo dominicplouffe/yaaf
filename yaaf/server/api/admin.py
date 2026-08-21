@@ -15,7 +15,7 @@ import secrets as pysecrets
 from datetime import datetime
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -493,14 +493,25 @@ def export_project(project_id: str, session: Session = Depends(db)) -> dict:
 
     integrations = {k: v for k, v in (project.integrations or {}).items()
                     if k not in _NON_PORTABLE_INTEGRATION_KEYS}
+    # OAuth state is install-bound twice over: the registered client names
+    # THIS install's redirect URI, and the tokens name this install's consent.
+    # The `auth` marker travels so the importing side knows to offer Connect.
+    oauth_bound_secrets: set[str] = set()
     if "mcp_servers" in integrations:
+        for entry in integrations["mcp_servers"]:
+            if _source_auth(entry) == "oauth":
+                oauth_bound_secrets.update(_oauth_secret_names(entry))
         integrations["mcp_servers"] = [
-            {k: v for k, v in entry.items() if k != "last_check"}
+            {k: v for k, v in entry.items()
+             if k not in ("last_check", "oauth", "bearer_secret")
+             or (k == "bearer_secret" and _source_auth(entry) != "oauth")}
             for entry in integrations["mcp_servers"]
         ]
 
     # Billing credentials stay out entirely: their values cannot travel, and
     # the twin connects its own in Settings (the page already insists).
+    # OAuth token/client secrets stay out too — "paste the refresh token" is
+    # not a request a human can meet; the import re-connects instead.
     secret_names = [
         {"name": s.name, "role_scopes": s.role_scopes, "kind": s.kind}
         for s in session.execute(
@@ -508,6 +519,7 @@ def export_project(project_id: str, session: Session = Depends(db)) -> dict:
             .where(Secret.project_id == project.id, Secret.kind == "service")
             .order_by(Secret.created_at)
         ).scalars()
+        if s.name not in oauth_bound_secrets
     ]
 
     _audit(session, project.id, "project.export", "project", project.id)
@@ -632,11 +644,25 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
     # Ciphertext is copied as-is — same install, same master key, so nothing is
     # ever decrypted to move it. This is the line an export cannot cross, and
     # the reason a clone needs no credential re-entry at all.
+    #
+    # OAuth data-source tokens are the one exception: providers rotate refresh
+    # tokens on use, so two projects sharing one would invalidate each other's
+    # copy on the first refresh. The registered client (id + secret) does come
+    # across — same install, same redirect URI, one registration serves both —
+    # so reconnecting the twin is a single Connect click, not a re-setup.
+    oauth_token_names: set[str] = set()
+    for entry in (source.integrations or {}).get("mcp_servers", []):
+        if _source_auth(entry) == "oauth":
+            oauth = entry.get("oauth") or {}
+            oauth_token_names.update(
+                n for n in (entry.get("bearer_secret"), oauth.get("refresh_secret")) if n)
     ciphertexts: dict[str, str] = {}
     secret_ids: dict[str, str] = {}
     for row in session.execute(
         select(Secret).where(Secret.project_id == source.id).order_by(Secret.created_at)
     ).scalars():
+        if row.name in oauth_token_names:
+            continue
         copy = Secret(id=ids.new_id(ids.SECRET), project_id=project.id, name=row.name,
                       ciphertext=row.ciphertext, role_scopes=list(row.role_scopes or []),
                       kind=row.kind)
@@ -700,7 +726,21 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
 
         entry = {k: v for k, v in entry.items() if k != "last_check"}
         url_cipher = ciphertexts.get(entry.get("url_secret") or "")
-        if not url_cipher:
+        if _source_auth(entry) == "oauth":
+            # Its tokens deliberately did not come across (see the copy loop);
+            # keep the endpoints and client so Connect is one click, drop
+            # every reference to token rows the twin does not have.
+            entry.pop("bearer_secret", None)
+            entry["oauth"] = {
+                **{k: v for k, v in (entry.get("oauth") or {}).items()
+                   if k in ("authorization_endpoint", "token_endpoint",
+                            "registration_endpoint", "client_id",
+                            "client_secret_secret", "resource", "scope")},
+                "status": "needs_auth",
+            }
+            check = {"ok": False,
+                     "detail": "OAuth sources need reconnecting on the twin — press Connect"}
+        elif not url_cipher:
             check = {"ok": False, "detail": "the data source's URL secret did not come across"}
         else:
             token_cipher = ciphertexts.get(entry.get("bearer_secret") or "")
@@ -811,6 +851,16 @@ class DataSourceIn(BaseModel):
     # expensive path stops existing for it. Default inline: a source that was
     # already connected keeps behaving exactly as it did.
     access: Literal["inline", "bulk"] = "inline"
+    # None means "infer from bearer" so every existing caller keeps meaning
+    # what it always meant; "oauth" switches the source to the browser
+    # sign-in flow, where the token secret holds a refreshed access token
+    # instead of a pasted credential.
+    auth: Literal["none", "bearer", "oauth"] | None = None
+    # Only for OAuth servers without dynamic client registration: credentials
+    # from the provider's developer console. Ignored for other auth modes.
+    client_id: str | None = None
+    client_secret: str | None = None
+    scope: str | None = None
 
 
 def _upsert_project_secret(session: Session, project_id: str, name: str, value: str,
@@ -888,9 +938,27 @@ def _data_source_owning(session: Session, project_id: str | None, secret_name: s
     if project is None:
         return None
     for source in (project.integrations or {}).get("mcp_servers", []):
-        if secret_name in (source.get("url_secret"), source.get("bearer_secret")):
+        oauth = source.get("oauth") or {}
+        if secret_name in (source.get("url_secret"), source.get("bearer_secret"),
+                           oauth.get("refresh_secret"), oauth.get("client_secret_secret")):
             return source.get("name")
     return None
+
+
+def _source_auth(entry: dict) -> str:
+    """The source's auth mode, with the legacy inference spelled out once:
+    entries saved before OAuth existed carry no `auth` key, and for them a
+    stored token means bearer."""
+    return entry.get("auth") or ("bearer" if entry.get("bearer_secret") else "none")
+
+
+def _oauth_secret_names(entry: dict) -> list[str]:
+    """Every secret an OAuth source owns beyond its URL: the access token and,
+    when present, the refresh token and registered client secret."""
+    oauth = entry.get("oauth") or {}
+    return [name for name in (entry.get("bearer_secret"),
+                              oauth.get("refresh_secret"),
+                              oauth.get("client_secret_secret")) if name]
 
 
 def _sse_or_json(response) -> dict | None:
@@ -938,8 +1006,9 @@ def _check_data_source(url: str, bearer: str | None, transport=None) -> dict:
                            "clientInfo": {"name": "yaaf", "version": "1.0"}},
             }, None)
             if opened.status_code in (401, 403):
-                return {"ok": False, "detail": f"the server refused the credential (HTTP "
-                                               f"{opened.status_code}) — check the bearer token"}
+                return {"ok": False, "code": "unauthorized",
+                        "detail": f"the server refused the credential (HTTP "
+                                  f"{opened.status_code}) — check the bearer token"}
             if opened.status_code == 404:
                 return {"ok": False, "detail": "no MCP endpoint at that path (HTTP 404) — the "
                                                "address needs the server's own path, often /mcp"}
@@ -985,18 +1054,34 @@ def _check_data_source(url: str, bearer: str | None, transport=None) -> dict:
     return {"ok": True, "detail": f"{who} ready — {len(tools)} tool(s): {shown}{more}"}
 
 
+def _oauth_checked(url: str, token: str, entry: dict, transport=None) -> dict:
+    """The ordinary reachability check, with its 401 advice corrected for
+    OAuth: "check the bearer token" tells the chairman to paste something,
+    and there is nothing to paste — the fix is a fresh sign-in."""
+    check = _check_data_source(url, token, transport)
+    if check.get("code") == "unauthorized":
+        entry["oauth"] = {**(entry.get("oauth") or {}), "status": "needs_reauth"}
+        check = {**check, "detail": "the server rejected the access token — press Reconnect"}
+    return check
+
+
 @router.post("/projects/{project_id}/mcp_servers")
 def add_data_source(project_id: str, body: DataSourceIn, session: Session = Depends(db)) -> dict:
     """One form, everything wired: validates the URL at the door, stores it
     (and any token) as role-granted secrets, records the mapping in project
-    config, and preflights reachability. Egress and the proxy follow
-    automatically; no role edit, no repin, no CLI.
+    config, and preflights reachability. No role edit, no repin, no CLI.
 
     Saving under an existing name is the edit path, so `bearer` reads as:
     omitted = keep the current token, `""` = remove it, anything else = rotate.
     A URL-only edit that dropped the auth header would fail hours later inside
     an agent run, which is exactly the class of failure this form exists to
-    prevent."""
+    prevent.
+
+    OAuth sources follow the same shape with a browser sign-in where the paste
+    would be: saving records the mode and answers `needs_connect`, the Connect
+    button walks the sign-in, and from then on the token secret holds an access
+    token this server refreshes — an edit that only regrants roles must never
+    force the chairman back through the provider's consent screen."""
     project = _get_project(session, project_id)
     parsed = _parse_source_url(
         body.url,
@@ -1008,6 +1093,24 @@ def add_data_source(project_id: str, body: DataSourceIn, session: Session = Depe
 
     servers = (project.integrations or {}).get("mcp_servers", [])
     prior = next((s for s in servers if s.get("name") == body.name), None)
+    # `auth` reads like `bearer` does: absent keeps an existing source's mode
+    # (so pre-OAuth callers keep meaning what they always meant), a pasted
+    # token implies bearer, and a brand-new source with neither is open.
+    if body.auth:
+        auth = body.auth
+    elif body.bearer:
+        auth = "bearer"
+    elif prior is not None and body.bearer is None:
+        auth = _source_auth(prior)
+    else:
+        auth = "none"
+
+    if prior is not None and _source_auth(prior) == "oauth" and auth != "oauth":
+        # Switching away from OAuth: its tokens are not pasted credentials and
+        # must not survive as one — drop them all and let the new mode start clean.
+        for stale in _oauth_secret_names(prior):
+            _delete_project_secret(session, project.id, stale)
+        prior = {k: v for k, v in prior.items() if k not in ("bearer_secret", "oauth")}
 
     url_secret = _upsert_project_secret(
         session, project.id, f"mcp-{body.name}-url", body.url.strip(), body.roles)
@@ -1015,42 +1118,83 @@ def add_data_source(project_id: str, body: DataSourceIn, session: Session = Depe
         "name": body.name,
         "url_secret": url_secret.name,
         "roles": body.roles,
-        # Host/port recorded in config (chairman-visible) so egress derivation
-        # never needs to decrypt anything.
+        # Host/port recorded in config so the chairman can see where a source
+        # points without decrypting anything.
         "url_host": parsed.hostname,
         "url_port": parsed.port or (443 if parsed.scheme == "https" else 80),
         "access": body.access,
+        "auth": auth,
     }
-    # Three cases, because an edit that changes only the URL must not silently
-    # disarm the auth header. Absent (None) keeps whatever the source already
-    # had; empty string is the explicit "drop the token"; anything else rotates.
-    token = body.bearer or None
-    held = prior.get("bearer_secret") if prior else None
-    if body.bearer:
-        token_secret = _upsert_project_secret(
-            session, project.id, f"mcp-{body.name}-token", body.bearer, body.roles)
-        entry["bearer_secret"] = token_secret.name
-    elif body.bearer == "" and held:
-        _delete_project_secret(session, project.id, held)
-    elif body.bearer is None and held:
-        carried = _project_secret_value(session, project.id, held)
-        if carried is not None:
-            # Re-store it so the carried token tracks this save's role grants.
-            _upsert_project_secret(session, project.id, held, carried, body.roles)
-            entry["bearer_secret"] = held
-            token = carried
 
-    check = _check_data_source(body.url.strip(), token)
+    needs_connect = False
+    if auth == "oauth":
+        token = None
+        carried_oauth = dict((prior or {}).get("oauth") or {}) \
+            if prior is not None and _source_auth(prior) == "oauth" else {}
+        # Only decrypted here, in the one branch that compares it — ordinary
+        # bearer/none saves must not pay a secret read they never look at.
+        prior_url = (_project_secret_value(session, project.id, prior["url_secret"])
+                     if prior and prior.get("url_secret") else None)
+        if carried_oauth and (prior_url or "").strip() == body.url.strip():
+            # Same source, same address: the connection survives the edit. The
+            # access token is re-stored so its grants track this save's roles.
+            oauth_state = carried_oauth
+            held = prior.get("bearer_secret")
+            carried = _project_secret_value(session, project.id, held) if held else None
+            if carried is not None:
+                _upsert_project_secret(session, project.id, held, carried, body.roles)
+                entry["bearer_secret"] = held
+                token = carried
+        else:
+            # New source, changed address, or a switch from pasted-token auth:
+            # any tokens that exist were minted for something else. Start over.
+            oauth_state = {"status": "needs_auth", "resource": body.url.strip()}
+            if prior is not None:
+                for stale in _oauth_secret_names(prior):
+                    _delete_project_secret(session, project.id, stale)
+        if body.client_id:
+            oauth_state["client_id"] = body.client_id
+        if body.client_secret:
+            client_row = _upsert_project_secret(
+                session, project.id, f"mcp-{body.name}-oauth-client", body.client_secret, [])
+            oauth_state["client_secret_secret"] = client_row.name
+        if body.scope is not None:
+            oauth_state["scope"] = body.scope or None
+        entry["oauth"] = oauth_state
+        needs_connect = token is None or oauth_state.get("status") != "connected"
+        if token:
+            check = _oauth_checked(body.url.strip(), token, entry)
+        else:
+            check = {"ok": False, "detail": "OAuth connection required — press Connect"}
+    else:
+        # Three cases, because an edit that changes only the URL must not silently
+        # disarm the auth header. Absent (None) keeps whatever the source already
+        # had; empty string is the explicit "drop the token"; anything else rotates.
+        token = body.bearer or None
+        held = prior.get("bearer_secret") if prior else None
+        if body.bearer:
+            token_secret = _upsert_project_secret(
+                session, project.id, f"mcp-{body.name}-token", body.bearer, body.roles)
+            entry["bearer_secret"] = token_secret.name
+        elif body.bearer == "" and held:
+            _delete_project_secret(session, project.id, held)
+        elif body.bearer is None and held:
+            carried = _project_secret_value(session, project.id, held)
+            if carried is not None:
+                # Re-store it so the carried token tracks this save's role grants.
+                _upsert_project_secret(session, project.id, held, carried, body.roles)
+                entry["bearer_secret"] = held
+                token = carried
+        check = _check_data_source(body.url.strip(), token)
     entry["last_check"] = {**check, "at": utcnow().isoformat()}
 
     servers = [s for s in servers if s.get("name") != body.name]
     project.integrations = {**(project.integrations or {}), "mcp_servers": [*servers, entry]}
     _audit(session, project.id, "mcp_server.save", "project", project.id,
            {"name": body.name, "roles": body.roles, "host": entry["url_host"],
-            "access": body.access, "check_ok": check["ok"]})
-    return {"name": body.name, "check": check,
-            "note": "Egress updates and the proxy reloads automatically within ~15s; "
-                    "effective on each granted role's next run."}
+            "access": body.access, "auth": auth, "check_ok": check["ok"]})
+    return {"name": body.name, "check": check, "needs_connect": needs_connect,
+            "note": "Effective on each granted role's next run."}
 
 
 @router.delete("/projects/{project_id}/mcp_servers/{name}")
@@ -1060,7 +1204,7 @@ def delete_data_source(project_id: str, name: str, session: Session = Depends(db
     entry = next((s for s in servers if s.get("name") == name), None)
     if entry is None:
         raise HTTPException(status_code=404, detail="unknown data source")
-    for secret_name in (entry.get("url_secret"), entry.get("bearer_secret")):
+    for secret_name in {entry.get("url_secret"), *_oauth_secret_names(entry)}:
         if secret_name:
             _delete_project_secret(session, project.id, secret_name)
     project.integrations = {**project.integrations,
@@ -1085,25 +1229,96 @@ def check_data_source(project_id: str, name: str, session: Session = Depends(db)
     url = value_of(entry.get("url_secret"))
     if not url:
         raise HTTPException(status_code=422, detail="the data source's URL secret is missing")
-    check = _check_data_source(url, value_of(entry.get("bearer_secret")))
+    if _source_auth(entry) == "oauth":
+        from yaaf.server.mcp_oauth import ensure_fresh_token
+
+        token = ensure_fresh_token(session, project, entry)
+        if token is None:
+            check = {"ok": False, "detail": "OAuth connection required — press Connect"}
+        else:
+            check = _oauth_checked(url, token, entry)
+    else:
+        check = _check_data_source(url, value_of(entry.get("bearer_secret")))
     entry["last_check"] = {**check, "at": utcnow().isoformat()}
-    project.integrations = {**project.integrations, "mcp_servers": servers}
+    # Through persist_entry, not a bare reassignment: `entry` was edited in
+    # place, so the reassigned value compares equal to the loaded one and a
+    # plain assignment is silently skipped at flush.
+    from yaaf.server.mcp_oauth import persist_entry
+
+    persist_entry(project, entry)
     _audit(session, project.id, "mcp_server.check", "project", project.id,
            {"name": name, "ok": check["ok"]})
     return check
 
 
-@router.get("/egress/config")
-def egress_config(session: Session = Depends(db)) -> dict:
-    """The generated per-role squid config, served for `yaaf egress-sync` to
-    write on the compose host (where deploy/proxy/ actually lives)."""
-    from yaaf.server.egress import build
+@router.post("/projects/{project_id}/mcp_servers/{name}/oauth/start")
+def start_data_source_oauth(project_id: str, name: str, request: Request,
+                            session: Session = Depends(db)) -> dict:
+    """Begin the browser sign-in for an OAuth data source: discover the
+    authorization server, register a client there (or reuse one the chairman
+    pasted), and mint the URL the chairman's browser must visit. The `state`
+    in that URL is single-use and 256 bits — it is the whole credential the
+    unauthenticated callback route later redeems, which is why a fresh call
+    here voids any earlier half-finished sign-in."""
+    from yaaf.core.config import settings
+    from yaaf.core.crypto import encrypt
+    from yaaf.server import mcp_oauth
 
+    project = _get_project(session, project_id)
+    servers = (project.integrations or {}).get("mcp_servers", [])
+    entry = next((s for s in servers if s.get("name") == name), None)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="unknown data source")
+    if _source_auth(entry) != "oauth":
+        raise HTTPException(status_code=422, detail="this data source is not set to OAuth "
+                                                    "sign-in — edit it and pick OAuth first")
+    url = _project_secret_value(session, project.id, entry.get("url_secret") or "")
+    if not url:
+        raise HTTPException(status_code=422, detail="the data source's URL secret is missing")
+
+    # The browser-facing origin. Deriving it from the request is a dev
+    # convenience; behind a TLS-terminating proxy it reports http, so
+    # production sets YAAF_PUBLIC_BASE_URL.
+    base = (settings().public_base_url or str(request.base_url)).rstrip("/")
+    redirect_uri = f"{base}/oauth/mcp/callback"
+
+    oauth = dict(entry.get("oauth") or {})
     try:
-        assignments, files = build(session)
-    except RuntimeError as exc:  # port collision — actionable, not a 500
+        disc = mcp_oauth.discover(url)
+        if not oauth.get("client_id"):
+            client_id, client_secret = mcp_oauth.register_client(disc, redirect_uri)
+            oauth["client_id"] = client_id
+            if client_secret:
+                client_row = _upsert_project_secret(
+                    session, project.id, f"mcp-{name}-oauth-client", client_secret, [])
+                oauth["client_secret_secret"] = client_row.name
+    except mcp_oauth.OAuthSetupError as exc:
+        entry["oauth"] = {**oauth, "error": str(exc)}
+        mcp_oauth.persist_entry(project, entry)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return {"assignments": assignments, "files": files}
+
+    state = pysecrets.token_urlsafe(32)
+    verifier = pysecrets.token_urlsafe(64)
+    oauth.update({
+        "status": "pending",
+        "authorization_endpoint": disc.authorization_endpoint,
+        "token_endpoint": disc.token_endpoint,
+        "registration_endpoint": disc.registration_endpoint,
+        "resource": disc.resource,
+        # The PKCE verifier is a secret with a fifteen-minute life; it still
+        # never touches the config JSON in plaintext.
+        "pending": {"state": state, "verifier_cipher": encrypt(verifier),
+                    "redirect_uri": redirect_uri, "created_at": utcnow().isoformat()},
+    })
+    oauth.pop("error", None)
+    entry["oauth"] = oauth
+    mcp_oauth.persist_entry(project, entry)
+    authorize_url = mcp_oauth.build_authorize_url(
+        disc, oauth["client_id"], redirect_uri, state, verifier, oauth.get("scope"))
+    _audit(session, project.id, "mcp_server.oauth_start", "project", project.id,
+           {"name": name, "authorization_endpoint": disc.authorization_endpoint})
+    return {"authorize_url": authorize_url,
+            "note": "Complete the sign-in in the opened tab, then test the source."}
 
 
 @router.post("/teams/{team_id}/repin")
@@ -1521,6 +1736,30 @@ class ApprovalDecision(BaseModel):
     note: str = Field(default="", max_length=4000)
 
 
+def _apply_decision(session: Session, approval: Approval, project: Project,
+                    approve: bool, note: str, notice_body: str,
+                    audit_detail: dict | None = None) -> None:
+    """ONE implementation of "an approval is decided": status, timestamps,
+    the requester's wake notice, the audit row, the wake. decide_approval and
+    fulfill_need both land here, so decision semantics can never fork."""
+    approval.status = ApprovalStatus.APPROVED if approve else ApprovalStatus.DENIED
+    approval.decided_at = utcnow()
+    approval.decision_note = note
+    approval.decided_by_user_id = project.chairman_user_id
+    session.add(
+        Notice(
+            id=ids.new_id(ids.NOTICE),
+            project_id=approval.project_id,
+            agent_id=approval.requested_by_agent_id,
+            kind=NoticeKind.APPROVAL_DECIDED,
+            body=notice_body,
+        )
+    )
+    _audit(session, approval.project_id, "approval.decide", "approval", approval.id,
+           {"approve": approve, **(audit_detail or {})})
+    notify(session, WAKE_CHANNEL, approval.project_id)
+
+
 @router.post("/approvals/{approval_id}/decide")
 def decide_approval(
     approval_id: str, body: ApprovalDecision, session: Session = Depends(db)
@@ -1530,28 +1769,108 @@ def decide_approval(
         raise HTTPException(status_code=404, detail="unknown approval")
     if approval.status != ApprovalStatus.PENDING:
         raise HTTPException(status_code=409, detail=f"approval already {approval.status}")
-    approval.status = ApprovalStatus.APPROVED if body.approve else ApprovalStatus.DENIED
-    approval.decided_at = utcnow()
-    approval.decision_note = body.note
     project = session.get(Project, approval.project_id)
-    approval.decided_by_user_id = project.chairman_user_id
-    session.add(
-        Notice(
-            id=ids.new_id(ids.NOTICE),
-            project_id=approval.project_id,
-            agent_id=approval.requested_by_agent_id,
-            kind=NoticeKind.APPROVAL_DECIDED,
-            body=(
-                f"Approval '{approval.title}' was "
-                f"{'APPROVED' if body.approve else 'DENIED'}"
-                + (f": {body.note}" if body.note else ".")
-            ),
-        )
+    _apply_decision(
+        session, approval, project, body.approve, body.note,
+        notice_body=(f"Approval '{approval.title}' was "
+                     f"{'APPROVED' if body.approve else 'DENIED'}"
+                     + (f": {body.note}" if body.note else ".")),
     )
-    _audit(session, approval.project_id, "approval.decide", "approval", approval.id,
-           {"approve": body.approve})
-    notify(session, WAKE_CHANNEL, approval.project_id)
     return {"id": approval.id, "status": approval.status}
+
+
+@router.get("/projects/{project_id}/accounts")
+def list_accounts(project_id: str, session: Session = Depends(db)) -> list[dict]:
+    """The account registry: everything the company answers to out in the
+    world. Record-only by decision — winding down is the CEO's call while the
+    project runs, and the chairman's reading when he stops it for good."""
+    from yaaf.core.models import Account
+
+    _get_project(session, project_id)
+    rows = session.execute(
+        select(Account).where(Account.project_id == project_id)
+        .order_by(Account.created_at)
+    ).scalars()
+    return [{"id": a.id, "service": a.service, "username": a.username,
+             "owner": a.owner, "credential_name": a.credential_name,
+             "url": a.url, "requirement_id": a.requirement_id, "note": a.note,
+             "created_at": a.created_at.isoformat()} for a in rows]
+
+
+class AgentSchedule(BaseModel):
+    # "HH:MM" in the constitution's timezone, or null to clear.
+    daily_at: str | None = Field(default=None, pattern="^([01]?\\d|2[0-3]):[0-5]\\d$")
+
+
+@router.patch("/agents/{agent_id}/schedule")
+def set_agent_schedule(
+    agent_id: str, body: AgentSchedule, session: Session = Depends(db)
+) -> dict:
+    """A per-agent daily wake — the CEO's standup generalized to any agent
+    (stage E). Fires through the same heartbeat dedup and wake-rate brakes;
+    every firing is still a paid model call, which is why it is the
+    chairman's to set."""
+    agent = session.get(Agent, agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail="unknown agent")
+    was = agent.daily_at
+    agent.daily_at = body.daily_at
+    _audit(session, agent.project_id, "agent.schedule", "agent", agent.id,
+           {"name": agent.name, "was": was, "now": body.daily_at})
+    return {"id": agent.id, "name": agent.name, "daily_at": agent.daily_at}
+
+
+class NeedFulfillIn(BaseModel):
+    secret_name: str = Field(min_length=2, max_length=120)
+    value: str = Field(min_length=1)
+    roles: list[str] = Field(min_length=1)
+    note: str = Field(default="", max_length=4000)
+
+
+@router.post("/approvals/{approval_id}/fulfill")
+def fulfill_need(
+    approval_id: str, body: NeedFulfillIn, session: Session = Depends(db)
+) -> dict:
+    """One motion: store the credential, scope the roles, approve the need.
+
+    The needs loop's whole point — 'I need AWS, give me a key' should cost the
+    chairman one form, not a form plus a settings hunt plus remembering to
+    answer the approval. The stored value never appears anywhere again; the
+    CEO is told the env-var name and who received it."""
+    approval = session.get(Approval, approval_id)
+    if approval is None:
+        raise HTTPException(status_code=404, detail="unknown approval")
+    if approval.kind != "tool_request":
+        raise HTTPException(status_code=422,
+                            detail="only a need (kind=tool_request) is fulfillable "
+                                   "with a credential; decide other kinds normally")
+    if approval.status != ApprovalStatus.PENDING:
+        raise HTTPException(status_code=409, detail=f"approval already {approval.status}")
+    try:
+        policy.check_roles_exist(session, body.roles)
+    except policy.Refusal as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    project = _get_project(session, approval.project_id)
+    secret = _upsert_project_secret(
+        session, project.id, body.secret_name, body.value, body.roles)
+    # The hint MUST be the runner's own mapping — a second normalization once
+    # announced a variable that did not exist.
+    from yaaf.core.naming import env_var_name
+
+    env_var = env_var_name(secret.name)
+    _apply_decision(
+        session, approval, project, True,
+        (body.note or "fulfilled") + f" [credential: {secret.name}]",
+        notice_body=(f"Your need '{approval.title}' was FULFILLED: the credential "
+                     f"'{secret.name}' now reaches roles {', '.join(body.roles)} as "
+                     f"the environment variable {env_var} on their next run."
+                     + (f" His note: {body.note}" if body.note else "")),
+        audit_detail={"fulfilled": True, "secret_name": secret.name,
+                      "roles": body.roles},
+    )
+    return {"id": approval.id, "status": approval.status,
+            "secret_name": secret.name, "env_var_hint": env_var,
+            "roles": body.roles}
 
 
 class HypothesisExtend(BaseModel):
@@ -1889,44 +2208,280 @@ class RequirementDecision(BaseModel):
     note: str = Field(default="", max_length=4000)
 
 
+# ── apply helpers: one mutation, two hands ─────────────────────────────────────
+#
+# Each scope verb has exactly one implementation, called by the chairman's
+# route here and — when the constitution's authority dial grants the verb —
+# by the CEO's self-exercise route in the agent API. The actor string keeps
+# the record honest about whose hand moved; `notify` is False when the CEO
+# acted itself (a notice telling the CEO what the CEO just did is noise —
+# the chairman's digest carries it instead). Every helper raises
+# policy.Refusal; the admin routes translate to HTTPException, the agent
+# route lets it count as a refusal like any other.
+
+
+def apply_accept(session: Session, project: Project, row: Requirement, actor: str,
+                 stage: int | None, note: str, by_user: str | None,
+                 notify: bool = True) -> dict:
+    policy.check_requirement_accept(row)
+    from_status = row.status
+    row.status = RequirementStatus.PENDING
+    row.accepted_by_user_id = by_user
+    row.accepted_at = utcnow()
+    if stage is not None:
+        row.stage = stage
+    policy.record_requirement_event(session, row, RequirementStatus.PENDING, actor,
+                                    note=note or None, from_status=from_status)
+    _audit(session, row.project_id, "requirement.accept", "requirement", row.id,
+           {"key": row.key, "stage": row.stage, "actor": actor})
+    if notify:
+        _notice_ceo(
+            session, row.project_id, NoticeKind.GOAL_CHANGED,
+            f"The chairman ACCEPTED {row.key} into scope: {row.statement[:400]}\n"
+            f"Stage {row.stage}. It is now something you may create work for, and it "
+            "counts toward what has to be true before this project is finished.",
+        )
+    return {"id": row.id, "key": row.key, "status": row.status, "stage": row.stage}
+
+
+def apply_cut(session: Session, project: Project, row: Requirement, actor: str,
+              reason: str, notify: bool = True) -> dict:
+    policy.check_requirement_cut(row)
+    from_status = row.status
+    row.status = RequirementStatus.CUT
+    row.cut_reason = reason
+    row.cut_at = utcnow()
+    policy.record_requirement_event(session, row, RequirementStatus.CUT, actor,
+                                    note=reason, from_status=from_status)
+    _audit(session, row.project_id, "requirement.cut", "requirement", row.id,
+           {"key": row.key, "reason": reason, "actor": actor})
+    if notify:
+        _notice_ceo(
+            session, row.project_id, NoticeKind.GOAL_CHANGED,
+            f"The chairman CUT {row.key} from scope: {row.statement[:300]}\n"
+            f"His reason: {reason[:1000]}\nStop work on it. Anything that depended on "
+            "it is now unblocked — a cut requirement counts as settled, not as pending "
+            "forever.",
+        )
+    return {"id": row.id, "key": row.key, "status": row.status}
+
+
+def apply_reopen(session: Session, project: Project, row: Requirement, actor: str,
+                 reason: str, notify: bool = True) -> dict:
+    policy.check_requirement_reopen(row)
+    from_status = row.status
+    row.status = RequirementStatus.PENDING
+    row.met_at = None
+    row.met_by_run_id = None
+    row.check_output = None
+    row.cut_reason = None
+    row.cut_at = None
+    policy.record_requirement_event(session, row, RequirementStatus.PENDING, actor,
+                                    note=f"reopened: {reason[:500]}",
+                                    from_status=from_status)
+    _audit(session, row.project_id, "requirement.reopen", "requirement", row.id,
+           {"key": row.key, "was": from_status, "reason": reason, "actor": actor})
+    if notify:
+        _notice_ceo(
+            session, row.project_id, NoticeKind.GOAL_CHANGED,
+            f"{row.key} was REOPENED (it was {from_status}): {row.statement[:300]}\n"
+            f"Reason: {reason[:800]}\nIt is scope again — its stage reopened with it, "
+            "so plan for it before anything staged later.",
+        )
+    return {"id": row.id, "key": row.key, "status": row.status, "was": from_status}
+
+
+def apply_restage(session: Session, project: Project, row: Requirement, actor: str,
+                  stage: int, reason: str, notify: bool = True) -> dict:
+    policy.check_requirement_restage(row)
+    was = row.stage
+    if stage == was:
+        raise policy.Refusal(f"{row.key} is already in stage {was}.", status_code=409)
+    row.stage = stage
+    policy.record_requirement_event(
+        session, row, row.status, actor,
+        note=f"restaged {was} → {stage}: {reason[:500]}", from_status=row.status)
+    _audit(session, row.project_id, "requirement.restage", "requirement", row.id,
+           {"key": row.key, "from_stage": was, "to_stage": stage,
+            "reason": reason, "actor": actor})
+    if notify:
+        _notice_ceo(
+            session, row.project_id, NoticeKind.GOAL_CHANGED,
+            f"{row.key} moved from stage {was} to stage {stage}: {reason[:800]}\n"
+            "The open stage is derived, so the order of work may just have changed — "
+            "re-read the plan before creating tasks.",
+        )
+    return {"id": row.id, "key": row.key, "stage": row.stage, "was": was}
+
+
+def apply_reestimate(session: Session, project: Project, row: Requirement, actor: str,
+                     est_runs: int, reason: str, notify: bool = True) -> dict:
+    policy.check_requirement_reestimate(row)
+    was = row.est_runs
+    if row.est_runs_first is None:
+        row.est_runs_first = was
+    row.est_runs = est_runs
+    policy.record_requirement_event(
+        session, row, row.status, actor,
+        note=f"reestimated {was} → {est_runs} runs: {reason[:500]}",
+        from_status=row.status)
+    _audit(session, row.project_id, "requirement.reestimate", "requirement", row.id,
+           {"key": row.key, "from_est": was, "to_est": est_runs,
+            "first_est": row.est_runs_first, "reason": reason, "actor": actor})
+    if notify:
+        _notice_ceo(
+            session, row.project_id, NoticeKind.GOAL_CHANGED,
+            f"{row.key} is now estimated at {est_runs} runs (was {was}): "
+            f"{reason[:800]}\nThe plan arithmetic reads the new number; the bias "
+            "ratio still scores the original.",
+        )
+    return {"id": row.id, "key": row.key, "est_runs": row.est_runs,
+            "est_runs_first": row.est_runs_first, "was": was}
+
+
+def apply_reword(session: Session, project: Project, row: Requirement, actor: str,
+                 statement: str, reason: str, notify: bool = True) -> dict:
+    if row.status in policy.CLOSED_REQUIREMENT_STATUSES:
+        raise policy.Refusal(
+            f"{row.key} is {row.status}; settled scope is history. Add a new "
+            "requirement instead of editing what already happened.",
+            status_code=409,
+        )
+    old = row.statement
+    row.statement = statement.strip()
+    policy.record_requirement_event(
+        session, row, row.status, actor,
+        note=f"reworded: {reason[:500]}", from_status=row.status)
+    _audit(session, project.id, "requirement.reword", "requirement", row.id,
+           {"key": row.key, "reason": reason, "actor": actor})
+    if notify:
+        _notice_ceo(
+            session, project.id, NoticeKind.GOAL_CHANGED,
+            f"The chairman REWORDED {row.key}.\nWas: {old[:300]}\nIs now: "
+            f"{row.statement[:300]}\nHis reason: {reason[:500]}\nThe key, estimate "
+            "and history are unchanged — read the new wording before working it.",
+        )
+    return {"id": row.id, "key": row.key, "statement": row.statement}
+
+
+def apply_verdict(session: Session, project: Project, row: Requirement, actor: str,
+                  ok: bool, note: str, notify: bool = True) -> dict:
+    if row.status != RequirementStatus.CHECKING:
+        raise policy.Refusal(
+            f"{row.key} is {row.status}; only a requirement awaiting a verdict can "
+            "take one.",
+            status_code=409,
+        )
+    note = (note or "").strip()
+    # A rejection with no reason is a dead end: everything downstream — what the
+    # CEO rebuilds, and whether already-accepted stages have to be redone — is
+    # read from this note and nothing else.
+    if not ok and not note:
+        raise policy.Refusal(
+            "A rejection needs a reason. Everything that happens next is built from it: "
+            "the CEO decides what to rebuild, and whether stages already accepted have "
+            "to be redone, by reading this and nothing else. 'Not met' on its own is a "
+            "dead end.",
+            status_code=422,
+        )
+    from_status = row.status
+    if ok:
+        row.status = RequirementStatus.MET
+        row.met_at = utcnow()
+        row.check_output = note or "observable confirmed"
+        policy.record_requirement_event(session, row, RequirementStatus.MET, actor,
+                                        note=note or None, from_status=from_status)
+    else:
+        row.status = RequirementStatus.IN_PROGRESS
+        row.failure_load += 1
+        # On the requirement, not only in a notice: a notice is consumed by the
+        # first run that reads it and is then gone, but the reason a deliverable
+        # was rejected has to still be there on the tenth run of the rework, and
+        # on the chairman's own screen next to the thing he rejected.
+        row.check_output = f"{policy.VERDICT_REJECTED}{note}"[:policy.VERDICT_NOTE_CAP]
+        policy.record_requirement_event(session, row, RequirementStatus.IN_PROGRESS,
+                                        actor, note=note, from_status=from_status)
+        if notify:
+            _notice_ceo(
+                session, row.project_id, NoticeKind.AUDIT_FAILED,
+                f"The chairman looked at {row.key} and it does NOT hold. This is what he "
+                f"said, in full:\n\n{note}\n\n"
+                f"{row.key} is back in progress and you may create work for it right now — "
+                "nothing is blocking you and nothing is waiting on him. Before you do, work "
+                "through his words in this order:\n"
+                f"1. What does {row.key} itself have to rebuild to meet them?\n"
+                "2. Do requirements you already settled have to be redone? Defects usually "
+                "surface at the last deliverable and are made further upstream — if what he "
+                "says invalidates an earlier stage, that stage is wrong too. Settled scope "
+                "is history here: a met requirement cannot be reopened or reworded by "
+                "anyone. Propose a NEW requirement at that earlier stage instead. The moment "
+                "he accepts it the open stage drops back to it by itself, and the later "
+                "stages freeze until it settles — which is the correct order to rebuild in.\n"
+                "3. Then create the work, and say in the boardroom what you concluded at "
+                "steps 1 and 2 so he can see the shape of the rebuild before it runs.\n"
+                f"Only he can change what {row.key} asks for. If his words move the bar "
+                "rather than the work, say so in the boardroom rather than quietly building "
+                "to a different one.",
+            )
+    _audit(session, row.project_id, "requirement.verdict", "requirement", row.id,
+           {"key": row.key, "ok": ok, "actor": actor})
+    return {"id": row.id, "key": row.key, "status": row.status}
+
+
+def apply_edge_remove(session: Session, project: Project, actor: str,
+                      from_requirement_id: str, to_requirement_id: str,
+                      reason: str, notify: bool = True) -> dict:
+    edge = session.execute(
+        select(RequirementEdge).where(
+            RequirementEdge.from_requirement_id == from_requirement_id,
+            RequirementEdge.to_requirement_id == to_requirement_id,
+        )
+    ).scalar_one_or_none()
+    if edge is None:
+        raise policy.Refusal("no such dependency edge", status_code=404)
+    source = session.get(Requirement, edge.from_requirement_id)
+    target = session.get(Requirement, edge.to_requirement_id)
+    session.delete(edge)
+    _audit(session, edge.project_id, "requirement.unsequence", "requirement",
+           target.id if target else edge.to_requirement_id,
+           {"from": source.key if source else edge.from_requirement_id,
+            "to": target.key if target else edge.to_requirement_id,
+            "reason": reason, "actor": actor})
+    if notify:
+        _notice_ceo(
+            session, edge.project_id, NoticeKind.GOAL_CHANGED,
+            f"The dependency {source.key if source else '?'} → "
+            f"{target.key if target else '?'} was removed: {reason[:800]}\n"
+            f"{target.key if target else 'The blocked requirement'} no longer waits "
+            "for it.",
+        )
+    return {"removed": True,
+            "from": source.key if source else None, "to": target.key if target else None}
+
+
 @router.post("/requirements/{requirement_id}/accept")
 def accept_requirement(
     requirement_id: str, body: RequirementDecision, session: Session = Depends(db)
 ) -> dict:
-    """Scope becomes scope here and nowhere else.
+    """Scope becomes scope here — or, under `plan_authority: ceo`, through the
+    CEO's own hand in the agent API; both run this same apply helper.
 
-    The CEO proposes; only the chairman accepts. That split is the whole reason
-    the forecast means anything: remaining ÷ velocity is a number about the
-    CEO's work, and a CEO that could accept its own requirements would own both
-    sides of its own scoreboard.
+    Under the default dial the CEO proposes and only the chairman accepts:
+    remaining ÷ velocity is a number about the CEO's work, and a CEO that could
+    accept its own requirements would own both sides of its own scoreboard.
+    The dial is the chairman's to set, and turning it is an amendment on the
+    record — authority is granted, never seized.
     """
     row = session.get(Requirement, requirement_id)
     if row is None:
         raise HTTPException(status_code=404, detail="unknown requirement")
     project = _get_project(session, row.project_id)
     try:
-        policy.check_requirement_accept(row)
+        return apply_accept(session, project, row,
+                            f"user:{project.chairman_user_id}",
+                            body.stage, body.note, project.chairman_user_id)
     except policy.Refusal as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
-
-    from_status = row.status
-    row.status = RequirementStatus.PENDING
-    row.accepted_by_user_id = project.chairman_user_id
-    row.accepted_at = utcnow()
-    if body.stage is not None:
-        row.stage = body.stage
-    policy.record_requirement_event(session, row, RequirementStatus.PENDING,
-                                    f"user:{project.chairman_user_id}",
-                                    note=body.note or None, from_status=from_status)
-    _audit(session, row.project_id, "requirement.accept", "requirement", row.id,
-           {"key": row.key, "stage": row.stage})
-    _notice_ceo(
-        session, row.project_id, NoticeKind.GOAL_CHANGED,
-        f"The chairman ACCEPTED {row.key} into scope: {row.statement[:400]}\n"
-        f"Stage {row.stage}. It is now something you may create work for, and it counts "
-        "toward what has to be true before this project is finished.",
-    )
-    return {"id": row.id, "key": row.key, "status": row.status, "stage": row.stage}
 
 
 class RequirementCut(BaseModel):
@@ -1945,26 +2500,10 @@ def cut_requirement(
         raise HTTPException(status_code=404, detail="unknown requirement")
     project = _get_project(session, row.project_id)
     try:
-        policy.check_requirement_cut(row)
+        return apply_cut(session, project, row,
+                         f"user:{project.chairman_user_id}", body.reason)
     except policy.Refusal as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
-
-    from_status = row.status
-    row.status = RequirementStatus.CUT
-    row.cut_reason = body.reason
-    row.cut_at = utcnow()
-    policy.record_requirement_event(session, row, RequirementStatus.CUT,
-                                    f"user:{project.chairman_user_id}",
-                                    note=body.reason, from_status=from_status)
-    _audit(session, row.project_id, "requirement.cut", "requirement", row.id,
-           {"key": row.key, "reason": body.reason})
-    _notice_ceo(
-        session, row.project_id, NoticeKind.GOAL_CHANGED,
-        f"The chairman CUT {row.key} from scope: {row.statement[:300]}\n"
-        f"His reason: {body.reason[:1000]}\nStop work on it. Anything that depended on it "
-        "is now unblocked — a cut requirement counts as settled, not as pending forever.",
-    )
-    return {"id": row.id, "key": row.key, "status": row.status}
 
 
 class RequirementVerdict(BaseModel):
@@ -1998,64 +2537,115 @@ def requirement_verdict(
     row = session.get(Requirement, requirement_id)
     if row is None:
         raise HTTPException(status_code=404, detail="unknown requirement")
-    if row.status != RequirementStatus.CHECKING:
-        raise HTTPException(
-            status_code=409,
-            detail=f"{row.key} is {row.status}; only a requirement awaiting your verdict "
-                   "can take one.",
-        )
-    note = body.note.strip()
-    if not body.ok and not note:
-        raise HTTPException(
-            status_code=422,
-            detail="A rejection needs a reason. Everything that happens next is built "
-                   "from it: the CEO decides what to rebuild, and whether stages you "
-                   "already accepted have to be redone, by reading this and nothing "
-                   "else. 'Not met' on its own is a dead end.",
-        )
     project = _get_project(session, row.project_id)
-    actor = f"user:{project.chairman_user_id}"
-    from_status = row.status
-    if body.ok:
-        row.status = RequirementStatus.MET
-        row.met_at = utcnow()
-        row.check_output = note or "chairman confirmed the observable"
-        policy.record_requirement_event(session, row, RequirementStatus.MET, actor,
-                                        note=note or None, from_status=from_status)
-    else:
-        row.status = RequirementStatus.IN_PROGRESS
-        row.failure_load += 1
-        # On the requirement, not only in a notice. A notice is consumed by the
-        # first run that reads it and is then gone; the reason a deliverable was
-        # rejected has to still be there on the tenth run of the rework, and on
-        # the chairman's own screen next to the thing he rejected.
-        row.check_output = f"{policy.VERDICT_REJECTED}{note}"[:policy.VERDICT_NOTE_CAP]
-        policy.record_requirement_event(session, row, RequirementStatus.IN_PROGRESS, actor,
-                                        note=note, from_status=from_status)
-        _notice_ceo(
-            session, row.project_id, NoticeKind.AUDIT_FAILED,
-            f"The chairman looked at {row.key} and it does NOT hold. This is what he "
-            f"said, in full:\n\n{note}\n\n"
-            f"{row.key} is back in progress and you may create work for it right now — "
-            "nothing is blocking you and nothing is waiting on him. Before you do, work "
-            "through his words in this order:\n"
-            f"1. What does {row.key} itself have to rebuild to meet them?\n"
-            "2. Do requirements you already settled have to be redone? Defects usually "
-            "surface at the last deliverable and are made further upstream — if what he "
-            "says invalidates an earlier stage, that stage is wrong too. Settled scope "
-            "is history here: a met requirement cannot be reopened or reworded by "
-            "anyone. Propose a NEW requirement at that earlier stage instead. The moment "
-            "he accepts it the open stage drops back to it by itself, and the later "
-            "stages freeze until it settles — which is the correct order to rebuild in.\n"
-            "3. Then create the work, and say in the boardroom what you concluded at "
-            "steps 1 and 2 so he can see the shape of the rebuild before it runs.\n"
-            f"Only he can change what {row.key} asks for. If his words move the bar "
-            "rather than the work, say so in the boardroom rather than quietly building "
-            "to a different one.",
-        )
-    _audit(session, row.project_id, "requirement.verdict", "requirement", row.id,
-           {"key": row.key, "ok": body.ok, "note_chars": len(note)})
-    return {"id": row.id, "key": row.key, "status": row.status}
+    try:
+        return apply_verdict(session, project, row,
+                             f"user:{project.chairman_user_id}", body.ok, body.note)
+    except policy.Refusal as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+
+# ── the missing verbs: reopen, restage, reestimate, unsequence ──────────────────
+#
+# Stage A of the CEO Charter (docs/AUTONOMY.md). Until these existed, MET and
+# CUT were terminal for every principal including the chairman, a stage could
+# never be moved, an estimate could never honestly grow, and an edge was a
+# one-way ratchet. Each verb writes a requirement_event, so history is
+# recorded, never rewritten — and because the open stage is derived
+# (min(stage) over open requirements), reopening a requirement reopens its
+# stage with zero extra machinery.
+
+
+class RequirementReopen(BaseModel):
+    reason: str = Field(min_length=5, max_length=4000)
+
+
+@router.post("/requirements/{requirement_id}/reopen")
+def reopen_requirement(
+    requirement_id: str, body: RequirementReopen, session: Session = Depends(db)
+) -> dict:
+    """The undo that never existed: a wrong verdict or a premature cut stops
+    being permanent. The settlement stays in the event log; the requirement
+    returns to PENDING and its stage reopens by derivation."""
+    row = session.get(Requirement, requirement_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="unknown requirement")
+    project = _get_project(session, row.project_id)
+    try:
+        return apply_reopen(session, project, row,
+                            f"user:{project.chairman_user_id}", body.reason)
+    except policy.Refusal as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+
+class RequirementRestage(BaseModel):
+    stage: int = Field(ge=1, le=50)
+    reason: str = Field(min_length=5, max_length=4000)
+
+
+@router.post("/requirements/{requirement_id}/restage")
+def restage_requirement(
+    requirement_id: str, body: RequirementRestage, session: Session = Depends(db)
+) -> dict:
+    """Move an open requirement to a different stage. 'This should have been
+    stage 1' finally has an expression."""
+    row = session.get(Requirement, requirement_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="unknown requirement")
+    project = _get_project(session, row.project_id)
+    try:
+        return apply_restage(session, project, row,
+                             f"user:{project.chairman_user_id}",
+                             body.stage, body.reason)
+    except policy.Refusal as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+
+class RequirementReestimate(BaseModel):
+    est_runs: int = Field(ge=1, le=10_000)
+    reason: str = Field(min_length=5, max_length=4000)
+
+
+@router.post("/requirements/{requirement_id}/reestimate")
+def reestimate_requirement(
+    requirement_id: str, body: RequirementReestimate, session: Session = Depends(db)
+) -> dict:
+    """Revise est_runs with the revision on the record. The plan arithmetic
+    reads the new number; the bias multiplier is always scored against the
+    FIRST estimate, so honesty about work growing gets a channel and
+    lowballing still cannot be laundered."""
+    row = session.get(Requirement, requirement_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="unknown requirement")
+    project = _get_project(session, row.project_id)
+    try:
+        return apply_reestimate(session, project, row,
+                                f"user:{project.chairman_user_id}",
+                                body.est_runs, body.reason)
+    except policy.Refusal as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+
+class EdgeRemove(BaseModel):
+    from_requirement_id: str
+    to_requirement_id: str
+    reason: str = Field(min_length=5, max_length=4000)
+
+
+@router.post("/requirement_edges/remove")
+def remove_requirement_edge(body: EdgeRemove, session: Session = Depends(db)) -> dict:
+    """Unsequence: dependency edges stop being a one-way ratchet. The cycle
+    check still guards every add; removal needs no check beyond existing."""
+    source = session.get(Requirement, body.from_requirement_id)
+    project = _get_project(session, source.project_id) if source else None
+    try:
+        if project is None:
+            raise policy.Refusal("no such dependency edge", status_code=404)
+        return apply_edge_remove(session, project, f"user:{project.chairman_user_id}",
+                                 body.from_requirement_id, body.to_requirement_id,
+                                 body.reason)
+    except policy.Refusal as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
 
 # ── the topology experiment: one variable, three arms, four numbers ─────────────
@@ -2274,6 +2864,7 @@ def add_requirement(
         status=RequirementStatus.PENDING,
         stage=body.stage,
         est_runs=body.est_runs,
+        est_runs_first=body.est_runs,
         accepted_by_user_id=project.chairman_user_id,
         accepted_at=utcnow(),
     )
@@ -2313,27 +2904,13 @@ def reword_requirement(
     row = session.get(Requirement, requirement_id)
     if row is None:
         raise HTTPException(status_code=404, detail="unknown requirement")
-    if row.status in policy.CLOSED_REQUIREMENT_STATUSES:
-        raise HTTPException(
-            status_code=409,
-            detail=f"{row.key} is {row.status}; settled scope is history. Add a new "
-                   "requirement instead of editing what already happened.",
-        )
     project = _get_project(session, row.project_id)
-    old = row.statement
-    row.statement = body.statement.strip()
-    policy.record_requirement_event(
-        session, row, row.status, f"user:{project.chairman_user_id}",
-        note=f"reworded: {body.reason[:500]}", from_status=row.status)
-    _audit(session, project.id, "requirement.reword", "requirement", row.id,
-           {"key": row.key, "reason": body.reason})
-    _notice_ceo(
-        session, project.id, NoticeKind.GOAL_CHANGED,
-        f"The chairman REWORDED {row.key}.\nWas: {old[:300]}\nIs now: "
-        f"{row.statement[:300]}\nHis reason: {body.reason[:500]}\nThe key, estimate "
-        "and history are unchanged — read the new wording before working it.",
-    )
-    return {"id": row.id, "key": row.key, "statement": row.statement}
+    try:
+        return apply_reword(session, project, row,
+                            f"user:{project.chairman_user_id}",
+                            body.statement, body.reason)
+    except policy.Refusal as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
 
 class ReviewLeverIn(BaseModel):

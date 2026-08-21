@@ -234,9 +234,9 @@ def test_cadence_is_stated_in_the_system_prompt_only_when_set(client):
     text = _system_prompt(_with_cadence(client))
     assert "at most every 4h" in text
     assert "09:00 and 20:00 America/New_York" in text
-    # ...and the line that used to read as blanket permission to post is now
-    # explicitly about candour instead of frequency.
-    assert "never about frequency" in text
+    # ...and the asking line grants the verb without granting frequency:
+    # allowed always, required never, recorded when it breaks the cadence.
+    assert "allowed, never required" in text
 
 
 def test_a_project_with_no_cadence_says_nothing_about_one(client):

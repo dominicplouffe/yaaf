@@ -188,9 +188,11 @@ function RejectVerdict({ r, onDone }: { r: PlanRequirement; onDone: () => void }
   );
 }
 
-/** Chairman levers for one requirement. Accept and cut are his alone — the CEO
-    proposes and can never accept its own — and the verdict is how an
-    observable acceptance test gets an answer a script cannot give. */
+/** Chairman levers for one requirement. Under the default authority dial
+    accept and cut are his alone — the CEO proposes — and the verdict is how
+    an observable acceptance test gets an answer a script cannot give. Settled
+    scope gets the undo: reopen returns a met or cut requirement to the plan,
+    and its stage reopens with it. */
 function Levers({ r, onDone }: { r: PlanRequirement; onDone: () => void }) {
   if (r.status === "proposed") {
     return (
@@ -251,7 +253,22 @@ function Levers({ r, onDone }: { r: PlanRequirement; onDone: () => void }) {
       />
     );
   }
-  return null;
+  // Settled — met or cut. Reopen is the undo that never used to exist.
+  return (
+    <NoteAction
+      label="Reopen…"
+      className="small"
+      placeholder={r.status === "met"
+        ? "Why this is not actually done — it returns to the plan"
+        : "Why this belongs back in scope — it returns to the plan"}
+      confirmLabel="↩ Reopen"
+      requireNote
+      onSubmit={async (note) => {
+        await post(`/admin/requirements/${r.id}/reopen`, { reason: note });
+        onDone();
+      }}
+    />
+  );
 }
 
 function testLine(r: PlanRequirement): string {

@@ -4,8 +4,7 @@ A backend executes one leased job and returns a result. Two exist in M1:
 
 - ``mock``: scripted behaviors that drive the *real* HTTP API — the framework's
   orchestration is CI-testable end to end at $0 in model tokens
-- ``agent_sdk``: the Claude Agent SDK inside a Docker sandbox behind the egress
-  proxy — the real thing
+- ``agent_sdk``: the Claude Agent SDK inside a Docker sandbox — the real thing
 
 The backend never touches the database. Everything it needs rides on the
 :class:`~yaaf.runner.types.RunJob`; everything it produces comes back on the

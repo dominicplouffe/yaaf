@@ -25,6 +25,7 @@ from yaaf.core.models import (
     Agent,
     AgentKind,
     LedgerEntry,
+    LedgerKind,
     Project,
     Run,
     RunKind,
@@ -359,7 +360,7 @@ def _report(session: Session, project: Project, since: datetime, window: str) ->
 
     # 8. External spend + reconciliation against the ledger.
     _heading("External spend & ledger reconciliation")
-    external = [entry for entry in ledger if entry.kind == "external_spend"]
+    external = [entry for entry in ledger if entry.kind == LedgerKind.EXTERNAL_SPEND]
     if external:
         external_usd = sum(entry.usd or 0.0 for entry in external)
         typer.echo(f"  {len(external)} external-spend entries · total ${external_usd:,.2f}")
@@ -378,7 +379,7 @@ def _report(session: Session, project: Project, since: datetime, window: str) ->
         typer.echo(f"  reconciliation: {NO_DOLLARS}")
     else:
         by_kind = {kind: sum(entry.usd or 0.0 for entry in ledger if entry.kind == kind)
-                   for kind in ("model_usage", "external_spend", "infra")}
+                   for kind in (LedgerKind.MODEL_USAGE, LedgerKind.EXTERNAL_SPEND, LedgerKind.INFRA)}
         ledger_usd = sum(entry.usd or 0.0 for entry in ledger)
         typer.echo(f"  reconciliation: ledger usd ${ledger_usd:,.2f} "
                    f"(model_usage ${by_kind['model_usage']:,.2f} + "

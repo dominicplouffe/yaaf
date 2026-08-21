@@ -26,6 +26,14 @@ class Settings(BaseSettings):
     # Base URL agents use to reach the platform API from inside sandboxes.
     api_base_url: str = "http://localhost:8080"
 
+    # Browser-facing origin of this install (e.g. https://yaaf.example.com) —
+    # used to build the OAuth redirect URI when connecting an OAuth-protected
+    # MCP data source. Unset, the redirect URI is derived from the incoming
+    # request, which is fine for local dev but reports plain http behind a
+    # TLS-terminating proxy; production installs should set it, and OAuth
+    # providers generally refuse non-https redirect URIs anyway.
+    public_base_url: str = ""
+
     api_host: str = "0.0.0.0"
     api_port: int = 8080
 
@@ -46,7 +54,6 @@ class Settings(BaseSettings):
     sandbox_mode: str = "docker"
     sandbox_image: str = "yaaf-sandbox:latest"
     sandbox_network: str = "yaaf_sandbox"
-    egress_proxy_url: str = "http://proxy:3128"
     workspaces_root: str = "/var/lib/yaaf/workspaces"
     artifacts_root: str = "/var/lib/yaaf/artifacts"
 
@@ -58,13 +65,6 @@ class Settings(BaseSettings):
     artifact_s3_access_key: str = ""
     artifact_s3_secret_key: str = ""
 
-    # Egress auto-apply: when set, the runner watches the generated proxy
-    # config for changes, writes it here, and reloads squid in the named
-    # container (exec `squid -k reconfigure`) — config edits in the UI reach
-    # squid without any CLI step. Empty = manual `yaaf egress-sync`
-    # (multi-box setups).
-    proxy_generated_dir: str = ""
-    proxy_container: str = ""
 
     # Chairman notifications (approval nags, budget pauses). Unset = log only.
     smtp_host: str = ""
