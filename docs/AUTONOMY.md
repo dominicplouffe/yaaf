@@ -50,8 +50,9 @@ never seized.
   containers, scoped secrets, audit and spot-checks are the containment.
 - **Revenue** exists only as a signed-webhook-fed ledger kind so income can
   never be invented; the P&L itself is the CEO's to build with its agents.
-- **Needs arrive over Slack**, answerable remotely; fulfilling one stores
-  and scopes the credential in one motion.
+- **Needs arrive over chat** — Slack today, Telegram or WhatsApp when a
+  connector exists — answerable remotely; fulfilling one stores and scopes
+  the credential in one motion.
 - **Modes never change**: Explore adapts by itself; Deliver and Operate
   keep their rigid shapes on purpose.
 - **External wakes**: signed webhooks and watched mailboxes wake the right
@@ -92,7 +93,7 @@ never seized.
 | A | Missing verbs (reopen · restage · reestimate · unsequence · dial-assignable cut · ask), the two bug fixes, removal of the egress allowlist, widened directive scope so chairman orders execute | not started |
 | B | The Authority constitution group, seven switches, three presets, decision digest, `verdict_policy: ceo_judgment` with audit-sampled self-closes | not started |
 | C | Spend envelope: `external_monthly_usd_cap` (always-on, any billing mode), `max_usd_per_purchase`, atomic purchase actuator over the side-effect ledger, optional virtual-card hardening | not started |
-| D | Credentials become capabilities: recognizer library (packages + tooling), needs queue over Slack (`tool_request` wired), CEO delegation to team roles, `revenue` ledger kind fed by signed webhooks | not started |
+| D | Credentials become capabilities: recognizer library (packages + tooling), needs queue over chat (`tool_request` wired; Slack first, any messenger later), CEO delegation to team roles, `revenue` ledger kind fed by signed webhooks | not started |
 | E | Browser lane on the open network, `AWAITING_HUMAN` suspension with live take-over (captcha/2FA), account registry (record-only, situational owner), external-event wakes and per-agent schedules | not started |
 
 Order is forced: verbs before authority, authority before money, money
