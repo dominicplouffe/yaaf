@@ -210,8 +210,15 @@ class ConstitutionDoc(BaseModel):
         choices=["chairman", "ceo_judgment"],
         help="Observable acceptance tests a script cannot check. 'chairman': they park "
              "on your desk. 'ceo_judgment': the CEO judges and keeps going — and every "
-             "self-judged close is drawn into your spot-audit at an elevated rate, so "
-             "nothing is quietly trusted.")
+             "self-judged close is disclosed to you in full, so nothing is quietly "
+             "trusted.")
+    capability_authority: str = _rule(
+        "chairman", group="Autonomy", label="Who delegates the credentials",
+        choices=["chairman", "ceo"],
+        help="Whatever you store, the company can use — this decides who scopes it to "
+             "roles. 'chairman': grants are yours (the CEO files needs). 'ceo': the "
+             "CEO re-scopes existing credentials across its own team itself, on the "
+             "record. Creating a credential is always yours — you hold the values.")
 
     # Budgets — native unit of the project's billing mode
     monthly_usd_cap: float = _rule(

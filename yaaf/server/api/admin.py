@@ -1539,6 +1539,62 @@ def decide_approval(
     return {"id": approval.id, "status": approval.status}
 
 
+class NeedFulfillIn(BaseModel):
+    secret_name: str = Field(min_length=2, max_length=120)
+    value: str = Field(min_length=1)
+    roles: list[str] = Field(min_length=1)
+    note: str = Field(default="", max_length=4000)
+
+
+@router.post("/approvals/{approval_id}/fulfill")
+def fulfill_need(
+    approval_id: str, body: NeedFulfillIn, session: Session = Depends(db)
+) -> dict:
+    """One motion: store the credential, scope the roles, approve the need.
+
+    The needs loop's whole point — 'I need AWS, give me a key' should cost the
+    chairman one form, not a form plus a settings hunt plus remembering to
+    answer the approval. The stored value never appears anywhere again; the
+    CEO is told the env-var name and who received it."""
+    approval = session.get(Approval, approval_id)
+    if approval is None:
+        raise HTTPException(status_code=404, detail="unknown approval")
+    if approval.kind != "tool_request":
+        raise HTTPException(status_code=422,
+                            detail="only a need (kind=tool_request) is fulfillable "
+                                   "with a credential; decide other kinds normally")
+    if approval.status != ApprovalStatus.PENDING:
+        raise HTTPException(status_code=409, detail=f"approval already {approval.status}")
+    for slug in body.roles:
+        _latest_role_version(session, slug)  # 422s on an unknown role
+    project = _get_project(session, approval.project_id)
+    secret = _upsert_project_secret(
+        session, project.id, body.secret_name, body.value, body.roles)
+    approval.status = ApprovalStatus.APPROVED
+    approval.decided_at = utcnow()
+    approval.decided_by_user_id = project.chairman_user_id
+    approval.decision_note = (body.note or "fulfilled") + f" [credential: {secret.name}]"
+    env_var = body.secret_name.upper().replace("-", "_").replace(" ", "_")
+    session.add(
+        Notice(
+            id=ids.new_id(ids.NOTICE),
+            project_id=project.id,
+            agent_id=approval.requested_by_agent_id,
+            kind=NoticeKind.APPROVAL_DECIDED,
+            body=(f"Your need '{approval.title}' was FULFILLED: the credential "
+                  f"'{secret.name}' now reaches roles {', '.join(body.roles)} as an "
+                  f"environment variable on their next run."
+                  + (f" His note: {body.note}" if body.note else "")),
+        )
+    )
+    _audit(session, project.id, "need.fulfill", "approval", approval.id,
+           {"secret_name": secret.name, "roles": body.roles})
+    notify(session, WAKE_CHANNEL, project.id)
+    return {"id": approval.id, "status": approval.status,
+            "secret_name": secret.name, "env_var_hint": env_var,
+            "roles": body.roles}
+
+
 class HypothesisExtend(BaseModel):
     new_kill_date: datetime
     reason: str = Field(min_length=10)

@@ -306,8 +306,12 @@ def _prepare_session(session: Session, project: Project, ceo: Agent) -> tuple[di
     # does, so it gets the same paragraph describing them.
     job.system_prompt += _data_source_prompt(
         _merge_project_data_sources(session, project, role_version, job))
-    job.billing_env = {**_billing_env(session, project),
-                       **_role_secret_env(session, project, role_version)}
+    role_secrets = _role_secret_env(session, project, role_version)
+    # The resident CEO knows its credentials the same way a run does.
+    from yaaf.server.recognizers import credentials_prompt
+
+    job.system_prompt += credentials_prompt(list(role_secrets))
+    job.billing_env = {**_billing_env(session, project), **role_secrets}
 
     # Chat gets its own scratch at /workspace: a run's staging must never race
     # a resident session's. It also gets the company's working tree read-only

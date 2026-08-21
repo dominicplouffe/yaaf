@@ -214,6 +214,15 @@ docker compose --profile s3 up      # bundled MinIO for local use
 The bucket is created on first use. The base install stays boto3-free — it's
 imported lazily, only when the endpoint is set.
 
+## Revenue
+
+A signed generic webhook whose JSON body carries `revenue_usd` books a
+`revenue` ledger row alongside its evidence. This is the ONLY path that writes
+revenue — no agent verb exists for it — so income can be reported without ever
+being inventable, and the CEO can build a P&L on ledger rows instead of
+claims. Point your payment processor's webhook (via a small signing relay) at
+`/webhooks/generic/{project_id}`.
+
 ## Network
 
 The sandbox network is open — no allowlist, no per-role proxy. The chairman's

@@ -31,11 +31,15 @@ from yaaf.core.models import (
     Evidence,
     EvidenceKind,
     EvidenceProvenance,
+    LedgerEntry,
     Message,
+    Notice,
+    NoticeKind,
     Project,
     VerificationStatus,
     utcnow,
 )
+from yaaf.server import policy
 from yaaf.server.deps import db
 from yaaf.server.slack.bridge import (
     post_boardroom_from_chairman,
@@ -300,11 +304,15 @@ async def slack_webhook(
 
 
 class GenericEvidenceIn(BaseModel):
-    """What a chairman-configured connector posts: a described observation."""
+    """What a chairman-configured connector posts: a described observation —
+    and, when money came in, the amount. Revenue rides ONLY this signed path:
+    there is no agent verb that books it, so income can be reported without
+    ever being inventable (CEO Charter, stage D)."""
 
     description: str = Field(min_length=10)
     source_url: str | None = None
     occurred_at: datetime | None = None
+    revenue_usd: float | None = Field(default=None, gt=0)
 
 
 @router.post("/generic/{project_id}")
@@ -332,6 +340,28 @@ async def generic_webhook(
         source_url=body.source_url,
         occurred_at=body.occurred_at or utcnow(),
     )
+    ledger_id: str | None = None
+    if body.revenue_usd is not None:
+        ledger = LedgerEntry(
+            id=ids.new_id(ids.LEDGER),
+            project_id=project.id,
+            kind="revenue",
+            usd=body.revenue_usd,
+            note=f"webhook: {body.description[:300]}",
+        )
+        session.add(ledger)
+        ledger_id = ledger.id
+        ceo = policy.ceo_of(session, project.id)
+        if ceo is not None:
+            session.add(Notice(
+                id=ids.new_id(ids.NOTICE), project_id=project.id, agent_id=ceo.id,
+                kind=NoticeKind.REVENUE,
+                body=(f"Revenue landed, verified by signed webhook: "
+                      f"${body.revenue_usd:,.2f} — {body.description[:300]}\n"
+                      "It is on the ledger. This number cannot be written by anyone "
+                      "here — only the connector's signature books it — so build "
+                      "your P&L on the ledger's revenue rows, never on claims."),
+            ))
     session.add(
         AuditLog(
             id=ids.new_id(ids.AUDIT),
@@ -340,7 +370,7 @@ async def generic_webhook(
             action="webhook.generic",
             entity="evidence",
             entity_id=row.id,
-            detail={"source_url": body.source_url},
+            detail={"source_url": body.source_url, "revenue_usd": body.revenue_usd},
         )
     )
-    return {"evidence_id": row.id}
+    return {"evidence_id": row.id, "ledger_id": ledger_id}

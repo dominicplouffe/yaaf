@@ -434,6 +434,50 @@ async def t_spend_book(args):
 
 
 @tool(
+    "need_request",
+    "CEO only. File a NEED with the chairman: a capability the company lacks — 'I need "
+    "AWS access, give me a key', 'we need a Stripe account', 'SMTP credentials for the "
+    "writer'. It reaches him where he reads (boardroom, Slack, email) and he fulfills "
+    "it in one motion: the credential lands as an env var for the roles you name, and "
+    "you are woken with the decision. Unanswered, it expires to no — plan the work "
+    "that does not depend on it rather than waiting. Say WHY (what work it unblocks), "
+    "suggest a credential name, name the roles, and estimate monthly cost honestly.",
+    {"title": str, "why": str, "est_usd_per_month": float,
+     "suggested_secret_name": str, "roles": list},
+)
+async def t_need_request(args):
+    payload = {k: v for k, v in args.items() if v not in (None, "", [])}
+    return _text(_call("POST", "/agent/needs", payload))
+
+
+@tool(
+    "credentials_list",
+    "CEO only. The credential roster: every service credential the company holds and "
+    "which roles receive it — names and scopes only, never values. Read it before "
+    "filing a need (the capability may already exist) or delegating one.",
+    {},
+)
+async def t_credentials_list(args):
+    return _text(_call("GET", "/agent/credentials"))
+
+
+@tool(
+    "credential_scope",
+    "CEO only, and only where the constitution grants capability_authority: ceo — "
+    "otherwise a 403 naming the paths (file a need, or the chairman's boardroom order "
+    "as a directive). Delegate an existing credential across your team: add_roles / "
+    "remove_roles by role slug, with a reason. The value never moves — only who "
+    "receives it at run time. Audited and sent to the chairman; effective on each "
+    "role's next run.",
+    {"name": str, "add_roles": list, "remove_roles": list, "reason": str},
+)
+async def t_credential_scope(args):
+    payload = {k: v for k, v in dict(args).items()
+               if k != "name" and v not in (None, "", [])}
+    return _text(_call("POST", f"/agent/credentials/{args['name']}/scope", payload))
+
+
+@tool(
     "purchase_begin",
     "Clear a real-world purchase against the spend envelope BEFORE paying — a refusal "
     "here costs nothing; the same refusal after paying costs the money. Records the "
@@ -937,6 +981,7 @@ ALL_TOOLS = [
     t_evidence_add, t_review_narrative, t_commitment_propose, t_scope_act,
     t_hypothesis_add, t_hypothesis_kill, t_decision_add,
     t_approval_request, t_approvals_list, t_spend_book,
+    t_need_request, t_credentials_list, t_credential_scope,
     t_purchase_begin, t_purchase_finish,
     t_side_effect_begin, t_side_effect_finish,
     t_artifact_put, t_artifact_list, t_artifact_get, t_env_list,

@@ -73,6 +73,12 @@ def constitution_prose(cons: ConstitutionDoc, project: Project) -> str:
         f"need chairman approval; approvals expire to DENIED after "
         f"{cons.approval_timeout_days} days, so re-plan rather than wait.\n"
         f"{_envelope_clause(cons)}"
+        "- A capability the company lacks — an account, an API key, a service — is a "
+        "NEED. The CEO checks credentials_list, then files it with need_request (why, "
+        "roles, honest monthly cost); it reaches the chairman where he reads, and he "
+        "fulfills it in one motion. Unanswered it expires to no, so plan the work that "
+        "does not depend on it. Anyone else: tell the CEO what you are missing — a "
+        "suggestion survives.\n"
         f"- Budget: {budget}. At 100% the project auto-pauses.\n"
         # The wake-loop brakes were the one enforced group never stated here,
         # so a company that had spent its daily runs by 01:22 had a CEO with no
@@ -151,6 +157,10 @@ def _authority_clause(cons: ConstitutionDoc) -> str:
         held.append("judge unverifiable observable closes yourself (scope_act verdict) "
                     "— judge honestly and keep going; every self-judgment is disclosed "
                     "to the chairman in full")
+    if cons.capability_authority == "ceo":
+        held.append("delegate the company's credentials across your team yourself "
+                    "(credentials_list, credential_scope) — creating one stays the "
+                    "chairman's, so file a need for what the company lacks")
     if not held:
         return ""
     return (

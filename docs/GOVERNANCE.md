@@ -91,8 +91,9 @@ Also enforced here, and not tunable because they're structural:
 | `scope_authority` | `"chairman"` | Who may cut, reopen, restage, reestimate, reword and unsequence. `"ceo"` hands the verbs to the CEO, on the record, reversibly. Your routes never close. |
 | `commitment_authority` | `"chairman"` | Who signs the delivery date. `"ceo"`: proposing adopts the platform's own projection immediately — the CEO still cannot write a date, only accept the arithmetic's. |
 | `verdict_policy` | `"chairman"` | Who judges unverifiable observable closes. `"ceo_judgment"`: the CEO judges and keeps going, and every self-judgment is disclosed to you in full — stronger than sampling. |
+| `capability_authority` | `"chairman"` | Who scopes credentials to roles. `"ceo"`: the CEO re-scopes existing service credentials across its team itself, on the record, disclosed to you. Creating a credential is always yours — you hold the values. |
 
-The four authority switches are the dial (docs/AUTONOMY.md): they decide *who
+The five authority switches are the dial (docs/AUTONOMY.md): they decide *who
 holds a verb*, never whether the record is honest. Every self-exercise runs
 through the same machinery as your own buttons, lands in the audit log, and is
 sent to you out-of-band. The dial itself is chairman-only — a directive

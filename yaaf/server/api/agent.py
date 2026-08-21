@@ -25,6 +25,7 @@ from yaaf.core.models import (
     Approval,
     AuditLog,
     Channel,
+    ChannelKind,
     ChannelRead,
     Commitment,
     CommitmentStatus,
@@ -44,6 +45,7 @@ from yaaf.core.models import (
     ReviewStatus,
     RunKind,
     RunQueue,
+    Secret,
     SideEffect,
     SideEffectStatus,
     SuccessTestKind,
@@ -1497,6 +1499,182 @@ def book_spend(
     )
     session.add(row)
     return {"id": row.id}
+
+
+# ── needs and credential delegation ─────────────────────────────────────────────
+#
+# Credentials are capabilities (CEO Charter, stage D). A capability the
+# company LACKS becomes a need: a structured ask that lands where the chairman
+# actually is — the boardroom (which the Slack bridge mirrors when connected)
+# plus his out-of-band notification — and is fulfilled in one motion on his
+# side (value stored, roles scoped, need approved). A capability the company
+# HAS is delegated by whoever holds capability_authority: the chairman's
+# tickbox by default, the CEO's own verb when the dial grants it.
+
+
+class NeedIn(BaseModel):
+    title: str = Field(min_length=4, max_length=200)
+    why: str = Field(min_length=10, max_length=4000)
+    est_usd_per_month: float | None = Field(default=None, ge=0)
+    suggested_secret_name: str | None = Field(default=None, max_length=120)
+    roles: list[str] = Field(default_factory=list)
+
+
+@router.post("/needs")
+def need_request(
+    body: NeedIn, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
+) -> dict:
+    """File a need: 'I need access to AWS — give me a key.'
+
+    Rides the approval machinery (kind=tool_request: it nags, it expires
+    default-deny, the chairman decides), and additionally lands as a boardroom
+    line so it reaches him wherever he reads — the dashboard, Slack, any
+    connected messenger. Fulfilling it stores the credential and scopes the
+    roles in one motion on his side."""
+    if ctx.agent.kind != AgentKind.CEO:
+        raise Refusal("Needs go to the chairman, and only the CEO speaks to him. "
+                      "Tell the CEO what you are missing — a suggestion survives.",
+                      status_code=403)
+    cons = effective(session, ctx.project.id)
+    from datetime import timedelta
+
+    detail_lines = [body.why]
+    if body.suggested_secret_name:
+        detail_lines.append(f"Suggested credential name: {body.suggested_secret_name}")
+    if body.roles:
+        detail_lines.append(f"For roles: {', '.join(body.roles)}")
+    if body.est_usd_per_month is not None:
+        detail_lines.append(f"Estimated cost: ~${body.est_usd_per_month:,.2f}/month")
+    approval = Approval(
+        id=ids.new_id(ids.APPROVAL),
+        project_id=ctx.project.id,
+        kind="tool_request",
+        requested_by_agent_id=ctx.agent.id,
+        title=f"Need: {body.title}",
+        body="\n".join(detail_lines),
+        amount_usd=body.est_usd_per_month,
+        expires_at=utcnow() + timedelta(days=cons.approval_timeout_days),
+    )
+    session.add(approval)
+    boardroom = session.execute(
+        select(Channel).where(Channel.project_id == ctx.project.id,
+                              Channel.kind == ChannelKind.BOARDROOM)
+    ).scalar_one_or_none()
+    if boardroom is not None:
+        # A system line, not a CEO status: it spends no cadence and reads the
+        # same in the dashboard and in Slack (the bridge mirrors the boardroom).
+        cost = (f" (~${body.est_usd_per_month:,.0f}/mo)"
+                if body.est_usd_per_month is not None else "")
+        session.add(Message(
+            id=ids.new_id(ids.MESSAGE),
+            project_id=ctx.project.id,
+            channel_id=boardroom.id,
+            body=(f"📋 NEED: {body.title}{cost} — {body.why[:400]}\n"
+                  f"Fulfill it on the Decisions screen (one motion: value stored, "
+                  f"roles scoped, need approved), or decline it there. Unanswered, "
+                  f"it expires to no in {cons.approval_timeout_days} days."),
+        ))
+    session.add(AuditLog(
+        id=ids.new_id(ids.AUDIT), project_id=ctx.project.id,
+        actor=f"agent:{ctx.agent.id}", action="need.request",
+        entity="approval", entity_id=approval.id,
+        detail={"title": body.title, "roles": body.roles,
+                "est_usd_per_month": body.est_usd_per_month},
+    ))
+    from yaaf.server.notify import chairman_notify
+
+    chairman_notify(
+        session, ctx.project, f"The company needs: {body.title}",
+        "\n".join(detail_lines) + "\n\nFulfill or decline it on the Decisions screen "
+        "— fulfilling stores the credential and scopes the roles in one motion.",
+    )
+    notify(session, WAKE_CHANNEL, ctx.project.id)
+    return {
+        "need_id": approval.id,
+        "expires_at": approval.expires_at.isoformat(),
+        "note": (f"Filed and sent to the chairman where he reads. Unanswered, it "
+                 f"expires to DENIED in {cons.approval_timeout_days} days — plan the "
+                 "work that does not depend on it rather than waiting."),
+    }
+
+
+@router.get("/credentials")
+def credentials_list(
+    ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
+) -> list[dict]:
+    """Names and scopes only, service credentials only — what the company
+    holds and who may use it. Values never ride any agent surface, and the
+    billing credential is not listed at all."""
+    if ctx.agent.kind != AgentKind.CEO:
+        raise Refusal("The credential roster is the CEO's to read.", status_code=403)
+    rows = session.execute(
+        select(Secret).where(Secret.project_id == ctx.project.id,
+                             Secret.kind == "service").order_by(Secret.name)
+    ).scalars()
+    return [{"name": s.name, "role_scopes": s.role_scopes or []} for s in rows]
+
+
+class CredentialScope(BaseModel):
+    add_roles: list[str] = Field(default_factory=list)
+    remove_roles: list[str] = Field(default_factory=list)
+    reason: str = Field(min_length=10)
+
+
+@router.post("/credentials/{name}/scope")
+def credential_scope(
+    name: str,
+    body: CredentialScope,
+    ctx: RunContext = Depends(run_auth),
+    session: Session = Depends(db),
+) -> dict:
+    """Delegate a capability: re-scope an existing credential across the
+    team's roles — the chairman's tickbox, exercised by the CEO where the
+    dial grants it. Values never move; only who receives them at run time.
+    Creating a credential is always the chairman's — he holds the values."""
+    if ctx.agent.kind != AgentKind.CEO:
+        raise Refusal("Delegation, where granted at all, is granted to the CEO.",
+                      status_code=403)
+    cons = effective(session, ctx.project.id)
+    if cons.capability_authority != "ceo":
+        raise Refusal(
+            "The constitution holds capability_authority = 'chairman': scoping "
+            "credentials is his tickbox on this project. File a need, or ask him in "
+            "the boardroom — his order executes as a directive. The dial itself is "
+            "his amendment to turn, and yours to recommend.",
+            status_code=403,
+        )
+    if not body.add_roles and not body.remove_roles:
+        raise Refusal("Nothing to change.", status_code=422)
+    row = session.execute(
+        select(Secret).where(Secret.project_id == ctx.project.id, Secret.name == name)
+    ).scalar_one_or_none()
+    if row is None or row.kind != "service":
+        raise Refusal(f"No service credential named {name!r} on this project.",
+                      status_code=404)
+    scopes = list(row.role_scopes or [])
+    was = list(scopes)
+    for slug in body.add_roles:
+        if slug not in scopes:
+            scopes.append(slug)
+    scopes = [s for s in scopes if s not in body.remove_roles]
+    row.role_scopes = scopes
+    session.add(AuditLog(
+        id=ids.new_id(ids.AUDIT), project_id=ctx.project.id,
+        actor=f"agent:{ctx.agent.id}", action="credential.scope",
+        entity="secret", entity_id=row.id,
+        detail={"name": name, "was": was, "now": scopes, "reason": body.reason},
+    ))
+    from yaaf.server.notify import chairman_notify
+
+    chairman_notify(
+        session, ctx.project, f"CEO re-scoped credential {name}",
+        f"{name}: {', '.join(was) or '(nobody)'} → {', '.join(scopes) or '(nobody)'}\n"
+        f"Its reason: {body.reason}\nExercised under capability_authority: ceo. "
+        "Effective on each role's next run; reverse it any time in Settings.",
+    )
+    return {"name": name, "role_scopes": scopes, "was": was,
+            "note": "Effective on each granted role's next run. On the record, and "
+                    "the chairman has been told."}
 
 
 # ── the purchase actuator ───────────────────────────────────────────────────────

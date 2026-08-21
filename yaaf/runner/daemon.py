@@ -195,12 +195,11 @@ def _materialize(session: Session, queued: RunQueue, project: Project) -> RunJob
     source_specs = _merge_project_data_sources(session, project, role_version, job)
     role_secrets = _role_secret_env(session, project, role_version)
     job.billing_env = {**_billing_env(session, project), **role_secrets}
-    if role_secrets:
-        job.system_prompt += (
-            "\n\nCREDENTIALS: these environment variables are set in your sandbox for your "
-            f"role: {', '.join(sorted(role_secrets))}. Use them for their purpose; never "
-            "print, log, or write them to files."
-        )
+    # Credentials are capabilities: each variable arrives with what it is and
+    # how to use it, where the recognizer library knows (docs/AUTONOMY.md).
+    from yaaf.server.recognizers import credentials_prompt
+
+    job.system_prompt += credentials_prompt(list(role_secrets))
     job.system_prompt += _data_source_prompt(source_specs)
     return job
 

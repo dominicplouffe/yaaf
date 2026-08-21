@@ -288,6 +288,9 @@ class NoticeKind(enum.StrEnum):
     # same ratio as the model budget, but never pausing anything: the wall is
     # enforced where money is cleared and booked, not by stopping the company.
     EXTERNAL_SPEND_WARNING = "external_spend_warning"
+    # Money came IN — booked only by a signed webhook, never by an agent, so
+    # income can be reported without ever being inventable.
+    REVENUE = "revenue"
     APPROVAL_DECIDED = "approval_decided"
     APPROVAL_EXPIRED = "approval_expired"
     THREAD_FROZEN = "thread_frozen"
