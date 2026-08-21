@@ -19,6 +19,7 @@ each is attacked here with a live run token, over HTTP, the way an agent would:
 from __future__ import annotations
 
 from tests.conftest import ADMIN, agent_by_name, bearer, live_token, make_project
+from yaaf.core.constitution import effective
 from yaaf.core.db import db_session
 from yaaf.core.models import (
     Project,
@@ -244,7 +245,8 @@ def test_closing_every_task_moves_a_requirement_to_checking_not_to_met(client):
                        headers=bearer(lead_token)).status_code == 200
 
     with db_session() as session:
-        janitor.check_finished_requirements(session, session.get(Project, project["id"]))
+        row = session.get(Project, project["id"])
+        janitor.check_finished_requirements(session, row, effective(session, row.id))
     with db_session() as session:
         row = session.get(Requirement, rid)
         assert row.status == RequirementStatus.CHECKING, \
@@ -314,7 +316,8 @@ def test_the_chairman_verdict_is_the_only_thing_that_meets_an_observable(client)
         headers=bearer(lead_token))
     assert completed.status_code == 200, completed.text
     with db_session() as session:
-        janitor.check_finished_requirements(session, session.get(Project, project["id"]))
+        row = session.get(Project, project["id"])
+        janitor.check_finished_requirements(session, row, effective(session, row.id))
 
     rejected = client.post(f"/admin/requirements/{rid}/verdict",
                            json={"ok": False, "note": "the dates are wrong"}, headers=ADMIN)
@@ -325,7 +328,8 @@ def test_the_chairman_verdict_is_the_only_thing_that_meets_an_observable(client)
         assert row.failure_load == 1, "a rejected requirement is an error, and errors count"
 
     with db_session() as session:
-        janitor.check_finished_requirements(session, session.get(Project, project["id"]))
+        row = session.get(Project, project["id"])
+        janitor.check_finished_requirements(session, row, effective(session, row.id))
     passed = client.post(f"/admin/requirements/{rid}/verdict",
                          json={"ok": True, "note": "checked it myself"}, headers=ADMIN)
     assert passed.status_code == 200

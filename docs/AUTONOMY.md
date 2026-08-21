@@ -105,3 +105,41 @@ granted by the constitution, never seized.
 
 Order is forced: verbs before authority, authority before money, money
 before self-provisioning, and the browser last.
+
+## Post-review hardening (21 Aug 2026)
+
+A full adversarial review of the five stages surfaced 18 findings; all are
+fixed and regression-tested (478 tests green). The load-bearing ones:
+
+- **Ledger kinds are an enum** (`LedgerKind`), and revenue is money coming
+  IN: it is excluded from the budget sums (janitor + observe), so a project
+  can no longer be auto-paused for earning.
+- **Cleared purchases reserve the envelope.** `purchase_begin` counts
+  cleared-but-unfinished purchases as committed, so two overlapping begins
+  cannot each clear against the same headroom. A failed finish releases the
+  reservation.
+- **`spend_book` books an overshoot instead of hiding it** — the money
+  already moved; refusing the record would un-report real spending. It
+  books, writes a `spend.over_envelope` audit row, and tells the chairman.
+- **One executor for scope actions.** Directives and `scope_act` run
+  through the same `_execute_scope_action`, so refusal accounting and
+  disclosure are identical on both paths, and model-authored action fields
+  are coerced and bounded (`stage` 1–50, `est_runs` 1–10000, …) — a 422
+  naming the field, never a 500.
+- **Platform boardroom lines never wake an agent** (the dispatcher skips
+  sender-less messages), or every need the CEO filed would urgently buy a
+  run to read its own announcement.
+- **Role grants are validated** (`check_roles_exist`): a typo'd slug is a
+  422 naming it, not a silent grant to nobody.
+- **One env-var normalizer** (`yaaf/core/naming.py`): the fulfill hint, the
+  wake notice, and the runner injection all derive the same name.
+- **Chairman notifications no longer block requests** — delivery happens on
+  a background thread after the DB reads complete.
+- **Deploys migrate the sandbox network** (`migrate_sandbox_network`
+  rebuilds an `internal: true` network from the allowlist era) and remove
+  the orphaned squid container.
+- The last egress-era fossils are gone from the UI copy, presets
+  (Supervised/Autonomous now set all five switches explicitly, so a preset
+  always overrides an imported bundle), CONTRIBUTING.md, and the
+  fpl-manager walkthrough; the secret-reveal invariant again bans
+  `credential` in `/agent` paths outside the two vetted roster routes.

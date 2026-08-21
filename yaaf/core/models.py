@@ -285,6 +285,19 @@ class SideEffectStatus(enum.StrEnum):
     FAILED = "failed"
 
 
+class LedgerKind(enum.StrEnum):
+    """What a ledger row's dollars (or tokens) mean. The distinction is
+    load-bearing arithmetic, not taxonomy: the budget meter sums everything
+    that is NOT revenue, the external envelope sums exactly EXTERNAL_SPEND,
+    and REVENUE is written only by signed webhooks — no agent verb exists.
+    A new kind added here must decide which sums it belongs to."""
+
+    MODEL_USAGE = "model_usage"
+    EXTERNAL_SPEND = "external_spend"
+    INFRA = "infra"
+    REVENUE = "revenue"
+
+
 class NoticeKind(enum.StrEnum):
     DROUGHT = "drought"
     HYPOTHESIS_EXPIRED = "hypothesis_expired"
@@ -534,8 +547,11 @@ class Message(Base):
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
     channel_id: Mapped[str] = mapped_column(ForeignKey("channels.id"))
-    # Exactly one of sender_agent_id / sender_user_id is set. System notices use
-    # the notices table, not messages.
+    # At most one of sender_agent_id / sender_user_id is set. Agent-directed
+    # system notices use the notices table; the one sender-less shape is a
+    # PLATFORM BOARDROOM LINE (a need or assist announced to the chairman),
+    # which mirrors to Slack like any boardroom message and is deliberately
+    # never a wake reason — the dispatcher skips sender-less messages.
     sender_agent_id: Mapped[str | None] = mapped_column(String(40))
     sender_user_id: Mapped[str | None] = mapped_column(String(40))
     thread_id: Mapped[str | None] = mapped_column(String(40))  # root message id
@@ -1050,7 +1066,7 @@ class LedgerEntry(Base):
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
-    kind: Mapped[str] = mapped_column(String(24))  # model_usage|external_spend|infra
+    kind: Mapped[str] = mapped_column(String(24))  # LedgerKind
     tokens_in: Mapped[int] = mapped_column(Integer, default=0)
     tokens_out: Mapped[int] = mapped_column(Integer, default=0)
     # The API's input_tokens is only the uncached remainder; the real prompt is

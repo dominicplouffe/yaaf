@@ -11,16 +11,12 @@ interface RoleDetail {
   system_prompt: string;
   model: string;
   effort: string;
-  // Booleans for the sandbox tools plus egress_allow: string[] — unknown keys
+  // Booleans for the sandbox tools — unknown keys
   // are preserved verbatim on save (the proxy generator reads this dict too).
   tool_permissions: Record<string, unknown>;
   secret_scopes: string[];
 }
 
-function egressLines(perms: Record<string, unknown>): string {
-  const list = perms["egress_allow"];
-  return Array.isArray(list) ? list.join("\n") : "";
-}
 
 /** "claude-opus-5" → "opus-5": the family is the choice; the vendor prefix is noise. */
 function shortModel(model: string | null): string {
@@ -58,7 +54,7 @@ const PERMISSIONS = [
     label: "Bash",
     help: "Any shell command, for roles whose craft is building and running things.",
   },
-  { key: "web", label: "Web", help: "Fetch and search the web, within the egress allowlist." },
+  { key: "web", label: "Web", help: "Fetch and search the open web." },
 ] as const;
 
 export default function Roles() {
@@ -66,10 +62,6 @@ export default function Roles() {
   const [editing, setEditing] = useState<RoleDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
-  // Raw textarea text for the egress list — kept separate so blank lines
-  // survive typing; the parsed domains live in tool_permissions.egress_allow.
-  const [egressText, setEgressText] = useState("");
-  const [portsText, setPortsText] = useState("");
   const formRef = useRef<HTMLFormElement>(null);
 
   function refresh() {
@@ -88,9 +80,10 @@ export default function Roles() {
       // key from imported data must not round-trip into a save refusal.
       delete detail.tool_permissions["mcp_servers"];
       setEditing(detail);
-      setEgressText(egressLines(detail.tool_permissions));
-      const ports = detail.tool_permissions["egress_ports"];
-      setPortsText(Array.isArray(ports) ? ports.join(", ") : "");
+      // Egress scoping was removed with the allowlist proxy (docs/AUTONOMY.md);
+      // stale keys from old role data must not round-trip as false promises.
+      delete detail.tool_permissions["egress_allow"];
+      delete detail.tool_permissions["egress_ports"];
     } catch (e) {
       setError((e as Error).message);
     }
@@ -135,8 +128,6 @@ export default function Roles() {
           onClick={() => {
             setSaved(null);
             setEditing({ ...EMPTY });
-            setEgressText("");
-            setPortsText("");
           }}
         >
           + New role
@@ -327,55 +318,11 @@ export default function Roles() {
                 );
               })}
             </div>
-            <label className="field">
-              Egress allowlist — one domain per line; blank = role uses the global allowlist
-            </label>
-            <textarea
-              className="mono"
-              style={{ minHeight: 70 }}
-              value={egressText}
-              placeholder={"api.wordpress.com\nen.wikipedia.org"}
-              onChange={(e) => {
-                setEgressText(e.target.value);
-                const domains = e.target.value
-                  .split("\n")
-                  .map((line) => line.trim())
-                  .filter(Boolean);
-                const next = { ...perms };
-                if (domains.length) next["egress_allow"] = domains;
-                else delete next["egress_allow"];
-                setEditing({ ...editing, tool_permissions: next });
-              }}
-            />
-            <p className="help" style={{ margin: "4px 0 0" }}>
-              Per-role egress scoping, enforced by the proxy config generator — this role's
-              sandboxes can reach only these hosts, whatever the global list allows. Ports
-              beyond 80/443 need an entry in egress ports below.
-            </p>
             <p className="help" style={{ margin: "4px 0 0" }}>
               Looking for MCP servers? Data sources live on each project (Settings → Data
-              sources) and are assigned to roles there — one form wires the URL, secrets,
-              grants, egress, and proxy together. Roles never carry their own servers.
+              sources) and are assigned to roles there — one form wires the URL, secrets and
+              grants together. Roles never carry their own servers.
             </p>
-            <label className="field">
-              Egress ports beyond 80/443 (comma-separated — e.g. an internal API's port)
-            </label>
-            <input
-              className="mono"
-              value={portsText}
-              placeholder="3845, 8443"
-              onChange={(e) => {
-                // Raw text kept separately so a trailing comma survives typing;
-                // the parsed ports live in tool_permissions.egress_ports.
-                setPortsText(e.target.value);
-                const ports = e.target.value.split(",").map((p) => parseInt(p.trim(), 10))
-                  .filter((p) => Number.isFinite(p) && p > 0 && p < 65536);
-                const next = { ...perms };
-                if (ports.length) next["egress_ports"] = ports;
-                else delete next["egress_ports"];
-                setEditing({ ...editing, tool_permissions: next });
-              }}
-            />
             <label className="field">Secret scopes (comma-separated names this role may receive)</label>
             <input
               value={editing.secret_scopes.join(", ")}

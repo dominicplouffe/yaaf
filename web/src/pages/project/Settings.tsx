@@ -541,9 +541,8 @@ function DataSources({
       </p>
       <p className="help">
         One save does all of it: validates the URL, stores it and any token encrypted, grants
-        them to the roles you tick, opens the firewall for that host, reloads the proxy (~15s),
-        and calls the server to confirm it answers. To change one, press <b>edit</b> — no role
-        editing, no repin, no CLI.
+        them to the roles you tick, and calls the server to confirm it answers. To change one,
+        press <b>edit</b> — no role editing, no repin, no CLI.
       </p>
 
       {sources.length > 0 && (
@@ -645,7 +644,7 @@ function DataSources({
                             return;
                           act(
                             () => del(`/admin/projects/${projectId}/mcp_servers/${source.name}`),
-                            `Removed '${source.name}'. Egress and the proxy update themselves within ~15s.`,
+                            `Removed '${source.name}'. Granted roles lose it on their next run.`,
                           );
                         }}
                       >

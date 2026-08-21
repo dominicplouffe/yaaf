@@ -154,6 +154,42 @@ def test_the_ceo_delegates_under_the_dial_and_it_is_never_quiet(client):
         assert secret.role_scopes == ["worker"]
 
 
+def test_a_grant_to_a_role_that_does_not_exist_grants_nothing(client):
+    """A typo'd slug would silently scope the credential to nobody — the
+    refusal names the unknown slug instead, and the scopes do not move."""
+    project = make_project(client, slug="delegate4",
+                           constitution={"capability_authority": "ceo"})
+    _stored_credential(client, project)
+    refused = client.post("/agent/credentials/smtp-password/scope",
+                          headers=bearer(token(project)),
+                          json={"add_roles": ["wrker"],
+                                "reason": "the writer sends the digest now"})
+    assert refused.status_code == 422, refused.text
+    assert "wrker" in refused.text
+    with db_session() as session:
+        secret = session.query(Secret).filter(
+            Secret.project_id == project["id"],
+            Secret.name == "smtp-password").one()
+        assert secret.role_scopes == ["ceo"], "nothing moved"
+
+
+def test_a_platform_boardroom_line_wakes_nobody(client):
+    """The need's announcement is addressed to the chairman. If it counted as
+    an unread message for the CEO, every need would urgently buy a run to
+    read its own announcement."""
+    from yaaf.core.constitution import effective
+    from yaaf.core.models import Agent
+    from yaaf.server import dispatcher
+
+    project = make_project(client, slug="needy3")
+    assert file_need(client, project).status_code == 200
+    with db_session() as session:
+        row = session.get(Project, project["id"])
+        agent = session.get(Agent, project["ceo_agent_id"])
+        reasons = dispatcher._wake_reasons(session, row, effective(session, row.id), agent)
+    assert not [r for r in reasons if r["kind"] == "messages"], reasons
+
+
 def test_billing_credentials_are_never_delegable(client):
     project = make_project(client, slug="delegate3",
                            constitution={"capability_authority": "ceo"})

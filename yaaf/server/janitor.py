@@ -51,6 +51,7 @@ from yaaf.core.models import (
     Hypothesis,
     HypothesisStatus,
     LedgerEntry,
+    LedgerKind,
     MemoryScope,
     Notice,
     NoticeKind,
@@ -149,7 +150,7 @@ def _janitor_project(session: Session, project: Project) -> None:
     release_dead_claims(session, project, cons)
     elect_missing_leads(session, project)
     check_plan(session, project, cons)
-    check_finished_requirements(session, project)
+    check_finished_requirements(session, project, cons)
     check_stalled_requirements(session, project)
     nag_observable_requirements(session, project, cons)
     check_commitments(session, project, cons)
@@ -430,7 +431,8 @@ def check_commitments(session: Session, project: Project, cons: ConstitutionDoc)
 # ── requirements: is it true yet? ───────────────────────────────────────────────
 
 
-def check_finished_requirements(session: Session, project: Project) -> int:
+def check_finished_requirements(session: Session, project: Project,
+                                cons: ConstitutionDoc) -> int:
     """A requirement whose work has all closed goes to the platform to be
     judged — never to the agents who did it.
 
@@ -446,7 +448,6 @@ def check_finished_requirements(session: Session, project: Project) -> int:
     be asked.
     """
     moved = 0
-    cons = effective(session, project.id)
     live = session.execute(
         select(Requirement).where(
             Requirement.project_id == project.id,
@@ -1147,7 +1148,7 @@ def _harvest_reaped_usage(session: Session, project: Project, run: Run) -> bool:
         LedgerEntry(
             id=ids.new_id(ids.LEDGER),
             project_id=project.id,
-            kind="model_usage",
+            kind=LedgerKind.MODEL_USAGE,
             tokens_in=run.tokens_in,
             tokens_out=run.tokens_out,
             cache_creation_tokens=run.cache_creation_tokens,
@@ -1343,7 +1344,12 @@ def month_to_date(session: Session, project_id: str) -> tuple[float, int]:
                          + LedgerEntry.cache_read_tokens),
                 0,
             ),
-        ).where(LedgerEntry.project_id == project_id, LedgerEntry.at >= month_start)
+        ).where(LedgerEntry.project_id == project_id,
+                LedgerEntry.at >= month_start,
+                # Revenue is money coming IN — summing it here once auto-paused
+                # a project for earning. Spend-by-default: any future kind
+                # counts as spend unless it is revenue.
+                LedgerEntry.kind != LedgerKind.REVENUE)
     ).one()
     return float(usd), int(tokens)
 
@@ -1406,9 +1412,8 @@ def _warn_external_envelope(session: Session, project: Project,
     cap = cons.external_monthly_usd_cap
     if cap <= 0:
         return
-    spent = policy.external_spent_this_month(session, project.id)
-    if spent < cap * cons.budget_warn_ratio:
-        return
+    # Cheapest check first: once the month's warning exists, every subsequent
+    # 15s tick skips the ledger SUM entirely for the rest of the month.
     month_start = utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     already = session.execute(
         select(func.count(Notice.id)).where(
@@ -1418,6 +1423,9 @@ def _warn_external_envelope(session: Session, project: Project,
         )
     ).scalar_one()
     if already:
+        return
+    spent = policy.external_spent_this_month(session, project.id)
+    if spent < cap * cons.budget_warn_ratio:
         return
     _notice_ceo(
         session, project, NoticeKind.EXTERNAL_SPEND_WARNING,

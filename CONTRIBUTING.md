@@ -44,8 +44,7 @@ YAAF_TEST_DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:55432/po
    claims, or side effects should keep its promises under violence — the
    chaos suite (`tests/chaos/`) is where those promises are checked.
 6. **Secrets stay out.** No credentials in code, tests, fixtures, or
-   committed config — including "example" values that look real. Site
-   domains stay out of committed egress files (use per-role allowlists).
+   committed config — including "example" values that look real.
 
 ## Pull requests
 

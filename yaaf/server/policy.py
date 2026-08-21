@@ -57,6 +57,7 @@ from yaaf.core.models import (
     Hypothesis,
     HypothesisStatus,
     LedgerEntry,
+    LedgerKind,
     Memory,
     MemoryScope,
     Message,
@@ -1712,10 +1713,31 @@ def external_spent_this_month(session: Session, project_id: str) -> float:
     return float(session.execute(
         select(func.coalesce(func.sum(LedgerEntry.usd), 0.0)).where(
             LedgerEntry.project_id == project_id,
-            LedgerEntry.kind == "external_spend",
+            LedgerEntry.kind == LedgerKind.EXTERNAL_SPEND,
             LedgerEntry.at >= month_start,
         )
     ).scalar_one())
+
+
+def pending_purchase_usd(session: Session, project_id: str) -> float:
+    """Cleared-but-unfinished purchases. They reserve the envelope: money the
+    company has been told it may move is committed the moment it is cleared,
+    or two overlapping purchases could each clear against the same headroom
+    and together bust the wall. A failed finish releases the reservation; a
+    stale one can be released by finishing it ok=false after checking with
+    the vendor."""
+    from yaaf.core.models import SideEffect, SideEffectStatus
+
+    month_start = utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    rows = session.execute(
+        select(SideEffect.payload).where(
+            SideEffect.project_id == project_id,
+            SideEffect.kind == "purchase",
+            SideEffect.status == SideEffectStatus.RECORDED,
+            SideEffect.created_at >= month_start,
+        )
+    ).scalars()
+    return float(sum(float((p or {}).get("usd") or 0) for p in rows))
 
 
 def check_external_spend(
@@ -1724,25 +1746,37 @@ def check_external_spend(
     cons: ConstitutionDoc,
     usd: float,
     approval: Approval | None,
-) -> None:
-    """The envelope, refused with its arithmetic. Called before a purchase is
-    cleared and before a raw spend is booked — same walls on both paths, so
-    which tool carried the money never changes what the money may do."""
+    enforce_wall: bool = True,
+) -> float:
+    """The envelope, refused with its arithmetic. Returns the month's
+    committed real-world USD (booked + cleared-but-unfinished) so callers can
+    quote headroom without re-running the aggregates.
+
+    `enforce_wall=False` is for booking money that ALREADY moved (spend_book):
+    refusing the record would un-report real spending, which is worse than any
+    overshoot — the caller discloses the overshoot loudly instead. The
+    approval lines still apply on both paths: they were the agent's to clear
+    BEFORE paying."""
+    committed = 0.0
     if cons.external_monthly_usd_cap > 0:
-        spent = external_spent_this_month(session, project.id)
-        if spent + usd > cons.external_monthly_usd_cap:
+        committed = (external_spent_this_month(session, project.id)
+                     + pending_purchase_usd(session, project.id))
+        if enforce_wall and committed + usd > cons.external_monthly_usd_cap:
             raise Refusal(
                 f"This would put the month's real-world spend at "
-                f"${spent + usd:,.2f}, over the ${cons.external_monthly_usd_cap:,.0f} "
-                f"envelope (${spent:,.2f} already spent). The wall does not take "
-                "approvals — raising it is a constitution amendment, which is the "
-                "chairman's, and yours to recommend with the arithmetic.",
+                f"${committed + usd:,.2f}, over the "
+                f"${cons.external_monthly_usd_cap:,.0f} envelope "
+                f"(${committed:,.2f} already booked or cleared — an unfinished "
+                "purchase reserves the envelope until purchase_finish closes it). "
+                "The wall does not take approvals — raising it is a constitution "
+                "amendment, which is the chairman's, and yours to recommend with "
+                "the arithmetic.",
                 status_code=403,
             )
     over_purchase = 0 < cons.max_usd_per_purchase < usd
     over_threshold = usd >= cons.approval_threshold_usd
     if not (over_purchase or over_threshold):
-        return
+        return committed
     ok = (
         approval is not None
         and approval.project_id == project.id
@@ -1759,6 +1793,34 @@ def check_external_spend(
             "kind='spend' — as a recommendation you would defend.",
             status_code=403,
         )
+    return committed
+
+
+def check_roles_exist(session: Session, slugs: list[str]) -> None:
+    """One IN query; refused with the unknown names spelled out."""
+    from yaaf.core.models import Role
+
+    known = set(session.execute(
+        select(Role.slug).where(Role.slug.in_(slugs))
+    ).scalars())
+    missing = sorted(set(slugs) - known)
+    if missing:
+        raise Refusal(
+            f"No such role(s): {', '.join(missing)}. A grant to a role that does "
+            "not exist grants nothing — check the roster and use exact slugs.",
+            status_code=422,
+        )
+
+
+# ── the authority dial, in one place ────────────────────────────────────────────
+#
+# Every "does the CEO hold this?" question routes through here, so the day the
+# Advised setting (announce, wait a window, silence means go) lands, it is one
+# function's change instead of a hunt across five files.
+
+def ceo_holds(cons: ConstitutionDoc, switch: str) -> bool:
+    value = getattr(cons, switch)
+    return value == ("ceo_judgment" if switch == "verdict_policy" else "ceo")
 
 
 # ── chairman directives ─────────────────────────────────────────────────────────
@@ -1826,8 +1888,7 @@ def check_self_scope_action(cons: ConstitutionDoc, action: dict) -> None:
     kind = action["kind"]
     switch = _ACTION_AUTHORITY[kind]
     held = getattr(cons, switch)
-    granted = held == ("ceo_judgment" if switch == "verdict_policy" else "ceo")
-    if not granted:
+    if not ceo_holds(cons, switch):
         raise Refusal(
             f"The constitution holds {switch} = '{held}': '{kind}' is not yours to "
             "exercise on this project. Two paths remain — the chairman's own button, "
@@ -1852,6 +1913,47 @@ def _check_action_shape(action: dict, allowed: dict[str, tuple[str, ...]],
     missing = [f for f in allowed[kind] if action.get(f) in (None, "")]
     if missing:
         raise Refusal(f"The {kind} action needs {', '.join(missing)}.", status_code=422)
+    _coerce_action_fields(action)
+
+
+def _coerce_action_fields(action: dict) -> None:
+    """Type- and range-check the action's fields, refusing instead of letting
+    a bad value 500 mid-transaction or write a stage the chairman's own routes
+    would never accept. Mutates the dict so callers read coerced values. The
+    bounds mirror the admin Pydantic models exactly — the same verb must face
+    the same walls whichever hand exercises it."""
+    def _int_field(name: str, lo: int, hi: int, required: bool) -> None:
+        value = action.get(name)
+        if value in (None, ""):
+            if required:
+                raise Refusal(f"'{name}' is required here.", status_code=422)
+            return
+        if isinstance(value, bool) or not isinstance(value, (int, str)):
+            raise Refusal(f"'{name}' must be a whole number, got {value!r}.",
+                          status_code=422)
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            raise Refusal(f"'{name}' must be a whole number, got {value!r}.",
+                          status_code=422) from None
+        if not lo <= number <= hi:
+            raise Refusal(f"'{name}' must be between {lo} and {hi}, got {number}. "
+                          "Stage 0 is R-00's, the plan gate's, and nobody else's.",
+                          status_code=422)
+        action[name] = number
+
+    kind = action["kind"]
+    if kind in ("accept", "restage"):
+        _int_field("stage", 1, 50, required=(kind == "restage"))
+    if kind == "reestimate":
+        _int_field("est_runs", 1, 10_000, required=True)
+    if kind == "reword":
+        statement = action.get("statement")
+        if not isinstance(statement, str) or not 10 <= len(statement.strip()) <= 2000:
+            raise Refusal("'statement' must be 10-2000 characters.", status_code=422)
+        action["statement"] = statement.strip()
+    if kind == "verdict" and not isinstance(action.get("ok"), bool):
+        raise Refusal("'ok' must be true or false.", status_code=422)
 
 
 def check_directive_scope(changes: dict) -> None:

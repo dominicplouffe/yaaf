@@ -96,6 +96,28 @@ load_stack_env() {
   export YAAF_STACK YAAF_STATE_ROOT
 }
 
+
+# The Charter opened the sandbox network (docs/AUTONOMY.md): the per-role
+# egress proxy is gone. A box that deployed before that has a network created
+# with internal:true — with the proxy removed, containers on it would have NO
+# route out at all, and compose refuses to alter a network's internal flag in
+# place. Recreate it once, before compose up. Sandbox containers are ephemeral
+# by design, so disconnecting stragglers loses nothing a retry won't redo.
+migrate_sandbox_network() {
+  load_stack_env
+  local net="${YAAF_SANDBOX_NETWORK:-yaaf_sandbox}"
+  local internal
+  internal="$($DOCKER network inspect "$net" --format '{{.Internal}}' 2>/dev/null || true)"
+  [ "$internal" = "true" ] || return 0
+  say "Sandbox network '$net' is internal-only from a pre-Charter deploy; recreating it open"
+  for cid in $($DOCKER network inspect "$net" --format '{{range $id, $_ := .Containers}}{{$id}} {{end}}' 2>/dev/null); do
+    $DOCKER network disconnect -f "$net" "$cid" 2>/dev/null || true
+  done
+  $DOCKER network rm "$net" >/dev/null 2>&1 \
+    || die "could not remove the old internal network '$net' — remove it by hand and re-run"
+  ok "old internal network removed; compose recreates it open"
+}
+
 wait_for_api() {
   local port="$1" deadline=$((SECONDS + 180))
   until curl -fsS "http://127.0.0.1:${port}/healthz" >/dev/null 2>&1; do

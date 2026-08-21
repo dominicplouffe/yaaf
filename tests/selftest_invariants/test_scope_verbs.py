@@ -302,6 +302,27 @@ def test_an_order_cannot_cite_the_ceos_own_message(client):
     assert "cannot cite yourself" in refused.text
 
 
+def test_an_order_with_broken_fields_is_refused_not_crashed(client):
+    """The action dict arrives from a model. A stage of 0, a string where a
+    number goes, a 'yes' where a bool goes — each must be a 422 naming the
+    field, never a 500 from deep inside an apply helper."""
+    project = deliver_project(client)
+    req = add_requirement(client, project)
+    said = chairman_says(project, "move it, grow the estimate, judge it")
+    for action in (
+        {"kind": "restage", "requirement_key": req["key"], "stage": 0},
+        {"kind": "restage", "requirement_key": req["key"], "stage": "later"},
+        {"kind": "reestimate", "requirement_key": req["key"], "est_runs": "lots"},
+        {"kind": "reestimate", "requirement_key": req["key"], "est_runs": -3},
+        {"kind": "verdict", "requirement_key": req["key"], "ok": "yes"},
+    ):
+        refused = file_action(client, project, said, action)
+        assert refused.status_code == 422, f"{action}: {refused.text}"
+    with db_session() as session:
+        row = session.get(Requirement, req["id"])
+        assert (row.stage, row.est_runs) == (1, 5), "nothing moved"
+
+
 def test_an_order_must_be_a_known_verb_with_its_fields(client):
     project = deliver_project(client)
     req = add_requirement(client, project)

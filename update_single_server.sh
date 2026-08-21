@@ -94,13 +94,13 @@ fi
 # Two images, and compose only knows about one. The sandbox image is what agent
 # runs execute inside; skipping it leaves runs on stale code after an update.
 say "Rebuilding images"
-# Before compose up: squid will not start without its include target, and on a
-# box upgrading from the old in-checkout location this is what carries the
-# existing role ports across.
 $DOCKER build -f deploy/sandbox/Dockerfile -t yaaf-sandbox:latest . >/dev/null \
   || die "sandbox image build failed"
 ok "yaaf-sandbox:latest rebuilt"
-compose up -d --build || die "compose up failed"
+migrate_sandbox_network
+# --remove-orphans: the proxy service was removed with the egress allowlist;
+# an orphaned squid container would sit there advertising containment nothing uses.
+compose up -d --build --remove-orphans || die "compose up failed"
 ok "control plane restarted on the new code"
 
 # ── 4. migrations ─────────────────────────────────────────────────────────────

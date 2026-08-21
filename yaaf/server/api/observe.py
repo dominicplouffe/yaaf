@@ -30,6 +30,7 @@ from yaaf.core.models import (
     EvidenceKind,
     Hypothesis,
     LedgerEntry,
+    LedgerKind,
     Memory,
     MemoryScope,
     Message,
@@ -162,7 +163,8 @@ def desk(session: Session = Depends(db)) -> dict:
                 func.coalesce(func.sum(LedgerEntry.tokens_out), 0),
                 func.coalesce(func.sum(LedgerEntry.cache_creation_tokens), 0),
                 func.coalesce(func.sum(LedgerEntry.cache_read_tokens), 0),
-            ).where(LedgerEntry.project_id == project.id, LedgerEntry.at >= month_start)
+            ).where(LedgerEntry.project_id == project.id, LedgerEntry.at >= month_start,
+                LedgerEntry.kind != LedgerKind.REVENUE)
         ).one()
         usd_mode = project.billing_mode == "api_key"
         pending = [
@@ -337,7 +339,8 @@ def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
             func.coalesce(func.sum(LedgerEntry.tokens_out), 0),
             func.coalesce(func.sum(LedgerEntry.cache_creation_tokens), 0),
             func.coalesce(func.sum(LedgerEntry.cache_read_tokens), 0),
-        ).where(LedgerEntry.project_id == project.id, LedgerEntry.at >= month_start)
+        ).where(LedgerEntry.project_id == project.id, LedgerEntry.at >= month_start,
+                LedgerEntry.kind != LedgerKind.REVENUE)
     ).one()
     open_tasks = policy.open_top_level_tasks(session, project.id)
     window = utcnow() - timedelta(hours=cons.drought_hours)

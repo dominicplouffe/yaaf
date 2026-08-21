@@ -112,7 +112,10 @@ $DOCKER build -f deploy/sandbox/Dockerfile -t yaaf-sandbox:latest . \
   || die "sandbox image build failed"
 ok "yaaf-sandbox:latest built"
 
-compose up -d --build || die "compose up failed"
+migrate_sandbox_network
+# --remove-orphans: the proxy service was removed with the egress allowlist;
+# an orphaned squid container would sit there advertising containment nothing uses.
+compose up -d --build --remove-orphans || die "compose up failed"
 ok "control plane up"
 
 # ── 6. wait for the API ───────────────────────────────────────────────────────

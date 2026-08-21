@@ -10,7 +10,7 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict, Field
@@ -21,6 +21,7 @@ from yaaf.core import ids
 from yaaf.core.constitution import effective, propose_amendment
 from yaaf.core.db import notify
 from yaaf.core.models import (
+    Account,
     AgentKind,
     Approval,
     AuditLog,
@@ -36,6 +37,7 @@ from yaaf.core.models import (
     Hypothesis,
     HypothesisStatus,
     LedgerEntry,
+    LedgerKind,
     Memory,
     Message,
     Requirement,
@@ -57,6 +59,7 @@ from yaaf.core.models import (
 )
 from yaaf.server import policy, typing_state
 from yaaf.server.deps import RunContext, db, run_auth
+from yaaf.server.notify import chairman_notify
 from yaaf.server.policy import Refusal
 
 router = APIRouter()
@@ -490,7 +493,9 @@ class DirectiveIn(BaseModel):
     from_message_id: str
     changes: dict | None = None
     action: dict | None = None
-    reason: str = Field(min_length=10)
+    # Capped below the 4000-char reason columns so the citation suffix the
+    # platform appends can never push a valid request over a wall mid-write.
+    reason: str = Field(min_length=10, max_length=3800)
 
 
 @router.post("/directives")
@@ -557,57 +562,83 @@ def _requirement_by_key(session: Session, project_id: str, key: str) -> Requirem
     return row
 
 
+def _execute_scope_action(session: Session, ctx: RunContext, action: dict,
+                          reason: str, actor: str, by_user: str | None,
+                          notify_ceo: bool) -> tuple[dict, str]:
+    """ONE implementation of every scope verb, whoever's authority carries it.
+
+    Both the directive path (the chairman's cited word) and the self-exercise
+    path (the dial) land here, on the apply_* helpers directly — so a Refusal
+    reaches the app-level handler and counts against the run's refusal cap on
+    both paths, field validation happened in policy (typed, ranged, same walls
+    as the chairman's own routes), and adding a verb is one branch plus one
+    entry in the policy tables. Reasons are length-capped at the request
+    models, so nothing here can outgrow a column."""
+    # Local import: admin imports this module at load; one-way at import time.
+    from yaaf.server.api import admin as admin_api
+
+    kind = action["kind"]
+    project = ctx.project
+    row = _requirement_by_key(session, project.id, action["requirement_key"])
+    if kind == "accept":
+        result = admin_api.apply_accept(session, project, row, actor,
+                                        action.get("stage"), reason,
+                                        by_user=by_user, notify=notify_ceo)
+        detail = f"accepted {row.key} into scope (stage {result['stage']})"
+    elif kind == "cut":
+        result = admin_api.apply_cut(session, project, row, actor, reason,
+                                     notify=notify_ceo)
+        detail = f"cut {row.key}"
+    elif kind == "reopen":
+        result = admin_api.apply_reopen(session, project, row, actor, reason,
+                                        notify=notify_ceo)
+        detail = f"reopened {row.key} (was {result['was']})"
+    elif kind == "restage":
+        result = admin_api.apply_restage(session, project, row, actor,
+                                         action["stage"], reason, notify=notify_ceo)
+        detail = f"moved {row.key} to stage {result['stage']} (was {result['was']})"
+    elif kind == "reestimate":
+        result = admin_api.apply_reestimate(session, project, row, actor,
+                                            action["est_runs"], reason,
+                                            notify=notify_ceo)
+        detail = (f"reestimated {row.key} at {result['est_runs']} runs "
+                  f"(was {result['was']}; scored estimate stays "
+                  f"{result['est_runs_first']})")
+    elif kind == "reword":
+        result = admin_api.apply_reword(session, project, row, actor,
+                                        action["statement"], reason,
+                                        notify=notify_ceo)
+        detail = f"reworded {row.key}"
+    elif kind == "verdict":
+        result = admin_api.apply_verdict(session, project, row, actor,
+                                         bool(action["ok"]), reason,
+                                         notify=notify_ceo)
+        detail = (f"judged {row.key} {'MET' if action['ok'] else 'NOT met'} "
+                  "(unverifiable observable, CEO judgment)")
+    else:  # unsequence
+        source = _requirement_by_key(session, project.id, action["depends_on_key"])
+        result = admin_api.apply_edge_remove(session, project, actor,
+                                             source.id, row.id, reason,
+                                             notify=notify_ceo)
+        detail = f"removed the dependency {source.key} → {row.key}"
+    return result, detail
+
+
 def _file_scope_directive(body: DirectiveIn, ctx: RunContext, session: Session) -> dict:
     """Execute a plan order the chairman gave in the boardroom, on his cited
-    authority, through the same admin machinery his own buttons drive."""
+    authority — the same apply helpers his own buttons drive."""
     action = body.action or {}
     policy.check_directive_action(action)
     cited = policy.check_directive_citation(
         session, ctx.project, body.from_message_id, for_rules=False)
-    # Local import: admin imports this module at load, so the dependency only
-    # runs one way at import time.
-    from yaaf.server.api import admin as admin_api
-
-    kind = action["kind"]
-    row = _requirement_by_key(session, ctx.project.id, action["requirement_key"])
     reason = (f"{body.reason} [chairman's order, boardroom message {cited.id} at "
               f"{cited.created_at.isoformat(timespec='minutes')}]")
-    if kind == "accept":
-        result = admin_api.accept_requirement(
-            row.id, admin_api.RequirementDecision(stage=action.get("stage"), note=reason),
-            session)
-        detail = f"accepted {row.key} into scope"
-    elif kind == "cut":
-        result = admin_api.cut_requirement(
-            row.id, admin_api.RequirementCut(reason=reason), session)
-        detail = f"cut {row.key}"
-    elif kind == "reopen":
-        result = admin_api.reopen_requirement(
-            row.id, admin_api.RequirementReopen(reason=reason), session)
-        detail = f"reopened {row.key} (was {result['was']})"
-    elif kind == "restage":
-        result = admin_api.restage_requirement(
-            row.id, admin_api.RequirementRestage(stage=int(action["stage"]), reason=reason),
-            session)
-        detail = f"moved {row.key} to stage {result['stage']} (was {result['was']})"
-    elif kind == "reestimate":
-        result = admin_api.reestimate_requirement(
-            row.id,
-            admin_api.RequirementReestimate(est_runs=int(action["est_runs"]), reason=reason),
-            session)
-        detail = f"reestimated {row.key} at {result['est_runs']} runs (was {result['was']})"
-    elif kind == "reword":
-        result = admin_api.reword_requirement(
-            row.id,
-            admin_api.RequirementReword(statement=str(action["statement"]), reason=reason),
-            session)
-        detail = f"reworded {row.key}"
-    else:  # unsequence
-        source = _requirement_by_key(session, ctx.project.id, action["depends_on_key"])
-        result = admin_api.remove_requirement_edge(
-            admin_api.EdgeRemove(from_requirement_id=source.id, to_requirement_id=row.id,
-                                 reason=reason), session)
-        detail = f"removed the dependency {source.key} → {row.key}"
+    result, detail = _execute_scope_action(
+        session, ctx, action, reason,
+        actor=f"user:{ctx.project.chairman_user_id}",
+        by_user=ctx.project.chairman_user_id,
+        notify_ceo=True,
+    )
     session.add(
         AuditLog(
             id=ids.new_id(ids.AUDIT),
@@ -635,7 +666,7 @@ def _file_scope_directive(body: DirectiveIn, ctx: RunContext, session: Session) 
 
 class ScopeActIn(BaseModel):
     action: dict
-    reason: str = Field(min_length=10)
+    reason: str = Field(min_length=10, max_length=3800)
 
 
 @router.post("/scope")
@@ -657,54 +688,14 @@ def scope_act(
                       status_code=403)
     cons = effective(session, ctx.project.id)
     policy.check_self_scope_action(cons, body.action)
-    # Local import: admin imports this module at load; one-way at import time.
-    from yaaf.server.api import admin as admin_api
-
-    action = body.action
-    kind = action["kind"]
-    actor = f"agent:{ctx.agent.id}"
-    row = _requirement_by_key(session, ctx.project.id, action["requirement_key"])
-    project = ctx.project
-    reason = f"{body.reason} [self-exercised under the constitution's authority dial]"
-    if kind == "accept":
-        result = admin_api.apply_accept(session, project, row, actor,
-                                        action.get("stage"), reason, by_user=None,
-                                        notify=False)
-        detail = f"accepted {row.key} into scope (stage {result['stage']})"
-    elif kind == "cut":
-        result = admin_api.apply_cut(session, project, row, actor, reason, notify=False)
-        detail = f"cut {row.key}"
-    elif kind == "reopen":
-        result = admin_api.apply_reopen(session, project, row, actor, reason,
-                                        notify=False)
-        detail = f"reopened {row.key} (was {result['was']})"
-    elif kind == "restage":
-        result = admin_api.apply_restage(session, project, row, actor,
-                                         int(action["stage"]), reason, notify=False)
-        detail = f"moved {row.key} to stage {result['stage']} (was {result['was']})"
-    elif kind == "reestimate":
-        result = admin_api.apply_reestimate(session, project, row, actor,
-                                            int(action["est_runs"]), reason,
-                                            notify=False)
-        detail = (f"reestimated {row.key} at {result['est_runs']} runs "
-                  f"(was {result['was']}; scored estimate stays "
-                  f"{result['est_runs_first']})")
-    elif kind == "reword":
-        result = admin_api.apply_reword(session, project, row, actor,
-                                        str(action["statement"]), reason, notify=False)
-        detail = f"reworded {row.key}"
-    elif kind == "verdict":
-        ok = bool(action["ok"])
-        result = admin_api.apply_verdict(session, project, row, actor, ok, reason,
-                                         notify=False)
-        detail = (f"judged {row.key} {'MET' if ok else 'NOT met'} "
-                  "(unverifiable observable, CEO judgment)")
-    else:  # unsequence
-        source = _requirement_by_key(session, ctx.project.id, action["depends_on_key"])
-        result = admin_api.apply_edge_remove(session, project, actor,
-                                             source.id, row.id, reason, notify=False)
-        detail = f"removed the dependency {source.key} → {row.key}"
-    _disclose_self_action(session, ctx, kind, detail, body.reason)
+    result, detail = _execute_scope_action(
+        session, ctx, body.action,
+        f"{body.reason} [self-exercised under the constitution's authority dial]",
+        actor=f"agent:{ctx.agent.id}",
+        by_user=None,
+        notify_ceo=False,
+    )
+    _disclose_self_action(session, ctx, body.action["kind"], detail, body.reason)
     return {
         "executed": detail,
         "result": result,
@@ -732,8 +723,6 @@ def _disclose_self_action(session: Session, ctx: RunContext, kind: str,
             detail={"kind": kind, "detail": detail, "reason": reason},
         )
     )
-    from yaaf.server.notify import chairman_notify
-
     chairman_notify(
         session, ctx.project,
         f"CEO decision: {detail}",
@@ -812,7 +801,7 @@ def book_chat_usage(
         session.add(LedgerEntry(
             id=ids.new_id(ids.LEDGER),
             project_id=ctx.project.id,
-            kind="model_usage",
+            kind=LedgerKind.MODEL_USAGE,
             tokens_in=body.tokens_in,
             tokens_out=body.tokens_out,
             cache_creation_tokens=body.cache_creation_tokens,
@@ -1205,8 +1194,6 @@ def propose_commitment(
             detail={"deliver_by": commitment.deliver_by.isoformat(),
                     "scope": commitment.scope_snapshot},
         ))
-        from yaaf.server.notify import chairman_notify
-
         chairman_notify(
             session, ctx.project,
             f"CEO committed to {commitment.deliver_by:%Y-%m-%d}",
@@ -1280,8 +1267,6 @@ def file_review_narrative(
     review.recommended = (body.recommended or "").strip() or None
     review.narrative_run_id = ctx.run.id
     review.narrative_filed_at = utcnow()
-    from yaaf.server.notify import chairman_notify
-
     chairman_notify(
         session, ctx.project, f"review #{review.number}: the CEO's narrative is in",
         body.narrative[:2000]
@@ -1417,6 +1402,26 @@ def decision_add(
 # ── approvals & spend ───────────────────────────────────────────────────────────
 
 
+
+def _file_approval(session: Session, ctx: RunContext, kind: str, title: str,
+                   body: str, amount_usd: float | None = None) -> Approval:
+    """ONE way an agent puts something on the chairman's desk: same id, same
+    expiry arithmetic, same default-deny clock, whichever lane filed it."""
+    cons = effective(session, ctx.project.id)
+    row = Approval(
+        id=ids.new_id(ids.APPROVAL),
+        project_id=ctx.project.id,
+        kind=kind,
+        requested_by_agent_id=ctx.agent.id,
+        title=title,
+        body=body,
+        amount_usd=amount_usd,
+        expires_at=utcnow() + timedelta(days=cons.approval_timeout_days),
+    )
+    session.add(row)
+    return row
+
+
 class ApprovalRequest(BaseModel):
     kind: str
     title: str = Field(min_length=4, max_length=300)
@@ -1429,19 +1434,8 @@ def approval_request(
     body: ApprovalRequest, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
 ) -> dict:
     cons = effective(session, ctx.project.id)
-    from datetime import timedelta
-
-    row = Approval(
-        id=ids.new_id(ids.APPROVAL),
-        project_id=ctx.project.id,
-        kind=body.kind,
-        requested_by_agent_id=ctx.agent.id,
-        title=body.title,
-        body=body.body,
-        amount_usd=body.amount_usd,
-        expires_at=utcnow() + timedelta(days=cons.approval_timeout_days),
-    )
-    session.add(row)
+    row = _file_approval(session, ctx, body.kind, body.title, body.body,
+                         body.amount_usd)
     return {
         "id": row.id,
         "expires_at": row.expires_at.isoformat(),
@@ -1482,22 +1476,46 @@ class SpendIn(BaseModel):
 def book_spend(
     body: SpendIn, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
 ) -> dict:
-    """Book a real-world spend made with raw tooling. The same envelope as the
-    purchase actuator — which tool carried the money never changes what the
-    money may do — but nothing here fired the effect, so pair it with a side
-    effect when the spend is retryable."""
+    """Book a real-world spend made with raw tooling. The approval lines are
+    the same as the purchase actuator's — they were yours to clear BEFORE
+    paying — but the monthly wall is not enforced here: this money already
+    moved, and refusing the record would un-report real spending, which is
+    worse than any overshoot. An overshoot is booked AND disclosed loudly."""
     cons = effective(session, ctx.project.id)
     approval = session.get(Approval, body.approval_id) if body.approval_id else None
-    policy.check_external_spend(session, ctx.project, cons, body.usd, approval)
+    committed = policy.check_external_spend(session, ctx.project, cons, body.usd,
+                                            approval, enforce_wall=False)
     row = LedgerEntry(
         id=ids.new_id(ids.LEDGER),
         project_id=ctx.project.id,
-        kind="external_spend",
+        kind=LedgerKind.EXTERNAL_SPEND,
         usd=body.usd,
         run_id=ctx.run.id,
         note=body.note,
     )
     session.add(row)
+    cap = cons.external_monthly_usd_cap
+    if cap > 0 and committed + body.usd > cap:
+        session.add(AuditLog(
+            id=ids.new_id(ids.AUDIT), project_id=ctx.project.id,
+            actor=f"agent:{ctx.agent.id}", action="spend.over_envelope",
+            entity="ledger", entity_id=row.id,
+            detail={"usd": body.usd, "committed_after": committed + body.usd,
+                    "cap": cap, "note": body.note[:300]},
+        ))
+        chairman_notify(
+            session, ctx.project, "Real-world spend crossed the envelope",
+            f"${body.usd:,.2f} was spent with raw tooling and booked, putting the "
+            f"month at ${committed + body.usd:,.2f} of the ${cap:,.0f} envelope. "
+            "Booked rather than refused — the money had already moved, and an "
+            "unrecorded spend is worse than an overshot one. Further purchases are "
+            "walled; the spend itself is on the ledger and the audit.",
+        )
+        return {"id": row.id,
+                "warning": (f"Booked, and the month is now over the "
+                            f"${cap:,.0f} envelope. The chairman has been told. "
+                            "Clear purchases with purchase_begin BEFORE paying — "
+                            "that is where the wall can still save you.")}
     return {"id": row.id}
 
 
@@ -1548,8 +1566,6 @@ def account_record(
     an orphan the owner discovers on a bill. Store the credential as a secret
     (or file it in your assist/need) and link its NAME here — the registry
     links, it never holds."""
-    from yaaf.core.models import Account
-
     existing = session.execute(
         select(Account).where(Account.project_id == ctx.project.id,
                               Account.service == body.service.strip(),
@@ -1588,8 +1604,6 @@ def account_record(
 def accounts_list(
     ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
 ) -> list[dict]:
-    from yaaf.core.models import Account
-
     rows = session.execute(
         select(Account).where(Account.project_id == ctx.project.id)
         .order_by(Account.created_at)
@@ -1620,19 +1634,9 @@ def assist_request(
     session state to the workspace BEFORE ending the run (playwright
     storage_state, cookies, the URL you were on): the workspace persists, so
     the next run resumes where this one stopped."""
-    cons = effective(session, ctx.project.id)
-    from datetime import timedelta
-
-    approval = Approval(
-        id=ids.new_id(ids.APPROVAL),
-        project_id=ctx.project.id,
-        kind="assist",
-        requested_by_agent_id=ctx.agent.id,
-        title=f"Assist: {body.what[:120]}",
-        body=body.what + (f"\nWhere: {body.where}" if body.where else ""),
-        expires_at=utcnow() + timedelta(days=cons.approval_timeout_days),
-    )
-    session.add(approval)
+    approval = _file_approval(
+        session, ctx, "assist", f"Assist: {body.what[:120]}",
+        body.what + (f"\nWhere: {body.where}" if body.where else ""))
     _boardroom_system_line(
         session, ctx.project.id,
         f"🤝 ASSIST NEEDED ({ctx.agent.name}): {body.what[:400]}"
@@ -1645,8 +1649,6 @@ def assist_request(
         entity="approval", entity_id=approval.id,
         detail={"what": body.what[:300], "where": body.where},
     ))
-    from yaaf.server.notify import chairman_notify
-
     chairman_notify(
         session, ctx.project, f"Human needed: {body.what[:120]}",
         approval.body + "\n\nAnswer on the Decisions screen — your note travels "
@@ -1689,8 +1691,6 @@ def need_request(
                       "Tell the CEO what you are missing — a suggestion survives.",
                       status_code=403)
     cons = effective(session, ctx.project.id)
-    from datetime import timedelta
-
     detail_lines = [body.why]
     if body.suggested_secret_name:
         detail_lines.append(f"Suggested credential name: {body.suggested_secret_name}")
@@ -1698,17 +1698,9 @@ def need_request(
         detail_lines.append(f"For roles: {', '.join(body.roles)}")
     if body.est_usd_per_month is not None:
         detail_lines.append(f"Estimated cost: ~${body.est_usd_per_month:,.2f}/month")
-    approval = Approval(
-        id=ids.new_id(ids.APPROVAL),
-        project_id=ctx.project.id,
-        kind="tool_request",
-        requested_by_agent_id=ctx.agent.id,
-        title=f"Need: {body.title}",
-        body="\n".join(detail_lines),
-        amount_usd=body.est_usd_per_month,
-        expires_at=utcnow() + timedelta(days=cons.approval_timeout_days),
-    )
-    session.add(approval)
+    approval = _file_approval(
+        session, ctx, "tool_request", f"Need: {body.title}",
+        "\n".join(detail_lines), body.est_usd_per_month)
     cost = (f" (~${body.est_usd_per_month:,.0f}/mo)"
             if body.est_usd_per_month is not None else "")
     _boardroom_system_line(
@@ -1724,8 +1716,6 @@ def need_request(
         detail={"title": body.title, "roles": body.roles,
                 "est_usd_per_month": body.est_usd_per_month},
     ))
-    from yaaf.server.notify import chairman_notify
-
     chairman_notify(
         session, ctx.project, f"The company needs: {body.title}",
         "\n".join(detail_lines) + "\n\nFulfill or decline it on the Decisions screen "
@@ -1788,6 +1778,10 @@ def credential_scope(
         )
     if not body.add_roles and not body.remove_roles:
         raise Refusal("Nothing to change.", status_code=422)
+    if body.add_roles:
+        # A grant to a role that does not exist grants nothing while telling
+        # everyone it did — the worst kind of success.
+        policy.check_roles_exist(session, body.add_roles)
     row = session.execute(
         select(Secret).where(Secret.project_id == ctx.project.id, Secret.name == name)
     ).scalar_one_or_none()
@@ -1807,8 +1801,6 @@ def credential_scope(
         entity="secret", entity_id=row.id,
         detail={"name": name, "was": was, "now": scopes, "reason": body.reason},
     ))
-    from yaaf.server.notify import chairman_notify
-
     chairman_notify(
         session, ctx.project, f"CEO re-scoped credential {name}",
         f"{name}: {', '.join(was) or '(nobody)'} → {', '.join(scopes) or '(nobody)'}\n"
@@ -1868,7 +1860,8 @@ def purchase_begin(
                      "with the vendor before retrying."),
         }
     approval = session.get(Approval, body.approval_id) if body.approval_id else None
-    policy.check_external_spend(session, ctx.project, cons, body.usd, approval)
+    committed = policy.check_external_spend(session, ctx.project, cons, body.usd,
+                                            approval)
     row = SideEffect(
         id=ids.new_id(ids.SIDE_EFFECT),
         project_id=ctx.project.id,
@@ -1887,8 +1880,9 @@ def purchase_begin(
         detail={"vendor": body.vendor, "usd": body.usd,
                 "description": body.description[:300]},
     ))
-    spent = policy.external_spent_this_month(session, ctx.project.id)
-    remaining = (cons.external_monthly_usd_cap - spent - body.usd
+    # `committed` came back from the envelope check — no second ledger scan.
+    # This purchase now reserves the envelope too, until finish closes it.
+    remaining = (cons.external_monthly_usd_cap - committed - body.usd
                  if cons.external_monthly_usd_cap > 0 else None)
     return {
         "purchase_id": row.id,
@@ -1935,7 +1929,7 @@ def purchase_finish(
         ledger = LedgerEntry(
             id=ids.new_id(ids.LEDGER),
             project_id=ctx.project.id,
-            kind="external_spend",
+            kind=LedgerKind.EXTERNAL_SPEND,
             usd=usd,
             run_id=ctx.run.id,
             note=(f"purchase: {(row.payload or {}).get('vendor', '?')} — "

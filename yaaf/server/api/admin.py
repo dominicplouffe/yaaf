@@ -1506,6 +1506,30 @@ class ApprovalDecision(BaseModel):
     note: str = Field(default="", max_length=4000)
 
 
+def _apply_decision(session: Session, approval: Approval, project: Project,
+                    approve: bool, note: str, notice_body: str,
+                    audit_detail: dict | None = None) -> None:
+    """ONE implementation of "an approval is decided": status, timestamps,
+    the requester's wake notice, the audit row, the wake. decide_approval and
+    fulfill_need both land here, so decision semantics can never fork."""
+    approval.status = ApprovalStatus.APPROVED if approve else ApprovalStatus.DENIED
+    approval.decided_at = utcnow()
+    approval.decision_note = note
+    approval.decided_by_user_id = project.chairman_user_id
+    session.add(
+        Notice(
+            id=ids.new_id(ids.NOTICE),
+            project_id=approval.project_id,
+            agent_id=approval.requested_by_agent_id,
+            kind=NoticeKind.APPROVAL_DECIDED,
+            body=notice_body,
+        )
+    )
+    _audit(session, approval.project_id, "approval.decide", "approval", approval.id,
+           {"approve": approve, **(audit_detail or {})})
+    notify(session, WAKE_CHANNEL, approval.project_id)
+
+
 @router.post("/approvals/{approval_id}/decide")
 def decide_approval(
     approval_id: str, body: ApprovalDecision, session: Session = Depends(db)
@@ -1515,27 +1539,13 @@ def decide_approval(
         raise HTTPException(status_code=404, detail="unknown approval")
     if approval.status != ApprovalStatus.PENDING:
         raise HTTPException(status_code=409, detail=f"approval already {approval.status}")
-    approval.status = ApprovalStatus.APPROVED if body.approve else ApprovalStatus.DENIED
-    approval.decided_at = utcnow()
-    approval.decision_note = body.note
     project = session.get(Project, approval.project_id)
-    approval.decided_by_user_id = project.chairman_user_id
-    session.add(
-        Notice(
-            id=ids.new_id(ids.NOTICE),
-            project_id=approval.project_id,
-            agent_id=approval.requested_by_agent_id,
-            kind=NoticeKind.APPROVAL_DECIDED,
-            body=(
-                f"Approval '{approval.title}' was "
-                f"{'APPROVED' if body.approve else 'DENIED'}"
-                + (f": {body.note}" if body.note else ".")
-            ),
-        )
+    _apply_decision(
+        session, approval, project, body.approve, body.note,
+        notice_body=(f"Approval '{approval.title}' was "
+                     f"{'APPROVED' if body.approve else 'DENIED'}"
+                     + (f": {body.note}" if body.note else ".")),
     )
-    _audit(session, approval.project_id, "approval.decide", "approval", approval.id,
-           {"approve": body.approve})
-    notify(session, WAKE_CHANNEL, approval.project_id)
     return {"id": approval.id, "status": approval.status}
 
 
@@ -1606,31 +1616,28 @@ def fulfill_need(
                                    "with a credential; decide other kinds normally")
     if approval.status != ApprovalStatus.PENDING:
         raise HTTPException(status_code=409, detail=f"approval already {approval.status}")
-    for slug in body.roles:
-        _latest_role_version(session, slug)  # 422s on an unknown role
+    try:
+        policy.check_roles_exist(session, body.roles)
+    except policy.Refusal as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     project = _get_project(session, approval.project_id)
     secret = _upsert_project_secret(
         session, project.id, body.secret_name, body.value, body.roles)
-    approval.status = ApprovalStatus.APPROVED
-    approval.decided_at = utcnow()
-    approval.decided_by_user_id = project.chairman_user_id
-    approval.decision_note = (body.note or "fulfilled") + f" [credential: {secret.name}]"
-    env_var = body.secret_name.upper().replace("-", "_").replace(" ", "_")
-    session.add(
-        Notice(
-            id=ids.new_id(ids.NOTICE),
-            project_id=project.id,
-            agent_id=approval.requested_by_agent_id,
-            kind=NoticeKind.APPROVAL_DECIDED,
-            body=(f"Your need '{approval.title}' was FULFILLED: the credential "
-                  f"'{secret.name}' now reaches roles {', '.join(body.roles)} as an "
-                  f"environment variable on their next run."
-                  + (f" His note: {body.note}" if body.note else "")),
-        )
+    # The hint MUST be the runner's own mapping — a second normalization once
+    # announced a variable that did not exist.
+    from yaaf.core.naming import env_var_name
+
+    env_var = env_var_name(secret.name)
+    _apply_decision(
+        session, approval, project, True,
+        (body.note or "fulfilled") + f" [credential: {secret.name}]",
+        notice_body=(f"Your need '{approval.title}' was FULFILLED: the credential "
+                     f"'{secret.name}' now reaches roles {', '.join(body.roles)} as "
+                     f"the environment variable {env_var} on their next run."
+                     + (f" His note: {body.note}" if body.note else "")),
+        audit_detail={"fulfilled": True, "secret_name": secret.name,
+                      "roles": body.roles},
     )
-    _audit(session, project.id, "need.fulfill", "approval", approval.id,
-           {"secret_name": secret.name, "roles": body.roles})
-    notify(session, WAKE_CHANNEL, project.id)
     return {"id": approval.id, "status": approval.status,
             "secret_name": secret.name, "env_var_hint": env_var,
             "roles": body.roles}

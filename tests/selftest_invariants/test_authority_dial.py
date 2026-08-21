@@ -137,6 +137,22 @@ def test_self_acceptance_opens_the_plan_gate_without_a_chairman_click(client):
     assert task.status_code == 200, task.text
 
 
+def test_a_self_exercise_with_broken_fields_is_refused_not_crashed(client):
+    """Same guarantee the directive path has: model-authored fields are
+    coerced and bounded before any apply helper runs — a 422 naming the
+    field, never a 500."""
+    project = project_with(client, dial=AUTONOMOUS, slug="dial-shape")
+    proposed = propose(client, project)
+    for action in (
+        {"kind": "restage", "requirement_key": proposed["key"], "stage": 0},
+        {"kind": "restage", "requirement_key": proposed["key"], "stage": "later"},
+        {"kind": "reestimate", "requirement_key": proposed["key"], "est_runs": "lots"},
+        {"kind": "verdict", "requirement_key": proposed["key"], "ok": "yes"},
+    ):
+        refused = act(client, project, action)
+        assert refused.status_code == 422, f"{action}: {refused.text}"
+
+
 def test_every_self_exercise_is_audited_and_disclosed(client):
     project = project_with(client, dial=AUTONOMOUS)
     proposed = propose(client, project)

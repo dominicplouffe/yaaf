@@ -44,21 +44,26 @@ const MODES = [
 ] as const;
 
 // The authority dial (docs/AUTONOMY.md): who holds the verbs. A preset is
-// nothing but a bundle of four constitution switches — each editable
+// nothing but a bundle of five constitution switches — each editable
 // individually later in Settings → Rules in force, changed by amendment.
+// Every preset names all five explicitly so it overrides whatever a loaded
+// setup bundle carried — an empty preset would silently inherit instead.
 const AUTONOMY_PRESETS = [
   { value: "supervised", label: "Supervised",
     blurb: "You approve scope, sign the date, and judge unverifiable closes. " +
       "The CEO proposes — and executes any order you give it in the boardroom.",
     example: "Today's behavior. Right for a first project, or real money on the line.",
-    constitution: {} },
+    constitution: { plan_authority: "chairman", scope_authority: "chairman",
+      commitment_authority: "chairman", verdict_policy: "chairman",
+      capability_authority: "chairman" } },
   { value: "autonomous", label: "Autonomous",
     blurb: "The CEO accepts its own plan, signs the platform's projected date, and " +
       "judges unverifiable closes itself. Every decision is audited and sent to " +
       "you; all of it is reversible; your buttons never close.",
     example: "The CEO runs the company; you chair it. Budgets and brakes still bind.",
     constitution: { plan_authority: "ceo", scope_authority: "ceo",
-      commitment_authority: "ceo", verdict_policy: "ceo_judgment" } },
+      commitment_authority: "ceo", verdict_policy: "ceo_judgment",
+      capability_authority: "ceo" } },
 ] as const;
 
 export default function NewProject() {

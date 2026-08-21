@@ -1063,6 +1063,11 @@ def _wake_reasons(
         unread = [
             m for m in session.execute(stmt.order_by(Message.created_at)).scalars()
             if m.sender_agent_id != agent.id
+            # Platform boardroom lines (needs/assists announced to the
+            # chairman) have no sender and are addressed to HIM — they mirror
+            # to Slack and never wake an agent, or every need the CEO filed
+            # would urgently buy a run to read its own announcement.
+            and not (m.sender_agent_id is None and m.sender_user_id is None)
         ]
         actionable = 0
         for message in unread:

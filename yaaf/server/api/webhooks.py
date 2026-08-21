@@ -32,6 +32,7 @@ from yaaf.core.models import (
     EvidenceKind,
     EvidenceProvenance,
     LedgerEntry,
+    LedgerKind,
     Message,
     Notice,
     NoticeKind,
@@ -350,7 +351,7 @@ async def generic_webhook(
         ledger = LedgerEntry(
             id=ids.new_id(ids.LEDGER),
             project_id=project.id,
-            kind="revenue",
+            kind=LedgerKind.REVENUE,
             usd=body.revenue_usd,
             note=f"webhook: {body.description[:300]}",
         )

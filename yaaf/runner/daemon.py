@@ -29,6 +29,7 @@ from yaaf.core.db import db_session
 from yaaf.core.models import (
     Agent,
     LedgerEntry,
+    LedgerKind,
     Notice,
     NoticeKind,
     Project,
@@ -358,9 +359,9 @@ def _scrub_remote(workspace: Path, full_name: str) -> None:
 
 
 def _env_var_name(secret_name: str) -> str:
-    import re
+    from yaaf.core.naming import env_var_name
 
-    return re.sub(r"[^A-Za-z0-9]+", "_", secret_name).strip("_").upper()
+    return env_var_name(secret_name)
 
 
 def _role_secret_env(session: Session, project: Project, role_version) -> dict:
@@ -506,7 +507,7 @@ def finalize(job: RunJob, result: RunResult, was_revoked: bool = False) -> None:
                 LedgerEntry(
                     id=ids.new_id(ids.LEDGER),
                     project_id=job.project_id,
-                    kind="model_usage",
+                    kind=LedgerKind.MODEL_USAGE,
                     tokens_in=result.tokens_in,
                     tokens_out=result.tokens_out,
                     cache_creation_tokens=result.cache_creation_tokens,

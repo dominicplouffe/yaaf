@@ -234,3 +234,94 @@ def test_external_spent_this_month_counts_only_external(client):
                                 kind="model_usage", usd=999.0))
     with db_session() as session:
         assert policy.external_spent_this_month(session, project["id"]) == 0.0
+
+
+# ── reservations ────────────────────────────────────────────────────────────────
+
+
+def test_a_cleared_purchase_reserves_the_envelope(client):
+    """Two overlapping begins must not each clear against the same headroom:
+    cleared-but-unfinished money is committed until finish closes it, and a
+    failed finish gives the headroom back."""
+    project = project_with(client, slug="reserve")
+    first = begin(client, project, 150.0, key="buy-a",
+                  approval_id=approve_spend(client, project, 150.0))
+    assert first.status_code == 200, first.text
+    assert booked_usd(project["id"]) == 0, "nothing booked yet — reserved, not spent"
+
+    walled = begin(client, project, 100.0, key="buy-b",
+                   approval_id=approve_spend(client, project, 100.0))
+    assert walled.status_code == 403
+    assert "reserves the envelope" in walled.text
+
+    failed = finish(client, project, first.json()["purchase_id"], ok=False)
+    assert failed.status_code == 200, failed.text
+    fits = begin(client, project, 100.0, key="buy-c",
+                 approval_id=approve_spend(client, project, 100.0))
+    assert fits.status_code == 200, fits.text
+
+
+# ── money that already moved ────────────────────────────────────────────────────
+
+
+def test_spend_book_records_an_overshoot_instead_of_hiding_it(client):
+    """The wall refuses a purchase BEFORE money moves. spend_book is the
+    other case: the money is gone, so refusing the record would un-report
+    real spending. It books, audits, and warns instead."""
+    from yaaf.core.models import AuditLog
+
+    project = project_with(client, slug="overshoot",
+                           constitution={"external_monthly_usd_cap": 100.0,
+                                         "max_usd_per_purchase": 0,
+                                         "approval_threshold_usd": 250.0})
+    fine = client.post("/agent/ledger/spend", headers=bearer(token(project)),
+                       json={"usd": 80.0, "note": "paid by card at checkout"})
+    assert fine.status_code == 200, fine.text
+    assert "warning" not in fine.json()
+
+    over = client.post("/agent/ledger/spend", headers=bearer(token(project)),
+                       json={"usd": 60.0, "note": "the second card charge"})
+    assert over.status_code == 200, over.text
+    assert "over the" in over.json()["warning"]
+    assert booked_usd(project["id"]) == 140.0, "booked in full, not clipped"
+    with db_session() as session:
+        audit = session.query(AuditLog).filter(
+            AuditLog.project_id == project["id"],
+            AuditLog.action == "spend.over_envelope").one()
+        assert audit.detail["committed_after"] == 140.0
+
+    # The wall still stands where it can help: the NEXT purchase is refused.
+    walled = begin(client, project, 10.0, key="buy-after")
+    assert walled.status_code == 403
+
+
+# ── revenue is not spend ────────────────────────────────────────────────────────
+
+
+def test_revenue_never_counts_as_spend(client):
+    """Earning money must not burn the model budget (auto-pause) or the
+    external envelope — summing revenue as spend once paused a project for
+    succeeding."""
+    from yaaf.core.constitution import effective
+    from yaaf.core.models import Project, ProjectStatus
+    from yaaf.server import janitor
+
+    project = project_with(client, slug="earns",
+                           constitution={**ENVELOPE, "monthly_usd_cap": 50.0})
+    with db_session() as session:
+        from yaaf.core import ids
+
+        session.add(LedgerEntry(id=ids.new_id(ids.LEDGER), project_id=project["id"],
+                                kind="revenue", usd=10_000.0))
+    with db_session() as session:
+        assert policy.external_spent_this_month(session, project["id"]) == 0.0
+        usd, _ = janitor.month_to_date(session, project["id"])
+        assert usd == 0.0
+        row = session.get(Project, project["id"])
+        janitor.enforce_budget(session, row, effective(session, row.id))
+    with db_session() as session:
+        assert session.get(Project, project["id"]).status == ProjectStatus.RUNNING
+    # And the envelope still has its full headroom.
+    cleared = begin(client, project, 12.0, key="buy-after-earning")
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["envelope_remaining_after"] == 188.0
