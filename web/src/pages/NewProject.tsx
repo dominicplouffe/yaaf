@@ -43,6 +43,24 @@ const MODES = [
     example: "\u201CA weekly blog post, tracked and improved.\u201D" },
 ] as const;
 
+// The authority dial (docs/AUTONOMY.md): who holds the verbs. A preset is
+// nothing but a bundle of four constitution switches — each editable
+// individually later in Settings → Rules in force, changed by amendment.
+const AUTONOMY_PRESETS = [
+  { value: "supervised", label: "Supervised",
+    blurb: "You approve scope, sign the date, and judge unverifiable closes. " +
+      "The CEO proposes — and executes any order you give it in the boardroom.",
+    example: "Today's behavior. Right for a first project, or real money on the line.",
+    constitution: {} },
+  { value: "autonomous", label: "Autonomous",
+    blurb: "The CEO accepts its own plan, signs the platform's projected date, and " +
+      "judges unverifiable closes itself. Every decision is audited and sent to " +
+      "you; all of it is reversible; your buttons never close.",
+    example: "The CEO runs the company; you chair it. Budgets and brakes still bind.",
+    constitution: { plan_authority: "ceo", scope_authority: "ceo",
+      commitment_authority: "ceo", verdict_policy: "ceo_judgment" } },
+] as const;
+
 export default function NewProject() {
   const navigate = useNavigate();
   const [roles, setRoles] = useState<RoleSummary[]>([]);
@@ -61,6 +79,7 @@ export default function NewProject() {
   // mode is frozen at creation and Explore hides the Plan tab by design.
   const [modeNotice, setModeNotice] = useState<string | null>(null);
   const [exploreDeadline, setExploreDeadline] = useState("");
+  const [autonomy, setAutonomy] = useState("supervised");
   const [runtime, setRuntime] = useState("agent_sdk");
   const [controlledDomains, setControlledDomains] = useState("");
   const [teams, setTeams] = useState<TeamDraft[]>([
@@ -245,13 +264,14 @@ export default function NewProject() {
           .map((d) => d.trim())
           .filter(Boolean),
         constitution: {
-          // A setup file carries the source's full rulebook; the four knobs
-          // below override whatever you edited on this page.
+          // A setup file carries the source's full rulebook; the knobs and
+          // the authority preset below override whatever you edited here.
           ...(bundle?.project.constitution ?? {}),
           queue_ceiling: queueCeiling,
           drought_hours: droughtHours,
           monthly_usd_cap: usdCap,
           approval_threshold_usd: approvalThreshold,
+          ...(AUTONOMY_PRESETS.find((p) => p.value === autonomy)?.constitution ?? {}),
         },
         integrations: { ...(bundle?.project.integrations ?? {}), runtime },
         ceo_role_slug: ceoSlug,
@@ -434,9 +454,12 @@ export default function NewProject() {
           )}
           {mode !== "explore" ? (
             <p className="help" style={{ marginTop: 10 }}>
-              This project starts owing a plan: the CEO proposes requirements, you accept
-              them on the Plan tab, and no work may be created until the plan holds and
-              adds up against the budget.
+              This project starts owing a plan: the CEO proposes requirements,
+              {autonomy === "autonomous"
+                ? " accepts them itself under the authority you grant below,"
+                : " you accept them on the Plan tab,"}{" "}
+              and no work may be created until the plan holds and adds up against the
+              budget.
             </p>
           ) : (
             <div style={{ marginTop: 10, display: "flex", gap: 10, alignItems: "baseline",
@@ -453,6 +476,37 @@ export default function NewProject() {
               </span>
             </div>
           )}
+        </div>
+        <div className="card" style={{ marginBottom: 10 }}>
+          <label className="field">Who runs it?</label>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+            gap: 10, marginTop: 6 }}>
+            {AUTONOMY_PRESETS.map((p) => (
+              <button key={p.value} type="button"
+                onClick={() => setAutonomy(p.value)}
+                style={{
+                  font: "inherit", textAlign: "left", cursor: "pointer",
+                  background: autonomy === p.value ? "rgba(57,135,229,0.07)" : "var(--surface)",
+                  border: autonomy === p.value
+                    ? "1px solid var(--accent)" : "1px solid var(--border)",
+                  borderRadius: 8, padding: "12px 14px",
+                }}>
+                <div style={{ fontWeight: 650, fontSize: 15, color: "var(--ink)" }}>
+                  {autonomy === p.value ? "◉" : "○"} {p.label}
+                </div>
+                <div style={{ fontSize: 12.5, color: "var(--ink-2)", marginTop: 6 }}>{p.blurb}</div>
+                <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 8, fontStyle: "italic",
+                  borderTop: "1px solid var(--grid, var(--border))", paddingTop: 7 }}>
+                  {p.example}
+                </div>
+              </button>
+            ))}
+          </div>
+          <p className="help" style={{ marginTop: 10 }}>
+            A preset is four rules in the constitution's Autonomy group — each one editable
+            individually later in Settings → Rules in force, with a written reason, binding
+            from the next agent call. Turning the dial up or back is always yours.
+          </p>
         </div>
         <div className="card">
           <div className="row">
