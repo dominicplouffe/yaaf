@@ -292,6 +292,19 @@ def test_denied_consent_is_reported_not_swallowed(world, client):
     assert "the human said no" in entry["oauth"]["error"]
 
 
+def test_provider_error_text_cannot_script_the_dashboard(world, client):
+    """The callback is unauthenticated and echoes provider-controlled text; a
+    hostile authorization server must not be able to inject markup that runs on
+    the dashboard origin in the chairman's browser."""
+    project = make_project(client, start=False)
+    query, _ = _connect(client, project["id"])
+    landed = client.get("/oauth/mcp/callback", params={
+        "state": query["state"][0], "error": "access_denied",
+        "error_description": "<script>alert('xss')</script>"})
+    assert "<script>alert" not in landed.text
+    assert "&lt;script&gt;" in landed.text
+
+
 def test_an_abandoned_sign_in_expires(world, client):
     project = make_project(client, start=False)
     query, _ = _connect(client, project["id"])

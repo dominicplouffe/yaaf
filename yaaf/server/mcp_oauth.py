@@ -352,7 +352,7 @@ def ensure_fresh_token(session: Session, project: Project, entry: dict, *,
     check and the lease path) get the same behavior: a broken renewal marks
     the source needs_reauth and keeps the old token mounted, so the failure
     shows up as a named auth error instead of a silently absent source."""
-    from yaaf.server.api.admin import _project_secret_value, _upsert_project_secret
+    from yaaf.server.api.admin import _project_secret_value
 
     if entry.get("auth") != "oauth":
         return None
@@ -391,18 +391,35 @@ def ensure_fresh_token(session: Session, project: Project, entry: dict, *,
         persist_entry(project, entry)
         return access
 
+    entry["oauth"] = oauth
+    store_tokens(session, project, entry, tokens)
+    return tokens["access_token"]
+
+
+def store_tokens(session: Session, project: Project, entry: dict, tokens: dict) -> None:
+    """The one place freshly-minted OAuth tokens land — the sign-in callback and
+    every later refresh both call it, so the access token's role grants, the
+    refresh secret's name, and the connected/expires_at/obtained_at bookkeeping
+    can never drift between the two paths. The access token reuses the source's
+    ordinary mcp-<name>-token secret (so the sandbox path is unchanged); the
+    refresh token is stored ungranted (role_scopes=[]) and never injected."""
+    from yaaf.server.api.admin import _upsert_project_secret
+
+    name = entry.get("name", "")
+    oauth = dict(entry.get("oauth") or {})
     token_secret = _upsert_project_secret(
         session, project.id, f"mcp-{name}-token", tokens["access_token"],
         list(entry.get("roles") or []))
     entry["bearer_secret"] = token_secret.name
-    if tokens.get("refresh_token") and refresh_name:
+    if tokens.get("refresh_token"):
         # Rotation: the old refresh token died the moment this one was issued.
+        refresh_name = oauth.get("refresh_secret") or f"mcp-{name}-oauth-refresh"
         _upsert_project_secret(session, project.id, refresh_name,
                                tokens["refresh_token"], [])
+        oauth["refresh_secret"] = refresh_name
     oauth["status"] = "connected"
     oauth["expires_at"] = tokens.get("expires_at")
     oauth["obtained_at"] = utcnow().isoformat()
     oauth.pop("error", None)
     entry["oauth"] = oauth
     persist_entry(project, entry)
-    return tokens["access_token"]

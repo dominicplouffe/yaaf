@@ -528,7 +528,11 @@ function DataSourceEditor({
   const [roles, setRoles] = useState<string[]>(source.roles);
   const [access, setAccess] = useState<SourceAccess>(source.access ?? "inline");
   const [auth, setAuth] = useState<SourceAuth>(sourceAuthOf(source));
-  const [clientId, setClientId] = useState(source.oauth?.client_id ?? "");
+  // Not prefilled from source.oauth.client_id: that id may be a dynamic
+  // registration the server owns, and re-submitting it while a URL change
+  // resets the connection would keep a client whose secret was just dropped.
+  // The Advanced box is for a client the chairman pastes by hand.
+  const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
   const [scope, setScope] = useState(source.oauth?.scope ?? "");
 
@@ -607,9 +611,11 @@ function DataSourceEditor({
           disabled={busy || !url.trim() || roles.length === 0}
           onClick={() => {
             // Pre-open the tab in the click itself, before any await, or the
-            // popup blocker eats the provider's sign-in page.
-            const tab = auth === "oauth" && source.oauth?.status !== "connected"
-              ? window.open("", "_blank") : null;
+            // popup blocker eats the provider's sign-in page. Editing a
+            // connected source's URL resets it server-side and answers
+            // needs_connect, so an OAuth save may need the tab even when the
+            // pre-save status was 'connected' — open it whenever auth is oauth.
+            const tab = auth === "oauth" ? window.open("", "_blank") : null;
             act(async () => {
               try {
                 const result = await post<DataSourceSaveResult>(

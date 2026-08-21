@@ -1006,8 +1006,9 @@ def _check_data_source(url: str, bearer: str | None, transport=None) -> dict:
                            "clientInfo": {"name": "yaaf", "version": "1.0"}},
             }, None)
             if opened.status_code in (401, 403):
-                return {"ok": False, "detail": f"the server refused the credential (HTTP "
-                                               f"{opened.status_code}) — check the bearer token"}
+                return {"ok": False, "code": "unauthorized",
+                        "detail": f"the server refused the credential (HTTP "
+                                  f"{opened.status_code}) — check the bearer token"}
             if opened.status_code == 404:
                 return {"ok": False, "detail": "no MCP endpoint at that path (HTTP 404) — the "
                                                "address needs the server's own path, often /mcp"}
@@ -1058,7 +1059,7 @@ def _oauth_checked(url: str, token: str, entry: dict, transport=None) -> dict:
     OAuth: "check the bearer token" tells the chairman to paste something,
     and there is nothing to paste — the fix is a fresh sign-in."""
     check = _check_data_source(url, token, transport)
-    if not check["ok"] and "refused the credential" in check.get("detail", ""):
+    if check.get("code") == "unauthorized":
         entry["oauth"] = {**(entry.get("oauth") or {}), "status": "needs_reauth"}
         check = {**check, "detail": "the server rejected the access token — press Reconnect"}
     return check
@@ -1092,9 +1093,6 @@ def add_data_source(project_id: str, body: DataSourceIn, session: Session = Depe
 
     servers = (project.integrations or {}).get("mcp_servers", [])
     prior = next((s for s in servers if s.get("name") == body.name), None)
-    prior_url = (_project_secret_value(session, project.id, prior["url_secret"])
-                 if prior and prior.get("url_secret") else None)
-
     # `auth` reads like `bearer` does: absent keeps an existing source's mode
     # (so pre-OAuth callers keep meaning what they always meant), a pasted
     # token implies bearer, and a brand-new source with neither is open.
@@ -1133,6 +1131,10 @@ def add_data_source(project_id: str, body: DataSourceIn, session: Session = Depe
         token = None
         carried_oauth = dict((prior or {}).get("oauth") or {}) \
             if prior is not None and _source_auth(prior) == "oauth" else {}
+        # Only decrypted here, in the one branch that compares it — ordinary
+        # bearer/none saves must not pay a secret read they never look at.
+        prior_url = (_project_secret_value(session, project.id, prior["url_secret"])
+                     if prior and prior.get("url_secret") else None)
         if carried_oauth and (prior_url or "").strip() == body.url.strip():
             # Same source, same address: the connection survives the edit. The
             # access token is re-stored so its grants track this save's roles.

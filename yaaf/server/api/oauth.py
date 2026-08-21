@@ -16,6 +16,7 @@ provider opened, not the SPA.
 
 from __future__ import annotations
 
+import html
 import logging
 from contextlib import suppress
 from datetime import datetime, timedelta
@@ -35,6 +36,12 @@ router = APIRouter()
 
 
 def _page(title: str, detail: str, status_code: int = 200) -> HTMLResponse:
+    # title and detail can carry provider-controlled text (an OAuth error
+    # description, an exchange-failure message) on this unauthenticated route,
+    # so every interpolated value is HTML-escaped — an authorization server
+    # must not be able to script the dashboard origin in the chairman's tab.
+    title = html.escape(title)
+    detail = html.escape(detail)
     body = f"""<!doctype html>
 <html><head><meta charset="utf-8"><title>yaaf — {title}</title>
 <style>
@@ -69,7 +76,15 @@ def mcp_oauth_callback(state: str = "", code: str = "", error: str = "",
                        error_description: str = "",
                        session: Session = Depends(db)) -> HTMLResponse:
     from yaaf.core.crypto import decrypt
-    from yaaf.server.api.admin import _audit, _oauth_checked, _upsert_project_secret
+    from yaaf.server.api.admin import _audit, _oauth_checked
+
+    # This route is unauthenticated; a real callback always carries a state and
+    # either a code or an error. Reject the malformed shape before the pending
+    # scan, so junk traffic cannot make each request cost a projects table load.
+    if not state or not (code or error):
+        return _page("Sign-in link not recognized",
+                     "This is not a valid sign-in link. Press Connect again in the "
+                     "project's Settings.", 400)
 
     found = _find_pending(session, state)
     if found is None:
@@ -126,17 +141,11 @@ def mcp_oauth_callback(state: str = "", code: str = "", error: str = "",
                      f"The provider would not exchange the sign-in for a token: {exc}. "
                      "Press Connect in Settings to try again.", 400)
 
-    token_row = _upsert_project_secret(
-        session, project.id, f"mcp-{name}-token", tokens["access_token"],
-        list(entry.get("roles") or []))
-    entry["bearer_secret"] = token_row.name
-    if tokens.get("refresh_token"):
-        refresh_row = _upsert_project_secret(
-            session, project.id, f"mcp-{name}-oauth-refresh", tokens["refresh_token"], [])
-        oauth["refresh_secret"] = refresh_row.name
-    oauth["expires_at"] = tokens.get("expires_at")
-    oauth["obtained_at"] = utcnow().isoformat()
-    persist("connected")
+    # One writer for freshly-minted tokens, shared with the refresh path, so
+    # the two can never disagree on secret names, role grants, or status.
+    entry["oauth"] = oauth
+    mcp_oauth.store_tokens(session, project, entry, tokens)
+    oauth = entry["oauth"]
 
     # Prove the connection while the chairman is still looking: the tab they
     # return to should already show a green check or a named failure.

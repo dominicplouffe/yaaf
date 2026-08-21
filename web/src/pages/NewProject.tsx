@@ -179,7 +179,11 @@ export default function NewProject() {
   function dedupedSlug(base: string): string {
     if (!base || !existingSlugs.includes(base)) return base;
     for (let n = 2; ; n++) {
-      const candidate = `${base}-${n}`.slice(0, 64);
+      const suffix = `-${n}`;
+      // Trim the base, not the suffix: slicing `${base}-${n}` to 64 when base
+      // is already 64 chars drops the suffix entirely, so every candidate
+      // equals the taken base and the loop never ends.
+      const candidate = base.slice(0, 64 - suffix.length) + suffix;
       if (!existingSlugs.includes(candidate)) return candidate;
     }
   }
