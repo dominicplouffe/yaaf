@@ -2,7 +2,7 @@
 
 Everything here is **optional** and configured per project from the dashboard.
 Nothing below requires editing a role, redeploying, or touching the CLI, with
-one exception noted for multi-box egress.
+no exceptions.
 
 The rule that governs all of it: **agents get capabilities, never credentials
 they could exfiltrate.** Secrets are envelope-encrypted, scoped to roles, and
@@ -63,9 +63,7 @@ What happens on save:
    is rejected now, not hours later inside an agent run.
 2. The URL (and optional bearer token) are stored as role-granted secrets.
 3. The mapping is recorded in project config.
-4. **Egress and the proxy update themselves** — the runner regenerates the
-   per-role squid config and reloads it.
-5. The granted roles' sandboxes mount the server as **real tools**.
+4. The granted roles' sandboxes mount the server as **real tools**.
 
 **Check it.** The check button actually speaks MCP — `initialize`, then
 `tools/list` — and tells you which tools came back. (A plain GET was useless:
@@ -216,21 +214,10 @@ docker compose --profile s3 up      # bundled MinIO for local use
 The bucket is created on first use. The base install stays boto3-free — it's
 imported lazily, only when the endpoint is set.
 
-## Egress allowlists
+## Network
 
-Each role declares the hosts it may reach (`egress_allow` in the role
-definition). The sandbox network is `internal: true`, so containers reach the
-world **only** through the squid proxy on that role's port. Your writer can
-reach WordPress and nothing else.
-
-On a single-box deploy this is automatic: the runner watches the generated
-config, writes it, and reloads squid (`YAAF_PROXY_GENERATED_DIR` +
-`YAAF_PROXY_CONTAINER` in `deploy/docker-compose.yml`). No CLI step.
-
-For multi-box setups, run it by hand on the box hosting `deploy/`:
-
-```bash
-yaaf egress-sync --proxy-container deploy-proxy-1
-```
-
-Data sources add their host to the granted roles' allowlists automatically.
+The sandbox network is open — no allowlist, no per-role proxy. The chairman's
+decision, on the record in docs/AUTONOMY.md: capability should never be a
+firewall ticket. What contains an agent is the fresh container, the
+role-scoped secrets it was or wasn't granted, the budgets, the loop brakes and
+the audit trail.

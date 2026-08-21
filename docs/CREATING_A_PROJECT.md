@@ -130,10 +130,8 @@ a URL that offers tools. This is one form:
   The other roles never see it; that's the point.
 
 Click **Save**. Everything else is automatic: the URL is stored encrypted,
-the network firewall opens exactly that host for exactly those roles, the
-proxy reloads itself within about fifteen seconds, and the next time an
-engineer runs, the source's tools are simply *there*. The save also tests
-that the server answers, and tells you if it doesn't.
+and the next time an engineer runs, the source's tools are simply *there*.
+The save also tests that the server answers, and tells you if it doesn't.
 
 ### Why a data source makes a variable
 
@@ -228,6 +226,6 @@ project pauses itself rather than burning money against a wall.
    writer) → budget cap → Create.
 2. Settings → billing → paste API key → Connect (auto-tested).
 3. Settings → Data sources → `ppc` + the MCP URL + engineer role → Save
-   (auto-tested, firewall and proxy handle themselves).
+   (auto-tested).
 4. Overview → fix anything the health card names → card disappears.
 5. Boardroom → brief the CEO → done. Check back in the morning.

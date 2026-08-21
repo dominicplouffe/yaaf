@@ -114,7 +114,6 @@ def test_two_stacks_never_produce_the_same_chat_filter(stack):
 @pytest.mark.parametrize(
     "hardcoded, why",
     [
-        ("deploy-proxy-1", "the runner would reconfigure the other stack's squid"),
         ("yaaf-sandbox:latest", "a rebuild would change the other stack's next run"),
     ],
 )

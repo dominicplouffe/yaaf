@@ -295,12 +295,11 @@ docker build -f deploy/sandbox/Dockerfile -t yaaf-sandbox:latest .
 |---|---|
 | `db` | Postgres 16, with a healthcheck the other services wait on |
 | `api` | The API, the dispatcher and janitor threads, the Slack mirror and socket threads, and the built web UI at `/app` |
-| `runner` | Leases runs, launches sandbox containers, meters everything, keeps the proxy config current |
-| `proxy` | Squid — the sandbox network's only route to the internet |
+| `runner` | Leases runs, launches sandbox containers, meters everything |
 | `minio` | Optional S3-compatible artifact store (`--profile s3`) |
 
-The `sandbox` network is `internal: true`: sandbox containers reach the world
-**only** through the proxy.
+The `sandbox` network is open — no proxy, no allowlist (the chairman's
+decision; see docs/AUTONOMY.md). It still isolates stacks from each other.
 
 ### Two images
 
@@ -333,20 +332,9 @@ in env vars. See [GOVERNANCE.md](GOVERNANCE.md).
 | `YAAF_WORKER_NAME` | `worker-1` | Identifies this runner in leases |
 | `YAAF_SANDBOX_MODE` | `docker` | `docker` (isolation) or `subprocess` (dev/CI only — **no isolation**) |
 | `YAAF_SANDBOX_IMAGE` | `yaaf-sandbox:latest` | |
-| `YAAF_SANDBOX_NETWORK` | `yaaf_sandbox` | Must be the internal network |
-| `YAAF_EGRESS_PROXY_URL` | `http://proxy:3128` | |
+| `YAAF_SANDBOX_NETWORK` | `yaaf_sandbox` | |
 | `YAAF_WORKSPACES_ROOT` | `/var/lib/yaaf/workspaces` | Host path must equal container path |
 | `YAAF_ARTIFACTS_ROOT` | `/var/lib/yaaf/artifacts` | |
-
-### Egress auto-apply
-
-| Variable | Default | Notes |
-|---|---|---|
-| `YAAF_PROXY_GENERATED_DIR` | *(empty)* | When set, the runner writes the generated per-role config here on change |
-| `YAAF_PROXY_CONTAINER` | *(empty)* | …and reloads squid in this container. Empty = manual `yaaf egress-sync` (multi-box) |
-
-Reloading is `docker exec <container> squid -k reconfigure`, **not** a
-container HUP — PID 1 is a bash entrypoint that swallows signals.
 
 ### Artifact store (optional)
 
@@ -432,8 +420,7 @@ projects — APIs are still moving.
 Add runners, not API servers. Runs are leased with a TTL heartbeat, so several
 `yaaf-runner` processes (or boxes) safely share one database. Each needs
 `YAAF_DATABASE_URL`, `YAAF_MASTER_KEY`, a unique `YAAF_WORKER_NAME`, and access
-to Docker plus the proxy. On multi-box setups, run `yaaf egress-sync` on the
-box hosting the proxy after role or data-source changes.
+to Docker.
 
 ### When a run dies
 
@@ -448,7 +435,7 @@ payment.
 
 ```
 yaaf/server     API, policy engine (the refusals), dispatcher, janitor,
-                evidence verifier, Slack bridge, egress generator
+                evidence verifier, Slack bridge
 yaaf/runner     leases runs, launches sandbox containers, meters everything
 yaaf/core       models, constitution schema, crypto, config, artifacts
 yaaf/cli        `yaaf` — admin/observe CLI, `yaaf experiment`, `yaaf spend-report`

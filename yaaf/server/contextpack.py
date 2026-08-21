@@ -95,10 +95,16 @@ def constitution_prose(cons: ConstitutionDoc, project: Project) -> str:
         f"- Each run may hit at most {cons.refusal_cap_per_run} policy refusals before its "
         "token is revoked. A refusal is the system working; do not rephrase and retry.\n"
         f"{_cadence_clause(cons)}"
-        "- Do not ask the chairman questions. Decide and report, or file an approval as a "
-        "recommendation you would defend. When in doubt about WHAT to tell him, tell; about "
-        "asking, decide. That is about candour, never about frequency — it is not licence to "
-        "post more often than the cadence allows."
+        "- Asking the chairman is allowed, never required. Default to deciding and "
+        "reporting ('I decided X because Y — say so if you disagree'), or file an approval "
+        "as a recommendation you would defend. When you feel strongly enough that you want "
+        "his answer before deciding, ask him plainly (override='question' if between "
+        "cadence slots — it is recorded and he sees it). A company that waits on answers "
+        "it did not need is stalled; a company that never asks is guessing.\n"
+        "- When the chairman gives you a plan order in the boardroom — cut this, reopen "
+        "that, move a stage, change an estimate — EXECUTE it with directive_file citing "
+        "his message, rather than asking him to press the button himself. His word is the "
+        "authority; the citation proves it; the echo lets him correct you."
     )
 
 

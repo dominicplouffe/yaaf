@@ -138,16 +138,15 @@ A role is a JSON file in [`roles/`](../roles):
   "effort": "xhigh",
   "tool_permissions": {"files": true, "bash": true, "web": true,
                        "data_processing": true,
-                       "egress_allow": ["api.github.com", "pypi.org"]},
+                       "web": true},
   "secret_scopes": ["github"],
   "system_prompt": "…"
 }
 ```
 
 - `model` / `effort` — per role, so your writer isn't paying engineer prices.
-- `tool_permissions` — `files`, `bash`, `data_processing`, `web`, and
-  `egress_allow` (the hosts this role's sandbox may reach; a role that declares
-  any gets its **own proxy port**). `data_processing` grants the same shell
+- `tool_permissions` — `files`, `bash`, `data_processing`, `web`.
+  `data_processing` grants the same shell
   `bash` does; it is separate so that a role which has one in order to aggregate
   data with code says so, rather than looking like it builds software. Grant it
   to any role that reads a data source — one that can fetch bulk data but not

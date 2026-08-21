@@ -7,7 +7,7 @@ waiting a turn. Reading through the agent API advances the CEO's read cursor,
 which is exactly what keeps the dispatcher from also waking a work run for the
 same message.
 
-Same containment as any run: the per-run token, the egress proxy, the agent
+Same containment as any run: the per-run token, the sandbox, the agent
 HTTP API — and the same platform toolset, so "CEO, do X" can happen right in
 the conversation, under the same server-side refusals.
 
@@ -40,7 +40,7 @@ HISTORY_BOOTSTRAP = 30
 CHAT_HISTORY_MSG_CHARS = 1_000
 
 # Only a genuine 401/403 means the token was revoked (project paused, kill
-# switch) — anything else is the API restarting, the proxy hiccuping, or a
+# switch) — anything else is the API restarting, the network hiccuping, or a
 # timeout, and killing a healthy session over six bad seconds of network was
 # a top cause of the restart churn. Transients back off and only give up
 # after TRANSIENT_EXIT_S of continuous failure.
@@ -348,7 +348,7 @@ async def main() -> int:
         mcp_servers={"yaaf": server, **base._external_mcp_servers()},
         tools=base._builtin_tools(),
         allowed_tools=base._allowed_tools(),
-        permission_mode="bypassPermissions",  # containment is the sandbox + proxy + API
+        permission_mode="bypassPermissions",  # containment is the sandbox + API
         cwd="/workspace",
         setting_sources=[],
         # A runaway backstop, not a lifetime budget: the old value (30) was

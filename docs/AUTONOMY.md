@@ -75,9 +75,11 @@ never seized.
   `est_runs`, `statement`, and acceptance tests are write-once.
 - `cut` is chairman-only; directives are scoped to three cadence fields, so
   chairman feedback cannot be executed by the CEO at all.
-- Two bugs regardless of design: `POST /agent/commitments` has no sandbox
-  tool (the CEO cannot actually propose a date), and `ceo.json` says
-  `bash: false` while `data_processing: true` grants real Bash.
+- Two suspected bugs: `POST /agent/commitments` had no sandbox tool (the
+  CEO could not actually propose a date) — real, fixed in stage A. The
+  `ceo.json` `bash: false` + `data_processing: true` pairing turned out to be
+  documented design (sandbox_entry: data_processing is the same shell under a
+  narrower charter; a python-only grant would be theatre) — no change.
 - No actuator exists: no browser, no payment path, no capability
   acquisition; blocked egress is an invisible squid 403, unlogged.
 - Rails that already exist and the design reuses: external-spend ledger
@@ -90,7 +92,7 @@ never seized.
 
 | | Stage | Status |
 |---|---|---|
-| A | Missing verbs (reopen · restage · reestimate · unsequence · dial-assignable cut · ask), the two bug fixes, removal of the egress allowlist, widened directive scope so chairman orders execute | not started |
+| A | Missing verbs (reopen · restage · reestimate · unsequence · ask), the commitments-tool fix, removal of the egress allowlist, widened directive scope so chairman orders execute (accept · cut · reopen · restage · reestimate · reword · unsequence, citing his boardroom message) | **done** — 433 tests green; dashboard buttons for the new verbs are stage B UI work |
 | B | The Authority constitution group, seven switches, three presets, decision digest, `verdict_policy: ceo_judgment` with audit-sampled self-closes | not started |
 | C | Spend envelope: `external_monthly_usd_cap` (always-on, any billing mode), `max_usd_per_purchase`, atomic purchase actuator over the side-effect ledger, optional virtual-card hardening | not started |
 | D | Credentials become capabilities: recognizer library (packages + tooling), needs queue over chat (`tool_request` wired; dashboard + Slack first, any messenger later), CEO delegation to team roles, `revenue` ledger kind fed by signed webhooks | not started |

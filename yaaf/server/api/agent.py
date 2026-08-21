@@ -483,10 +483,12 @@ def post_message(
 
 class DirectiveIn(BaseModel):
     """A standing instruction the chairman gave in the boardroom, filed by the
-    CEO as policy instead of as a memory."""
+    CEO — as policy (changes) or as an executed plan order (action) — instead
+    of as a memory."""
 
     from_message_id: str
-    changes: dict
+    changes: dict | None = None
+    action: dict | None = None
     reason: str = Field(min_length=10)
 
 
@@ -494,24 +496,30 @@ class DirectiveIn(BaseModel):
 def file_directive(
     body: DirectiveIn, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
 ) -> dict:
-    """Turn something the chairman said into something the platform enforces.
+    """Turn something the chairman said into something the platform does.
 
-    The gap this closes: on 16 Aug he wrote "change your updates to every 4
-    hours" in the boardroom, and *nothing structural happened*. The CEO wrote
-    itself a memory and hoped — so the next stateless run, which never read
-    that memory, carried on reporting. A directive that lives in prose is a
-    directive the company can forget.
+    Two shapes. `changes` files reporting-cadence policy (the original gap: on
+    16 Aug he wrote "change your updates to every 4 hours" and nothing
+    structural happened). `action` executes a plan order — the chairman writes
+    "cut R-07" or "reopen R-04, it wasn't actually done" in the boardroom, and
+    the CEO carries it out through the same machinery as the chairman's own
+    buttons, instead of the order waiting for him to click it himself.
 
     The platform cannot check what a message *meant*, so it checks what it can
     and makes the rest loud: the citation must be a real, recent boardroom
-    message from the chairman himself, newer than the rule it replaces; the
-    change may only touch fields that constrain the company's demands on him;
-    and every filing is audited, disclosed to the CEO, and echoed back to him
-    in the boardroom where a misreading is one sentence away from correction.
+    message from the chairman himself; the authority exercised is his, proven
+    by that citation; and every filing is audited, disclosed, and echoed back
+    to him in the boardroom where a misreading is one sentence away from
+    correction — and every scope verb is reversible.
     """
     if ctx.agent.kind != AgentKind.CEO:
         raise Refusal("Only the CEO files directives — nobody else speaks to the chairman.",
                       status_code=403)
+    if (body.changes is None) == (body.action is None):
+        raise Refusal("A directive carries exactly one of `changes` (a cadence rule) or "
+                      "`action` (a plan order).", status_code=422)
+    if body.action is not None:
+        return _file_scope_directive(body, ctx, session)
     policy.check_directive_scope(body.changes)
     cited = policy.check_directive_citation(session, ctx.project, body.from_message_id)
     try:
@@ -534,6 +542,90 @@ def file_directive(
         "note": ("Filed and in force now. It is recorded, and "
                  "the chairman has been told in the boardroom so he can correct you if you "
                  "read him wrong. Stop carrying this rule in memory; it is policy."),
+    }
+
+
+def _requirement_by_key(session: Session, project_id: str, key: str) -> Requirement:
+    row = session.execute(
+        select(Requirement).where(
+            Requirement.project_id == project_id, Requirement.key == key.strip().upper()
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        raise Refusal(f"No requirement {key} in this project.", status_code=404)
+    return row
+
+
+def _file_scope_directive(body: DirectiveIn, ctx: RunContext, session: Session) -> dict:
+    """Execute a plan order the chairman gave in the boardroom, on his cited
+    authority, through the same admin machinery his own buttons drive."""
+    action = body.action or {}
+    policy.check_directive_action(action)
+    cited = policy.check_directive_citation(
+        session, ctx.project, body.from_message_id, for_rules=False)
+    # Local import: admin imports this module at load, so the dependency only
+    # runs one way at import time.
+    from yaaf.server.api import admin as admin_api
+
+    kind = action["kind"]
+    row = _requirement_by_key(session, ctx.project.id, action["requirement_key"])
+    reason = (f"{body.reason} [chairman's order, boardroom message {cited.id} at "
+              f"{cited.created_at.isoformat(timespec='minutes')}]")
+    if kind == "accept":
+        result = admin_api.accept_requirement(
+            row.id, admin_api.RequirementDecision(stage=action.get("stage"), note=reason),
+            session)
+        detail = f"accepted {row.key} into scope"
+    elif kind == "cut":
+        result = admin_api.cut_requirement(
+            row.id, admin_api.RequirementCut(reason=reason), session)
+        detail = f"cut {row.key}"
+    elif kind == "reopen":
+        result = admin_api.reopen_requirement(
+            row.id, admin_api.RequirementReopen(reason=reason), session)
+        detail = f"reopened {row.key} (was {result['was']})"
+    elif kind == "restage":
+        result = admin_api.restage_requirement(
+            row.id, admin_api.RequirementRestage(stage=int(action["stage"]), reason=reason),
+            session)
+        detail = f"moved {row.key} to stage {result['stage']} (was {result['was']})"
+    elif kind == "reestimate":
+        result = admin_api.reestimate_requirement(
+            row.id,
+            admin_api.RequirementReestimate(est_runs=int(action["est_runs"]), reason=reason),
+            session)
+        detail = f"reestimated {row.key} at {result['est_runs']} runs (was {result['was']})"
+    elif kind == "reword":
+        result = admin_api.reword_requirement(
+            row.id,
+            admin_api.RequirementReword(statement=str(action["statement"]), reason=reason),
+            session)
+        detail = f"reworded {row.key}"
+    else:  # unsequence
+        source = _requirement_by_key(session, ctx.project.id, action["depends_on_key"])
+        result = admin_api.remove_requirement_edge(
+            admin_api.EdgeRemove(from_requirement_id=source.id, to_requirement_id=row.id,
+                                 reason=reason), session)
+        detail = f"removed the dependency {source.key} → {row.key}"
+    session.add(
+        AuditLog(
+            id=ids.new_id(ids.AUDIT),
+            project_id=ctx.project.id,
+            actor=f"agent:{ctx.agent.id}",
+            action="scope.directive",
+            entity="message",
+            entity_id=cited.id,
+            detail={"action": action, "detail": detail,
+                    "cited_at": cited.created_at.isoformat()},
+        )
+    )
+    policy.confirm_directive(session, ctx.project, ctx.agent, cited, action_detail=detail)
+    return {
+        "executed": detail,
+        "result": result,
+        "note": ("Executed on the chairman's cited authority and echoed back to him in "
+                 "the boardroom, threaded to his message. If you read him wrong, he will "
+                 "say so — every scope verb is reversible."),
     }
 
 
@@ -889,6 +981,7 @@ def propose_requirement(
         status=RequirementStatus.PROPOSED,
         stage=body.stage,
         est_runs=body.est_runs,
+        est_runs_first=body.est_runs,
         proposed_by_agent_id=ctx.agent.id,
     )
     session.add(requirement)

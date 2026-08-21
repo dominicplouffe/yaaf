@@ -89,53 +89,11 @@ yaaf_sandbox_ids() {
         '$3 == stack || ($3 == "" && stack == "deploy") { print $1 }' || true
 }
 
-# The runner regenerates the per-role squid config every 15 seconds, and it
-# used to write into ./proxy/generated — inside the git checkout. A tracked file
-# that the running application rewrites is a permanent local modification: noise
-# at best, and since this script refuses to run on a dirty tree, a deploy that
-# blocks itself at worst. Two of that file's commits exist only to absorb the
-# churn. Machine state now lives beside the other machine state.
-#
-# Squid's `include` is FATAL when the target is missing, so the directory has to
-# carry a roles.conf before the proxy container ever starts. A comment-only file
-# parses cleanly, and the runner replaces it within one tick.
-#
-# The directory moves with YAAF_STATE_ROOT so a second stack on the same box
-# does not have both runners regenerating squid config into one directory.
-#
-# Read here rather than in load_env because the host directories are created
-# before deploy/.env is written on a first run — and on every run after that,
-# the file is the authority.
 load_stack_env() {
   if [ -f "$REPO/deploy/.env" ]; then set -a; . "$REPO/deploy/.env"; set +a; fi
   YAAF_STACK="${YAAF_STACK:-deploy}"
   YAAF_STATE_ROOT="${YAAF_STATE_ROOT:-/var/lib/yaaf}"
   export YAAF_STACK YAAF_STATE_ROOT
-  PROXY_GENERATED_DIR="$YAAF_STATE_ROOT/proxy-generated"
-}
-
-ensure_proxy_generated() {
-  load_stack_env
-  local legacy="$REPO/deploy/proxy/generated"
-  [ -d "$PROXY_GENERATED_DIR" ] \
-    || mkdir -p "$PROXY_GENERATED_DIR" 2>/dev/null \
-    || sudo mkdir -p "$PROXY_GENERATED_DIR" \
-    || die "could not create $PROXY_GENERATED_DIR"
-
-  # One-time carry-over for a box upgrading from the in-checkout location: it
-  # keeps its role ports instead of losing egress until the next regeneration.
-  if [ ! -f "$PROXY_GENERATED_DIR/roles.conf" ] && [ -f "$legacy/roles.conf" ]; then
-    cp -a "$legacy"/. "$PROXY_GENERATED_DIR"/ 2>/dev/null \
-      || sudo cp -a "$legacy"/. "$PROXY_GENERATED_DIR"/ 2>/dev/null || true
-  fi
-
-  if [ ! -f "$PROXY_GENERATED_DIR/roles.conf" ]; then
-    local seed="# Seeded before first boot — the runner rewrites this within 15s.
-# Squid refuses to start when this include target does not exist."
-    printf '%s\n' "$seed" > "$PROXY_GENERATED_DIR/roles.conf" 2>/dev/null \
-      || printf '%s\n' "$seed" | sudo tee "$PROXY_GENERATED_DIR/roles.conf" >/dev/null \
-      || die "could not seed $PROXY_GENERATED_DIR/roles.conf"
-  fi
 }
 
 wait_for_api() {

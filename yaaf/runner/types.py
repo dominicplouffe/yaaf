@@ -27,9 +27,6 @@ class RunJob:
     # Constitution run_token_budget: the model is told its token budget so it
     # paces itself and wraps up before the line. 0 = off.
     task_budget_tokens: int = 0
-    # Per-role egress: set when the role has its own scoped proxy port
-    # (yaaf/server/egress.py); None = default port + global allowlist.
-    egress_proxy_url: str | None = None
     # Injected credentials (never logged):
     api_base_url: str = ""
     api_token: str = ""            # per-run yaaf token (plaintext)

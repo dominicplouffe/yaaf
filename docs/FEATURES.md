@@ -132,11 +132,10 @@ extend a bet once, kill things, spot-audit, and start/pause/stop.
 
 - **A fresh Docker container per run**: no privileges, resource caps, the
   project workspace mounted, and a short-lived token scoped to that one run.
-- **All egress through an allowlist proxy.** The sandbox network is
-  `internal: true` — containers reach the world *only* via squid. Roles declare
-  their own allowlist, so your writer can reach WordPress and nothing else. The
-  runner regenerates the per-role proxy config on change and reloads squid
-  automatically; multi-box setups use `yaaf egress-sync`.
+- **The network is open.** The chairman's decision (docs/AUTONOMY.md): the
+  per-role egress allowlist made every capability a firewall ticket, so it was
+  removed. Containment is the fresh container, role-scoped secrets, budgets,
+  loop brakes and the audit trail — not a domain list.
 - **Secrets are envelope-encrypted** (Fernet), scoped to roles, and injected
   per-run into the sandbox environment. Agents never see values in chat, and
   `billing`-kind secrets refuse role grants entirely. Slack and GitHub platform
@@ -207,8 +206,7 @@ decision, and configuration change. The dashboard surfaces it as:
   healthy project shows nothing at all.
 - **Data sources prove themselves.** An MCP server is a one-form add (name,
   URL, roles, Save): the URL is validated at the door, you can run a live check
-  against it, egress and the proxy update themselves, and the granted roles'
-  sandboxes mount it as real tools.
+  against it, and the granted roles' sandboxes mount it as real tools.
 - **Project export** produces a portable *setup file* — goal, teams,
   constitution, config, and the *names* of credentials — with secrets and
   plumbing stripped. **Project clone** produces a running twin on the same

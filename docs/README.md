@@ -17,7 +17,7 @@ Start here if you're new; skim the table if you're not.
 | [FEATURES.md](FEATURES.md) | The complete feature reference, grouped by the failure it prevents. |
 | [DASHBOARD.md](DASHBOARD.md) | Every screen and what you do there — Desk, Projects, Roles, and each project tab. |
 | [GOVERNANCE.md](GOVERNANCE.md) | The constitution: all 24 rules, their defaults, what each refuses, and how to change one. |
-| [INTEGRATIONS.md](INTEGRATIONS.md) | Billing, credentials, MCP data sources, Slack, GitHub, webhooks, notifications, artifact storage, egress allowlists. |
+| [INTEGRATIONS.md](INTEGRATIONS.md) | Billing, credentials, MCP data sources, Slack, GitHub, webhooks, notifications, artifact storage. |
 
 ## Building on it
 

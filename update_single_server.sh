@@ -97,7 +97,6 @@ say "Rebuilding images"
 # Before compose up: squid will not start without its include target, and on a
 # box upgrading from the old in-checkout location this is what carries the
 # existing role ports across.
-ensure_proxy_generated; ok "proxy config dir ready ($PROXY_GENERATED_DIR)"
 $DOCKER build -f deploy/sandbox/Dockerfile -t yaaf-sandbox:latest . >/dev/null \
   || die "sandbox image build failed"
 ok "yaaf-sandbox:latest rebuilt"

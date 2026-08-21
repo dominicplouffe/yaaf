@@ -989,8 +989,7 @@ def _check_data_source(url: str, bearer: str | None, transport=None) -> dict:
 def add_data_source(project_id: str, body: DataSourceIn, session: Session = Depends(db)) -> dict:
     """One form, everything wired: validates the URL at the door, stores it
     (and any token) as role-granted secrets, records the mapping in project
-    config, and preflights reachability. Egress and the proxy follow
-    automatically; no role edit, no repin, no CLI.
+    config, and preflights reachability. No role edit, no repin, no CLI.
 
     Saving under an existing name is the edit path, so `bearer` reads as:
     omitted = keep the current token, `""` = remove it, anything else = rotate.
@@ -1015,8 +1014,8 @@ def add_data_source(project_id: str, body: DataSourceIn, session: Session = Depe
         "name": body.name,
         "url_secret": url_secret.name,
         "roles": body.roles,
-        # Host/port recorded in config (chairman-visible) so egress derivation
-        # never needs to decrypt anything.
+        # Host/port recorded in config so the chairman can see where a source
+        # points without decrypting anything.
         "url_host": parsed.hostname,
         "url_port": parsed.port or (443 if parsed.scheme == "https" else 80),
         "access": body.access,
@@ -1049,8 +1048,7 @@ def add_data_source(project_id: str, body: DataSourceIn, session: Session = Depe
            {"name": body.name, "roles": body.roles, "host": entry["url_host"],
             "access": body.access, "check_ok": check["ok"]})
     return {"name": body.name, "check": check,
-            "note": "Egress updates and the proxy reloads automatically within ~15s; "
-                    "effective on each granted role's next run."}
+            "note": "Effective on each granted role's next run."}
 
 
 @router.delete("/projects/{project_id}/mcp_servers/{name}")
@@ -1091,19 +1089,6 @@ def check_data_source(project_id: str, name: str, session: Session = Depends(db)
     _audit(session, project.id, "mcp_server.check", "project", project.id,
            {"name": name, "ok": check["ok"]})
     return check
-
-
-@router.get("/egress/config")
-def egress_config(session: Session = Depends(db)) -> dict:
-    """The generated per-role squid config, served for `yaaf egress-sync` to
-    write on the compose host (where deploy/proxy/ actually lives)."""
-    from yaaf.server.egress import build
-
-    try:
-        assignments, files = build(session)
-    except RuntimeError as exc:  # port collision — actionable, not a 500
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return {"assignments": assignments, "files": files}
 
 
 @router.post("/teams/{team_id}/repin")
@@ -2018,6 +2003,180 @@ def requirement_verdict(
     return {"id": row.id, "key": row.key, "status": row.status}
 
 
+# ── the missing verbs: reopen, restage, reestimate, unsequence ──────────────────
+#
+# Stage A of the CEO Charter (docs/AUTONOMY.md). Until these existed, MET and
+# CUT were terminal for every principal including the chairman, a stage could
+# never be moved, an estimate could never honestly grow, and an edge was a
+# one-way ratchet. Each verb writes a requirement_event, so history is
+# recorded, never rewritten — and because the open stage is derived
+# (min(stage) over open requirements), reopening a requirement reopens its
+# stage with zero extra machinery.
+
+
+class RequirementReopen(BaseModel):
+    reason: str = Field(min_length=5, max_length=4000)
+
+
+@router.post("/requirements/{requirement_id}/reopen")
+def reopen_requirement(
+    requirement_id: str, body: RequirementReopen, session: Session = Depends(db)
+) -> dict:
+    """The undo that never existed: a wrong verdict or a premature cut stops
+    being permanent. The settlement stays in the event log; the requirement
+    returns to PENDING and its stage reopens by derivation."""
+    row = session.get(Requirement, requirement_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="unknown requirement")
+    project = _get_project(session, row.project_id)
+    try:
+        policy.check_requirement_reopen(row)
+    except policy.Refusal as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    from_status = row.status
+    row.status = RequirementStatus.PENDING
+    row.met_at = None
+    row.met_by_run_id = None
+    row.check_output = None
+    row.cut_reason = None
+    row.cut_at = None
+    policy.record_requirement_event(session, row, RequirementStatus.PENDING,
+                                    f"user:{project.chairman_user_id}",
+                                    note=f"reopened: {body.reason[:500]}",
+                                    from_status=from_status)
+    _audit(session, row.project_id, "requirement.reopen", "requirement", row.id,
+           {"key": row.key, "was": from_status, "reason": body.reason})
+    _notice_ceo(
+        session, row.project_id, NoticeKind.GOAL_CHANGED,
+        f"{row.key} was REOPENED (it was {from_status}): {row.statement[:300]}\n"
+        f"Reason: {body.reason[:800]}\nIt is scope again — its stage reopened with it, "
+        "so plan for it before anything staged later.",
+    )
+    return {"id": row.id, "key": row.key, "status": row.status, "was": from_status}
+
+
+class RequirementRestage(BaseModel):
+    stage: int = Field(ge=1, le=50)
+    reason: str = Field(min_length=5, max_length=4000)
+
+
+@router.post("/requirements/{requirement_id}/restage")
+def restage_requirement(
+    requirement_id: str, body: RequirementRestage, session: Session = Depends(db)
+) -> dict:
+    """Move an open requirement to a different stage. 'This should have been
+    stage 1' finally has an expression."""
+    row = session.get(Requirement, requirement_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="unknown requirement")
+    project = _get_project(session, row.project_id)
+    try:
+        policy.check_requirement_restage(row)
+    except policy.Refusal as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    was = row.stage
+    if body.stage == was:
+        raise HTTPException(status_code=409,
+                            detail=f"{row.key} is already in stage {was}.")
+    row.stage = body.stage
+    policy.record_requirement_event(
+        session, row, row.status, f"user:{project.chairman_user_id}",
+        note=f"restaged {was} → {body.stage}: {body.reason[:500]}",
+        from_status=row.status)
+    _audit(session, row.project_id, "requirement.restage", "requirement", row.id,
+           {"key": row.key, "from_stage": was, "to_stage": body.stage,
+            "reason": body.reason})
+    _notice_ceo(
+        session, row.project_id, NoticeKind.GOAL_CHANGED,
+        f"{row.key} moved from stage {was} to stage {body.stage}: "
+        f"{body.reason[:800]}\nThe open stage is derived, so the order of work may "
+        "just have changed — re-read the plan before creating tasks.",
+    )
+    return {"id": row.id, "key": row.key, "stage": row.stage, "was": was}
+
+
+class RequirementReestimate(BaseModel):
+    est_runs: int = Field(ge=1, le=10_000)
+    reason: str = Field(min_length=5, max_length=4000)
+
+
+@router.post("/requirements/{requirement_id}/reestimate")
+def reestimate_requirement(
+    requirement_id: str, body: RequirementReestimate, session: Session = Depends(db)
+) -> dict:
+    """Revise est_runs with the revision on the record. The plan arithmetic
+    reads the new number; the bias multiplier is always scored against the
+    FIRST estimate, so honesty about work growing gets a channel and
+    lowballing still cannot be laundered."""
+    row = session.get(Requirement, requirement_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="unknown requirement")
+    project = _get_project(session, row.project_id)
+    try:
+        policy.check_requirement_reestimate(row)
+    except policy.Refusal as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    was = row.est_runs
+    if row.est_runs_first is None:
+        row.est_runs_first = was
+    row.est_runs = body.est_runs
+    policy.record_requirement_event(
+        session, row, row.status, f"user:{project.chairman_user_id}",
+        note=f"reestimated {was} → {body.est_runs} runs: {body.reason[:500]}",
+        from_status=row.status)
+    _audit(session, row.project_id, "requirement.reestimate", "requirement", row.id,
+           {"key": row.key, "from_est": was, "to_est": body.est_runs,
+            "first_est": row.est_runs_first, "reason": body.reason})
+    _notice_ceo(
+        session, row.project_id, NoticeKind.GOAL_CHANGED,
+        f"{row.key} is now estimated at {body.est_runs} runs (was {was}): "
+        f"{body.reason[:800]}\nThe plan arithmetic reads the new number; the bias "
+        "ratio still scores the original.",
+    )
+    return {"id": row.id, "key": row.key, "est_runs": row.est_runs,
+            "est_runs_first": row.est_runs_first, "was": was}
+
+
+class EdgeRemove(BaseModel):
+    from_requirement_id: str
+    to_requirement_id: str
+    reason: str = Field(min_length=5, max_length=4000)
+
+
+@router.post("/requirement_edges/remove")
+def remove_requirement_edge(body: EdgeRemove, session: Session = Depends(db)) -> dict:
+    """Unsequence: dependency edges stop being a one-way ratchet. The cycle
+    check still guards every add; removal needs no check beyond existing."""
+    edge = session.execute(
+        select(RequirementEdge).where(
+            RequirementEdge.from_requirement_id == body.from_requirement_id,
+            RequirementEdge.to_requirement_id == body.to_requirement_id,
+        )
+    ).scalar_one_or_none()
+    if edge is None:
+        raise HTTPException(status_code=404, detail="no such dependency edge")
+    source = session.get(Requirement, edge.from_requirement_id)
+    target = session.get(Requirement, edge.to_requirement_id)
+    _get_project(session, edge.project_id)  # 404 on a project this admin cannot see
+    session.delete(edge)
+    _audit(session, edge.project_id, "requirement.unsequence", "requirement",
+           target.id if target else edge.to_requirement_id,
+           {"from": source.key if source else edge.from_requirement_id,
+            "to": target.key if target else edge.to_requirement_id,
+            "reason": body.reason})
+    _notice_ceo(
+        session, edge.project_id, NoticeKind.GOAL_CHANGED,
+        f"The dependency {source.key if source else '?'} → "
+        f"{target.key if target else '?'} was removed: {body.reason[:800]}\n"
+        f"{target.key if target else 'The blocked requirement'} no longer waits for it.",
+    )
+    return {"removed": True,
+            "from": source.key if source else None, "to": target.key if target else None}
+
+
 # ── the topology experiment: one variable, three arms, four numbers ─────────────
 
 TOPOLOGIES = ("solo", "ceo_team", "ceo_leads_workers")
@@ -2234,6 +2393,7 @@ def add_requirement(
         status=RequirementStatus.PENDING,
         stage=body.stage,
         est_runs=body.est_runs,
+        est_runs_first=body.est_runs,
         accepted_by_user_id=project.chairman_user_id,
         accepted_at=utcnow(),
     )

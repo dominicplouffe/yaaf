@@ -4,7 +4,7 @@ The host side (this file) stages inputs into the workspace, launches the
 sandbox container, and reads the result back. The model runs *inside* the
 container (see ``sandbox_entry.py``): its only credentials are the per-run
 yaaf token and the project's billing credential, its only network is the
-egress proxy, and its only platform surface is the agent HTTP API.
+open network, and its only platform surface is the agent HTTP API.
 """
 
 from __future__ import annotations
@@ -95,7 +95,7 @@ class AgentSDKBackend:
         }
         exit_code, logs = run_agent_container(
             workspace_dir=str(workspace), env=env, timeout_s=job.timeout_s,
-            stop_event=stop_event, proxy_url=job.egress_proxy_url,
+            stop_event=stop_event,
         )
 
         if result_path.exists():

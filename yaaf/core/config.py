@@ -46,7 +46,6 @@ class Settings(BaseSettings):
     sandbox_mode: str = "docker"
     sandbox_image: str = "yaaf-sandbox:latest"
     sandbox_network: str = "yaaf_sandbox"
-    egress_proxy_url: str = "http://proxy:3128"
     workspaces_root: str = "/var/lib/yaaf/workspaces"
     artifacts_root: str = "/var/lib/yaaf/artifacts"
 
@@ -58,13 +57,6 @@ class Settings(BaseSettings):
     artifact_s3_access_key: str = ""
     artifact_s3_secret_key: str = ""
 
-    # Egress auto-apply: when set, the runner watches the generated proxy
-    # config for changes, writes it here, and reloads squid in the named
-    # container (exec `squid -k reconfigure`) — config edits in the UI reach
-    # squid without any CLI step. Empty = manual `yaaf egress-sync`
-    # (multi-box setups).
-    proxy_generated_dir: str = ""
-    proxy_container: str = ""
 
     # Chairman notifications (approval nags, budget pauses). Unset = log only.
     smtp_host: str = ""

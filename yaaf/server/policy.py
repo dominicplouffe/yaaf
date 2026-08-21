@@ -748,6 +748,47 @@ def check_requirement_cut(requirement: Requirement) -> None:
         )
 
 
+def check_requirement_reopen(requirement: Requirement) -> None:
+    """Only settled scope can be reopened. Reopening is the undo that never
+    existed: a wrong verdict or a premature cut used to be permanent for
+    everyone, the chairman included."""
+    if requirement.key == PLAN_KEY:
+        raise Refusal(
+            "R-00 is the plan gate; the janitor opens and closes it by arithmetic. "
+            "It is not scope to reopen.",
+            status_code=409,
+        )
+    if requirement.status not in CLOSED_REQUIREMENT_STATUSES:
+        raise Refusal(
+            f"{requirement.key} is {requirement.status} — it is already open. Only a "
+            "met or cut requirement can be reopened.",
+            status_code=409,
+        )
+
+
+def check_requirement_restage(requirement: Requirement) -> None:
+    if requirement.status in CLOSED_REQUIREMENT_STATUSES:
+        raise Refusal(
+            f"{requirement.key} is {requirement.status}; settled scope is history. "
+            "Reopen it first if it truly belongs back in the plan.",
+            status_code=409,
+        )
+    if requirement.key == PLAN_KEY:
+        raise Refusal("R-00 has no stage to move.", status_code=409)
+
+
+def check_requirement_reestimate(requirement: Requirement) -> None:
+    if requirement.status in CLOSED_REQUIREMENT_STATUSES:
+        raise Refusal(
+            f"{requirement.key} is {requirement.status}; what it actually took is "
+            "already on the record, and an estimate revised after the fact would "
+            "only exist to flatter the ratio.",
+            status_code=409,
+        )
+    if requirement.key == PLAN_KEY:
+        raise Refusal("R-00 carries no estimate.", status_code=409)
+
+
 def unmet_dependencies(session: Session, requirement: Requirement) -> list[Requirement]:
     """Everything that must be true before this one may be worked."""
     rows = session.execute(
@@ -1003,9 +1044,12 @@ def estimate_bias(session: Session, project_id: str) -> tuple[float, dict]:
     settled = [
         r
         for r in scope_requirements(session, project_id, all_cycles=True)
-        if r.status in CLOSED_REQUIREMENT_STATUSES and r.est_runs
+        if r.status in CLOSED_REQUIREMENT_STATUSES and (r.est_runs_first or r.est_runs)
     ]
-    pairs = [(r.est_runs, runs_spent_on(session, r.id)) for r in settled]
+    # Scored against the FIRST estimate, always: reestimate moves est_runs for
+    # the plan arithmetic, never the number the ratio judges.
+    pairs = [(r.est_runs_first or r.est_runs, runs_spent_on(session, r.id))
+             for r in settled]
     pairs = [(est, actual) for est, actual in pairs if actual > 0]
     if len(pairs) < MIN_SETTLED_FOR_BIAS:
         return 1.0, {"basis": "no history yet", "settled": len(pairs)}
@@ -1480,7 +1524,7 @@ def check_thread_not_frozen(session: Session, thread_id: str | None) -> None:
 # limit here.
 
 DEFAULT_REPORT_INTERVAL_HOURS = 0.0  # off unless the chairman sets a cadence
-REPORT_OVERRIDES = ("blocker", "budget", "approval")
+REPORT_OVERRIDES = ("blocker", "budget", "approval", "question")
 
 
 class ReportCadence(NamedTuple):
@@ -1607,8 +1651,8 @@ def _check_report_override(
 ) -> None:
     if override not in REPORT_OVERRIDES:
         raise Refusal(
-            f"'{override}' is not a break-glass reason. The cadence breaks for exactly three "
-            f"things: {', '.join(REPORT_OVERRIDES)}.")
+            f"'{override}' is not a break-glass reason. The cadence breaks for exactly "
+            f"these: {', '.join(REPORT_OVERRIDES)}.")
     if override == "approval":
         pending = session.execute(
             select(func.count(Approval.id)).where(
@@ -1631,9 +1675,12 @@ def _check_report_override(
             raise Refusal(
                 f"override='budget' but spend is not at the warning line yet ({spent:,.0f} of "
                 f"{cap:,.0f}). The platform raises the budget warning itself when it lands.")
-    # 'blocker' is a judgment call the platform cannot check. It passes — and
-    # it is recorded, so a CEO that cries blocker four times a day is visible
-    # to the chairman rather than merely irritating.
+    # 'blocker' is a judgment call the platform cannot check. So is 'question'
+    # — the ask verb: the CEO may put a real question to the chairman when it
+    # feels strongly, at any dial setting, and asking never spends the report
+    # cadence. Both pass — and both are recorded, so a CEO that cries blocker
+    # or asks four times a day is visible to the chairman rather than merely
+    # irritating.
     session.add(
         AuditLog(
             id=ids.new_id(ids.AUDIT),
@@ -1649,13 +1696,48 @@ def _check_report_override(
 
 # ── chairman directives ─────────────────────────────────────────────────────────
 #
-# The CEO may turn something the chairman said into enforced policy. Two things
-# keep that from being a hole: it may only touch rules that constrain what the
-# company asks of *him* (there is nobody such a rule could be used against),
-# and it must cite a real, recent message he actually wrote.
+# The CEO may turn something the chairman said into something the platform
+# does. Two shapes: a RULE directive files reporting-cadence policy, and a
+# SCOPE directive executes a plan order — accept, cut, reopen, restage,
+# reestimate, reword, unsequence — through the same admin machinery the
+# chairman's own buttons drive. What keeps either from being a hole: it must
+# cite a real, recent boardroom message he actually wrote, the authority
+# exercised is his (proven by the citation), and every execution is echoed
+# back threaded to his words, where a misreading is one sentence from
+# correction — and every one of these verbs is reversible.
 
 DIRECTIVE_FIELDS = CADENCE_FIELDS
 DIRECTIVE_MAX_AGE_HOURS = 24
+
+# The scope verbs a directive may execute, and the fields each one needs
+# beyond the requirement it names. `accept` covers "add" too: the CEO
+# proposes, then files the chairman's yes from the message where he said it.
+DIRECTIVE_ACTIONS: dict[str, tuple[str, ...]] = {
+    "accept": (),
+    "cut": (),
+    "reopen": (),
+    "restage": ("stage",),
+    "reestimate": ("est_runs",),
+    "reword": ("statement",),
+    "unsequence": ("depends_on_key",),
+}
+
+
+def check_directive_action(action: dict) -> None:
+    kind = action.get("kind")
+    if kind not in DIRECTIVE_ACTIONS:
+        raise Refusal(
+            f"'{kind}' is not a scope order a directive can carry. The verbs are: "
+            f"{', '.join(sorted(DIRECTIVE_ACTIONS))}. Anything else is the chairman's "
+            "own button to press.",
+            status_code=422,
+        )
+    if not action.get("requirement_key"):
+        raise Refusal("A scope directive names the requirement by key (e.g. R-07).",
+                      status_code=422)
+    missing = [f for f in DIRECTIVE_ACTIONS[kind] if action.get(f) in (None, "")]
+    if missing:
+        raise Refusal(f"The {kind} order needs {', '.join(missing)}.", status_code=422)
 
 
 def check_directive_scope(changes: dict) -> None:
@@ -1673,10 +1755,14 @@ def check_directive_scope(changes: dict) -> None:
         )
 
 
-def check_directive_citation(session: Session, project: Project, message_id: str) -> Message:
+def check_directive_citation(
+    session: Session, project: Project, message_id: str, for_rules: bool = True
+) -> Message:
     """The cited message must be the chairman's own words, in the boardroom,
-    recent, and newer than the rule it replaces — otherwise a stale message
-    could be re-cited to undo a fresher instruction."""
+    recent — and, for a rule directive, newer than the rule it replaces, so a
+    stale message cannot be re-cited to undo a fresher instruction. A scope
+    order skips that last check: it executes an act, it does not replace a
+    standing rule."""
     message = session.get(Message, message_id)
     if message is None or message.project_id != project.id:
         raise Refusal(f"No message {message_id} in this project to cite.", status_code=404)
@@ -1692,6 +1778,8 @@ def check_directive_citation(session: Session, project: Project, message_id: str
         raise Refusal(
             f"That message is {age.days}d old. File a directive when he gives it, not from "
             f"history — anything older than {DIRECTIVE_MAX_AGE_HOURS}h is his to restate.")
+    if not for_rules:
+        return message
     newest = session.execute(
         select(func.max(Amendment.effective_at)).where(
             Amendment.project_id == project.id,
@@ -1707,16 +1795,28 @@ def check_directive_citation(session: Session, project: Project, message_id: str
 
 
 def confirm_directive(
-    session: Session, project: Project, agent: Agent, cited: Message, changes: dict
+    session: Session,
+    project: Project,
+    agent: Agent,
+    cited: Message,
+    changes: dict | None = None,
+    action_detail: str | None = None,
 ) -> None:
     """Say it back to him. The platform can verify that he spoke and when, but
     never what he meant — so the safeguard against a misread directive is that
     he sees it land, in his own channel, threaded to the words it came from."""
-    readable = ", ".join(f"{key.removeprefix('chairman_report_')} = {value}"
-                         for key, value in sorted(changes.items()))
-    body = (f"Recorded as policy, effective now: **{readable}**. I took this from your message "
-            f"above and the platform enforces it from here — it is no longer something I have "
-            f"to remember between runs. Say so if I read you wrong.")
+    if action_detail is not None:
+        body = (f"Done, from your message above: **{action_detail}**. Executed on your "
+                f"authority and on the record. Say so if I read you wrong — every one of "
+                f"these is reversible.")
+        title = "Plan changed on your order"
+    else:
+        readable = ", ".join(f"{key.removeprefix('chairman_report_')} = {value}"
+                             for key, value in sorted((changes or {}).items()))
+        body = (f"Recorded as policy, effective now: **{readable}**. I took this from your "
+                f"message above and the platform enforces it from here — it is no longer "
+                f"something I have to remember between runs. Say so if I read you wrong.")
+        title = "Reporting cadence changed"
     session.add(
         Message(
             id=ids.new_id(ids.MESSAGE),
@@ -1727,11 +1827,11 @@ def confirm_directive(
             body=body,
         )
     )
-    # Best-effort out-of-band: a rule change he did not ask for is exactly the
+    # Best-effort out-of-band: a change he did not watch happen is exactly the
     # thing he should not have to be watching Slack to catch.
     from yaaf.server.notify import chairman_notify
 
-    chairman_notify(session, project, "Reporting cadence changed", body)
+    chairman_notify(session, project, title, body)
 
 
 def _ago(delta: timedelta) -> str:

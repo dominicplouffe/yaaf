@@ -451,7 +451,7 @@ class RoleVersion(Base):
     system_prompt: Mapped[str] = mapped_column(Text)
     model: Mapped[str] = mapped_column(String(64), default="claude-sonnet-5")
     effort: Mapped[str] = mapped_column(String(8), default="high")
-    # {"bash": true, "web": true, "github": false, "egress_allow": ["api.example.com"]}
+    # {"bash": true, "web": true, "github": false}
     tool_permissions: Mapped[dict] = mapped_column(JSONVariant, default=dict)
     secret_scopes: Mapped[list] = mapped_column(JSONVariant, default=list)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
@@ -584,6 +584,12 @@ class Requirement(Base):
     # created for requirements in the open stage or earlier.
     stage: Mapped[int] = mapped_column(Integer, default=1)
     est_runs: Mapped[int | None] = mapped_column(Integer)
+    # The first estimate ever given, never updated. Reestimating moves
+    # est_runs so the plan arithmetic stays honest about the work ahead, but
+    # the bias multiplier is always scored against the number the CEO first
+    # stood behind — discovering a task grew gets a channel, and lowballing
+    # still cannot be laundered by revising afterwards.
+    est_runs_first: Mapped[int | None] = mapped_column(Integer)
     actual_runs: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     # Runs that died and checks that failed against this requirement. The
     # chairman asked the CEO to be adaptable to "plan changes, parameter
