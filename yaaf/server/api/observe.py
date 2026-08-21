@@ -482,6 +482,18 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
                 f"data source '{name}': credential not granted to role(s) "
                 f"{', '.join(ungranted)} — re-save it", "settings")
             continue
+        oauth_status = (source.get("oauth") or {}).get("status")
+        if source.get("auth") == "oauth" and oauth_status != "connected":
+            # A stale token may still be mounted, but agents are one expiry
+            # away from named auth failures — the fix is a human sign-in, and
+            # only the health page can ask for one.
+            what = {"pending": "its OAuth sign-in was started but never finished",
+                    "needs_reauth": "its OAuth connection expired"}.get(
+                oauth_status, "its OAuth connection was never made")
+            verb = "Reconnect" if oauth_status == "needs_reauth" else "Connect"
+            add(f"data-source:{name}", "fail",
+                f"data source '{name}': {what} — press {verb} in Settings", "settings")
+            continue
         last = source.get("last_check") or {}
         if not last:
             add(f"data-source:{name}", "warn",

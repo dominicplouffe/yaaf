@@ -94,6 +94,38 @@ exports, listings, logs — as bulk. It is enforcement, not advice: for a bulk
 source the expensive path does not exist, so no prompt has to talk an agent out
 of taking it.
 
+### OAuth servers — Notion, Linear, Atlassian and friends
+
+Hosted MCP servers usually hand out no pastable token: they are OAuth
+resource servers, and the client is expected to walk the MCP authorization
+spec — discovery, client registration, the authorization-code flow with PKCE,
+refresh-token renewal. yaaf does all of that on the control plane. Pick
+**OAuth — sign in through the provider** in the auth dropdown, save, and press
+**Connect**: a tab opens on the provider's consent screen, and when you finish
+there the source connects. The tokens are stored as encrypted project secrets
+and **refreshed automatically** — before every health check and before every
+run that mounts the source — so sandboxes keep receiving the same
+`MCP_<NAME>_TOKEN` variable a pasted bearer would produce, always holding a
+current access token. If renewal ever stops working (a revoked grant, a
+provider reset), the source shows **needs re-auth** on the health page and the
+fix is one **Reconnect** click.
+
+Most providers register yaaf as a client automatically (RFC 7591). The few
+that don't get an **Advanced** disclosure on the form: paste a client ID (and
+secret, if issued) from the provider's developer console.
+
+Two operational notes:
+
+- Set `YAAF_PUBLIC_BASE_URL` to the browser-facing origin of your install
+  (e.g. `https://yaaf.example.com`). The sign-in redirects back to
+  `<that origin>/oauth/mcp/callback`, and providers generally refuse
+  non-https redirect URIs — behind a TLS-terminating proxy the derived
+  fallback reports plain http.
+- OAuth tokens never travel: a **clone** carries the registered client but
+  asks you to press Connect on the twin (refresh tokens rotate on use, so two
+  projects sharing one would invalidate each other), and an **export** carries
+  only the `auth: "oauth"` marker.
+
 ## Slack
 
 **Settings → Integrations → Slack bridge.**

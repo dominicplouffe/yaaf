@@ -273,6 +273,16 @@ def _merge_project_data_sources(session: Session, project: Project, role_version
         for source in (project.integrations or {}).get("mcp_servers", []):
             if role is None or role.slug not in source.get("roles", []):
                 continue
+            if source.get("auth") == "oauth":
+                # An OAuth access token expires; renew it (into the same
+                # mcp-<name>-token secret row) before this run inherits it, so
+                # a long-lived source never mounts with yesterday's token. A
+                # failed renewal keeps the stale token mounted and marks the
+                # source needs_reauth — the health page says why, the agent
+                # sees a named auth error instead of a silently absent source.
+                from yaaf.server.mcp_oauth import ensure_fresh_token
+
+                ensure_fresh_token(session, project, source)
             spec = {"name": source["name"],
                     "url_env": _env_var_name(source["url_secret"]),
                     # bulk sources are reachable only through data_fetch (which

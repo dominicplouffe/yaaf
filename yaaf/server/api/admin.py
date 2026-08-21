@@ -15,7 +15,7 @@ import secrets as pysecrets
 from datetime import datetime
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -493,14 +493,25 @@ def export_project(project_id: str, session: Session = Depends(db)) -> dict:
 
     integrations = {k: v for k, v in (project.integrations or {}).items()
                     if k not in _NON_PORTABLE_INTEGRATION_KEYS}
+    # OAuth state is install-bound twice over: the registered client names
+    # THIS install's redirect URI, and the tokens name this install's consent.
+    # The `auth` marker travels so the importing side knows to offer Connect.
+    oauth_bound_secrets: set[str] = set()
     if "mcp_servers" in integrations:
+        for entry in integrations["mcp_servers"]:
+            if _source_auth(entry) == "oauth":
+                oauth_bound_secrets.update(_oauth_secret_names(entry))
         integrations["mcp_servers"] = [
-            {k: v for k, v in entry.items() if k != "last_check"}
+            {k: v for k, v in entry.items()
+             if k not in ("last_check", "oauth", "bearer_secret")
+             or (k == "bearer_secret" and _source_auth(entry) != "oauth")}
             for entry in integrations["mcp_servers"]
         ]
 
     # Billing credentials stay out entirely: their values cannot travel, and
     # the twin connects its own in Settings (the page already insists).
+    # OAuth token/client secrets stay out too — "paste the refresh token" is
+    # not a request a human can meet; the import re-connects instead.
     secret_names = [
         {"name": s.name, "role_scopes": s.role_scopes, "kind": s.kind}
         for s in session.execute(
@@ -508,6 +519,7 @@ def export_project(project_id: str, session: Session = Depends(db)) -> dict:
             .where(Secret.project_id == project.id, Secret.kind == "service")
             .order_by(Secret.created_at)
         ).scalars()
+        if s.name not in oauth_bound_secrets
     ]
 
     _audit(session, project.id, "project.export", "project", project.id)
@@ -632,11 +644,25 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
     # Ciphertext is copied as-is — same install, same master key, so nothing is
     # ever decrypted to move it. This is the line an export cannot cross, and
     # the reason a clone needs no credential re-entry at all.
+    #
+    # OAuth data-source tokens are the one exception: providers rotate refresh
+    # tokens on use, so two projects sharing one would invalidate each other's
+    # copy on the first refresh. The registered client (id + secret) does come
+    # across — same install, same redirect URI, one registration serves both —
+    # so reconnecting the twin is a single Connect click, not a re-setup.
+    oauth_token_names: set[str] = set()
+    for entry in (source.integrations or {}).get("mcp_servers", []):
+        if _source_auth(entry) == "oauth":
+            oauth = entry.get("oauth") or {}
+            oauth_token_names.update(
+                n for n in (entry.get("bearer_secret"), oauth.get("refresh_secret")) if n)
     ciphertexts: dict[str, str] = {}
     secret_ids: dict[str, str] = {}
     for row in session.execute(
         select(Secret).where(Secret.project_id == source.id).order_by(Secret.created_at)
     ).scalars():
+        if row.name in oauth_token_names:
+            continue
         copy = Secret(id=ids.new_id(ids.SECRET), project_id=project.id, name=row.name,
                       ciphertext=row.ciphertext, role_scopes=list(row.role_scopes or []),
                       kind=row.kind)
@@ -700,7 +726,21 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
 
         entry = {k: v for k, v in entry.items() if k != "last_check"}
         url_cipher = ciphertexts.get(entry.get("url_secret") or "")
-        if not url_cipher:
+        if _source_auth(entry) == "oauth":
+            # Its tokens deliberately did not come across (see the copy loop);
+            # keep the endpoints and client so Connect is one click, drop
+            # every reference to token rows the twin does not have.
+            entry.pop("bearer_secret", None)
+            entry["oauth"] = {
+                **{k: v for k, v in (entry.get("oauth") or {}).items()
+                   if k in ("authorization_endpoint", "token_endpoint",
+                            "registration_endpoint", "client_id",
+                            "client_secret_secret", "resource", "scope")},
+                "status": "needs_auth",
+            }
+            check = {"ok": False,
+                     "detail": "OAuth sources need reconnecting on the twin — press Connect"}
+        elif not url_cipher:
             check = {"ok": False, "detail": "the data source's URL secret did not come across"}
         else:
             token_cipher = ciphertexts.get(entry.get("bearer_secret") or "")
@@ -811,6 +851,16 @@ class DataSourceIn(BaseModel):
     # expensive path stops existing for it. Default inline: a source that was
     # already connected keeps behaving exactly as it did.
     access: Literal["inline", "bulk"] = "inline"
+    # None means "infer from bearer" so every existing caller keeps meaning
+    # what it always meant; "oauth" switches the source to the browser
+    # sign-in flow, where the token secret holds a refreshed access token
+    # instead of a pasted credential.
+    auth: Literal["none", "bearer", "oauth"] | None = None
+    # Only for OAuth servers without dynamic client registration: credentials
+    # from the provider's developer console. Ignored for other auth modes.
+    client_id: str | None = None
+    client_secret: str | None = None
+    scope: str | None = None
 
 
 def _upsert_project_secret(session: Session, project_id: str, name: str, value: str,
@@ -888,9 +938,27 @@ def _data_source_owning(session: Session, project_id: str | None, secret_name: s
     if project is None:
         return None
     for source in (project.integrations or {}).get("mcp_servers", []):
-        if secret_name in (source.get("url_secret"), source.get("bearer_secret")):
+        oauth = source.get("oauth") or {}
+        if secret_name in (source.get("url_secret"), source.get("bearer_secret"),
+                           oauth.get("refresh_secret"), oauth.get("client_secret_secret")):
             return source.get("name")
     return None
+
+
+def _source_auth(entry: dict) -> str:
+    """The source's auth mode, with the legacy inference spelled out once:
+    entries saved before OAuth existed carry no `auth` key, and for them a
+    stored token means bearer."""
+    return entry.get("auth") or ("bearer" if entry.get("bearer_secret") else "none")
+
+
+def _oauth_secret_names(entry: dict) -> list[str]:
+    """Every secret an OAuth source owns beyond its URL: the access token and,
+    when present, the refresh token and registered client secret."""
+    oauth = entry.get("oauth") or {}
+    return [name for name in (entry.get("bearer_secret"),
+                              oauth.get("refresh_secret"),
+                              oauth.get("client_secret_secret")) if name]
 
 
 def _sse_or_json(response) -> dict | None:
@@ -985,6 +1053,17 @@ def _check_data_source(url: str, bearer: str | None, transport=None) -> dict:
     return {"ok": True, "detail": f"{who} ready — {len(tools)} tool(s): {shown}{more}"}
 
 
+def _oauth_checked(url: str, token: str, entry: dict, transport=None) -> dict:
+    """The ordinary reachability check, with its 401 advice corrected for
+    OAuth: "check the bearer token" tells the chairman to paste something,
+    and there is nothing to paste — the fix is a fresh sign-in."""
+    check = _check_data_source(url, token, transport)
+    if not check["ok"] and "refused the credential" in check.get("detail", ""):
+        entry["oauth"] = {**(entry.get("oauth") or {}), "status": "needs_reauth"}
+        check = {**check, "detail": "the server rejected the access token — press Reconnect"}
+    return check
+
+
 @router.post("/projects/{project_id}/mcp_servers")
 def add_data_source(project_id: str, body: DataSourceIn, session: Session = Depends(db)) -> dict:
     """One form, everything wired: validates the URL at the door, stores it
@@ -995,7 +1074,13 @@ def add_data_source(project_id: str, body: DataSourceIn, session: Session = Depe
     omitted = keep the current token, `""` = remove it, anything else = rotate.
     A URL-only edit that dropped the auth header would fail hours later inside
     an agent run, which is exactly the class of failure this form exists to
-    prevent."""
+    prevent.
+
+    OAuth sources follow the same shape with a browser sign-in where the paste
+    would be: saving records the mode and answers `needs_connect`, the Connect
+    button walks the sign-in, and from then on the token secret holds an access
+    token this server refreshes — an edit that only regrants roles must never
+    force the chairman back through the provider's consent screen."""
     project = _get_project(session, project_id)
     parsed = _parse_source_url(
         body.url,
@@ -1007,6 +1092,27 @@ def add_data_source(project_id: str, body: DataSourceIn, session: Session = Depe
 
     servers = (project.integrations or {}).get("mcp_servers", [])
     prior = next((s for s in servers if s.get("name") == body.name), None)
+    prior_url = (_project_secret_value(session, project.id, prior["url_secret"])
+                 if prior and prior.get("url_secret") else None)
+
+    # `auth` reads like `bearer` does: absent keeps an existing source's mode
+    # (so pre-OAuth callers keep meaning what they always meant), a pasted
+    # token implies bearer, and a brand-new source with neither is open.
+    if body.auth:
+        auth = body.auth
+    elif body.bearer:
+        auth = "bearer"
+    elif prior is not None and body.bearer is None:
+        auth = _source_auth(prior)
+    else:
+        auth = "none"
+
+    if prior is not None and _source_auth(prior) == "oauth" and auth != "oauth":
+        # Switching away from OAuth: its tokens are not pasted credentials and
+        # must not survive as one — drop them all and let the new mode start clean.
+        for stale in _oauth_secret_names(prior):
+            _delete_project_secret(session, project.id, stale)
+        prior = {k: v for k, v in prior.items() if k not in ("bearer_secret", "oauth")}
 
     url_secret = _upsert_project_secret(
         session, project.id, f"mcp-{body.name}-url", body.url.strip(), body.roles)
@@ -1019,35 +1125,73 @@ def add_data_source(project_id: str, body: DataSourceIn, session: Session = Depe
         "url_host": parsed.hostname,
         "url_port": parsed.port or (443 if parsed.scheme == "https" else 80),
         "access": body.access,
+        "auth": auth,
     }
-    # Three cases, because an edit that changes only the URL must not silently
-    # disarm the auth header. Absent (None) keeps whatever the source already
-    # had; empty string is the explicit "drop the token"; anything else rotates.
-    token = body.bearer or None
-    held = prior.get("bearer_secret") if prior else None
-    if body.bearer:
-        token_secret = _upsert_project_secret(
-            session, project.id, f"mcp-{body.name}-token", body.bearer, body.roles)
-        entry["bearer_secret"] = token_secret.name
-    elif body.bearer == "" and held:
-        _delete_project_secret(session, project.id, held)
-    elif body.bearer is None and held:
-        carried = _project_secret_value(session, project.id, held)
-        if carried is not None:
-            # Re-store it so the carried token tracks this save's role grants.
-            _upsert_project_secret(session, project.id, held, carried, body.roles)
-            entry["bearer_secret"] = held
-            token = carried
 
-    check = _check_data_source(body.url.strip(), token)
+    needs_connect = False
+    if auth == "oauth":
+        token = None
+        carried_oauth = dict((prior or {}).get("oauth") or {}) \
+            if prior is not None and _source_auth(prior) == "oauth" else {}
+        if carried_oauth and (prior_url or "").strip() == body.url.strip():
+            # Same source, same address: the connection survives the edit. The
+            # access token is re-stored so its grants track this save's roles.
+            oauth_state = carried_oauth
+            held = prior.get("bearer_secret")
+            carried = _project_secret_value(session, project.id, held) if held else None
+            if carried is not None:
+                _upsert_project_secret(session, project.id, held, carried, body.roles)
+                entry["bearer_secret"] = held
+                token = carried
+        else:
+            # New source, changed address, or a switch from pasted-token auth:
+            # any tokens that exist were minted for something else. Start over.
+            oauth_state = {"status": "needs_auth", "resource": body.url.strip()}
+            if prior is not None:
+                for stale in _oauth_secret_names(prior):
+                    _delete_project_secret(session, project.id, stale)
+        if body.client_id:
+            oauth_state["client_id"] = body.client_id
+        if body.client_secret:
+            client_row = _upsert_project_secret(
+                session, project.id, f"mcp-{body.name}-oauth-client", body.client_secret, [])
+            oauth_state["client_secret_secret"] = client_row.name
+        if body.scope is not None:
+            oauth_state["scope"] = body.scope or None
+        entry["oauth"] = oauth_state
+        needs_connect = token is None or oauth_state.get("status") != "connected"
+        if token:
+            check = _oauth_checked(body.url.strip(), token, entry)
+        else:
+            check = {"ok": False, "detail": "OAuth connection required — press Connect"}
+    else:
+        # Three cases, because an edit that changes only the URL must not silently
+        # disarm the auth header. Absent (None) keeps whatever the source already
+        # had; empty string is the explicit "drop the token"; anything else rotates.
+        token = body.bearer or None
+        held = prior.get("bearer_secret") if prior else None
+        if body.bearer:
+            token_secret = _upsert_project_secret(
+                session, project.id, f"mcp-{body.name}-token", body.bearer, body.roles)
+            entry["bearer_secret"] = token_secret.name
+        elif body.bearer == "" and held:
+            _delete_project_secret(session, project.id, held)
+        elif body.bearer is None and held:
+            carried = _project_secret_value(session, project.id, held)
+            if carried is not None:
+                # Re-store it so the carried token tracks this save's role grants.
+                _upsert_project_secret(session, project.id, held, carried, body.roles)
+                entry["bearer_secret"] = held
+                token = carried
+        check = _check_data_source(body.url.strip(), token)
     entry["last_check"] = {**check, "at": utcnow().isoformat()}
 
     servers = [s for s in servers if s.get("name") != body.name]
     project.integrations = {**(project.integrations or {}), "mcp_servers": [*servers, entry]}
     _audit(session, project.id, "mcp_server.save", "project", project.id,
            {"name": body.name, "roles": body.roles, "host": entry["url_host"],
-            "access": body.access, "check_ok": check["ok"]})
-    return {"name": body.name, "check": check,
+            "access": body.access, "auth": auth, "check_ok": check["ok"]})
+    return {"name": body.name, "check": check, "needs_connect": needs_connect,
             "note": "Effective on each granted role's next run."}
 
 
@@ -1058,7 +1202,7 @@ def delete_data_source(project_id: str, name: str, session: Session = Depends(db
     entry = next((s for s in servers if s.get("name") == name), None)
     if entry is None:
         raise HTTPException(status_code=404, detail="unknown data source")
-    for secret_name in (entry.get("url_secret"), entry.get("bearer_secret")):
+    for secret_name in {entry.get("url_secret"), *_oauth_secret_names(entry)}:
         if secret_name:
             _delete_project_secret(session, project.id, secret_name)
     project.integrations = {**project.integrations,
@@ -1083,12 +1227,96 @@ def check_data_source(project_id: str, name: str, session: Session = Depends(db)
     url = value_of(entry.get("url_secret"))
     if not url:
         raise HTTPException(status_code=422, detail="the data source's URL secret is missing")
-    check = _check_data_source(url, value_of(entry.get("bearer_secret")))
+    if _source_auth(entry) == "oauth":
+        from yaaf.server.mcp_oauth import ensure_fresh_token
+
+        token = ensure_fresh_token(session, project, entry)
+        if token is None:
+            check = {"ok": False, "detail": "OAuth connection required — press Connect"}
+        else:
+            check = _oauth_checked(url, token, entry)
+    else:
+        check = _check_data_source(url, value_of(entry.get("bearer_secret")))
     entry["last_check"] = {**check, "at": utcnow().isoformat()}
-    project.integrations = {**project.integrations, "mcp_servers": servers}
+    # Through persist_entry, not a bare reassignment: `entry` was edited in
+    # place, so the reassigned value compares equal to the loaded one and a
+    # plain assignment is silently skipped at flush.
+    from yaaf.server.mcp_oauth import persist_entry
+
+    persist_entry(project, entry)
     _audit(session, project.id, "mcp_server.check", "project", project.id,
            {"name": name, "ok": check["ok"]})
     return check
+
+
+@router.post("/projects/{project_id}/mcp_servers/{name}/oauth/start")
+def start_data_source_oauth(project_id: str, name: str, request: Request,
+                            session: Session = Depends(db)) -> dict:
+    """Begin the browser sign-in for an OAuth data source: discover the
+    authorization server, register a client there (or reuse one the chairman
+    pasted), and mint the URL the chairman's browser must visit. The `state`
+    in that URL is single-use and 256 bits — it is the whole credential the
+    unauthenticated callback route later redeems, which is why a fresh call
+    here voids any earlier half-finished sign-in."""
+    from yaaf.core.config import settings
+    from yaaf.core.crypto import encrypt
+    from yaaf.server import mcp_oauth
+
+    project = _get_project(session, project_id)
+    servers = (project.integrations or {}).get("mcp_servers", [])
+    entry = next((s for s in servers if s.get("name") == name), None)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="unknown data source")
+    if _source_auth(entry) != "oauth":
+        raise HTTPException(status_code=422, detail="this data source is not set to OAuth "
+                                                    "sign-in — edit it and pick OAuth first")
+    url = _project_secret_value(session, project.id, entry.get("url_secret") or "")
+    if not url:
+        raise HTTPException(status_code=422, detail="the data source's URL secret is missing")
+
+    # The browser-facing origin. Deriving it from the request is a dev
+    # convenience; behind a TLS-terminating proxy it reports http, so
+    # production sets YAAF_PUBLIC_BASE_URL.
+    base = (settings().public_base_url or str(request.base_url)).rstrip("/")
+    redirect_uri = f"{base}/oauth/mcp/callback"
+
+    oauth = dict(entry.get("oauth") or {})
+    try:
+        disc = mcp_oauth.discover(url)
+        if not oauth.get("client_id"):
+            client_id, client_secret = mcp_oauth.register_client(disc, redirect_uri)
+            oauth["client_id"] = client_id
+            if client_secret:
+                client_row = _upsert_project_secret(
+                    session, project.id, f"mcp-{name}-oauth-client", client_secret, [])
+                oauth["client_secret_secret"] = client_row.name
+    except mcp_oauth.OAuthSetupError as exc:
+        entry["oauth"] = {**oauth, "error": str(exc)}
+        mcp_oauth.persist_entry(project, entry)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    state = pysecrets.token_urlsafe(32)
+    verifier = pysecrets.token_urlsafe(64)
+    oauth.update({
+        "status": "pending",
+        "authorization_endpoint": disc.authorization_endpoint,
+        "token_endpoint": disc.token_endpoint,
+        "registration_endpoint": disc.registration_endpoint,
+        "resource": disc.resource,
+        # The PKCE verifier is a secret with a fifteen-minute life; it still
+        # never touches the config JSON in plaintext.
+        "pending": {"state": state, "verifier_cipher": encrypt(verifier),
+                    "redirect_uri": redirect_uri, "created_at": utcnow().isoformat()},
+    })
+    oauth.pop("error", None)
+    entry["oauth"] = oauth
+    mcp_oauth.persist_entry(project, entry)
+    authorize_url = mcp_oauth.build_authorize_url(
+        disc, oauth["client_id"], redirect_uri, state, verifier, oauth.get("scope"))
+    _audit(session, project.id, "mcp_server.oauth_start", "project", project.id,
+           {"name": name, "authorization_endpoint": disc.authorization_endpoint})
+    return {"authorize_url": authorize_url,
+            "note": "Complete the sign-in in the opened tab, then test the source."}
 
 
 @router.post("/teams/{team_id}/repin")

@@ -327,6 +327,18 @@ export interface McpServerEntry {
       context); bulk = reachable only via data_fetch, which writes results to a
       workspace file. Absent on sources saved before the field existed. */
   access?: "inline" | "bulk";
+  /** Absent on sources saved before OAuth existed: a stored token then means
+      bearer, nothing means an open server. */
+  auth?: "none" | "bearer" | "oauth";
+  /** OAuth connection state, present when auth === "oauth". The tokens
+      themselves live in encrypted secrets; this is only what the page shows. */
+  oauth?: {
+    status: "needs_auth" | "pending" | "connected" | "needs_reauth";
+    expires_at?: string | null;
+    client_id?: string;
+    scope?: string | null;
+    error?: string;
+  };
   last_check?: { ok: boolean; detail: string; at: string };
 }
 

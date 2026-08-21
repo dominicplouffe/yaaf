@@ -53,6 +53,11 @@ services:
       YAAF_ADMIN_TOKEN: ${YAAF_ADMIN_TOKEN:-dev-admin-token}
       YAAF_MASTER_KEY: ${YAAF_MASTER_KEY:-}
       YAAF_API_BASE_URL: http://api:8080
+      # Browser-facing origin (https://yaaf.example.com) for OAuth-protected
+      # MCP data sources — their sign-in redirects back to it. Unset, the
+      # redirect URI is derived per request, which breaks behind a
+      # TLS-terminating proxy.
+      # YAAF_PUBLIC_BASE_URL: ${YAAF_PUBLIC_BASE_URL:-}
       # Host path == container path, here as well as on the runner: the two
       # services share these directories and store absolute paths in the
       # database, so they have to agree on what a path means.
