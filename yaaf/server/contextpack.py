@@ -72,6 +72,7 @@ def constitution_prose(cons: ConstitutionDoc, project: Project) -> str:
         f"- Spends of ${cons.approval_threshold_usd:,.0f}+ and anything legally ambiguous "
         f"need chairman approval; approvals expire to DENIED after "
         f"{cons.approval_timeout_days} days, so re-plan rather than wait.\n"
+        f"{_envelope_clause(cons)}"
         f"- Budget: {budget}. At 100% the project auto-pauses.\n"
         # The wake-loop brakes were the one enforced group never stated here,
         # so a company that had spent its daily runs by 01:22 had a CEO with no
@@ -106,6 +107,30 @@ def constitution_prose(cons: ConstitutionDoc, project: Project) -> str:
         "that, move a stage, change an estimate — EXECUTE it with directive_file citing "
         "his message, rather than asking him to press the button himself. His word is the "
         "authority; the citation proves it; the echo lets him correct you."
+    )
+
+
+def _envelope_clause(cons: ConstitutionDoc) -> str:
+    """The real-world spend envelope, stated where every other money rule is
+    stated. Silent when both lines are off."""
+    parts: list[str] = []
+    if cons.max_usd_per_purchase > 0:
+        parts.append(f"a single purchase over ${cons.max_usd_per_purchase:,.0f} needs "
+                     "an approval even below the threshold")
+    if cons.external_monthly_usd_cap > 0:
+        parts.append(f"the month's real-world total is walled at "
+                     f"${cons.external_monthly_usd_cap:,.0f} — no approval overrides "
+                     "it, only an amendment")
+    if not parts:
+        return ""
+    return (
+        "- Real-world purchases (separate from the model budget): "
+        + "; ".join(parts)
+        + ". Inside those lines, buy what the work needs without asking. Clear a "
+          "purchase with purchase_begin BEFORE paying and close it with the receipt; "
+          "a spend made with raw tooling is booked with spend_book against the same "
+          "walls. Every real purchase ends up on the ledger — an unbooked one is what "
+          "the spot-audit catches.\n"
     )
 
 

@@ -224,6 +224,23 @@ class ConstitutionDoc(BaseModel):
         0.8, gt=0, lt=1, group="Budgets", label="Warn at this share of the budget",
         help="The CEO is told to cut burn at this point — before the platform pauses the "
              "project for it.")
+    # The spend envelope (CEO Charter, stage C — docs/AUTONOMY.md). Real-world
+    # purchases, as distinct from model spend. There is no spend_authority
+    # switch on purpose: the money dial IS these numbers, and a switch would
+    # only duplicate them. Inside the envelope an autonomous CEO buys without
+    # asking; outside it, the existing approval machinery answers.
+    external_monthly_usd_cap: float = _rule(
+        500.0, ge=0, group="Budgets", label="Monthly real-world spend (USD)",
+        help="USD the company may spend in the world per month — purchases, "
+             "subscriptions, services — separate from the model budget and enforced "
+             "in EVERY billing mode (token-billed projects used to meter this and "
+             "never cap it). A purchase that would cross it is refused with the "
+             "arithmetic; raising it is an amendment. 0 turns it off.")
+    max_usd_per_purchase: float = _rule(
+        100.0, ge=0, group="Budgets", label="Most one purchase may be, unasked",
+        help="USD. A single purchase above this needs an approval even below the "
+             "approval threshold — the line between running the company and "
+             "surprising its owner. 0 turns the per-purchase line off.")
 
     # Memory (lana §6b) — caps are refusals; curation is explicit, never auto-evict
     memory_cap_project: int = _rule(

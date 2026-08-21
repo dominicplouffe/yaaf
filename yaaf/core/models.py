@@ -284,6 +284,10 @@ class NoticeKind(enum.StrEnum):
     HYPOTHESIS_EXPIRED = "hypothesis_expired"
     BUDGET_WARNING = "budget_warning"
     BUDGET_EXHAUSTED = "budget_exhausted"
+    # The real-world spend envelope (external_monthly_usd_cap) — warned at the
+    # same ratio as the model budget, but never pausing anything: the wall is
+    # enforced where money is cleared and booked, not by stopping the company.
+    EXTERNAL_SPEND_WARNING = "external_spend_warning"
     APPROVAL_DECIDED = "approval_decided"
     APPROVAL_EXPIRED = "approval_expired"
     THREAD_FROZEN = "thread_frozen"

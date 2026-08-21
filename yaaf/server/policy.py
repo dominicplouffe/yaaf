@@ -56,6 +56,7 @@ from yaaf.core.models import (
     EvidenceKind,
     Hypothesis,
     HypothesisStatus,
+    LedgerEntry,
     Memory,
     MemoryScope,
     Message,
@@ -1692,6 +1693,72 @@ def _check_report_override(
             detail={"reason": override},
         )
     )
+
+
+# ── the spend envelope ──────────────────────────────────────────────────────────
+#
+# Real-world money (CEO Charter, stage C — docs/AUTONOMY.md). The dial for
+# money is three numbers, not a switch: `approval_threshold_usd` (the line
+# above which the chairman is asked regardless), `max_usd_per_purchase` (the
+# line above which a single purchase is asked even below the threshold), and
+# `external_monthly_usd_cap` (the month's hard wall, enforced in EVERY billing
+# mode — token-billed projects used to meter real dollars and never cap them).
+# Inside the envelope an autonomous CEO buys without asking; the ledger and
+# the spot-audit are how the owner trusts the envelope after the fact.
+
+
+def external_spent_this_month(session: Session, project_id: str) -> float:
+    month_start = utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    return float(session.execute(
+        select(func.coalesce(func.sum(LedgerEntry.usd), 0.0)).where(
+            LedgerEntry.project_id == project_id,
+            LedgerEntry.kind == "external_spend",
+            LedgerEntry.at >= month_start,
+        )
+    ).scalar_one())
+
+
+def check_external_spend(
+    session: Session,
+    project: Project,
+    cons: ConstitutionDoc,
+    usd: float,
+    approval: Approval | None,
+) -> None:
+    """The envelope, refused with its arithmetic. Called before a purchase is
+    cleared and before a raw spend is booked — same walls on both paths, so
+    which tool carried the money never changes what the money may do."""
+    if cons.external_monthly_usd_cap > 0:
+        spent = external_spent_this_month(session, project.id)
+        if spent + usd > cons.external_monthly_usd_cap:
+            raise Refusal(
+                f"This would put the month's real-world spend at "
+                f"${spent + usd:,.2f}, over the ${cons.external_monthly_usd_cap:,.0f} "
+                f"envelope (${spent:,.2f} already spent). The wall does not take "
+                "approvals — raising it is a constitution amendment, which is the "
+                "chairman's, and yours to recommend with the arithmetic.",
+                status_code=403,
+            )
+    over_purchase = 0 < cons.max_usd_per_purchase < usd
+    over_threshold = usd >= cons.approval_threshold_usd
+    if not (over_purchase or over_threshold):
+        return
+    ok = (
+        approval is not None
+        and approval.project_id == project.id
+        and approval.status == ApprovalStatus.APPROVED
+        and (approval.amount_usd or 0) >= usd
+    )
+    if not ok:
+        line = (f"${cons.approval_threshold_usd:,.0f} (the approval threshold)"
+                if over_threshold
+                else f"${cons.max_usd_per_purchase:,.0f} (the per-purchase line)")
+        raise Refusal(
+            f"A spend of ${usd:,.2f} crosses {line} and needs an approved chairman "
+            "approval covering the amount. Request one at POST /agent/approvals with "
+            "kind='spend' — as a recommendation you would defend.",
+            status_code=403,
+        )
 
 
 # ── chairman directives ─────────────────────────────────────────────────────────

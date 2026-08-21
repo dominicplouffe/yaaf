@@ -23,7 +23,6 @@ from yaaf.core.db import notify
 from yaaf.core.models import (
     AgentKind,
     Approval,
-    ApprovalStatus,
     AuditLog,
     Channel,
     ChannelRead,
@@ -1481,22 +1480,13 @@ class SpendIn(BaseModel):
 def book_spend(
     body: SpendIn, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
 ) -> dict:
+    """Book a real-world spend made with raw tooling. The same envelope as the
+    purchase actuator — which tool carried the money never changes what the
+    money may do — but nothing here fired the effect, so pair it with a side
+    effect when the spend is retryable."""
     cons = effective(session, ctx.project.id)
-    if body.usd >= cons.approval_threshold_usd:
-        approval = session.get(Approval, body.approval_id) if body.approval_id else None
-        ok = (
-            approval is not None
-            and approval.project_id == ctx.project.id
-            and approval.status == ApprovalStatus.APPROVED
-            and (approval.amount_usd or 0) >= body.usd
-        )
-        if not ok:
-            raise Refusal(
-                f"Spends of ${cons.approval_threshold_usd:,.0f} or more need an approved "
-                "chairman approval covering the amount. Request one at POST /agent/approvals "
-                "with kind='spend' — as a recommendation you would defend.",
-                status_code=403,
-            )
+    approval = session.get(Approval, body.approval_id) if body.approval_id else None
+    policy.check_external_spend(session, ctx.project, cons, body.usd, approval)
     row = LedgerEntry(
         id=ids.new_id(ids.LEDGER),
         project_id=ctx.project.id,
@@ -1507,6 +1497,148 @@ def book_spend(
     )
     session.add(row)
     return {"id": row.id}
+
+
+# ── the purchase actuator ───────────────────────────────────────────────────────
+#
+# The convenient path for real-world buying (CEO Charter, stage C). A purchase
+# that runs through here gets its bookkeeping for free and atomically: the
+# envelope is checked BEFORE money moves, the side-effect row makes a
+# crash-retry unable to buy twice, and finishing books the ledger and keeps
+# the receipt. It is never the only path — a stored card is a credential like
+# any other, usable by any tool the CEO points at a checkout — but a purchase
+# made outside it must still be booked with spend_book, against the same
+# envelope, and an unbooked purchase is exactly what the spot-audit catches.
+
+
+class PurchaseBegin(BaseModel):
+    vendor: str = Field(min_length=2, max_length=200)
+    description: str = Field(min_length=5, max_length=2000)
+    usd: float = Field(gt=0)
+    idempotency_key: str = Field(min_length=4, max_length=200)
+    requirement_id: str | None = None
+    approval_id: str | None = None
+
+
+@router.post("/purchases")
+def purchase_begin(
+    body: PurchaseBegin, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
+) -> dict:
+    """Clear a purchase against the envelope and record it before paying.
+
+    Call this BEFORE money moves. A refusal here costs nothing; the same
+    refusal discovered after paying costs the money and an apology."""
+    cons = effective(session, ctx.project.id)
+    existing = session.execute(
+        select(SideEffect).where(
+            SideEffect.project_id == ctx.project.id,
+            SideEffect.idempotency_key == body.idempotency_key,
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return {
+            "purchase_id": existing.id,
+            "status": existing.status,
+            "duplicate": True,
+            "result": existing.result,
+            "note": ("This purchase was already recorded (possibly by a prior attempt). "
+                     "If status is 'completed', the money already moved — DO NOT pay "
+                     "again. If 'recorded', a prior attempt died mid-purchase: check "
+                     "with the vendor before retrying."),
+        }
+    approval = session.get(Approval, body.approval_id) if body.approval_id else None
+    policy.check_external_spend(session, ctx.project, cons, body.usd, approval)
+    row = SideEffect(
+        id=ids.new_id(ids.SIDE_EFFECT),
+        project_id=ctx.project.id,
+        run_id=ctx.run.id,
+        kind="purchase",
+        idempotency_key=body.idempotency_key,
+        payload={"vendor": body.vendor, "description": body.description,
+                 "usd": body.usd, "requirement_id": body.requirement_id,
+                 "approval_id": body.approval_id},
+    )
+    session.add(row)
+    session.add(AuditLog(
+        id=ids.new_id(ids.AUDIT), project_id=ctx.project.id,
+        actor=f"agent:{ctx.agent.id}", action="purchase.begin",
+        entity="side_effect", entity_id=row.id,
+        detail={"vendor": body.vendor, "usd": body.usd,
+                "description": body.description[:300]},
+    ))
+    spent = policy.external_spent_this_month(session, ctx.project.id)
+    remaining = (cons.external_monthly_usd_cap - spent - body.usd
+                 if cons.external_monthly_usd_cap > 0 else None)
+    return {
+        "purchase_id": row.id,
+        "status": row.status,
+        "duplicate": False,
+        "cleared_usd": body.usd,
+        "envelope_remaining_after": round(remaining, 2) if remaining is not None else None,
+        "note": ("Cleared. Pay with whatever tool fits, then call purchase_finish with "
+                 "the receipt — the ledger entry is written there, not here, so a "
+                 "purchase that falls through costs nothing on the books."),
+    }
+
+
+class PurchaseFinish(BaseModel):
+    ok: bool
+    # The receipt is the point: what was bought, from whom, for how much, in
+    # the vendor's own words. Ten characters of "it worked" is not a receipt.
+    receipt: str = Field(min_length=10, max_length=8000)
+    external_ref: str | None = Field(default=None, max_length=300)
+
+
+@router.post("/purchases/{purchase_id}/finish")
+def purchase_finish(
+    purchase_id: str,
+    body: PurchaseFinish,
+    ctx: RunContext = Depends(run_auth),
+    session: Session = Depends(db),
+) -> dict:
+    row = session.get(SideEffect, purchase_id)
+    if row is None or row.project_id != ctx.project.id or row.kind != "purchase":
+        raise Refusal("Unknown purchase.", status_code=404)
+    if row.status != SideEffectStatus.RECORDED:
+        return {
+            "purchase_id": row.id,
+            "status": row.status,
+            "duplicate": True,
+            "note": "This purchase is already finished; the books did not change.",
+        }
+    usd = float((row.payload or {}).get("usd") or 0)
+    if body.ok:
+        # Money moved: book it even if the envelope shifted since begin — a
+        # refusal here would un-record real spending, which is worse than any
+        # overshoot. The overshoot itself shows in the meter and the audit.
+        ledger = LedgerEntry(
+            id=ids.new_id(ids.LEDGER),
+            project_id=ctx.project.id,
+            kind="external_spend",
+            usd=usd,
+            run_id=ctx.run.id,
+            note=(f"purchase: {(row.payload or {}).get('vendor', '?')} — "
+                  f"{(row.payload or {}).get('description', '')[:200]}"
+                  + (f" [ref {body.external_ref}]" if body.external_ref else "")),
+        )
+        session.add(ledger)
+        row.status = SideEffectStatus.COMPLETED
+        row.result = {"receipt": body.receipt, "external_ref": body.external_ref,
+                      "ledger_id": ledger.id}
+    else:
+        row.status = SideEffectStatus.FAILED
+        row.result = {"receipt": body.receipt, "external_ref": body.external_ref}
+    row.completed_at = utcnow()
+    session.add(AuditLog(
+        id=ids.new_id(ids.AUDIT), project_id=ctx.project.id,
+        actor=f"agent:{ctx.agent.id}", action="purchase.finish",
+        entity="side_effect", entity_id=row.id,
+        detail={"ok": body.ok, "usd": usd,
+                "vendor": (row.payload or {}).get("vendor"),
+                "receipt": body.receipt[:500]},
+    ))
+    return {"purchase_id": row.id, "status": row.status,
+            "booked_usd": usd if body.ok else 0.0}
 
 
 # ── side effects (idempotency ledger) ───────────────────────────────────────────

@@ -419,13 +419,51 @@ async def t_approvals_list(args):
 
 @tool(
     "spend_book",
-    "Book an external dollar spend to the ledger. Spends at/above the approval threshold "
-    "need an approved approval_id.",
+    "Book a real-world dollar spend you made with your own tooling. Every spend faces "
+    "the same envelope as purchase_begin: the monthly external cap is a hard wall, and "
+    "amounts over the per-purchase line or the approval threshold need an approved "
+    "approval_id. For a purchase you are ABOUT to make, prefer purchase_begin/"
+    "purchase_finish — it checks the envelope before money moves and books itself. "
+    "Every real purchase gets booked, one way or the other: an unbooked spend is what "
+    "the chairman's spot-audit exists to catch.",
     {"usd": float, "note": str, "approval_id": str},
 )
 async def t_spend_book(args):
     payload = {k: v for k, v in args.items() if v not in (None, "")}
     return _text(_call("POST", "/agent/ledger/spend", payload))
+
+
+@tool(
+    "purchase_begin",
+    "Clear a real-world purchase against the spend envelope BEFORE paying — a refusal "
+    "here costs nothing; the same refusal after paying costs the money. Records the "
+    "purchase with a stable idempotency_key so a crash or retry can never buy twice: "
+    "if the response says duplicate/completed, the money already moved — do NOT pay "
+    "again. Then pay with whatever tool fits (the platform never holds the card for "
+    "you), and call purchase_finish with the receipt. usd over the per-purchase line "
+    "or the approval threshold needs an approved approval_id; the monthly external "
+    "cap is a wall no approval overrides — recommend an amendment instead.",
+    {"vendor": str, "description": str, "usd": float, "idempotency_key": str,
+     "requirement_id": str, "approval_id": str},
+)
+async def t_purchase_begin(args):
+    payload = {k: v for k, v in args.items() if v not in (None, "")}
+    return _text(_call("POST", "/agent/purchases", payload))
+
+
+@tool(
+    "purchase_finish",
+    "Close a purchase opened with purchase_begin. ok=true books the ledger entry and "
+    "keeps the receipt (quote the vendor's own confirmation — what was bought, from "
+    "whom, for how much); ok=false records the failure and books nothing. Finishing "
+    "twice never double-books.",
+    {"purchase_id": str, "ok": bool, "receipt": str, "external_ref": str},
+)
+async def t_purchase_finish(args):
+    payload = {k: v for k, v in dict(args).items()
+               if k != "purchase_id" and v not in (None, "")}
+    payload["ok"] = bool(args.get("ok"))
+    return _text(_call("POST", f"/agent/purchases/{args['purchase_id']}/finish", payload))
 
 
 @tool(
@@ -899,6 +937,7 @@ ALL_TOOLS = [
     t_evidence_add, t_review_narrative, t_commitment_propose, t_scope_act,
     t_hypothesis_add, t_hypothesis_kill, t_decision_add,
     t_approval_request, t_approvals_list, t_spend_book,
+    t_purchase_begin, t_purchase_finish,
     t_side_effect_begin, t_side_effect_finish,
     t_artifact_put, t_artifact_list, t_artifact_get, t_env_list,
 ]

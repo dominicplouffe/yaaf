@@ -1394,6 +1394,38 @@ def enforce_budget(session: Session, project: Project, cons: ConstitutionDoc) ->
                 f"({spent:,.0f}/{cap:,.0f} {unit}). Decide what you are cutting and tell "
                 "the chairman the number — before the platform pauses the project for you.",
             )
+    _warn_external_envelope(session, project, cons)
+
+
+def _warn_external_envelope(session: Session, project: Project,
+                            cons: ConstitutionDoc) -> None:
+    """The real-world spend envelope, warned like the model budget — in every
+    billing mode, because a token-billed company still spends dollars in the
+    world. Never pauses anything: the wall itself is enforced where a purchase
+    is cleared and a spend is booked."""
+    cap = cons.external_monthly_usd_cap
+    if cap <= 0:
+        return
+    spent = policy.external_spent_this_month(session, project.id)
+    if spent < cap * cons.budget_warn_ratio:
+        return
+    month_start = utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    already = session.execute(
+        select(func.count(Notice.id)).where(
+            Notice.project_id == project.id,
+            Notice.kind == NoticeKind.EXTERNAL_SPEND_WARNING,
+            Notice.created_at >= month_start,
+        )
+    ).scalar_one()
+    if already:
+        return
+    _notice_ceo(
+        session, project, NoticeKind.EXTERNAL_SPEND_WARNING,
+        f"${spent:,.2f} of the ${cap:,.0f} real-world spend envelope is used this "
+        "month. Purchases that would cross the wall will be refused with the "
+        "arithmetic — plan the remaining spend, or recommend an amendment to the "
+        "chairman with the numbers.",
+    )
 
 
 # ── memory pressure (informational; enforcement is at memory add) ──────────────
