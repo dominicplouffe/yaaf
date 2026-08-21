@@ -674,6 +674,12 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
                     "acceptance_test": r.acceptance_test,
                     "blocked_by": blocked[r.id],
                     "failure_load": r.failure_load,
+                    # What the chairman said when he rejected it, on every run
+                    # rather than only on the one that consumed the notice. A
+                    # rework that takes six runs read his words once, on the
+                    # first, and was planning from memory by the third.
+                    **({"chairman_rejected_it_saying": rejected}
+                       if (rejected := policy.rejected_by_chairman(r)) else {}),
                 }
                 for r in requirements
             ]

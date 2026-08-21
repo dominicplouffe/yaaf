@@ -645,6 +645,27 @@ def record_task_event(
 # The third is what turns the dependency graph from a picture into a gate.
 
 
+# A chairman's rejection of an observable is kept ON the requirement, not only
+# in a notice the first run consumes and destroys. `check_output` is where it
+# goes, because it is literally the output of the check — but that column also
+# holds a command's stdout, so the prefix is what lets every reader downstream
+# (the context pack, the Plan tab, the dispatcher's ladder) tell a person's
+# verdict from a shell's. Change it here and they all follow.
+VERDICT_REJECTED = "chairman, not met: "
+# The note itself is capped at 10_000 by the API model; this leaves room for
+# the prefix rather than silently eating the last words of a long rejection.
+VERDICT_NOTE_CAP = 10_400
+
+
+def rejected_by_chairman(requirement) -> str | None:
+    """The chairman's rejection note, or None if the last thing to happen to
+    this requirement was not one."""
+    output = requirement.check_output or ""
+    if not output.startswith(VERDICT_REJECTED):
+        return None
+    return output[len(VERDICT_REJECTED):]
+
+
 OPEN_REQUIREMENT_STATUSES = (
     RequirementStatus.PENDING,
     RequirementStatus.IN_PROGRESS,

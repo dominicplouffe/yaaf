@@ -431,16 +431,22 @@ def check_commitments(session: Session, project: Project, cons: ConstitutionDoc)
 
 
 def _work_closed_since_last_check(session: Session, requirement, tasks) -> bool:
-    """Has any task under this requirement moved since the platform last ruled?
+    """Has any task under this requirement moved since it was last ruled on?
 
-    The marker is the checker's own event, written in the same transaction as
-    the verdict, so it cannot drift from it. Never checked before → True: the
-    first ruling is always owed.
+    The marker is the ruling itself, whoever made it: any event that took this
+    requirement OUT of `checking`. That is the checker's failing command test
+    and the chairman's verdict on an observable, under one rule. Never ruled on
+    before → True: the first ruling is always owed.
 
-    Only the *checker* counts, never a chairman verdict on an observable. That
-    loop has a human in it and paces itself; gating on it would mean a chairman
-    who rejected an observable could never look at it again without ordering
-    fresh work first.
+    An earlier version counted only the *checker*, on the reasoning that the
+    chairman's loop has a human in it and paces itself. It does not. An
+    observable acceptance test never reaches the checker, so it never wrote the
+    event this reads, so the guard was dead for exactly the requirements a human
+    rules on: the chairman pressed "not met", the next sweep fifteen seconds
+    later put it straight back in front of him, and the red button did nothing
+    at all. A rejection means the artifact is wrong. The test is a function of
+    work that has not changed since, so re-asking cannot produce a new answer —
+    it can only ask the same person the same question until he stops reading.
 
     Deliberately keyed on task movement rather than a timer or a retry budget.
     A retry budget still spends N containers proving the same thing; a clock
@@ -450,7 +456,7 @@ def _work_closed_since_last_check(session: Session, requirement, tasks) -> bool:
     last = session.execute(
         select(func.max(RequirementEvent.at)).where(
             RequirementEvent.requirement_id == requirement.id,
-            RequirementEvent.actor == "checker",
+            RequirementEvent.from_status == RequirementStatus.CHECKING,
         )
     ).scalar()
     if last is None:

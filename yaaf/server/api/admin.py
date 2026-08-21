@@ -1969,7 +1969,11 @@ def cut_requirement(
 
 class RequirementVerdict(BaseModel):
     ok: bool
-    note: str = Field(default="", max_length=4000)
+    # Long on purpose. A rejection is the whole brief for the rework that
+    # follows it — the chairman who found six methodology defects in a report
+    # has six paragraphs to write, and a field that clips him at a tweet turns
+    # the most valuable thing he does all week into "it doesn't".
+    note: str = Field(default="", max_length=10_000)
 
 
 @router.post("/requirements/{requirement_id}/verdict")
@@ -1982,6 +1986,14 @@ def requirement_verdict(
     names something a script cannot check — "the memo reads well" — so somebody
     has to look. That somebody is never the agent whose work it judges, which
     is why this route is here and not in the agent API.
+
+    A rejection STICKS. The requirement goes back to in-progress and stays
+    there until new work closes under it; the janitor will not park it in front
+    of the chairman again on its own. For a while it did — the guard that stops
+    an unchanged workspace being re-tested keyed on the platform's checker, and
+    an observable never reaches the checker — so pressing "not met" was undone
+    fifteen seconds later, every time, and the button did nothing a chairman
+    could see. See `janitor._work_closed_since_last_check`.
     """
     row = session.get(Requirement, requirement_id)
     if row is None:
@@ -1992,29 +2004,57 @@ def requirement_verdict(
             detail=f"{row.key} is {row.status}; only a requirement awaiting your verdict "
                    "can take one.",
         )
+    note = body.note.strip()
+    if not body.ok and not note:
+        raise HTTPException(
+            status_code=422,
+            detail="A rejection needs a reason. Everything that happens next is built "
+                   "from it: the CEO decides what to rebuild, and whether stages you "
+                   "already accepted have to be redone, by reading this and nothing "
+                   "else. 'Not met' on its own is a dead end.",
+        )
     project = _get_project(session, row.project_id)
     actor = f"user:{project.chairman_user_id}"
     from_status = row.status
     if body.ok:
         row.status = RequirementStatus.MET
         row.met_at = utcnow()
-        row.check_output = body.note or "chairman confirmed the observable"
+        row.check_output = note or "chairman confirmed the observable"
         policy.record_requirement_event(session, row, RequirementStatus.MET, actor,
-                                        note=body.note or None, from_status=from_status)
+                                        note=note or None, from_status=from_status)
     else:
         row.status = RequirementStatus.IN_PROGRESS
         row.failure_load += 1
+        # On the requirement, not only in a notice. A notice is consumed by the
+        # first run that reads it and is then gone; the reason a deliverable was
+        # rejected has to still be there on the tenth run of the rework, and on
+        # the chairman's own screen next to the thing he rejected.
+        row.check_output = f"{policy.VERDICT_REJECTED}{note}"[:policy.VERDICT_NOTE_CAP]
         policy.record_requirement_event(session, row, RequirementStatus.IN_PROGRESS, actor,
-                                        note=body.note or "chairman rejected the observable",
-                                        from_status=from_status)
+                                        note=note, from_status=from_status)
         _notice_ceo(
             session, row.project_id, NoticeKind.AUDIT_FAILED,
-            f"The chairman looked at {row.key} and it does NOT hold: "
-            f"{body.note[:1000] or '(no note)'}\nIt is back in progress. Read what he said "
-            "before creating more work for it.",
+            f"The chairman looked at {row.key} and it does NOT hold. This is what he "
+            f"said, in full:\n\n{note}\n\n"
+            f"{row.key} is back in progress and you may create work for it right now — "
+            "nothing is blocking you and nothing is waiting on him. Before you do, work "
+            "through his words in this order:\n"
+            f"1. What does {row.key} itself have to rebuild to meet them?\n"
+            "2. Do requirements you already settled have to be redone? Defects usually "
+            "surface at the last deliverable and are made further upstream — if what he "
+            "says invalidates an earlier stage, that stage is wrong too. Settled scope "
+            "is history here: a met requirement cannot be reopened or reworded by "
+            "anyone. Propose a NEW requirement at that earlier stage instead. The moment "
+            "he accepts it the open stage drops back to it by itself, and the later "
+            "stages freeze until it settles — which is the correct order to rebuild in.\n"
+            "3. Then create the work, and say in the boardroom what you concluded at "
+            "steps 1 and 2 so he can see the shape of the rebuild before it runs.\n"
+            f"Only he can change what {row.key} asks for. If his words move the bar "
+            "rather than the work, say so in the boardroom rather than quietly building "
+            "to a different one.",
         )
     _audit(session, row.project_id, "requirement.verdict", "requirement", row.id,
-           {"key": row.key, "ok": body.ok})
+           {"key": row.key, "ok": body.ok, "note_chars": len(note)})
     return {"id": row.id, "key": row.key, "status": row.status}
 
 

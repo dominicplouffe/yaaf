@@ -720,6 +720,10 @@ def plan_view(project_id: str, session: Session = Depends(db)) -> dict:
                 "met_at": r.met_at.isoformat() if r.met_at else None,
                 "cut_reason": r.cut_reason,
                 "check_output": r.check_output,
+                # Split out rather than left for the browser to sniff: the
+                # prefix that marks a person's verdict apart from a command's
+                # stdout belongs in one place, and it is not the UI.
+                "chairman_verdict": policy.rejected_by_chairman(r),
             }
             for r in scope
         ],

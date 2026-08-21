@@ -470,7 +470,7 @@ def _board_reachability(session: Session, project: Project, now) -> dict:
     ).scalar_one()
 
     # Scope waiting on the chairman, and scope that quietly stopped moving.
-    proposed, observable, stalled = [], [], []
+    proposed, observable, stalled, rework = [], [], [], []
     for req in session.execute(
         select(Requirement).where(Requirement.project_id == project.id)
     ).scalars():
@@ -496,6 +496,13 @@ def _board_reachability(session: Session, project: Project, now) -> dict:
             # becomes MET and never becomes anyone's problem.
             if total and not open_now and not counts[TaskStatus.DONE]:
                 stalled.append(req.key)
+            # The chairman sent it back and nobody picked the rework up. Its
+            # board is empty and it will not return to him on its own — that is
+            # deliberate, since a deliverable nobody has touched cannot get a
+            # different answer — so this is the one quiet in the ladder that
+            # needs the CEO rather than a clock or the chairman.
+            elif not open_now and policy.rejected_by_chairman(req):
+                rework.append(req.key)
 
     plan = policy.plan_requirement(session, project.id)
     plan_open = plan is not None and plan.status not in policy.CLOSED_REQUIREMENT_STATUSES
@@ -508,6 +515,8 @@ def _board_reachability(session: Session, project: Project, now) -> dict:
         unreachable = "paused_agents"
     elif stalled:
         unreachable = "stalled_requirement"
+    elif rework:
+        unreachable = "rework_owed"
     elif proposed or observable or plan_open:
         unreachable = "awaiting_chairman"
     elif gates:
@@ -525,6 +534,7 @@ def _board_reachability(session: Session, project: Project, now) -> dict:
         "leaderless_teams": sorted(leaderless),
         "paused_agents": sorted(parked),
         "stalled_requirements": sorted(stalled),
+        "rework_owed": sorted(rework),
         "proposed_requirements": sorted(proposed),
         "observable_checking": sorted(observable),
         "plan_open": plan_open,
@@ -677,22 +687,46 @@ def _activity_brief(state: dict) -> dict:
             "test will never run because nothing succeeded. It needs new work or it "
             "needs cutting — it will not resolve itself.")
 
+    if gate == "rework_owed":
+        keys = _listed(board["rework_owed"])
+        return brief(
+            "serious", "rework owed",
+            f"{keys} came back from you and the rework has not started",
+            f"{keys}: you sent it back and nobody has picked up the rework.",
+            "It is open, its board is empty, and it will not come back to you until "
+            "new work closes under it — which is the point, since re-asking you about "
+            "a deliverable nobody has touched is not a question. The CEO has what you "
+            "said and is free to create the work. If this stays here, say so in the "
+            "boardroom.")
+
     if gate == "awaiting_chairman":
-        wants = []
+        # One sentence per cause, because they are not the same refusal and
+        # saying they are cost a company its rework: this read "no work may be
+        # created until this is settled" whatever the cause, the CEO quoted it
+        # to the chairman as fact — the context pack tells it to quote this
+        # rather than reason from a directory — and stood down for the night.
+        # Only an unaccepted plan actually stops everything.
+        wants, why = [], []
         if board["plan_open"]:
             wants.append("the plan needs accepting")
+            why.append("Until you accept the plan nothing may be created at all; that "
+                       "one is a hard refusal and the CEO will quote it.")
         if board["proposed_requirements"]:
             wants.append(f"{_listed(board['proposed_requirements'])} proposed")
+            why.append("Work may not be created for scope you have not accepted — "
+                       "scope you already accepted is untouched by it.")
         if board["observable_checking"]:
             wants.append(
                 f"{_listed(board['observable_checking'])} waiting on your verdict")
+            why.append("A requirement sitting with you is finished being worked, so it "
+                       "blocks nothing but itself; if the rest of the board is quiet "
+                       "too, that is a different reason and this is not it.")
         asks = _listed(wants)
         return brief(
             "warn", "your call",
             f"waiting on you — {asks}",
             f"Waiting on you: {asks}.",
-            "No work may be created until this is settled, so the company will stay "
-            "quiet however much capacity it has. Decide it on the Plan tab.")
+            " ".join(why) + " Decide it on the Plan tab.")
 
     if gate == "blocked_tasks":
         return brief(

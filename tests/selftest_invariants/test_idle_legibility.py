@@ -32,7 +32,9 @@ from yaaf.core.models import (
     Notice,
     NoticeKind,
     Project,
+    Run,
     RunQueue,
+    RunStatus,
     Task,
     TaskStatus,
     Team,
@@ -41,11 +43,11 @@ from yaaf.core.models import (
 from yaaf.server import dispatcher
 
 # Every value the ladder in `activity_state` and `_board_reachability` can put
-# in `blocked_by`. None is the fourteenth: "nothing is stopping this".
+# in `blocked_by`. None is the fifteenth: "nothing is stopping this".
 GATES = {
     "daily_runs", "pacing", "governance_reserve", "concurrency", "agents_busy",
     "wake_ceiling", "coalescing", "scheduled", "no_lead", "paused_agents",
-    "stalled_requirement", "awaiting_chairman", "blocked_tasks",
+    "stalled_requirement", "rework_owed", "awaiting_chairman", "blocked_tasks",
 }
 # The gates that are waiting out a clock. Only these may be dismissed in the
 # UI, and each has to name the moment it ends — a wait with no falsifiable time
@@ -90,6 +92,7 @@ def _synthetic(gate: str | None) -> dict:
         "board": {"claimable": 0, "gated": 1, "next_gate_at": at, "blocked": 1,
                   "leaderless_teams": ["Alpha"], "paused_agents": ["Mike"],
                   "stalled_requirements": ["R-02"],
+                  "rework_owed": ["R-06"],
                   "proposed_requirements": ["R-03"],
                   "observable_checking": ["R-01"], "plan_open": True,
                   "unreachable": gate},
@@ -187,6 +190,43 @@ def test_a_team_with_no_lead_says_its_queue_is_unclaimable(client):
     assert state["brief"]["clears_at"] is None, "this one never clears itself"
     with db_session() as session:
         assert dispatcher.dispatch_once(session) == 0
+
+
+def test_a_requirement_the_chairman_sent_back_is_not_a_quiet_board(client):
+    """The state the loop-fix creates, and the reason it needs a name.
+
+    Once a rejection sticks, the requirement sits open with an empty board and
+    will not go back to the chairman until new work closes under it. Every
+    counter reads zero and nothing is wrong with any of them — which is exactly
+    the shape of quiet this ladder exists to refuse. It is the CEO's move, and
+    the screen has to say so.
+    """
+    from tests.selftest_invariants.test_requirements import (
+        _park_an_observable,
+        _verdict,
+        deliver_project,
+    )
+
+    project = deliver_project(client, slug="sent-back")
+    rid = _park_an_observable(client, project)
+    assert _verdict(client, rid, False, "The margins are wrong. Rebuild it.").status_code == 200
+
+    # The CEO has been woken and has read it; what is left is that it has not
+    # acted. An unread notice is a different sentence, and so is a run still
+    # going — the tokens that built the deliverable are still RUNNING here.
+    with db_session() as session:
+        for notice in session.query(Notice).filter(Notice.consumed_at.is_(None)):
+            notice.consumed_at = utcnow()
+        for run in session.query(Run).filter(Run.status == RunStatus.RUNNING):
+            run.status = RunStatus.DONE
+    _drain()
+
+    state = _activity(project)
+    assert state["blocked_by"] == "rework_owed", state["brief"]
+    assert state["board"]["rework_owed"] == ["R-01"]
+    assert state["brief"]["tone"] == "serious"
+    assert state["brief"]["clears_at"] is None, "no clock ends this one"
+    assert "rework" in state["brief"]["short"]
 
 
 def test_work_owned_by_a_paused_agent_is_not_silent(client):

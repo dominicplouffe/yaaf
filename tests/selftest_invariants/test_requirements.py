@@ -324,6 +324,14 @@ def test_the_chairman_verdict_is_the_only_thing_that_meets_an_observable(client)
         assert row.status == RequirementStatus.IN_PROGRESS
         assert row.failure_load == 1, "a rejected requirement is an error, and errors count"
 
+    # He is not asked again until the rework lands — see
+    # `test_a_rejected_observable_is_not_re_asked_until_the_work_moves`.
+    with db_session() as session:
+        janitor.check_finished_requirements(session, session.get(Project, project["id"]))
+    with db_session() as session:
+        assert session.get(Requirement, rid).status == RequirementStatus.IN_PROGRESS
+
+    _complete_a_task(client, project, rid)
     with db_session() as session:
         janitor.check_finished_requirements(session, session.get(Project, project["id"]))
     passed = client.post(f"/admin/requirements/{rid}/verdict",
@@ -609,6 +617,120 @@ def test_a_failing_acceptance_test_is_not_retried_until_the_work_moves(client):
         janitor.check_finished_requirements(session, session.get(Project, project["id"]))
     assert _queued_checks(project["id"]) == 2, \
         "work moved, so the platform owes a fresh ruling"
+
+
+def _park_an_observable(client, project: dict, slug_note: str = "") -> str:
+    """An observable requirement with its work all closed: parked in CHECKING,
+    waiting on the chairman and nobody else."""
+    from yaaf.server import janitor
+
+    rid = propose(client, ceo_token(project), test=OBS_TEST)["requirement_id"]
+    accept(client, rid, project)
+    _complete_a_task(client, project, rid)
+    with db_session() as session:
+        janitor.check_finished_requirements(session, session.get(Project, project["id"]))
+    with db_session() as session:
+        assert session.get(Requirement, rid).status == RequirementStatus.CHECKING, slug_note
+    return rid
+
+
+def _verdict(client, rid: str, ok: bool, note: str = ""):
+    return client.post(f"/admin/requirements/{rid}/verdict",
+                       json={"ok": ok, "note": note}, headers=ADMIN)
+
+
+def test_a_rejected_observable_is_not_re_asked_until_the_work_moves(client):
+    """The chairman's half of the loop that ate a company.
+
+    The command half was fixed and the observable half was not, because the
+    guard keyed on the *checker's* event and an observable never reaches the
+    checker. So a chairman who pressed "not met" was asked the same question
+    again fifteen seconds later, and again, about a document nobody had
+    touched. He pressed it several times over an evening and it never stuck —
+    from where he sat the red button did nothing at all.
+
+    A rejection is a ruling. The next one is owed when the work moves.
+    """
+    from yaaf.server import janitor
+
+    project = deliver_project(client, slug="looped-observable")
+    rid = _park_an_observable(client, project)
+
+    rejected = _verdict(client, rid, False, "The margin figures are wrong; rebuild it.")
+    assert rejected.status_code == 200, rejected.text
+    assert rejected.json()["status"] == RequirementStatus.IN_PROGRESS
+
+    # Nothing has been rebuilt. Ten janitor passes must not put it back in
+    # front of him.
+    for _ in range(10):
+        with db_session() as session:
+            janitor.check_finished_requirements(
+                session, session.get(Project, project["id"]))
+        with db_session() as session:
+            assert session.get(Requirement, rid).status == RequirementStatus.IN_PROGRESS, \
+                "re-asking the chairman about an unchanged deliverable is not a question"
+
+    # The rework closes — now the answer really could be different.
+    _complete_a_task(client, project, rid)
+    with db_session() as session:
+        janitor.check_finished_requirements(session, session.get(Project, project["id"]))
+    with db_session() as session:
+        assert session.get(Requirement, rid).status == RequirementStatus.CHECKING, \
+            "work moved, so the chairman is owed a fresh look"
+
+
+def test_the_ceo_may_build_the_rework_the_moment_it_is_rejected(client):
+    """The other half of what stalled the real project: the CEO believed the
+    platform blocked it, said so to the chairman, and stood down. Nothing
+    blocks it — and this is the test that keeps that true."""
+    project = deliver_project(client, slug="rework-allowed")
+    rid = _park_an_observable(client, project)
+    _verdict(client, rid, False, "Scrutinise the big numbers against account ACOS.")
+
+    allowed = make_task(client, ceo_token(project), project, rid)
+    assert allowed.status_code == 200, allowed.text
+
+
+def test_a_rejection_with_no_reason_is_refused(client):
+    """Everything downstream is built from the note. 'Not met' on its own
+    leaves the CEO guessing at what six defects were."""
+    project = deliver_project(client, slug="silent-no")
+    rid = _park_an_observable(client, project)
+
+    refused = _verdict(client, rid, False, "   ")
+    assert refused.status_code == 422
+    assert "reason" in refused.json()["detail"]
+    with db_session() as session:
+        assert session.get(Requirement, rid).status == RequirementStatus.CHECKING, \
+            "a refused verdict must not move the requirement"
+
+    assert _verdict(client, rid, True).status_code == 200, \
+        "confirming still needs no note — there is nothing to rebuild"
+
+
+def test_the_rejection_reaches_the_ceo_whole_and_stays_on_the_requirement(client):
+    """A notice is consumed by the first run that reads it. A rebuild that
+    takes six runs was planning from memory by the third, and the note was
+    clipped at 1000 characters before it even got there."""
+    from yaaf.core.models import Notice
+    from yaaf.server import policy
+
+    project = deliver_project(client, slug="long-verdict")
+    rid = _park_an_observable(client, project)
+    note = "Advertisements and campaigns are the same thing. " + ("x" * 3000) + " END."
+
+    assert _verdict(client, rid, False, note).status_code == 200
+
+    with db_session() as session:
+        row = session.get(Requirement, rid)
+        assert policy.rejected_by_chairman(row) == note, \
+            "the requirement itself must carry what he said"
+        body = session.query(Notice).filter(
+            Notice.agent_id == project["ceo_agent_id"]).all()[-1].body
+    assert note in body, "the CEO gets it whole, not clipped"
+    assert "may create work for it right now" in body
+    assert "NEW requirement at that earlier stage" in body, \
+        "the CEO must be told the one route to redoing a settled stage"
 
 
 def test_repeated_acceptance_failures_escalate_once_and_then_go_quiet(client):

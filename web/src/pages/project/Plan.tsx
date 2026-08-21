@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { get, post } from "../../api";
 import { usePoll } from "../../hooks";
-import { AsOf, NoteAction, Skeleton } from "../../ui";
+import { AsOf, ConfirmModal, NoteAction, Skeleton } from "../../ui";
 import type { ProjectCtx } from "../Project";
 
 /** The visual plan the chairman asked for — twice — before it was twice
@@ -34,6 +34,7 @@ interface PlanRequirement {
   met_at: string | null;
   cut_reason: string | null;
   check_output: string | null;
+  chairman_verdict: string | null;
 }
 
 interface PlanCommitment {
@@ -106,6 +107,87 @@ function statusBadge(status: string) {
 
 const SETTLED = new Set(["met", "cut"]);
 
+/** Saying no, at the length saying no actually takes.
+
+    The other levers here are one-line notes and should stay that way — accept,
+    cut and "it holds" are decisions whose reason fits in a sentence. A
+    rejection is not one of those: it is the entire brief for the rebuild that
+    follows, the CEO plans from it and nothing else, and the single-line input
+    this used to share with the rest quietly asked a chairman with six defects
+    to find to summarise them in a tweet. */
+function RejectVerdict({ r, onDone }: { r: PlanRequirement; onDone: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function go() {
+    if (!note.trim()) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await post(`/admin/requirements/${r.id}/verdict`, { ok: false, note: note.trim() });
+      setOpen(false);
+      setNote("");
+      onDone();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!open) {
+    return (
+      <button className="small danger" onClick={() => setOpen(true)}>
+        It doesn't…
+      </button>
+    );
+  }
+  return (
+    <ConfirmModal
+      title={`${r.key} does not hold`}
+      confirmLabel="✗ Not met — send it back"
+      danger
+      busy={busy || !note.trim()}
+      onConfirm={go}
+      onCancel={() => { setOpen(false); setError(null); }}
+    >
+      <p style={{ marginTop: 0 }}>{r.statement}</p>
+      <p>
+        Write what is wrong and what has to change. The CEO plans the whole rebuild from
+        this and from nothing else, so the detail you put here is the detail it works to.
+      </p>
+      <textarea
+        autoFocus
+        rows={12}
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+        placeholder={"What is wrong with the deliverable.\nWhat the correct method or "
+          + "number is.\nWhether anything you already accepted has to be redone because "
+          + "of it — defects usually surface at the last deliverable and are made "
+          + "further upstream."}
+      />
+      <ul style={{ margin: "10px 0 0", paddingLeft: 18 }}>
+        <li>
+          <b>It stays rejected.</b> It comes back to you only after new work closes under
+          it — you will not be asked about the same unchanged deliverable again.
+        </li>
+        <li>
+          <b>The CEO is woken immediately</b> with these words in full, and decides what
+          this requirement rebuilds and whether earlier stages have to be redone.
+        </li>
+        <li>
+          A stage you already accepted cannot be reopened — the CEO proposes a fresh
+          requirement at that stage and you accept it, which puts the later stages back
+          behind it.
+        </li>
+      </ul>
+      {error && <p className="help" style={{ color: "var(--critical)" }}>{error}</p>}
+    </ConfirmModal>
+  );
+}
+
 /** Chairman levers for one requirement. Accept and cut are his alone — the CEO
     proposes and can never accept its own — and the verdict is how an
     observable acceptance test gets an answer a script cannot give. */
@@ -150,17 +232,7 @@ function Levers({ r, onDone }: { r: PlanRequirement; onDone: () => void }) {
             onDone();
           }}
         />
-        <NoteAction
-          label="It doesn't…"
-          className="small danger"
-          placeholder="What is wrong — the CEO reads this before creating more work"
-          confirmLabel="✗ Not met"
-          requireNote
-          onSubmit={async (note) => {
-            await post(`/admin/requirements/${r.id}/verdict`, { ok: false, note });
-            onDone();
-          }}
-        />
+        <RejectVerdict r={r} onDone={onDone} />
       </>
     );
   }
@@ -226,12 +298,23 @@ function RequirementCard({ r, onCritical, onDone }: {
           waits for {r.depends_on.join(", ")}
         </div>
       )}
+      {/* Not behind the fold. What you said when you sent it back is the
+          reason this requirement is in the state it is in, and it stays on
+          the card until the rebuild comes back to you. */}
+      {r.chairman_verdict && !SETTLED.has(r.status) && (
+        <div className="sb" style={{
+          marginTop: 6, paddingLeft: 8, whiteSpace: "pre-wrap",
+          borderLeft: "3px solid var(--critical)",
+        }}>
+          <span className="help">you sent this back: </span>{r.chairman_verdict}
+        </div>
+      )}
       {open && (
         <div style={{ marginTop: 8, fontSize: 13, color: "var(--ink-2)" }}>
           <div style={{ fontFamily: "var(--mono, monospace)", fontSize: 12 }}>
             {r.test_kind === "command" ? "$ " : ""}{testLine(r)}
           </div>
-          {r.check_output && (
+          {r.check_output && !r.chairman_verdict && (
             <div style={{ marginTop: 6 }}>
               <span className="help">last check: </span>{r.check_output}
             </div>
