@@ -213,7 +213,14 @@ WORKSPACE_RUN = (
     "pulls, long documents, intermediate results — in files, work on it with "
     "tools, and let only the small end of it (aggregates, samples, conclusions) "
     "into messages, memory, or your own prose. Before fetching anything twice, "
-    "look in the workspace: a file a previous run left there is free."
+    "look in the workspace: a file a previous run left there is free. "
+    "The sandbox also carries Chromium with playwright (python) for services "
+    "that have no API — signups, dashboards, checkouts. Screenshot the moments "
+    "that matter into the workspace as your evidence trail; save session state "
+    "(storage_state, cookies) there so the next run resumes logged in; record "
+    "every account you create with account_record; and when a captcha, 2FA "
+    "code, or human-only step blocks you, save state and file assist_request — "
+    "never try to defeat a security challenge."
 )
 WORKSPACE_CHAT = (
     "TWO DIRECTORIES, and the difference matters. /company is the company's real "

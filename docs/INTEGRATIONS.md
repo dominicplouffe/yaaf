@@ -214,6 +214,14 @@ docker compose --profile s3 up      # bundled MinIO for local use
 The bucket is created on first use. The base install stays boto3-free — it's
 imported lazily, only when the endpoint is set.
 
+## Waking on the world
+
+A signed generic webhook may carry `wake`: `"ceo"` or an agent's exact name.
+The named agent gets an urgent notice and wakes on the next dispatcher tick —
+under every wake-rate brake, so the world can knock but never stampede. This
+is how a customer email, an order, or a monitoring alert reaches an agent
+before its next heartbeat.
+
 ## Revenue
 
 A signed generic webhook whose JSON body carries `revenue_usd` books a

@@ -1539,6 +1539,47 @@ def decide_approval(
     return {"id": approval.id, "status": approval.status}
 
 
+@router.get("/projects/{project_id}/accounts")
+def list_accounts(project_id: str, session: Session = Depends(db)) -> list[dict]:
+    """The account registry: everything the company answers to out in the
+    world. Record-only by decision — winding down is the CEO's call while the
+    project runs, and the chairman's reading when he stops it for good."""
+    from yaaf.core.models import Account
+
+    _get_project(session, project_id)
+    rows = session.execute(
+        select(Account).where(Account.project_id == project_id)
+        .order_by(Account.created_at)
+    ).scalars()
+    return [{"id": a.id, "service": a.service, "username": a.username,
+             "owner": a.owner, "credential_name": a.credential_name,
+             "url": a.url, "requirement_id": a.requirement_id, "note": a.note,
+             "created_at": a.created_at.isoformat()} for a in rows]
+
+
+class AgentSchedule(BaseModel):
+    # "HH:MM" in the constitution's timezone, or null to clear.
+    daily_at: str | None = Field(default=None, pattern="^([01]?\\d|2[0-3]):[0-5]\\d$")
+
+
+@router.patch("/agents/{agent_id}/schedule")
+def set_agent_schedule(
+    agent_id: str, body: AgentSchedule, session: Session = Depends(db)
+) -> dict:
+    """A per-agent daily wake — the CEO's standup generalized to any agent
+    (stage E). Fires through the same heartbeat dedup and wake-rate brakes;
+    every firing is still a paid model call, which is why it is the
+    chairman's to set."""
+    agent = session.get(Agent, agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail="unknown agent")
+    was = agent.daily_at
+    agent.daily_at = body.daily_at
+    _audit(session, agent.project_id, "agent.schedule", "agent", agent.id,
+           {"name": agent.name, "was": was, "now": body.daily_at})
+    return {"id": agent.id, "name": agent.name, "daily_at": agent.daily_at}
+
+
 class NeedFulfillIn(BaseModel):
     secret_name: str = Field(min_length=2, max_length=120)
     value: str = Field(min_length=1)

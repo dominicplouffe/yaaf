@@ -45,6 +45,7 @@ SECRET = "secr"
 AUDIT = "audt"
 NOTICE = "ntce"
 SUGGESTION = "sugg"
+ACCOUNT = "acct"
 
 
 def new_id(prefix: str) -> str:

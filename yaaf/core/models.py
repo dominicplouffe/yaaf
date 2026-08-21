@@ -259,6 +259,12 @@ class ApprovalKind(enum.StrEnum):
     LEGAL = "legal"
     OWNER_DECISION = "owner_decision"
     TOOL_REQUEST = "tool_request"
+    # The human-assist protocol (CEO Charter, stage E): a step only a human
+    # can do — a captcha, a 2FA code, a KYC form, an account only he can
+    # touch. Any agent may file one; the chairman's answer rides the decision
+    # note and wakes the asker. The platform never tries to defeat a security
+    # challenge at any autonomy level — it hands it over.
+    ASSIST = "assist"
 
 
 class ApprovalStatus(enum.StrEnum):
@@ -291,6 +297,10 @@ class NoticeKind(enum.StrEnum):
     # Money came IN — booked only by a signed webhook, never by an agent, so
     # income can be reported without ever being inventable.
     REVENUE = "revenue"
+    # The world talked back (stage E): a signed webhook asked that an agent be
+    # woken — a customer email, an order, a monitoring alert. Urgent-classed,
+    # still under every wake-rate brake: the world can knock, never stampede.
+    EXTERNAL_EVENT = "external_event"
     APPROVAL_DECIDED = "approval_decided"
     APPROVAL_EXPIRED = "approval_expired"
     THREAD_FROZEN = "thread_frozen"
@@ -492,6 +502,11 @@ class Agent(Base):
     role_version_id: Mapped[str | None] = mapped_column(String(40))
     status: Mapped[str] = mapped_column(String(16), default=AgentStatus.ACTIVE)
     model_override: Mapped[str | None] = mapped_column(String(64))
+    # Per-agent daily wake, "HH:MM" in the constitution's timezone (stage E).
+    # The CEO's standup generalized: a support agent that checks the inbox
+    # every morning, a metrics agent that reports at close. Chairman-set;
+    # fires through the same heartbeat dedup and wake-rate brakes as the CEO's.
+    daily_at: Mapped[str | None] = mapped_column(String(8))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 
@@ -1118,6 +1133,38 @@ class Run(Base):
     # sent to the model, stashed beside the trace.
     context_path: Mapped[str | None] = mapped_column(Text)
     summary: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class Account(Base):
+    """The account registry (CEO Charter, stage E): every identity the company
+    creates out in the world, on the record — record-only by the chairman's
+    decision. No orphan signups: when a project is stopped for good, this is
+    how its owner sees what exists and settles it. `owner` is situational —
+    'project' when the account hangs off an identity the project owns (its
+    email, its domain), 'chairman' when a responsible human is the name behind
+    it — decided per account, in the boardroom, and written down here."""
+
+    __tablename__ = "accounts"
+    __table_args__ = (
+        UniqueConstraint("project_id", "service", "username"),
+        Index("ix_accounts_project", "project_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    service: Mapped[str] = mapped_column(String(200))       # "namecheap.com"
+    username: Mapped[str] = mapped_column(String(200))      # login / email used
+    owner: Mapped[str] = mapped_column(String(16), default="project")  # project|chairman
+    # The stored secret holding this account's credential, when one exists —
+    # a name, never a value; the registry links, it does not hold.
+    credential_name: Mapped[str | None] = mapped_column(String(120))
+    url: Mapped[str | None] = mapped_column(String(500))
+    # What justified it: the requirement served, and anything worth knowing
+    # at wind-down (plan tier, renewal date, "cancel via support email").
+    requirement_id: Mapped[str | None] = mapped_column(String(40))
+    note: Mapped[str | None] = mapped_column(Text)
+    created_by_agent_id: Mapped[str | None] = mapped_column(String(40))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 

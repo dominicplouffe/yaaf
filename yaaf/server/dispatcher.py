@@ -82,7 +82,7 @@ MESSAGE_COALESCE_COUNT = 3
 # store is not worth a full-price wake, so it coalesces and rides the next one.
 URGENT_NOTICE_KINDS = {NoticeKind.BUDGET_WARNING, NoticeKind.BUDGET_EXHAUSTED,
                        NoticeKind.APPROVAL_DECIDED, NoticeKind.AUDIT_FAILED,
-                       NoticeKind.MEMORY_FULL,
+                       NoticeKind.MEMORY_FULL, NoticeKind.EXTERNAL_EVENT,
                        # A stall notice that waited out a batching window would
                        # be extending the exact silence it exists to report.
                        NoticeKind.STALLED,
@@ -1107,6 +1107,16 @@ def _wake_reasons(
     # 3. Work: ready tasks this agent could claim, or a claim to push forward.
     reasons.extend(_work_reasons(session, agent, now))
 
+    # 3b. A per-agent daily wake (agents.daily_at) — the CEO's standup
+    #     generalized to any agent (stage E): the support agent that reads
+    #     the inbox every morning, the metrics agent that reports at close.
+    #     Same helper, same heartbeat dedup, same brakes.
+    if agent.daily_at:
+        personal = _daily_wake_due(session, project, cons, agent, now,
+                                   raw=agent.daily_at, name="agent_daily")
+        if personal:
+            reasons.append(personal)
+
     # 4. Heartbeats: the CEO plans on a cadence even in silence — but silence
     #    with an empty board and no live bet leaves nothing to plan, and an
     #    idle wake is a full-price run. The first-ever heartbeat always fires
@@ -1185,8 +1195,13 @@ def _ceo_has_planning_material(session: Session, project: Project) -> bool:
 
 
 def _daily_wake_due(session: Session, project: Project, cons: ConstitutionDoc,
-                    agent: Agent, now) -> dict | None:
-    raw = cons.ceo_daily_at
+                    agent: Agent, now, raw: str | None = None,
+                    name: str = "daily") -> dict | None:
+    """A once-per-local-day wall-clock wake. Called with the constitution's
+    ceo_daily_at for the CEO, and with agents.daily_at for anyone the chairman
+    put on a rhythm (stage E) — same dedup Heartbeat, distinct `name`, so the
+    CEO can hold both without either eating the other."""
+    raw = cons.ceo_daily_at if raw is None else raw
     if not raw:
         return None
     try:
@@ -1195,22 +1210,22 @@ def _daily_wake_due(session: Session, project: Project, cons: ConstitutionDoc,
         hour, minute = (int(part) for part in str(raw).split(":", 1))
         tz = ZoneInfo(cons.timezone)
     except Exception:
-        log.warning("project %s has invalid ceo_daily_at/timezone config", project.slug)
+        log.warning("project %s has invalid daily_at/timezone config", project.slug)
         return None
     now_local = now.astimezone(tz)
     target = now_local.replace(hour=hour, minute=minute, second=0, microsecond=0)
     if now_local < target:
         return None
     beat = session.execute(
-        select(Heartbeat).where(Heartbeat.agent_id == agent.id, Heartbeat.name == "daily")
+        select(Heartbeat).where(Heartbeat.agent_id == agent.id, Heartbeat.name == name)
     ).scalar_one_or_none()
     if beat is not None and beat.last_fired_at.astimezone(tz).date() >= now_local.date():
         return None
     if beat is None:
-        session.add(Heartbeat(agent_id=agent.id, name="daily", last_fired_at=now))
+        session.add(Heartbeat(agent_id=agent.id, name=name, last_fired_at=now))
     else:
         beat.last_fired_at = now
-    return {"kind": "heartbeat", "name": "daily",
+    return {"kind": "heartbeat", "name": name,
             "note": f"daily {raw} {cons.timezone} wake"}
 
 

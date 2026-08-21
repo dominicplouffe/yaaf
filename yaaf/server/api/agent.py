@@ -1512,6 +1512,159 @@ def book_spend(
 # tickbox by default, the CEO's own verb when the dial grants it.
 
 
+def _boardroom_system_line(session: Session, project_id: str, body: str) -> None:
+    """A platform-authored boardroom line: no sender, so it spends no cadence
+    and reads the same in the dashboard and in Slack (the bridge mirrors the
+    boardroom) — the one channel that reaches the chairman wherever he is."""
+    boardroom = session.execute(
+        select(Channel).where(Channel.project_id == project_id,
+                              Channel.kind == ChannelKind.BOARDROOM)
+    ).scalar_one_or_none()
+    if boardroom is not None:
+        session.add(Message(
+            id=ids.new_id(ids.MESSAGE),
+            project_id=project_id,
+            channel_id=boardroom.id,
+            body=body,
+        ))
+
+
+class AccountIn(BaseModel):
+    service: str = Field(min_length=2, max_length=200)
+    username: str = Field(min_length=1, max_length=200)
+    owner: str = Field(default="project", pattern="^(project|chairman)$")
+    credential_name: str | None = Field(default=None, max_length=120)
+    url: str | None = Field(default=None, max_length=500)
+    requirement_id: str | None = None
+    note: str | None = Field(default=None, max_length=4000)
+
+
+@router.post("/accounts")
+def account_record(
+    body: AccountIn, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
+) -> dict:
+    """Record an identity the company created in the world. Record-only, and
+    REQUIRED discipline rather than machinery: an account nobody wrote down is
+    an orphan the owner discovers on a bill. Store the credential as a secret
+    (or file it in your assist/need) and link its NAME here — the registry
+    links, it never holds."""
+    from yaaf.core.models import Account
+
+    existing = session.execute(
+        select(Account).where(Account.project_id == ctx.project.id,
+                              Account.service == body.service.strip(),
+                              Account.username == body.username.strip())
+    ).scalar_one_or_none()
+    if existing is not None:
+        return {"account_id": existing.id, "duplicate": True,
+                "note": "Already on the registry."}
+    row = Account(
+        id=ids.new_id(ids.ACCOUNT),
+        project_id=ctx.project.id,
+        service=body.service.strip(),
+        username=body.username.strip(),
+        owner=body.owner,
+        credential_name=body.credential_name,
+        url=body.url,
+        requirement_id=body.requirement_id,
+        note=body.note,
+        created_by_agent_id=ctx.agent.id,
+    )
+    session.add(row)
+    session.add(AuditLog(
+        id=ids.new_id(ids.AUDIT), project_id=ctx.project.id,
+        actor=f"agent:{ctx.agent.id}", action="account.record",
+        entity="account", entity_id=row.id,
+        detail={"service": row.service, "username": row.username,
+                "owner": row.owner},
+    ))
+    return {"account_id": row.id, "duplicate": False,
+            "note": "On the registry. The chairman sees everything the company "
+                    "answers to, which is what makes winding down a reading "
+                    "instead of an archaeology."}
+
+
+@router.get("/accounts")
+def accounts_list(
+    ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
+) -> list[dict]:
+    from yaaf.core.models import Account
+
+    rows = session.execute(
+        select(Account).where(Account.project_id == ctx.project.id)
+        .order_by(Account.created_at)
+    ).scalars()
+    return [{"service": a.service, "username": a.username, "owner": a.owner,
+             "credential_name": a.credential_name, "url": a.url,
+             "note": a.note} for a in rows]
+
+
+class AssistIn(BaseModel):
+    what: str = Field(min_length=10, max_length=2000)
+    # Where the human picks up: a URL, "the SMS sent to your phone", a form.
+    where: str | None = Field(default=None, max_length=500)
+
+
+@router.post("/assists")
+def assist_request(
+    body: AssistIn, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
+) -> dict:
+    """The human-assist protocol: a step only a human can do.
+
+    A captcha, a 2FA code, a KYC form, a signature — the platform never tries
+    to defeat a security challenge at any autonomy level; it hands it over.
+    ANY agent may file one (a worker mid-signup should not relay a captcha
+    through the CEO), and it rides the approval machinery: it nags, it
+    expires default-deny, and the chairman's answer — the code, the 'done',
+    the 'no' — arrives in the decision note, which wakes you. Save your
+    session state to the workspace BEFORE ending the run (playwright
+    storage_state, cookies, the URL you were on): the workspace persists, so
+    the next run resumes where this one stopped."""
+    cons = effective(session, ctx.project.id)
+    from datetime import timedelta
+
+    approval = Approval(
+        id=ids.new_id(ids.APPROVAL),
+        project_id=ctx.project.id,
+        kind="assist",
+        requested_by_agent_id=ctx.agent.id,
+        title=f"Assist: {body.what[:120]}",
+        body=body.what + (f"\nWhere: {body.where}" if body.where else ""),
+        expires_at=utcnow() + timedelta(days=cons.approval_timeout_days),
+    )
+    session.add(approval)
+    _boardroom_system_line(
+        session, ctx.project.id,
+        f"🤝 ASSIST NEEDED ({ctx.agent.name}): {body.what[:400]}"
+        + (f"\nWhere: {body.where}" if body.where else "")
+        + "\nAnswer on the Decisions screen — your note travels back verbatim "
+          "(a code, a 'done', a 'no') and wakes the agent.")
+    session.add(AuditLog(
+        id=ids.new_id(ids.AUDIT), project_id=ctx.project.id,
+        actor=f"agent:{ctx.agent.id}", action="assist.request",
+        entity="approval", entity_id=approval.id,
+        detail={"what": body.what[:300], "where": body.where},
+    ))
+    from yaaf.server.notify import chairman_notify
+
+    chairman_notify(
+        session, ctx.project, f"Human needed: {body.what[:120]}",
+        approval.body + "\n\nAnswer on the Decisions screen — your note travels "
+        "back verbatim and wakes the agent. This is the one step autonomy never "
+        "takes from you: the platform hands over security challenges, it never "
+        "defeats them.",
+    )
+    notify(session, WAKE_CHANNEL, ctx.project.id)
+    return {
+        "assist_id": approval.id,
+        "expires_at": approval.expires_at.isoformat(),
+        "note": ("Filed and sent to the chairman where he reads. Save your session "
+                 "state to the workspace now (cookies, storage state, the URL), "
+                 "record what you were doing, and end the run — his answer wakes "
+                 "you, and the workspace persists."),
+    }
+
+
 class NeedIn(BaseModel):
     title: str = Field(min_length=4, max_length=200)
     why: str = Field(min_length=10, max_length=4000)
@@ -1556,24 +1709,14 @@ def need_request(
         expires_at=utcnow() + timedelta(days=cons.approval_timeout_days),
     )
     session.add(approval)
-    boardroom = session.execute(
-        select(Channel).where(Channel.project_id == ctx.project.id,
-                              Channel.kind == ChannelKind.BOARDROOM)
-    ).scalar_one_or_none()
-    if boardroom is not None:
-        # A system line, not a CEO status: it spends no cadence and reads the
-        # same in the dashboard and in Slack (the bridge mirrors the boardroom).
-        cost = (f" (~${body.est_usd_per_month:,.0f}/mo)"
-                if body.est_usd_per_month is not None else "")
-        session.add(Message(
-            id=ids.new_id(ids.MESSAGE),
-            project_id=ctx.project.id,
-            channel_id=boardroom.id,
-            body=(f"📋 NEED: {body.title}{cost} — {body.why[:400]}\n"
-                  f"Fulfill it on the Decisions screen (one motion: value stored, "
-                  f"roles scoped, need approved), or decline it there. Unanswered, "
-                  f"it expires to no in {cons.approval_timeout_days} days."),
-        ))
+    cost = (f" (~${body.est_usd_per_month:,.0f}/mo)"
+            if body.est_usd_per_month is not None else "")
+    _boardroom_system_line(
+        session, ctx.project.id,
+        f"📋 NEED: {body.title}{cost} — {body.why[:400]}\n"
+        f"Fulfill it on the Decisions screen (one motion: value stored, "
+        f"roles scoped, need approved), or decline it there. Unanswered, "
+        f"it expires to no in {cons.approval_timeout_days} days.")
     session.add(AuditLog(
         id=ids.new_id(ids.AUDIT), project_id=ctx.project.id,
         actor=f"agent:{ctx.agent.id}", action="need.request",

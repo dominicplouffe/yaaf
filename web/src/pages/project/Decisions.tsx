@@ -15,6 +15,8 @@ function whyYours(kind: string): string {
       return "The CEO judged this a direction change, not an execution detail.";
     case "tool_request":
       return "An agent is asking for a capability it does not have. Only you can grant one.";
+    case "assist":
+      return "A step only a human can do — a captcha, a 2FA code, a form. Your note travels back verbatim (a code, a 'done', a 'no') and wakes the agent. The platform hands over security challenges; it never defeats them.";
     default:
       return "The constitution routes this kind of decision to the chairman.";
   }

@@ -434,6 +434,53 @@ async def t_spend_book(args):
 
 
 @tool(
+    "assist_request",
+    "Any agent. A step only a HUMAN can do is blocking you — a captcha, a 2FA code, a "
+    "KYC form, a signature, an account only the chairman can touch. Never try to defeat "
+    "a security challenge; hand it over. Before calling: save your session state to the "
+    "workspace (playwright storage_state / cookies, the URL you were on, what remains "
+    "to do) — the workspace persists across runs, so the next run resumes where you "
+    "stopped. Say exactly WHAT you need ('the 6-digit code SMS'd to your phone', "
+    "'solve the captcha at this URL and tell me done') and WHERE. His answer arrives "
+    "verbatim in the decision that wakes you; unanswered it expires to no, so also "
+    "plan the work that does not depend on it.",
+    {"what": str, "where": str},
+)
+async def t_assist_request(args):
+    payload = {k: v for k, v in args.items() if v not in (None, "")}
+    return _text(_call("POST", "/agent/assists", payload))
+
+
+@tool(
+    "account_record",
+    "REQUIRED whenever you create an account/identity anywhere in the world — a signup, "
+    "a registration, a service login. Record: service, username, owner ('project' when "
+    "it hangs off an identity the project owns like its own email/domain; 'chairman' "
+    "when a responsible human is the name behind it — when unsure, ask in the "
+    "boardroom), the NAME of the stored credential (never a value — store values as "
+    "secrets via a need, or note where they live), url, and a note with what matters "
+    "at wind-down (plan tier, renewal date, how to cancel). An account nobody wrote "
+    "down is an orphan the owner discovers on a bill.",
+    {"service": str, "username": str, "owner": str, "credential_name": str,
+     "url": str, "requirement_id": str, "note": str},
+)
+async def t_account_record(args):
+    payload = {k: v for k, v in args.items() if v not in (None, "")}
+    return _text(_call("POST", "/agent/accounts", payload))
+
+
+@tool(
+    "accounts_list",
+    "The account registry: every identity the company has created in the world. Read "
+    "it before signing up anywhere (it may already exist) and when winding anything "
+    "down.",
+    {},
+)
+async def t_accounts_list(args):
+    return _text(_call("GET", "/agent/accounts"))
+
+
+@tool(
     "need_request",
     "CEO only. File a NEED with the chairman: a capability the company lacks — 'I need "
     "AWS access, give me a key', 'we need a Stripe account', 'SMTP credentials for the "
@@ -982,6 +1029,7 @@ ALL_TOOLS = [
     t_hypothesis_add, t_hypothesis_kill, t_decision_add,
     t_approval_request, t_approvals_list, t_spend_book,
     t_need_request, t_credentials_list, t_credential_scope,
+    t_assist_request, t_account_record, t_accounts_list,
     t_purchase_begin, t_purchase_finish,
     t_side_effect_begin, t_side_effect_finish,
     t_artifact_put, t_artifact_list, t_artifact_get, t_env_list,

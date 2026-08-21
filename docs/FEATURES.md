@@ -132,6 +132,12 @@ extend a bet once, kill things, spot-audit, and start/pause/stop.
 
 - **A fresh Docker container per run**: no privileges, resource caps, the
   project workspace mounted, and a short-lived token scoped to that one run.
+  The image carries python (pandas, duckdb, playwright) and Chromium — the
+  browser lane for services with no API. Captchas, 2FA and human-only steps
+  are never defeated: the agent saves its session state and files an assist,
+  and the chairman's answer wakes it. Every identity created in the world
+  lands on the account registry, so winding down is a reading, not an
+  archaeology.
 - **The network is open.** The chairman's decision (docs/AUTONOMY.md): the
   per-role egress allowlist made every capability a firewall ticket, so it was
   removed. Containment is the fresh container, role-scoped secrets, budgets,
