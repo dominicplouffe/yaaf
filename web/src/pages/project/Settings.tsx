@@ -43,6 +43,16 @@ function envVarName(name: string): string {
   return name.replace(/[^A-Za-z0-9]+/g, "_").replace(/^_+|_+$/g, "").toUpperCase();
 }
 
+/** Live-normalize a data source name to the API's slug rule (^[a-z0-9-]{2,32}$):
+    the name becomes an env var, a tool prefix and secret names, so "SEMRush"
+    must land as "semrush" here rather than bounce off the server as a regex.
+    Trailing hyphens survive typing ("my-" on the way to "my-source"); leading
+    ones never; the save handler strips the trailing ones. */
+function slugifyName(raw: string): string {
+  return raw.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/-+/g, "-")
+    .replace(/^-+/, "").slice(0, 32);
+}
+
 /** Config addresses a secret by name (`slack.bot_token_secret`, a data source's
     `url_secret`); revealing one needs its id. One lookup, used by every card. */
 function secretByName(secrets: SecretRow[], name: string | null | undefined) {
@@ -880,7 +890,7 @@ function DataSources({
           <label className="field">Name (lowercase slug)</label>
           <input
             value={name}
-            onChange={(e) => setName(e.target.value)}
+            onChange={(e) => setName(slugifyName(e.target.value))}
             placeholder="figma, analytics, crm…"
           />
           {name.trim() && (
@@ -928,9 +938,10 @@ function DataSources({
       <div className="actions">
         <button
           className="small primary"
-          disabled={busy || !name.trim() || !url.trim() || roles.length === 0}
+          disabled={busy || name.replace(/-+$/, "").length < 2 || !url.trim()
+            || roles.length === 0}
           onClick={() => {
-            const savedName = name.trim();
+            const savedName = name.replace(/-+$/, "");
             // Pre-open the sign-in tab inside the click, before any await —
             // a tab opened after the network round-trip is popup-blocked.
             const tab = auth === "oauth" ? window.open("", "_blank") : null;
