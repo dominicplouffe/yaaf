@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from yaaf.core.constitution import effective
@@ -138,6 +138,15 @@ def create_app() -> FastAPI:
         @app.get("/")
         def root() -> RedirectResponse:
             return RedirectResponse("/app/")
+
+        # The SPA declares its own icon, so this is for the pages that can't:
+        # /docs and any bare-root request, both of which fall back to the
+        # well-known path. Served as SVG regardless of the .ico spelling —
+        # browsers dispatch on the content type, and every engine that asks
+        # for a favicon today renders SVG.
+        @app.get("/favicon.ico", include_in_schema=False)
+        def favicon() -> FileResponse:
+            return FileResponse(dist / "favicon.svg", media_type="image/svg+xml")
     else:
 
         @app.get("/")

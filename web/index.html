@@ -3,6 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Absolute under the base path: hash routing means the browser's URL is
+         /app/#/project/… at any depth, so a relative href would still resolve,
+         but this stays correct if the router ever stops using hashes. -->
+    <link rel="icon" type="image/svg+xml" href="/app/favicon.svg" />
+    <meta name="theme-color" content="#0d0d0d" />
     <title>yaaf</title>
   </head>
   <body>

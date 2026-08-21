@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="yaaf">
+  <!-- The glyph is drawn as strokes, not <text>: favicon rendering has no
+       guaranteed font access, so a font-based mark is a coin flip per browser. -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4a93ea"/>
+      <stop offset="1" stop-color="#2f78d4"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#tile)"/>
+  <g fill="none" stroke="#ffffff" stroke-width="8.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M18 15 L33 37"/>
+    <path d="M46 15 L26 49"/>
+  </g>
+</svg>
