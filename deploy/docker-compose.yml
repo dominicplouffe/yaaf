@@ -66,6 +66,17 @@ services:
       # workspace from here. It used to be left to the default, which agreed
       # with the mount only because both were hardcoded to the same path.
       YAAF_WORKSPACES_ROOT: ${YAAF_STATE_ROOT:-/var/lib/yaaf}/workspaces
+      # Chairman notifications (optional). Unset = the nag is logged, not sent.
+      # These have to be listed here, not merely set in deploy/.env: compose
+      # reads that file for ${} substitution only, so a variable no service
+      # names never reaches a container. Keep in lockstep with the runner,
+      # which raises its own notices (run deaths, budget pauses).
+      YAAF_SMTP_HOST: ${YAAF_SMTP_HOST:-}
+      YAAF_SMTP_PORT: ${YAAF_SMTP_PORT:-587}
+      YAAF_SMTP_USERNAME: ${YAAF_SMTP_USERNAME:-}
+      YAAF_SMTP_PASSWORD: ${YAAF_SMTP_PASSWORD:-}
+      YAAF_SMTP_FROM: ${YAAF_SMTP_FROM:-}
+      YAAF_CHAIRMAN_WEBHOOK_URL: ${YAAF_CHAIRMAN_WEBHOOK_URL:-}
       # S3 artifact store (optional): start minio with `docker compose --profile s3 up`
       # and uncomment these on BOTH api and runner. Local files stay the default.
       # YAAF_ARTIFACT_S3_ENDPOINT: http://minio:9000
@@ -101,6 +112,15 @@ services:
       YAAF_SANDBOX_NETWORK: ${YAAF_SANDBOX_NETWORK:-yaaf_sandbox}
       YAAF_WORKSPACES_ROOT: ${YAAF_STATE_ROOT:-/var/lib/yaaf}/workspaces
       YAAF_ARTIFACTS_ROOT: ${YAAF_STATE_ROOT:-/var/lib/yaaf}/artifacts
+      # Chairman notifications: keep in lockstep with the api service above.
+      # The runner is not a bystander here — run deaths and budget pauses are
+      # raised on this side, and without these it would silently log them.
+      YAAF_SMTP_HOST: ${YAAF_SMTP_HOST:-}
+      YAAF_SMTP_PORT: ${YAAF_SMTP_PORT:-587}
+      YAAF_SMTP_USERNAME: ${YAAF_SMTP_USERNAME:-}
+      YAAF_SMTP_PASSWORD: ${YAAF_SMTP_PASSWORD:-}
+      YAAF_SMTP_FROM: ${YAAF_SMTP_FROM:-}
+      YAAF_CHAIRMAN_WEBHOOK_URL: ${YAAF_CHAIRMAN_WEBHOOK_URL:-}
       # S3 artifact store (optional): keep in lockstep with the api service above.
       # YAAF_ARTIFACT_S3_ENDPOINT: http://minio:9000
       # YAAF_ARTIFACT_S3_BUCKET: yaaf-artifacts
