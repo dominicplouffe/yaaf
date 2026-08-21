@@ -164,9 +164,10 @@ class ConstitutionDoc(BaseModel):
         help="With no verified external evidence for this long, only evidence-producing "
              "tasks may be created until proof lands.")
     require_evidence_verification: bool = _rule(
-        True, group="Evidence", label="External evidence must be verified",
-        help="Evidence counts only once the platform has fetched and checked it. Evidence "
-             "nobody can check is opinion.")
+        False, group="Evidence", label="External evidence must be verified",
+        help="On, evidence counts only once the platform has fetched and checked it — "
+             "evidence nobody can check is opinion. Off by default: most projects verify "
+             "with the data at their disposal. The 'Show me proof' preset turns it on.")
 
     # Autonomy thresholds (lana §6)
     approval_threshold_usd: float = _rule(

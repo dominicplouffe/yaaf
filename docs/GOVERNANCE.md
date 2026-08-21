@@ -78,7 +78,7 @@ Also enforced here, and not tunable because they're structural:
 | Rule | Default | What it does |
 |---|---|---|
 | `drought_hours` | 24 | With no verified external evidence for this long, only `produces_external_evidence=true` tasks may be created. |
-| `require_evidence_verification` | true | External evidence counts only after the platform fetches, checks, and snapshots it. Evidence nobody can check is opinion. |
+| `require_evidence_verification` | false | On, external evidence counts only after the platform fetches, checks, and snapshots it. Off by default — most projects verify with the data at their disposal; the "Show me proof" creation preset turns it on. |
 
 ### Autonomy
 

@@ -43,8 +43,9 @@ unit of work, and go back to sleep. Everything is recorded.
 
 Click **+ New project** and fill in the form top to bottom.
 
-**Name and slug.** Anything you like. The slug is the short lowercase ID
-(`ppc-audit`).
+**Name.** Anything you like. The slug — the short lowercase ID
+(`ppc-audit`) — is picked for you from the name and deduped against your
+existing projects; edit it only if you care what it says.
 
 **The goal — spend your time here.** This is the single most important field.
 The CEO plans everything from it, so write it the way you'd brief a
@@ -66,10 +67,25 @@ A good goal for our example:
 A weak goal ("analyze the PPC data") gets you a company that putters. Be as
 specific as you'd be with a person.
 
-**Chairman email** — yours. You're the human in this org chart.
+**Chairman email** — yours. You're the human in this org chart: it names you
+on approvals and boardroom messages, and if the server has SMTP configured
+(`YAAF_SMTP_HOST` in `deploy/.env`) it's also where needs, assists and budget
+alerts get mailed. Remembered for your next project.
 
-**Runtime** — leave on "real Claude agents". **Billing mode** — "API key"
-(dollars, metered) is the normal choice.
+**Billing.** Pick the key type — **Anthropic API key** (budget in dollars,
+the normal choice) or a **Claude subscription token** (budget in tokens) —
+and paste the key. It's stored encrypted, attached as the project's billing
+credential, and never enters a sandbox. Leave it blank and the project can be
+created but not started: agents cannot run keyless. (The mock runtime, under
+**advanced…**, is the $0 exception for tire-kicking the platform itself.)
+
+**Who runs it? / How does it run?** Two rows of preset cards. The first is
+the authority dial (Supervised or Autonomous — who holds the plan, scope,
+commitment and verdict verbs). The second sets the pace-money-proof numbers:
+**Full send** (fast, cost secondary), **Balanced** (the default), **Slow &
+steady** (small budget, fewer reports), **Show me proof** (evidence counts
+only once the platform verifies it). A preset just fills the Constitution
+fields below — adjust any of them, now or later in Settings.
 
 **Controlled domains.** List web properties **you** control — your own
 website, `github:your-account`. Why: agents must prove progress with
@@ -101,14 +117,23 @@ constitution version, and mandatory disclosure to the CEO. The company still
 cannot move its own goalposts; you never needed to be stopped from moving
 yours.
 
+The constitution card also carries your reporting cadence — **hours between
+unprompted status reports** (default 1), an optional reporting window like
+`09:00-20:00`, and your timezone (guessed from the browser).
+
 **Service credentials (optional).** If you already know the keys the agents
 will need, add them here: a name, the value, and tick which roles receive
 them. Agents get them as environment variables in their sandboxes and never
 see the values in chat. You can also do this later in Settings.
 
-Leave **"Start immediately"** checked and click **Create project**.
+**Data sources (optional).** MCP servers can be connected right here too —
+name, URL, optional token, roles — tested before the project starts. Or add
+them later in Settings (next section).
 
-## Step 2 — Connect billing
+Leave **"Start immediately"** checked and click **Create project**. (It
+needs the billing key — without one the project is created stopped.)
+
+## Step 2 — Connect billing (if you skipped it at creation)
 
 Open your new project → **Settings** → "How agents pay for Claude". Pick
 **Anthropic API key**, paste your key, click **Connect**. One click stores
@@ -222,10 +247,11 @@ project pauses itself rather than burning money against a wall.
 
 ## Quick reference — the audit project, start to finish
 
-1. New project → goal above → three one-person teams (researcher, engineer,
-   writer) → budget cap → Create.
-2. Settings → billing → paste API key → Connect (auto-tested).
-3. Settings → Data sources → `ppc` + the MCP URL + engineer role → Save
-   (auto-tested).
+1. New project → goal above → API key pasted → three one-person teams
+   (researcher, engineer, writer) → `ppc` data source + engineer role →
+   budget cap → Create.
+2. (Or later: Settings → billing → paste API key → Connect, auto-tested.)
+3. (Or later: Settings → Data sources → `ppc` + the MCP URL + engineer
+   role → Save, auto-tested.)
 4. Overview → fix anything the health card names → card disappears.
 5. Boardroom → brief the CEO → done. Check back in the morning.
