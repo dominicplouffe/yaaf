@@ -20,12 +20,15 @@ list of statuses honest. v3 — revised on two rounds of the chairman's answers,
 conflates "the record must be honest" with "the chairman must click". The
 design keeps the integrity rules structural at every autonomy level (the
 platform verifies everything it can and never quietly trusts what it can't —
-unverified closes stay spot-audit-eligible; money is capped and metered;
+a close it couldn't check is on the chairman's desk or, when the CEO judged
+it under the dial, disclosed to him in full; money is capped and metered;
 everything is audited; the constitution stays the chairman's; security
 challenges always go to the human) and turns the authority rules into a new
-constitution group — seven switches, three presets (Supervised / Advised /
-Autonomous) on the New-project form. Autonomy is granted by the constitution,
-never seized.
+constitution's Autonomy group — seven switches by stage E (four planning
+switches shipped in B; spend and capability switches arrive with their
+machinery in C and D), presets on the New-project form (Supervised and
+Autonomous shipped; Advised when its review-window exists). Autonomy is
+granted by the constitution, never seized.
 
 ## Decisions the chairman has made (21 Aug 2026)
 
@@ -38,7 +41,9 @@ never seized.
   requirement.
 - **Verify with the data at our disposal; never demand external validation
   the project can't produce.** Unverifiable closes are the CEO's judgment
-  call under `verdict_policy: ceo_judgment`, permanently spot-audit-eligible.
+  call under `verdict_policy: ceo_judgment` — as built, each self-judged
+  close is disclosed to the chairman in full, stronger than the sampling
+  first sketched.
   The CEO may ask the chairman when it feels strongly — allowed always,
   required never. Explore and Operate must never stall waiting on a human.
 - **Owner-of-record is situational** — the chairman or the project itself,
