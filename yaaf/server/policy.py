@@ -1724,20 +1724,67 @@ DIRECTIVE_ACTIONS: dict[str, tuple[str, ...]] = {
 
 
 def check_directive_action(action: dict) -> None:
-    kind = action.get("kind")
-    if kind not in DIRECTIVE_ACTIONS:
+    _check_action_shape(action, DIRECTIVE_ACTIONS,
+                        "a scope order a directive can carry",
+                        "Anything else is the chairman's own button to press.")
+
+
+# The verbs the CEO may exercise as ITS OWN authority when the constitution's
+# dial grants them (stage B — docs/AUTONOMY.md). Same shapes as directive
+# orders, plus the verdict; the difference is whose authority is exercised:
+# a directive runs on the chairman's cited word, a self-action on a rule he
+# wrote into the constitution. `verdict` requires `ok` (bool) and is gated on
+# verdict_policy rather than scope_authority.
+SELF_SCOPE_ACTIONS: dict[str, tuple[str, ...]] = {
+    **DIRECTIVE_ACTIONS,
+    "verdict": ("ok",),
+}
+
+# Which constitution switch holds each verb.
+_ACTION_AUTHORITY: dict[str, str] = {
+    "accept": "plan_authority",
+    "verdict": "verdict_policy",
+    **{kind: "scope_authority"
+       for kind in ("cut", "reopen", "restage", "reestimate", "reword", "unsequence")},
+}
+
+
+def check_self_scope_action(cons: ConstitutionDoc, action: dict) -> None:
+    """Validate the shape, then the authority. A verb the dial has not granted
+    is a 403 that names the two legitimate paths: the chairman's own button,
+    or a directive citing his boardroom order."""
+    _check_action_shape(action, SELF_SCOPE_ACTIONS,
+                        "a scope verb the CEO can hold",
+                        "Anything else is the chairman's own button to press.")
+    kind = action["kind"]
+    switch = _ACTION_AUTHORITY[kind]
+    held = getattr(cons, switch)
+    granted = held == ("ceo_judgment" if switch == "verdict_policy" else "ceo")
+    if not granted:
         raise Refusal(
-            f"'{kind}' is not a scope order a directive can carry. The verbs are: "
-            f"{', '.join(sorted(DIRECTIVE_ACTIONS))}. Anything else is the chairman's "
-            "own button to press.",
+            f"The constitution holds {switch} = '{held}': '{kind}' is not yours to "
+            "exercise on this project. Two paths remain — the chairman's own button, "
+            "or, if he ordered it in the boardroom, file it as a directive citing his "
+            "message. The dial itself is his amendment to turn, and yours to recommend.",
+            status_code=403,
+        )
+
+
+def _check_action_shape(action: dict, allowed: dict[str, tuple[str, ...]],
+                        what: str, tail: str) -> None:
+    kind = action.get("kind")
+    if kind not in allowed:
+        raise Refusal(
+            f"'{kind}' is not {what}. The verbs are: "
+            f"{', '.join(sorted(allowed))}. {tail}",
             status_code=422,
         )
     if not action.get("requirement_key"):
-        raise Refusal("A scope directive names the requirement by key (e.g. R-07).",
+        raise Refusal("A scope action names the requirement by key (e.g. R-07).",
                       status_code=422)
-    missing = [f for f in DIRECTIVE_ACTIONS[kind] if action.get(f) in (None, "")]
+    missing = [f for f in allowed[kind] if action.get(f) in (None, "")]
     if missing:
-        raise Refusal(f"The {kind} order needs {', '.join(missing)}.", status_code=422)
+        raise Refusal(f"The {kind} action needs {', '.join(missing)}.", status_code=422)
 
 
 def check_directive_scope(changes: dict) -> None:

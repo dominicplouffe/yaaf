@@ -87,6 +87,16 @@ Also enforced here, and not tunable because they're structural:
 | `approval_threshold_usd` | 250.0 | Spends at or above this — and anything legally ambiguous — wait for you. |
 | `approval_timeout_days` | 7 | An unanswered approval decides itself here, so a vacationing chairman degrades the company instead of deadlocking it. |
 | `approval_timeout_decision` | `"deny"` | What that expiry decides. Default-deny: silence is not consent. |
+| `plan_authority` | `"chairman"` | Who accepts proposed scope. `"ceo"`: the CEO accepts its own proposals — the plan gate runs the same arithmetic, every acceptance is audited and sent to you. |
+| `scope_authority` | `"chairman"` | Who may cut, reopen, restage, reestimate, reword and unsequence. `"ceo"` hands the verbs to the CEO, on the record, reversibly. Your routes never close. |
+| `commitment_authority` | `"chairman"` | Who signs the delivery date. `"ceo"`: proposing adopts the platform's own projection immediately — the CEO still cannot write a date, only accept the arithmetic's. |
+| `verdict_policy` | `"chairman"` | Who judges unverifiable observable closes. `"ceo_judgment"`: the CEO judges and keeps going, and every self-judgment is disclosed to you in full — stronger than sampling. |
+
+The four authority switches are the dial (docs/AUTONOMY.md): they decide *who
+holds a verb*, never whether the record is honest. Every self-exercise runs
+through the same machinery as your own buttons, lands in the audit log, and is
+sent to you out-of-band. The dial itself is chairman-only — a directive
+touching it is refused like any other constitution grab.
 
 ### Budgets
 

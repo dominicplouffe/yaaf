@@ -1874,44 +1874,249 @@ class RequirementDecision(BaseModel):
     note: str = Field(default="", max_length=4000)
 
 
+# ── apply helpers: one mutation, two hands ─────────────────────────────────────
+#
+# Each scope verb has exactly one implementation, called by the chairman's
+# route here and — when the constitution's authority dial grants the verb —
+# by the CEO's self-exercise route in the agent API. The actor string keeps
+# the record honest about whose hand moved; `notify` is False when the CEO
+# acted itself (a notice telling the CEO what the CEO just did is noise —
+# the chairman's digest carries it instead). Every helper raises
+# policy.Refusal; the admin routes translate to HTTPException, the agent
+# route lets it count as a refusal like any other.
+
+
+def apply_accept(session: Session, project: Project, row: Requirement, actor: str,
+                 stage: int | None, note: str, by_user: str | None,
+                 notify: bool = True) -> dict:
+    policy.check_requirement_accept(row)
+    from_status = row.status
+    row.status = RequirementStatus.PENDING
+    row.accepted_by_user_id = by_user
+    row.accepted_at = utcnow()
+    if stage is not None:
+        row.stage = stage
+    policy.record_requirement_event(session, row, RequirementStatus.PENDING, actor,
+                                    note=note or None, from_status=from_status)
+    _audit(session, row.project_id, "requirement.accept", "requirement", row.id,
+           {"key": row.key, "stage": row.stage, "actor": actor})
+    if notify:
+        _notice_ceo(
+            session, row.project_id, NoticeKind.GOAL_CHANGED,
+            f"The chairman ACCEPTED {row.key} into scope: {row.statement[:400]}\n"
+            f"Stage {row.stage}. It is now something you may create work for, and it "
+            "counts toward what has to be true before this project is finished.",
+        )
+    return {"id": row.id, "key": row.key, "status": row.status, "stage": row.stage}
+
+
+def apply_cut(session: Session, project: Project, row: Requirement, actor: str,
+              reason: str, notify: bool = True) -> dict:
+    policy.check_requirement_cut(row)
+    from_status = row.status
+    row.status = RequirementStatus.CUT
+    row.cut_reason = reason
+    row.cut_at = utcnow()
+    policy.record_requirement_event(session, row, RequirementStatus.CUT, actor,
+                                    note=reason, from_status=from_status)
+    _audit(session, row.project_id, "requirement.cut", "requirement", row.id,
+           {"key": row.key, "reason": reason, "actor": actor})
+    if notify:
+        _notice_ceo(
+            session, row.project_id, NoticeKind.GOAL_CHANGED,
+            f"The chairman CUT {row.key} from scope: {row.statement[:300]}\n"
+            f"His reason: {reason[:1000]}\nStop work on it. Anything that depended on "
+            "it is now unblocked — a cut requirement counts as settled, not as pending "
+            "forever.",
+        )
+    return {"id": row.id, "key": row.key, "status": row.status}
+
+
+def apply_reopen(session: Session, project: Project, row: Requirement, actor: str,
+                 reason: str, notify: bool = True) -> dict:
+    policy.check_requirement_reopen(row)
+    from_status = row.status
+    row.status = RequirementStatus.PENDING
+    row.met_at = None
+    row.met_by_run_id = None
+    row.check_output = None
+    row.cut_reason = None
+    row.cut_at = None
+    policy.record_requirement_event(session, row, RequirementStatus.PENDING, actor,
+                                    note=f"reopened: {reason[:500]}",
+                                    from_status=from_status)
+    _audit(session, row.project_id, "requirement.reopen", "requirement", row.id,
+           {"key": row.key, "was": from_status, "reason": reason, "actor": actor})
+    if notify:
+        _notice_ceo(
+            session, row.project_id, NoticeKind.GOAL_CHANGED,
+            f"{row.key} was REOPENED (it was {from_status}): {row.statement[:300]}\n"
+            f"Reason: {reason[:800]}\nIt is scope again — its stage reopened with it, "
+            "so plan for it before anything staged later.",
+        )
+    return {"id": row.id, "key": row.key, "status": row.status, "was": from_status}
+
+
+def apply_restage(session: Session, project: Project, row: Requirement, actor: str,
+                  stage: int, reason: str, notify: bool = True) -> dict:
+    policy.check_requirement_restage(row)
+    was = row.stage
+    if stage == was:
+        raise policy.Refusal(f"{row.key} is already in stage {was}.", status_code=409)
+    row.stage = stage
+    policy.record_requirement_event(
+        session, row, row.status, actor,
+        note=f"restaged {was} → {stage}: {reason[:500]}", from_status=row.status)
+    _audit(session, row.project_id, "requirement.restage", "requirement", row.id,
+           {"key": row.key, "from_stage": was, "to_stage": stage,
+            "reason": reason, "actor": actor})
+    if notify:
+        _notice_ceo(
+            session, row.project_id, NoticeKind.GOAL_CHANGED,
+            f"{row.key} moved from stage {was} to stage {stage}: {reason[:800]}\n"
+            "The open stage is derived, so the order of work may just have changed — "
+            "re-read the plan before creating tasks.",
+        )
+    return {"id": row.id, "key": row.key, "stage": row.stage, "was": was}
+
+
+def apply_reestimate(session: Session, project: Project, row: Requirement, actor: str,
+                     est_runs: int, reason: str, notify: bool = True) -> dict:
+    policy.check_requirement_reestimate(row)
+    was = row.est_runs
+    if row.est_runs_first is None:
+        row.est_runs_first = was
+    row.est_runs = est_runs
+    policy.record_requirement_event(
+        session, row, row.status, actor,
+        note=f"reestimated {was} → {est_runs} runs: {reason[:500]}",
+        from_status=row.status)
+    _audit(session, row.project_id, "requirement.reestimate", "requirement", row.id,
+           {"key": row.key, "from_est": was, "to_est": est_runs,
+            "first_est": row.est_runs_first, "reason": reason, "actor": actor})
+    if notify:
+        _notice_ceo(
+            session, row.project_id, NoticeKind.GOAL_CHANGED,
+            f"{row.key} is now estimated at {est_runs} runs (was {was}): "
+            f"{reason[:800]}\nThe plan arithmetic reads the new number; the bias "
+            "ratio still scores the original.",
+        )
+    return {"id": row.id, "key": row.key, "est_runs": row.est_runs,
+            "est_runs_first": row.est_runs_first, "was": was}
+
+
+def apply_reword(session: Session, project: Project, row: Requirement, actor: str,
+                 statement: str, reason: str, notify: bool = True) -> dict:
+    if row.status in policy.CLOSED_REQUIREMENT_STATUSES:
+        raise policy.Refusal(
+            f"{row.key} is {row.status}; settled scope is history. Add a new "
+            "requirement instead of editing what already happened.",
+            status_code=409,
+        )
+    old = row.statement
+    row.statement = statement.strip()
+    policy.record_requirement_event(
+        session, row, row.status, actor,
+        note=f"reworded: {reason[:500]}", from_status=row.status)
+    _audit(session, project.id, "requirement.reword", "requirement", row.id,
+           {"key": row.key, "reason": reason, "actor": actor})
+    if notify:
+        _notice_ceo(
+            session, project.id, NoticeKind.GOAL_CHANGED,
+            f"The chairman REWORDED {row.key}.\nWas: {old[:300]}\nIs now: "
+            f"{row.statement[:300]}\nHis reason: {reason[:500]}\nThe key, estimate "
+            "and history are unchanged — read the new wording before working it.",
+        )
+    return {"id": row.id, "key": row.key, "statement": row.statement}
+
+
+def apply_verdict(session: Session, project: Project, row: Requirement, actor: str,
+                  ok: bool, note: str, notify: bool = True) -> dict:
+    if row.status != RequirementStatus.CHECKING:
+        raise policy.Refusal(
+            f"{row.key} is {row.status}; only a requirement awaiting a verdict can "
+            "take one.",
+            status_code=409,
+        )
+    from_status = row.status
+    if ok:
+        row.status = RequirementStatus.MET
+        row.met_at = utcnow()
+        row.check_output = note or "observable confirmed"
+        policy.record_requirement_event(session, row, RequirementStatus.MET, actor,
+                                        note=note or None, from_status=from_status)
+    else:
+        row.status = RequirementStatus.IN_PROGRESS
+        row.failure_load += 1
+        policy.record_requirement_event(session, row, RequirementStatus.IN_PROGRESS,
+                                        actor, note=note or "observable rejected",
+                                        from_status=from_status)
+        if notify:
+            _notice_ceo(
+                session, row.project_id, NoticeKind.AUDIT_FAILED,
+                f"The chairman looked at {row.key} and it does NOT hold: "
+                f"{note[:1000] or '(no note)'}\nIt is back in progress. Read what he "
+                "said before creating more work for it.",
+            )
+    _audit(session, row.project_id, "requirement.verdict", "requirement", row.id,
+           {"key": row.key, "ok": ok, "actor": actor})
+    return {"id": row.id, "key": row.key, "status": row.status}
+
+
+def apply_edge_remove(session: Session, project: Project, actor: str,
+                      from_requirement_id: str, to_requirement_id: str,
+                      reason: str, notify: bool = True) -> dict:
+    edge = session.execute(
+        select(RequirementEdge).where(
+            RequirementEdge.from_requirement_id == from_requirement_id,
+            RequirementEdge.to_requirement_id == to_requirement_id,
+        )
+    ).scalar_one_or_none()
+    if edge is None:
+        raise policy.Refusal("no such dependency edge", status_code=404)
+    source = session.get(Requirement, edge.from_requirement_id)
+    target = session.get(Requirement, edge.to_requirement_id)
+    session.delete(edge)
+    _audit(session, edge.project_id, "requirement.unsequence", "requirement",
+           target.id if target else edge.to_requirement_id,
+           {"from": source.key if source else edge.from_requirement_id,
+            "to": target.key if target else edge.to_requirement_id,
+            "reason": reason, "actor": actor})
+    if notify:
+        _notice_ceo(
+            session, edge.project_id, NoticeKind.GOAL_CHANGED,
+            f"The dependency {source.key if source else '?'} → "
+            f"{target.key if target else '?'} was removed: {reason[:800]}\n"
+            f"{target.key if target else 'The blocked requirement'} no longer waits "
+            "for it.",
+        )
+    return {"removed": True,
+            "from": source.key if source else None, "to": target.key if target else None}
+
+
 @router.post("/requirements/{requirement_id}/accept")
 def accept_requirement(
     requirement_id: str, body: RequirementDecision, session: Session = Depends(db)
 ) -> dict:
-    """Scope becomes scope here and nowhere else.
+    """Scope becomes scope here — or, under `plan_authority: ceo`, through the
+    CEO's own hand in the agent API; both run this same apply helper.
 
-    The CEO proposes; only the chairman accepts. That split is the whole reason
-    the forecast means anything: remaining ÷ velocity is a number about the
-    CEO's work, and a CEO that could accept its own requirements would own both
-    sides of its own scoreboard.
+    Under the default dial the CEO proposes and only the chairman accepts:
+    remaining ÷ velocity is a number about the CEO's work, and a CEO that could
+    accept its own requirements would own both sides of its own scoreboard.
+    The dial is the chairman's to set, and turning it is an amendment on the
+    record — authority is granted, never seized.
     """
     row = session.get(Requirement, requirement_id)
     if row is None:
         raise HTTPException(status_code=404, detail="unknown requirement")
     project = _get_project(session, row.project_id)
     try:
-        policy.check_requirement_accept(row)
+        return apply_accept(session, project, row,
+                            f"user:{project.chairman_user_id}",
+                            body.stage, body.note, project.chairman_user_id)
     except policy.Refusal as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
-
-    from_status = row.status
-    row.status = RequirementStatus.PENDING
-    row.accepted_by_user_id = project.chairman_user_id
-    row.accepted_at = utcnow()
-    if body.stage is not None:
-        row.stage = body.stage
-    policy.record_requirement_event(session, row, RequirementStatus.PENDING,
-                                    f"user:{project.chairman_user_id}",
-                                    note=body.note or None, from_status=from_status)
-    _audit(session, row.project_id, "requirement.accept", "requirement", row.id,
-           {"key": row.key, "stage": row.stage})
-    _notice_ceo(
-        session, row.project_id, NoticeKind.GOAL_CHANGED,
-        f"The chairman ACCEPTED {row.key} into scope: {row.statement[:400]}\n"
-        f"Stage {row.stage}. It is now something you may create work for, and it counts "
-        "toward what has to be true before this project is finished.",
-    )
-    return {"id": row.id, "key": row.key, "status": row.status, "stage": row.stage}
 
 
 class RequirementCut(BaseModel):
@@ -1930,26 +2135,10 @@ def cut_requirement(
         raise HTTPException(status_code=404, detail="unknown requirement")
     project = _get_project(session, row.project_id)
     try:
-        policy.check_requirement_cut(row)
+        return apply_cut(session, project, row,
+                         f"user:{project.chairman_user_id}", body.reason)
     except policy.Refusal as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
-
-    from_status = row.status
-    row.status = RequirementStatus.CUT
-    row.cut_reason = body.reason
-    row.cut_at = utcnow()
-    policy.record_requirement_event(session, row, RequirementStatus.CUT,
-                                    f"user:{project.chairman_user_id}",
-                                    note=body.reason, from_status=from_status)
-    _audit(session, row.project_id, "requirement.cut", "requirement", row.id,
-           {"key": row.key, "reason": body.reason})
-    _notice_ceo(
-        session, row.project_id, NoticeKind.GOAL_CHANGED,
-        f"The chairman CUT {row.key} from scope: {row.statement[:300]}\n"
-        f"His reason: {body.reason[:1000]}\nStop work on it. Anything that depended on it "
-        "is now unblocked — a cut requirement counts as settled, not as pending forever.",
-    )
-    return {"id": row.id, "key": row.key, "status": row.status}
 
 
 class RequirementVerdict(BaseModel):
@@ -1971,36 +2160,12 @@ def requirement_verdict(
     row = session.get(Requirement, requirement_id)
     if row is None:
         raise HTTPException(status_code=404, detail="unknown requirement")
-    if row.status != RequirementStatus.CHECKING:
-        raise HTTPException(
-            status_code=409,
-            detail=f"{row.key} is {row.status}; only a requirement awaiting your verdict "
-                   "can take one.",
-        )
     project = _get_project(session, row.project_id)
-    actor = f"user:{project.chairman_user_id}"
-    from_status = row.status
-    if body.ok:
-        row.status = RequirementStatus.MET
-        row.met_at = utcnow()
-        row.check_output = body.note or "chairman confirmed the observable"
-        policy.record_requirement_event(session, row, RequirementStatus.MET, actor,
-                                        note=body.note or None, from_status=from_status)
-    else:
-        row.status = RequirementStatus.IN_PROGRESS
-        row.failure_load += 1
-        policy.record_requirement_event(session, row, RequirementStatus.IN_PROGRESS, actor,
-                                        note=body.note or "chairman rejected the observable",
-                                        from_status=from_status)
-        _notice_ceo(
-            session, row.project_id, NoticeKind.AUDIT_FAILED,
-            f"The chairman looked at {row.key} and it does NOT hold: "
-            f"{body.note[:1000] or '(no note)'}\nIt is back in progress. Read what he said "
-            "before creating more work for it.",
-        )
-    _audit(session, row.project_id, "requirement.verdict", "requirement", row.id,
-           {"key": row.key, "ok": body.ok})
-    return {"id": row.id, "key": row.key, "status": row.status}
+    try:
+        return apply_verdict(session, project, row,
+                             f"user:{project.chairman_user_id}", body.ok, body.note)
+    except policy.Refusal as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
 
 # ── the missing verbs: reopen, restage, reestimate, unsequence ──────────────────
@@ -2030,30 +2195,10 @@ def reopen_requirement(
         raise HTTPException(status_code=404, detail="unknown requirement")
     project = _get_project(session, row.project_id)
     try:
-        policy.check_requirement_reopen(row)
+        return apply_reopen(session, project, row,
+                            f"user:{project.chairman_user_id}", body.reason)
     except policy.Refusal as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
-
-    from_status = row.status
-    row.status = RequirementStatus.PENDING
-    row.met_at = None
-    row.met_by_run_id = None
-    row.check_output = None
-    row.cut_reason = None
-    row.cut_at = None
-    policy.record_requirement_event(session, row, RequirementStatus.PENDING,
-                                    f"user:{project.chairman_user_id}",
-                                    note=f"reopened: {body.reason[:500]}",
-                                    from_status=from_status)
-    _audit(session, row.project_id, "requirement.reopen", "requirement", row.id,
-           {"key": row.key, "was": from_status, "reason": body.reason})
-    _notice_ceo(
-        session, row.project_id, NoticeKind.GOAL_CHANGED,
-        f"{row.key} was REOPENED (it was {from_status}): {row.statement[:300]}\n"
-        f"Reason: {body.reason[:800]}\nIt is scope again — its stage reopened with it, "
-        "so plan for it before anything staged later.",
-    )
-    return {"id": row.id, "key": row.key, "status": row.status, "was": from_status}
 
 
 class RequirementRestage(BaseModel):
@@ -2072,29 +2217,11 @@ def restage_requirement(
         raise HTTPException(status_code=404, detail="unknown requirement")
     project = _get_project(session, row.project_id)
     try:
-        policy.check_requirement_restage(row)
+        return apply_restage(session, project, row,
+                             f"user:{project.chairman_user_id}",
+                             body.stage, body.reason)
     except policy.Refusal as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
-
-    was = row.stage
-    if body.stage == was:
-        raise HTTPException(status_code=409,
-                            detail=f"{row.key} is already in stage {was}.")
-    row.stage = body.stage
-    policy.record_requirement_event(
-        session, row, row.status, f"user:{project.chairman_user_id}",
-        note=f"restaged {was} → {body.stage}: {body.reason[:500]}",
-        from_status=row.status)
-    _audit(session, row.project_id, "requirement.restage", "requirement", row.id,
-           {"key": row.key, "from_stage": was, "to_stage": body.stage,
-            "reason": body.reason})
-    _notice_ceo(
-        session, row.project_id, NoticeKind.GOAL_CHANGED,
-        f"{row.key} moved from stage {was} to stage {body.stage}: "
-        f"{body.reason[:800]}\nThe open stage is derived, so the order of work may "
-        "just have changed — re-read the plan before creating tasks.",
-    )
-    return {"id": row.id, "key": row.key, "stage": row.stage, "was": was}
 
 
 class RequirementReestimate(BaseModel):
@@ -2115,29 +2242,11 @@ def reestimate_requirement(
         raise HTTPException(status_code=404, detail="unknown requirement")
     project = _get_project(session, row.project_id)
     try:
-        policy.check_requirement_reestimate(row)
+        return apply_reestimate(session, project, row,
+                                f"user:{project.chairman_user_id}",
+                                body.est_runs, body.reason)
     except policy.Refusal as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
-
-    was = row.est_runs
-    if row.est_runs_first is None:
-        row.est_runs_first = was
-    row.est_runs = body.est_runs
-    policy.record_requirement_event(
-        session, row, row.status, f"user:{project.chairman_user_id}",
-        note=f"reestimated {was} → {body.est_runs} runs: {body.reason[:500]}",
-        from_status=row.status)
-    _audit(session, row.project_id, "requirement.reestimate", "requirement", row.id,
-           {"key": row.key, "from_est": was, "to_est": body.est_runs,
-            "first_est": row.est_runs_first, "reason": body.reason})
-    _notice_ceo(
-        session, row.project_id, NoticeKind.GOAL_CHANGED,
-        f"{row.key} is now estimated at {body.est_runs} runs (was {was}): "
-        f"{body.reason[:800]}\nThe plan arithmetic reads the new number; the bias "
-        "ratio still scores the original.",
-    )
-    return {"id": row.id, "key": row.key, "est_runs": row.est_runs,
-            "est_runs_first": row.est_runs_first, "was": was}
 
 
 class EdgeRemove(BaseModel):
@@ -2150,31 +2259,16 @@ class EdgeRemove(BaseModel):
 def remove_requirement_edge(body: EdgeRemove, session: Session = Depends(db)) -> dict:
     """Unsequence: dependency edges stop being a one-way ratchet. The cycle
     check still guards every add; removal needs no check beyond existing."""
-    edge = session.execute(
-        select(RequirementEdge).where(
-            RequirementEdge.from_requirement_id == body.from_requirement_id,
-            RequirementEdge.to_requirement_id == body.to_requirement_id,
-        )
-    ).scalar_one_or_none()
-    if edge is None:
-        raise HTTPException(status_code=404, detail="no such dependency edge")
-    source = session.get(Requirement, edge.from_requirement_id)
-    target = session.get(Requirement, edge.to_requirement_id)
-    _get_project(session, edge.project_id)  # 404 on a project this admin cannot see
-    session.delete(edge)
-    _audit(session, edge.project_id, "requirement.unsequence", "requirement",
-           target.id if target else edge.to_requirement_id,
-           {"from": source.key if source else edge.from_requirement_id,
-            "to": target.key if target else edge.to_requirement_id,
-            "reason": body.reason})
-    _notice_ceo(
-        session, edge.project_id, NoticeKind.GOAL_CHANGED,
-        f"The dependency {source.key if source else '?'} → "
-        f"{target.key if target else '?'} was removed: {body.reason[:800]}\n"
-        f"{target.key if target else 'The blocked requirement'} no longer waits for it.",
-    )
-    return {"removed": True,
-            "from": source.key if source else None, "to": target.key if target else None}
+    source = session.get(Requirement, body.from_requirement_id)
+    project = _get_project(session, source.project_id) if source else None
+    try:
+        if project is None:
+            raise policy.Refusal("no such dependency edge", status_code=404)
+        return apply_edge_remove(session, project, f"user:{project.chairman_user_id}",
+                                 body.from_requirement_id, body.to_requirement_id,
+                                 body.reason)
+    except policy.Refusal as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
 
 # ── the topology experiment: one variable, three arms, four numbers ─────────────
@@ -2433,27 +2527,13 @@ def reword_requirement(
     row = session.get(Requirement, requirement_id)
     if row is None:
         raise HTTPException(status_code=404, detail="unknown requirement")
-    if row.status in policy.CLOSED_REQUIREMENT_STATUSES:
-        raise HTTPException(
-            status_code=409,
-            detail=f"{row.key} is {row.status}; settled scope is history. Add a new "
-                   "requirement instead of editing what already happened.",
-        )
     project = _get_project(session, row.project_id)
-    old = row.statement
-    row.statement = body.statement.strip()
-    policy.record_requirement_event(
-        session, row, row.status, f"user:{project.chairman_user_id}",
-        note=f"reworded: {body.reason[:500]}", from_status=row.status)
-    _audit(session, project.id, "requirement.reword", "requirement", row.id,
-           {"key": row.key, "reason": body.reason})
-    _notice_ceo(
-        session, project.id, NoticeKind.GOAL_CHANGED,
-        f"The chairman REWORDED {row.key}.\nWas: {old[:300]}\nIs now: "
-        f"{row.statement[:300]}\nHis reason: {body.reason[:500]}\nThe key, estimate "
-        "and history are unchanged — read the new wording before working it.",
-    )
-    return {"id": row.id, "key": row.key, "statement": row.statement}
+    try:
+        return apply_reword(session, project, row,
+                            f"user:{project.chairman_user_id}",
+                            body.statement, body.reason)
+    except policy.Refusal as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
 
 class ReviewLeverIn(BaseModel):

@@ -266,6 +266,27 @@ async def t_directive_file(args):
 
 
 @tool(
+    "scope_act",
+    "CEO only, and only where the constitution's authority dial grants it (your "
+    "constitution prose says which verbs you hold; everything you don't hold is a 403 "
+    "with the legitimate path named). Exercise a scope verb as YOUR OWN authority: "
+    '{"kind": "accept|cut|reopen|restage|reestimate|reword|unsequence|verdict", '
+    '"requirement_key": "R-07", plus for restage "stage", for reestimate "est_runs", '
+    'for reword "statement", for unsequence "depends_on_key", for verdict "ok" (bool)}. '
+    "verdict is for an UNVERIFIABLE observable in checking — judge it honestly and keep "
+    "going; every self-judgment is disclosed to the chairman in full. Every use is "
+    "audited and sent to the chairman; all of it is reversible. Spend this authority "
+    "the way you would want it audited. This is not the tool for executing a chairman "
+    "boardroom order — that is directive_file, citing his message, and works in every "
+    "mode.",
+    {"action": dict, "reason": str},
+)
+async def t_scope_act(args):
+    return _text(_call("POST", "/agent/scope",
+                       {"action": args["action"], "reason": args["reason"]}))
+
+
+@tool(
     "commitment_propose",
     "CEO only. Ask to commit to a delivery date. You do not and cannot write the date: "
     "the platform stamps its own projection from pace and scope, and the chairman "
@@ -875,7 +896,7 @@ ALL_TOOLS = [
     t_suggest, t_channels, t_messages_read, t_message_post, t_directive_file,
     t_memory_search, t_memory_add, t_memory_supersede, t_memory_compact, t_memory_forget,
     t_memory_tool,
-    t_evidence_add, t_review_narrative, t_commitment_propose,
+    t_evidence_add, t_review_narrative, t_commitment_propose, t_scope_act,
     t_hypothesis_add, t_hypothesis_kill, t_decision_add,
     t_approval_request, t_approvals_list, t_spend_book,
     t_side_effect_begin, t_side_effect_finish,

@@ -181,6 +181,38 @@ class ConstitutionDoc(BaseModel):
         choices=["deny", "approve"],
         help="'deny' or 'approve'. Default-deny: silence is not consent.")
 
+    # The authority dial (CEO Charter, stage B — docs/AUTONOMY.md). Integrity
+    # rules never move; these decide only WHO holds each verb. 'chairman' is
+    # today's behavior; 'ceo' hands the verb to the CEO, exercised through the
+    # same machinery, with every use audited and disclosed. Autonomy is
+    # granted by the constitution — the CEO still cannot edit its own rulebook,
+    # and the chairman's routes, veto and pause never close.
+    plan_authority: str = _rule(
+        "chairman", group="Autonomy", label="Who accepts scope into the plan",
+        choices=["chairman", "ceo"],
+        help="'chairman': proposals wait for your click (today's behavior). 'ceo': the "
+             "CEO accepts its own proposals — the plan gate still runs the same "
+             "arithmetic, and every acceptance lands in your Decisions record.")
+    scope_authority: str = _rule(
+        "chairman", group="Autonomy", label="Who may change the plan",
+        choices=["chairman", "ceo"],
+        help="Cut, reopen, restage, reestimate, reword, unsequence. 'chairman': yours "
+             "alone (the CEO can still execute your boardroom orders as directives). "
+             "'ceo': the CEO wields them itself, on the record, reversibly.")
+    commitment_authority: str = _rule(
+        "chairman", group="Autonomy", label="Who signs the delivery date",
+        choices=["chairman", "ceo"],
+        help="'chairman': a proposed commitment waits for you. 'ceo': proposing adopts "
+             "the platform's own projected date immediately — the CEO still cannot "
+             "write a date, only accept the arithmetic's.")
+    verdict_policy: str = _rule(
+        "chairman", group="Autonomy", label="Who judges unverifiable closes",
+        choices=["chairman", "ceo_judgment"],
+        help="Observable acceptance tests a script cannot check. 'chairman': they park "
+             "on your desk. 'ceo_judgment': the CEO judges and keeps going — and every "
+             "self-judged close is drawn into your spot-audit at an elevated rate, so "
+             "nothing is quietly trusted.")
+
     # Budgets — native unit of the project's billing mode
     monthly_usd_cap: float = _rule(
         1000.0, ge=0, group="Budgets", label="Monthly budget (USD)",

@@ -95,6 +95,7 @@ def constitution_prose(cons: ConstitutionDoc, project: Project) -> str:
         f"- Each run may hit at most {cons.refusal_cap_per_run} policy refusals before its "
         "token is revoked. A refusal is the system working; do not rephrase and retry.\n"
         f"{_cadence_clause(cons)}"
+        f"{_authority_clause(cons)}"
         "- Asking the chairman is allowed, never required. Default to deciding and "
         "reporting ('I decided X because Y — say so if you disagree'), or file an approval "
         "as a recommendation you would defend. When you feel strongly enough that you want "
@@ -105,6 +106,34 @@ def constitution_prose(cons: ConstitutionDoc, project: Project) -> str:
         "that, move a stage, change an estimate — EXECUTE it with directive_file citing "
         "his message, rather than asking him to press the button himself. His word is the "
         "authority; the citation proves it; the echo lets him correct you."
+    )
+
+
+def _authority_clause(cons: ConstitutionDoc) -> str:
+    """Which verbs the authority dial grants this CEO, stated where every other
+    enforced limit is stated. Silent under the default (Supervised) dial — a
+    paragraph about authority nobody granted is pure token cost."""
+    held: list[str] = []
+    if cons.plan_authority == "ceo":
+        held.append("ACCEPT your own proposed requirements into scope (scope_act)")
+    if cons.scope_authority == "ceo":
+        held.append("change the plan yourself — cut, reopen, restage, reestimate, "
+                    "reword, unsequence (scope_act)")
+    if cons.commitment_authority == "ceo":
+        held.append("sign the delivery date: commitment_propose adopts the platform's "
+                    "projection as the promise immediately")
+    if cons.verdict_policy == "ceo_judgment":
+        held.append("judge unverifiable observable closes yourself (scope_act verdict) "
+                    "— judge honestly and keep going; every self-judgment is disclosed "
+                    "to the chairman in full")
+    if not held:
+        return ""
+    return (
+        "- AUTHORITY THE CONSTITUTION GRANTS YOU: "
+        + "; ".join(held)
+        + ". Every exercise is audited and sent to the chairman; all of it is "
+          "reversible, and the dial is his to turn back. Decide like an executive: "
+          "act, record the reason, and never wait on an answer you did not need.\n"
     )
 
 

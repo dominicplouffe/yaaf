@@ -446,6 +446,7 @@ def check_finished_requirements(session: Session, project: Project) -> int:
     be asked.
     """
     moved = 0
+    cons = effective(session, project.id)
     live = session.execute(
         select(Requirement).where(
             Requirement.project_id == project.id,
@@ -480,6 +481,21 @@ def check_finished_requirements(session: Session, project: Project) -> int:
                 requirement_id=requirement.id,
             ))
             note = "all work closed; the platform is running the acceptance test"
+        elif cons.verdict_policy == "ceo_judgment":
+            # The dial hands unverifiable closes to the CEO's judgment: tell it
+            # to judge instead of parking on a desk nobody is required to
+            # check. Every self-judgment is disclosed to the chairman in full.
+            note = "all work closed; awaiting the CEO's judgment on the observable"
+            _notice_ceo(
+                session, project, NoticeKind.GOAL_CHANGED,
+                f"{requirement.key} has no work left open and its acceptance test is an "
+                f"observable the platform cannot run: {requirement.statement[:300]}\n"
+                "The constitution grants you the verdict (verdict_policy: "
+                "ceo_judgment). Look at what was actually produced and judge it "
+                "honestly with scope_act — kind 'verdict', ok true or false, and say "
+                "what you saw. Your judgment is disclosed to the chairman in full, "
+                "and the spot-audit exists for exactly this close.",
+            )
         else:
             note = "all work closed; waiting on the chairman to confirm the observable"
             _notice_ceo(

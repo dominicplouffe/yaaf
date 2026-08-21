@@ -629,6 +629,119 @@ def _file_scope_directive(body: DirectiveIn, ctx: RunContext, session: Session) 
     }
 
 
+# ── self-held scope authority ──────────────────────────────────────────────────
+
+
+class ScopeActIn(BaseModel):
+    action: dict
+    reason: str = Field(min_length=10)
+
+
+@router.post("/scope")
+def scope_act(
+    body: ScopeActIn, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
+) -> dict:
+    """Exercise a scope verb the constitution's authority dial grants the CEO.
+
+    Under the default dial every verb here is a 403 — the chairman holds them
+    all, and the CEO's paths are proposing, or executing his boardroom orders
+    as directives. When the chairman turns `plan_authority`, `scope_authority`
+    or `verdict_policy` to the CEO, the same verbs run through the same apply
+    helpers as his own buttons — the only differences are the actor on the
+    record and where the disclosure goes: every self-exercise lands in the
+    audit log and is sent to the chairman, so autonomy is never quiet.
+    """
+    if ctx.agent.kind != AgentKind.CEO:
+        raise Refusal("Scope authority, where granted at all, is granted to the CEO.",
+                      status_code=403)
+    cons = effective(session, ctx.project.id)
+    policy.check_self_scope_action(cons, body.action)
+    # Local import: admin imports this module at load; one-way at import time.
+    from yaaf.server.api import admin as admin_api
+
+    action = body.action
+    kind = action["kind"]
+    actor = f"agent:{ctx.agent.id}"
+    row = _requirement_by_key(session, ctx.project.id, action["requirement_key"])
+    project = ctx.project
+    reason = f"{body.reason} [self-exercised under the constitution's authority dial]"
+    if kind == "accept":
+        result = admin_api.apply_accept(session, project, row, actor,
+                                        action.get("stage"), reason, by_user=None,
+                                        notify=False)
+        detail = f"accepted {row.key} into scope (stage {result['stage']})"
+    elif kind == "cut":
+        result = admin_api.apply_cut(session, project, row, actor, reason, notify=False)
+        detail = f"cut {row.key}"
+    elif kind == "reopen":
+        result = admin_api.apply_reopen(session, project, row, actor, reason,
+                                        notify=False)
+        detail = f"reopened {row.key} (was {result['was']})"
+    elif kind == "restage":
+        result = admin_api.apply_restage(session, project, row, actor,
+                                         int(action["stage"]), reason, notify=False)
+        detail = f"moved {row.key} to stage {result['stage']} (was {result['was']})"
+    elif kind == "reestimate":
+        result = admin_api.apply_reestimate(session, project, row, actor,
+                                            int(action["est_runs"]), reason,
+                                            notify=False)
+        detail = (f"reestimated {row.key} at {result['est_runs']} runs "
+                  f"(was {result['was']}; scored estimate stays "
+                  f"{result['est_runs_first']})")
+    elif kind == "reword":
+        result = admin_api.apply_reword(session, project, row, actor,
+                                        str(action["statement"]), reason, notify=False)
+        detail = f"reworded {row.key}"
+    elif kind == "verdict":
+        ok = bool(action["ok"])
+        result = admin_api.apply_verdict(session, project, row, actor, ok, reason,
+                                         notify=False)
+        detail = (f"judged {row.key} {'MET' if ok else 'NOT met'} "
+                  "(unverifiable observable, CEO judgment)")
+    else:  # unsequence
+        source = _requirement_by_key(session, ctx.project.id, action["depends_on_key"])
+        result = admin_api.apply_edge_remove(session, project, actor,
+                                             source.id, row.id, reason, notify=False)
+        detail = f"removed the dependency {source.key} → {row.key}"
+    _disclose_self_action(session, ctx, kind, detail, body.reason)
+    return {
+        "executed": detail,
+        "result": result,
+        "note": ("Done under the authority the constitution grants you. It is on the "
+                 "record and the chairman has been told — he can reverse any of it, "
+                 "and turning the dial back is one amendment. Spend this authority "
+                 "the way you would want it audited."),
+    }
+
+
+def _disclose_self_action(session: Session, ctx: RunContext, kind: str,
+                          detail: str, reason: str) -> None:
+    """Autonomy is never quiet: every self-exercise is audited and sent to the
+    chairman out-of-band. Self-judged verdicts in particular are disclosed
+    every single time — stronger than sampling, and the reason `ceo_judgment`
+    does not bend 'nothing is quietly trusted'."""
+    session.add(
+        AuditLog(
+            id=ids.new_id(ids.AUDIT),
+            project_id=ctx.project.id,
+            actor=f"agent:{ctx.agent.id}",
+            action="scope.self",
+            entity="project",
+            entity_id=ctx.project.id,
+            detail={"kind": kind, "detail": detail, "reason": reason},
+        )
+    )
+    from yaaf.server.notify import chairman_notify
+
+    chairman_notify(
+        session, ctx.project,
+        f"CEO decision: {detail}",
+        f"{detail}\n\nIts reason: {reason}\n\nExercised under the authority dial you "
+        "set in the constitution. Everything here is reversible — reopen what was "
+        "cut, cut what was accepted — and the dial itself is yours to turn back.",
+    )
+
+
 def _audit_directive(session: Session, ctx: RunContext, cited: Message, changes: dict) -> None:
     session.add(
         AuditLog(
@@ -1074,6 +1187,45 @@ def propose_commitment(
     )
     session.add(commitment)
     session.flush()
+    if cons.commitment_authority == "ceo":
+        # The dial holds the date's signature too. Self-acceptance is only ever
+        # adopting the platform's own projection — the CEO still cannot write a
+        # date — so what the grant really covers is the *commitment to it*.
+        # Same freeze as the chairman's accept, disclosed the same loud way.
+        from yaaf.server.api import admin as admin_api
+
+        commitment.status = CommitmentStatus.ACCEPTED
+        commitment.accepted_at = utcnow()
+        admin_api._freeze_commitment_basis(session, ctx.project, commitment, cons)
+        session.add(AuditLog(
+            id=ids.new_id(ids.AUDIT), project_id=ctx.project.id,
+            actor=f"agent:{ctx.agent.id}", action="commitment.self_accept",
+            entity="commitment", entity_id=commitment.id,
+            detail={"deliver_by": commitment.deliver_by.isoformat(),
+                    "scope": commitment.scope_snapshot},
+        ))
+        from yaaf.server.notify import chairman_notify
+
+        chairman_notify(
+            session, ctx.project,
+            f"CEO committed to {commitment.deliver_by:%Y-%m-%d}",
+            f"The CEO committed to delivering {len(commitment.scope_snapshot)} "
+            f"requirement(s) by {commitment.deliver_by:%Y-%m-%d} — the platform's own "
+            "projection, which the CEO cannot write, only adopt. From here the "
+            "projection recomputes continuously; a slip freezes new scope and emails "
+            "you, exactly as if you had signed it yourself. Move or decline it any "
+            "time — those buttons never close.",
+        )
+        return {
+            "commitment_id": commitment.id,
+            "status": commitment.status,
+            "deliver_by": deliver_by.isoformat(),
+            "basis": projection["basis"],
+            "note": ("Committed. The constitution grants you the signature, so the "
+                     "platform's projected date is now the promise — it is frozen, "
+                     "audited, and the chairman has been told. A slip freezes new "
+                     "scope on you the same as on anyone."),
+        }
     return {
         "commitment_id": commitment.id,
         "status": commitment.status,
