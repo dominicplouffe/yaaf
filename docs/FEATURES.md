@@ -18,16 +18,18 @@ model, effort, tool permissions, secret scopes) versioned in a platform-wide
 library. A *project* hires teams by pinning a role version; each team has
 employees and a lead. The CEO is the only agent that plans.
 
-- A starter library ships in [`roles/`](../roles), in three families: the
+- A starter library ships in [`roles/`](../roles), in four families: the
   general-purpose set (`ceo`, `engineer`, `researcher`, `writer`, `tutor`,
   `adversary`, `data-analyst`, `blog-writer`, `marketer`, `gtm`, `sales`,
   `support`), a markets
   desk
   (`cio`, `equity-analyst`, `quant-researcher`, `market-data-engineer`,
   `market-news-analyst`, `macro-analyst`, `technical-analyst`, `risk-manager`,
-  `portfolio-manager`, `compliance-officer`, `finance-writer`), and a mobile
+  `portfolio-manager`, `compliance-officer`, `finance-writer`), a mobile
   game studio (`game-analyst`, `game-developer`, `game-ux-designer`,
-  `game-graphic-designer`).
+  `game-graphic-designer`), and a data-science bench that runs as a chain —
+  `data-scientist` finds it, `data-skeptic` tries to kill it, and
+  `exec-communicator` turns what survives into a deck an executive finishes.
 - Load them with `yaaf seed-roles roles/`; browse and edit at **Roles** in the
   dashboard, which shows each role's blast radius (which projects run it, at
   which version).

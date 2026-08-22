@@ -382,7 +382,7 @@ yaaf/runner     leases runs, launches sandbox containers, meters everything
 yaaf/cli        `yaaf` — admin/observe CLI, incl. `yaaf experiment`
 web/            the chairman's dashboard (React, served at /app)
 roles/          starter role library: general-purpose, a tutor, an analyst,
-                a markets desk, a mobile-game studio
+                a markets desk, a mobile-game studio, a data-science bench
 examples/       eleven importable projects (.md + .json) — two fundamentals,
                 nine that need the platform
 evals/          golden-transcript evals — regression-gate for prompt edits
