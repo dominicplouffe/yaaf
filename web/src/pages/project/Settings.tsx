@@ -14,6 +14,18 @@ import {
   ProjectBundle,
   RoleSummary,
 } from "../../api";
+import {
+  BLANK_DATA_SOURCE,
+  DataSourceDraft,
+  DataSourceFields,
+  DataSourceIntro,
+  dataSourceBody,
+  envVarName,
+  RoleOption,
+  savedName,
+  SourceAuth,
+  sourceReady,
+} from "../../datasource";
 import { fmtWhen, usePoll } from "../../hooks";
 import { ConfirmModal, SecretInput, StoredSecret } from "../../ui";
 
@@ -37,20 +49,6 @@ interface SecretRow {
   project_id: string | null;
   role_scopes: string[];
   kind: "service" | "billing";
-}
-
-function envVarName(name: string): string {
-  return name.replace(/[^A-Za-z0-9]+/g, "_").replace(/^_+|_+$/g, "").toUpperCase();
-}
-
-/** Live-normalize a data source name to the API's slug rule (^[a-z0-9-]{2,32}$):
-    the name becomes an env var, a tool prefix and secret names, so "SEMRush"
-    must land as "semrush" here rather than bounce off the server as a regex.
-    Trailing hyphens survive typing ("my-" on the way to "my-source"); leading
-    ones never; the save handler strips the trailing ones. */
-function slugifyName(raw: string): string {
-  return raw.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/-+/g, "-")
-    .replace(/^-+/, "").slice(0, 32);
 }
 
 /** Config addresses a secret by name (`slack.bot_token_secret`, a data source's
@@ -324,8 +322,6 @@ function checkBadge(last: McpServerEntry["last_check"]) {
   );
 }
 
-type SourceAuth = "none" | "bearer" | "oauth";
-
 /** The stored mode, with the legacy inference the server also applies: entries
     saved before OAuth existed carry no `auth`, and for them a token means bearer. */
 function sourceAuthOf(source: McpServerEntry): SourceAuth {
@@ -353,10 +349,8 @@ async function startOAuthSignIn(projectId: string, name: string, tab: Window | n
   return started;
 }
 
-type RoleOption = { slug: string; teams: string[] };
-
-/** One checkbox per distinct role in the org, labelled with the team(s) running
-    it — grants are per role, so sibling teams share a box. */
+/** The org's teams as grant targets — one entry per distinct role, carrying
+    the team(s) running it, which is how RoleTicks labels the boxes. */
 function roleOptionsOf(org: OrgView | null): RoleOption[] {
   const options: RoleOption[] = [];
   for (const team of org?.teams ?? []) {
@@ -366,132 +360,6 @@ function roleOptionsOf(org: OrgView | null): RoleOption[] {
     else options.push({ slug: team.role_slug, teams: [team.name] });
   }
   return options;
-}
-
-function RoleTicks({ options, selected, onChange }: {
-  options: RoleOption[];
-  selected: string[];
-  onChange: (slugs: string[]) => void;
-}) {
-  if (options.length === 0)
-    return <p className="help">No teams yet — add a team on the Overview tab first.</p>;
-  return (
-    <div className="pill-row">
-      {options.map((option) => (
-        <label key={option.slug} style={{ display: "flex", gap: 5, alignItems: "center" }}>
-          <input
-            type="checkbox"
-            style={{ width: "auto" }}
-            checked={selected.includes(option.slug)}
-            onChange={(e) =>
-              onChange(
-                e.target.checked
-                  ? [...selected, option.slug]
-                  : selected.filter((slug) => slug !== option.slug),
-              )
-            }
-          />
-          {option.teams.join(", ")} ({option.slug})
-        </label>
-      ))}
-    </div>
-  );
-}
-
-type SourceAccess = "inline" | "bulk";
-
-/** How a source's results reach an agent — the choice that decides whether a
-    data pull costs tokens or CPU. Offered on both the add and edit forms
-    because it is the one setting worth changing after the fact. */
-function AccessPicker({ value, onChange }: {
-  value: SourceAccess;
-  onChange: (next: SourceAccess) => void;
-}) {
-  return (
-    <>
-      <label className="field">How agents read it</label>
-      <select value={value} onChange={(e) => onChange(e.target.value as SourceAccess)}>
-        <option value="inline">inline — mounted as tools, results go into the model</option>
-        <option value="bulk">bulk — results go to a file, via data_fetch</option>
-      </select>
-      <div className="help" style={{ marginTop: 4 }}>
-        {value === "inline"
-          ? "Every result is copied into the agent's context and billed by the token. Right for small lookups; ruinous for exports."
-          : "The tools are not mounted at all, so nothing can pull rows into context by accident. Agents call data_fetch, which writes the full result to a workspace file they then process with code."}
-      </div>
-    </>
-  );
-}
-
-/** How a source authenticates. "oauth" trades the pasted credential for a
-    browser sign-in: Connect opens the provider's consent screen, and from then
-    on the platform stores and refreshes the tokens itself. */
-function AuthPicker({ value, onChange }: {
-  value: SourceAuth;
-  onChange: (next: SourceAuth) => void;
-}) {
-  return (
-    <>
-      <label className="field">How it authenticates</label>
-      <select value={value} onChange={(e) => onChange(e.target.value as SourceAuth)}>
-        <option value="none">none — the server is open</option>
-        <option value="bearer">bearer token — paste a credential</option>
-        <option value="oauth">OAuth — sign in through the provider</option>
-      </select>
-      {value === "oauth" && (
-        <div className="help" style={{ marginTop: 4 }}>
-          For hosted servers like Notion, Linear or Atlassian: saving opens the
-          provider's sign-in in a new tab; finish it there and the source connects.
-          Tokens are stored encrypted and refreshed automatically.
-        </div>
-      )}
-    </>
-  );
-}
-
-/** Manual OAuth client fields — needed only by providers without dynamic
-    client registration, so they hide behind a disclosure. */
-function OAuthClientFields({ clientId, clientSecret, scope, onClientId, onClientSecret, onScope }: {
-  clientId: string;
-  clientSecret: string;
-  scope: string;
-  onClientId: (v: string) => void;
-  onClientSecret: (v: string) => void;
-  onScope: (v: string) => void;
-}) {
-  return (
-    <details style={{ marginTop: 6 }}>
-      <summary className="help" style={{ cursor: "pointer" }}>
-        Advanced — leave blank; most servers register yaaf automatically
-      </summary>
-      <div className="row" style={{ marginTop: 6 }}>
-        <div>
-          <label className="field">Client ID (optional)</label>
-          <input
-            value={clientId}
-            onChange={(e) => onClientId(e.target.value)}
-            placeholder="from the provider's developer console"
-          />
-        </div>
-        <div>
-          <label className="field">Client secret (optional)</label>
-          <SecretInput
-            value={clientSecret}
-            onChange={onClientSecret}
-            placeholder="only if the provider issued one"
-          />
-        </div>
-        <div>
-          <label className="field">Scope (optional)</label>
-          <input
-            value={scope}
-            onChange={(e) => onScope(e.target.value)}
-            placeholder="blank = the server's default"
-          />
-        </div>
-      </div>
-    </details>
-  );
 }
 
 function savedMessage(result: unknown): string {
@@ -521,20 +389,22 @@ function DataSourceEditor({
   onDone: () => void;
 }) {
   const urlSecretId = secretByName(secrets, source.url_secret)?.id;
-  const [url, setUrl] = useState("");
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [bearer, setBearer] = useState("");
   const [dropToken, setDropToken] = useState(false);
-  const [roles, setRoles] = useState<string[]>(source.roles);
-  const [access, setAccess] = useState<SourceAccess>(source.access ?? "inline");
-  const [auth, setAuth] = useState<SourceAuth>(sourceAuthOf(source));
   // Not prefilled from source.oauth.client_id: that id may be a dynamic
   // registration the server owns, and re-submitting it while a URL change
   // resets the connection would keep a client whose secret was just dropped.
   // The Advanced box is for a client the chairman pastes by hand.
-  const [clientId, setClientId] = useState("");
-  const [clientSecret, setClientSecret] = useState("");
-  const [scope, setScope] = useState(source.oauth?.scope ?? "");
+  const [draft, setDraft] = useState<DataSourceDraft>({
+    ...BLANK_DATA_SOURCE,
+    name: source.name,
+    roles: source.roles,
+    access: source.access ?? "inline",
+    auth: sourceAuthOf(source),
+    scope: source.oauth?.scope ?? "",
+  });
+  const { url, auth } = draft;
+  const heldToken = !!source.bearer_secret && sourceAuthOf(source) === "bearer";
 
   useEffect(() => {
     setLoadError(null);
@@ -545,70 +415,44 @@ function DataSourceEditor({
       return;
     }
     get<{ value: string }>(`/admin/secrets/${urlSecretId}/value`)
-      .then((got) => setUrl(got.value))
+      .then((got) => setDraft((prev) => ({ ...prev, url: got.value })))
       .catch((e) => setLoadError((e as Error).message));
   }, [urlSecretId]);
 
   return (
     <div className="source-editor">
-      <div className="row">
-        <div>
-          <label className="field">URL — the server's full address</label>
-          <input
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            placeholder="https://host:3845/mcp"
-          />
-        </div>
-        <div>
-          <AuthPicker value={auth} onChange={setAuth} />
-        </div>
-      </div>
-      {auth === "bearer" && (
-        <div style={{ maxWidth: 420 }}>
-          <label className="field">
+      <DataSourceFields
+        value={draft}
+        onChange={setDraft}
+        roleOptions={roleOptions}
+        showName={false}
+        bearerLabel={
+          <>
             Bearer token —{" "}
-            {source.bearer_secret && sourceAuthOf(source) === "bearer"
+            {heldToken
               ? dropToken ? "will be removed" : "blank keeps the current one"
               : "none stored"}
+          </>
+        }
+        bearerPlaceholder={heldToken ? "blank = keep current" : "paste the credential"}
+        bearerDisabled={dropToken}
+        belowBearer={heldToken && (
+          <label className="help" style={{ display: "flex", gap: 5, alignItems: "center" }}>
+            <input
+              type="checkbox"
+              style={{ width: "auto" }}
+              checked={dropToken}
+              onChange={(e) => setDropToken(e.target.checked)}
+            />
+            remove the stored token — this server needs no auth
           </label>
-          <SecretInput
-            value={bearer}
-            disabled={dropToken}
-            placeholder={source.bearer_secret && sourceAuthOf(source) === "bearer"
-              ? "blank = keep current" : "paste the credential"}
-            onChange={setBearer}
-          />
-          {source.bearer_secret && sourceAuthOf(source) === "bearer" && (
-            <label className="help" style={{ display: "flex", gap: 5, alignItems: "center" }}>
-              <input
-                type="checkbox"
-                style={{ width: "auto" }}
-                checked={dropToken}
-                onChange={(e) => setDropToken(e.target.checked)}
-              />
-              remove the stored token — this server needs no auth
-            </label>
-          )}
-        </div>
-      )}
-      {auth === "oauth" && (
-        <OAuthClientFields
-          clientId={clientId}
-          clientSecret={clientSecret}
-          scope={scope}
-          onClientId={setClientId}
-          onClientSecret={setClientSecret}
-          onScope={setScope}
-        />
-      )}
-      <AccessPicker value={access} onChange={setAccess} />
-      <label className="field">Which roles get this source</label>
-      <RoleTicks options={roleOptions} selected={roles} onChange={setRoles} />
+        )}
+        rolesLabel="Which roles get this source"
+      />
       <div className="actions">
         <button
           className="small primary"
-          disabled={busy || !url.trim() || roles.length === 0}
+          disabled={busy || !url.trim() || draft.roles.length === 0}
           onClick={() => {
             // Pre-open the tab in the click itself, before any await, or the
             // popup blocker eats the provider's sign-in page. Editing a
@@ -621,18 +465,11 @@ function DataSourceEditor({
                 const result = await post<DataSourceSaveResult>(
                   `/admin/projects/${projectId}/mcp_servers`,
                   {
-                    name: source.name,
-                    url: url.trim(),
+                    ...dataSourceBody(draft),
                     // Omitted keeps the stored token; "" removes it; a value rotates.
                     bearer:
-                      auth === "bearer" ? (dropToken ? "" : bearer.trim() || undefined)
+                      auth === "bearer" ? (dropToken ? "" : draft.bearer.trim() || undefined)
                       : auth === "none" && source.bearer_secret ? "" : undefined,
-                    roles,
-                    access,
-                    auth,
-                    client_id: auth === "oauth" ? clientId.trim() || undefined : undefined,
-                    client_secret: auth === "oauth" ? clientSecret.trim() || undefined : undefined,
-                    scope: auth === "oauth" ? scope.trim() || undefined : undefined,
                   },
                 );
                 if (result.needs_connect) await startOAuthSignIn(projectId, source.name, tab);
@@ -677,15 +514,7 @@ function DataSources({
   const sources = (dash.integrations["mcp_servers"] as McpServerEntry[] | undefined) ?? [];
   const [org, setOrg] = useState<OrgView | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
-  const [name, setName] = useState("");
-  const [url, setUrl] = useState("");
-  const [bearer, setBearer] = useState("");
-  const [roles, setRoles] = useState<string[]>([]);
-  const [access, setAccess] = useState<SourceAccess>("inline");
-  const [auth, setAuth] = useState<SourceAuth>("none");
-  const [clientId, setClientId] = useState("");
-  const [clientSecret, setClientSecret] = useState("");
-  const [scope, setScope] = useState("");
+  const [draft, setDraft] = useState<DataSourceDraft>(BLANK_DATA_SOURCE);
   // The source whose sign-in tab is open right now. While set, the dash is
   // re-polled so the page notices the callback landing without a refresh.
   const [connecting, setConnecting] = useState<string | null>(null);
@@ -714,18 +543,9 @@ function DataSources({
 
   return (
     <>
-      <p className="subtitle">
-        A data source is an MCP server — a URL that offers tools. An agent's sandbox is a locked
-        box whose only way in is an environment variable you granted, so the address travels as
-        one: saving <code>ppc</code> stores its URL encrypted and hands the granted roles{" "}
-        <code>$MCP_PPC_URL</code>. That variable <em>is</em> the delivery mechanism, not a side
-        effect — which is why everything about a source is edited here and nowhere else.
-      </p>
-      <p className="help">
-        One save does all of it: validates the URL, stores it and any token encrypted, grants
-        them to the roles you tick, and calls the server to confirm it answers. To change one,
-        press <b>edit</b> — no role editing, no repin, no CLI.
-      </p>
+      <DataSourceIntro>
+        To change one, press <b>edit</b> — no role editing, no repin, no CLI.
+      </DataSourceIntro>
 
       {sources.length > 0 && (
         <table style={{ marginBottom: 14 }}>
@@ -891,96 +711,27 @@ function DataSources({
       )}
 
       <label className="field">Add a data source</label>
-      <div className="row">
-        <div>
-          <label className="field">Name (lowercase slug)</label>
-          <input
-            value={name}
-            onChange={(e) => setName(slugifyName(e.target.value))}
-            placeholder="figma, analytics, crm…"
-          />
-          {name.trim() && (
-            <div className="help" style={{ marginTop: 4 }}>
-              granted roles will get <code>${envVarName(`mcp-${name.trim()}-url`)}</code> and
-              call its tools as <code>mcp__{name.trim()}__*</code>
-            </div>
-          )}
-        </div>
-        <div>
-          <label className="field">URL — the server's full address</label>
-          <input
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            placeholder="https://host:3845/mcp"
-          />
-        </div>
-        <div>
-          <AuthPicker value={auth} onChange={setAuth} />
-        </div>
-      </div>
-      {auth === "bearer" && (
-        <div style={{ maxWidth: 420 }}>
-          <label className="field">Bearer token</label>
-          <SecretInput
-            value={bearer}
-            onChange={setBearer}
-            placeholder="paste the credential"
-          />
-        </div>
-      )}
-      {auth === "oauth" && (
-        <OAuthClientFields
-          clientId={clientId}
-          clientSecret={clientSecret}
-          scope={scope}
-          onClientId={setClientId}
-          onClientSecret={setClientSecret}
-          onScope={setScope}
-        />
-      )}
-      <AccessPicker value={access} onChange={setAccess} />
-      <label className="field">Which roles get this source (nobody, until you tick)</label>
-      <RoleTicks options={roleOptions} selected={roles} onChange={setRoles} />
+      <DataSourceFields value={draft} onChange={setDraft} roleOptions={roleOptions} />
       <div className="actions">
         <button
           className="small primary"
-          disabled={busy || name.replace(/-+$/, "").length < 2 || !url.trim()
-            || roles.length === 0}
+          disabled={busy || !sourceReady(draft)}
           onClick={() => {
-            const savedName = name.replace(/-+$/, "");
+            const name = savedName(draft);
             // Pre-open the sign-in tab inside the click, before any await —
             // a tab opened after the network round-trip is popup-blocked.
-            const tab = auth === "oauth" ? window.open("", "_blank") : null;
+            const tab = draft.auth === "oauth" ? window.open("", "_blank") : null;
             act(async () => {
               try {
                 const result = await post<DataSourceSaveResult>(
                   `/admin/projects/${projectId}/mcp_servers`,
-                  {
-                    name: savedName,
-                    url: url.trim(),
-                    bearer: auth === "bearer" ? bearer.trim() || undefined : undefined,
-                    roles,
-                    access,
-                    auth,
-                    client_id: auth === "oauth" ? clientId.trim() || undefined : undefined,
-                    client_secret:
-                      auth === "oauth" ? clientSecret.trim() || undefined : undefined,
-                    scope: auth === "oauth" ? scope.trim() || undefined : undefined,
-                  },
+                  dataSourceBody(draft),
                 );
                 if (result.needs_connect) {
-                  await startOAuthSignIn(projectId, savedName, tab);
-                  setConnecting(savedName);
+                  await startOAuthSignIn(projectId, name, tab);
+                  setConnecting(name);
                 } else tab?.close();
-                setName("");
-                setUrl("");
-                setBearer("");
-                setRoles([]);
-                setAccess("inline");
-                setAuth("none");
-                setClientId("");
-                setClientSecret("");
-                setScope("");
+                setDraft(BLANK_DATA_SOURCE);
                 return result;
               } catch (e) {
                 tab?.close();

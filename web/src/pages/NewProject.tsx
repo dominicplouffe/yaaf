@@ -1,6 +1,18 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { get, McpServerEntry, patch, post, ProjectBundle, RoleSummary } from "../api";
+import {
+  BLANK_DATA_SOURCE,
+  DataSourceDraft,
+  DataSourceFields,
+  DataSourceIntro,
+  dataSourceBody,
+  envVarName,
+  isFullUrl,
+  RoleOption,
+  savedName,
+  sourceReady,
+} from "../datasource";
 import { SecretInput } from "../ui";
 
 interface TeamDraft {
@@ -16,30 +28,8 @@ interface CredentialDraft {
   grants: string[]; // role slugs
 }
 
-interface DataSourceDraft {
-  name: string;
-  url: string;
-  bearer: string;
-  grants: string[]; // role slugs
-}
-
 function slugify(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 64);
-}
-
-function envVarName(name: string): string {
-  return name.replace(/[^A-Za-z0-9]+/g, "_").replace(/^_+|_+$/g, "").toUpperCase();
-}
-
-/** The same rule the server applies to a data source's address: a full
-    http(s) address, not a bare host and not a token pasted into the wrong box. */
-function isFullUrl(value: string): boolean {
-  try {
-    const parsed = new URL(value.trim());
-    return (parsed.protocol === "http:" || parsed.protocol === "https:") && !!parsed.hostname;
-  } catch {
-    return false;
-  }
 }
 
 const MODES = [
@@ -214,23 +204,8 @@ export default function NewProject() {
     setCredentials((prev) => prev.map((c, j) => (j === i ? { ...c, ...patch } : c)));
   }
 
-  function setDataSource(i: number, patch: Partial<DataSourceDraft>) {
-    setDataSources((prev) => prev.map((s, j) => (j === i ? { ...s, ...patch } : s)));
-  }
-
-  function toggleSourceGrant(i: number, slug: string) {
-    setDataSources((prev) =>
-      prev.map((s, j) =>
-        j === i
-          ? {
-              ...s,
-              grants: s.grants.includes(slug)
-                ? s.grants.filter((g) => g !== slug)
-                : [...s.grants, slug],
-            }
-          : s,
-      ),
-    );
+  function setDataSource(i: number, next: DataSourceDraft) {
+    setDataSources((prev) => prev.map((s, j) => (j === i ? next : s)));
   }
 
   // Start needs a model to bill: a real key here, or the mock runtime. A
@@ -304,6 +279,27 @@ export default function NewProject() {
     (br) => !roles.some((r) => r.slug === br.slug),
   );
 
+  function roleLabel(slug: string): string {
+    return (
+      workerRoles.find((r) => r.slug === slug)?.name ??
+      newBundleRoles.find((r) => r.slug === slug)?.name ??
+      slug
+    );
+  }
+
+  // The drafted teams as grant targets, in the shape Settings' tick boxes use:
+  // one entry per distinct role, carrying the team(s) that run it. A team is
+  // named the moment it has a role, so the role's own name stands in until then.
+  const roleOptions: RoleOption[] = [];
+  for (const team of teams) {
+    if (!team.role_slug) continue;
+    const label = team.name.trim() || roleLabel(team.role_slug);
+    const existing = roleOptions.find((option) => option.slug === team.role_slug);
+    if (existing) {
+      if (!existing.teams.includes(label)) existing.teams.push(label);
+    } else roleOptions.push({ slug: team.role_slug, teams: [label] });
+  }
+
   // A setup file carries its data sources' wiring but not their addresses —
   // those are secrets, and secrets stay behind. So some rows in the credential
   // list below are not opaque keys at all: they are URLs the sandbox hands
@@ -348,18 +344,43 @@ export default function NewProject() {
             "https://host:3845/mcp, not a bare hostname or a token.",
         );
       }
-      const badSource = dataSources.find((s) => s.name.trim() && !isFullUrl(s.url));
-      if (badSource) {
-        throw new Error(
-          `Data source "${badSource.name}" needs a full URL like https://host:3845/mcp.`,
-        );
-      }
-      const ungranted = dataSources.find((s) => s.name.trim() && s.grants.length === 0);
-      if (ungranted) {
-        throw new Error(
-          `Data source "${ungranted.name}" is granted to no roles — nobody would ` +
-            "receive its tools. Tick at least one role, or remove the row.",
-        );
+      // A card left entirely blank is an unused card. Anything typed into one
+      // has to be complete here, because a half-filled source would otherwise
+      // be dropped without a word and be missed mid-run. Grants are pruned to
+      // the roles the drafted teams still run: a tick survives in state after
+      // its team's role is changed, and the source must not carry it.
+      const savedSources: { name: string; body: ReturnType<typeof dataSourceBody> }[] = [];
+      for (const source of dataSources) {
+        const sourceName = savedName(source);
+        if (!sourceName && !source.url.trim()) continue;
+        if (sourceName.length < 2) {
+          throw new Error(
+            "A data source needs a name of at least two characters — it becomes the " +
+              "env var its roles receive and the prefix of its tools.",
+          );
+        }
+        if (savedSources.some((s) => s.name === sourceName)) {
+          throw new Error(
+            `Two data sources are both called "${sourceName}" — one name, one source: ` +
+              "the second would overwrite the first.",
+          );
+        }
+        if (!isFullUrl(source.url)) {
+          throw new Error(
+            `Data source "${sourceName}" needs a full URL like https://host:3845/mcp.`,
+          );
+        }
+        const granted = source.roles.filter((slug) => usedRoleSlugs.includes(slug));
+        if (!sourceReady(source) || granted.length === 0) {
+          throw new Error(
+            `Data source "${sourceName}" is granted to no roles — nobody would ` +
+              "receive its tools. Tick at least one role, or remove the row.",
+          );
+        }
+        savedSources.push({
+          name: sourceName,
+          body: { ...dataSourceBody(source), roles: granted },
+        });
       }
       // Role definitions travel with a setup file — seed any the library
       // lacks before the server resolves slugs. Re-check against a fresh
@@ -467,17 +488,18 @@ export default function NewProject() {
       // answer at that address? A source that cannot answer is a project whose
       // agents will burn runs hunting for absent tools, so it does not start.
       const unreachable: string[] = [];
-      for (const source of dataSources) {
-        if (!source.name.trim()) continue;
+      // OAuth sources are the one kind that cannot finish here: the provider's
+      // sign-in needs a project to come back to, and it exists only now. They
+      // are saved with their wiring and connected from Settings, one click.
+      const needSignIn: string[] = [];
+      for (const source of savedSources) {
         try {
-          const saved = await post<{ check: { ok: boolean; detail: string } }>(
-            `/admin/projects/${created.id}/mcp_servers`, {
-              name: source.name.trim(),
-              url: source.url.trim(),
-              ...(source.bearer.trim() ? { bearer: source.bearer.trim() } : {}),
-              roles: source.grants,
-            });
-          if (!saved.check.ok) unreachable.push(`"${source.name}": ${saved.check.detail}`);
+          const saved = await post<{
+            check: { ok: boolean; detail: string };
+            needs_connect?: boolean;
+          }>(`/admin/projects/${created.id}/mcp_servers`, source.body);
+          if (saved.needs_connect) needSignIn.push(source.name);
+          else if (!saved.check.ok) unreachable.push(`"${source.name}": ${saved.check.detail}`);
         } catch (err) {
           unreachable.push(`"${source.name}": ${(err as Error).message}`);
         }
@@ -491,14 +513,19 @@ export default function NewProject() {
           unreachable.push(`"${source}": ${(err as Error).message}`);
         }
       }
-      if (unreachable.length) {
+      if (unreachable.length || needSignIn.length) {
+        const lines = [
+          ...unreachable.map((detail) => `not answering — ${detail}`),
+          ...needSignIn.map((name) => `"${name}": waiting on its provider sign-in`),
+        ];
+        const subject = lines.length > 1 ? "some of its data sources are" : "a data source is";
         alert(
-          `Project created, but its data source${unreachable.length > 1 ? "s are" : " is"} not ` +
-            `answering:\n\n${unreachable.join("\n")}\n\nThe project was NOT started. Fix the ` +
-            "address in Settings → Data sources — that form tests it — then start the project.",
+          `Project created, but ${subject} not ready:\n\n${lines.join("\n")}\n\n` +
+            "The project was NOT started. Finish them in Settings → Data sources — that " +
+            "form tests an address and holds the Connect button — then start the project.",
         );
         if (created.webhooks) setDone(created.id);
-        else navigate(`/projects/${created.id}`);
+        else navigate(`/projects/${created.id}/settings?s=data`);
         return;
       }
       if (startNow && canStartNow) await post(`/admin/projects/${created.id}/start`);
@@ -945,9 +972,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
                       checked={cred.grants.includes(slug)}
                       onChange={() => toggleGrant(i, slug)}
                     />
-                    {workerRoles.find((r) => r.slug === slug)?.name ??
-                      newBundleRoles.find((r) => r.slug === slug)?.name ??
-                      slug}
+                    {roleLabel(slug)}
                   </label>
                 ))}
               </div>
@@ -972,65 +997,25 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
         </button>
 
         <h2>Data sources (optional)</h2>
-        <p className="subtitle">
-          An MCP server your agents should reach — a URL that offers tools (a database
-          gateway, a SaaS bridge…). Saved with the project, tested before it starts, and
-          mounted as <code>mcp__&lt;name&gt;__*</code> tools for the roles you tick. You can
-          also add these later in Settings → Data sources.
-        </p>
+        <DataSourceIntro>
+          One added here is saved with the project and tested again before it starts.
+          Afterwards, sources are added and changed in Settings → Data sources.
+        </DataSourceIntro>
         {dataSources.map((source, i) => (
           <div className="card" key={i} style={{ marginBottom: 10 }}>
-            <div className="row">
-              <div>
-                <label className="field">Name (a-z, 0-9, dashes)</label>
-                <input
-                  value={source.name}
-                  onChange={(e) => setDataSource(i, { name: e.target.value })}
-                  placeholder="crm, fpl…"
-                  pattern="[a-z0-9-]{2,32}"
-                />
-              </div>
-              <div>
-                <label className="field">URL — full address, scheme included</label>
-                <input
-                  value={source.url}
-                  onChange={(e) => setDataSource(i, { url: e.target.value })}
-                  placeholder="https://host:3845/mcp"
-                />
-                {!!source.url.trim() && !isFullUrl(source.url) && (
-                  <div className="error" style={{ marginTop: 4 }}>
-                    Not a full address — like https://host:3845/mcp. localhost will not
-                    work: sandboxes are containers, use the host&apos;s LAN address.
-                  </div>
-                )}
-              </div>
-            </div>
-            <label className="field">Bearer token (optional)</label>
-            <SecretInput
-              value={source.bearer}
-              onChange={(bearer) => setDataSource(i, { bearer })}
-              placeholder="blank unless the server wants auth"
+            <DataSourceFields
+              value={source}
+              onChange={(next) => setDataSource(i, next)}
+              roleOptions={roleOptions}
+              rolesLabel="Which roles get this source (nobody, until you tick)"
+              rolesEmptyHint="Pick your teams' roles above first."
+              oauthNote={
+                "For hosted servers like Notion, Linear or Atlassian. The provider's " +
+                "sign-in cannot happen until the project exists, so this one is saved " +
+                "unconnected: finish it with Connect in Settings → Data sources, and the " +
+                "project waits rather than starting agents without the tools."
+              }
             />
-            <label className="field">Which roles receive its tools</label>
-            {usedRoleSlugs.length === 0 ? (
-              <p className="help">Pick your teams' roles above first.</p>
-            ) : (
-              <div className="pill-row">
-                {usedRoleSlugs.map((roleSlug) => (
-                  <label key={roleSlug} style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                    <input
-                      type="checkbox"
-                      style={{ width: "auto" }}
-                      checked={source.grants.includes(roleSlug)}
-                      onChange={() => toggleSourceGrant(i, roleSlug)}
-                    />
-                    {workerRoles.find((r) => r.slug === roleSlug)?.name ??
-                      newBundleRoles.find((r) => r.slug === roleSlug)?.name ??
-                      roleSlug}
-                  </label>
-                ))}
-              </div>
-            )}
             <div className="actions">
               <button
                 type="button"
@@ -1044,9 +1029,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
         ))}
         <button
           type="button"
-          onClick={() =>
-            setDataSources((prev) => [...prev, { name: "", url: "", bearer: "", grants: [] }])
-          }
+          onClick={() => setDataSources((prev) => [...prev, { ...BLANK_DATA_SOURCE }])}
         >
           + Add data source
         </button>
