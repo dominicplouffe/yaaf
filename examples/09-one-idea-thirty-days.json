@@ -1,0 +1,51 @@
+{
+  "yaaf_bundle": 1,
+  "kind": "project_setup",
+  "source_slug": "idea-hunt",
+  "exported_at": "2026-08-22T00:00:00+00:00",
+  "values_included": false,
+  "project": {
+    "slug": "idea-hunt",
+    "name": "One Idea, Thirty Days",
+    "goal": "Find me one small software product worth building, and prove that somebody other than me wants it \u2014 inside thirty days. Not a list of twenty ideas: one, with an argument that survives attack. The proof is the whole point and it has to come from outside this company: people describing this exact problem in public in their own words, existing tools people pay for and complain about, a forum thread where somebody asks for it. Screenshots of your own reasoning are not evidence. Deliver: what the product is in two sentences, who specifically has this problem, what they do today and what it costs them, why now, what would have to be true for this to be a business, and the single cheapest test that would falsify it. If thirty days produce nothing defensible, say so \u2014 that is a real finding and it is the honest deliverable.",
+    "billing_mode": "api_key",
+    "mode": "explore",
+    "controlled_domains": [
+      "your-own-site.example",
+      "github:your-account"
+    ],
+    "github_repo": null,
+    "deadline": null,
+    "chairman_email": null,
+    "constitution": {
+      "chairman_report_interval_hours": 2.0,
+      "chairman_report_window_local": "08:00-21:00",
+      "timezone": "America/New_York",
+      "queue_ceiling": 4,
+      "monthly_usd_cap": 60,
+      "approval_threshold_usd": 10,
+      "drought_hours": 48,
+      "require_evidence_verification": true,
+      "external_ratio_min": 0.5
+    },
+    "integrations": {
+      "runtime": "agent_sdk"
+    },
+    "billing_secret_name": "anthropic-api-key",
+    "ceo_role_slug": "ceo",
+    "ceo_name": "Founder",
+    "ceo_daily_at": null,
+    "ceo_model_override": null,
+    "teams": [
+      {
+        "role_slug": "gtm",
+        "name": "Desk",
+        "employees": [],
+        "lead": null
+      }
+    ],
+    "solo": true
+  },
+  "roles": [],
+  "secrets": []
+}

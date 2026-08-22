@@ -19,7 +19,7 @@ library. A *project* hires teams by pinning a role version; each team has
 employees and a lead. The CEO is the only agent that plans.
 
 - A starter library ships in [`roles/`](../roles), in three families: the
-  general-purpose set (`ceo`, `engineer`, `researcher`, `writer`,
+  general-purpose set (`ceo`, `engineer`, `researcher`, `writer`, `tutor`,
   `blog-writer`, `marketer`, `gtm`, `sales`, `support`), a markets desk
   (`cio`, `equity-analyst`, `quant-researcher`, `market-data-engineer`,
   `market-news-analyst`, `macro-analyst`, `technical-analyst`, `risk-manager`,
@@ -302,9 +302,11 @@ decision, and configuration change. The dashboard surfaces it as:
   that attacks every rule over HTTP, chaos tests (crash, reap, retry), golden
   transcript evals that gate prompt edits, and end-to-end runs against a mock
   model.
-- **Mock runtime** (`runtime: mock`) rehearses a whole company — wakes, tasks,
-  refusals, the lot — for $0, so you can test a constitution before spending a
-  cent.
+- **Mock runtime** (`runtime: mock`) swaps the Agent SDK for scripted
+  behaviours, which is how CI drives a whole company — planning, decomposition,
+  claims, completions, evidence, every governance trip — for $0. Behaviours are
+  registered in code; **none ship by default**, so a mock project on your own
+  install reads its context and exits. It is the test harness, not a demo mode.
 - **`yaaf experiment`** runs the org-vs-single-agent experiment described in
   [M2_PROTOCOL.md](M2_PROTOCOL.md): two arms under identical governance, blind
   bundles, judge-model plus human rubric passes, and a pre-registered decision

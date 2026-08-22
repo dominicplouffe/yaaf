@@ -157,7 +157,7 @@ Everything yaaf does, and where it's documented. Full reference:
 | **Audit** | Every message, task transition, run, dollar, decision, amendment, and refusal — queryable and on screen. |
 | **Chat** | A resident CEO session per project: the Boardroom answers in seconds, and so does Slack. Chatting never consumes the work queue's caps. |
 | **Integrations** | Slack (Socket Mode — no public URL), GitHub repo-per-project, external MCP servers as one-form data sources, signed webhooks, S3-compatible artifacts, email/webhook alerts. → [INTEGRATIONS](docs/INTEGRATIONS.md) |
-| **Proof it works** | 526 offline tests, chaos tests, golden-transcript evals, a $0 mock runtime, and `yaaf experiment`. → [M2_PROTOCOL](docs/M2_PROTOCOL.md) |
+| **Proof it works** | 526 offline tests, chaos tests, golden-transcript evals that gate prompt edits, a $0 scripted runtime CI drives a whole company through, and `yaaf experiment`. → [M2_PROTOCOL](docs/M2_PROTOCOL.md) |
 
 ## How is this different from a standalone agent?
 
@@ -211,23 +211,8 @@ agents. Either way, you get the answer instead of the vibes.
 
 ## Quickstart
 
-**Dev mode — five minutes, no Docker, $0** (agents are scripted stand-ins):
-
-```bash
-python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"   # needs Python 3.12+
-.venv/bin/python -m pytest tests/            # the whole suite runs offline
-
-export YAAF_DATABASE_URL=sqlite:////tmp/yaaf.db YAAF_ADMIN_TOKEN=dev-admin-token \
-       YAAF_SANDBOX_MODE=subprocess
-.venv/bin/python -c "from yaaf.core.db import engine; \
-  from yaaf.core.models import Base; Base.metadata.create_all(engine())"
-.venv/bin/yaaf-server &                      # API + dispatcher + janitor
-export YAAF_API=http://localhost:8080
-.venv/bin/yaaf seed-roles roles/
-```
-
-**The real thing — your own server** (real Claude agents, sandboxed). One script
-takes a bare box to a running company:
+**Install it — one script, and the only path you need.** It takes a bare box to
+a running company with real, sandboxed Claude agents:
 
 ```bash
 curl -fsSL https://get.docker.com | sh          # if docker isn't there yet
@@ -261,6 +246,45 @@ update script verifies the schema really reached head rather than assuming. Full
 detail, and what to do when something goes sideways, in
 **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**.
 
+<details>
+<summary><b>Running it from a checkout instead</b> — for working <i>on</i> yaaf</summary>
+
+No Docker, SQLite, and the sandbox replaced by a plain subprocess. It provides
+**no isolation**, so it is for developing yaaf, not for running work you care
+about. Four things the compose deployment does for you have to be done by hand,
+and missing any one of them leaves a company that looks alive and never moves:
+
+```bash
+python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"   # Python 3.12+
+.venv/bin/python -m pytest tests/            # the whole suite runs offline
+
+cd web && npm install && npm run build && cd ..   # 1. without this there is no dashboard
+
+export YAAF_DATABASE_URL=sqlite:////tmp/yaaf.db \
+       YAAF_ADMIN_TOKEN=dev-admin-token \
+       YAAF_SANDBOX_MODE=subprocess \
+       YAAF_API=http://localhost:8080 \
+       YAAF_MASTER_KEY=$(.venv/bin/python -c \
+         "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
+                                             # 2. without this, saving your API key 500s
+
+.venv/bin/python -c "from yaaf.core.db import engine; \
+  from yaaf.core.models import Base; Base.metadata.create_all(engine())"
+
+.venv/bin/yaaf-server &     # API, dashboard, dispatcher, janitor
+.venv/bin/yaaf-runner &     # 3. the part that actually executes runs — without
+                            #    it every run queues and nothing ever happens
+.venv/bin/yaaf seed-roles roles/
+```
+
+Then `http://localhost:8080/app`, and the admin token is `dev-admin-token`.
+Agents still cost money here: they are real Claude agents paid for with the API
+key you attach to the project. (4. is the one you do not have to do — the chat
+lane needs a container, so in subprocess mode the boardroom answers through
+ordinary queued runs and the supervisor stands down instead of erroring.)
+
+</details>
+
 ## Your first project
 
 Open the dashboard, log in with the admin token, and create a project.
@@ -268,11 +292,18 @@ Open the dashboard, log in with the admin token, and create a project.
 plain English** — picking a shape, writing a goal the CEO can plan from,
 accepting the plan, connecting billing, credentials, and data sources.
 
-Or don't write one: **[examples/](examples/)** has ten setups you import as a
-file and run — a coverage desk, a pre-open market brief, an honest backtest, a
-point-in-time data pipeline, a portfolio review, a solo idea hunt, a macro
-watch, a newsletter that has to find real readers, a fund screen, and a **$0 dry
-run** on the mock runtime that is the best place to start.
+Or don't write one. **[examples/](examples/)** has ten projects you import as a
+file, arranged in the order worth doing them, each showing you a part of yaaf
+the last one didn't: a briefing note, a sourced answer to an argument, a CLI
+tool with tests the platform runs, a quickstart proven by executing it, a weekly
+tutor that adapts to what you got wrong, an analysis of a deliberately messy
+spreadsheet, a change-watch on something you depend on, a browser game built by
+a three-team studio, a thirty-day hunt for a product idea, and a company note
+built from SEC filings.
+
+**They need nothing but your API key** — no data subscriptions, no vendor
+accounts. Start with **[01 — Your first hour](examples/01-your-first-hour.md)**:
+one writer, four requirements, a few dollars.
 
 > **Billing note:** agents pay with an API key you attach per project.
 > Anthropic's consumer terms don't permit running fleets on a personal Claude
@@ -283,7 +314,7 @@ run** on the mock runtime that is the best place to start.
 | | |
 |---|---|
 | [Creating a project](docs/CREATING_A_PROJECT.md) | Your first project, in plain English |
-| [Examples](examples/) | Ten setups you can import as-is |
+| [Examples](examples/) | Ten projects to import and run, in order |
 | [Features](docs/FEATURES.md) | The complete feature reference |
 | [Dashboard](docs/DASHBOARD.md) | Every screen and what you do there |
 | [Governance](docs/GOVERNANCE.md) | All 49 rules, their defaults, and how to change one |
@@ -304,9 +335,9 @@ yaaf/server     the platform: API, policy engine (the refusals), dispatcher,
 yaaf/runner     leases runs, launches sandbox containers, meters everything
 yaaf/cli        `yaaf` — admin/observe CLI, incl. `yaaf experiment`
 web/            the chairman's dashboard (React, served at /app)
-roles/          starter role library: general-purpose, a markets desk, a
-                mobile-game studio
-examples/       ten importable project setups (.md + .json)
+roles/          starter role library: general-purpose, a tutor, a markets
+                desk, a mobile-game studio
+examples/       ten importable projects (.md + .json), plus sample data
 evals/          golden-transcript evals — regression-gate for prompt edits
 tests/          invariant suite that attacks every rule over HTTP, chaos
                 tests, and the eval checks; CI runs it all on SQLite + Postgres

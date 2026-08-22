@@ -1,0 +1,54 @@
+{
+  "yaaf_bundle": 1,
+  "kind": "project_setup",
+  "source_slug": "weekly-tutor",
+  "exported_at": "2026-08-22T00:00:00+00:00",
+  "values_included": false,
+  "project": {
+    "slug": "weekly-tutor",
+    "name": "A Tutor That Adapts",
+    "goal": "Teach me SQL, one lesson a week, and change the plan based on what I actually get wrong. Replace the subject with what I want to learn before planning. Each week deliver exactly one lesson as a file: a plain-language explanation, one worked example reasoned through step by step including where the obvious approach fails, five exercises that make me do the thing rather than recall it, and a separate answer key with the reasoning shown. Say how long it should take and be honest about it. In week one, also publish the whole arc: what I should be able to DO at the end, and the sequence that gets me there. Every week after, start by reading my marked answers if I have left any in the workspace \u2014 if I got something wrong, re-teach it before moving on, and say in the lesson that this is what you are doing and why. Never flatter me; if something is hard, say it is hard.",
+    "billing_mode": "api_key",
+    "mode": "operate",
+    "controlled_domains": [],
+    "github_repo": null,
+    "deadline": null,
+    "chairman_email": null,
+    "constitution": {
+      "chairman_report_interval_hours": 2.0,
+      "chairman_report_window_local": "08:00-21:00",
+      "timezone": "America/New_York",
+      "queue_ceiling": 4,
+      "monthly_usd_cap": 40,
+      "approval_threshold_usd": 10,
+      "drought_hours": 168,
+      "external_ratio_min": 0.0,
+      "cycle_frequency": "weekly",
+      "cycle_day": 6,
+      "review_interval_days": 14,
+      "memory_cap_project": 80
+    },
+    "integrations": {
+      "runtime": "agent_sdk"
+    },
+    "billing_secret_name": "anthropic-api-key",
+    "ceo_role_slug": "ceo",
+    "ceo_name": "CEO",
+    "ceo_daily_at": "09:00",
+    "ceo_model_override": null,
+    "teams": [
+      {
+        "role_slug": "tutor",
+        "name": "Teaching",
+        "employees": [
+          "Iris",
+          "Nils"
+        ],
+        "lead": "Iris"
+      }
+    ],
+    "solo": false
+  },
+  "roles": [],
+  "secrets": []
+}

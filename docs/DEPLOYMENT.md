@@ -7,29 +7,70 @@ architecture change.
 
 ---
 
-## Dev mode — five minutes, no Docker, $0
+## Dev mode — a checkout, for working on yaaf
 
-Agents are scripted stand-ins (`runtime: mock`), so you can rehearse a whole
-company — wakes, tasks, refusals, budget pauses — before spending a cent.
+No Docker, SQLite instead of Postgres, and the sandbox replaced by a plain
+subprocess. This is the **contributor** path: if you want to *run* yaaf, use
+[the deploy script](#the-real-thing--your-own-server) below instead.
+
+The compose deployment does four things for you that you have to do by hand
+here. Miss any one and you get a company that looks alive and never moves — so
+each is called out.
 
 ```bash
-python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
+python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"      # Python 3.12+
 .venv/bin/python -m pytest tests/            # 526 tests, offline; 1 skips without Postgres
 
+# 1. The dashboard is built, not shipped: web/dist is gitignored, and without
+#    it the API serves a JSON note instead of /app.
+cd web && npm install && npm run build && cd ..
+
+# 2. YAAF_MASTER_KEY encrypts every stored secret. Without it, saving the
+#    project's Anthropic key answers 500 and the project can never start.
 export YAAF_DATABASE_URL=sqlite:////tmp/yaaf.db \
        YAAF_ADMIN_TOKEN=dev-admin-token \
-       YAAF_SANDBOX_MODE=subprocess
+       YAAF_SANDBOX_MODE=subprocess \
+       YAAF_API=http://localhost:8080 \
+       YAAF_MASTER_KEY=$(.venv/bin/python -c \
+         "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
+
 .venv/bin/python -c "from yaaf.core.db import engine; \
   from yaaf.core.models import Base; Base.metadata.create_all(engine())"
-.venv/bin/yaaf-server &                      # API + dispatcher + janitor
-export YAAF_API=http://localhost:8080
+
+.venv/bin/yaaf-server &     # API, dashboard, dispatcher, janitor
+# 3. The server does NOT execute runs. Without a runner, every run sits in
+#    run_queue forever and the company never does anything at all.
+.venv/bin/yaaf-runner &
 .venv/bin/yaaf seed-roles roles/
 ```
 
 Open **http://localhost:8080/app** and log in with the admin token.
 
+4. is the one you do not have to do: the chat lane is a container, so in
+subprocess mode the supervisor stands down with one log line and the boardroom
+answers through ordinary queued runs instead.
+
+> **This is not a free mode.** The agents are real Claude agents, paid for with
+> the API key you attach to the project. `runtime: mock` swaps them for scripted
+> stand-ins, but no behaviours ship with yaaf — see
+> [The mock runtime](#the-mock-runtime) — so a mock project reads its context
+> and exits. It is a test harness, not a demo.
+
 > `YAAF_SANDBOX_MODE=subprocess` provides **no isolation**. It exists for dev
 > machines and CI, and yaaf refuses it unless you configure it explicitly.
+
+### The mock runtime
+
+`runtime: mock` (Settings → Advanced) routes runs to `MockBackend` instead of
+the Claude Agent SDK. A behaviour is a plain Python function registered against
+an agent name; the tests and the eval harness register a company's worth of
+them (`evals/behaviors.py`) and drive planning, decomposition, claims,
+completions, evidence and every governance trip at $0. That is what CI runs.
+
+**Nothing is registered by default.** On your own install a mock agent reads its
+context pack and exits, which is exactly right for testing the platform and
+useless as a demo. If you want to watch a scripted company move, run the eval
+harness (`python -m evals.run`) rather than pointing a project at mock.
 
 ## The real thing — your own server
 
@@ -440,11 +481,11 @@ yaaf/runner     leases runs, launches sandbox containers, meters everything
 yaaf/core       models, constitution schema, crypto, config, artifacts
 yaaf/cli        `yaaf` — admin/observe CLI, `yaaf experiment`, `yaaf spend-report`
 web/            the chairman's dashboard (React, served at /app)
-roles/          starter role library — general, markets desk, game studio
+roles/          starter role library — general, tutor, markets, game studio
 deploy/         Dockerfiles and compose
 evals/          golden-transcript evals — regression-gate for prompt edits
 tests/          invariant suite over HTTP, chaos tests, eval checks
 migrations/     Alembic
-examples/       ten importable project setups (.md + .json)
+examples/       ten importable projects (.md + .json) + sample data
 docs/           this documentation
 ```

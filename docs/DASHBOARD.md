@@ -56,11 +56,11 @@ remind you about. An edit never silently changes a running company.
 The wizard: name and slug, the goal (the CEO plans from this and nothing else),
 your email, billing mode, controlled domains, which teams to hire, and any
 constitution overrides. [CREATING_A_PROJECT.md](CREATING_A_PROJECT.md) walks
-through it in plain English; [`examples/`](../examples/) has ten worked setups
-you can copy.
+through it in plain English; [`examples/`](../examples/) has ten projects you
+import and run, in the order worth doing them.
 
 You can also start from a **setup file** — an exported project design, or one
-of the ready-made ones in [`examples/`](../examples/). Loading one fills the
+of the ten in [`examples/`](../examples/). Loading one fills the
 whole form, brings any role definitions your library lacks, and lists the
 credentials the design expects you to supply.
 

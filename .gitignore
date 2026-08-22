@@ -6,6 +6,9 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 data/
+# …except the sample dataset example 06 is built around. It has to be in the
+# repo: the whole point of that example is that it works with nothing to set up.
+!examples/data/
 *.db
 deploy/.env
 # Per-machine compose tweaks (loopback port binding on remote boxes, etc.)

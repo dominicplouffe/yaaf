@@ -158,7 +158,7 @@ The spec shape and a worked pair of goals live in
 [`experiments/m2.spec.json`](../experiments/m2.spec.json); the protocol, the
 rubric and the decision rule are in [M2_PROTOCOL.md](M2_PROTOCOL.md). The solo
 arm is ordinary solo mode — see
-[`examples/06-solo-idea-hunt.md`](../examples/06-solo-idea-hunt.md).
+[`examples/09-one-idea-thirty-days.md`](../examples/09-one-idea-thirty-days.md).
 
 ---
 

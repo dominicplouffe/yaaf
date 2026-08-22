@@ -1,0 +1,51 @@
+{
+  "yaaf_bundle": 1,
+  "kind": "project_setup",
+  "source_slug": "a-tool-that-runs",
+  "exported_at": "2026-08-22T00:00:00+00:00",
+  "values_included": false,
+  "project": {
+    "slug": "a-tool-that-runs",
+    "name": "A Tool That Runs",
+    "goal": "Build me a small command-line tool in this project's workspace, in Python, using the standard library only: A TOOL THAT TAKES A FOLDER OF MARKDOWN FILES AND REPORTS BROKEN RELATIVE LINKS. Replace that with the tool I actually want before planning. It must have a --help that explains itself in one screen, sensible behaviour on the boring cases (no arguments, an empty folder, a file it cannot read), a non-zero exit code when it finds problems so it can be used in a script, and tests written with the standard library's unittest that run with no installation step. Standard library only, on purpose: a fresh container runs the tests, so anything pip-installed during a run will not be there when the check runs.",
+    "billing_mode": "api_key",
+    "mode": "deliver",
+    "controlled_domains": [],
+    "github_repo": null,
+    "deadline": null,
+    "chairman_email": null,
+    "constitution": {
+      "chairman_report_interval_hours": 2.0,
+      "chairman_report_window_local": "08:00-21:00",
+      "timezone": "America/New_York",
+      "queue_ceiling": 5,
+      "monthly_usd_cap": 60,
+      "approval_threshold_usd": 10,
+      "drought_hours": 168,
+      "external_ratio_min": 0.0,
+      "max_usd_per_run": 3.0
+    },
+    "integrations": {
+      "runtime": "agent_sdk"
+    },
+    "billing_secret_name": "anthropic-api-key",
+    "ceo_role_slug": "ceo",
+    "ceo_name": "CEO",
+    "ceo_daily_at": null,
+    "ceo_model_override": null,
+    "teams": [
+      {
+        "role_slug": "engineer",
+        "name": "Build",
+        "employees": [
+          "Mika",
+          "Dev"
+        ],
+        "lead": "Mika"
+      }
+    ],
+    "solo": false
+  },
+  "roles": [],
+  "secrets": []
+}
