@@ -596,14 +596,18 @@ export interface BundleRole {
   secret_scopes: string[];
 }
 
-/** A portable project setup file (GET /admin/projects/{id}/export). The
-    `project` section is a ready create-project body minus slug collisions and
-    the chairman; credential values never travel — only their names. */
+/** A project setup file (GET /admin/projects/{id}/export). The `project`
+    section is a ready create-project body minus slug collisions. By default
+    only credential *names* travel; exported with `include_values=true` — the
+    Settings download — every secret's `value` rides along and the file is a
+    complete backup. */
 export interface ProjectBundle {
   yaaf_bundle: number;
   kind: string;
   source_slug: string;
   exported_at: string;
+  /** True when credential values are inside (a full backup). */
+  values_included?: boolean;
   project: {
     slug: string;
     name: string;
@@ -612,15 +616,40 @@ export interface ProjectBundle {
     /** Absent from setup files exported before project shapes existed. */
     mode?: string;
     controlled_domains: string[];
+    /** The repo evidence webhooks attest against. */
+    github_repo?: string | null;
+    /** Explore's window, ISO-dated; may already be in the past. */
+    deadline?: string | null;
+    /** Who ran the source project — a prefill, editable on import. */
+    chairman_email?: string | null;
     constitution: Record<string, unknown>;
     integrations: Record<string, unknown>;
+    /** Name of the billing credential in `secrets` (full backups only). */
+    billing_secret_name?: string | null;
     ceo_role_slug: string;
     ceo_name: string;
-    teams: { role_slug: string; name: string; employees: string[]; lead: string | null }[];
+    ceo_daily_at?: string | null;
+    ceo_model_override?: string | null;
+    teams: {
+      role_slug: string;
+      name: string;
+      employees: string[];
+      lead: string | null;
+      /** "HH:MM" daily wakes, keyed by employee name. */
+      schedules?: Record<string, string>;
+      /** Per-agent model overrides, keyed by employee name. */
+      model_overrides?: Record<string, string>;
+    }[];
     solo: boolean;
   };
   roles: BundleRole[];
-  secrets: { name: string; role_scopes: string[]; kind: string }[];
+  secrets: {
+    name: string;
+    role_scopes: string[];
+    kind: string;
+    /** Present only in full backups (include_values=true). */
+    value?: string;
+  }[];
 }
 
 /** POST /admin/projects/{id}/clone — a running twin on this install. Unlike a

@@ -245,6 +245,20 @@ export default function NewProject() {
       setRuntime(String(p.integrations["runtime"] ?? "agent_sdk"));
       setControlledDomains((p.controlled_domains ?? []).join(", "));
       setSolo(Boolean(p.solo));
+      // Who ran the source project. A prefill like the rest of the form —
+      // change it if the twin answers to someone else.
+      if (p.chairman_email) setChairmanEmail(p.chairman_email);
+      // An Explore window that is still open carries; a spent one would be
+      // refused at create (a company the janitor closes at birth), so it is
+      // left blank rather than prefilled into a guaranteed error.
+      if (p.deadline && new Date(p.deadline) > new Date()) {
+        setExploreDeadline(p.deadline.slice(0, 10));
+      }
+      // A full backup carries the billing key too — the one credential the
+      // form holds apart, because it is attached rather than role-granted.
+      const billing = parsed.secrets.find((s) =>
+        p.billing_secret_name ? s.name === p.billing_secret_name : s.kind === "billing");
+      if (billing?.value) setBillingKey(billing.value);
       setTeams(
         p.teams.length
           ? p.teams.map((t) => ({
@@ -258,7 +272,7 @@ export default function NewProject() {
       setCredentials(
         parsed.secrets
           .filter((s) => s.kind === "service")
-          .map((s) => ({ name: s.name, value: "", grants: s.role_scopes })),
+          .map((s) => ({ name: s.name, value: s.value ?? "", grants: s.role_scopes })),
       );
       const cons = p.constitution as Record<string, number>;
       if (cons.queue_ceiling !== undefined) setQueueCeiling(cons.queue_ceiling);
@@ -430,18 +444,34 @@ export default function NewProject() {
           ...(AUTONOMY_PRESETS.find((p) => p.value === autonomy)?.constitution ?? {}),
         },
         integrations: { ...(bundle?.project.integrations ?? {}), runtime },
+        ...(bundle?.project.github_repo ? { github_repo: bundle.project.github_repo } : {}),
         ceo_role_slug: ceoSlug,
         ceo_name: bundle?.project.ceo_name ?? "CEO",
+        ...(bundle?.project.ceo_daily_at ? { ceo_daily_at: bundle.project.ceo_daily_at } : {}),
+        ...(bundle?.project.ceo_model_override
+          ? { ceo_model_override: bundle.project.ceo_model_override } : {}),
         solo,
         teams: teams
           .filter((t) => t.role_slug && t.name && (solo || t.employees.trim()))
           .map((t) => {
             const employees = t.employees.split(",").map((s) => s.trim()).filter(Boolean);
+            // Daily wakes and model overrides ride the setup file per person.
+            // Filtered to the names still on the form: renaming an employee
+            // here must not turn into a refusal about someone who left.
+            const fromBundle = bundle?.project.teams.find((bt) => bt.name === t.name.trim());
+            const keep = (settings?: Record<string, string>) =>
+              Object.fromEntries(
+                Object.entries(settings ?? {}).filter(([n]) => employees.includes(n)));
+            const schedules = keep(fromBundle?.schedules);
+            const modelOverrides = keep(fromBundle?.model_overrides);
             return {
               role_slug: t.role_slug,
               name: t.name.trim(),
               employees,
               lead: t.lead.trim() || undefined,
+              ...(Object.keys(schedules).length ? { schedules } : {}),
+              ...(Object.keys(modelOverrides).length
+                ? { model_overrides: modelOverrides } : {}),
             };
           }),
       };
@@ -457,7 +487,7 @@ export default function NewProject() {
         try {
           const stored = await post<{ id: string }>("/admin/secrets", {
             project_id: created.id,
-            name: "anthropic-api-key",
+            name: bundle?.project.billing_secret_name || "anthropic-api-key",
             value: billingKey.trim(),
             role_scopes: [],
             kind: "billing",
@@ -620,11 +650,16 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             <p className="help">
               Loaded "{bundle.project.name}" (exported from {bundle.source_slug}).
               {bundle.secrets.length > 0 &&
-                " Credential names came along without their values — fill them in below, or skip and add them later in Settings."}
+                (bundle.values_included
+                  ? " Credential values came along — everything below is filled in; review and adjust."
+                  : " Credential names came along without their values — fill them in below, or skip and add them later in Settings.")}
               {dataSourceUrls.size > 0 &&
                 ` ${dataSourceUrls.size === 1 ? "One of them is a data source's" : "Some of them are data sources'"} ` +
                   "address: a full URL, tested before this project starts."}
-              {" "}Billing is connected afterwards in Settings.
+              {" "}
+              {bundle.values_included && billingKey.trim()
+                ? "The billing key came along too — it is in the Billing card below."
+                : "Billing is connected afterwards in Settings."}
             </p>
           )}
         </div>

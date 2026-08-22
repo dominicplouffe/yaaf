@@ -1552,7 +1552,8 @@ export default function Settings({
   async function downloadSetup() {
     setError(null);
     try {
-      const bundle = await get<ProjectBundle>(`/admin/projects/${projectId}/export`);
+      const bundle = await get<ProjectBundle>(
+        `/admin/projects/${projectId}/export?include_values=true`);
       const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
@@ -1886,11 +1887,12 @@ export default function Settings({
       <h2>Setup file</h2>
       <div className="card">
         <p className="help" style={{ marginTop: 0 }}>
-          For <i>another</i> install. Downloads this project's design as one file: teams, role
-          definitions, the constitution, configuration, and the <i>names</i> of its credentials —
-          never their values, which cannot leave the deployment that encrypted them. Upload it on
-          the New Project page; you'll re-enter credential values there and connect billing
-          afterwards. Duplicating on this install needs none of that — use the twin above.
+          A complete backup, as one JSON file: teams and their schedules, role definitions, the
+          constitution, configuration, data sources — and every credential <i>value</i>, billing
+          key, Slack token and webhook signing key, decrypted. Upload it on the New Project page
+          and the whole form prefills, values included; nothing to re-enter. It holds the keys it
+          names, so store it the way you store passwords. Duplicating on this install is simpler
+          still — use the twin above.
         </p>
         <div className="actions">
           <button onClick={downloadSetup}>Download setup file</button>

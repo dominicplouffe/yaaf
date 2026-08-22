@@ -112,6 +112,37 @@ def test_twin_pins_the_versions_the_source_runs(client):
         assert twin_ceo.name == source_ceo.name
 
 
+def test_the_people_keep_their_settings(client):
+    """A twin's people are the same people: chairman-set daily wakes, model
+    overrides and pause state come across. Dropping daily_at here silently
+    cancelled every standup the chairman had set — a company that looks
+    identical and never checks its inbox at 09:00."""
+    from tests.conftest import agent_by_name
+    from yaaf.core.models import AgentStatus
+
+    project = make_project(client, start=False)
+    for agent_id, at in ((project["ceo_agent_id"], "08:30"),
+                         (agent_by_name(project, "Emp2"), "17:45")):
+        set_wake = client.patch(f"/admin/agents/{agent_id}/schedule",
+                                json={"daily_at": at}, headers=ADMIN)
+        assert set_wake.status_code == 200, set_wake.text
+    with db_session() as session:
+        emp = session.get(Agent, agent_by_name(project, "Emp2"))
+        emp.model_override = "claude-haiku-4-5-20251001"
+        emp.status = AgentStatus.PAUSED
+
+    twin = _clone(client, project["id"]).json()
+    with db_session() as session:
+        twin_ceo = session.query(Agent).filter_by(project_id=twin["id"],
+                                                  kind=AgentKind.CEO).one()
+        assert twin_ceo.daily_at == "08:30"
+        twin_emp = session.query(Agent).filter_by(project_id=twin["id"],
+                                                  name="Emp2").one()
+        assert twin_emp.daily_at == "17:45"
+        assert twin_emp.model_override == "claude-haiku-4-5-20251001"
+        assert twin_emp.status == AgentStatus.PAUSED
+
+
 def test_the_org_is_rebuilt_whole_and_empty(client):
     """Same people and rooms, governed by the same rules; none of the source's
     history and none of its amendment argument."""

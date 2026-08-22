@@ -164,7 +164,8 @@ Data; everything after is occasional.
 
 - **Duplicate & export** — **clone** into a running twin on this install
   (credentials and all, optionally aimed at a new goal), or **export** a
-  portable setup file with secrets and plumbing stripped.
+  full-backup setup file: the whole design plus every credential value,
+  decrypted. It holds the keys it names — store it like a password.
 - **Advanced** — runtime (`agent_sdk` or `mock`) and the webhook signing
   secrets. The CEO's cadence (`ceo_heartbeat_hours`, `ceo_daily_at`,
   `timezone`) and `max_concurrent_runs` are constitution rules, not config:
