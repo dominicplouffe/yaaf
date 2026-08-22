@@ -7,7 +7,7 @@ Start here if you're new; skim the table if you're not.
 | Doc | What it covers |
 |---|---|
 | [CREATING_A_PROJECT.md](CREATING_A_PROJECT.md) | **Start here.** Your first project in plain English: picking a shape, writing a goal the CEO can plan from, accepting the plan, connecting billing, credentials, and data sources. |
-| [../examples/](../examples/) | **Ten projects to import and run**, split by the question a skeptic asks: two you could do in a Claude session (so you learn the loop) and eight that name the specific thing which breaks without the platform. Each needs nothing but your API key, bar one free-GitHub exception. |
+| [../examples/](../examples/) | **Eleven projects to import and run**, split by the question a skeptic asks: two you could do in a Claude session (so you learn the loop) and nine that name the specific thing which breaks without the platform. Each needs nothing but your API key, bar one free-GitHub exception. |
 | [DEPLOYMENT.md](DEPLOYMENT.md) | Install and run it: one script for a real deployment, a checkout for working on yaaf, every environment variable, backups, upgrades, scaling. |
 
 ## Using it

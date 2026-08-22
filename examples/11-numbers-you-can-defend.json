@@ -1,0 +1,60 @@
+{
+  "yaaf_bundle": 1,
+  "kind": "project_setup",
+  "source_slug": "numbers-you-can-defend",
+  "exported_at": "2026-08-22T00:00:00+00:00",
+  "values_included": false,
+  "project": {
+    "slug": "numbers-you-can-defend",
+    "name": "Numbers You Can Defend",
+    "goal": "Answer one question from public data, and answer it well enough that a skeptic could re-derive every number in the answer without asking me anything.\n\nThe question: WHICH COLLEGE MAJORS ACTUALLY PAY, AND HOW SURE CAN ANYONE HONESTLY BE — replace that with whatever you actually want to know from this data, or point the whole project at a different public CSV entirely.\n\nThe data is free, public and needs no account. This project fetches it itself as its first act — three files from FiveThirtyEight's college-majors dataset (CC BY 4.0), 173 rows each, joinable on Major_code:\n  https://raw.githubusercontent.com/fivethirtyeight/data/master/college-majors/recent-grads.csv\n  https://raw.githubusercontent.com/fivethirtyeight/data/master/college-majors/all-ages.csv\n  https://raw.githubusercontent.com/fivethirtyeight/data/master/college-majors/grad-students.csv\nFetch each into /workspace/data/, and before computing anything, write /workspace/data/PROVENANCE.md recording every file's URL, byte size, row count and SHA-256. Every number this project states afterwards is a claim about those exact copies. If a URL does not answer or a file has changed shape, that IS the report for that task — say so and stop. Never fill the gap from memory: this is a well-known dataset and half-remembering it is the most likely way this project produces a confident wrong answer.\n\nTwo teams, and they do not share work. Analysis fetches, cleans, computes and writes. Verification writes the checks that recompute Analysis's published numbers straight from the CSVs and fail if the memo and the data disagree. Verification never does the analysis, and Analysis never writes the check that judges its own number.\n\nThis data has three traps in it, and the memo is not finished until it handles all three out loud:\n  - The highest median salaries rest on tiny samples — several on fewer than ten graduates. Any ranking that does not say so is confidently wrong, and it is the answer everyone gets by default.\n  - At least one major is missing its totals entirely, which moves every share, rate and denominator computed over the full set.\n  - Category summaries cannot be built by averaging the per-major medians. That is a mean of medians; go back to the counts and weight it, or say why you cannot.\n\nEvery figure in the memo comes from a committed script that runs with no arguments and uses only what the sandbox image already ships — python3 and the standard library, pandas, duckdb. Nothing pip-installed at run time: the container is thrown away after every run and the checks execute in a fresh one, so an install that happened once is gone. Each headline number carries the count it rests on in the same sentence.\n\nThe deliverable is not the memo alone. It is the memo, plus the scripts that produce every number in it, plus the provenance file — so that in six months I can run one command and either get the same answer or find out exactly what moved.",
+    "billing_mode": "api_key",
+    "mode": "deliver",
+    "controlled_domains": [],
+    "github_repo": null,
+    "deadline": null,
+    "chairman_email": null,
+    "constitution": {
+      "chairman_report_interval_hours": 2.0,
+      "chairman_report_window_local": "08:00-21:00",
+      "timezone": "America/New_York",
+      "queue_ceiling": 6,
+      "monthly_usd_cap": 60,
+      "approval_threshold_usd": 15,
+      "drought_hours": 168,
+      "external_ratio_min": 0.0,
+      "max_usd_per_run": 3.0,
+      "task_check_failures_before_block": 3
+    },
+    "integrations": {
+      "runtime": "agent_sdk"
+    },
+    "billing_secret_name": "anthropic-api-key",
+    "ceo_role_slug": "ceo",
+    "ceo_name": "CEO",
+    "ceo_daily_at": null,
+    "ceo_model_override": null,
+    "teams": [
+      {
+        "role_slug": "data-analyst",
+        "name": "Analysis",
+        "employees": [
+          "Nina",
+          "Priya"
+        ],
+        "lead": "Nina"
+      },
+      {
+        "role_slug": "engineer",
+        "name": "Verification",
+        "employees": [
+          "Theo"
+        ],
+        "lead": null
+      }
+    ],
+    "solo": false
+  },
+  "roles": [],
+  "secrets": []
+}
