@@ -1531,6 +1531,15 @@ export default function Settings({
             "Fix the address in the twin's Settings → Data sources before starting it.",
         );
       }
+      // The tokens made it but the rooms did not — said now, while the
+      // chairman is looking, not discovered three days into a silent mirror.
+      if (twin.copied.slack_rooms_dropped) {
+        alert(
+          `Twin "${twin.slug}" created with the Slack tokens but no rooms: the channel map ` +
+            "stays behind so two companies never post into one room. Map the twin's rooms in " +
+            "its Settings → Integrations when you want it mirrored.",
+        );
+      }
       // An Explore twin whose source window had already passed starts without
       // one. Silence here would read as "it kept the deadline", and mode is
       // frozen — so the window is the only part of the shape still settable.
@@ -1848,8 +1857,20 @@ export default function Settings({
         </p>
         <p className="help">
           Left behind on purpose: this project's history — runs, tasks, messages, memory, files,
-          amendments — and its Slack channel map, since two companies posting into one room helps
-          nobody. The Slack tokens do come along, so you only re-map rooms.
+          amendments.
+        </p>
+        <p className="help" style={{ color: "var(--warn, var(--ink-2))" }}>
+          ⚠ A twin is the same <i>shape</i> of company: its mode ({dash.mode}) and its teams are
+          frozen at creation, exactly as this project's were. To change either — or anything else
+          the creation form asks — don't twin it: download the setup file below and edit
+          everything on the New Project page instead.
+        </p>
+        <p className="help" style={{ color: "var(--warn, var(--ink-2))" }}>
+          ⚠ The twin talks to the outside on its own wiring. Slack tokens come along but the
+          channel map does not (two companies posting into one room helps nobody) — re-map rooms
+          in the twin's Settings → Integrations. It also mints its own webhook signing secrets,
+          so any outside sender pointed at this project's evidence webhooks must be re-pointed
+          at the twin's URLs and secrets before its inbound evidence can be attested.
         </p>
         <div className="row">
           <div>
