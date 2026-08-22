@@ -487,6 +487,6 @@ deploy/         Dockerfiles and compose
 evals/          golden-transcript evals — regression-gate for prompt edits
 tests/          invariant suite over HTTP, chaos tests, eval checks
 migrations/     Alembic
-examples/       ten importable projects (.md + .json)
+examples/       eleven importable projects (.md + .json)
 docs/           this documentation
 ```

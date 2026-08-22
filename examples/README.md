@@ -1,11 +1,11 @@
-# Examples — two you could do without yaaf, and eight you couldn't
+# Examples — two you could do without yaaf, and nine you couldn't
 
 Every example here has to answer one question, and answers it at the top of its
 page: **why not just a Claude Skill?**
 
 For the first two the honest answer is *"you could — that's the point."* They
 exist to teach you the loop on something you can check yourself in five minutes.
-For the other eight the answer names the specific thing that breaks: nobody is
+For the other nine the answer names the specific thing that breaks: nobody is
 awake at 02:00; a chat session cannot be woken by your app; a resumed session
 does not know it already opened that pull request; one agent cannot be its own
 skeptic; a link nobody fetched is not evidence.
@@ -43,10 +43,11 @@ Each of these breaks without the platform, for the reason in the last column.
 | 08 | [A game you can play](08-a-game-you-can-play.md) | A one-file browser game that's actually fun | Deliver | Put three roles with conflicting charters in a room and hand you the argument |
 | 09 | [One idea, thirty days](09-one-idea-thirty-days.md) | Find a product idea and prove someone wants it | **Explore**, solo | Hold a bet to a kill date you can't quietly move, on evidence it didn't write |
 | 10 | [Read the filings](10-read-the-filings.md) | A company note you could defend to a skeptic | Deliver | Produce the *record* — verified claims, logged decisions, sampled work |
+| 11 | [Numbers you can defend](11-numbers-you-can-defend.md) | An answer from data, and the check that re-derives it | Deliver | Be checked. Every headline figure recomputes from a pinned copy, judged by an agent that did not write it |
 
 Domains, so you can find yourself in one: writing, research, ops and
 integration, software maintenance, education, QA, monitoring, games, product
-discovery, regulated research.
+discovery, regulated research, data analysis.
 
 ## The short version of the argument
 
@@ -139,11 +140,12 @@ container; the **workspace** persists, the environment does not. So a check can
 use what the sandbox image ships — `python3` and the standard library,
 `pandas`, `duckdb`, `node`, `jq`, `git`, `curl` — or something committed to the
 workspace. It cannot use a package an earlier run pip-installed. This trips
-everyone once; example 06 is built around it.
+everyone once; example 11 is the one where it bites hardest, because there the
+checks are the deliverable.
 
 ## The roles they hire
 
-From [`roles/`](../roles/). These examples use ten of them:
+From [`roles/`](../roles/). These examples hire fifteen of them:
 
 | Slug | Role | Used by |
 |---|---|---|
@@ -151,8 +153,9 @@ From [`roles/`](../roles/). These examples use ten of them:
 | `writer` | Writer / Content | 01, 02, 07 |
 | `researcher` | Researcher / Analyst | 02, 07 |
 | `support` | Customer Support | 03 |
-| `engineer` | Software Engineer | 03, 04, 06 |
+| `engineer` | Software Engineer | 03, 04, 06, 11 |
 | `adversary` | Red Team / Adversarial Reviewer | 06 |
+| `data-analyst` | Data Analyst | 11 |
 | `tutor` | Tutor / Curriculum Builder | 05 |
 | `game-developer`, `game-ux-designer`, `game-analyst` | A game studio | 08 |
 | `gtm` | Go-to-Market | 09 |
@@ -171,7 +174,7 @@ silently change a project that is mid-flight.
 The fastest route to a good project of your own is to take the example closest
 in *shape* — not in subject — and change the goal:
 
-- **One thing, then stop** → Deliver (01, 02, 06, 08, 10)
+- **One thing, then stop** → Deliver (01, 02, 06, 08, 10, 11)
 - **The same thing on a rhythm, improving** → Operate (03, 04, 05, 07)
 - **A question you can't write requirements for yet** → Explore (09)
 

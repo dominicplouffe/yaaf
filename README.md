@@ -90,7 +90,7 @@ trail and a UI to watch it from. That is a reasonable thing to build if it is
 your product. yaaf is that thing, already built, when it isn't.
 
 The [examples](examples/) are organised around exactly this: two you could do in
-a Claude session, so you learn the machinery, and eight that name the specific
+a Claude session, so you learn the machinery, and nine that name the specific
 thing which breaks without it.
 
 ## The second idea: work that has a terminus
@@ -331,7 +331,7 @@ Open the dashboard, log in with the admin token, and create a project.
 plain English** — picking a shape, writing a goal the CEO can plan from,
 accepting the plan, connecting billing, credentials, and data sources.
 
-Or don't write one. **[examples/](examples/)** has ten projects you import as a
+Or don't write one. **[examples/](examples/)** has eleven projects you import as a
 file, split the way the question above splits:
 
 **Two you could do in a Claude session** — a briefing note, and a sourced answer
@@ -360,7 +360,7 @@ requirements, a few dollars.
 | | |
 |---|---|
 | [Creating a project](docs/CREATING_A_PROJECT.md) | Your first project, in plain English |
-| [Examples](examples/) | Ten projects to import: two fundamentals, eight that need yaaf |
+| [Examples](examples/) | Eleven projects to import: two fundamentals, nine that need yaaf |
 | [Features](docs/FEATURES.md) | The complete feature reference |
 | [Dashboard](docs/DASHBOARD.md) | Every screen and what you do there |
 | [Governance](docs/GOVERNANCE.md) | All 49 rules, their defaults, and how to change one |
@@ -381,10 +381,10 @@ yaaf/server     the platform: API, policy engine (the refusals), dispatcher,
 yaaf/runner     leases runs, launches sandbox containers, meters everything
 yaaf/cli        `yaaf` — admin/observe CLI, incl. `yaaf experiment`
 web/            the chairman's dashboard (React, served at /app)
-roles/          starter role library: general-purpose, a tutor, a markets
-                desk, a mobile-game studio
-examples/       ten importable projects (.md + .json) — two fundamentals,
-                eight that need the platform
+roles/          starter role library: general-purpose, a tutor, an analyst,
+                a markets desk, a mobile-game studio
+examples/       eleven importable projects (.md + .json) — two fundamentals,
+                nine that need the platform
 evals/          golden-transcript evals — regression-gate for prompt edits
 tests/          invariant suite that attacks every rule over HTTP, chaos
                 tests, and the eval checks; CI runs it all on SQLite + Postgres
