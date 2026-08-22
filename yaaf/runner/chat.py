@@ -99,6 +99,15 @@ def chat_enabled(project: Project) -> bool:
 def chat_supervisor_loop() -> None:  # pragma: no cover - thin loop
     import time
 
+    # The chat lane IS a container: same image, same egress, same billing. In
+    # subprocess mode there is no container lane to supervise, so the loop
+    # stands down with one line instead of throwing a Docker traceback every
+    # tick — which is what a first-time reader of the dev-mode quickstart saw,
+    # and reasonably read as "this is broken" while everything else worked.
+    if getattr(settings(), "sandbox_mode", "docker") == "subprocess":
+        log.info("chat supervisor idle: sandbox_mode=subprocess has no container "
+                 "lane, so the boardroom answers through ordinary queued runs")
+        return
     while True:
         try:
             chat_supervisor_once()

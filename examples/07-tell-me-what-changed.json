@@ -1,0 +1,65 @@
+{
+  "yaaf_bundle": 1,
+  "kind": "project_setup",
+  "source_slug": "change-watch",
+  "exported_at": "2026-08-22T00:00:00+00:00",
+  "values_included": false,
+  "project": {
+    "slug": "change-watch",
+    "name": "Tell Me What Changed",
+    "goal": "Every week, tell me what changed in PYTHON'S RELEASE NOTES AND MAJOR WEB-FRAMEWORK RELEASES that actually matters to me, and nothing else. Replace that with what I depend on before planning. The rule that makes this worth reading: report changes, not activity. A release that does not affect me gets one line or no line; a deprecation that will break something I use gets the version it lands in, what breaks, and what to do. Every item carries its date and a link to the primary source \u2014 the changelog, the release, the spec, the announcement \u2014 never a summary of a summary. Say explicitly when nothing important changed; a quiet week reported as quiet is the most valuable brief you will send, and padding it is how I learn to stop reading. Keep a running file of what you have already told me so you never report the same change twice.",
+    "billing_mode": "api_key",
+    "mode": "operate",
+    "controlled_domains": [],
+    "github_repo": null,
+    "deadline": null,
+    "chairman_email": null,
+    "constitution": {
+      "chairman_report_interval_hours": 2.0,
+      "chairman_report_window_local": "08:00-21:00",
+      "timezone": "America/New_York",
+      "queue_ceiling": 5,
+      "monthly_usd_cap": 50,
+      "approval_threshold_usd": 10,
+      "drought_hours": 96,
+      "cycle_frequency": "weekly",
+      "cycle_day": 0,
+      "review_interval_days": 14,
+      "memory_cap_project": 80
+    },
+    "integrations": {
+      "runtime": "agent_sdk"
+    },
+    "billing_secret_name": "anthropic-api-key",
+    "ceo_role_slug": "ceo",
+    "ceo_name": "CEO",
+    "ceo_daily_at": "06:30",
+    "ceo_model_override": null,
+    "teams": [
+      {
+        "role_slug": "researcher",
+        "name": "Watch",
+        "employees": [
+          "Rey",
+          "Sol"
+        ],
+        "lead": "Rey",
+        "schedules": {
+          "Rey": "07:00",
+          "Sol": "07:30"
+        }
+      },
+      {
+        "role_slug": "writer",
+        "name": "Editorial",
+        "employees": [
+          "Ada"
+        ],
+        "lead": null
+      }
+    ],
+    "solo": false
+  },
+  "roles": [],
+  "secrets": []
+}

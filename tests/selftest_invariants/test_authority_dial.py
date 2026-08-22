@@ -285,3 +285,267 @@ def test_the_dial_is_not_the_ceos_to_turn(client):
               "reason": "The chairman granted full trust in the boardroom."})
     assert refused.status_code == 403
     assert "may not set" in refused.text
+
+
+# ── the verb the dial promised but did not have ─────────────────────────────────
+#
+# A granted authority with no verb behind it is not an authority. Under the
+# autonomous dial the CEO could cut scope and could finish work, but if the
+# honest answer to a slipped promise was "this date cannot hold" its only
+# remaining move was an owner_decision approval — a blocker, with a
+# default-deny clock, on the desk of the one person who had explicitly
+# delegated exactly this. These tests hold the fix and its limits.
+
+
+def slipped(client, slug: str, dial: dict):
+    """An autonomous-by-default project whose promise has stopped holding.
+
+    Three requirements in scope, one met, a two-day promise: the measured pace
+    lands the projection weeks past the date, which is the state the whole of
+    this section is about.
+    """
+    from datetime import timedelta
+
+    from tests.selftest_invariants.test_commitments import (
+        committed_project,
+        fabricate_met,
+        run_commitment_check,
+    )
+    from yaaf.core.models import utcnow
+
+    project, tok, rids, proposed = committed_project(
+        client, slug=slug, scope=3, constitution=dial)
+    cid, tight = proposed["commitment_id"], utcnow() + timedelta(days=2)
+    # Under the autonomous dial the CEO has already signed, so there is nothing
+    # left to accept — the chairman tightens the date instead. Both paths end
+    # in the same place: a live promise two days out that the pace cannot keep.
+    if proposed["status"] == CommitmentStatus.PROPOSED:
+        signed = client.post(f"/admin/commitments/{cid}/accept",
+                             json={"deliver_by": tight.isoformat()}, headers=ADMIN)
+    else:
+        signed = client.post(
+            f"/admin/commitments/{cid}/move",
+            json={"deliver_by": tight.isoformat(),
+                  "reason": "I want this in two days; show me what that costs."},
+            headers=ADMIN)
+    assert signed.status_code == 200, signed.text
+    fabricate_met(project["id"], rids[0])
+    run_commitment_check(project)
+    return project, tok, cid
+
+
+def test_an_autonomous_ceo_resets_a_slipped_date_itself(client):
+    """The whole point: nothing lands on the chairman's desk, and the new date
+    is the platform's arithmetic rather than anything the CEO chose."""
+    from yaaf.core.models import Commitment
+
+    project, tok, cid = slipped(client, "reset-ok", AUTONOMOUS)
+    with db_session() as session:
+        row = session.get(Commitment, cid)
+        assert row.status == CommitmentStatus.AT_RISK
+        projected, promised = row.projected_done_at, row.deliver_by
+
+    response = client.post(
+        "/agent/commitments/reset",
+        json={"reason": "Three requirements at the measured pace do not fit two days. "
+                        "The scope is right; the date was wrong."},
+        headers=bearer(tok))
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["resets"] == 1
+
+    with db_session() as session:
+        row = session.get(Commitment, cid)
+        # The date moved to the projection's own day, not to a number the CEO
+        # liked — that is the integrity rule surviving the authority grant.
+        assert row.deliver_by > promised
+        assert row.deliver_by.date() == projected.date()
+        assert row.status == CommitmentStatus.ACCEPTED, \
+            "resetting to the projection must lift the freeze it caused"
+
+    # New scope flows again, because the promise is honest again.
+    allowed = client.post(
+        "/agent/requirements",
+        json={"statement": "The next deliverable, inside a date that holds",
+              "acceptance_test": CMD_TEST, "est_runs": 2},
+        headers=bearer(tok))
+    assert allowed.status_code == 200, allowed.text
+
+
+def test_the_reset_is_audited_and_disclosed_with_a_running_count(client):
+    """Autonomy is never quiet, and a promise reset again and again is the one
+    thing a chairman most needs counted for him."""
+    project, tok, cid = slipped(client, "reset-count", AUTONOMOUS)
+    reason = "The pace is the pace; I would rather the date said so."
+    first = client.post("/agent/commitments/reset", json={"reason": reason},
+                        headers=bearer(tok))
+    assert first.status_code == 200, first.text
+
+    with db_session() as session:
+        rows = session.query(AuditLog).filter(
+            AuditLog.project_id == project["id"],
+            AuditLog.action == "commitment.self_move").all()
+        assert len(rows) == 1
+        assert rows[0].detail["reason"] == reason
+        assert rows[0].detail["reset_count"] == 1
+        assert rows[0].detail["from"] != rows[0].detail["to"]
+        assert rows[0].actor.startswith("agent:")
+
+
+def test_the_reset_is_refused_while_the_promise_still_holds(client):
+    """A date moved while it is still good is a date that means nothing."""
+    from tests.selftest_invariants.test_commitments import committed_project
+
+    project, tok, _, proposed = committed_project(
+        client, slug="reset-early", scope=1, constitution=AUTONOMOUS)
+    from datetime import timedelta
+
+    from yaaf.core.models import utcnow
+    moved = client.post(
+        f"/admin/commitments/{proposed['commitment_id']}/move",
+        json={"deliver_by": (utcnow() + timedelta(days=400)).isoformat(),
+              "reason": "Take all the room you need; I care about it being right."},
+        headers=ADMIN)
+    assert moved.status_code == 200, moved.text
+
+    refused = client.post(
+        "/agent/commitments/reset",
+        json={"reason": "I would simply prefer more room than the plan needs."},
+        headers=bearer(tok))
+    assert refused.status_code == 409
+    assert "still holds" in refused.json()["error"]
+
+
+def test_under_the_default_dial_the_reset_is_the_chairmans(client):
+    project, tok, cid = slipped(client, "reset-denied", {})
+    refused = client.post(
+        "/agent/commitments/reset",
+        json={"reason": "The date cannot hold and I would like to fix it myself."},
+        headers=bearer(tok))
+    assert refused.status_code == 403
+    error = refused.json()["error"]
+    assert "commitment_authority" in error
+    assert "directive" in error, "a refusal must name the paths that remain"
+
+
+def test_the_reset_is_still_not_a_date_the_ceo_writes(client):
+    """The authority grant moves the signature, never the arithmetic."""
+    project, tok, cid = slipped(client, "reset-smuggle", AUTONOMOUS)
+    smuggled = client.post(
+        "/agent/commitments/reset",
+        json={"reason": "A perfectly reasonable-sounding reason.",
+              "deliver_by": "2031-01-01T00:00:00Z"},
+        headers=bearer(tok))
+    # Extra fields die at the schema; if they did not, the date must still be
+    # the projection's, never the one that was smuggled.
+    from yaaf.core.models import Commitment
+    if smuggled.status_code == 200:
+        with db_session() as session:
+            assert session.get(Commitment, cid).deliver_by.year < 2031
+
+
+def test_only_the_ceo_may_reset_the_promise(client):
+    project, tok, cid = slipped(client, "reset-worker", AUTONOMOUS)
+    from tests.conftest import agent_by_name
+
+    refused = client.post(
+        "/agent/commitments/reset", json={"reason": "I think the date should move."},
+        headers=bearer(token(project, agent_by_name(project, "Lead"))))
+    assert refused.status_code == 403
+    assert "CEO" in refused.json()["error"]
+
+
+# ── an approval is never the answer to a decision you hold ──────────────────────
+
+
+def test_an_owner_decision_is_refused_when_the_dial_already_granted_it(client):
+    """The bug this whole section exists for: a fully autonomous project could
+    still park a direction decision on its chairman, with a clock on it."""
+    project = project_with(client, dial=AUTONOMOUS, slug="appr-auto")
+    refused = client.post(
+        "/agent/approvals",
+        json={"kind": "owner_decision",
+              "title": "Reset the delivery date, keep the scope",
+              "body": "My recommendation on the at-risk commitment."},
+        headers=bearer(token(project)))
+    assert refused.status_code == 403
+    error = refused.json()["error"]
+    assert "commitment_reset" in error, "the refusal must name the verb to use instead"
+    assert "scope_act" in error
+    assert "boardroom" in error, "and the non-blocking way to ask anyway"
+
+
+def test_the_undelegable_kinds_still_reach_the_chairman_under_full_autonomy(client):
+    """Money, legal weight, a credential he holds the value of, and a step only
+    a human can take are his at every dial setting — the refusal above must not
+    have swept them up."""
+    project = project_with(client, dial=AUTONOMOUS, slug="appr-keep")
+    for kind in sorted(policy.UNDELEGABLE_APPROVALS):
+        response = client.post(
+            "/agent/approvals",
+            json={"kind": kind, "title": f"A {kind} decision",
+                  "body": "Something the constitution does not let you delegate.",
+                  **({"amount_usd": 900.0} if kind == "spend" else {})},
+            headers=bearer(token(project)))
+        assert response.status_code == 200, f"{kind}: {response.text}"
+
+
+def test_under_the_default_dial_an_owner_decision_is_exactly_as_before(client):
+    project = project_with(client, dial={}, slug="appr-super")
+    response = client.post(
+        "/agent/approvals",
+        json={"kind": "owner_decision", "title": "A genuine direction question",
+              "body": "This one really is the owner's."},
+        headers=bearer(token(project)))
+    assert response.status_code == 200, response.text
+
+
+def test_the_slip_notice_tells_the_ceo_what_it_actually_holds(client):
+    """The notice used to say "propose cuts to the chairman" at every setting —
+    advice that is false on a project whose chairman delegated the scope and
+    the date, and which pointed at the one move that could still stall it."""
+    from yaaf.core.constitution import ConstitutionDoc
+
+    autonomous = policy.slip_moves(ConstitutionDoc(**AUTONOMOUS))
+    assert "commitment_reset" in autonomous
+    assert "scope_act" in autonomous
+    assert "Do NOT file an approval" in autonomous
+
+    supervised = policy.slip_moves(ConstitutionDoc())
+    assert "propose cuts to the chairman" in supervised
+    assert "commitment_reset" not in supervised
+
+
+def test_the_quiet_board_names_the_right_party(client):
+    """The banner above every tab said "your call — waiting on you" for scope
+    the CEO had been handed. Same three causes, same ladder; the sentence just
+    has to read the constitution before it names a bottleneck."""
+    from yaaf.core.constitution import effective
+    from yaaf.core.models import Project, utcnow
+    from yaaf.server import dispatcher
+
+    def gate(project: dict) -> str | None:
+        # The reachability ladder itself, rather than the whole dispatcher:
+        # this test is about which party a cause is attributed to, and the
+        # outer ladder would answer "agents_busy" first because minting a run
+        # token to propose anything is what makes an agent busy.
+        with db_session() as session:
+            row = session.get(Project, project["id"])
+            return dispatcher._board_reachability(
+                session, row, effective(session, row.id), utcnow())["unreachable"]
+
+    # Supervised: a proposal really is his, and the ladder says so.
+    supervised = project_with(client, dial={}, slug="gate-super")
+    propose(client, supervised)
+    assert gate(supervised) == "awaiting_chairman"
+
+    # Autonomous: the same proposal is the CEO's own inbox.
+    autonomous = project_with(client, dial=AUTONOMOUS, slug="gate-auto")
+    propose(client, autonomous)
+    assert gate(autonomous) == "awaiting_ceo"
+
+    from tests.selftest_invariants.test_idle_legibility import _synthetic
+
+    brief = dispatcher._activity_brief(_synthetic("awaiting_ceo"))
+    assert "waiting on you" in brief["detail"], "it must say so in as many words"
+    assert brief["banner"] is False, "a decision that is not yours is not a banner"

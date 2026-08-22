@@ -47,12 +47,12 @@ from yaaf.server import dispatcher
 GATES = {
     "daily_runs", "pacing", "governance_reserve", "concurrency", "agents_busy",
     "wake_ceiling", "coalescing", "scheduled", "no_lead", "paused_agents",
-    "stalled_requirement", "rework_owed", "awaiting_chairman", "blocked_tasks",
-    "checks_lost", "checking",
+    "stalled_requirement", "rework_owed", "awaiting_chairman", "awaiting_ceo",
+    "blocked_tasks", "checks_lost", "checking",
 }
 # Gates that mean the company is fine — working, or the platform verifying its
 # finished work. These never raise the banner.
-FINE = {"concurrency", "agents_busy", "checking"}
+FINE = {"concurrency", "agents_busy", "checking", "awaiting_ceo"}
 # The gates that are waiting out a clock. Only these may be dismissed in the
 # UI, and each has to name the moment it ends — a wait with no falsifiable time
 # in it reads as a permanent fault.
@@ -100,6 +100,7 @@ def _synthetic(gate: str | None) -> dict:
                   "rework_owed": ["R-06"],
                   "proposed_requirements": ["R-03"],
                   "observable_checking": ["R-01"], "plan_open": True,
+                  "ceo_decides": ["scope", "verdicts"],
                   "unreachable": gate},
         "agents": [],
     }

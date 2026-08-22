@@ -1,6 +1,6 @@
 # Governance — the constitution, rule by rule
 
-Each project runs under a **constitution**: 39 numbers and switches the agents
+Each project runs under a **constitution**: 49 numbers and switches the agents
 cannot edit, argue with, or talk their way around. Every one is enforced
 server-side in [`yaaf/server/policy.py`](../yaaf/server/policy.py) as an HTTP
 refusal or an automatic state change. The schema itself lives in
@@ -17,7 +17,7 @@ moment it exists, on the tab its group maps to in `GROUP_THEMES`.
 
 ## Changing a rule
 
-**In the dashboard:** Settings → **Rules in force**. All 39 sit behind six tabs
+**In the dashboard:** Settings → **Rules in force**. All 49 sit behind six tabs
 — Money, Pace & brakes, How work is run, Autonomy, Memory, Rhythm & reporting —
 one rule per row, with the group as a subhead. Edit anything on any tab; a tray
 at the foot of the pane lists every pending change across all of them, takes
@@ -89,15 +89,24 @@ Also enforced here, and not tunable because they're structural:
 | `approval_timeout_decision` | `"deny"` | What that expiry decides. Default-deny: silence is not consent. |
 | `plan_authority` | `"chairman"` | Who accepts proposed scope. `"ceo"`: the CEO accepts its own proposals — the plan gate runs the same arithmetic, every acceptance is audited and sent to you. |
 | `scope_authority` | `"chairman"` | Who may cut, reopen, restage, reestimate, reword and unsequence. `"ceo"` hands the verbs to the CEO, on the record, reversibly. Your routes never close. |
-| `commitment_authority` | `"chairman"` | Who signs the delivery date. `"ceo"`: proposing adopts the platform's own projection immediately — the CEO still cannot write a date, only accept the arithmetic's. |
+| `commitment_authority` | `"chairman"` | Who signs the delivery date, and who resets one that has stopped holding. `"ceo"`: proposing adopts the platform's own projection immediately, and `commitment_reset` re-adopts it on a slip — the CEO still cannot write a date, only accept the arithmetic's. Your own Move is unrestricted, because you may promise what the arithmetic does not. |
 | `verdict_policy` | `"chairman"` | Who judges unverifiable observable closes. `"ceo_judgment"`: the CEO judges and keeps going, and every self-judgment is disclosed to you in full — stronger than sampling. |
 | `capability_authority` | `"chairman"` | Who scopes credentials to roles. `"ceo"`: the CEO re-scopes existing service credentials across its team itself, on the record, disclosed to you. Creating a credential is always yours — you hold the values. |
 
 The five authority switches are the dial (docs/AUTONOMY.md): they decide *who
 holds a verb*, never whether the record is honest. Every self-exercise runs
-through the same machinery as your own buttons, lands in the audit log, and is
-sent to you out-of-band. The dial itself is chairman-only — a directive
-touching it is refused like any other constitution grab.
+through the same machinery as your own buttons, lands in the audit log, is sent
+to you out-of-band, and is listed under **Records → Decisions → what the CEO
+decided**. The dial itself is chairman-only — a directive touching it is refused
+like any other constitution grab.
+
+**A granted authority always has a verb behind it.** With `plan_authority`,
+`scope_authority` and `commitment_authority` all on `"ceo"`, an `owner_decision`
+approval is **refused**, naming the verb to use instead: an approval blocks on a
+human and carries a default-deny clock, so filing one for a decision you already
+delegated is the one way an autonomous project can still stall on you. The four
+kinds the dial cannot delegate — `spend`, `legal`, `tool_request`, `assist` —
+still reach you at every setting.
 
 ### Budgets
 
@@ -137,6 +146,9 @@ Memory-heavy roles (research desks, support) need more room than the defaults.
 | `max_usd_per_run` | 2.0 | USD one run may spend. It is warned as it approaches and stopped at the line. 0 turns it off. |
 | `refusal_cap_per_run` | 5 | Past this the run's token is revoked. Rephrasing a refused request is not a strategy. |
 | `task_check_failures_before_block` | 3 | A task whose success test fails this often **blocks** and becomes a question for whoever planned it. Counts across re-claims; only a pass resets it. |
+| `requirement_check_failures_before_escalation` | 3 | A requirement whose acceptance test keeps failing this often stops being retried silently and becomes a question — the requirement-level twin of the rule above. |
+| `max_task_gate_hours` | 6 | The furthest ahead work may be scheduled with `not_before`. A gated task wakes nobody and shows on no screen as work in progress, so a company gated on one looks stopped. Gates beyond this are refused. |
+| `stall_hours` | 3.0 | Hours of silence before you are told. A company that quietly stopped is the failure mode this catches. |
 | `max_concurrent_runs` | 3 | Agents working simultaneously. Protects the provider rate limit every project on the box shares. |
 | `reserved_governance_runs` | 3 | Runs held out of the daily ceiling so a review, a cycle plan or a re-forecast can always happen. Ordinary work stops at the cap minus this. 0 turns it off. |
 

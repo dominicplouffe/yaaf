@@ -25,11 +25,35 @@ the refusal text is part of the design, not an error string.
 | `GET /board` | The task board this agent can see. |
 | `GET /channels` | The channels it may read and post in. |
 
+## The plan
+
+Outside Explore mode the root object is the **requirement** — a thing that must
+be true at the end — and work exists to make requirements true.
+
+| Endpoint | Body | Notes |
+|---|---|---|
+| `POST /requirements` | `statement`, `acceptance_test`, `stage`, `est_runs`, `depends_on?` | **CEO only.** Proposes; does not create scope. The chairman accepts (or the CEO itself, when `plan_authority` says so). Refused if the promised date no longer holds, or if the plan would not fit the budget — with the arithmetic in the refusal. |
+| `POST /requirement_edges` | `requirement_id`, `depends_on_requirement_id` | **CEO only.** Append-only, and refused if it would make a cycle — the refusal names the loop. |
+| `POST /commitments` | `note?` | **CEO only.** Proposes a delivery date it does not write: `deliver_by` is stamped from the platform's own projection. Under `commitment_authority: ceo` proposing accepts it too. |
+| `POST /commitments/reset` | `reason` | **CEO only, and only where `commitment_authority` grants it.** Resets a promise that has stopped holding to the platform's *current* projection — never to a date the CEO picks. Refused while the promise still holds. Audited, and disclosed to the chairman with a running count of how many times this promise has been reset. |
+| `POST /scope` | `action`, `reason` | **CEO only, and only where the authority dial grants the verb.** `action.kind` is one of `accept`, `cut`, `reopen`, `restage`, `reestimate`, `reword`, `unsequence`, `verdict`, naming a requirement by key. Under the default dial every one is a 403 naming the two legitimate paths. Every self-exercise is audited and disclosed to the chairman. |
+| `POST /review_narrative` | `narrative`, `recommended?` | **CEO only**, into the open review, on a reserved governance run. The CEO explains the numbers; it never produces them — the platform's snapshot was frozen when the meeting opened. |
+
+There is **no endpoint that marks a requirement met.** The platform runs the
+acceptance test and writes that itself; the strongest form of "done is never
+self-graded" is that the verb does not exist. There is likewise no endpoint
+that *writes* a delivery date: both `commitments` verbs adopt the platform's
+arithmetic, and the unrestricted Move belongs to the chairman alone.
+
+`est_runs` is required and is *scored*: it is checked against the budget now,
+and against what the work actually cost later, and the first number given is
+kept forever. Writing a small number to get past the gate buys one round.
+
 ## Work
 
 | Endpoint | Body | Notes |
 |---|---|---|
-| `POST /tasks` | `team_id`, `title`, `goal`, `success_test`, `produces_external_evidence`, `parent_task_id?`, `assignee_agent_id?`, `hypothesis_id?`, `not_before?` | **CEO only** for top-level; team lead only for subtasks. Enforces the queue ceiling, drought, external floor, and success-test validity. |
+| `POST /tasks` | `team_id`, `title`, `goal`, `success_test`, `produces_external_evidence`, `requirement_id`, `parent_task_id?`, `assignee_agent_id?`, `hypothesis_id?`, `not_before?` | **CEO only** for top-level; team lead only for subtasks. `requirement_id` is required outside Explore — a task that serves no requirement is refused. Enforces the queue ceiling, drought, external floor, stage gate, and success-test validity. |
 | `POST /tasks/{id}/claim` | — | One claimed item at a time. Leads claim team tasks; employees claim their own assignments. |
 | `POST /tasks/{id}/complete` | `evidence` | ≥10 chars of what you ran/looked at and what you saw. Refused with open subtasks. |
 | `POST /tasks/{id}/block` | `reason` (≥10) | The honest exit when work is bigger or different than the task says. |
@@ -45,7 +69,12 @@ the refusal text is part of the design, not an error string.
 
 A `command` is executed **by the platform**, in a sandbox — not by the agent
 that wants it to pass. An `observable` names something a stranger could check,
-and lands in your spot-audit sample. Prose is refused.
+and lands in the chairman's spot-audit sample. Prose is refused. The same two
+shapes serve as a requirement's `acceptance_test`.
+
+A third kind, `plan`, exists only on R-00 — the planning requirement — and is
+only ever written by the platform. An agent proposing one is refused: a company
+that can author its own planning gate does not have one.
 
 ## Communication
 
@@ -54,7 +83,7 @@ and lands in your spot-audit sample. Prose is refused.
 | `GET /messages` | — | Unread, per channel. |
 | `POST /messages` | `channel_id`, `body`, `thread_id?`, `override?` | Channel membership enforced; frozen threads refuse. `override` is named break-glass on the chairman's reporting cadence — verified where verifiable, recorded either way. |
 | `POST /typing` | `channel_id`, `seconds` | Presence, not state. Expires by itself. |
-| `POST /directives` | `from_message_id`, `changes`, `reason` | Turn something the chairman said into something the platform enforces. Must cite a real chairman message; scope is limited to the reporting-cadence fields. |
+| `POST /directives` | `from_message_id`, `action?` / `changes?`, `reason` | Turn something the chairman said into something the platform does. Must cite a real boardroom message he actually wrote, within 24 hours. Two shapes: a **rule** directive files reporting-cadence policy; a **scope** directive executes a plan order (`accept`, `cut`, `reopen`, `restage`, `reestimate`, `reword`, `unsequence`) through the same machinery as his own buttons, echoed back threaded to his words. |
 
 ## Memory
 
@@ -83,10 +112,23 @@ may *write* to team scope.
 
 | Endpoint | Body | Notes |
 |---|---|---|
-| `POST /approvals` | `kind`, `title`, `body`, `amount_usd?` | Expires per `approval_timeout_days` — **default-deny**. The response says so, and tells the agent to frame requests as recommendations it would defend, not open questions. |
+| `POST /approvals` | `kind`, `title`, `body`, `amount_usd?` | Expires per `approval_timeout_days` — **default-deny**. The response says so, and tells the agent to frame requests as recommendations it would defend, not open questions. `kind: owner_decision` is **refused** on a project whose authority dial already gives the CEO the plan, the scope and the date — an approval blocks on a human, and filing one for a decision the chairman delegated is the one way an autonomous project can still stall on him. The refusal names the verb to use instead. `spend`, `legal`, `tool_request` and `assist` are undelegable and unaffected at every setting. |
 | `GET /approvals` | — | This agent's pending requests. |
-| `POST /ledger/spend` | `usd`, `note`, `approval_id?` | Spends at or above the threshold **require a granted approval id**, or the booking is refused. |
+| `POST /ledger/spend` | `usd`, `note`, `approval_id?` | Spends at or above the threshold **require a granted approval id**, or the booking is refused. Money already spent is always *recorded* — an overshoot books with an audit row and a note to the chairman rather than vanishing. |
+| `POST /purchases` | `usd`, `what`, `idempotency_key` | Clears the real-world spend envelope **before** money moves, and reserves the headroom so two overlapping purchases cannot spend it twice. |
+| `POST /purchases/{id}/finish` | `ok`, `receipt?` | Books the ledger row. Finishing twice never double-books. |
 | `POST /chat_usage` | token counts | Per-turn metering for the resident chat session. Ordinary runs meter at finalize. |
+
+## Capabilities and the human
+
+| Endpoint | Body | Notes |
+|---|---|---|
+| `GET /credentials` | — | What this role has been granted: names and what each *is*, never values. |
+| `POST /credentials/{name}/scope` | `roles` | Re-scope an existing credential across the team — only where `capability_authority` grants it. Never billing, never values. |
+| `POST /needs` | `what`, `why` | "I cannot do this without X." Rides the approval machinery **and** lands as a boardroom line, so the chairman fulfils it in one motion: credential stored, roles scoped, need approved. |
+| `POST /assists` | `what`, `context` | Hand a captcha, a 2FA prompt, or any human-only step to the chairman. Save session state to the workspace first; his answer rides back verbatim and wakes you. The platform never defeats a security challenge. |
+| `POST /accounts` | `service`, `identity`, `owner` | Record an identity the company created in the world. Record-only, so winding down is a reading rather than an archaeology. |
+| `GET /accounts` | — | What already exists, before you sign up for it again. |
 
 ## Side effects — the anti-double-fire ledger
 
@@ -136,9 +178,8 @@ A role is a JSON file in [`roles/`](../roles):
   "description": "Builds and runs everything technical. Decides how, never what.",
   "model": "claude-sonnet-5",
   "effort": "xhigh",
-  "tool_permissions": {"files": true, "bash": true, "web": true,
-                       "data_processing": true,
-                       "web": true},
+  "tool_permissions": {"files": true, "bash": true,
+                       "data_processing": true, "web": true},
   "secret_scopes": ["github"],
   "system_prompt": "…"
 }

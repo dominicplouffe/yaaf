@@ -6,9 +6,9 @@ Start here if you're new; skim the table if you're not.
 
 | Doc | What it covers |
 |---|---|
-| [CREATING_A_PROJECT.md](CREATING_A_PROJECT.md) | **Start here.** Your first project in plain English: writing a goal the CEO can plan from, connecting billing, credentials, and data sources. |
-| [../examples/](../examples/) | Ten worked setups — open-source launch, client deliverable, support desk, overnight crew — with goal text, teams, constitution numbers, and what counts as done. |
-| [DEPLOYMENT.md](DEPLOYMENT.md) | Install and run it: dev mode in five minutes, Docker Compose for real, every environment variable, backups, upgrades, scaling. |
+| [CREATING_A_PROJECT.md](CREATING_A_PROJECT.md) | **Start here.** Your first project in plain English: picking a shape, writing a goal the CEO can plan from, accepting the plan, connecting billing, credentials, and data sources. |
+| [../examples/](../examples/) | **Ten projects to import and run**, split by the question a skeptic asks: two you could do in a Claude session (so you learn the loop) and eight that name the specific thing which breaks without the platform. Each needs nothing but your API key, bar one free-GitHub exception. |
+| [DEPLOYMENT.md](DEPLOYMENT.md) | Install and run it: one script for a real deployment, a checkout for working on yaaf, every environment variable, backups, upgrades, scaling. |
 
 ## Using it
 
@@ -16,7 +16,8 @@ Start here if you're new; skim the table if you're not.
 |---|---|
 | [FEATURES.md](FEATURES.md) | The complete feature reference, grouped by the failure it prevents. |
 | [DASHBOARD.md](DASHBOARD.md) | Every screen and what you do there — Desk, Projects, Roles, and each project tab. |
-| [GOVERNANCE.md](GOVERNANCE.md) | The constitution: all 24 rules, their defaults, what each refuses, and how to change one. |
+| [GOVERNANCE.md](GOVERNANCE.md) | The constitution: all 49 rules, their defaults, what each refuses, and how to change one. |
+| [AUTONOMY.md](AUTONOMY.md) | How much the CEO decides without you — the five authority switches, and what never moves at any setting. |
 | [INTEGRATIONS.md](INTEGRATIONS.md) | Billing, credentials, MCP data sources, Slack, GitHub, webhooks, notifications, artifact storage. |
 
 ## Building on it
@@ -30,7 +31,7 @@ Start here if you're new; skim the table if you're not.
 
 | Doc | What it covers |
 |---|---|
-| [PLAN.md](PLAN.md) | The founding plan, kill conditions included, plus a maintained status appendix. |
+| [PLAN.md](PLAN.md) | The thesis, the kill conditions, what is built, and what is deliberately not. |
 | [M2_PROTOCOL.md](M2_PROTOCOL.md) | The org-vs-single-agent experiment: arms, controls, blind judging, pre-registered decision rule. |
-| [projects/](projects/) | Notes from real projects running on yaaf. |
+| [projects/](projects/) | Full worked project definitions from real use, longer than an example. |
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | How to work on yaaf itself. |

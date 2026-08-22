@@ -1,0 +1,66 @@
+{
+  "yaaf_bundle": 1,
+  "kind": "project_setup",
+  "source_slug": "tiny-game",
+  "exported_at": "2026-08-22T00:00:00+00:00",
+  "values_included": false,
+  "project": {
+    "slug": "tiny-game",
+    "name": "A Game You Can Play",
+    "goal": "Build me a small browser game I can open in a file and actually enjoy for five minutes: ONE SCREEN, ONE MECHANIC, NO BUILD STEP \u2014 a single HTML file with its JavaScript inline, playable by double-clicking it. Pick the mechanic yourselves and tell me what you chose and why before you build it. The bar is not 'it runs', it is 'it feels good': the input must be responsive, the difficulty must ramp, failing must be legible so I know what I did wrong, and there must be one moment that makes me want another go. Put every tuning value \u2014 gravity, speed, spawn rate, timings \u2014 in one named block at the top so they can be changed without hunting. It must work on a phone-sized screen with touch as well as a keyboard, run without a server or a network, and start in under a second. Ship a short note saying what you tuned and what it felt like before and after.",
+    "billing_mode": "api_key",
+    "mode": "deliver",
+    "controlled_domains": [],
+    "github_repo": null,
+    "deadline": null,
+    "chairman_email": null,
+    "constitution": {
+      "chairman_report_interval_hours": 2.0,
+      "chairman_report_window_local": "08:00-21:00",
+      "timezone": "America/New_York",
+      "queue_ceiling": 6,
+      "monthly_usd_cap": 80,
+      "approval_threshold_usd": 15,
+      "drought_hours": 168,
+      "external_ratio_min": 0.0,
+      "max_usd_per_run": 3.0
+    },
+    "integrations": {
+      "runtime": "agent_sdk"
+    },
+    "billing_secret_name": "anthropic-api-key",
+    "ceo_role_slug": "ceo",
+    "ceo_name": "CEO",
+    "ceo_daily_at": null,
+    "ceo_model_override": null,
+    "teams": [
+      {
+        "role_slug": "game-developer",
+        "name": "Build",
+        "employees": [
+          "Kit"
+        ],
+        "lead": null
+      },
+      {
+        "role_slug": "game-ux-designer",
+        "name": "Feel",
+        "employees": [
+          "Juno"
+        ],
+        "lead": null
+      },
+      {
+        "role_slug": "game-analyst",
+        "name": "Design",
+        "employees": [
+          "Wren"
+        ],
+        "lead": null
+      }
+    ],
+    "solo": false
+  },
+  "roles": [],
+  "secrets": []
+}

@@ -1,85 +1,184 @@
-# Examples — ten things people actually run on yaaf
+# Examples — two you could do without yaaf, and eight you couldn't
 
-Each file below is a complete worked example: who you are, what you want, the
-exact goal text to paste, the teams to hire, the constitution numbers that
-matter, and — the part most people skip — **what counts as done**.
+Every example here has to answer one question, and answers it at the top of its
+page: **why not just a Claude Skill?**
 
-They're written to be read in any order. If you've never created a project,
-read [docs/CREATING_A_PROJECT.md](../docs/CREATING_A_PROJECT.md) first; it
-walks the dashboard wizard in plain English. These examples assume you've done
-that once.
+For the first two the honest answer is *"you could — that's the point."* They
+exist to teach you the loop on something you can check yourself in five minutes.
+For the other eight the answer names the specific thing that breaks: nobody is
+awake at 02:00; a chat session cannot be woken by your app; a resumed session
+does not know it already opened that pull request; one agent cannot be its own
+skeptic; a link nobody fetched is not evidence.
 
-| # | Example | What it teaches |
-|---|---|---|
-| 01 | [Ship an open-source tool](01-open-source-tool.md) | GitHub workspace, external evidence from unaffiliated accounts, hypotheses with kill dates |
-| 02 | [A blog that knows if anyone read it](02-company-blog.md) | WordPress drafts as the approval gate, why your own domain can't be evidence |
-| 03 | [A client deliverable you can sell twice](03-client-data-audit.md) | MCP data sources, cloning a working project into a per-client twin |
-| 04 | [A standing research desk](04-research-desk.md) | Sourced findings, memory curation, spot-auditing claims |
-| 05 | [A support desk that feeds the roadmap](05-support-desk.md) | Slack bridge, user complaints as evidence, suggestions instead of self-assigned work |
-| 06 | [One agent, all the guardrails](06-solo-agent-governance.md) | Solo mode — budgets, verification, and audit without the org |
-| 07 | [Settle org-vs-solo for your own goal](07-run-the-experiment.md) | `yaaf experiment`: two arms, blind judging, a pre-registered decision |
-| 08 | [Find your first paying customers](08-first-paying-customers.md) | Approval thresholds, the side-effect ledger, evidence that survives a skeptic |
-| 09 | [An overnight crew for a repo you own](09-repo-maintenance-crew.md) | Success tests as commands the platform runs, run caps, `yaaf spend-report` |
-| 10 | [Try the whole thing for $0](10-dry-run-dollar-zero.md) | Mock runtime — rehearse your constitution before spending a cent |
+**Everything needs one thing: an Anthropic API key.** No data subscriptions, no
+vendor accounts. The single exception is example 04, which needs a **free**
+GitHub account, and needs one because doing something in the world and proving
+it happened is the entire lesson.
 
-## The two things every example has in common
+---
 
-**The goal is the product.** The CEO plans from it and nothing else. Every
-example gives you goal text you can paste and edit. Copy the *shape*: the
-outcome that exists at the end, the deliverable and who it's for, the deadline,
-and where the inputs come from. "Analyze the data" produces a company that
-putters at $8/hour.
+## Part 1 · Fundamentals
 
-**Done is defined before work starts.** Every task carries a success test, and
-there are exactly two kinds:
+**A Claude Skill can do both of these.** Do them anyway. You are not here for
+the deliverable — you are here to write a goal, watch a plan get proposed,
+accept it yourself, and see the platform decide whether the work was done.
+Everything in Part 2 assumes you have.
 
-```json
-{"type": "command",    "command": "pytest tests/ -q && ruff check ."}
-{"type": "observable", "target":  "https://pypi.org/project/foo/ shows version 0.2.0"}
-```
+| # | Example | What it is | Shape | What you learn |
+|---|---|---|---|---|
+| 01 | [Your first hour](01-your-first-hour.md) | A briefing note on any subject | Deliver | The whole loop, as small as it goes: propose → **you accept** → work → verified |
+| 02 | [Settle an argument](02-settle-an-argument.md) | A sourced answer to a question you're stuck on | Deliver | Sourced evidence — and the first real difference: a citation the *platform* fetches, hashes and snapshots |
 
-A `command` is run by the platform, not the agent — it can actually fail. An
-`observable` names something a stranger could check. Prose ("verify it works
-well") is refused at the API. The examples show what good tests look like for
-each kind of work.
+## Part 2 · Why yaaf exists
 
-## Running an example from the CLI
+Each of these breaks without the platform, for the reason in the last column.
 
-Every example is doable entirely in the dashboard. If you'd rather script it,
-the shape is the same everywhere:
+| # | Example | What it is | Shape | What a Claude session can't do here |
+|---|---|---|---|---|
+| 03 | [A desk the world wakes up](03-a-desk-the-world-wakes.md) | Signed events arrive; an agent wakes and triages | **Operate** | Be listening. A signed endpoint wakes a *named* agent at 03:00, under every rate brake |
+| 04 | [An overnight crew](04-an-overnight-crew.md) | Nightly maintenance PRs on a repo you own | **Operate** | Be awake at 02:00 — and know, after a crash, that it already opened that PR |
+| 05 | [A tutor that adapts](05-a-tutor-that-adapts.md) | One lesson a week that reacts to your answers | **Operate** | Wake up next Sunday, holding what you got wrong in week three |
+| 06 | [A red team that can block](06-a-red-team.md) | An adversary whose sign-off gates the build | Deliver | Be its own skeptic. A *different* agent holds a requirement the builders cannot close |
+| 07 | [Tell me what changed](07-tell-me-what-changed.md) | A weekly brief on something you depend on | **Operate** | Run on Monday without you, and not re-report week one's news on week nine |
+| 08 | [A game you can play](08-a-game-you-can-play.md) | A one-file browser game that's actually fun | Deliver | Put three roles with conflicting charters in a room and hand you the argument |
+| 09 | [One idea, thirty days](09-one-idea-thirty-days.md) | Find a product idea and prove someone wants it | **Explore**, solo | Hold a bet to a kill date you can't quietly move, on evidence it didn't write |
+| 10 | [Read the filings](10-read-the-filings.md) | A company note you could defend to a skeptic | Deliver | Produce the *record* — verified claims, logged decisions, sampled work |
+
+Domains, so you can find yourself in one: writing, research, ops and
+integration, software maintenance, education, QA, monitoring, games, product
+discovery, regulated research.
+
+## The short version of the argument
+
+**A skill is a capability. yaaf is the company.** They are not alternatives —
+yaaf *runs* your skills: a role's `tool_permissions.skills` is an allowlist
+handed straight to the Agent SDK, so a role can be granted exactly the skills it
+should have and no others.
+
+What the platform adds is not cleverness. It is what happens across a hundred
+sittings you are not present for: something deciding what to do next, a
+definition of done that isn't self-graded, a budget that stops by itself, memory
+with a curator, and a record you can hand to someone who asks how you know.
+
+See the README's [Isn't this just a Claude Skill?](../README.md#isnt-this-just-a-claude-skill)
+for the long version.
+
+---
+
+## Importing one
+
+**Prerequisite, once per deployment:** the role library must be loaded, since
+these designs hire from it. `./deploy_single_server.sh` does it for you;
+otherwise run `yaaf seed-roles roles/`.
+
+**In the dashboard**, which is the intended path:
+
+1. **+ New project → Start from a setup file**, and pick the `.json`.
+2. The form fills in: shape, goal, teams, constitution, and the org.
+3. **Paste your Anthropic key**, **edit the goal** where it shouts in capitals,
+   and check your email and timezone.
+4. Create.
+
+Two things the form owns rather than the file, so glance at them before you
+submit:
+
+- **The knobs on the form win.** Queue ceiling, drought hours, budget and
+  approval threshold prefill from the file — but the reporting cadence, the
+  reporting window, the timezone and "require verification" come from the
+  form's own fields.
+- **The autonomy preset wins.** Supervised or Autonomous is your choice on the
+  form; the file cannot make it for you. Every example here assumes
+  **Supervised**, because watching yourself accept a plan is the point of Part
+  1. See [docs/AUTONOMY.md](../docs/AUTONOMY.md).
+
+**From the CLI**, which honors the whole constitution as written:
 
 ```bash
-export YAAF_API=http://localhost:8080
-export YAAF_ADMIN_TOKEN=$(grep YAAF_ADMIN_TOKEN deploy/.env | cut -d= -f2-)
+mkdir -p seed/projects seed/roles
+cp roles/*.json seed/roles/
+cp examples/01-your-first-hour.json seed/projects/
 
-yaaf seed-roles roles/                      # once per deployment
+export YAAF_API=http://localhost:8080 YAAF_ADMIN_TOKEN=…
 yaaf create-user you@example.com "Your Name"
-yaaf create-project examples/spec.json      # the JSON each example gives you
-yaaf set-secret anthropic --project my-slug --kind billing   # value is prompted
-yaaf configure my-slug --billing-secret-id secr_…
-yaaf start my-slug
+yaaf seed seed --chairman you@example.com     # created in draft, never started
+
+# Prompts for the key, never echoes it, and prints the secret's id.
+yaaf set-secret anthropic-api-key --project first-hour --kind billing
+yaaf configure first-hour --billing-secret-id secr_…   # the id it just printed
+yaaf start first-hour
 ```
 
 Then watch it: `yaaf dashboard <slug>`, `yaaf board <slug>`, `yaaf runs <slug>`,
-`yaaf evidence <slug>`, `yaaf spend-report <slug> --days 7`. Talk to your CEO
-with `yaaf say <slug> "…"`, and spot-check with `yaaf audit <slug> --n 5`.
+`yaaf spend-report <slug> --days 7`. Talk to your CEO with
+`yaaf say <slug> "…"`, and spot-check with `yaaf audit <slug> --n 5`.
 
-## The roles you can hire
+## Three things every example has in common
 
-From [roles/](../roles/), seeded with `yaaf seed-roles roles/`:
+**The goal is the product.** The CEO plans from it and nothing else. Each of
+these ships a goal you edit rather than one you copy, and the part you must
+change is IN CAPITALS so you cannot miss it. Copy the *shape*: what exists at
+the end, who it is for, where the inputs come from, and — the part people skip
+— what would count as working, stated before anyone starts. "Analyze the data"
+produces a company that putters at $8/hour.
 
-| Slug | Role | Good at | Gets secrets scoped |
-|---|---|---|---|
-| `ceo` | CEO / Project Manager | Planning, bets, kills. The only agent you talk to | — |
-| `engineer` | Software Engineer | Code, infra, deploys, data work | `github` |
-| `researcher` | Researcher / Analyst | Market scans, evaluations, sourced answers | — |
-| `writer` | Writer / Content | Docs, reports, landing copy | — |
-| `blog-writer` | Marketing Blog Writer | SEO-aware posts, publishes WordPress drafts | `wordpress` |
-| `marketer` | Marketing | Channels, positioning, campaigns | — |
-| `gtm` | Go-to-Market | Offers, pricing, researched outreach | — |
-| `sales` | Sales | Follow-ups, objections, proposals | — |
-| `support` | Customer Support | Real users, reproductions, routing problems back | — |
+**Done is defined before work starts.** Every requirement and every task carries
+a test, and there are exactly two kinds:
 
-Roles are versioned. Edit the JSON, re-seed, and existing teams keep running
-their pinned version until you adopt the new one — so a prompt edit can't
-silently change a project that's mid-flight.
+```json
+{"type": "command",    "command": "cd /workspace && python3 -m unittest discover -s tests -q"}
+{"type": "observable", "target":  "deliverables/memo.md carries a source URL for every factual claim"}
+```
+
+A `command` is run by the **platform**, in a sandbox, not by the agent that
+wants it to pass. An `observable` names something a stranger could check, and
+lands in your spot-audit sample. Prose ("verify it works well") is refused at
+the API, because it is a test that cannot fail.
+
+**An acceptance test may only rely on what survives.** Every run gets a fresh
+container; the **workspace** persists, the environment does not. So a check can
+use what the sandbox image ships — `python3` and the standard library,
+`pandas`, `duckdb`, `node`, `jq`, `git`, `curl` — or something committed to the
+workspace. It cannot use a package an earlier run pip-installed. This trips
+everyone once; example 06 is built around it.
+
+## The roles they hire
+
+From [`roles/`](../roles/). These examples use ten of them:
+
+| Slug | Role | Used by |
+|---|---|---|
+| `ceo` | CEO / Project Manager | every example except 10 |
+| `writer` | Writer / Content | 01, 02, 07 |
+| `researcher` | Researcher / Analyst | 02, 07 |
+| `support` | Customer Support | 03 |
+| `engineer` | Software Engineer | 03, 04, 06 |
+| `adversary` | Red Team / Adversarial Reviewer | 06 |
+| `tutor` | Tutor / Curriculum Builder | 05 |
+| `game-developer`, `game-ux-designer`, `game-analyst` | A game studio | 08 |
+| `gtm` | Go-to-Market | 09 |
+| `cio`, `equity-analyst`, `compliance-officer` | A markets desk | 10 |
+
+The library holds more than these — a full markets family (eleven roles), a
+fourth game role, and the rest of a general-purpose company (`blog-writer`,
+`marketer`, `sales`). Browse them at **Roles** in the dashboard.
+
+Roles are **versioned**. Edit the JSON, re-seed, and existing teams keep running
+their pinned version until you adopt the new one — so a prompt edit cannot
+silently change a project that is mid-flight.
+
+## Writing your own
+
+The fastest route to a good project of your own is to take the example closest
+in *shape* — not in subject — and change the goal:
+
+- **One thing, then stop** → Deliver (01, 02, 06, 08, 10)
+- **The same thing on a rhythm, improving** → Operate (03, 04, 05, 07)
+- **A question you can't write requirements for yet** → Explore (09)
+
+Then read [docs/CREATING_A_PROJECT.md](../docs/CREATING_A_PROJECT.md), which
+walks the form in plain English, and steal acceptance tests from whichever
+example is closest.
+
+And before you build it here, ask the question this folder is organised around:
+**if you could finish it in one sitting, you probably should.** yaaf earns its
+keep on the work you cannot sit through.

@@ -152,7 +152,9 @@ def _authority_clause(cons: ConstitutionDoc) -> str:
                     "reword, unsequence (scope_act)")
     if cons.commitment_authority == "ceo":
         held.append("sign the delivery date: commitment_propose adopts the platform's "
-                    "projection as the promise immediately")
+                    "projection as the promise immediately, and commitment_reset "
+                    "re-adopts it when the promise stops holding — you never write a "
+                    "date, only accept the arithmetic's")
     if cons.verdict_policy == "ceo_judgment":
         held.append("judge unverifiable observable closes yourself (scope_act verdict) "
                     "— judge honestly and keep going; every self-judgment is disclosed "
@@ -168,7 +170,12 @@ def _authority_clause(cons: ConstitutionDoc) -> str:
         + "; ".join(held)
         + ". Every exercise is audited and sent to the chairman; all of it is "
           "reversible, and the dial is his to turn back. Decide like an executive: "
-          "act, record the reason, and never wait on an answer you did not need.\n"
+          "act, record the reason, and never wait on an answer you did not need. "
+          "A decision you hold does NOT go to him as an approval — an approval blocks "
+          "on a human and carries a default-deny clock, and filing one for something "
+          "he has already delegated is refused. Decide it, then tell him what you did "
+          "and why. If you want his view first, ask in the boardroom "
+          "(override='question') and keep working while you wait.\n"
     )
 
 
@@ -733,7 +740,7 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
                     "Waiting on the chairman; nothing binds yet."
                     if commitment.status == "proposed" else
                     "New scope is FROZEN: requirement proposals are refused while the "
-                    "projection is past the date. Finish what is open or propose cuts."
+                    "projection is past the date. " + policy.slip_moves(cons)
                     if frozen else
                     "The platform recomputes the projection continuously. If it slips "
                     "past the date, new scope freezes and the chairman is emailed."

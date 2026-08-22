@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { AmendmentRow, ApprovalRow, get, post } from "../../api";
+import { AmendmentRow, ApprovalRow, CeoDecisionRow, get, post } from "../../api";
 import { fmtUsd, fmtWhen, usePoll } from "../../hooks";
 import { clockClass, downloadCsv, ExportCsv, fmtLeft } from "../../ui";
 import type { ProjectCtx } from "../Project";
@@ -12,7 +12,7 @@ function whyYours(kind: string): string {
     case "legal":
       return "Anything with legal weight is a chairman decision by rule, regardless of amount.";
     case "owner_decision":
-      return "The CEO judged this a direction change, not an execution detail.";
+      return "The CEO judged this a direction change, not an execution detail. On a project whose authority dial hands it the plan, the scope and the date, this kind is refused instead — it decides and tells you.";
     case "tool_request":
       return "An agent is asking for a capability it does not have. Only you can grant one.";
     case "assist":
@@ -181,6 +181,80 @@ function DecisionCard({
   );
 }
 
+/** What the CEO decided on its own authority.
+
+    Autonomy was always audited and always emailed, and had nowhere to be READ:
+    a chairman who had delegated the plan, the date and the verdicts could open
+    this screen and find no trace of a single decision made in his name. The
+    one row that did appear was the approval the CEO filed when it ran out of
+    verbs — so the more he delegated, the emptier the screen and the more
+    misleading the thing on it.
+
+    Deliberately NOT under "Waiting on you": nothing here is pending and
+    nothing expires. It is a record, and every line of it is reversible from
+    the Plan screen or Settings. */
+function CeoDecisions({ projectId }: { projectId: string }) {
+  const { data } = usePoll(
+    () => get<CeoDecisionRow[]>(`/observe/projects/${projectId}/ceo_decisions`),
+    15000,
+  );
+  const rows = data ?? [];
+  return (
+    <>
+      <h2 className="zone">
+        What the CEO decided <span className="cnt">{rows.length}</span>
+      </h2>
+      <p className="subtitle" style={{ marginBottom: 8 }}>
+        Decisions the constitution puts in the CEO's hands, taken without you and disclosed
+        here in full. Nothing on this list is waiting on you and nothing expires — but every
+        line of it is reversible, and the dial that granted it is yours to turn back in{" "}
+        Settings → Rules in force.
+      </p>
+      {rows.length === 0 ? (
+        <p className="help">
+          Nothing yet. Under the Supervised dial this list stays empty by design — the CEO
+          proposes and you decide, so its decisions are the approvals above.
+        </p>
+      ) : (
+        <>
+          <div className="pills">
+            <ExportCsv
+              onClick={() =>
+                downloadCsv(
+                  "ceo-decisions.csv",
+                  ["at", "about", "what", "reason"],
+                  rows.map((d) => [d.at, d.about, d.what, d.reason]),
+                )
+              }
+            />
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>When</th>
+                <th>About</th>
+                <th style={{ width: "38%" }}>What it did</th>
+                <th style={{ width: "34%" }}>Its reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((d) => (
+                <tr key={d.id}>
+                  <td className="mono">{fmtWhen(d.at)}</td>
+                  <td className="mono">{d.about}</td>
+                  <td>{d.what}</td>
+                  <td>{d.reason || <span className="help">no reason recorded</span>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+    </>
+  );
+}
+
+
 /** Everything you decided, and everything that decided itself while you were
     away. Approvals used to be a tab that stood empty most days; the live ones
     now travel with you in the strip, and this is where they come to rest. */
@@ -276,6 +350,8 @@ export default function Decisions({ ctx }: { ctx: ProjectCtx }) {
           </table>
         </>
       )}
+
+      <CeoDecisions projectId={projectId} />
 
       <h2 className="zone">
         Rule changes <span className="cnt">{rows.length}</span>

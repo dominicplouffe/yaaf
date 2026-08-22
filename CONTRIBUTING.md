@@ -7,7 +7,7 @@ itself to the same standard: every rule ships with a test that attacks it.
 ## Getting set up
 
 ```bash
-python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
+python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"   # Python 3.12+
 .venv/bin/python -m pytest tests/        # whole suite, offline, $0 in tokens
 .venv/bin/ruff check .                   # lint
 cd web && npm install && npm run build   # type-checks the SPA
@@ -57,12 +57,16 @@ YAAF_TEST_DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:55432/po
 ## Reporting security issues
 
 Please don't open a public issue for anything exploitable (auth bypasses,
-sandbox or egress escapes, secret exposure). Contact the maintainer privately
+sandbox escapes, secret exposure). Contact the maintainer privately
 via GitHub (profile email or a private security advisory on this repo).
 
 ## Where to start
 
-Read [docs/PLAN.md](docs/PLAN.md) first — it's the founding plan, including
-what would kill the project. The status appendix at the bottom is the honest
-ledger of what exists. Good first contributions: more invariant attacks, more
-chaos, more golden-eval scenarios, evidence connectors for new services.
+Read [docs/PLAN.md](docs/PLAN.md) first — the thesis, the kill conditions, an
+honest ledger of what exists, and what is deliberately not built.
+[docs/FEATURES.md](docs/FEATURES.md) is the map of the surface;
+[docs/AGENT_API.md](docs/AGENT_API.md) is what an agent actually sees.
+
+Good first contributions: more invariant attacks, more chaos, more golden-eval
+scenarios, evidence connectors for new services, and roles for a domain the
+library does not cover yet.

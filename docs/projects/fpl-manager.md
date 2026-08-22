@@ -13,9 +13,13 @@ squad, they never touch it. You execute every move yourself in the FPL app.
 
 ## The clock
 
-The 2026/27 season opens **Friday 21 August 2026, 20:00 BST**, so the Gameweek 1 deadline is
-**18:30 BST that day**. Everything below has to be created, billed, wired and briefed before
-then, because the first deliverable is due before that deadline.
+The 2026/27 season opened **Friday 21 August 2026**. If you are setting this up mid-season,
+nothing here changes except the first deliverable: instead of an opening squad, the first
+cycle's scope is a takeover audit of the squad you already have — same shape, same tests.
+
+Whenever you start, the binding constraint is the same one: the project has to be created,
+billed, wired and briefed **before** the next gameweek deadline, because the first
+deliverable is due 24 hours ahead of it.
 
 Confirm the exact time against the live API rather than this document — kickoff times move:
 
@@ -326,7 +330,8 @@ start. The timestamp requirement is the point: team news decays in hours.
 
 This is the single most important field in the project — the strategist plans everything from
 it. It names the outcome, the deliverable, the deadline and where the inputs come from, and
-it encodes the weekly rhythm in the text itself, because yaaf has no weekly-cadence field.
+it names the weekly rhythm in the text too, so the strategist reads the same shape the
+platform enforces — this is an **Operate** project, and its cycle rolls weekly.
 
 > Play the 2026/27 Fantasy Premier League season for the chairman and finish inside the top
 > 100,000 of the overall rankings, with top 10,000 as the stretch target. Two deliverables on
@@ -357,6 +362,7 @@ deliverable itself, the same way *"the arithmetic shown"* does in the PPC audit 
   "name": "FPL Manager 2026/27",
   "goal": "Play the 2026/27 Fantasy Premier League season for the chairman and finish inside the top 100,000 of the overall rankings, with top 10,000 as the stretch target. Two deliverables on a fixed rhythm. First: no later than four hours before the Gameweek 1 deadline, a recommended squad of 15 players costing at most 100.0m, naming the starting XI, the captain, the vice-captain and the bench in order, and for every player the expected points, the ownership, and the one thing that would make the pick wrong. Second: for every gameweek after that, a decision memo delivered at least 24 hours before that gameweek's deadline, naming the transfer to make or the explicit decision to roll, the captain, the XI and any chip play — followed within 48 hours of the gameweek ending by a scored review of that memo: points scored, rank movement, which calls were right, which were wrong, and what changes as a result. All player data comes from the connected \"fpl\" data source and named public sources — use real figures only, never illustrative or estimated ones, and state the gameweek range every figure covers. A recommendation without expected points, effective ownership and a stated downside is not a recommendation.",
   "chairman_email": "you@example.com",
+  "mode": "operate",
   "billing_mode": "api_key",
   "controlled_domains": [],
   "ceo_role_slug": "fpl-chief-strategist",
@@ -376,22 +382,30 @@ deliverable itself, the same way *"the arithmetic shown"* does in the PPC audit 
     "approval_threshold_usd": 10,
     "chairman_report_interval_hours": 24,
     "chairman_report_window_local": "08:00-21:00",
-    "chairman_report_timezone": "America/Toronto",
+    "timezone": "America/Toronto",
     "memory_cap_project": 80,
     "memory_cap_team": 60,
-    "runs_per_project_per_day": 60
-  },
-  "config": {
+    "runs_per_project_per_day": 60,
+    "cycle_frequency": "weekly",
+    "cycle_day": 1,
+    "review_interval_days": 7,
     "ceo_daily_at": "09:00",
-    "timezone": "America/Toronto",
     "ceo_heartbeat_hours": 12,
     "max_concurrent_runs": 3
-  }
+  },
+  "integrations": {"runtime": "agent_sdk"}
 }
 ```
 
-**Fill in before you run it:** `chairman_email`, and both timezone fields if
-`America/Toronto` isn't yours (IANA names only — the reporting window is read in that zone).
+**Fill in before you run it:** `chairman_email`, and `timezone` if `America/Toronto` isn't
+yours (IANA names only). One zone serves the whole rulebook — the reporting window, the daily
+wake, and the cycle roll are all read in it.
+
+**Operate plans before it builds.** The first thing the strategist does after you start it is
+propose the cycle's requirements — the memo, the review, the numbers each must carry — and
+they sit on the **Plan** tab as *proposed* until you accept them. Nothing gets created until
+that plan holds and fits the budget. Every cycle roll reopens that gate, which is what turns
+"we should learn from last week" into a step the platform actually makes the company take.
 
 Why each non-default value:
 
@@ -406,15 +420,17 @@ Why each non-default value:
 | `chairman_report_window_local` | `08:00-21:00` | No 3am boardroom posts |
 | `memory_cap_project` / `_team` | 80 / 60 | The chip calendar, the watchlist and per-player judgments accumulate for 38 weeks |
 | `runs_per_project_per_day` | 60 | Quiet midweek, burst on deadline day |
-| `ceo_daily_at` | `09:00` | One wall-clock wake per day to step the weekly rhythm |
+| `cycle_frequency` / `cycle_day` | `weekly` / `1` | The gameweek *is* the cycle. Tuesday roll: the previous gameweek has settled, the next deadline is four days out. Each roll closes the cycle, carries unfinished scope forward, reopens the plan gate, and hands the strategist the last three cycles' narratives verbatim — which is exactly the scored-review loop this project wants. |
+| `ceo_daily_at` | `09:00` | One wall-clock wake per day to step the rhythm inside a cycle |
 
 `controlled_domains` stays empty on purpose: you control no football data source, so every
 source the agents cite is legitimately external evidence.
 
-> **Use the CLI, not the wizard, if you want these values.** The web New Project page
-> unconditionally overrides `queue_ceiling`, `drought_hours`, `monthly_usd_cap` and
-> `approval_threshold_usd` from its own form fields. `yaaf create-project` honors the whole
-> constitution dict.
+> **Check the wizard's own fields if you create this in the dashboard.** The New Project page
+> surfaces `queue_ceiling`, `drought_hours`, `monthly_usd_cap`, `approval_threshold_usd`,
+> the reporting cadence and the timezone as form fields, and whatever is in those fields wins
+> over an imported setup file. `yaaf create-project` honors the whole constitution dict as
+> written.
 
 ---
 
@@ -536,8 +552,10 @@ a second data source named `fplstats`. Nothing in this definition changes when y
 
 ## 8. The operating rhythm
 
-yaaf has no weekly-cadence field, so the rhythm lives in three places: the goal text, the
-strategist's prompt, and `not_before` on the tasks it creates. A daily 09:00 wake steps it.
+The gameweek is the cycle. The platform rolls it every Tuesday, closing the last one,
+carrying unfinished scope forward, reopening the plan gate, and handing the strategist the
+last three cycles' narratives verbatim. Inside a cycle the rhythm lives in the goal text, the
+strategist's prompt, and `not_before` on the tasks it creates; a daily 09:00 wake steps it.
 
 | When | Who | Output |
 |---|---|---|

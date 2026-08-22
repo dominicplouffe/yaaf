@@ -153,6 +153,7 @@ export interface Activity {
     | "stalled_requirement"
     | "rework_owed"
     | "awaiting_chairman"
+    | "awaiting_ceo"
     | "blocked_tasks"
     | "checks_lost"
     | "checking"
@@ -200,6 +201,9 @@ export interface Activity {
     stalled_requirements: string[];
     rework_owed: string[];
     proposed_requirements: string[];
+    /** Which of the pending decisions the authority dial hands to the CEO —
+        "scope", "verdicts". Empty under the Supervised dial. */
+    ceo_decides: string[];
     observable_checking: string[];
     plan_open: boolean;
     unreachable: string | null;
@@ -464,6 +468,21 @@ export interface AmendmentRow {
   proposed_at: string;
   effective_at: string;
   disclosed: boolean;
+}
+
+/** One decision the CEO made on its own authority. Never pending, never
+    expiring — the disclosure half of the autonomy dial, as a record you read
+    and can reverse rather than a request that blocks you. */
+export interface CeoDecisionRow {
+  id: string;
+  at: string;
+  action: string;
+  /** "the plan" | "the date" | "a credential" — what it touched. */
+  about: string;
+  by: string;
+  what: string;
+  reason: string | null;
+  detail: Record<string, unknown>;
 }
 
 export interface ApprovalRow {

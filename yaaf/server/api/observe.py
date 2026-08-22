@@ -22,6 +22,7 @@ from yaaf.core.models import (
     Approval,
     ApprovalStatus,
     Artifact,
+    AuditLog,
     AuditSample,
     AuditSampleStatus,
     Channel,
@@ -1304,6 +1305,81 @@ def reviews(project_id: str, session: Session = Depends(db)) -> dict:
         "open": open_review,
         "history": [view(r) for r in rows if r.status != ReviewStatus.OPEN],
     }
+
+
+# Every action an agent takes under the authority dial, and nothing else. The
+# keys are the four write paths that exist (agent.py: scope_act, commitment
+# self-accept, commitment reset, credential re-scope) — a whitelist rather than
+# a prefix match, so a new audit action has to be added here deliberately
+# instead of appearing on the chairman's screen by accident.
+_SELF_EXERCISE_ACTIONS = {
+    "scope.self": "the plan",
+    "commitment.self_accept": "the date",
+    "commitment.self_move": "the date",
+    "credential.scope": "a credential",
+}
+
+
+@router.get("/projects/{project_id}/ceo_decisions")
+def ceo_decisions(project_id: str, limit: int = 50, session: Session = Depends(db)) -> list[dict]:
+    """What the CEO decided on its own authority — the disclosure half of the
+    autonomy dial, as a screen rather than only as an email.
+
+    Autonomy was always audited and always emailed, but it had nowhere to be
+    READ: a chairman who had delegated the plan, the date and the verdicts
+    could open the dashboard and find no trace of a single decision made in his
+    name. The one thing that did show up was the approval the CEO filed when it
+    ran out of verbs — so the more autonomous the project, the emptier the
+    screen and the more misleading the one row on it.
+
+    Nothing here is pending and nothing expires. It is a record to read, and
+    everything in it is reversible from the Plan screen or Settings.
+    """
+    project = _project(session, project_id)
+    rows = session.execute(
+        select(AuditLog)
+        .where(AuditLog.project_id == project.id,
+               AuditLog.action.in_(sorted(_SELF_EXERCISE_ACTIONS)))
+        .order_by(AuditLog.at.desc())
+        .limit(max(1, min(limit, 200)))
+    ).scalars()
+    names = {a.id: a.name for a in session.execute(
+        select(Agent).where(Agent.project_id == project.id)).scalars()}
+    out = []
+    for row in rows:
+        actor = row.actor.removeprefix("agent:")
+        detail = row.detail or {}
+        out.append({
+            "id": row.id,
+            "at": row.at.isoformat(),
+            "action": row.action,
+            "about": _SELF_EXERCISE_ACTIONS[row.action],
+            "by": names.get(actor, "CEO"),
+            "what": _self_exercise_summary(row.action, detail),
+            "reason": detail.get("reason"),
+            "detail": detail,
+        })
+    return out
+
+
+def _self_exercise_summary(action: str, detail: dict) -> str:
+    """One line a human reads, not a dict they have to decode."""
+    if action == "scope.self":
+        kind, what = detail.get("kind", "changed"), detail.get("detail")
+        return what or f"{kind} on the plan"
+    if action == "commitment.self_accept":
+        return (f"Signed the delivery date: {(detail.get('deliver_by') or '')[:10]}"
+                f" over {len(detail.get('scope') or [])} requirement(s)")
+    if action == "commitment.self_move":
+        nth = detail.get("reset_count")
+        tail = f" (reset #{nth})" if nth and nth > 1 else ""
+        return (f"Reset the delivery date: {(detail.get('from') or '')[:10]} → "
+                f"{(detail.get('to') or '')[:10]}{tail}")
+    if action == "credential.scope":
+        was = ", ".join(detail.get("was") or []) or "nobody"
+        now = ", ".join(detail.get("now") or []) or "nobody"
+        return f"Re-scoped credential {detail.get('name')}: {was} → {now}"
+    return action
 
 
 @router.get("/projects/{project_id}/audit_samples")

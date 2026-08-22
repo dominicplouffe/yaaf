@@ -1,0 +1,58 @@
+{
+  "yaaf_bundle": 1,
+  "kind": "project_setup",
+  "source_slug": "filings-desk",
+  "exported_at": "2026-08-22T00:00:00+00:00",
+  "values_included": false,
+  "project": {
+    "slug": "filings-desk",
+    "name": "Read The Filings",
+    "goal": "Write me an initiation note on ONE US-LISTED COMPANY I NAME, built only from its own filings on SEC EDGAR \u2014 free and public at sec.gov/edgar, so this desk needs no data subscription of any kind. Name the company before planning. Assume I will have to defend every sentence of this to somebody who asks 'how do you know?', so the record is as much the deliverable as the note: every figure carries its period and a link to the filing it came from, every computed number ships with the script that computed it, and anything you inferred rather than verified is labelled as inference in the text. The note must contain what the business actually sells and to whom; the three or four numbers the story depends on, tracked over eight quarters rather than two; where management's framing and the statements disagree (adjusted versus GAAP, stock compensation, one-offs that keep recurring, segment definitions that changed); the capital structure and what it costs; and the bear case argued as well as a bear would argue it. Finish with what would change your mind, stated as a number in a future filing. Research for my own use only: this desk never places an order, never touches an account, and nothing it writes is advice for anyone but me.",
+    "billing_mode": "api_key",
+    "mode": "deliver",
+    "controlled_domains": [],
+    "github_repo": null,
+    "deadline": null,
+    "chairman_email": null,
+    "constitution": {
+      "chairman_report_interval_hours": 2.0,
+      "chairman_report_window_local": "08:00-21:00",
+      "timezone": "America/New_York",
+      "queue_ceiling": 5,
+      "monthly_usd_cap": 60,
+      "approval_threshold_usd": 15,
+      "drought_hours": 168,
+      "external_ratio_min": 0.34
+    },
+    "integrations": {
+      "runtime": "agent_sdk"
+    },
+    "billing_secret_name": "anthropic-api-key",
+    "ceo_role_slug": "cio",
+    "ceo_name": "CIO",
+    "ceo_daily_at": null,
+    "ceo_model_override": null,
+    "teams": [
+      {
+        "role_slug": "equity-analyst",
+        "name": "Research",
+        "employees": [
+          "Maya",
+          "Tobias"
+        ],
+        "lead": "Maya"
+      },
+      {
+        "role_slug": "compliance-officer",
+        "name": "Review",
+        "employees": [
+          "Owen"
+        ],
+        "lead": null
+      }
+    ],
+    "solo": false
+  },
+  "roles": [],
+  "secrets": []
+}

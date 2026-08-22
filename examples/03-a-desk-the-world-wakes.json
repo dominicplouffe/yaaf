@@ -1,0 +1,63 @@
+{
+  "yaaf_bundle": 1,
+  "kind": "project_setup",
+  "source_slug": "on-call-desk",
+  "exported_at": "2026-08-22T00:00:00+00:00",
+  "values_included": false,
+  "project": {
+    "slug": "on-call-desk",
+    "name": "A Desk The World Wakes Up",
+    "goal": "Run a standing triage desk for MY SIDE PROJECT \u2014 replace that with what you are actually watching before planning. Events arrive at this project's signed webhook endpoint: an error my app caught, a signup, a customer email, a failed job, anything I decide to POST. When one arrives, the named agent is woken and works it the same hour rather than waiting for a heartbeat. For each event: reproduce or corroborate it before theorising, decide whether it is new or the same underlying thing as something already logged, and write it into a single living register at deliverables/register.md \u2014 one row per DISTINCT problem, with how many times it has now been seen, when it was first and last seen, and what is known. Never a second row for a repeat; the register's value is that it collapses noise. Anything you can genuinely settle, settle, and say what you did. Anything you cannot, say plainly what you would need. Once a week, give me a summary of what the world actually sent, what changed, and the single thing most worth fixing \u2014 and if a quiet week is a quiet week, say that in one line rather than padding it.",
+    "billing_mode": "api_key",
+    "mode": "operate",
+    "controlled_domains": [],
+    "github_repo": null,
+    "deadline": null,
+    "chairman_email": null,
+    "constitution": {
+      "chairman_report_interval_hours": 2.0,
+      "chairman_report_window_local": "08:00-21:00",
+      "timezone": "America/New_York",
+      "queue_ceiling": 6,
+      "monthly_usd_cap": 50,
+      "approval_threshold_usd": 10,
+      "drought_hours": 168,
+      "external_ratio_min": 0.0,
+      "cycle_frequency": "weekly",
+      "cycle_day": 0,
+      "review_interval_days": 14,
+      "memory_cap_project": 80,
+      "runs_per_project_per_day": 80
+    },
+    "integrations": {
+      "runtime": "agent_sdk"
+    },
+    "billing_secret_name": "anthropic-api-key",
+    "ceo_role_slug": "ceo",
+    "ceo_name": "CEO",
+    "ceo_daily_at": "09:00",
+    "ceo_model_override": null,
+    "teams": [
+      {
+        "role_slug": "support",
+        "name": "Triage",
+        "employees": [
+          "Nadia",
+          "Piet"
+        ],
+        "lead": "Nadia"
+      },
+      {
+        "role_slug": "engineer",
+        "name": "Diagnosis",
+        "employees": [
+          "Mika"
+        ],
+        "lead": null
+      }
+    ],
+    "solo": false
+  },
+  "roles": [],
+  "secrets": []
+}
