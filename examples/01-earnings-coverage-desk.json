@@ -1,0 +1,75 @@
+{
+  "yaaf_bundle": 1,
+  "kind": "project_setup",
+  "source_slug": "earnings-coverage-desk",
+  "exported_at": "2026-08-22T00:00:00+00:00",
+  "values_included": false,
+  "project": {
+    "slug": "earnings-coverage-desk",
+    "name": "Earnings Coverage Desk",
+    "goal": "Produce a decision-ready initiation pack on five US-listed companies I name, for my own use, within six weeks: one research note per name built from primary filings (10-K, 10-Q, 8-K, transcripts) with every figure carrying its period and a source URL; a comparable-company table covering all five; and a one-page summary of where management's framing and the statements disagree. Every note states the bear case as a bear would state it and names one observable that would change the thesis. Research only \u2014 this desk recommends and never trades, and nothing it writes is advice for anyone but me.",
+    "billing_mode": "api_key",
+    "mode": "deliver",
+    "controlled_domains": [],
+    "github_repo": null,
+    "deadline": null,
+    "chairman_email": null,
+    "constitution": {
+      "chairman_report_interval_hours": 4.0,
+      "chairman_report_window_local": "08:00-20:00",
+      "timezone": "America/New_York",
+      "queue_ceiling": 6,
+      "monthly_usd_cap": 400,
+      "approval_threshold_usd": 50,
+      "drought_hours": 48,
+      "external_ratio_min": 0.34
+    },
+    "integrations": {
+      "runtime": "agent_sdk"
+    },
+    "billing_secret_name": "anthropic-api-key",
+    "ceo_role_slug": "cio",
+    "ceo_name": "CIO",
+    "ceo_daily_at": null,
+    "ceo_model_override": null,
+    "teams": [
+      {
+        "role_slug": "equity-analyst",
+        "name": "Research",
+        "employees": [
+          "Maya",
+          "Tobias"
+        ],
+        "lead": "Maya"
+      },
+      {
+        "role_slug": "market-data-engineer",
+        "name": "Data",
+        "employees": [
+          "Ines"
+        ],
+        "lead": null
+      },
+      {
+        "role_slug": "compliance-officer",
+        "name": "Compliance",
+        "employees": [
+          "Owen"
+        ],
+        "lead": null
+      }
+    ],
+    "solo": false
+  },
+  "roles": [],
+  "secrets": [
+    {
+      "name": "market-data",
+      "role_scopes": [
+        "equity-analyst",
+        "market-data-engineer"
+      ],
+      "kind": "service"
+    }
+  ]
+}

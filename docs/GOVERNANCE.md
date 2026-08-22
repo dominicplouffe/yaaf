@@ -1,6 +1,6 @@
 # Governance — the constitution, rule by rule
 
-Each project runs under a **constitution**: 39 numbers and switches the agents
+Each project runs under a **constitution**: 49 numbers and switches the agents
 cannot edit, argue with, or talk their way around. Every one is enforced
 server-side in [`yaaf/server/policy.py`](../yaaf/server/policy.py) as an HTTP
 refusal or an automatic state change. The schema itself lives in
@@ -17,7 +17,7 @@ moment it exists, on the tab its group maps to in `GROUP_THEMES`.
 
 ## Changing a rule
 
-**In the dashboard:** Settings → **Rules in force**. All 39 sit behind six tabs
+**In the dashboard:** Settings → **Rules in force**. All 49 sit behind six tabs
 — Money, Pace & brakes, How work is run, Autonomy, Memory, Rhythm & reporting —
 one rule per row, with the group as a subhead. Edit anything on any tab; a tray
 at the foot of the pane lists every pending change across all of them, takes
@@ -137,6 +137,9 @@ Memory-heavy roles (research desks, support) need more room than the defaults.
 | `max_usd_per_run` | 2.0 | USD one run may spend. It is warned as it approaches and stopped at the line. 0 turns it off. |
 | `refusal_cap_per_run` | 5 | Past this the run's token is revoked. Rephrasing a refused request is not a strategy. |
 | `task_check_failures_before_block` | 3 | A task whose success test fails this often **blocks** and becomes a question for whoever planned it. Counts across re-claims; only a pass resets it. |
+| `requirement_check_failures_before_escalation` | 3 | A requirement whose acceptance test keeps failing this often stops being retried silently and becomes a question — the requirement-level twin of the rule above. |
+| `max_task_gate_hours` | 6 | The furthest ahead work may be scheduled with `not_before`. A gated task wakes nobody and shows on no screen as work in progress, so a company gated on one looks stopped. Gates beyond this are refused. |
+| `stall_hours` | 3.0 | Hours of silence before you are told. A company that quietly stopped is the failure mode this catches. |
 | `max_concurrent_runs` | 3 | Agents working simultaneously. Protects the provider rate limit every project on the box shares. |
 | `reserved_governance_runs` | 3 | Runs held out of the daily ceiling so a review, a cycle plan or a re-forecast can always happen. Ordinary work stops at the cap minus this. 0 turns it off. |
 

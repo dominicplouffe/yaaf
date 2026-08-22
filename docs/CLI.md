@@ -24,7 +24,10 @@ Every command that takes a project accepts **either a slug or an id**.
 | `yaaf create-user EMAIL NAME` | Create a user. Idempotent by email. |
 | `yaaf create-project SPEC_FILE` | Create a project from a JSON spec (shape below). |
 | `yaaf set-secret NAME [--project P] [--scopes a,b] [--kind service\|billing]` | Store an encrypted secret. **The value is prompted** — never echoed, logged, or left in shell history. Omit `--project` for a platform-level secret. |
-| `yaaf configure PROJECT [--runtime …] [--billing-secret-id …] [--billing-mode …] [--ceo-heartbeat-hours …] [--max-concurrent-runs …]` | Update mutable configuration. **Never the constitution** — that's an amendment. |
+| `yaaf configure PROJECT [--runtime …] [--billing-secret-id …] [--billing-mode …]` | Update outward wiring only. **Never the constitution** — cadence, concurrency and every other limit is an amendment. |
+| `yaaf amend PROJECT --reason "…" --set rule=value` | Change a constitution rule. Repeatable `--set`; values are parsed as JSON where possible, so `--set runs_per_project_per_day=80` gives a number and `--set ceo_daily_at='"09:00"'` gives a string. An invalid overlay is refused whole. |
+| `yaaf save-seed [DIR]` | Write every role and project *design* to a folder as JSON. Plumbing and secrets stay behind. |
+| `yaaf seed [DIR] --chairman EMAIL [--roles-only]` | Restore such a folder onto an install. Projects come back **in draft** — restoring a backup never starts spending. |
 
 ### Project spec shape
 
@@ -34,25 +37,50 @@ Every command that takes a project accepts **either a slug or an id**.
   "name": "My Project",
   "goal": "A goal the CEO can plan from — the outcome, the deliverable, who it is for, the deadline, and where the inputs come from.",
   "chairman_email": "you@example.com",
+  "mode": "deliver",
   "billing_mode": "api_key",
   "controlled_domains": ["mycompany.com"],
+  "github_repo": "you/my-project",
   "constitution": {"queue_ceiling": 5, "monthly_usd_cap": 300},
-  "config": {"runtime": "mock", "ceo_heartbeat_hours": 4},
+  "integrations": {"runtime": "mock"},
   "ceo_role_slug": "ceo",
   "ceo_name": "CEO",
+  "ceo_daily_at": "09:00",
   "teams": [
     {"role_slug": "engineer", "name": "Engineering",
-     "employees": ["Ada", "Grace"], "lead": "Ada"}
+     "employees": ["Ada", "Grace"], "lead": "Ada",
+     "schedules": {"Grace": "07:30"},
+     "model_overrides": {"Ada": "claude-opus-5"}}
   ],
   "solo": false
 }
 ```
 
+- `mode` is `explore` (default), `deliver`, or `operate`, and is **frozen at
+  creation** — the rules differ by shape. Outside Explore the project starts
+  owing a plan and a task serving no requirement is refused.
+- `deadline` (ISO datetime) is Explore's shape only: open scope, bounded time.
+  Deliver promises through a commitment and Operate runs on cycles, so a bare
+  date is refused there.
 - `constitution` holds **overrides** onto the defaults; omit it for stock rules.
+  A full rulebook (what an export carries) validates fine too.
+- `integrations` is wiring, never limits: `runtime` (`agent_sdk` | `mock`),
+  Slack mapping, data sources. Anything that caps or paces an agent lives in
+  the constitution.
 - `controlled_domains` are the domains that **cannot** count as external
   evidence — your own site proving your own success is not proof.
+- `ceo_daily_at` and a team's `schedules` are `"HH:MM"` daily wakes read in the
+  constitution's timezone. A schedule naming nobody on the team is refused
+  rather than dropped — a wake that silently fails to attach is missed at 09:00
+  every day, with no error anywhere.
 - `solo: true` places the CEO as the sole member of the only team (which must
   have no employees), so one brain plans and executes under identical policy.
+
+A setup file from [`examples/`](../examples/) or from a project's
+**Settings → Duplicate & export** is a superset of this: the same object under
+a `project` key, plus `roles` and `secrets`. The dashboard's New-project form
+loads one whole; from the CLI, feed the `project` object to `create-project`
+(and `yaaf seed` does exactly that for a whole folder).
 
 ## Lifecycle
 
@@ -89,9 +117,14 @@ yaaf stop  my-slug --reason "shipped"
 | `yaaf unfreeze MESSAGE_ID` | Release a thread the pair circuit breaker froze. |
 | `yaaf audit-evidence EVIDENCE_ID --ok\|--bad [--note …]` | Record your verdict on a piece of evidence. |
 
-Amending the constitution is deliberately not a one-liner — it needs a written
-reason. Use Settings → Rules in force, or `POST
-/admin/projects/{id}/amendments` (see [GOVERNANCE.md](GOVERNANCE.md#changing-a-rule)).
+Constitution changes go through `yaaf amend` (above) or Settings → **Rules in
+force**. Either way they carry a written reason, an audit entry, and disclosure
+to the CEO — see [GOVERNANCE.md](GOVERNANCE.md#changing-a-rule).
+
+Scope decisions — accepting a proposed requirement, cutting one, signing or
+moving a delivery date, pulling a review lever — are dashboard actions
+(**Plan** and **Review** tabs) or direct API calls; there is no CLI shorthand,
+because each needs a reason you would want read back at the next review.
 
 ## Spend analysis
 
@@ -121,8 +154,11 @@ blind judging, a pre-registered decision rule.
 | `yaaf experiment score BUNDLES LABEL FITNESS CRAFT UTILITY` | Record your own rubric pass for one blind bundle. |
 | `yaaf experiment decide …` | Unseal the mapping, compute the preregistered composites, apply the decision rule, write the result document. Run only after judging. |
 
-See [`examples/07-run-the-experiment.md`](../examples/07-run-the-experiment.md)
-for a walkthrough on your own goal.
+The spec shape and a worked pair of goals live in
+[`experiments/m2.spec.json`](../experiments/m2.spec.json); the protocol, the
+rubric and the decision rule are in [M2_PROTOCOL.md](M2_PROTOCOL.md). The solo
+arm is ordinary solo mode — see
+[`examples/06-solo-idea-hunt.md`](../examples/06-solo-idea-hunt.md).
 
 ---
 

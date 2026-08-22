@@ -14,7 +14,7 @@ company — wakes, tasks, refusals, budget pauses — before spending a cent.
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
-.venv/bin/python -m pytest tests/            # 194 tests, offline; 1 skips without Postgres
+.venv/bin/python -m pytest tests/            # 515 tests, offline; 1 skips without Postgres
 
 export YAAF_DATABASE_URL=sqlite:////tmp/yaaf.db \
        YAAF_ADMIN_TOKEN=dev-admin-token \
@@ -440,11 +440,11 @@ yaaf/runner     leases runs, launches sandbox containers, meters everything
 yaaf/core       models, constitution schema, crypto, config, artifacts
 yaaf/cli        `yaaf` — admin/observe CLI, `yaaf experiment`, `yaaf spend-report`
 web/            the chairman's dashboard (React, served at /app)
-roles/          starter role library (CEO, engineer, researcher, writer…)
-deploy/         Dockerfiles, compose, squid config
+roles/          starter role library — general, markets desk, game studio
+deploy/         Dockerfiles and compose
 evals/          golden-transcript evals — regression-gate for prompt edits
 tests/          invariant suite over HTTP, chaos tests, eval checks
 migrations/     Alembic
-examples/       ten worked project setups
+examples/       ten importable project setups (.md + .json)
 docs/           this documentation
 ```

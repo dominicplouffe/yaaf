@@ -1,0 +1,55 @@
+{
+  "yaaf_bundle": 1,
+  "kind": "project_setup",
+  "source_slug": "solo-idea-hunt",
+  "exported_at": "2026-08-22T00:00:00+00:00",
+  "values_included": false,
+  "project": {
+    "slug": "solo-idea-hunt",
+    "name": "Solo Idea Hunt",
+    "goal": "One analyst, working alone under the full rulebook: find and defend one investment idea in US-listed equities within 30 days that I would be willing to act on. The output is a single note \u2014 the business, the numbers over eight quarters, why the market is wrong, the bear case stated as a bear would state it, what would falsify the thesis, and the size it deserves given the downside. Breadth is not the goal: one idea with an argument that survives attack beats ten screened names. If 30 days of work produces nothing defensible, say so \u2014 that is a real finding and it is the honest deliverable. Research only; no orders, no advice to anyone else.",
+    "billing_mode": "api_key",
+    "mode": "explore",
+    "controlled_domains": [],
+    "github_repo": null,
+    "deadline": null,
+    "chairman_email": null,
+    "constitution": {
+      "chairman_report_interval_hours": 4.0,
+      "chairman_report_window_local": "08:00-20:00",
+      "timezone": "America/New_York",
+      "queue_ceiling": 4,
+      "monthly_usd_cap": 150,
+      "approval_threshold_usd": 25,
+      "drought_hours": 72,
+      "require_evidence_verification": true
+    },
+    "integrations": {
+      "runtime": "agent_sdk"
+    },
+    "billing_secret_name": "anthropic-api-key",
+    "ceo_role_slug": "cio",
+    "ceo_name": "Analyst",
+    "ceo_daily_at": null,
+    "ceo_model_override": null,
+    "teams": [
+      {
+        "role_slug": "equity-analyst",
+        "name": "Desk",
+        "employees": [],
+        "lead": null
+      }
+    ],
+    "solo": true
+  },
+  "roles": [],
+  "secrets": [
+    {
+      "name": "market-data",
+      "role_scopes": [
+        "cio"
+      ],
+      "kind": "service"
+    }
+  ]
+}

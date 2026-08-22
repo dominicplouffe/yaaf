@@ -1,0 +1,76 @@
+{
+  "yaaf_bundle": 1,
+  "kind": "project_setup",
+  "source_slug": "strategy-backtest",
+  "exported_at": "2026-08-22T00:00:00+00:00",
+  "values_included": false,
+  "project": {
+    "slug": "strategy-backtest",
+    "name": "Strategy Backtest",
+    "goal": "Find out whether one specific claim about the market survives the data, and write it up either way: 'post-earnings-announcement drift is still tradeable in US large caps after realistic costs.' The deliverable is a reproducible study in the project repo \u2014 the hypothesis and falsification test written down before results are looked at, a point-in-time survivorship-free universe, explicit cost and slippage assumptions, in-sample and out-of-sample results reported separately, the number of specifications tried, and a comparison against buy-and-hold and a random-entry control. A null result is a complete deliverable and must be written up with the same care as a positive one. No orders are ever placed; this is research.",
+    "billing_mode": "api_key",
+    "mode": "deliver",
+    "controlled_domains": [],
+    "github_repo": "you/strategy-backtest",
+    "deadline": null,
+    "chairman_email": null,
+    "constitution": {
+      "chairman_report_interval_hours": 4.0,
+      "chairman_report_window_local": "08:00-20:00",
+      "timezone": "America/New_York",
+      "queue_ceiling": 5,
+      "monthly_usd_cap": 300,
+      "approval_threshold_usd": 40,
+      "drought_hours": 96,
+      "external_ratio_min": 0.2,
+      "max_usd_per_run": 3.0
+    },
+    "integrations": {
+      "runtime": "agent_sdk"
+    },
+    "billing_secret_name": "anthropic-api-key",
+    "ceo_role_slug": "cio",
+    "ceo_name": "CIO",
+    "ceo_daily_at": null,
+    "ceo_model_override": null,
+    "teams": [
+      {
+        "role_slug": "quant-researcher",
+        "name": "Quant",
+        "employees": [
+          "Lena",
+          "Arjun"
+        ],
+        "lead": "Lena"
+      },
+      {
+        "role_slug": "market-data-engineer",
+        "name": "Data",
+        "employees": [
+          "Ines"
+        ],
+        "lead": null
+      }
+    ],
+    "solo": false
+  },
+  "roles": [],
+  "secrets": [
+    {
+      "name": "market-data",
+      "role_scopes": [
+        "quant-researcher",
+        "market-data-engineer"
+      ],
+      "kind": "service"
+    },
+    {
+      "name": "github",
+      "role_scopes": [
+        "market-data-engineer",
+        "quant-researcher"
+      ],
+      "kind": "service"
+    }
+  ]
+}

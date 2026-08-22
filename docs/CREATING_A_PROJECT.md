@@ -16,9 +16,14 @@ A project is a small company. It has:
   reports to you. It's the only agent you ever talk to.
 - **Teams of worker agents** (researchers, engineers, writers…) that do the
   work. Each team has a lead who breaks work down and hands it out.
-- **You, the chairman.** You set the goal, approve spending, answer the CEO's
-  questions, and spot-check the work. You don't manage tasks — that's the
-  CEO's job, and the system enforces it.
+- **You, the chairman.** You set the goal, decide what counts as in scope,
+  sign the delivery date, approve spending, answer the CEO's questions, and
+  spot-check the work. You don't manage tasks — that's the CEO's job, and the
+  system enforces it.
+- **A plan, if the project ships something.** In a Deliver or Operate project
+  the root object is the **requirement**: a thing that must be true at the end,
+  carrying a test the platform runs itself. Tasks exist to make requirements
+  true, and a task serving no requirement is refused.
 
 The company keeps working while you're away. Agents wake up when there's a
 reason to (a message from you, a task ready, a scheduled check-in), do one
@@ -66,6 +71,24 @@ A good goal for our example:
 
 A weak goal ("analyze the PPC data") gets you a company that putters. Be as
 specific as you'd be with a person.
+
+**What shape is this?** Three cards, and the choice is **frozen at creation**
+because the rules differ by shape:
+
+- **Explore** — chase a goal with no fixed end. Bets, evidence, and your call
+  on when it has earned its keep. *"Find an idea and get one sale in 60 days."*
+  Explore takes an optional deadline: open scope, bounded time.
+- **Deliver** — ship one thing, then stop. *"An audit of the customer's PPC
+  account."* This is our example.
+- **Operate** — a Deliver that starts again on a rhythm, and gets better each
+  cycle. *"A weekly market brief, tracked and improved."* You pick the rhythm
+  (daily, weekly, monthly, quarterly) in the constitution.
+
+Outside Explore, the company **plans before it builds**. Its first obligation
+is a plan: requirements, ordered into stages, each estimated, adding up to
+something the budget can pay for. Until that holds, no work may be created at
+all. That is a refusal in the server, not a nudge — and it is the difference
+between a company that finishes and a pipeline with no terminus.
 
 **Chairman email** — yours. You're the human in this org chart: it names you
 on approvals and boardroom messages, and if the server has SMTP configured
@@ -213,13 +236,43 @@ need:
 > cares most about wasted ad spend. Deadline is firm. Ask me here if you're
 > blocked; I check in mornings and evenings.
 
-Then let it work. The CEO will state its plan as a falsifiable bet with a
-kill date, create tasks with real success tests, and the teams will start
-claiming them within a couple of minutes. You can watch it all happen in the
-**Work** tab, and in **Records** when you want the receipts.
+Then let it work.
+
+**In a Deliver or Operate project, the next thing that happens is the plan.**
+The CEO proposes requirements — things that must be *true* at the end, each
+with an acceptance test and an estimate — and they appear on the **Plan** tab
+marked *proposed*, which counts as nothing until you accept them. Read them
+like a statement of work: is this the right list, in the right order, and does
+each one have a test that could actually fail? Accept what you want, cut what
+you don't. Once the plan holds, the board opens and the teams start claiming
+work within a couple of minutes.
+
+Then the CEO will propose a **delivery date** — one it does not write, because
+the platform stamps it from its own projection of your measured pace. Sign it,
+or replace it with your own. From that moment the promise is watched: if the
+projection slips past it, new scope freezes and you are told, with the
+arithmetic in front of you.
+
+In an Explore project there is no plan and no Plan tab. The CEO states a
+falsifiable bet with a kill date instead, and the evidence rules do the rest.
+
+You can watch all of it in **Plan** and **Work**, and in **Records** when you
+want the receipts.
 
 ## Your job from here (it's small, on purpose)
 
+- **Accept the plan, and cut what doesn't belong.** Scope is yours: the CEO
+  proposes, you decide. This is the single highest-leverage thing you do, and
+  it is deliberately not delegated — a forecast whose denominator is set by the
+  party being forecast is not a forecast. (You can hand this verb to the CEO;
+  see [AUTONOMY.md](AUTONOMY.md).)
+- **Sign the date, and decide what happens when it slips.** Cut something, or
+  move the date with a reason. Those are the two honest options and the
+  platform offers exactly those two.
+- **Show up to the review.** Once a week (by default) the platform opens a
+  standing meeting with its own numbers and the CEO's explanation of them. Six
+  levers, each recorded with your reason and shown back at the next review
+  beside what it bought.
 - **Answer the boardroom.** The CEO escalates real blockers there. A blocked
   company that's waiting on you says so.
 - **Decide approvals.** Any spend over the threshold you set lands in a
@@ -247,11 +300,13 @@ project pauses itself rather than burning money against a wall.
 
 ## Quick reference — the audit project, start to finish
 
-1. New project → goal above → API key pasted → three one-person teams
-   (researcher, engineer, writer) → `ppc` data source + engineer role →
+1. New project → goal above → **Deliver** → API key pasted → three one-person
+   teams (researcher, engineer, writer) → `ppc` data source + engineer role →
    budget cap → Create.
 2. (Or later: Settings → billing → paste API key → Connect, auto-tested.)
 3. (Or later: Settings → Data sources → `ppc` + the MCP URL + engineer
    role → Save, auto-tested.)
 4. Overview → fix anything the health card names → card disappears.
-5. Boardroom → brief the CEO → done. Check back in the morning.
+5. Boardroom → brief the CEO.
+6. Plan → accept the requirements you want, cut the rest, sign the date.
+7. Done. Check back in the morning.
