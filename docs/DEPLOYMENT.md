@@ -14,7 +14,7 @@ company — wakes, tasks, refusals, budget pauses — before spending a cent.
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
-.venv/bin/python -m pytest tests/            # 515 tests, offline; 1 skips without Postgres
+.venv/bin/python -m pytest tests/            # 526 tests, offline; 1 skips without Postgres
 
 export YAAF_DATABASE_URL=sqlite:////tmp/yaaf.db \
        YAAF_ADMIN_TOKEN=dev-admin-token \

@@ -415,7 +415,8 @@ def _coalesced_until(count: int, oldest, urgent: bool, now, minutes: float, thre
     return ripe if ripe > now else None
 
 
-def _board_reachability(session: Session, project: Project, now) -> dict:
+def _board_reachability(session: Session, project: Project, cons: ConstitutionDoc,
+                        now) -> dict:
     """The board as the dispatcher can actually reach it.
 
     An empty board and a board nobody may touch both produce zero wakes, and
@@ -526,6 +527,18 @@ def _board_reachability(session: Session, project: Project, now) -> dict:
     plan = policy.plan_requirement(session, project.id)
     plan_open = plan is not None and plan.status not in policy.CLOSED_REQUIREMENT_STATUSES
 
+    # Whose decision, actually. Each of these three waits on whoever the
+    # authority dial says holds the verb — and on a project that delegated
+    # them, calling it "awaiting_chairman" told a chairman he was the
+    # bottleneck on a company he had deliberately handed over. R-00 closes by
+    # arithmetic rather than by a click, but what it waits FOR is scope being
+    # accepted, so it follows the same switch.
+    ceo_scope = policy.ceo_holds(cons, "plan_authority")
+    ceo_verdicts = policy.ceo_holds(cons, "verdict_policy")
+    chairman_waits = bool(
+        ((proposed or plan_open) and not ceo_scope) or (observable and not ceo_verdicts)
+    )
+
     # Order matters: things that never clear on their own come before things
     # that do, and "you have to decide" comes before "a clock has to pass".
     if leaderless:
@@ -536,8 +549,10 @@ def _board_reachability(session: Session, project: Project, now) -> dict:
         unreachable = "stalled_requirement"
     elif rework:
         unreachable = "rework_owed"
-    elif proposed or observable or plan_open:
+    elif chairman_waits:
         unreachable = "awaiting_chairman"
+    elif proposed or observable or plan_open:
+        unreachable = "awaiting_ceo"
     elif gates:
         unreachable = "scheduled"
     elif blocked:
@@ -563,6 +578,12 @@ def _board_reachability(session: Session, project: Project, now) -> dict:
         "proposed_requirements": sorted(proposed),
         "observable_checking": sorted(observable),
         "plan_open": plan_open,
+        # Which of the three the dial has handed to the CEO, so the sentence
+        # can name the right party instead of guessing.
+        "ceo_decides": sorted(
+            (["scope"] if ceo_scope and (proposed or plan_open) else [])
+            + (["verdicts"] if ceo_verdicts and observable else [])
+        ),
         "unreachable": unreachable,
     }
 
@@ -753,6 +774,29 @@ def _activity_brief(state: dict) -> dict:
             f"Waiting on you: {asks}.",
             " ".join(why) + " Decide it on the Plan tab.")
 
+    if gate == "awaiting_ceo":
+        # The same three causes as awaiting_chairman, on a project whose dial
+        # handed them to the CEO. Nothing here is the chairman's to do, and
+        # saying so is the whole value of the sentence: the alternative was
+        # telling him to go and click something he had delegated away.
+        wants = []
+        if board["plan_open"] or board["proposed_requirements"]:
+            wants.append("scope it has proposed but not yet accepted")
+        if board["observable_checking"]:
+            wants.append(
+                f"a verdict on {_listed(board['observable_checking'])}")
+        asks = _listed(wants)
+        return brief(
+            "ok", "the CEO's call",
+            f"the CEO owes itself a decision — {asks}",
+            f"The CEO has not yet decided: {asks}.",
+            "Nothing here is waiting on you — the constitution gives the CEO these "
+            "verbs, and it takes them on its next planning wake. Everything it "
+            "decides lands under Records → Decisions with its reason, and you can "
+            "reverse any of it. If it is still sitting here next time you look, say "
+            "so in the boardroom.",
+            banner=False)
+
     if gate == "blocked_tasks":
         return brief(
             "serious", "blocked",
@@ -899,7 +943,7 @@ def activity_state(session: Session, project: Project, cons: ConstitutionDoc) ->
             "batching_until": held.isoformat() if held else None,
         })
 
-    board = _board_reachability(session, project, now)
+    board = _board_reachability(session, project, cons, now)
 
     with_work = [r for r in rows if r["pending"]]
     free = [r for r in with_work

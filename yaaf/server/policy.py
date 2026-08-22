@@ -46,6 +46,7 @@ from yaaf.core.models import (
     AgentStatus,
     Amendment,
     Approval,
+    ApprovalKind,
     ApprovalStatus,
     AuditLog,
     Channel,
@@ -1549,6 +1550,121 @@ def check_commitment_accept(commitment: Commitment) -> None:
         )
 
 
+def check_commitment_reset(
+    session: Session, project: Project, cons: ConstitutionDoc, agent: Agent
+) -> tuple[Commitment, dict]:
+    """The CEO resets a promise that stopped holding — where the dial grants it.
+
+    Without this verb an autonomous CEO facing an at-risk date had no move at
+    all: it could cut scope (scope_authority) and it could finish work, but if
+    the honest answer was "the date has to move" its only remaining path was an
+    owner_decision approval — a blocker on the desk of a chairman who had
+    already delegated exactly this. Authority is configuration; a granted
+    authority with no verb behind it is neither.
+
+    The integrity rule does not bend: the CEO still never WRITES a date. The
+    only date it can reset to is the platform's own current projection, the
+    same arithmetic `commitment_propose` stamps. So a reset can never buy slack
+    the measured pace has not already spent — it can only stop the promise
+    being a number nobody believes.
+    """
+    require_project_running(project)
+    if agent.kind != AgentKind.CEO:
+        raise Refusal(
+            "The promise is the CEO's to reset, where the constitution grants it at "
+            "all. If you think the date cannot hold, say so to the CEO — the promise "
+            "is made from the whole plan, not one desk.",
+            status_code=403,
+        )
+    if not ceo_holds(cons, "commitment_authority"):
+        raise Refusal(
+            "The constitution holds commitment_authority = "
+            f"'{cons.commitment_authority}': the date is the chairman's to move on this "
+            "project. Two paths remain — his own button on the Plan screen, or, if he "
+            "told you in the boardroom to move it, file it as a directive citing his "
+            "message. Recommend the reset to him plainly; the dial itself is his "
+            "amendment to turn.",
+            status_code=403,
+        )
+    commitment = live_commitment(session, project.id)
+    if commitment is None:
+        raise Refusal(
+            "There is no live commitment to reset. Propose one when the plan holds.",
+            status_code=409,
+        )
+    frozen = commitment_scope_frozen(session, project, cons)
+    if frozen is None:
+        raise Refusal(
+            f"The promise still holds: you said {commitment.deliver_by:%Y-%m-%d} and the "
+            "projection lands inside it. There is nothing to reset — a date moved while "
+            "it is still good is a date that means nothing. Deliver it.",
+            status_code=409,
+        )
+    _, projection, _ = frozen
+    if not projection["known"]:
+        raise Refusal(
+            "There is nothing to project a new date from: " + projection["why"] + " "
+            "Resetting to a number you made up is exactly what this platform refuses. "
+            "Meet something or estimate the open scope first.",
+            status_code=409,
+        )
+    return commitment, projection
+
+
+def commitment_resets(session: Session, commitment: Commitment) -> int:
+    """How many times this promise has already been reset by the CEO. Disclosed
+    on every reset: one is a company adapting, four in a fortnight is a date
+    nobody should believe, and the chairman should not have to count them."""
+    return int(session.execute(
+        select(func.count(AuditLog.id)).where(
+            AuditLog.project_id == commitment.project_id,
+            AuditLog.action == "commitment.self_move",
+            AuditLog.entity_id == commitment.id,
+        )
+    ).scalar_one() or 0)
+
+
+# The approval kinds that stay the chairman's at every autonomy level, because
+# each is something the dial does not and cannot delegate: money above his line,
+# legal weight, a credential only he holds the value of, and a security
+# challenge only a human may answer.
+UNDELEGABLE_APPROVALS = frozenset({"spend", "legal", "tool_request", "assist"})
+
+# Which switches would have to be the CEO's for "a decision that is genuinely
+# the owner's" to be, in fact, the CEO's.
+_DIRECTION_SWITCHES = ("plan_authority", "scope_authority", "commitment_authority")
+
+
+def check_approval_request(cons: ConstitutionDoc, kind: str) -> None:
+    """An approval is a blocker on a human's desk with a default-deny clock on
+    it. Filing one for something the constitution already put in the CEO's
+    hands is the single way an autonomous project can still stall on its
+    chairman — so it is a refusal, named, with the verbs it should have used.
+
+    Only `owner_decision` is affected. The other kinds are undelegable at any
+    setting and keep working exactly as before.
+    """
+    if kind != ApprovalKind.OWNER_DECISION:
+        return
+    if not all(ceo_holds(cons, switch) for switch in _DIRECTION_SWITCHES):
+        return
+    raise Refusal(
+        "This project's constitution puts direction in your hands — you accept scope, "
+        "you change the plan, and you sign and reset the delivery date. An "
+        "owner_decision approval would park a decision you already hold on the "
+        "chairman's desk with a clock on it, and he delegated it precisely so that "
+        "would not happen. Decide it: scope_act to accept, cut, reopen, restage, "
+        "reestimate or reword, commitment_reset to reset the date to the platform's "
+        "projection. Every one is audited, disclosed to him in full, and reversible by "
+        "him at any time. If you genuinely want his opinion first, ask him in the "
+        "boardroom with override='question' — asking never blocks, and never stops you "
+        "deciding in the meantime. Money over the threshold, anything legally "
+        "ambiguous, a credential you do not have, and a step only a human can take are "
+        "still his: those approval kinds are unaffected.",
+        status_code=403,
+    )
+
+
 def commitment_scope_frozen(
     session: Session, project: Project, cons: ConstitutionDoc
 ) -> tuple[Commitment, dict, str] | None:
@@ -1959,6 +2075,46 @@ def check_roles_exist(session: Session, slugs: list[str]) -> None:
 def ceo_holds(cons: ConstitutionDoc, switch: str) -> bool:
     value = getattr(cons, switch)
     return value == ("ceo_judgment" if switch == "verdict_policy" else "ceo")
+
+
+def slip_moves(cons: ConstitutionDoc) -> str:
+    """What the CEO can actually do about a slipped promise, per the dial.
+
+    Written from the constitution rather than from habit because the old text
+    said "propose cuts to the chairman" at every setting — advice that is
+    simply false on a project whose chairman had already handed over the scope
+    and the date, and which pushed the CEO toward the one move that could still
+    stall the company: an approval on a desk nobody had asked to be involved.
+    """
+    holds_scope = ceo_holds(cons, "scope_authority")
+    holds_date = ceo_holds(cons, "commitment_authority")
+    if holds_scope and holds_date:
+        return (
+            "This is yours to solve and you have every verb for it: finish what is "
+            "open, cut scope with scope_act, or — when the honest answer is that the "
+            "date cannot hold — reset it with commitment_reset, which adopts the "
+            "platform's own projection. Reach for cutting first if the real problem is "
+            "that the scope is too big; a date reset repeatedly is a plan problem "
+            "wearing a date problem's clothes. Decide, then tell the chairman what you "
+            "did and why in your next report. Do NOT file an approval for this — it is "
+            "not his decision on this project, and the platform will refuse it."
+        )
+    if holds_scope:
+        return (
+            "Your moves: finish what is open, or cut scope yourself with scope_act. "
+            "The date itself is the chairman's to move — recommend it to him plainly "
+            "with the arithmetic; he has been emailed."
+        )
+    if holds_date:
+        return (
+            "Your moves: finish what is open, or reset the date with commitment_reset, "
+            "which adopts the platform's own projection. Cuts are the chairman's to "
+            "make — recommend them plainly; he has been emailed."
+        )
+    return (
+        "Your moves are the ones that change the arithmetic — finish what is open, or "
+        "propose cuts to the chairman. The date is his to move. He has been emailed."
+    )
 
 
 # ── chairman directives ─────────────────────────────────────────────────────────

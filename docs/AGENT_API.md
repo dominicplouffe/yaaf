@@ -35,12 +35,15 @@ be true at the end — and work exists to make requirements true.
 | `POST /requirements` | `statement`, `acceptance_test`, `stage`, `est_runs`, `depends_on?` | **CEO only.** Proposes; does not create scope. The chairman accepts (or the CEO itself, when `plan_authority` says so). Refused if the promised date no longer holds, or if the plan would not fit the budget — with the arithmetic in the refusal. |
 | `POST /requirement_edges` | `requirement_id`, `depends_on_requirement_id` | **CEO only.** Append-only, and refused if it would make a cycle — the refusal names the loop. |
 | `POST /commitments` | `note?` | **CEO only.** Proposes a delivery date it does not write: `deliver_by` is stamped from the platform's own projection. Under `commitment_authority: ceo` proposing accepts it too. |
+| `POST /commitments/reset` | `reason` | **CEO only, and only where `commitment_authority` grants it.** Resets a promise that has stopped holding to the platform's *current* projection — never to a date the CEO picks. Refused while the promise still holds. Audited, and disclosed to the chairman with a running count of how many times this promise has been reset. |
 | `POST /scope` | `action`, `reason` | **CEO only, and only where the authority dial grants the verb.** `action.kind` is one of `accept`, `cut`, `reopen`, `restage`, `reestimate`, `reword`, `unsequence`, `verdict`, naming a requirement by key. Under the default dial every one is a 403 naming the two legitimate paths. Every self-exercise is audited and disclosed to the chairman. |
 | `POST /review_narrative` | `narrative`, `recommended?` | **CEO only**, into the open review, on a reserved governance run. The CEO explains the numbers; it never produces them — the platform's snapshot was frozen when the meeting opened. |
 
 There is **no endpoint that marks a requirement met.** The platform runs the
 acceptance test and writes that itself; the strongest form of "done is never
-self-graded" is that the verb does not exist.
+self-graded" is that the verb does not exist. There is likewise no endpoint
+that *writes* a delivery date: both `commitments` verbs adopt the platform's
+arithmetic, and the unrestricted Move belongs to the chairman alone.
 
 `est_runs` is required and is *scored*: it is checked against the budget now,
 and against what the work actually cost later, and the first number given is
@@ -109,7 +112,7 @@ may *write* to team scope.
 
 | Endpoint | Body | Notes |
 |---|---|---|
-| `POST /approvals` | `kind`, `title`, `body`, `amount_usd?` | Expires per `approval_timeout_days` — **default-deny**. The response says so, and tells the agent to frame requests as recommendations it would defend, not open questions. |
+| `POST /approvals` | `kind`, `title`, `body`, `amount_usd?` | Expires per `approval_timeout_days` — **default-deny**. The response says so, and tells the agent to frame requests as recommendations it would defend, not open questions. `kind: owner_decision` is **refused** on a project whose authority dial already gives the CEO the plan, the scope and the date — an approval blocks on a human, and filing one for a decision the chairman delegated is the one way an autonomous project can still stall on him. The refusal names the verb to use instead. `spend`, `legal`, `tool_request` and `assist` are undelegable and unaffected at every setting. |
 | `GET /approvals` | — | This agent's pending requests. |
 | `POST /ledger/spend` | `usd`, `note`, `approval_id?` | Spends at or above the threshold **require a granted approval id**, or the booking is refused. Money already spent is always *recorded* — an overshoot books with an audit row and a note to the chairman rather than vanishing. |
 | `POST /purchases` | `usd`, `what`, `idempotency_key` | Clears the real-world spend envelope **before** money moves, and reserves the headroom so two overlapping purchases cannot spend it twice. |

@@ -301,6 +301,22 @@ async def t_commitment_propose(args):
     return _text(_call("POST", "/agent/commitments", payload))
 
 
+@tool(
+    "commitment_reset",
+    "CEO only, and only where the constitution grants you commitment_authority. Reset a "
+    "promise that has stopped holding to the platform's CURRENT projection. You still "
+    "cannot write a date — the only date you can reset to is the arithmetic's, so this "
+    "buys no slack the pace has not already spent. Refused while the promise still "
+    "holds. Every reset is audited, disclosed to the chairman with a running count of "
+    "how many times you have done it, and reversible by him. Reach for it when the "
+    "honest answer is that the date cannot hold; reach for cutting scope first when the "
+    "honest answer is that the scope is too big.",
+    {"reason": str},
+)
+async def t_commitment_reset(args):
+    return _text(_call("POST", "/agent/commitments/reset", {"reason": args["reason"]}))
+
+
 @tool("memory_search", "Search durable memory. Query it before repeating work. "
       "include_superseded=true also returns entries folded away by compaction.",
       {"q": str, "scope": str, "include_superseded": bool})
@@ -404,7 +420,11 @@ async def t_decision_add(args):
     "approval_request",
     "Put a decision to the chairman as a recommendation you would defend — never an open "
     "question. kind: spend|legal|owner_decision|tool_request. Unanswered approvals expire "
-    "to DENIED.",
+    "to DENIED. An approval BLOCKS on a human, so it is the wrong tool for anything the "
+    "constitution already put in your hands: where the authority dial grants you the "
+    "plan, the scope and the date, an owner_decision is refused and names the verb to "
+    "use instead. To want his opinion without blocking, ask in the boardroom with "
+    "override='question' and keep going.",
     {"kind": str, "title": str, "body": str, "amount_usd": float},
 )
 async def t_approval_request(args):
@@ -1025,7 +1045,8 @@ ALL_TOOLS = [
     t_suggest, t_channels, t_messages_read, t_message_post, t_directive_file,
     t_memory_search, t_memory_add, t_memory_supersede, t_memory_compact, t_memory_forget,
     t_memory_tool,
-    t_evidence_add, t_review_narrative, t_commitment_propose, t_scope_act,
+    t_evidence_add, t_review_narrative, t_commitment_propose, t_commitment_reset,
+    t_scope_act,
     t_hypothesis_add, t_hypothesis_kill, t_decision_add,
     t_approval_request, t_approvals_list, t_spend_book,
     t_need_request, t_credentials_list, t_credential_scope,

@@ -254,6 +254,36 @@ def check_plan(session: Session, project: Project, cons: ConstitutionDoc) -> boo
 PROJECTION_STAMP_TOLERANCE = timedelta(hours=1)
 
 
+def _slip_moves_for_chairman(cons: ConstitutionDoc) -> str:
+    """The same fact from the other side: whether this needs the chairman at
+    all. Telling a chairman "your levers" about a project he has already
+    delegated is how a dashboard teaches him to ignore it."""
+    holds_scope = policy.ceo_holds(cons, "scope_authority")
+    holds_date = policy.ceo_holds(cons, "commitment_authority")
+    if holds_scope and holds_date:
+        return (
+            "Nothing is waiting on you: the constitution gives the CEO both levers "
+            "here, so it will finish, cut, or reset the date to the platform's "
+            "projection, and tell you which it chose and why. Every one of those is "
+            "reversible by you, and the dial is yours to turn back."
+        )
+    if holds_scope:
+        return (
+            "The CEO can cut scope itself and will. The date is yours: move it on the "
+            "Plan screen, or leave it and let the freeze hold the company to finishing "
+            "what is open."
+        )
+    if holds_date:
+        return (
+            "The CEO can reset the date to the platform's projection itself and will "
+            "tell you when it does. Cuts are yours, on the Plan screen."
+        )
+    return (
+        "Your levers: cut scope on the Plan screen, move the date, or wait — the "
+        "freeze lifts by itself if the pace recovers."
+    )
+
+
 def check_commitments(session: Session, project: Project, cons: ConstitutionDoc) -> None:
     """The forecast, recomputed; the promise, re-validated; every transition,
     disclosed.
@@ -387,15 +417,13 @@ def check_commitments(session: Session, project: Project, cons: ConstitutionDoc)
             f"The commitment is BREACHED: {commitment.deliver_by:%Y-%m-%d} has passed "
             f"and {projection['remaining']} requirement(s) are still open.{ground} "
             "New scope is frozen — requirement proposals will be refused. Existing "
-            "work continues; finish it. The date is the chairman's to move and the "
-            "scope his to cut, and he has been emailed the numbers.",
+            "work continues; finish it. " + policy.slip_moves(cons),
         )
         chairman_notify(
             session, project, "commitment BREACHED",
             f"The promised date {commitment.deliver_by:%Y-%m-%d} has passed with "
             f"{projection['remaining']} requirement(s) still open; {landing}. "
-            "New scope is frozen until you act: move the date, cut scope, or let it "
-            "stand and hold the company to finishing what is open.",
+            "New scope is frozen. " + _slip_moves_for_chairman(cons),
         )
     elif status == CommitmentStatus.AT_RISK:
         days = max(1, (projected - commitment.deliver_by).days)
@@ -404,17 +432,14 @@ def check_commitments(session: Session, project: Project, cons: ConstitutionDoc)
             session, project, NoticeKind.COMMITMENT_AT_RISK,
             f"The commitment is AT RISK: you promised {commitment.deliver_by:%Y-%m-%d} "
             f"and {landing} — about {days} day(s) late ({basis['note']}).{ground} "
-            "New scope is frozen while this holds: proposals will be refused. Your "
-            "moves are the ones that change the arithmetic — finish what is open, or "
-            "propose cuts to the chairman. He has been emailed.",
+            "New scope is frozen while this holds: proposals will be refused. "
+            + policy.slip_moves(cons),
         )
         chairman_notify(
             session, project, "commitment at risk",
             f"The projection now lands about {projected:%Y-%m-%d} against the promised "
             f"{commitment.deliver_by:%Y-%m-%d} ({basis['note']}).{ground}\n\n"
-            "New scope is frozen for the CEO. Your levers: cut scope on the Plan "
-            "screen, move the date, or wait — the freeze lifts by itself if the pace "
-            "recovers.",
+            "New scope is frozen for the CEO. " + _slip_moves_for_chairman(cons),
         )
     else:  # recovered to ACCEPTED
         commitment.status_reason = None

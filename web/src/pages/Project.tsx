@@ -278,6 +278,32 @@ function ProjectBar({
   );
 }
 
+/** Why this one is on the chairman's desk, in a clause.
+
+    It used to read "Nobody else can decide this" for every kind — a claim
+    about the constitution, made without reading it. On a project whose
+    authority dial hands the CEO the plan, the scope and the date, that
+    sentence was false, and false in the most expensive direction: it told a
+    chairman who had deliberately delegated that he was still the bottleneck.
+    Each clause below is true at every dial setting, because each names
+    something the dial does not delegate. */
+function whyItIsYours(kind: string): string {
+  switch (kind) {
+    case "spend":
+      return "Above your approval threshold, so it is never an agent's call.";
+    case "legal":
+      return "Anything with legal weight is yours by rule, at any autonomy setting.";
+    case "tool_request":
+      return "A capability the company does not have — you hold the values.";
+    case "assist":
+      return "A step only a human can take. The platform hands these over, never defeats them.";
+    case "owner_decision":
+      return "The CEO judged this yours rather than its own.";
+    default:
+      return "The constitution routes this kind of decision to you.";
+  }
+}
+
 /** What a tab cannot do: be seen from the other five. Approvals expire to DENY,
     so the one thing that must never depend on the chairman opening the right
     tab is the decision that runs out of time on its own. */
@@ -302,12 +328,18 @@ function ActionStrip({
   // "waiting on R-01 acceptance" without saying where accepting happens, so
   // this strip says it from every tab. Explore is excluded — it has no Plan
   // tab to send anyone to, and proposals are refused there at the door.
+  // …unless the dial gave acceptance to the CEO, in which case a proposal is
+  // the CEO's own inbox and saying "awaits your acceptance" would be a lie
+  // about who is holding the company up.
+  const ceoAcceptsScope = dash.constitution["plan_authority"] === "ceo";
   const proposedScope = dash.mode !== "explore" && dash.requirements_proposed > 0
     ? dash.requirements_proposed : 0;
 
-  if (pending.length === 0 && expiredBets.length === 0 && proposedScope === 0) return null;
+  const scopeNeedsYou = proposedScope > 0 && !ceoAcceptsScope;
 
-  const rest = pending.length - 1 + expiredBets.length + (proposedScope > 0 ? 1 : 0);
+  if (pending.length === 0 && expiredBets.length === 0 && !scopeNeedsYou) return null;
+
+  const rest = pending.length - 1 + expiredBets.length + (scopeNeedsYou ? 1 : 0);
 
   if (pending.length > 0) {
     const a = pending[0];
@@ -322,7 +354,7 @@ function ActionStrip({
             )}
           </div>
           <div className="sb">
-            Nobody else can decide this. It auto-denies in{" "}
+            {whyItIsYours(a.kind)} It auto-denies in{" "}
             <span className={`clock ${clockClass(a.expires_at)}`}>
               {fmtLeft(a.expires_at).replace(" left", "")}
             </span>
@@ -335,7 +367,7 @@ function ActionStrip({
     );
   }
 
-  if (proposedScope > 0) {
+  if (scopeNeedsYou) {
     return (
       <div className="strip">
         <span className="chip warn">scope proposed</span>

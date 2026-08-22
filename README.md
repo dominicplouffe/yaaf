@@ -61,8 +61,10 @@ at the end, carrying a test the platform runs itself.
 The CEO proposes a date; it never **writes** one. The platform stamps it from
 its own projection of measured pace, and re-projects it on every tick. When the
 projection lands past the promise, the commitment moves itself to *at risk*,
-**new scope freezes**, and you are told — with the arithmetic in front of you
-and exactly two honest levers: cut something, or move the date with a reason.
+**new scope freezes**, and there are exactly two honest ways out: cut something,
+or reset the date — with a reason, and only ever to what the arithmetic now
+says. Who pulls those levers is the autonomy setting; that they are the only two
+is not.
 
 The guarantee isn't that the date holds. Nobody can promise that. It's that when
 it stops holding, the company cannot quietly add work and hope.
@@ -155,7 +157,7 @@ Everything yaaf does, and where it's documented. Full reference:
 | **Audit** | Every message, task transition, run, dollar, decision, amendment, and refusal — queryable and on screen. |
 | **Chat** | A resident CEO session per project: the Boardroom answers in seconds, and so does Slack. Chatting never consumes the work queue's caps. |
 | **Integrations** | Slack (Socket Mode — no public URL), GitHub repo-per-project, external MCP servers as one-form data sources, signed webhooks, S3-compatible artifacts, email/webhook alerts. → [INTEGRATIONS](docs/INTEGRATIONS.md) |
-| **Proof it works** | 515 offline tests, chaos tests, golden-transcript evals, a $0 mock runtime, and `yaaf experiment`. → [M2_PROTOCOL](docs/M2_PROTOCOL.md) |
+| **Proof it works** | 526 offline tests, chaos tests, golden-transcript evals, a $0 mock runtime, and `yaaf experiment`. → [M2_PROTOCOL](docs/M2_PROTOCOL.md) |
 
 ## How is this different from a standalone agent?
 

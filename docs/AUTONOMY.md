@@ -44,18 +44,79 @@ Each lives in the constitution's **Autonomy** group.
 |---|---|---|
 | `plan_authority` | Proposed requirements wait for your click. | The CEO accepts its own proposals. The plan gate still runs the same arithmetic; every acceptance lands in your Decisions record. |
 | `scope_authority` | Cut, reopen, restage, reestimate, reword and unsequence are yours alone. The CEO can still *execute your boardroom orders* as directives. | The CEO wields them itself, on the record, reversibly. |
-| `commitment_authority` | A proposed commitment waits for you to sign it. | Proposing adopts the platform's own projected date immediately. |
+| `commitment_authority` | A proposed commitment waits for you to sign it, and the date is yours to move. | Proposing adopts the platform's own projected date immediately, and `commitment_reset` re-adopts it when the promise stops holding. |
 | `verdict_policy` | Observable acceptance tests a script cannot check park on your desk. | `ceo_judgment`: the CEO judges and keeps going — **and every self-judged close is disclosed to you in full.** |
 | `capability_authority` | Credential grants are yours; the CEO files *needs*. | The CEO re-scopes credentials it already has across its own team. |
 
 Two notes that matter more than they look:
 
 - **The CEO never writes a date.** `commitment_authority: ceo` lets it accept
-  the platform's projection, not invent one. The date is arithmetic in both
-  settings; the switch only decides whose signature goes under it.
+  the platform's projection, not invent one — on the first signature and on
+  every reset after. The date is arithmetic in both settings; the switch only
+  decides whose signature goes under it. Your own Move button is unrestricted,
+  because you are allowed to promise something the arithmetic does not.
 - **Creating a credential is always yours.** You hold the values. The
   capability switch is about *scoping* what already exists, never about
   minting something new.
+
+## A granted authority always has a verb behind it
+
+This is the rule that makes the dial mean something, and it was learned the
+hard way. A fully autonomous project whose delivery date slipped used to reach
+a dead end: the CEO could cut scope and it could finish work, but if the honest
+answer was *"this date cannot hold"*, it had no verb for that at all. Its only
+remaining move was to file an `owner_decision` approval — putting a decision
+its chairman had explicitly delegated back on his desk, with a default-deny
+clock on it, under the words "Nobody else can decide this."
+
+Two things changed, and both are structural:
+
+- **`commitment_reset`** exists. Where the dial grants the date, the CEO can
+  reset a promise that has stopped holding **to the platform's own current
+  projection** — never to a date it picked. So a reset buys no slack the
+  measured pace has not already spent; it can only stop a promise from being a
+  number nobody believes. It is refused while the promise still holds, every
+  reset is disclosed to you with a running count of how many there have been,
+  and a promise reset four times in a fortnight is meant to be legible as a
+  plan problem rather than buried.
+- **An approval you already delegated is refused.** When `plan_authority`,
+  `scope_authority` and `commitment_authority` are all the CEO's, an
+  `owner_decision` approval is a 403 that names the verbs to use instead. The
+  four kinds the dial *cannot* delegate — `spend`, `legal`, `tool_request`,
+  `assist` — are untouched and still reach you at every setting.
+
+If the CEO wants your opinion without stopping, it asks in the boardroom
+(`override='question'`) and keeps working. Asking is always allowed. Blocking
+on the answer is what is not.
+
+## The dashboard reads the dial too
+
+Three surfaces used to assert things the constitution contradicted, and each
+now checks it first:
+
+- The **approval strip** above every tab said *"Nobody else can decide this"*
+  for every kind. It now names the actual reason — over your threshold, legal
+  weight, a credential you hold, a step only a human can take — each of which
+  is true at every setting.
+- The **status banner** said *"your call — waiting on you"* whenever scope was
+  proposed or a verdict was pending. On a delegated project it now reads *"the
+  CEO owes itself a decision"*, and it is not a banner, because nothing about
+  it is yours to do.
+- The **Plan strip** no longer claims a proposed requirement "awaits your
+  acceptance" on a project where the CEO accepts its own.
+
+## Reading what it decided
+
+Autonomy without disclosure is just an unsupervised agent. Every self-exercise
+— accepting scope, cutting it, signing or resetting the date, judging an
+unverifiable close, re-scoping a credential — is audited, emailed to you, and
+listed under **Records → Decisions → "What the CEO decided"**: what it did, its
+reason, and when.
+
+Nothing on that list is pending and nothing expires. It is deliberately not
+filed under "Waiting on you", because none of it is — but every line of it is
+reversible from the Plan screen or Settings, and the dial that granted it is
+one amendment from being turned back.
 
 ## What never moves, at any level
 
@@ -65,6 +126,9 @@ Two notes that matter more than they look:
 - **Nothing unverifiable is quietly trusted.** A close the platform could not
   check either lands on your desk (`chairman`) or is disclosed to you in full
   (`ceo_judgment`). There is no third path where it disappears.
+- **A promise that stops holding still freezes new scope.** At every setting.
+  What the dial decides is *who* resolves it — not whether the company may
+  quietly carry on adding work past a date it is going to miss.
 - **Money is capped and metered.** The monthly budget pauses the project at
   100%. The real-world spend envelope (`external_monthly_usd_cap`) is a hard
   wall in every billing mode — no approval overrides it, only an amendment.

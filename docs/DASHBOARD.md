@@ -216,7 +216,18 @@ Four ways of asking the same question, kept out of the daily path:
 | **Runs** | Every model call: agent, team, why it woke, what it cost, and the full trace. |
 | **Messages** | Every channel — including the ones you can read but not speak in. |
 | **Memory** | What the company chose to remember, per scope, with its curation history. |
-| **Decisions** | Everything you decided, and everything that decided itself: expired approvals, auto-pauses, killed bets, frozen threads. |
+| **Decisions** | Everything you decided, everything that decided itself (expired approvals, auto-pauses, killed bets, frozen threads), every rule change — and **what the CEO decided** on its own authority. |
+
+### What the CEO decided
+
+On an autonomous project the CEO accepts scope, cuts it, signs and resets the
+delivery date, and judges unverifiable closes. All of that is audited and
+emailed — and it is listed here too: what it did, its reason, and when.
+
+It sits deliberately **outside** "Waiting on you". Nothing on it is pending and
+nothing expires. It is a record you read, every line is reversible from the
+Plan screen or Settings, and the dial that granted it is one amendment from
+being turned back. Under the Supervised dial the list stays empty by design.
 
 ## Settings
 

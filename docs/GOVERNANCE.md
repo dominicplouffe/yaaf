@@ -89,15 +89,24 @@ Also enforced here, and not tunable because they're structural:
 | `approval_timeout_decision` | `"deny"` | What that expiry decides. Default-deny: silence is not consent. |
 | `plan_authority` | `"chairman"` | Who accepts proposed scope. `"ceo"`: the CEO accepts its own proposals — the plan gate runs the same arithmetic, every acceptance is audited and sent to you. |
 | `scope_authority` | `"chairman"` | Who may cut, reopen, restage, reestimate, reword and unsequence. `"ceo"` hands the verbs to the CEO, on the record, reversibly. Your routes never close. |
-| `commitment_authority` | `"chairman"` | Who signs the delivery date. `"ceo"`: proposing adopts the platform's own projection immediately — the CEO still cannot write a date, only accept the arithmetic's. |
+| `commitment_authority` | `"chairman"` | Who signs the delivery date, and who resets one that has stopped holding. `"ceo"`: proposing adopts the platform's own projection immediately, and `commitment_reset` re-adopts it on a slip — the CEO still cannot write a date, only accept the arithmetic's. Your own Move is unrestricted, because you may promise what the arithmetic does not. |
 | `verdict_policy` | `"chairman"` | Who judges unverifiable observable closes. `"ceo_judgment"`: the CEO judges and keeps going, and every self-judgment is disclosed to you in full — stronger than sampling. |
 | `capability_authority` | `"chairman"` | Who scopes credentials to roles. `"ceo"`: the CEO re-scopes existing service credentials across its team itself, on the record, disclosed to you. Creating a credential is always yours — you hold the values. |
 
 The five authority switches are the dial (docs/AUTONOMY.md): they decide *who
 holds a verb*, never whether the record is honest. Every self-exercise runs
-through the same machinery as your own buttons, lands in the audit log, and is
-sent to you out-of-band. The dial itself is chairman-only — a directive
-touching it is refused like any other constitution grab.
+through the same machinery as your own buttons, lands in the audit log, is sent
+to you out-of-band, and is listed under **Records → Decisions → what the CEO
+decided**. The dial itself is chairman-only — a directive touching it is refused
+like any other constitution grab.
+
+**A granted authority always has a verb behind it.** With `plan_authority`,
+`scope_authority` and `commitment_authority` all on `"ceo"`, an `owner_decision`
+approval is **refused**, naming the verb to use instead: an approval blocks on a
+human and carries a default-deny clock, so filing one for a decision you already
+delegated is the one way an autonomous project can still stall on you. The four
+kinds the dial cannot delegate — `spend`, `legal`, `tool_request`, `assist` —
+still reach you at every setting.
 
 ### Budgets
 

@@ -1225,6 +1225,83 @@ def propose_commitment(
     }
 
 
+class CommitmentReset(BaseModel):
+    reason: str = Field(min_length=10, max_length=4000)
+
+
+@router.post("/commitments/reset")
+def reset_commitment(
+    body: CommitmentReset, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
+) -> dict:
+    """Reset a promise that stopped holding, to the platform's own projection.
+
+    The counterpart of the chairman's Move button, held by whoever
+    `commitment_authority` says. It exists because the alternative was worse:
+    an autonomous CEO whose date had slipped could cut scope and could finish
+    work, but if the honest answer was "this date cannot hold" its only
+    remaining move was to file an approval — putting a decision the chairman
+    had explicitly delegated back on his desk, with a default-deny clock on it.
+
+    What does NOT change is the rule under the rule: the CEO cannot write a
+    date. The new `deliver_by` is the end of the day the platform currently
+    projects, computed by the same producer that stamps a proposal. A reset
+    therefore buys no slack that the measured pace has not already spent — it
+    can only stop a promise from being a number nobody believes.
+    """
+    cons = effective(session, ctx.project.id)
+    commitment, projection = policy.check_commitment_reset(
+        session, ctx.project, cons, ctx.agent)
+    old = commitment.deliver_by
+    projected = projection["projected_done_at"]
+    # Day-shaped, exactly as a proposal is: a promise is "by the 30th", never
+    # "by 14:07:22", and an end-of-day date cannot read as late one tick after
+    # the sliding projection catches up with it.
+    commitment.deliver_by = projected.replace(hour=23, minute=59, second=59, microsecond=0)
+    resets = policy.commitment_resets(session, commitment) + 1
+    session.add(AuditLog(
+        id=ids.new_id(ids.AUDIT), project_id=ctx.project.id,
+        actor=f"agent:{ctx.agent.id}", action="commitment.self_move",
+        entity="commitment", entity_id=commitment.id,
+        detail={"from": old.isoformat(), "to": commitment.deliver_by.isoformat(),
+                "reason": body.reason, "basis": projection.get("basis"),
+                "reset_count": resets},
+    ))
+    # The count travels with the disclosure on purpose. One reset is a company
+    # adapting to what it learned; the fourth in a fortnight is a date nobody
+    # should believe, and the chairman should not have to count them himself to
+    # find that out.
+    tally = ("This is the first time this promise has been reset."
+             if resets == 1 else
+             f"This promise has now been reset {resets} times.")
+    chairman_notify(
+        session, ctx.project,
+        f"CEO reset the delivery date to {commitment.deliver_by:%Y-%m-%d}",
+        f"{old:%Y-%m-%d} → {commitment.deliver_by:%Y-%m-%d}\n\nIts reason: {body.reason}"
+        f"\n\nThe new date is the platform's own projection ({projection.get('basis')}) "
+        "— the CEO cannot write a date, only adopt the arithmetic's. "
+        f"{tally}\n\nExercised under commitment_authority: ceo. Move it yourself, cut "
+        "scope, or turn the dial back — those buttons never close.",
+    )
+    # Re-walk the status now, through the same producer the janitor uses, so a
+    # freeze lifts (or persists) on the spot rather than on the next tick.
+    from yaaf.server import janitor
+
+    janitor.check_commitments(session, ctx.project, cons)
+    return {
+        "commitment_id": commitment.id,
+        "status": commitment.status,
+        "was": old.isoformat(),
+        "deliver_by": commitment.deliver_by.isoformat(),
+        "basis": projection.get("basis"),
+        "resets": resets,
+        "note": ("Reset to the platform's projection and disclosed to the chairman in "
+                 "full. The scope freeze lifts only if the arithmetic now fits inside "
+                 "the new date. Resetting is not free: he can see how many times you "
+                 "have done it, and a promise reset repeatedly is a plan problem you "
+                 "should be naming rather than a date problem you keep solving."),
+    }
+
+
 # ── the review: the CEO's half of the meeting ───────────────────────────────────
 
 
@@ -1434,6 +1511,10 @@ def approval_request(
     body: ApprovalRequest, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
 ) -> dict:
     cons = effective(session, ctx.project.id)
+    # An approval is a blocker on a human's desk with a default-deny clock on
+    # it. Filing one for something the dial already put in the CEO's hands is
+    # the one way an autonomous project can still stall on its chairman.
+    policy.check_approval_request(cons, body.kind)
     row = _file_approval(session, ctx, body.kind, body.title, body.body,
                          body.amount_usd)
     return {
