@@ -1,18 +1,26 @@
-"""Invariant selftests: the project setup export is portable and secret-free.
+"""Invariant selftests: the project export, in both strengths.
 
-A setup file must recreate the project's design on any install — and must
-never carry a secret value, a webhook signing key, or anything bound to this
-deployment (Slack wiring, data-source check results)."""
+The default export is the portable *design*: it must recreate the project on
+any install and carries credential names, never values — this is what the
+seed (wipe-survival) machinery stores. `include_values=true` is the full
+backup the chairman downloads on purpose: every value travels, decrypted, so
+a restore rebuilds the whole company with nothing to re-enter."""
 
 from __future__ import annotations
 
 import json
 
-from tests.conftest import ADMIN, amend, make_project
+from tests.conftest import ADMIN, agent_by_name, amend, make_project
+from yaaf.core.db import db_session
+from yaaf.core.models import Agent, AgentKind, Project
 
 
-def _export(client, project_id: str) -> dict:
-    response = client.get(f"/admin/projects/{project_id}/export", headers=ADMIN)
+def _export(client, project_id: str, include_values: bool = False) -> dict:
+    response = client.get(
+        f"/admin/projects/{project_id}/export"
+        + ("?include_values=true" if include_values else ""),
+        headers=ADMIN,
+    )
     assert response.status_code == 200, response.text
     return response.json()
 
@@ -44,8 +52,10 @@ def test_bundle_carries_design_not_plumbing(client):
     spec = bundle["project"]
 
     assert bundle["yaaf_bundle"] == 1
+    assert bundle["values_included"] is False
     assert spec["teams"] == [{"role_slug": "worker", "name": "Alpha",
-                              "employees": ["Lead", "Emp2"], "lead": "Lead"}]
+                              "employees": ["Lead", "Emp2"], "lead": "Lead",
+                              "schedules": {}, "model_overrides": {}}]
     assert spec["constitution"]["queue_ceiling"] == 5
     assert spec["ceo_role_slug"] == "ceo"
     assert spec["solo"] is False
@@ -110,9 +120,121 @@ def test_solo_bundle_round_trips(client):
     bundle = _export(client, original["id"])
     assert bundle["project"]["solo"] is True
     assert bundle["project"]["teams"] == [{"role_slug": "worker", "name": "Solo",
-                                           "employees": [], "lead": None}]
+                                           "employees": [], "lead": None,
+                                           "schedules": {}, "model_overrides": {}}]
 
     created = client.post("/admin/projects", json={
         **bundle["project"], "slug": "solo-twin", "chairman_email": "chair@example.com",
     }, headers=ADMIN)
     assert created.status_code == 200, created.text
+
+
+def test_full_backup_carries_every_value(client):
+    """The chairman's explicit download: nothing held back. Service and
+    billing credentials with their decrypted values, Slack wiring, webhook
+    signing keys, data-source secrets — all of it in the file, so a restore
+    is a restore rather than an evening of re-pasting."""
+    project = make_project(client, start=False)
+    client.post("/admin/secrets", json={
+        "project_id": project["id"], "name": "wordpress",
+        "value": "wp-secret-value", "role_scopes": ["worker"], "kind": "service",
+    }, headers=ADMIN)
+    stored = client.post("/admin/secrets", json={
+        "project_id": project["id"], "name": "anthropic-api-key",
+        "value": "sk-ant-api-not-real", "role_scopes": [], "kind": "billing",
+    }, headers=ADMIN).json()
+    client.patch(f"/admin/projects/{project['id']}", json={
+        "billing_secret_id": stored["id"],
+    }, headers=ADMIN)
+    provisioned = client.post(f"/admin/projects/{project['id']}/webhook_secrets",
+                              headers=ADMIN).json()
+    client.patch(f"/admin/projects/{project['id']}", json={
+        "integrations": {"slack": {"chairman_slack_user": "U123",
+                                   "channel_map": {"boardroom": "C0BQ"}},
+                         "runtime": "mock"},
+    }, headers=ADMIN)
+    client.post(f"/admin/projects/{project['id']}/mcp_servers", json={
+        "name": "kb", "url": "http://127.0.0.1:9/mcp", "roles": ["worker"],
+        "bearer": "kb-token-value",
+    }, headers=ADMIN)
+
+    bundle = _export(client, project["id"], include_values=True)
+    spec = bundle["project"]
+
+    assert bundle["values_included"] is True
+    values = {s["name"]: s for s in bundle["secrets"]}
+    assert values["wordpress"]["value"] == "wp-secret-value"
+    assert values["wordpress"]["role_scopes"] == ["worker"]
+    assert values["anthropic-api-key"]["value"] == "sk-ant-api-not-real"
+    assert values["anthropic-api-key"]["kind"] == "billing"
+    assert values["mcp-kb-url"]["value"] == "http://127.0.0.1:9/mcp"
+    assert values["mcp-kb-token"]["value"] == "kb-token-value"
+    # The billing attachment travels by name, so the import re-attaches it.
+    assert spec["billing_secret_name"] == "anthropic-api-key"
+    # Slack wiring and this project's signing keys travel whole: a restored
+    # project keeps attesting the same senders without reconfiguration.
+    assert spec["integrations"]["slack"]["channel_map"] == {"boardroom": "C0BQ"}
+    assert spec["integrations"]["github_webhook_secret"] == \
+        provisioned["github_webhook_secret"]
+    assert spec["integrations"]["webhook_secret"] == provisioned["webhook_secret"]
+    # A check verdict is about this install's network at some past moment;
+    # even a backup leaves it behind and the import re-proves reachability.
+    assert all("last_check" not in s for s in spec["integrations"]["mcp_servers"])
+
+
+def test_full_backup_round_trips_the_people_and_the_wiring(client):
+    """The half of the design the old export dropped: the repo evidence
+    attests against, the chairman's identity, and the people's settings —
+    daily wakes and model overrides — must survive export → create."""
+    project = make_project(client, start=False)
+    ceo_id = project["ceo_agent_id"]
+    emp_id = agent_by_name(project, "Emp2")
+    for agent_id, at in ((ceo_id, "08:30"), (emp_id, "17:45")):
+        set_wake = client.patch(f"/admin/agents/{agent_id}/schedule",
+                                json={"daily_at": at}, headers=ADMIN)
+        assert set_wake.status_code == 200, set_wake.text
+    with db_session() as session:
+        session.get(Project, project["id"]).github_repo = "acme/site"
+        session.get(Agent, emp_id).model_override = "claude-haiku-4-5-20251001"
+
+    bundle = _export(client, project["id"], include_values=True)
+    spec = bundle["project"]
+    assert spec["github_repo"] == "acme/site"
+    assert spec["chairman_email"] == "chair@example.com"
+    assert spec["ceo_daily_at"] == "08:30"
+    assert spec["teams"][0]["schedules"] == {"Emp2": "17:45"}
+    assert spec["teams"][0]["model_overrides"] == {"Emp2": "claude-haiku-4-5-20251001"}
+
+    created = client.post("/admin/projects", json={**spec, "slug": "restored"},
+                          headers=ADMIN)
+    assert created.status_code == 200, created.text
+    restored_id = created.json()["id"]
+    with db_session() as session:
+        assert session.get(Project, restored_id).github_repo == "acme/site"
+        ceo = session.query(Agent).filter_by(project_id=restored_id,
+                                             kind=AgentKind.CEO).one()
+        assert ceo.daily_at == "08:30"
+        emp = session.query(Agent).filter_by(project_id=restored_id, name="Emp2").one()
+        assert emp.daily_at == "17:45"
+        assert emp.model_override == "claude-haiku-4-5-20251001"
+
+
+def test_people_settings_for_unknown_names_are_refused(client):
+    """A schedule that silently fails to attach is a standup missed at 09:00
+    every day with no error anywhere — so a name that matches nobody on the
+    team is a refusal that names the typo, not a dropped key."""
+    make_project(client, start=False)  # seeds chairman + roles
+    body = {
+        "slug": "typo", "name": "Typo", "goal": "Prove refusals name the typo.",
+        "chairman_email": "chair@example.com", "ceo_role_slug": "ceo",
+        "teams": [{"role_slug": "worker", "name": "Alpha", "employees": ["Ada"],
+                   "schedules": {"Adah": "09:00"}}],
+    }
+    refused = client.post("/admin/projects", json=body, headers=ADMIN)
+    assert refused.status_code == 422
+    assert "Adah" in refused.json()["detail"]
+
+    body["teams"][0]["schedules"] = {"Ada": "9 am"}
+    malformed = client.post("/admin/projects", json=body, headers=ADMIN)
+    assert malformed.status_code == 422
+    assert "HH:MM" in malformed.json()["detail"]

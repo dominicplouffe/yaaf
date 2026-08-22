@@ -213,10 +213,14 @@ decision, and configuration change. The dashboard surfaces it as:
 - **Data sources prove themselves.** An MCP server is a one-form add (name,
   URL, roles, Save): the URL is validated at the door, you can run a live check
   against it, and the granted roles' sandboxes mount it as real tools.
-- **Project export** produces a portable *setup file* — goal, teams,
-  constitution, config, and the *names* of credentials — with secrets and
-  plumbing stripped. **Project clone** produces a running twin on the same
-  install, credential values and all, optionally aimed at a new goal.
+- **Project export** downloads the whole project as one JSON file — goal,
+  teams and their schedules, constitution, config, data sources, and every
+  credential *value* (billing key, Slack tokens, webhook signing keys
+  included), decrypted at the chairman's request so a restore re-enters
+  nothing. The API's default export (`include_values=false`, what the seed
+  machinery stores) still strips values and plumbing for cross-install
+  sharing. **Project clone** produces a running twin on the same install,
+  credential values and all, optionally aimed at a new goal.
 
 ## 12. Proving it works
 

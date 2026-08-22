@@ -246,6 +246,11 @@ def list_roles(session: Session = Depends(db)) -> list[dict]:
 # ── project creation ────────────────────────────────────────────────────────────
 
 
+# A per-agent daily wake, "HH:MM" in the constitution's timezone — the same
+# shape AgentSchedule accepts after creation.
+_DAILY_AT_PATTERN = "^([01]?\\d|2[0-3]):[0-5]\\d$"
+
+
 class TeamSpec(BaseModel):
     role_slug: str
     name: str
@@ -253,6 +258,13 @@ class TeamSpec(BaseModel):
     # team); create_project/add_team enforce that below.
     employees: list[str] = Field(default_factory=list)
     lead: str | None = None  # employee name; defaults to first when >1
+    # Per-employee settings keyed by employee name, so a setup file rebuilds
+    # the people it describes and not just their names: "HH:MM" daily wakes
+    # and per-agent model overrides. A key naming nobody on the team is
+    # refused rather than dropped — a wake schedule that silently fails to
+    # attach is missed at 09:00 every day, with no error anywhere.
+    schedules: dict[str, str] = Field(default_factory=dict)
+    model_overrides: dict[str, str] = Field(default_factory=dict)
 
 
 class ProjectCreate(BaseModel):
@@ -267,10 +279,15 @@ class ProjectCreate(BaseModel):
     # plan.
     mode: str = Field(default="explore", pattern="^(explore|deliver|operate)$")
     controlled_domains: list[str] = Field(default_factory=list)
+    # The repo evidence webhooks attest against. Part of the design, so a
+    # setup file carries it and a restore does not come back half-wired.
+    github_repo: str | None = None
     constitution: dict = Field(default_factory=dict)  # overrides onto defaults
     integrations: dict = Field(default_factory=dict)
     ceo_role_slug: str = "ceo"
     ceo_name: str = "CEO"
+    ceo_daily_at: str | None = Field(default=None, pattern=_DAILY_AT_PATTERN)
+    ceo_model_override: str | None = None
     teams: list[TeamSpec] = Field(default_factory=list)
     # Solo mode (the M2 single-agent arm): the CEO is placed as the sole member
     # — hence derived lead — of the only team, so one brain plans AND executes
@@ -309,6 +326,25 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
         )
     if not body.solo and any(not spec.employees for spec in body.teams):
         raise HTTPException(status_code=422, detail="every team needs at least one employee")
+    import re
+
+    for spec in body.teams:
+        for field_name, mapping in (("schedules", spec.schedules),
+                                    ("model_overrides", spec.model_overrides)):
+            unknown = sorted(set(mapping) - set(spec.employees))
+            if unknown:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"team '{spec.name}' has {field_name} for "
+                           f"{', '.join(unknown)} — not among its employees",
+                )
+        bad_time = next((v for v in spec.schedules.values()
+                         if not re.fullmatch(r"([01]?\d|2[0-3]):[0-5]\d", v)), None)
+        if bad_time is not None:
+            raise HTTPException(
+                status_code=422,
+                detail=f"team '{spec.name}' schedule '{bad_time}' is not HH:MM",
+            )
     deadline = body.deadline
     if deadline is not None:
         if body.mode != "explore":
@@ -340,6 +376,7 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
         billing_mode=body.billing_mode,
         mode=body.mode,
         controlled_domains=body.controlled_domains,
+        github_repo=body.github_repo,
         integrations=body.integrations,
         deadline=deadline,
         topology=topology,
@@ -369,7 +406,8 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
         kind=AgentKind.CEO,
         name=body.ceo_name,
         role_version_id=ceo_role_version.id,
-        model_override=None,
+        model_override=body.ceo_model_override,
+        daily_at=body.ceo_daily_at,
     )
     session.add(ceo)
     session.add(Channel(id=ids.new_id(ids.CHANNEL), project_id=project.id,
@@ -396,6 +434,8 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
                 team_id=team.id,
                 kind=AgentKind.EMPLOYEE,
                 name=employee_name,
+                daily_at=spec.schedules.get(employee_name),
+                model_override=spec.model_overrides.get(employee_name),
             )
             session.add(agent)
             agents.append(agent)
@@ -429,20 +469,34 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
 # Config keys that are this install's plumbing, not the project's design:
 # Slack wiring, webhook signing secrets, experiment bookkeeping. Everything
 # else in integrations (runtime, data sources…) travels with the bundle.
+# A full backup (include_values=true) keeps all of these except `experiment`,
+# whose ids mean nothing off this install.
 _NON_PORTABLE_INTEGRATION_KEYS = frozenset(
     {"slack", "github_webhook_secret", "webhook_secret", "experiment"}
 )
 
 
 @router.get("/projects/{project_id}/export")
-def export_project(project_id: str, session: Session = Depends(db)) -> dict:
-    """The project's design as a portable setup file. The `project` section is
-    a ready ProjectCreate body (the importer supplies slug and chairman); the
-    role definitions and credential *names* ride along so another install can
-    rebuild the org. Secret values never leave — they are encrypted with this
-    deployment's master key — so an import asks for them again. The New
-    Project page accepts this file."""
+def export_project(project_id: str, include_values: bool = False,
+                   session: Session = Depends(db)) -> dict:
+    """The project as a setup file, in one of two strengths.
+
+    Default: the portable *design*. The `project` section is a ready
+    ProjectCreate body (the importer supplies slug and chairman); role
+    definitions and credential *names* ride along so another install can
+    rebuild the org, while secret values stay behind — they are encrypted
+    with this deployment's master key and an import asks for them again.
+    This is the shape the seed (wipe-survival) machinery stores.
+
+    `include_values=true`: the full backup, made at the chairman's explicit
+    request. Every credential is decrypted into the file — service keys, the
+    billing key, Slack tokens, webhook signing keys, OAuth wiring — so a
+    restore recreates the whole company with nothing to re-enter. The file is
+    plaintext; the button that produces one says exactly what is inside.
+
+    The New Project page accepts either file."""
     project = _get_project(session, project_id)
+    chairman = session.get(User, project.chairman_user_id)
     ceo = session.execute(
         select(Agent).where(Agent.project_id == project.id, Agent.kind == AgentKind.CEO)
     ).scalar_one()
@@ -489,45 +543,83 @@ def export_project(project_id: str, session: Session = Depends(db)) -> dict:
             "name": team.name,
             "employees": [a.name for a in members],
             "lead": next((a.name for a in members if a.id == team.lead_agent_id), None),
+            # The people's settings, keyed by name: chairman-set daily wakes
+            # and per-agent model overrides. Losing these on a round trip is
+            # losing a standup nobody notices is gone until 09:00 passes.
+            "schedules": {a.name: a.daily_at for a in members if a.daily_at},
+            "model_overrides": {a.name: a.model_override
+                                for a in members if a.model_override},
         })
 
-    integrations = {k: v for k, v in (project.integrations or {}).items()
-                    if k not in _NON_PORTABLE_INTEGRATION_KEYS}
-    # OAuth state is install-bound twice over: the registered client names
-    # THIS install's redirect URI, and the tokens name this install's consent.
-    # The `auth` marker travels so the importing side knows to offer Connect.
-    oauth_bound_secrets: set[str] = set()
-    if "mcp_servers" in integrations:
-        for entry in integrations["mcp_servers"]:
-            if _source_auth(entry) == "oauth":
-                oauth_bound_secrets.update(_oauth_secret_names(entry))
-        integrations["mcp_servers"] = [
-            {k: v for k, v in entry.items()
-             if k not in ("last_check", "oauth", "bearer_secret")
-             or (k == "bearer_secret" and _source_auth(entry) != "oauth")}
-            for entry in integrations["mcp_servers"]
+    billing_secret_name = None
+    if include_values:
+        # The backup half: everything travels, decrypted. Only `experiment`
+        # bookkeeping stays behind (its ids name rows on this install) and
+        # data-source check verdicts (stale claims about this install's
+        # network — the import proves reachability itself).
+        from yaaf.core.crypto import decrypt
+
+        integrations = {k: v for k, v in (project.integrations or {}).items()
+                        if k != "experiment"}
+        if "mcp_servers" in integrations:
+            integrations["mcp_servers"] = [
+                {k: v for k, v in entry.items() if k != "last_check"}
+                for entry in integrations["mcp_servers"]
+            ]
+        secret_out = [
+            {"name": s.name, "role_scopes": s.role_scopes, "kind": s.kind,
+             "value": decrypt(s.ciphertext)}
+            for s in session.execute(
+                select(Secret)
+                .where(Secret.project_id == project.id)
+                .order_by(Secret.created_at)
+            ).scalars()
+        ]
+        if project.billing_secret_id:
+            attached = session.get(Secret, project.billing_secret_id)
+            billing_secret_name = attached.name if attached else None
+    else:
+        integrations = {k: v for k, v in (project.integrations or {}).items()
+                        if k not in _NON_PORTABLE_INTEGRATION_KEYS}
+        # OAuth state is install-bound twice over: the registered client names
+        # THIS install's redirect URI, and the tokens name this install's
+        # consent. The `auth` marker travels so the importing side knows to
+        # offer Connect.
+        oauth_bound_secrets: set[str] = set()
+        if "mcp_servers" in integrations:
+            for entry in integrations["mcp_servers"]:
+                if _source_auth(entry) == "oauth":
+                    oauth_bound_secrets.update(_oauth_secret_names(entry))
+            integrations["mcp_servers"] = [
+                {k: v for k, v in entry.items()
+                 if k not in ("last_check", "oauth", "bearer_secret")
+                 or (k == "bearer_secret" and _source_auth(entry) != "oauth")}
+                for entry in integrations["mcp_servers"]
+            ]
+
+        # Billing credentials stay out entirely: their values cannot travel,
+        # and the twin connects its own in Settings (the page already
+        # insists). OAuth token/client secrets stay out too — "paste the
+        # refresh token" is not a request a human can meet; the import
+        # re-connects instead.
+        secret_out = [
+            {"name": s.name, "role_scopes": s.role_scopes, "kind": s.kind}
+            for s in session.execute(
+                select(Secret)
+                .where(Secret.project_id == project.id, Secret.kind == "service")
+                .order_by(Secret.created_at)
+            ).scalars()
+            if s.name not in oauth_bound_secrets
         ]
 
-    # Billing credentials stay out entirely: their values cannot travel, and
-    # the twin connects its own in Settings (the page already insists).
-    # OAuth token/client secrets stay out too — "paste the refresh token" is
-    # not a request a human can meet; the import re-connects instead.
-    secret_names = [
-        {"name": s.name, "role_scopes": s.role_scopes, "kind": s.kind}
-        for s in session.execute(
-            select(Secret)
-            .where(Secret.project_id == project.id, Secret.kind == "service")
-            .order_by(Secret.created_at)
-        ).scalars()
-        if s.name not in oauth_bound_secrets
-    ]
-
-    _audit(session, project.id, "project.export", "project", project.id)
+    _audit(session, project.id, "project.export", "project", project.id,
+           {"include_values": include_values})
     return {
         "yaaf_bundle": 1,
         "kind": "project_setup",
         "source_slug": project.slug,
         "exported_at": utcnow().isoformat(),
+        "values_included": include_values,
         "project": {
             "slug": project.slug,
             "name": project.name,
@@ -535,15 +627,21 @@ def export_project(project_id: str, session: Session = Depends(db)) -> dict:
             "billing_mode": project.billing_mode,
             "mode": project.mode,
             "controlled_domains": project.controlled_domains,
+            "github_repo": project.github_repo,
+            "deadline": project.deadline.isoformat() if project.deadline else None,
+            "chairman_email": chairman.email if chairman else None,
             "constitution": effective(session, project.id).model_dump(),
             "integrations": integrations,
+            "billing_secret_name": billing_secret_name,
             "ceo_role_slug": ceo_role_slug,
             "ceo_name": ceo.name,
+            "ceo_daily_at": ceo.daily_at,
+            "ceo_model_override": ceo.model_override,
             "teams": teams,
             "solo": ceo.team_id is not None,
         },
         "roles": list(roles.values()),
-        "secrets": secret_names,
+        "secrets": secret_out,
     }
 
 
@@ -678,7 +776,9 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
     ceo = Agent(id=ids.new_id(ids.AGENT), project_id=project.id, team_id=None,
                 kind=AgentKind.CEO, name=source_ceo.name,
                 role_version_id=source_ceo.role_version_id,
-                model_override=source_ceo.model_override)
+                status=source_ceo.status,
+                model_override=source_ceo.model_override,
+                daily_at=source_ceo.daily_at)
     session.add(ceo)
     session.add(Channel(id=ids.new_id(ids.CHANNEL), project_id=project.id,
                         kind=ChannelKind.BOARDROOM))
@@ -704,7 +804,8 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
                           kind=AgentKind.EMPLOYEE, name=source_agent.name,
                           role_version_id=source_agent.role_version_id,
                           status=source_agent.status,
-                          model_override=source_agent.model_override)
+                          model_override=source_agent.model_override,
+                          daily_at=source_agent.daily_at)
             session.add(agent)
             agents.append(agent)
             if source_agent.id == source_team.lead_agent_id:

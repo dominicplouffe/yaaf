@@ -1531,6 +1531,15 @@ export default function Settings({
             "Fix the address in the twin's Settings → Data sources before starting it.",
         );
       }
+      // The tokens made it but the rooms did not — said now, while the
+      // chairman is looking, not discovered three days into a silent mirror.
+      if (twin.copied.slack_rooms_dropped) {
+        alert(
+          `Twin "${twin.slug}" created with the Slack tokens but no rooms: the channel map ` +
+            "stays behind so two companies never post into one room. Map the twin's rooms in " +
+            "its Settings → Integrations when you want it mirrored.",
+        );
+      }
       // An Explore twin whose source window had already passed starts without
       // one. Silence here would read as "it kept the deadline", and mode is
       // frozen — so the window is the only part of the shape still settable.
@@ -1552,7 +1561,8 @@ export default function Settings({
   async function downloadSetup() {
     setError(null);
     try {
-      const bundle = await get<ProjectBundle>(`/admin/projects/${projectId}/export`);
+      const bundle = await get<ProjectBundle>(
+        `/admin/projects/${projectId}/export?include_values=true`);
       const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
@@ -1847,8 +1857,20 @@ export default function Settings({
         </p>
         <p className="help">
           Left behind on purpose: this project's history — runs, tasks, messages, memory, files,
-          amendments — and its Slack channel map, since two companies posting into one room helps
-          nobody. The Slack tokens do come along, so you only re-map rooms.
+          amendments.
+        </p>
+        <p className="help" style={{ color: "var(--warn, var(--ink-2))" }}>
+          ⚠ A twin is the same <i>shape</i> of company: its mode ({dash.mode}) and its teams are
+          frozen at creation, exactly as this project's were. To change either — or anything else
+          the creation form asks — don't twin it: download the setup file below and edit
+          everything on the New Project page instead.
+        </p>
+        <p className="help" style={{ color: "var(--warn, var(--ink-2))" }}>
+          ⚠ The twin talks to the outside on its own wiring. Slack tokens come along but the
+          channel map does not (two companies posting into one room helps nobody) — re-map rooms
+          in the twin's Settings → Integrations. It also mints its own webhook signing secrets,
+          so any outside sender pointed at this project's evidence webhooks must be re-pointed
+          at the twin's URLs and secrets before its inbound evidence can be attested.
         </p>
         <div className="row">
           <div>
@@ -1886,11 +1908,12 @@ export default function Settings({
       <h2>Setup file</h2>
       <div className="card">
         <p className="help" style={{ marginTop: 0 }}>
-          For <i>another</i> install. Downloads this project's design as one file: teams, role
-          definitions, the constitution, configuration, and the <i>names</i> of its credentials —
-          never their values, which cannot leave the deployment that encrypted them. Upload it on
-          the New Project page; you'll re-enter credential values there and connect billing
-          afterwards. Duplicating on this install needs none of that — use the twin above.
+          A complete backup, as one JSON file: teams and their schedules, role definitions, the
+          constitution, configuration, data sources — and every credential <i>value</i>, billing
+          key, Slack token and webhook signing key, decrypted. Upload it on the New Project page
+          and the whole form prefills, values included; nothing to re-enter. It holds the keys it
+          names, so store it the way you store passwords. Duplicating on this install is simpler
+          still — use the twin above.
         </p>
         <div className="actions">
           <button onClick={downloadSetup}>Download setup file</button>
