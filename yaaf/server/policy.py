@@ -70,6 +70,8 @@ from yaaf.core.models import (
     RequirementStatus,
     Run,
     RunKind,
+    RunQueue,
+    RunStatus,
     SuccessTestKind,
     Task,
     TaskEvent,
@@ -302,6 +304,118 @@ def tasks_dead_on_check(
         t for t in rows
         if t.id != exclude_task_id and success_test_key(t.success_test) == key
     ]
+
+
+# How long a row may sit in CHECKING with no check run behind it before the
+# platform calls the check lost and requeues it. Generous against every honest
+# cause of a slow check — a queue backlog, a busy runner — and tiny against the
+# failure it exists to catch, which previously lasted forever.
+CHECK_LOST_GRACE = timedelta(minutes=5)
+
+
+def _utc_or_none(value: datetime | None) -> datetime | None:
+    if value is not None and value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value
+
+
+def check_in_flight(session: Session, *, task_id: str | None = None,
+                    requirement_id: str | None = None) -> bool:
+    """Is there still a check run — queued or running — that will move this
+    row out of CHECKING? False means nothing left in the system will ever
+    touch it again."""
+    kind = RunKind.SUCCESS_CHECK if task_id else RunKind.REQUIREMENT_CHECK
+    queue = select(func.count(RunQueue.id)).where(RunQueue.kind == kind)
+    runs = select(func.count(Run.id)).where(Run.kind == kind,
+                                            Run.status == RunStatus.RUNNING)
+    if task_id:
+        queue = queue.where(RunQueue.task_id == task_id)
+        runs = runs.where(Run.task_id == task_id)
+    else:
+        queue = queue.where(RunQueue.requirement_id == requirement_id)
+        runs = runs.where(Run.requirement_id == requirement_id)
+    return bool(session.execute(queue).scalar_one()
+                or session.execute(runs).scalar_one())
+
+
+def task_checking_since(session: Session, task_id: str) -> datetime | None:
+    return _utc_or_none(session.execute(
+        select(func.max(TaskEvent.at)).where(
+            TaskEvent.task_id == task_id,
+            TaskEvent.to_status == TaskStatus.CHECKING)
+    ).scalar())
+
+
+def requirement_checking_since(session: Session, requirement_id: str) -> datetime | None:
+    return _utc_or_none(session.execute(
+        select(func.max(RequirementEvent.at)).where(
+            RequirementEvent.requirement_id == requirement_id,
+            RequirementEvent.to_status == RequirementStatus.CHECKING)
+    ).scalar())
+
+
+def _last_check_run_at(session: Session, *, task_id: str | None = None,
+                       requirement_id: str | None = None) -> datetime | None:
+    """When the platform last did anything about this row's check: the newest
+    check run's finish (or start, if it never finished). Lost-check detection
+    ages off this as well as off the CHECKING transition, so a check that dies
+    and is requeued waits out a fresh grace period between attempts instead of
+    being re-run on every sweep."""
+    kind = RunKind.SUCCESS_CHECK if task_id else RunKind.REQUIREMENT_CHECK
+    stmt = select(func.max(func.coalesce(Run.finished_at, Run.created_at))).where(
+        Run.kind == kind)
+    if task_id:
+        stmt = stmt.where(Run.task_id == task_id)
+    else:
+        stmt = stmt.where(Run.requirement_id == requirement_id)
+    return _utc_or_none(session.execute(stmt).scalar())
+
+
+def lost_checks(session: Session, project_id: str,
+                now: datetime | None = None) -> tuple[list[Task], list[Requirement]]:
+    """Rows wedged in CHECKING: the check run they are waiting on no longer
+    exists anywhere — not queued, not running — and nothing about the check
+    has moved for longer than the grace period.
+
+    This state used to be invisible and permanent. A CHECKING task wakes
+    nobody and counts as no one's work, so the board read as idle — while its
+    requirement still counted as OPEN and gated every stage behind it. One
+    project sat wedged this way for 80 minutes, with zero failed checks and
+    no alarm, until the chairman asked why nothing was happening. The check
+    run had been reaped (or its queue row purged by a pause) and nothing ever
+    requeued it: a reaped run only releases CLAIMED tasks, and the janitor's
+    completion sweep only looks at IN_PROGRESS requirements.
+
+    Requirements with observable tests are excluded — those are legitimately
+    waiting on a human verdict, and `nag_observable_requirements` owns them.
+    """
+    now = now or utcnow()
+    horizon = now - CHECK_LOST_GRACE
+
+    def _lost(since: datetime | None, last_run: datetime | None) -> bool:
+        newest = max(filter(None, (since, last_run)), default=now)
+        return newest <= horizon
+
+    tasks = [
+        t for t in session.execute(
+            select(Task).where(Task.project_id == project_id,
+                               Task.status == TaskStatus.CHECKING)
+        ).scalars()
+        if _lost(task_checking_since(session, t.id),
+                 _last_check_run_at(session, task_id=t.id))
+        and not check_in_flight(session, task_id=t.id)
+    ]
+    requirements = [
+        r for r in session.execute(
+            select(Requirement).where(Requirement.project_id == project_id,
+                                      Requirement.status == RequirementStatus.CHECKING)
+        ).scalars()
+        if (r.acceptance_test or {}).get("type") == SuccessTestKind.COMMAND
+        and _lost(requirement_checking_since(session, r.id),
+                  _last_check_run_at(session, requirement_id=r.id))
+        and not check_in_flight(session, requirement_id=r.id)
+    ]
+    return tasks, requirements
 
 
 def check_task_gate(cons: ConstitutionDoc, not_before: datetime | None) -> None:

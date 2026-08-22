@@ -549,7 +549,8 @@ def _situation(session: Session, project: Project, cons: ConstitutionDoc) -> dic
         "unreachable_work": {k: v for k, v in state["board"].items()
                              if k in ("gated", "next_gate_at", "leaderless_teams",
                                       "paused_agents", "stalled_requirements",
-                                      "proposed_requirements", "observable_checking")
+                                      "proposed_requirements", "observable_checking",
+                                      "checking", "checks_lost")
                              and v},
         "note": ("This is the platform's own reading, computed by the same code that "
                  "decides whether to start a run. If the chairman asks why nothing is "

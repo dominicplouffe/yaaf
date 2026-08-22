@@ -504,6 +504,25 @@ def _board_reachability(session: Session, project: Project, now) -> dict:
             elif not open_now and policy.rejected_by_chairman(req):
                 rework.append(req.key)
 
+    # Work that is with the platform's own checker. A CHECKING row wakes
+    # nobody and is claimed by nobody, so it counted as nothing at all — and a
+    # board holding only CHECKING rows read "Nothing waiting. The board is
+    # empty" while a stage gate held every next step behind it. `checks_lost`
+    # names the wedged subset: checks whose run no longer exists anywhere,
+    # which the janitor requeues (and escalates to the CEO if they keep dying).
+    checking_tasks = session.execute(
+        select(func.count(Task.id)).where(Task.project_id == project.id,
+                                          Task.status == TaskStatus.CHECKING)
+    ).scalar_one()
+    checking_requirements = max(0, session.execute(
+        select(func.count(Requirement.id)).where(
+            Requirement.project_id == project.id,
+            Requirement.status == RequirementStatus.CHECKING)
+    ).scalar_one() - len(observable))
+    lost_tasks, lost_requirements = policy.lost_checks(session, project.id, now)
+    checks_lost = sorted([t.title for t in lost_tasks]
+                         + [r.key for r in lost_requirements])
+
     plan = policy.plan_requirement(session, project.id)
     plan_open = plan is not None and plan.status not in policy.CLOSED_REQUIREMENT_STATUSES
 
@@ -523,6 +542,10 @@ def _board_reachability(session: Session, project: Project, now) -> dict:
         unreachable = "scheduled"
     elif blocked:
         unreachable = "blocked_tasks"
+    elif checks_lost:
+        unreachable = "checks_lost"
+    elif checking_tasks or checking_requirements:
+        unreachable = "checking"
     else:
         unreachable = None
 
@@ -531,6 +554,8 @@ def _board_reachability(session: Session, project: Project, now) -> dict:
         "gated": len(gates),
         "next_gate_at": min(gates).isoformat() if gates else None,
         "blocked": blocked,
+        "checking": checking_tasks + checking_requirements,
+        "checks_lost": checks_lost,
         "leaderless_teams": sorted(leaderless),
         "paused_agents": sorted(parked),
         "stalled_requirements": sorted(stalled),
@@ -735,6 +760,26 @@ def _activity_brief(state: dict) -> dict:
             f"{board['blocked']} task(s) are blocked.",
             "An agent stopped and asked a question rather than guessing. Read the "
             "block reason on the Board tab and either answer it or kill the task.")
+
+    if gate == "checks_lost":
+        lost = _listed(board["checks_lost"])
+        return brief(
+            "warn", "check lost",
+            f"the check on {lost} went quiet; the platform is re-running it",
+            f"The check for {lost} went quiet and is being re-run.",
+            "The finished work is with the platform's checker, but its check run "
+            "died before reporting a result. The platform requeues a lost check "
+            "itself within minutes and tells the CEO if it keeps dying — the "
+            "deliverable itself may well be fine, and nothing here needs you yet.")
+
+    if gate == "checking":
+        return brief(
+            "ok", "verifying",
+            f"{board['checking']} check(s) running on finished work",
+            f"Verifying finished work — {board['checking']} check(s) with the platform.",
+            "Agents finished this work and the platform is running the success tests "
+            "itself, in a container, with no model involved. Results post on their "
+            "own; nothing here needs you.", banner=False)
 
     if gate == "concurrency":
         c = state["concurrency"]
@@ -942,6 +987,10 @@ def activity_state(session: Session, project: Project, cons: ConstitutionDoc) ->
             "gated_tasks": board["gated"],
             "claimed_tasks": claimed,
             "blocked_tasks": board["blocked"],
+            # Finished work the platform is still verifying. Counted so a board
+            # holding only CHECKING rows reads as work in hand, not as empty —
+            # the stall watchdog and the chairman's screen both read this.
+            "checking_tasks": board["checking"],
             "notices": notices_total,
             "agents_with_work": len(with_work),
         },

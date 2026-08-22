@@ -48,7 +48,11 @@ GATES = {
     "daily_runs", "pacing", "governance_reserve", "concurrency", "agents_busy",
     "wake_ceiling", "coalescing", "scheduled", "no_lead", "paused_agents",
     "stalled_requirement", "rework_owed", "awaiting_chairman", "blocked_tasks",
+    "checks_lost", "checking",
 }
+# Gates that mean the company is fine — working, or the platform verifying its
+# finished work. These never raise the banner.
+FINE = {"concurrency", "agents_busy", "checking"}
 # The gates that are waiting out a clock. Only these may be dismissed in the
 # UI, and each has to name the moment it ends — a wait with no falsifiable time
 # in it reads as a permanent fault.
@@ -87,9 +91,10 @@ def _synthetic(gate: str | None) -> dict:
         "coalescing": {"ripe_at": at, "agents_held": 1},
         "concurrency": {"in_flight": 3, "cap": 3},
         "waiting": {"ready_tasks": 1, "claimable_tasks": 0, "gated_tasks": 1,
-                    "claimed_tasks": 0, "blocked_tasks": 1, "notices": 2,
-                    "agents_with_work": 1},
+                    "claimed_tasks": 0, "blocked_tasks": 1, "checking_tasks": 1,
+                    "notices": 2, "agents_with_work": 1},
         "board": {"claimable": 0, "gated": 1, "next_gate_at": at, "blocked": 1,
+                  "checking": 1, "checks_lost": ["Shortlist the models"],
                   "leaderless_teams": ["Alpha"], "paused_agents": ["Mike"],
                   "stalled_requirements": ["R-02"],
                   "rework_owed": ["R-06"],
@@ -128,11 +133,12 @@ def test_every_gate_the_ladder_can_name_has_a_sentence():
 
 
 def test_only_stopped_gates_raise_the_banner():
-    """Concurrency and busy agents mean the company is *working*. A banner that
-    fires when things are fine is how a reader learns to stop reading it."""
-    for gate in ("concurrency", "agents_busy", None):
+    """Concurrency, busy agents and checks in flight mean the company is
+    *working*. A banner that fires when things are fine is how a reader learns
+    to stop reading it."""
+    for gate in (*FINE, None):
         assert dispatcher._activity_brief(_synthetic(gate))["banner"] is False
-    for gate in sorted(GATES - {"concurrency", "agents_busy"}):
+    for gate in sorted(GATES - FINE):
         assert dispatcher._activity_brief(_synthetic(gate))["banner"] is True
 
 

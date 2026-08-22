@@ -151,8 +151,11 @@ export interface Activity {
     | "no_lead"
     | "paused_agents"
     | "stalled_requirement"
+    | "rework_owed"
     | "awaiting_chairman"
     | "blocked_tasks"
+    | "checks_lost"
+    | "checking"
     | null;
   brief: ActivityBrief;
   daily_runs: { used: number; cap: number; resets_at: string };
@@ -175,6 +178,9 @@ export interface Activity {
     gated_tasks: number;
     claimed_tasks: number;
     blocked_tasks: number;
+    /** Finished work the platform is still verifying. Counted so a board
+        holding only checking rows reads as work in hand, not as empty. */
+    checking_tasks: number;
     notices: number;
     agents_with_work: number;
   };
@@ -184,9 +190,15 @@ export interface Activity {
     gated: number;
     next_gate_at: string | null;
     blocked: number;
+    /** Rows with the platform's own checker (tasks + command requirements). */
+    checking: number;
+    /** The wedged subset: checks whose run no longer exists anywhere. The
+        janitor requeues these itself; named here so the quiet has a name. */
+    checks_lost: string[];
     leaderless_teams: string[];
     paused_agents: string[];
     stalled_requirements: string[];
+    rework_owed: string[];
     proposed_requirements: string[];
     observable_checking: string[];
     plan_open: boolean;

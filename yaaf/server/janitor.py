@@ -148,6 +148,7 @@ def _janitor_project(session: Session, project: Project) -> None:
     expire_approvals(session, project, cons)
     enforce_budget(session, project, cons)
     release_dead_claims(session, project, cons)
+    requeue_lost_checks(session, project)
     elect_missing_leads(session, project)
     check_plan(session, project, cons)
     check_finished_requirements(session, project, cons)
@@ -1269,6 +1270,112 @@ def release_dead_claims(session: Session, project: Project, cons: ConstitutionDo
     return released
 
 
+# ── lost checks: a wedge nothing else will ever clear ───────────────────────────
+
+# After this many requeues for the same stay in CHECKING, the CEO is told once:
+# a check that keeps dying is the checker infrastructure failing, and the one
+# agent that can re-plan around it deserves to know before the chairman asks.
+LOST_CHECKS_BEFORE_ESCALATION = 3
+
+
+def requeue_lost_checks(session: Session, project: Project) -> int:
+    """A task or requirement in CHECKING whose check run no longer exists gets
+    its check queued again — enforcement by state change, like everything here.
+
+    CHECKING is a promise that the platform will move the row itself, so
+    nothing else watches it: it wakes nobody, counts as no one's work, and a
+    board holding only CHECKING rows reads as idle. When the check run behind
+    it is lost — reaped mid-flight, or its queue row purged by a pause — the
+    promise is broken silently and permanently: the task never closes, its
+    requirement stays OPEN, and every stage behind it is gated. One project
+    sat wedged exactly this way for 80 minutes with no alarm, until the
+    chairman asked why nothing was happening. Requeuing is idempotent (a
+    queued check makes the row no longer lost) and each requeue is audited.
+    """
+    tasks, requirements = policy.lost_checks(session, project.id)
+    requeued = 0
+    for task in tasks:
+        session.add(RunQueue(
+            id=ids.new_id(ids.RUN),
+            project_id=project.id,
+            agent_id=None,
+            kind=RunKind.SUCCESS_CHECK,
+            trigger={"type": "success_check", "task_id": task.id},
+            task_id=task.id,
+        ))
+        # No CHECKING→CHECKING task event: the row's status has not moved, and
+        # the audit row below is the record. (It would also reset the counter
+        # `task_checking_since` feeds.)
+        prior = _audit_requeue(session, project, "task", task.id,
+                               policy.task_checking_since(session, task.id))
+        if prior + 1 == LOST_CHECKS_BEFORE_ESCALATION:
+            _notice_ceo(
+                session, project, NoticeKind.TASK_CHECK_FAILED,
+                f"The platform has now lost {prior + 1} runs of the success test for "
+                f"task '{task.title}' ({task.id}) — each check died before reporting a "
+                "result, which is the checker infrastructure failing, not the work. "
+                "The test is queued again and the task stays in checking; the "
+                "deliverable may well be fine. Do not plan around this task as if it "
+                "had closed, and if it stays wedged, tell the chairman plainly that "
+                "the platform cannot run its checks.",
+            )
+        requeued += 1
+        log.warning("requeued lost success check for task %s (%s), attempt %s",
+                    task.id, project.slug, prior + 1)
+    for requirement in requirements:
+        session.add(RunQueue(
+            id=ids.new_id(ids.RUN),
+            project_id=project.id,
+            agent_id=None,
+            kind=RunKind.REQUIREMENT_CHECK,
+            trigger={"type": "requirement_check", "requirement_id": requirement.id},
+            requirement_id=requirement.id,
+        ))
+        # No CHECKING→CHECKING requirement event: `_work_closed_since_last_check`
+        # reads events with from_status=CHECKING as rulings, and a requeue is
+        # not a ruling. The audit row below is the record.
+        prior = _audit_requeue(session, project, "requirement", requirement.id,
+                               policy.requirement_checking_since(session, requirement.id))
+        if prior + 1 == LOST_CHECKS_BEFORE_ESCALATION:
+            _notice_ceo(
+                session, project, NoticeKind.GOAL_CHANGED,
+                f"The platform has now lost {prior + 1} runs of the acceptance test for "
+                f"{requirement.key} — each check died before reporting a result. The "
+                "requirement stays in checking (it still counts as open, so it gates "
+                "the stages behind it) and the test is queued again. This is the "
+                "checker failing, not the work: if it stays wedged, tell the chairman "
+                "plainly that the platform cannot run its checks.",
+            )
+        requeued += 1
+        log.warning("requeued lost acceptance check for %s (%s), attempt %s",
+                    requirement.key, project.slug, prior + 1)
+    if requeued:
+        notify(session, "yaaf_run_queue", project.id)
+    return requeued
+
+
+def _audit_requeue(session: Session, project: Project, entity: str, entity_id: str,
+                   since) -> int:
+    """Record this requeue and return how many came before it in the same stay
+    in CHECKING. The audit trail is the counter, exactly as the verdict nag's
+    cadence is: a lost check across two different completions of the same task
+    starts a fresh count, because `since` moves."""
+    stmt = select(func.count(AuditLog.id)).where(
+        AuditLog.project_id == project.id,
+        AuditLog.action == f"{entity}.check_requeued",
+        AuditLog.entity_id == entity_id,
+    )
+    if since is not None:
+        stmt = stmt.where(AuditLog.at >= since)
+    prior = session.execute(stmt).scalar_one()
+    session.add(AuditLog(
+        id=ids.new_id(ids.AUDIT), project_id=project.id, actor="system:janitor",
+        action=f"{entity}.check_requeued", entity=entity, entity_id=entity_id,
+        detail={"attempt": int(prior) + 1},
+    ))
+    return int(prior)
+
+
 # ── expiries ────────────────────────────────────────────────────────────────────
 
 
@@ -1722,7 +1829,8 @@ def warn_stall(session: Session, project: Project, cons: ConstitutionDoc) -> Non
     state = activity_state(session, project, cons)
     waiting = state["waiting"]
     if not (waiting["ready_tasks"] or waiting["claimed_tasks"]
-            or waiting["blocked_tasks"] or waiting["notices"]):
+            or waiting["blocked_tasks"] or waiting["checking_tasks"]
+            or waiting["notices"]):
         return  # nothing on the board: quiet is the right answer, not a stall
     # A gate that names its own clearing time is a wait, not a stall — the
     # watchdog exists for silence nobody can explain, not for one the product
