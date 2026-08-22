@@ -1,5 +1,13 @@
 # 02 — Settle an argument, with sources
 
+> **Why not just a Claude Skill?** Again, you largely could — and again, do it
+> here anyway, because this is where the first genuine difference shows up.
+> Turn on `require_evidence_verification` (see the end of this page) and a cited
+> URL counts for **nothing** until the platform has fetched, hashed and
+> snapshotted it server-side. A dead link stops being a confident sentence and
+> starts being a zero. No amount of prompting gets you that; it is a different
+> process doing the checking.
+
 **What you get:** a memo that answers one question you are stuck on, with
 enough evidence that you could defend the answer to someone who disagrees.
 
@@ -88,5 +96,5 @@ That last one is thirty seconds and it is the whole system. Do it once.
   Settings → Rules). Now a cited URL counts for nothing until the platform has
   fetched, hashed and snapshotted it — and a dead link counts for nothing at
   all, however confident the sentence around it was.
-- Then **[03 — A tool that runs](03-a-tool-that-runs.md)**, where "done" stops
-  being a judgement call entirely.
+- Then **[03 — A desk the world wakes up](03-a-desk-the-world-wakes.md)**, and
+  everything after it, where a Claude session stops being an option at all.

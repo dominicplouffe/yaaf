@@ -1,5 +1,12 @@
 # 08 — A game you can actually play
 
+> **Why not just a Claude Skill?** Honestly, one Claude Code session will write
+> you a one-file game. What it will not do is put a developer, a UX designer and
+> a design analyst in a room with **different charters and conflicting
+> priorities**, make them argue in a channel you can read afterwards, and hand
+> you the argument as a record. Read `Records → Messages` on this one; the
+> argument is more instructive than the game.
+
 **What you get:** a single HTML file you double-click, containing a small
 browser game that is genuinely fun for five minutes.
 

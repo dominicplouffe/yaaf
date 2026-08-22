@@ -1,41 +1,69 @@
-# Examples — ten projects, in the order worth doing them
+# Examples — two you could do without yaaf, and eight you couldn't
 
-These are not ten variations on one idea. They are ten different jobs, in ten
-different domains, arranged so that each one shows you a part of yaaf the last
-one didn't. Run them in order and you will have used essentially the whole
-platform on things you can judge for yourself.
+Every example here has to answer one question, and answers it at the top of its
+page: **why not just a Claude Skill?**
 
-**Everything here needs one thing: an Anthropic API key.** No data
-subscriptions, no vendor accounts, no signups. Where a project needs outside
-data it uses something free and public (SEC EDGAR, a project's own changelog)
-or ships the file in this repo. If an example ever asks you to buy something
-before you can try it, that is a bug — tell us.
+For the first two the honest answer is *"you could — that's the point."* They
+exist to teach you the loop on something you can check yourself in five minutes.
+For the other eight the answer names the specific thing that breaks: nobody is
+awake at 02:00; a chat session cannot be woken by your app; a resumed session
+does not know it already opened that pull request; one agent cannot be its own
+skeptic; a link nobody fetched is not evidence.
 
-## Start here
+**Everything needs one thing: an Anthropic API key.** No data subscriptions, no
+vendor accounts. The single exception is example 04, which needs a **free**
+GitHub account, and needs one because doing something in the world and proving
+it happened is the entire lesson.
 
-**[01 — Your first hour](01-your-first-hour.md).** One writer, four
-requirements, a few dollars, done before lunch. It exists so you watch the
-machinery once on something you can check in five minutes.
+---
 
-## The ten
+## Part 1 · Fundamentals
 
-| # | Example | What it is | Shape | What it teaches you |
+**A Claude Skill can do both of these.** Do them anyway. You are not here for
+the deliverable — you are here to write a goal, watch a plan get proposed,
+accept it yourself, and see the platform decide whether the work was done.
+Everything in Part 2 assumes you have.
+
+| # | Example | What it is | Shape | What you learn |
 |---|---|---|---|---|
-| 01 | [Your first hour](01-your-first-hour.md) | A briefing note on any subject | Deliver | The whole loop, as small as it goes: propose → **you accept** → work → done |
-| 02 | [Settle an argument](02-settle-an-argument.md) | A sourced answer to a question you're stuck on | Deliver | Sourced evidence, and what stops an agent blurring answer and *sourced* answer |
-| 03 | [A tool that runs](03-a-tool-that-runs.md) | A small CLI, with tests | Deliver | **`command` tests the platform runs itself** — where "done" stops being an opinion |
-| 04 | [Docs a stranger can follow](04-docs-a-stranger-can-follow.md) | A quickstart, proven by executing it | Deliver | Holding *prose* to a command test; two teams with opposing incentives |
-| 05 | [A tutor that adapts](05-a-tutor-that-adapts.md) | One lesson a week that reacts to your answers | **Operate** | Cycles, scope carried forward, last cycles' narratives handed over verbatim |
-| 06 | [Make sense of a spreadsheet](06-make-sense-of-a-spreadsheet.md) | An analysis of a messy CSV *(data included)* | Deliver | Bulk data in files not context; saying what the data **cannot** answer |
-| 07 | [Tell me what changed](07-tell-me-what-changed.md) | A weekly brief on something you depend on | **Operate** | Per-agent schedules, external evidence, and the **drought** rule |
-| 08 | [A game you can play](08-a-game-you-can-play.md) | A one-file browser game that's actually fun | Deliver | A three-team org that argues; "done" when it's a *feel* judgement |
-| 09 | [One idea, thirty days](09-one-idea-thirty-days.md) | Find a product idea and prove someone wants it | **Explore**, solo | Bets with kill dates, controlled domains, verified external evidence |
-| 10 | [Read the filings](10-read-the-filings.md) | An initiation note from a company's own filings | Deliver | A review gate before anything ships; the strictest sourcing in the set |
+| 01 | [Your first hour](01-your-first-hour.md) | A briefing note on any subject | Deliver | The whole loop, as small as it goes: propose → **you accept** → work → verified |
+| 02 | [Settle an argument](02-settle-an-argument.md) | A sourced answer to a question you're stuck on | Deliver | Sourced evidence — and the first real difference: a citation the *platform* fetches, hashes and snapshots |
 
-Between them: research, software, technical writing, education, data analysis,
-monitoring, game development, product discovery, and financial research. If
-none of those is your job, the shapes still transfer — read 03 and 10 and you
-will see how.
+## Part 2 · Why yaaf exists
+
+Each of these breaks without the platform, for the reason in the last column.
+
+| # | Example | What it is | Shape | What a Claude session can't do here |
+|---|---|---|---|---|
+| 03 | [A desk the world wakes up](03-a-desk-the-world-wakes.md) | Signed events arrive; an agent wakes and triages | **Operate** | Be listening. A signed endpoint wakes a *named* agent at 03:00, under every rate brake |
+| 04 | [An overnight crew](04-an-overnight-crew.md) | Nightly maintenance PRs on a repo you own | **Operate** | Be awake at 02:00 — and know, after a crash, that it already opened that PR |
+| 05 | [A tutor that adapts](05-a-tutor-that-adapts.md) | One lesson a week that reacts to your answers | **Operate** | Wake up next Sunday, holding what you got wrong in week three |
+| 06 | [A red team that can block](06-a-red-team.md) | An adversary whose sign-off gates the build | Deliver | Be its own skeptic. A *different* agent holds a requirement the builders cannot close |
+| 07 | [Tell me what changed](07-tell-me-what-changed.md) | A weekly brief on something you depend on | **Operate** | Run on Monday without you, and not re-report week one's news on week nine |
+| 08 | [A game you can play](08-a-game-you-can-play.md) | A one-file browser game that's actually fun | Deliver | Put three roles with conflicting charters in a room and hand you the argument |
+| 09 | [One idea, thirty days](09-one-idea-thirty-days.md) | Find a product idea and prove someone wants it | **Explore**, solo | Hold a bet to a kill date you can't quietly move, on evidence it didn't write |
+| 10 | [Read the filings](10-read-the-filings.md) | A company note you could defend to a skeptic | Deliver | Produce the *record* — verified claims, logged decisions, sampled work |
+
+Domains, so you can find yourself in one: writing, research, ops and
+integration, software maintenance, education, QA, monitoring, games, product
+discovery, regulated research.
+
+## The short version of the argument
+
+**A skill is a capability. yaaf is the company.** They are not alternatives —
+yaaf *runs* your skills: a role's `tool_permissions.skills` is an allowlist
+handed straight to the Agent SDK, so a role can be granted exactly the skills it
+should have and no others.
+
+What the platform adds is not cleverness. It is what happens across a hundred
+sittings you are not present for: something deciding what to do next, a
+definition of done that isn't self-graded, a budget that stops by itself, memory
+with a curator, and a record you can hand to someone who asks how you know.
+
+See the README's [Isn't this just a Claude Skill?](../README.md#isnt-this-just-a-claude-skill)
+for the long version.
+
+---
 
 ## Importing one
 
@@ -60,8 +88,8 @@ submit:
   form's own fields.
 - **The autonomy preset wins.** Supervised or Autonomous is your choice on the
   form; the file cannot make it for you. Every example here assumes
-  **Supervised**, because watching yourself accept a plan is the point of the
-  first few. See [docs/AUTONOMY.md](../docs/AUTONOMY.md).
+  **Supervised**, because watching yourself accept a plan is the point of Part
+  1. See [docs/AUTONOMY.md](../docs/AUTONOMY.md).
 
 **From the CLI**, which honors the whole constitution as written:
 
@@ -111,18 +139,20 @@ container; the **workspace** persists, the environment does not. So a check can
 use what the sandbox image ships — `python3` and the standard library,
 `pandas`, `duckdb`, `node`, `jq`, `git`, `curl` — or something committed to the
 workspace. It cannot use a package an earlier run pip-installed. This trips
-everyone once; example 03 is built around it.
+everyone once; example 06 is built around it.
 
 ## The roles they hire
 
-From [`roles/`](../roles/). These examples use nine of them:
+From [`roles/`](../roles/). These examples use ten of them:
 
 | Slug | Role | Used by |
 |---|---|---|
 | `ceo` | CEO / Project Manager | every example except 10 |
-| `writer` | Writer / Content | 01, 02, 04, 06, 07 |
-| `researcher` | Researcher / Analyst | 02, 06, 07 |
-| `engineer` | Software Engineer | 03, 04 |
+| `writer` | Writer / Content | 01, 02, 07 |
+| `researcher` | Researcher / Analyst | 02, 07 |
+| `support` | Customer Support | 03 |
+| `engineer` | Software Engineer | 03, 04, 06 |
+| `adversary` | Red Team / Adversarial Reviewer | 06 |
 | `tutor` | Tutor / Curriculum Builder | 05 |
 | `game-developer`, `game-ux-designer`, `game-analyst` | A game studio | 08 |
 | `gtm` | Go-to-Market | 09 |
@@ -130,7 +160,7 @@ From [`roles/`](../roles/). These examples use nine of them:
 
 The library holds more than these — a full markets family (eleven roles), a
 fourth game role, and the rest of a general-purpose company (`blog-writer`,
-`marketer`, `sales`, `support`). Browse them at **Roles** in the dashboard.
+`marketer`, `sales`). Browse them at **Roles** in the dashboard.
 
 Roles are **versioned**. Edit the JSON, re-seed, and existing teams keep running
 their pinned version until you adopt the new one — so a prompt edit cannot
@@ -141,10 +171,14 @@ silently change a project that is mid-flight.
 The fastest route to a good project of your own is to take the example closest
 in *shape* — not in subject — and change the goal:
 
-- **One thing, then stop** → Deliver (01, 02, 03, 04, 06, 08, 10)
-- **The same thing on a rhythm, improving** → Operate (05, 07)
+- **One thing, then stop** → Deliver (01, 02, 06, 08, 10)
+- **The same thing on a rhythm, improving** → Operate (03, 04, 05, 07)
 - **A question you can't write requirements for yet** → Explore (09)
 
 Then read [docs/CREATING_A_PROJECT.md](../docs/CREATING_A_PROJECT.md), which
 walks the form in plain English, and steal acceptance tests from whichever
 example is closest.
+
+And before you build it here, ask the question this folder is organised around:
+**if you could finish it in one sitting, you probably should.** yaaf earns its
+keep on the work you cannot sit through.

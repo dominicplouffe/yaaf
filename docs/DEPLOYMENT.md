@@ -481,11 +481,12 @@ yaaf/runner     leases runs, launches sandbox containers, meters everything
 yaaf/core       models, constitution schema, crypto, config, artifacts
 yaaf/cli        `yaaf` — admin/observe CLI, `yaaf experiment`, `yaaf spend-report`
 web/            the chairman's dashboard (React, served at /app)
-roles/          starter role library — general, tutor, markets, game studio
+roles/          starter role library — general, tutor, adversary, markets,
+                game studio
 deploy/         Dockerfiles and compose
 evals/          golden-transcript evals — regression-gate for prompt edits
 tests/          invariant suite over HTTP, chaos tests, eval checks
 migrations/     Alembic
-examples/       ten importable projects (.md + .json) + sample data
+examples/       ten importable projects (.md + .json)
 docs/           this documentation
 ```

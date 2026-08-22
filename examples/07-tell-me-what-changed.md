@@ -1,5 +1,11 @@
 # 07 — Tell me what changed (and nothing else)
 
+> **Why not just a Claude Skill?** Because it runs on Monday whether or not you
+> open a laptop, and because on week nine it must not tell you week one's news
+> again. Unattended repetition plus durable memory of what has already been
+> said is not a prompt; it is schedules, cycles, and a memory scope with a
+> curator and a cap.
+
 **What you get:** a weekly brief on something you depend on, containing only
 what actually changed and what it means for you.
 
@@ -98,4 +104,4 @@ rediscovers week one.
   and a dead source stops the drought clock from resetting, which is precisely
   the honest behaviour.
 - Then **[08 — A game you can play](08-a-game-you-can-play.md)**, for something
-  completely different.
+  completely different — and an org that argues.

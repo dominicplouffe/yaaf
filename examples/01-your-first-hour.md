@@ -1,5 +1,11 @@
 # 01 — Your first hour
 
+> **Why not just a Claude Skill?** For this one — you could, in a single
+> message, and it would be a fine note. **That is the point of putting it
+> first.** You are not here for the note; you are here to watch a plan get
+> proposed, accept it yourself, and see the platform decide whether it was
+> done. Nothing later in this set makes sense until you have.
+
 **Do this one first.** It is deliberately the smallest complete thing yaaf can
 do, because the point is not the deliverable — it is watching the machinery
 work once, on something you can check in five minutes.

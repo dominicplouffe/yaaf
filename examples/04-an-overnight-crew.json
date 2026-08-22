@@ -1,0 +1,69 @@
+{
+  "yaaf_bundle": 1,
+  "kind": "project_setup",
+  "source_slug": "overnight-crew",
+  "exported_at": "2026-08-22T00:00:00+00:00",
+  "values_included": false,
+  "project": {
+    "slug": "overnight-crew",
+    "name": "An Overnight Crew",
+    "goal": "Keep a repository I own in good health, overnight, without me. Point this at MY REPO \u2014 set the GitHub workspace in Settings before starting. Every night, pick the single most valuable piece of maintenance available and do it properly rather than doing five things badly: a dependency that has moved and can be moved safely, a test that is flaky rather than failing, a warning the build has been ignoring, a broken link in the docs, a piece of dead code nothing reaches, a README instruction that is no longer true. Every change arrives as its own small pull request with a title that says what and a body that says why, and the full test suite must pass before it opens \u2014 a red PR waiting for me in the morning is worse than no PR. Never batch unrelated changes into one PR, and never open a second PR for something already open. If CI fails on the main branch, that outranks everything: diagnose it first and tell me what broke it. Do not refactor for taste, do not restructure anything I have not asked about, and if the most valuable thing tonight is nothing, say so and stop.",
+    "billing_mode": "api_key",
+    "mode": "operate",
+    "controlled_domains": [
+      "github:your-account"
+    ],
+    "github_repo": "your-account/your-repo",
+    "deadline": null,
+    "chairman_email": null,
+    "constitution": {
+      "chairman_report_interval_hours": 2.0,
+      "chairman_report_window_local": "08:00-21:00",
+      "timezone": "America/New_York",
+      "queue_ceiling": 4,
+      "monthly_usd_cap": 120,
+      "approval_threshold_usd": 20,
+      "drought_hours": 168,
+      "external_ratio_min": 0.0,
+      "max_usd_per_run": 3.0,
+      "cycle_frequency": "weekly",
+      "cycle_day": 0,
+      "review_interval_days": 7,
+      "runs_per_project_per_day": 40
+    },
+    "integrations": {
+      "runtime": "agent_sdk"
+    },
+    "billing_secret_name": "anthropic-api-key",
+    "ceo_role_slug": "ceo",
+    "ceo_name": "CEO",
+    "ceo_daily_at": "01:30",
+    "ceo_model_override": null,
+    "teams": [
+      {
+        "role_slug": "engineer",
+        "name": "Crew",
+        "employees": [
+          "Mika",
+          "Dev"
+        ],
+        "lead": "Mika",
+        "schedules": {
+          "Mika": "02:00",
+          "Dev": "02:30"
+        }
+      }
+    ],
+    "solo": false
+  },
+  "roles": [],
+  "secrets": [
+    {
+      "name": "github",
+      "role_scopes": [
+        "engineer"
+      ],
+      "kind": "service"
+    }
+  ]
+}

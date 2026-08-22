@@ -1,5 +1,11 @@
 # 09 — One idea, one agent, thirty days
 
+> **Why not just a Claude Skill?** Because the deliverable is *thirty days of
+> not fooling yourself*. A bet that dies on a date you cannot quietly move,
+> evidence the platform fetches and snapshots rather than takes your word for,
+> and a rule that refuses to let the company write another framework document
+> when it has gone two days without finding anything real outside.
+
 **What you get:** one small product idea with an argument that survives attack —
 or an honest "there is nothing here", which is the same deliverable.
 

@@ -20,7 +20,8 @@ employees and a lead. The CEO is the only agent that plans.
 
 - A starter library ships in [`roles/`](../roles), in three families: the
   general-purpose set (`ceo`, `engineer`, `researcher`, `writer`, `tutor`,
-  `blog-writer`, `marketer`, `gtm`, `sales`, `support`), a markets desk
+  `adversary`, `blog-writer`, `marketer`, `gtm`, `sales`, `support`), a markets
+  desk
   (`cio`, `equity-analyst`, `quant-researcher`, `market-data-engineer`,
   `market-news-analyst`, `macro-analyst`, `technical-analyst`, `risk-manager`,
   `portfolio-manager`, `compliance-officer`, `finance-writer`), and a mobile

@@ -36,6 +36,63 @@ every rule is enforced as an API refusal or an automatic state change. An agent
 cannot be talked out of rules it never held. When an agent tries to break a
 rule, it doesn't get a stern reminder — it gets a 403.
 
+## Isn't this just a Claude Skill?
+
+Fair question, and the honest answer starts with: **yaaf runs your skills.** A
+role's `tool_permissions.skills` is an allowlist handed straight to the Agent
+SDK, so a role gets exactly the skills you grant it and nothing it wrote for
+itself. They are not alternatives. A skill is a *capability* — how to do a thing
+well. yaaf is the *company* that decides which capability to point at what,
+checks it actually got done, pays for it out of a capped budget, and keeps the
+receipt.
+
+**So don't use yaaf when a skill will do**, and that is most of the time:
+
+- You are there, watching, and will read the result before it matters.
+- It finishes in one sitting.
+- Nothing irreversible happens — no money moves, no PR opens, nobody is emailed.
+- "Did it work?" is a question you can answer by looking.
+- Nobody will ask you six weeks from now how you know.
+
+**Reach for something like yaaf when one of these is true:**
+
+- **It has to run while you're away.** Nightly, weekly, or whenever your app
+  posts an event — for weeks, not for a session.
+- **"Done" must not be self-graded.** Somebody other than the author has to
+  check, and "the model said so" is not going to survive contact with reality.
+- **Money has to stop by itself.** Not "I'll keep an eye on it."
+- **You'll have to reconstruct it later** — for a client, a boss, an auditor, or
+  yourself in three months.
+- **You want agents to disagree.** One agent checking its own work has the same
+  blind spots in both seats.
+
+Concretely, four ways to run agents and what each is actually for:
+
+| | Claude Skill / Code session | Scheduled agent (a cron'd prompt, a task) | Agent library (CrewAI, AutoGen, LangGraph) | **yaaf** |
+|---|---|---|---|---|
+| **What it is** | A capability you invoke | The same, on a timer | A toolkit for wiring agents into your app | A platform you deploy and chair |
+| **Decides what's next** | You do | You did, in advance | Your code does | A CEO agent, from a goal and a plan you accepted |
+| **"Task complete"** | The model says so | The model says so | The model says so | The **platform** runs the test, or you spot-audit it |
+| **Budget ceiling** | You watch the meter | You watch the meter | You watch the meter | Metered per run; warns, then **pauses the project** |
+| **Lifespan** | One session | One run at a time | While your script runs | Weeks — wakes, schedules, cycles, webhooks |
+| **Memory across runs** | Whatever the product gives you, plus your own files | Whatever you pass in | Yours to build | Scoped, capped, curated; caps are refusals, never silent eviction |
+| **After a crash mid-action** | You notice, and redo it | You notice, and redo it | Yours to build | Lease reaped, side-effect ledger stops the double-fire |
+| **The record** | Your scrollback | Your logs | Your logs | Every message, run, dollar, decision and refusal |
+| **More than one agent** | — | — | Yes, as you code it | Teams with charters that conflict on purpose, on a governed bus |
+
+None of that is about capability. A good model with a good skill will out-write
+yaaf's agents on any single task. **The difference is governance and duration** —
+and if neither of those is your problem, you don't have a yaaf-shaped problem.
+
+Note the "yours to build" cells. With a library you *can* reach most of this
+column; the work is a queue, a policy layer, a verifier, a ledger, an audit
+trail and a UI to watch it from. That is a reasonable thing to build if it is
+your product. yaaf is that thing, already built, when it isn't.
+
+The [examples](examples/) are organised around exactly this: two you could do in
+a Claude session, so you learn the machinery, and eight that name the specific
+thing which breaks without it.
+
 ## The second idea: work that has a terminus
 
 A task list is a pipeline with no end. So outside open-ended mode the root
@@ -159,43 +216,25 @@ Everything yaaf does, and where it's documented. Full reference:
 | **Integrations** | Slack (Socket Mode — no public URL), GitHub repo-per-project, external MCP servers as one-form data sources, signed webhooks, S3-compatible artifacts, email/webhook alerts. → [INTEGRATIONS](docs/INTEGRATIONS.md) |
 | **Proof it works** | 526 offline tests, chaos tests, golden-transcript evals that gate prompt edits, a $0 scripted runtime CI drives a whole company through, and `yaaf experiment`. → [M2_PROTOCOL](docs/M2_PROTOCOL.md) |
 
-## How is this different from a standalone agent?
+## What you give up
 
-A standalone agent (a chat assistant, a CLI coding agent) is a brilliant *tool*:
-you aim it, it works, you check the result. The discipline comes from you being
-there.
+Nothing here is free, and a skeptic deserves the list:
 
-yaaf is for the moment you stop being there. It supplies what a lone agent
-doesn't have: something that decides what to work on next (and what to kill), a
-definition of "done" that isn't self-graded, a scope you agreed to and a date
-computed from measured pace, budgets that actually stop spending, memory with a
-curator instead of an ever-growing scratchpad, and a complete record you can
-audit later. You go from *operating a tool* to *chairing an organization* — you
-speak only to the CEO, accept the plan, decide approvals, and spot-check the
-work.
+- **You deploy and run a thing.** Postgres, two containers, a box. A skill is a
+  file.
+- **Setup is minutes, not seconds.** A goal worth planning from takes longer to
+  write than a prompt, on purpose — it is the input everything else derives
+  from.
+- **You accept a plan.** On the default dial, scope waits for you. That is the
+  whole mechanism for keeping the forecast honest, and it is still a thing you
+  have to do. (Hand it over with one switch — [AUTONOMY](docs/AUTONOMY.md).)
+- **The floor is higher than the ceiling is high.** Governance costs tokens:
+  planning runs, review runs, verification. On a task you could have done in one
+  sitting, that overhead buys you nothing.
+- **It is pre-1.0.** APIs move.
 
-## How is this different from CrewAI / AutoGen / LangGraph?
-
-Those are **libraries**: you write a program that wires agents into a workflow,
-and the workflow lives while your program runs. They're excellent for building
-agent-powered *applications*, and yaaf is not trying to be one.
-
-yaaf is a **platform** you deploy — closer to "self-hosted GitLab for an AI
-workforce" than to an orchestration SDK:
-
-| | Agent libraries | yaaf |
-|---|---|---|
-| Lifespan | While your script runs | Weeks — event-driven wakes, schedules, heartbeats, cycles |
-| Where rules live | In prompts and your code | In the server, as refusals it's not possible to bypass |
-| "Task complete" | The model says so | Platform-run tests, verified evidence, human spot-audit |
-| A delivery date | You estimate it | Computed from measured pace, re-projected, freezes scope when it slips |
-| Cost control | You watch the meter | Metered runs, hard budget pauses, a separate real-world envelope, loop breakers |
-| Isolation | Your process, your network | Container per run, scoped secrets |
-| After a crash | Re-run the script | Leases reaped, work released, side-effect ledger prevents double-firing (no duplicate tweet, PR, or payment) |
-| Paper trail | Your logs | Full audit: every message, decision, dollar, and enforcement |
-
-If you want to *build an app that uses agents*, use a library. If you want to
-*run agents unattended on real goals with real budgets*, that's yaaf.
+If you read that list and thought "none of this is my problem", believe
+yourself. Use a skill.
 
 ## The honest part
 
@@ -293,17 +332,24 @@ plain English** — picking a shape, writing a goal the CEO can plan from,
 accepting the plan, connecting billing, credentials, and data sources.
 
 Or don't write one. **[examples/](examples/)** has ten projects you import as a
-file, arranged in the order worth doing them, each showing you a part of yaaf
-the last one didn't: a briefing note, a sourced answer to an argument, a CLI
-tool with tests the platform runs, a quickstart proven by executing it, a weekly
-tutor that adapts to what you got wrong, an analysis of a deliberately messy
-spreadsheet, a change-watch on something you depend on, a browser game built by
-a three-team studio, a thirty-day hunt for a product idea, and a company note
-built from SEC filings.
+file, split the way the question above splits:
+
+**Two you could do in a Claude session** — a briefing note, and a sourced answer
+to an argument you're stuck on. They are there so you learn the loop on
+something you can check yourself in five minutes.
+
+**Eight you couldn't** — a desk your app wakes with a signed webhook, a crew
+that opens maintenance PRs at 02:00 and doesn't double-fire after a crash, a
+tutor that reads what you got wrong last week, a red team holding a requirement
+the builders can't close, a change-watch that won't re-report old news, a game
+argued over by three roles with conflicting charters, a thirty-day idea hunt on
+evidence the platform verifies, and a company note built to survive "how do you
+know?".
 
 **They need nothing but your API key** — no data subscriptions, no vendor
-accounts. Start with **[01 — Your first hour](examples/01-your-first-hour.md)**:
-one writer, four requirements, a few dollars.
+accounts, with one free-GitHub exception that says so. Start with
+**[01 — Your first hour](examples/01-your-first-hour.md)**: one writer, four
+requirements, a few dollars.
 
 > **Billing note:** agents pay with an API key you attach per project.
 > Anthropic's consumer terms don't permit running fleets on a personal Claude
@@ -314,7 +360,7 @@ one writer, four requirements, a few dollars.
 | | |
 |---|---|
 | [Creating a project](docs/CREATING_A_PROJECT.md) | Your first project, in plain English |
-| [Examples](examples/) | Ten projects to import and run, in order |
+| [Examples](examples/) | Ten projects to import: two fundamentals, eight that need yaaf |
 | [Features](docs/FEATURES.md) | The complete feature reference |
 | [Dashboard](docs/DASHBOARD.md) | Every screen and what you do there |
 | [Governance](docs/GOVERNANCE.md) | All 49 rules, their defaults, and how to change one |
@@ -337,7 +383,8 @@ yaaf/cli        `yaaf` — admin/observe CLI, incl. `yaaf experiment`
 web/            the chairman's dashboard (React, served at /app)
 roles/          starter role library: general-purpose, a tutor, a markets
                 desk, a mobile-game studio
-examples/       ten importable projects (.md + .json), plus sample data
+examples/       ten importable projects (.md + .json) — two fundamentals,
+                eight that need the platform
 evals/          golden-transcript evals — regression-gate for prompt edits
 tests/          invariant suite that attacks every rule over HTTP, chaos
                 tests, and the eval checks; CI runs it all on SQLite + Postgres

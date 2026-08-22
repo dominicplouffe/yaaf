@@ -1,5 +1,11 @@
 # 05 — A tutor that adapts to what you got wrong
 
+> **Why not just a Claude Skill?** Because it has to wake up next Sunday. And
+> the Sunday after that, for months — reading what you got wrong in week three
+> when it plans week four. Here that is not a promise the model makes; the
+> platform hands it the last three cycles' narratives **verbatim** and reopens
+> the plan gate every time the cycle rolls.
+
 **What you get:** one lesson a week on a subject you choose — explanation,
 worked example, exercises, answer key — and a curriculum that *changes* based on
 the answers you leave for it.
@@ -82,5 +88,5 @@ a key you have already read.
 
 - **Cut a lesson** you don't care about on the Plan tab, with a reason. Watch
   the arc re-sequence around it.
-- Then **[06 — Make sense of a spreadsheet](06-make-sense-of-a-spreadsheet.md)**,
-  which is back to one deliverable but a much harder kind of honesty.
+- Then **[06 — A red team that can block](06-a-red-team.md)**, where a second
+  agent gets a veto over the first.

@@ -1,5 +1,12 @@
 # 10 — Read the filings
 
+> **Why not just a Claude Skill?** A skill will read a 10-K and write you a
+> note. What it will not give you is the thing you actually need when somebody
+> asks *"how do you know?"* — every claim fetched and snapshotted by the
+> platform, every computed figure shipped with the script that computed it,
+> every decision and dollar logged, and a sample of the work dealt back to you
+> to check. The note is the easy half. The record is the deliverable.
+
 **What you get:** an initiation note on one public company, built only from its
 own filings, that a skeptic could attack.
 
