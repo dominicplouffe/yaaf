@@ -68,9 +68,13 @@ for the long version.
 
 ## Importing one
 
-**Prerequisite, once per deployment:** the role library must be loaded, since
-these designs hire from it. `./deploy_single_server.sh` does it for you;
-otherwise run `yaaf seed-roles roles/`.
+**Prerequisite:** the role library must hold the roles these designs hire —
+they name roles by slug rather than carrying their prompts.
+`./deploy_single_server.sh` and `./update_single_server.sh` both load whatever
+the library is missing, so a `git pull` that brings new roles is enough;
+by hand it is `yaaf seed-roles roles/ --only-missing`. If a team arrives on the
+New Project page reading *"not in this install's role library"*, that is the
+step that has not run since the role was added.
 
 **In the dashboard**, which is the intended path:
 

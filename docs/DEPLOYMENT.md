@@ -273,10 +273,19 @@ over HTTP; by hand it is the loop above, or from a checkout with the CLI
 installed:
 `YAAF_API=http://localhost:8080 YAAF_ADMIN_TOKEN=$(grep YAAF_ADMIN_TOKEN deploy/.env | cut -d= -f2-) yaaf seed-roles roles/`.
 
-**Skipping the role seed is survivable.** The project wizard creates any roles
-a bundle needs at submit time, so a bundle-based project works on an unseeded
-deployment — but the role pickers are empty and a from-scratch project has
-nothing to staff itself with.
+**Skipping the role seed is survivable only if your bundles carry their
+roles.** An export from another install does carry them, and the project wizard
+creates those at submit time. The bundles in [`examples/`](../examples/) do not:
+they hire from the library by slug, so on an unseeded deployment their teams
+land on the New Project page with the role picker showing "not in this
+install's role library" — and a from-scratch project has nothing to staff
+itself with either.
+
+**A library seeded once does not grow by itself.** Both scripts load only the
+slugs the library is missing, so a role added to the repository after your
+first deploy arrives on the next `./update_single_server.sh`, and no role you
+already have is re-versioned. By hand it is
+`yaaf seed-roles roles/ --only-missing`.
 
 **The sandbox image is not rebuilt by `docker compose up --build`.** It is a
 separate `docker build`. Forgetting it on a new box means runs start against a

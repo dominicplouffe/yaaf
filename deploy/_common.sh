@@ -169,6 +169,53 @@ wait_for_schema() {
   return 1
 }
 
+# The role library, brought level with the checkout.
+#
+# Loading a role that already exists is not free: every POST to /admin/roles
+# stamps a NEW VERSION of it, so re-seeding the whole directory churns versions
+# and drags a role a chairman edited in the dashboard back to the file's
+# wording. The old guard against that was "seed only when the library is
+# empty", which is safe and also wrong the moment the repository grows a role:
+# an install deployed before the markets roles landed never got them, and the
+# only symptom was an example whose teams arrived at New Project with no role
+# selected. So: compare by slug and load only what this install has never seen.
+#
+# Reads the library over HTTP rather than `compose exec api yaaf seed-roles`,
+# because roles/ is deliberately not baked into the image — inside the
+# container that glob matches nothing and exits 0.
+sync_role_library() {
+  local port="$1" library slug seeded=0 present=0 added=""
+  library=$(curl -fsS -H "Authorization: Bearer ${YAAF_ADMIN_TOKEN}" \
+    "http://127.0.0.1:${port}/admin/roles") \
+    || return 1
+  compgen -G "$REPO/roles/*.json" >/dev/null || { warn "no roles/*.json in the checkout"; return 0; }
+  for f in "$REPO"/roles/*.json; do
+    # The slug is the file's own first field; a prompt further down may well
+    # contain the word, so stop at the first match.
+    slug=$(sed -n 's/.*"slug"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$f" | head -1)
+    [ -n "$slug" ] || die "${f##*/} has no \"slug\" — it is not a role definition"
+    if printf '%s' "$library" | grep -q "\"slug\":[[:space:]]*\"${slug}\"" ; then
+      present=$((present + 1))
+      continue
+    fi
+    curl -fsS -X POST "http://127.0.0.1:${port}/admin/roles" \
+      -H "Authorization: Bearer ${YAAF_ADMIN_TOKEN}" \
+      -H "Content-Type: application/json" \
+      --data-binary @"$f" >/dev/null || die "failed to seed ${f##*/}"
+    seeded=$((seeded + 1))
+    added="${added:+$added, }$slug"
+  done
+  if [ "$seeded" -eq 0 ]; then
+    ok "$present role(s) already loaded, none missing — nothing re-seeded"
+  elif [ "$present" -eq 0 ]; then
+    ok "seeded $seeded role(s) — the whole library"
+  else
+    # Naming them matters here: this is the line that tells a chairman which
+    # roles their install was missing, and why an example would not fill in.
+    ok "$present already loaded; seeded $seeded new role(s): $added"
+  fi
+}
+
 # The port the dashboard is published on, read back from the generated
 # override so update/kill agree with whatever deploy chose.
 current_port() {

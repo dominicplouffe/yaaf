@@ -2,8 +2,8 @@
 #
 # deploy_single_server.sh — take a bare box to a running yaaf, or bring an
 # existing one up to date. Safe to re-run: it never overwrites secrets, never
-# re-seeds a role library that already exists, and never widens an exposed
-# port you did not ask for.
+# re-versions a role the library already has (it loads only the ones missing),
+# and never widens an exposed port you did not ask for.
 #
 # Everything runs here: Postgres, the API + dashboard, the runner. Splitting
 # Postgres onto its own host is a later variant — the seam is marked
@@ -139,35 +139,16 @@ else
 fi
 
 # ── 8. role library ───────────────────────────────────────────────────────────
-# roles/ is deliberately not baked into the image, so this is an HTTP load from
-# the checkout. `docker compose exec api yaaf seed-roles roles/` would glob an
-# empty directory, print nothing, and exit 0.
+# Every role in the checkout that this install does not already have, loaded by
+# slug (see sync_role_library). Roles the library already carries are left
+# exactly as they are: re-posting one stamps a new version and would overwrite
+# a chairman's dashboard edits with the file's wording.
 say "Role library"
 if [ "$SKIP_ROLES" = "yes" ]; then
   warn "skipped (--skip-roles)"
 else
-  roles_json=$(curl -fsS -H "Authorization: Bearer ${YAAF_ADMIN_TOKEN}" \
-    "http://127.0.0.1:${PORT}/admin/roles") \
+  sync_role_library "$PORT" \
     || die "could not read the role library — is YAAF_ADMIN_TOKEN in deploy/.env the one the API booted with?"
-  # Counted separately from the fetch on purpose: grep exits 1 when a fresh
-  # deployment has no roles yet, and under `set -euo pipefail` that would kill
-  # the script at exactly the moment it needs to seed them. `grep -o | wc -l`
-  # rather than `grep -c` because the payload is one long line and -c counts
-  # lines, which reports any populated library as "1".
-  existing=$(printf '%s' "$roles_json" | grep -o '"slug"' | wc -l | tr -d ' ' || true)
-  if [ "${existing:-0}" -gt 0 ]; then
-    ok "$existing role(s) already loaded — not re-seeding (each load makes a new version)"
-  else
-    seeded=0
-    for f in roles/*.json; do
-      curl -fsS -X POST "http://127.0.0.1:${PORT}/admin/roles" \
-        -H "Authorization: Bearer ${YAAF_ADMIN_TOKEN}" \
-        -H "Content-Type: application/json" \
-        --data-binary @"$f" >/dev/null || die "failed to seed ${f##*/}"
-      seeded=$((seeded + 1))
-    done
-    ok "seeded $seeded role(s)"
-  fi
 fi
 
 # ── EXTERNAL-DB ───────────────────────────────────────────────────────────────

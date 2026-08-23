@@ -14,17 +14,19 @@
 #   ./update_single_server.sh --no-pull      # rebuild what is already checked out
 #   ./update_single_server.sh --no-backup    # skip the pg_dump (not advised)
 #   ./update_single_server.sh --keep-chat    # leave resident chat sessions running
+#   ./update_single_server.sh --skip-roles   # do not load roles new to the checkout
 #
 set -euo pipefail
 
-PULL="yes"; BACKUP="yes"; RESTART_CHAT="yes"
+PULL="yes"; BACKUP="yes"; RESTART_CHAT="yes"; SKIP_ROLES="no"
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-pull)   PULL="no"; shift ;;
     --no-backup) BACKUP="no"; shift ;;
     --keep-chat) RESTART_CHAT="no"; shift ;;
-    -h|--help)   sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --skip-roles) SKIP_ROLES="yes"; shift ;;
+    -h|--help)   sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown argument: $1 (try --help)" >&2; exit 2 ;;
   esac
 done
@@ -121,7 +123,24 @@ else
   ok "migrations applied"
 fi
 
-# ── 5. resident chat sessions ─────────────────────────────────────────────────
+# ── 5. role library ───────────────────────────────────────────────────────────
+# An update brings new code AND, sometimes, new roles — roles/ is checked out,
+# not baked into the image, so nothing else notices them. Without this step an
+# install seeded once keeps whatever library it had on day one, and the first
+# sign of it is a setup file from examples/ landing on New Project with its
+# teams' roles blank because the slugs it hires do not exist here.
+#
+# Only the missing slugs are loaded: a role already in the library is left
+# alone, edits and all.
+say "Role library"
+if [ "$SKIP_ROLES" = "yes" ]; then
+  warn "skipped (--skip-roles)"
+else
+  sync_role_library "$PORT" \
+    || die "could not read the role library — is YAAF_ADMIN_TOKEN in deploy/.env the one the API booted with?"
+fi
+
+# ── 6. resident chat sessions ─────────────────────────────────────────────────
 # Chat containers are adopted across runner restarts rather than recreated, so
 # without this they keep running the code they started with.
 say "Resident chat sessions"

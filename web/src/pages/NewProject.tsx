@@ -97,6 +97,11 @@ const CHAIRMAN_KEY = "yaaf.chairman";
 export default function NewProject() {
   const navigate = useNavigate();
   const [roles, setRoles] = useState<RoleSummary[]>([]);
+  // Distinct from `roles.length`: an install whose library is genuinely empty
+  // must still be told which roles a setup file wanted, and a file dropped
+  // before the fetch lands must not be judged against a list that is only
+  // empty because it has not arrived.
+  const [rolesLoaded, setRolesLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -153,7 +158,9 @@ export default function NewProject() {
   } | null>(null);
 
   useEffect(() => {
-    get<RoleSummary[]>("/admin/roles").then(setRoles).catch((e: Error) => setError(e.message));
+    get<RoleSummary[]>("/admin/roles")
+      .then((rows) => { setRoles(rows); setRolesLoaded(true); })
+      .catch((e: Error) => setError(e.message));
     // Existing slugs, so the auto-picked one can dedupe without a failed submit.
     get<{ slug: string }[]>("/observe/projects")
       .then((rows) => setExistingSlugs(rows.map((r) => r.slug)))
@@ -293,6 +300,21 @@ export default function NewProject() {
     (br) => !roles.some((r) => r.slug === br.slug),
   );
 
+  // Slugs a setup file names that this install cannot supply: not in the
+  // library, and no definition carried in the file either (the examples hire
+  // from the library rather than shipping their roles). A <select> whose value
+  // matches no <option> falls back to the placeholder, so before this the form
+  // simply showed "— pick a role —" and the chairman was left to guess which
+  // role the file had asked for. Derived rather than computed inside
+  // loadBundle: the library arrives on its own fetch, and a file dropped
+  // before it lands must not be judged against an empty list.
+  const known = (slug: string) =>
+    !slug || roles.some((r) => r.slug === slug) || newBundleRoles.some((r) => r.slug === slug);
+  const bundleCeoSlug = bundle?.project.ceo_role_slug ?? "";
+  const missingRoleSlugs = rolesLoaded
+    ? [...new Set([...teams.map((t) => t.role_slug), bundleCeoSlug].filter((s) => s && !known(s)))]
+    : [];
+
   function roleLabel(slug: string): string {
     return (
       workerRoles.find((r) => r.slug === slug)?.name ??
@@ -395,6 +417,16 @@ export default function NewProject() {
           name: sourceName,
           body: { ...dataSourceBody(source), roles: granted },
         });
+      }
+      // A role nobody can resolve fails at the server as an opaque 4xx after
+      // the chairman has filled the whole form in. Name it here instead.
+      if (missingRoleSlugs.length) {
+        throw new Error(
+          `This install's role library has no ${missingRoleSlugs.join(", ")}. ` +
+            "Load them from your checkout with `yaaf seed-roles roles/ --only-missing` " +
+            "(or ./update_single_server.sh), then reload this page — or pick roles this " +
+            "install already has.",
+        );
       }
       // Role definitions travel with a setup file — seed any the library
       // lacks before the server resolves slugs. Re-check against a fresh
@@ -876,6 +908,23 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
         </div>
 
         <h2>Teams</h2>
+        {missingRoleSlugs.length > 0 && (
+          <p className="help" style={{ color: "var(--warn, var(--ink-2))" }}>
+            This setup file hires {missingRoleSlugs.length === 1 ? "a role" : "roles"} this
+            install does not have: <strong>{missingRoleSlugs.join(", ")}</strong>. The examples
+            hire from the role library by slug rather than carrying their prompts, so a role
+            added to the repository after this install was seeded is not here yet. Load the
+            missing ones from your checkout — <code>./update_single_server.sh</code>, or{" "}
+            <code>yaaf seed-roles roles/ --only-missing</code> — then reload this page and load
+            the file again. Until then, pick a role this install does have for each team.
+            {missingRoleSlugs.includes(bundleCeoSlug) && (
+              <>
+                {" "}<strong>{bundleCeoSlug}</strong> is the CEO's role, which this form has no
+                picker for — the project cannot be created until the library has it.
+              </>
+            )}
+          </p>
+        )}
         {solo && (
           <p className="subtitle">
             This setup file is a solo project: the CEO is the only team's sole member, so the
@@ -904,6 +953,14 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
                         {r.name} — new, from the setup file
                       </option>
                     ))}
+                  {/* The role the file asked for, when this install has never
+                      heard of it. Held in the picker rather than dropped, so
+                      the ask is visible and submit can refuse it by name. */}
+                  {rolesLoaded && !known(team.role_slug) && (
+                    <option value={team.role_slug}>
+                      {team.role_slug} — not in this install's role library
+                    </option>
+                  )}
                 </select>
               </div>
               <div>

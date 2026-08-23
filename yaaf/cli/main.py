@@ -95,11 +95,36 @@ def _resolve_project(client: httpx.Client, ref: str) -> str:
 
 
 @app.command()
-def seed_roles(directory: Path = typer.Argument(Path("roles"))) -> None:
-    """Load every roles/*.json into the role library."""
+def seed_roles(
+    directory: Path = typer.Argument(Path("roles")),
+    only_missing: bool = typer.Option(
+        False, "--only-missing",
+        help="Skip roles the library already has, by slug, instead of stamping a new "
+             "version of each. What you want after an update adds roles to the checkout."),
+) -> None:
+    """Load every roles/*.json into the role library.
+
+    A plain run posts all of them, and every post stamps a NEW VERSION —
+    that is how an edited prompt reaches a running install. `--only-missing`
+    is the other job: an install seeded months ago has none of the roles the
+    repository grew since, and a setup file from examples/ that hires one of
+    them arrives at New Project with its team's role blank. That flag loads
+    exactly those, leaving every role already in the library untouched.
+    """
     with _client() as client:
+        have: set[str] = set()
+        if only_missing:
+            response = client.get("/admin/roles")
+            if response.status_code >= 400:
+                typer.echo(f"could not read the role library: {response.status_code} "
+                           f"{response.text[:120]}")
+                raise typer.Exit(1)
+            have = {role["slug"] for role in response.json()}
         for path in sorted(directory.glob("*.json")):
             body = json.loads(path.read_text())
+            if only_missing and body.get("slug") in have:
+                typer.echo(f"{path.name}: already in the library, left alone")
+                continue
             response = client.post("/admin/roles", json=body)
             typer.echo(f"{path.name}: {response.status_code} {response.text[:120]}")
 
