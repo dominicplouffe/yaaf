@@ -1,12 +1,26 @@
 """Does the taxonomy actually survive the round-trip the seed depends on?"""
-import json, glob, collections
+import collections
+import json
+from pathlib import Path
+
 from tests.conftest import ADMIN
+
+ROLE_FILES = sorted(Path("roles").glob("*.json"))
+CREW_FILES = sorted(Path("crews").glob("*.json"))
+
+
+def load(path: Path) -> dict:
+    return json.loads(path.read_text())
+
+
+def seed_roles(client) -> None:
+    for path in ROLE_FILES:
+        client.post("/admin/roles", json=load(path), headers=ADMIN)
 
 
 def test_every_shipped_role_seeds_with_its_category(client):
-    for path in sorted(glob.glob("roles/*.json")):
-        body = json.loads(open(path).read())
-        r = client.post("/admin/roles", json=body, headers=ADMIN)
+    for path in ROLE_FILES:
+        r = client.post("/admin/roles", json=load(path), headers=ADMIN)
         assert r.status_code < 400, (path, r.text)
 
     rows = client.get("/admin/roles", headers=ADMIN).json()
@@ -54,10 +68,9 @@ def test_a_bad_category_is_refused_by_name(client):
 
 
 def test_every_shipped_crew_seeds_and_resolves_against_the_library(client):
-    for path in sorted(glob.glob("roles/*.json")):
-        client.post("/admin/roles", json=json.loads(open(path).read()), headers=ADMIN)
-    for path in sorted(glob.glob("crews/*.json")):
-        r = client.post("/admin/crews", json=json.loads(open(path).read()), headers=ADMIN)
+    seed_roles(client)
+    for path in CREW_FILES:
+        r = client.post("/admin/crews", json=load(path), headers=ADMIN)
         assert r.status_code < 400, (path, r.text)
 
     crews = client.get("/admin/crews", headers=ADMIN).json()
@@ -70,6 +83,12 @@ def test_every_shipped_crew_seeds_and_resolves_against_the_library(client):
 
     desk = next(c for c in crews if c["slug"] == "a-markets-desk")
     assert desk["ceo_role_slug"] == "cio"
+
+    # The examples come first, in the order examples/README recommends them —
+    # alphabetical put every crew whose name starts with "A" in front.
+    sourced = [c["source"] for c in crews if (c["source"] or "").startswith("examples/")]
+    assert sourced == sorted(sourced)
+    assert crews[0]["source"].startswith("examples/01")
 
 
 def test_a_crew_naming_an_unknown_role_stays_visible_by_name(client):
