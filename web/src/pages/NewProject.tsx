@@ -168,6 +168,9 @@ export default function NewProject() {
   const [modeNotice, setModeNotice] = useState<string | null>(null);
   const [exploreDeadline, setExploreDeadline] = useState("");
   const [autonomy, setAutonomy] = useState("supervised");
+  // Set when a setup file's Autonomy group is not either preset exactly — a
+  // constitution hand-edited in Settings, which no button here can represent.
+  const [autonomyNotice, setAutonomyNotice] = useState<string | null>(null);
   const [runtime, setRuntime] = useState("agent_sdk");
   const [controlledDomains, setControlledDomains] = useState("");
   const [teams, setTeams] = useState<TeamDraft[]>([
@@ -422,6 +425,32 @@ export default function NewProject() {
           .filter((s) => s.kind === "service")
           .map((s) => ({ name: s.name, value: s.value ?? "", grants: s.role_scopes })),
       );
+      // Who holds the verbs travels in the file too, and the submit below
+      // stamps this preset over whatever the file said — so a file exported
+      // from an autonomous company came back supervised, and one exported
+      // from a supervised company could come back autonomous, neither with a
+      // word about it. Same defect as a role slug the picker could not show:
+      // the form dropped the file's answer silently. Read it instead.
+      const authority = p.constitution as Record<string, string>;
+      const stated = AUTONOMY_PRESETS.find((preset) =>
+        Object.entries(preset.constitution).every(([k, v]) => authority[k] === v));
+      const named = Object.keys(AUTONOMY_PRESETS[0].constitution)
+        .filter((k) => authority[k] !== undefined);
+      if (stated) {
+        setAutonomy(stated.value);
+        setAutonomyNotice(null);
+      } else if (named.length) {
+        // A mixed group is a real choice somebody made rule by rule in
+        // Settings. Neither button is it, so say which rules the file carries
+        // and leave the selection alone rather than rounding it to a preset.
+        setAutonomyNotice(
+          `This setup file sets ${named.map((k) => `${k}: ${authority[k]}`).join(", ")}, ` +
+          "which is not either preset. Picking one below replaces all five rules — " +
+          "or create it as-is and adjust in Settings → Rules in force.",
+        );
+      } else {
+        setAutonomyNotice(null);
+      }
       const cons = p.constitution as Record<string, number>;
       if (cons.queue_ceiling !== undefined) setQueueCeiling(cons.queue_ceiling);
       if (cons.drought_hours !== undefined) setDroughtHours(cons.drought_hours);
@@ -619,7 +648,12 @@ export default function NewProject() {
           chairman_report_interval_hours: reportHours,
           chairman_report_window_local: reportWindow.trim() || null,
           timezone: timezone.trim() || "UTC",
-          ...(AUTONOMY_PRESETS.find((p) => p.value === autonomy)?.constitution ?? {}),
+          // Skipped while a file's hand-mixed Autonomy group stands unanswered:
+          // rounding five deliberate rules to the nearest button is the silent
+          // overwrite this notice exists to stop. Clicking a preset clears it.
+          ...(autonomyNotice
+            ? {}
+            : AUTONOMY_PRESETS.find((p) => p.value === autonomy)?.constitution ?? {}),
         },
         integrations: { ...(bundle?.project.integrations ?? {}), runtime },
         ...(bundle?.project.github_repo ? { github_repo: bundle.project.github_repo } : {}),
@@ -1170,7 +1204,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             gap: 10, marginTop: 6 }}>
             {AUTONOMY_PRESETS.map((p) => (
               <button key={p.value} type="button"
-                onClick={() => setAutonomy(p.value)}
+                onClick={() => { setAutonomy(p.value); setAutonomyNotice(null); }}
                 style={{
                   font: "inherit", textAlign: "left", cursor: "pointer",
                   background: autonomy === p.value ? "rgba(57,135,229,0.07)" : "var(--surface)",
@@ -1189,6 +1223,11 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
               </button>
             ))}
           </div>
+          {autonomyNotice && (
+            <p className="help" style={{ marginTop: 10, color: "var(--warn, var(--ink-2))" }}>
+              {autonomyNotice}
+            </p>
+          )}
           <p className="help" style={{ marginTop: 10 }}>
             A preset is five rules in the constitution's Autonomy group — each one editable
             individually later in Settings → Rules in force, with a written reason, binding

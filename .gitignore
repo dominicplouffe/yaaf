@@ -28,3 +28,7 @@ HANDOFF.md
 # Database dumps taken by update_single_server.sh
 backups/
 .venv/
+
+# Project goals and setup files for private work — customer names, MCP hosts.
+# Kept out of docs/ while squash-to-public is undecided.
+local/
