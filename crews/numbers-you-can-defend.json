@@ -1,0 +1,28 @@
+{
+  "slug": "numbers-you-can-defend",
+  "name": "Numbers you can defend",
+  "outcome": "Findings from your data that someone else re-derived from the raw records.",
+  "ceo_role_slug": "ceo",
+  "domains": [
+    "data"
+  ],
+  "source": "examples/11-numbers-you-can-defend",
+  "teams": [
+    {
+      "role_slug": "data-analyst",
+      "name": "Analysis",
+      "employees": [
+        "Nina",
+        "Priya"
+      ],
+      "lead": "Nina"
+    },
+    {
+      "role_slug": "engineer",
+      "name": "Verification",
+      "employees": [
+        "Theo"
+      ]
+    }
+  ]
+}

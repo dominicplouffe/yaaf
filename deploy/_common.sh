@@ -184,7 +184,7 @@ wait_for_schema() {
 # because roles/ is deliberately not baked into the image — inside the
 # container that glob matches nothing and exits 0.
 sync_role_library() {
-  local port="$1" library slug seeded=0 present=0 added=""
+  local port="$1" library slug refile seeded=0 present=0 refiled=0 added=""
   library=$(curl -fsS -H "Authorization: Bearer ${YAAF_ADMIN_TOKEN}" \
     "http://127.0.0.1:${port}/admin/roles") \
     || return 1
@@ -196,6 +196,23 @@ sync_role_library() {
     [ -n "$slug" ] || die "${f##*/} has no \"slug\" — it is not a role definition"
     if printf '%s' "$library" | grep -q "\"slug\":[[:space:]]*\"${slug}\"" ; then
       present=$((present + 1))
+      # Present means its prompt is left alone. But category and domains live
+      # on the role, not the version, so an install seeded before the taxonomy
+      # landed carries all thirty roles filed under nothing — and the hiring
+      # desk would show every one of them as Uncategorised forever. Refile it
+      # in place: no new version, so no team goes behind its role.
+      refile=$(sed -n 's/.*"category"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$f" | head -1)
+      if [ -n "$refile" ]; then
+        curl -fsS -X PATCH "http://127.0.0.1:${port}/admin/roles/${slug}" \
+          -H "Authorization: Bearer ${YAAF_ADMIN_TOKEN}" \
+          -H "Content-Type: application/json" \
+          --data "$(python3 -c '
+import json, sys
+d = json.load(open(sys.argv[1]))
+print(json.dumps({"name": d["name"], "category": d.get("category"),
+                  "domains": d.get("domains", [])}))' "$f")" >/dev/null \
+          && refiled=$((refiled + 1)) || true
+      fi
       continue
     fi
     curl -fsS -X POST "http://127.0.0.1:${port}/admin/roles" \
@@ -205,6 +222,9 @@ sync_role_library() {
     seeded=$((seeded + 1))
     added="${added:+$added, }$slug"
   done
+  if [ "$refiled" -gt 0 ]; then
+    ok "$refiled role(s) refiled into the hiring categories (no new versions)"
+  fi
   if [ "$seeded" -eq 0 ]; then
     ok "$present role(s) already loaded, none missing — nothing re-seeded"
   elif [ "$present" -eq 0 ]; then
@@ -213,6 +233,36 @@ sync_role_library() {
     # Naming them matters here: this is the line that tells a chairman which
     # roles their install was missing, and why an example would not fill in.
     ok "$present already loaded; seeded $seeded new role(s): $added"
+  fi
+}
+
+# Crews, on the same contract as roles: load what this install has never seen,
+# leave anything already there alone. A crew is reference data — one is read at
+# hiring time and copied into the project's own teams — so re-seeding can never
+# reach a company that already started, and an edited crew stays edited.
+sync_crew_library() {
+  local port="$1" library slug seeded=0 present=0
+  library=$(curl -fsS -H "Authorization: Bearer ${YAAF_ADMIN_TOKEN}" \
+    "http://127.0.0.1:${port}/admin/crews") \
+    || return 1
+  compgen -G "$REPO/crews/*.json" >/dev/null || { warn "no crews/*.json in the checkout"; return 0; }
+  for f in "$REPO"/crews/*.json; do
+    slug=$(sed -n 's/.*"slug"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$f" | head -1)
+    [ -n "$slug" ] || die "${f##*/} has no \"slug\" — it is not a crew definition"
+    if printf '%s' "$library" | grep -q "\"slug\":[[:space:]]*\"${slug}\"" ; then
+      present=$((present + 1))
+      continue
+    fi
+    curl -fsS -X POST "http://127.0.0.1:${port}/admin/crews" \
+      -H "Authorization: Bearer ${YAAF_ADMIN_TOKEN}" \
+      -H "Content-Type: application/json" \
+      --data-binary @"$f" >/dev/null || die "failed to seed ${f##*/}"
+    seeded=$((seeded + 1))
+  done
+  if [ "$seeded" -eq 0 ]; then
+    ok "$present crew(s) already loaded, none missing"
+  else
+    ok "seeded $seeded crew(s) — the starting points on the hiring desk"
   fi
 }
 

@@ -1,0 +1,28 @@
+{
+  "slug": "answer-your-users",
+  "name": "Answer your users",
+  "outcome": "Every user question answered, and what they reveal routed back into the plan.",
+  "ceo_role_slug": "ceo",
+  "domains": [
+    "general"
+  ],
+  "source": "examples/03-a-desk-the-world-wakes",
+  "teams": [
+    {
+      "role_slug": "support",
+      "name": "Triage",
+      "employees": [
+        "Nadia",
+        "Piet"
+      ],
+      "lead": "Nadia"
+    },
+    {
+      "role_slug": "engineer",
+      "name": "Diagnosis",
+      "employees": [
+        "Mika"
+      ]
+    }
+  ]
+}

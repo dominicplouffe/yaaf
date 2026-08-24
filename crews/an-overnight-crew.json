@@ -1,0 +1,25 @@
+{
+  "slug": "an-overnight-crew",
+  "name": "An overnight crew",
+  "outcome": "Work done while you sleep, waiting for you in the morning.",
+  "ceo_role_slug": "ceo",
+  "domains": [
+    "general"
+  ],
+  "source": "examples/04-an-overnight-crew",
+  "teams": [
+    {
+      "role_slug": "engineer",
+      "name": "Crew",
+      "employees": [
+        "Mika",
+        "Dev"
+      ],
+      "lead": "Mika",
+      "schedules": {
+        "Mika": "02:00",
+        "Dev": "02:30"
+      }
+    }
+  ]
+}

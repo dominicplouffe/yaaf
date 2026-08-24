@@ -149,6 +149,8 @@ if [ "$SKIP_ROLES" = "yes" ]; then
 else
   sync_role_library "$PORT" \
     || die "could not read the role library — is YAAF_ADMIN_TOKEN in deploy/.env the one the API booted with?"
+  sync_crew_library "$PORT" \
+    || die "could not read the crew library — is YAAF_ADMIN_TOKEN in deploy/.env the one the API booted with?"
 fi
 
 # ── EXTERNAL-DB ───────────────────────────────────────────────────────────────

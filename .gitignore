@@ -30,3 +30,4 @@ HANDOFF.md
 
 # Database dumps taken by update_single_server.sh
 backups/
+.venv/

@@ -1,0 +1,19 @@
+{
+  "slug": "your-first-hour",
+  "name": "Your first hour",
+  "outcome": "One written thing, so you can see how the company works.",
+  "ceo_role_slug": "ceo",
+  "domains": [
+    "general"
+  ],
+  "source": "examples/01-your-first-hour",
+  "teams": [
+    {
+      "role_slug": "writer",
+      "name": "Desk",
+      "employees": [
+        "Ada"
+      ]
+    }
+  ]
+}

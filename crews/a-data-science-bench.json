@@ -1,0 +1,33 @@
+{
+  "slug": "a-data-science-bench",
+  "name": "A data-science bench",
+  "outcome": "A deep read of a dataset, attacked by a second scientist, delivered as a deck.",
+  "ceo_role_slug": "ceo",
+  "domains": [
+    "data"
+  ],
+  "source": "authored",
+  "teams": [
+    {
+      "name": "Analysis",
+      "role_slug": "data-scientist",
+      "employees": [
+        "Nina"
+      ]
+    },
+    {
+      "name": "Review",
+      "role_slug": "data-skeptic",
+      "employees": [
+        "Priya"
+      ]
+    },
+    {
+      "name": "Report",
+      "role_slug": "exec-communicator",
+      "employees": [
+        "Ada"
+      ]
+    }
+  ]
+}

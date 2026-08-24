@@ -1,0 +1,42 @@
+{
+  "slug": "a-markets-desk",
+  "name": "A markets desk",
+  "outcome": "A recommended book, with the research behind it and a brake on it.",
+  "ceo_role_slug": "cio",
+  "domains": [
+    "markets"
+  ],
+  "source": "authored",
+  "teams": [
+    {
+      "name": "Research",
+      "role_slug": "equity-analyst",
+      "employees": [
+        "Maya",
+        "Tobias"
+      ],
+      "lead": "Maya"
+    },
+    {
+      "name": "Macro",
+      "role_slug": "macro-analyst",
+      "employees": [
+        "Ines"
+      ]
+    },
+    {
+      "name": "Risk",
+      "role_slug": "risk-manager",
+      "employees": [
+        "Owen"
+      ]
+    },
+    {
+      "name": "Editorial",
+      "role_slug": "finance-writer",
+      "employees": [
+        "Ada"
+      ]
+    }
+  ]
+}
