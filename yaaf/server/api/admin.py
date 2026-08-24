@@ -328,6 +328,10 @@ def list_roles(session: Session = Depends(db)) -> list[dict]:
                     k for k, v in (latest.tool_permissions or {}).items()
                     if v is True
                 ) if latest else [],
+                # What the role cannot work without. The picker shows this at
+                # choosing time so a missing key stops being something the
+                # chairman discovers from a run that already failed.
+                "secret_scopes": (latest.secret_scopes or []) if latest else [],
                 "usage": usage,
             }
         )
@@ -392,7 +396,16 @@ def list_crews(session: Session = Depends(db)) -> list[dict]:
         for role in session.execute(select(Role)).scalars()
     }
     out = []
-    for crew in session.execute(select(Crew).order_by(Crew.name)).scalars():
+    # Not alphabetical: eleven of these are the examples, and examples/README
+    # orders them "in the order worth doing them" — which puts the one-team
+    # starter first and the four-team desks last. Alphabetical put every crew
+    # whose name begins with "A" in front of the ones a new chairman wants.
+    crews = sorted(
+        session.execute(select(Crew)).scalars(),
+        key=lambda c: (0, c.source or "") if (c.source or "").startswith("examples/")
+        else (1, c.name),
+    )
+    for crew in crews:
         teams = list(crew.teams or [])
         missing = sorted({
             slug for slug in

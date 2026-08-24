@@ -46,7 +46,11 @@ unit of work, and go back to sleep. Everything is recorded.
 
 ## Step 1 — Create the project
 
-Click **+ New project** and fill in the form top to bottom.
+Click **+ New project**. It runs in four steps — the job, the company, the
+money and the rules, then review — because those are the four decisions that
+need you; everything else is derived, set by a preset, or something you can do
+later in Settings. Nothing is hidden behind a step: **All on one page** shows
+the whole thing as one scroll whenever you want it, and the choice sticks.
 
 **Name.** Anything you like. The slug — the short lowercase ID
 (`ppc-audit`) — is picked for you from the name and deduped against your
@@ -117,7 +121,26 @@ a domain you control can't count as external. For an internal-deliverable
 project like the audit, just leave your own domains here so nobody can game
 the evidence rules.
 
-**Teams.** Pick from the role library. For the audit example:
+**Who runs it.** Pick the CEO. Most projects want **CEO / Project Manager**;
+a markets desk wants the **Chief Investment Officer**, which owns a mandate and
+a research agenda instead of a delivery plan. This is the only agent you will
+ever talk to, and it is frozen once the project starts.
+
+**Teams.** Open the hiring desk. Two ways in, and both end up in the same
+editable list of teams:
+
+- **Start from a crew** — a named job with a team already on it. *Numbers you
+  can defend* is the one for our audit: an Analysis team of two Data Analysts
+  and a one-person Verification team that re-derives their numbers. Picking a
+  crew fills the teams in, names included; change anything you like.
+- **Pick roles yourself** — thirty roles in six aisles (who decides, who finds
+  out what's true, who builds, who writes it up, who checks it, who sells it),
+  with a search box and a filter for what each works on. Every role shows what
+  it does in a sentence, how deep and expensive it is, and **what it needs** —
+  a GitHub token, a market-data key — before you hire it rather than after a
+  run fails asking for one.
+
+For the audit example, by hand:
 
 | Team | Role | Who's in it | What they'll do |
 |---|---|---|---|
@@ -127,6 +150,10 @@ the evidence rules.
 
 One person per team is fine — a sole member automatically acts as their own
 lead. Use two or three per team when there's genuinely parallel work.
+
+Later, on a running project, **Add a team** opens the same desk — but it opens
+on what your roster is missing rather than on the library: *"Nobody here checks
+the numbers before you see them"*, with the two or three hires that close it.
 
 **Constitution.** These are the hard rules the company lives under — spending
 caps, how many tasks can be open at once, how long the CEO can go without

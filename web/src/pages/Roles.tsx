@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { get, post, RoleSummary } from "../api";
-import { clip } from "../ui";
+import { CATEGORIES, DOMAINS, canDo, depthOf } from "../roles";
+import { clip, downloadCsv, ExportCsv } from "../ui";
 
 interface RoleDetail {
   slug: string;
   name: string;
   is_ceo_role: boolean;
+  category: string | null;
+  domains: string[];
   version: number;
   description: string;
   system_prompt: string;
@@ -27,6 +30,8 @@ const EMPTY: RoleDetail = {
   slug: "",
   name: "",
   is_ceo_role: false,
+  category: null,
+  domains: [],
   version: 0,
   description: "",
   system_prompt: "",
@@ -61,6 +66,8 @@ export default function Roles() {
   const [roles, setRoles] = useState<RoleSummary[]>([]);
   const [editing, setEditing] = useState<RoleDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [domain, setDomain] = useState("all");
   const [saved, setSaved] = useState<string | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
 
@@ -98,6 +105,10 @@ export default function Roles() {
         slug: editing.slug,
         name: editing.name,
         is_ceo_role: editing.is_ceo_role,
+        // Carried through the save so editing a prompt never quietly
+        // un-files a role — the taxonomy is identity, not version content.
+        category: editing.category,
+        domains: editing.domains,
         description: editing.description,
         system_prompt: editing.system_prompt,
         model: editing.model,
@@ -112,6 +123,45 @@ export default function Roles() {
     } catch (err) {
       setError((err as Error).message);
     }
+  }
+
+  // Thirty roles in one flat grid was already the pain point this page had;
+  // the categories make it navigable, and search covers the case where the
+  // chairman knows the word but not the aisle.
+  const needle = query.trim().toLowerCase();
+  const visible = roles.filter((role) => {
+    if (domain !== "all" && !(role.domains ?? []).includes(domain)) return false;
+    if (!needle) return true;
+    return `${role.name} ${role.slug} ${role.description} ${role.category ?? ""}`
+      .toLowerCase().includes(needle);
+  });
+  const groups = CATEGORIES
+    .map((c) => ({ ...c, rows: visible.filter((r) => r.category === c.id) }))
+    .filter((g) => g.rows.length);
+  const loose = visible.filter(
+    (r) => !CATEGORIES.some((c) => c.id === (r.category ?? "")));
+  if (loose.length) {
+    groups.push({
+      id: "", name: "Uncategorised", rows: loose,
+      line: "Roles written here, or from before the categories",
+    });
+  }
+
+  function exportLibrary() {
+    downloadCsv(
+      "role-library.csv",
+      ["slug", "name", "category", "domains", "depth", "cost", "model", "effort",
+        "can_do", "needs", "version", "teams_running_it", "description"],
+      roles.map((r) => {
+        const d = depthOf(r.model, r.effort);
+        return [
+          r.slug, r.name, r.category ?? "uncategorised", (r.domains ?? []).join(" "),
+          d.band, d.dollars, r.model ?? "", r.effort ?? "",
+          canDo(r.tools).join(" "), (r.secret_scopes ?? []).join(" "),
+          r.latest_version, r.usage.length, r.description,
+        ];
+      }),
+    );
   }
 
   const perms = editing?.tool_permissions ?? {};
@@ -141,8 +191,41 @@ export default function Roles() {
       </p>
       {error && <div className="error">{error}</div>}
 
+      <div className="hire-tools">
+        <div className="hire-search">
+          <input type="search" value={query} onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search roles — name, what they do, or slug"
+            aria-label="Search roles" />
+        </div>
+        <div className="pills" role="group" aria-label="What a role works on">
+          <button className={domain === "all" ? "active" : ""}
+            onClick={() => setDomain("all")}>All {roles.length}</button>
+          {DOMAINS.map((d) => {
+            const n = roles.filter((r) => (r.domains ?? []).includes(d.id)).length;
+            if (!n) return null;
+            return (
+              <button key={d.id} className={domain === d.id ? "active" : ""}
+                onClick={() => setDomain(d.id)}>{d.label} {n}</button>
+            );
+          })}
+        </div>
+        <ExportCsv onClick={exportLibrary} />
+      </div>
+
+      {visible.length === 0 && (
+        <p className="help">No role matches that. Clear the search, or write a new one.</p>
+      )}
+
+      {groups.map((group) => (
+      <div key={group.id || group.name}>
+      <h2 className="zone">
+        {group.name}
+        <span className="cnt">{group.rows.length}</span>
+        <span style={{ fontFamily: "inherit", letterSpacing: 0, textTransform: "none",
+          fontWeight: 400 }}>{group.line}</span>
+      </h2>
       <div className="role-grid">
-        {roles.map((role) => {
+        {group.rows.map((role) => {
           const behind = role.usage.filter((u) => u.pinned_version < role.latest_version).length;
           const projects = new Set(role.usage.map((u) => u.project_name)).size;
           return (
@@ -198,6 +281,8 @@ export default function Roles() {
           );
         })}
       </div>
+      </div>
+      ))}
 
       {editing && (
         <form className="card" onSubmit={save} ref={formRef} style={{ marginTop: 18 }}>
@@ -219,7 +304,7 @@ export default function Roles() {
                 <input
                   value={editing.slug}
                   disabled={editing.version > 0}
-                  pattern="[a-z0-9-]{2,64}"
+                  pattern="[a-z0-9\-]{2,64}"
                   onChange={(e) => setEditing({ ...editing, slug: e.target.value })}
                   required
                 />
@@ -241,6 +326,45 @@ export default function Roles() {
                   <option value="worker">worker role</option>
                   <option value="ceo">CEO role</option>
                 </select>
+              </div>
+            </div>
+            {/* Where this role sits on the hiring desk. Changing it refiles the
+                role for everyone immediately — it lives on the role, not the
+                version, so no team goes behind and no prompt moves. */}
+            <div className="row">
+              <div>
+                <label className="field">Aisle — where a chairman finds it when hiring</label>
+                <select
+                  value={editing.category ?? ""}
+                  onChange={(e) => setEditing({
+                    ...editing, category: e.target.value || null })}
+                >
+                  <option value="">Uncategorised — shown at the bottom of the list</option>
+                  {CATEGORIES.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name} — {c.line.toLowerCase()}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="field">Works on — a filter, not a folder</label>
+                <div className="pill-row" style={{ marginTop: 8 }}>
+                  {DOMAINS.map((d) => (
+                    <label key={d.id} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                      <input
+                        type="checkbox"
+                        style={{ width: "auto" }}
+                        checked={(editing.domains ?? []).includes(d.id)}
+                        onChange={() => setEditing({
+                          ...editing,
+                          domains: (editing.domains ?? []).includes(d.id)
+                            ? editing.domains.filter((x) => x !== d.id)
+                            : [...(editing.domains ?? []), d.id],
+                        })}
+                      />
+                      {d.label}
+                    </label>
+                  ))}
+                </div>
               </div>
             </div>
             <label className="field">Description (one line, shown in pickers and on the cards above)</label>

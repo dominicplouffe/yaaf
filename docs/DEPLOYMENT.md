@@ -97,7 +97,7 @@ that in plain English.
 | *(none)* | dashboard on `127.0.0.1:8080`, reachable over an SSH tunnel |
 | `--bind 0.0.0.0` | publish it — read the warning it prints |
 | `--port 9090` | somewhere other than 8080 |
-| `--skip-roles` | do not touch the role library |
+| `--skip-roles` | do not touch the role or crew libraries |
 
 ### What it actually does
 
@@ -118,7 +118,10 @@ Worth knowing, because when something breaks you debug these, not the script:
    compose knows nothing about. Skipping it leaves agent runs on a stale image.
 6. **Schema** — waits for migrations, then checks `alembic current` really
    says `(head)`.
-7. **Role library** — loads `roles/*.json` over HTTP.
+7. **Role library** — loads `roles/*.json` over HTTP, and refiles the roles
+   already there into their hiring categories (no new versions, so no live
+   team goes behind its prompt). Then `crews/*.json`, on the same
+   only-what-is-missing contract.
 
 ### Living with it
 
@@ -490,8 +493,10 @@ yaaf/runner     leases runs, launches sandbox containers, meters everything
 yaaf/core       models, constitution schema, crypto, config, artifacts
 yaaf/cli        `yaaf` — admin/observe CLI, `yaaf experiment`, `yaaf spend-report`
 web/            the chairman's dashboard (React, served at /app)
-roles/          starter role library — general, tutor, adversary, markets,
-                game studio
+roles/          starter role library — thirty roles in six hiring aisles:
+                general, tutor, adversary, markets desk, game studio,
+                data-science bench
+crews/          fourteen pre-staffed teams the hiring desk offers
 deploy/         Dockerfiles and compose
 evals/          golden-transcript evals — regression-gate for prompt edits
 tests/          invariant suite over HTTP, chaos tests, eval checks

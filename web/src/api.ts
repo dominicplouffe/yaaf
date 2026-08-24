@@ -606,12 +606,45 @@ export interface RoleSummary {
   slug: string;
   name: string;
   is_ceo_role: boolean;
+  /** One of six disciplines, or null for a role written before the taxonomy —
+      which the pickers file under "Uncategorised" rather than hiding. */
+  category: string | null;
+  /** Which worlds it knows. A filter in the hiring desk, never a folder. */
+  domains: string[];
   latest_version: number;
   model: string | null;
   effort: string | null;
   description: string;
   tools: string[];
+  secret_scopes: string[];
   usage: RoleUsage[];
+}
+
+/** One team inside a crew — the same shape TeamSpec takes at creation, so
+    applying a crew is a copy rather than a translation. */
+export interface CrewTeam {
+  name: string;
+  role_slug: string;
+  /** Resolved against this install's library; null when the role is missing. */
+  role_name: string | null;
+  employees: string[];
+  lead?: string | null;
+  schedules?: Record<string, string>;
+}
+
+/** A named job with a team already on it. Read once, at hiring time, and
+    copied into the project's own teams — nothing points back at it after. */
+export interface CrewSummary {
+  slug: string;
+  name: string;
+  outcome: string;
+  ceo_role_slug: string;
+  domains: string[];
+  source: string | null;
+  teams: CrewTeam[];
+  /** Roles this crew hires that the library does not have. Kept visible by
+      name rather than dropping the crew, the same courtesy a setup file gets. */
+  missing_role_slugs: string[];
 }
 
 /** A role definition as it travels inside a setup file — the POST /admin/roles body. */
@@ -619,6 +652,8 @@ export interface BundleRole {
   slug: string;
   name: string;
   is_ceo_role: boolean;
+  category?: string | null;
+  domains?: string[];
   description: string;
   system_prompt: string;
   model: string;
