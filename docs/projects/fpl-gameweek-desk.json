@@ -49,7 +49,7 @@
       "ceo_heartbeat_always": false,
       "ceo_daily_at": "08:00",
       "chairman_report_interval_hours": 12,
-      "chairman_report_window_local": "06:00-22:00",
+      "chairman_report_window_local": "05:00-22:00",
       "timezone": "America/Toronto",
       "cycle_frequency": "weekly",
       "cycle_day": 1,

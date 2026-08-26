@@ -332,7 +332,7 @@ amendment is a written reason and one click.
 | `mode` | `operate` | A Deliver that starts again on a rhythm. The gameweek is the rhythm. |
 | `cycle_frequency` / `cycle_day` | `weekly` / `1` | Tuesday roll: the last GW has settled, the next deadline is days out. |
 | `chairman_report_interval_hours` | 12 | Room for a Thursday memo *and* a Saturday-morning amendment when team news breaks late. |
-| `chairman_report_window_local` | `06:00-22:00` | A Saturday 11:30 UK deadline is 06:30 in Toronto. The window has to open before it. |
+| `chairman_report_window_local` | `05:00-22:00` | The earliest Saturday deadline — 90 minutes before a 12:30 UK kickoff — is 11:00 UK, which is **06:00 in Toronto** in both BST and GMT. A window opening at 06:00 opens on the deadline itself, so it starts at 05:00 to leave room for a pre-deadline amendment. The wizard's `09:00` default would miss that deadline entirely. |
 | `timezone` | `America/Toronto` | One zone serves the reporting window, the daily wake and the cycle roll. **Change it if it isn't yours** — IANA names only. |
 | `memory_cap_project` / `_team` | 120 / 80 | The chip calendar, the set-piece hierarchy and per-player judgments accumulate for 37 more weeks. |
 | `controlled_domains` | *(empty)* | You control no football data source, so every source the agents cite is legitimately external. |
@@ -350,7 +350,7 @@ amendment is a written reason and one click.
      so picking *Supervised* silently reverts the plan/scope/commitment/verdict settings in
      §7. (Autonomous also hands `capability_authority` to the CEO; if you would rather keep
      credential-scoping yourself, set it back in Settings → Rules in force afterwards.)
-   - **Hours between reports → 12**, **window → `06:00-22:00`**, **timezone → yours.**
+   - **Hours between reports → 12**, **window → `05:00-22:00`**, **timezone → yours.**
    - **Do not click a "How does it run?" preset after loading the file.** Those presets
      overwrite exactly the four knobs that matter here — queue ceiling, drought, monthly cap
      and approval threshold — and *Balanced* would put your cap back to $1000.
