@@ -9,6 +9,14 @@ This is a full yaaf project definition: six roles, a goal, a constitution, and t
 wiring. Everything here is copy-pasteable. The agents **recommend only** — they read your
 squad, they never touch it. You execute every move yourself in the FPL app.
 
+> **Already mid-season?** [`fpl-gameweek-desk.md`](fpl-gameweek-desk.md) is the in-season
+> companion — a weekly Operate project that takes a pasted squad brief and returns one memo
+> per gameweek: transfer or roll, chip or none, captain, vice, XI and bench order, then
+> scores its own memo after the gameweek settles. It ships as a ready-to-upload
+> [`fpl-gameweek-desk.json`](fpl-gameweek-desk.json) bundle and adds a dedicated Chip &
+> Captaincy strategist. Use this document for the opening squad, that one for the other
+> thirty-seven weeks.
+
 ---
 
 ## The clock

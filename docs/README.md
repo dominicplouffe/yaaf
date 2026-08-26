@@ -33,5 +33,5 @@ Start here if you're new; skim the table if you're not.
 |---|---|
 | [PLAN.md](PLAN.md) | The thesis, the kill conditions, what is built, and what is deliberately not. |
 | [M2_PROTOCOL.md](M2_PROTOCOL.md) | The org-vs-single-agent experiment: arms, controls, blind judging, pre-registered decision rule. |
-| [projects/](projects/) | Full worked project definitions from real use, longer than an example. |
+| [projects/](projects/) | Full worked project definitions from real use, longer than an example — including the two Fantasy Premier League companies: [fpl-manager](projects/fpl-manager.md) picks the opening squad, [fpl-gameweek-desk](projects/fpl-gameweek-desk.md) runs the other thirty-seven gameweeks and ships as an uploadable bundle. |
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | How to work on yaaf itself. |
