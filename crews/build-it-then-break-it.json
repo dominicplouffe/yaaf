@@ -1,0 +1,28 @@
+{
+  "slug": "build-it-then-break-it",
+  "name": "Build it, then break it",
+  "outcome": "Something shipped, plus a real attempt to break it that failed.",
+  "ceo_role_slug": "ceo",
+  "domains": [
+    "general"
+  ],
+  "source": "examples/06-a-red-team",
+  "teams": [
+    {
+      "role_slug": "engineer",
+      "name": "Build",
+      "employees": [
+        "Mika",
+        "Dev"
+      ],
+      "lead": "Mika"
+    },
+    {
+      "role_slug": "adversary",
+      "name": "Red Team",
+      "employees": [
+        "Sasha"
+      ]
+    }
+  ]
+}

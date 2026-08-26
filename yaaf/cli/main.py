@@ -123,9 +123,60 @@ def seed_roles(
         for path in sorted(directory.glob("*.json")):
             body = json.loads(path.read_text())
             if only_missing and body.get("slug") in have:
-                typer.echo(f"{path.name}: already in the library, left alone")
+                # Left alone means the prompt is left alone. Category and
+                # domains live on the role rather than the version precisely
+                # so an install seeded before the taxonomy can be refiled
+                # without stamping a version and putting live teams behind.
+                taxonomy = {
+                    "name": body.get("name"),
+                    "category": body.get("category"),
+                    "domains": body.get("domains", []),
+                }
+                response = client.patch(
+                    f"/admin/roles/{body['slug']}", json=taxonomy)
+                filed = "refiled" if response.status_code < 400 else "unchanged"
+                typer.echo(f"{path.name}: already in the library, prompt left "
+                           f"alone, {filed} as {body.get('category') or 'uncategorised'}")
                 continue
             response = client.post("/admin/roles", json=body)
+            typer.echo(f"{path.name}: {response.status_code} {response.text[:120]}")
+
+
+@app.command()
+def seed_crews(
+    directory: Path = typer.Argument(Path("crews")),
+    only_missing: bool = typer.Option(
+        False, "--only-missing",
+        help="Skip crews the library already has, by slug. What you want after an "
+             "update adds crews to the checkout without overwriting edited ones."),
+) -> None:
+    """Load every crews/*.json into the crew library.
+
+    A crew is a named job with a team already on it — the answer to "who do I
+    actually need?", which a categorised role list still leaves to the
+    chairman. Crews are not versioned: one is read at hiring time and copied
+    into the project's own teams, so re-seeding an edited crew can never reach
+    a company that already started.
+
+    Run it after `seed-roles` — a crew hiring a role the library lacks is
+    accepted and listed with that slug marked missing, but the picker is more
+    use when everything resolves.
+    """
+    with _client() as client:
+        have: set[str] = set()
+        if only_missing:
+            response = client.get("/admin/crews")
+            if response.status_code >= 400:
+                typer.echo(f"could not read the crew library: {response.status_code} "
+                           f"{response.text[:120]}")
+                raise typer.Exit(1)
+            have = {crew["slug"] for crew in response.json()}
+        for path in sorted(directory.glob("*.json")):
+            body = json.loads(path.read_text())
+            if only_missing and body.get("slug") in have:
+                typer.echo(f"{path.name}: already in the library, left alone")
+                continue
+            response = client.post("/admin/crews", json=body)
             typer.echo(f"{path.name}: {response.status_code} {response.text[:120]}")
 
 

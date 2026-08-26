@@ -44,6 +44,7 @@ from yaaf.core.models import (
     ChannelKind,
     Commitment,
     CommitmentStatus,
+    Crew,
     Cycle,
     Evidence,
     Hypothesis,
@@ -115,10 +116,29 @@ def create_user(body: UserIn, session: Session = Depends(db)) -> dict:
     return {"id": user.id, "existing": False}
 
 
+# The six aisles a role can be filed under. Discipline, not domain: a
+# Compliance Reviewer is a challenge role that happens to know markets, and
+# a single tree would file it in one place and send the chairman hunting in
+# the other. Domain lives in `domains` instead, as a filter.
+ROLE_CATEGORIES = (
+    "leadership",   # decides what happens next
+    "research",     # finds out what's true
+    "build",        # makes it work
+    "content",      # makes it worth reading, using, learning
+    "challenge",    # tries to prove it wrong before the world does
+    "growth",       # finds buyers, and keeps them
+)
+ROLE_DOMAINS = ("general", "markets", "data", "games", "education")
+
+
 class RoleIn(BaseModel):
     slug: str = Field(pattern="^[a-z0-9-]{2,64}$")
     name: str
     is_ceo_role: bool = False
+    # Absent is legal: a role written before the taxonomy, or by a chairman
+    # who did not care, is "uncategorised" and still appears in every picker.
+    category: str | None = None
+    domains: list[str] = Field(default_factory=list)
     description: str
     system_prompt: str
     model: str = "claude-sonnet-5"
@@ -139,15 +159,35 @@ def create_role(body: RoleIn, session: Session = Depends(db)) -> dict:
             detail="roles do not own MCP servers — add a Data Source on the "
                    "project (Settings → Data sources) and assign it to this role",
         )
+    if body.category is not None and body.category not in ROLE_CATEGORIES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"category must be one of {', '.join(ROLE_CATEGORIES)} — "
+                   f"or absent, which files the role under Uncategorised",
+        )
+    unknown_domains = sorted(set(body.domains) - set(ROLE_DOMAINS))
+    if unknown_domains:
+        raise HTTPException(
+            status_code=422,
+            detail=f"unknown domain {', '.join(unknown_domains)} — "
+                   f"pick from {', '.join(ROLE_DOMAINS)}",
+        )
     role = session.execute(select(Role).where(Role.slug == body.slug)).scalar_one_or_none()
     if role is None:
         role = Role(
-            id=ids.new_id(ids.ROLE), slug=body.slug, name=body.name, is_ceo_role=body.is_ceo_role
+            id=ids.new_id(ids.ROLE), slug=body.slug, name=body.name,
+            is_ceo_role=body.is_ceo_role,
+            category=body.category, domains=body.domains,
         )
         session.add(role)
         session.flush()
         version = 1
     else:
+        # A re-seed is how an edited taxonomy reaches a running install, so
+        # identity fields follow the file rather than sticking at v1's values.
+        role.name = body.name
+        role.category = body.category
+        role.domains = body.domains
         latest = session.execute(
             select(RoleVersion)
             .where(RoleVersion.role_id == role.id)
@@ -185,6 +225,8 @@ def get_role(slug: str, session: Session = Depends(db)) -> dict:
         "slug": role.slug,
         "name": role.name,
         "is_ceo_role": role.is_ceo_role,
+        "category": role.category,
+        "domains": role.domains or [],
         "version": latest.version,
         "description": latest.description,
         "system_prompt": latest.system_prompt,
@@ -192,6 +234,53 @@ def get_role(slug: str, session: Session = Depends(db)) -> dict:
         "effort": latest.effort,
         "tool_permissions": latest.tool_permissions,
         "secret_scopes": latest.secret_scopes,
+    }
+
+
+class RoleTaxonomyIn(BaseModel):
+    """The identity fields only — deliberately not the prompt."""
+    name: str | None = None
+    category: str | None = None
+    domains: list[str] | None = None
+
+
+@router.patch("/roles/{slug}")
+def update_role_taxonomy(
+    slug: str, body: RoleTaxonomyIn, session: Session = Depends(db)
+) -> dict:
+    """Refile a role without stamping a new version.
+
+    An install seeded before the taxonomy landed has all thirty roles and a
+    category on none of them, and POSTing the files again to fix that would
+    stamp thirty new versions — putting every running team behind its role and
+    lighting up the drift warning for a change that touches no prompt. These
+    fields live on `roles` precisely so they can move on their own, and this
+    is the endpoint that moves them. What an agent runs is untouched.
+    """
+    role = session.execute(select(Role).where(Role.slug == slug)).scalar_one_or_none()
+    if role is None:
+        raise HTTPException(status_code=404, detail="unknown role")
+    if body.category is not None and body.category not in ROLE_CATEGORIES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"category must be one of {', '.join(ROLE_CATEGORIES)}")
+    if body.domains is not None:
+        unknown = sorted(set(body.domains) - set(ROLE_DOMAINS))
+        if unknown:
+            raise HTTPException(
+                status_code=422,
+                detail=f"unknown domain {', '.join(unknown)} — "
+                       f"pick from {', '.join(ROLE_DOMAINS)}")
+        role.domains = body.domains
+    if body.name is not None:
+        role.name = body.name
+    if body.category is not None:
+        role.category = body.category
+    return {
+        "slug": role.slug,
+        "name": role.name,
+        "category": role.category,
+        "domains": role.domains or [],
     }
 
 
@@ -229,6 +318,8 @@ def list_roles(session: Session = Depends(db)) -> list[dict]:
                 "slug": role.slug,
                 "name": role.name,
                 "is_ceo_role": role.is_ceo_role,
+                "category": role.category,
+                "domains": role.domains or [],
                 "latest_version": latest.version if latest else 0,
                 "model": latest.model if latest else None,
                 "effort": latest.effort if latest else None,
@@ -237,9 +328,109 @@ def list_roles(session: Session = Depends(db)) -> list[dict]:
                     k for k, v in (latest.tool_permissions or {}).items()
                     if v is True
                 ) if latest else [],
+                # What the role cannot work without. The picker shows this at
+                # choosing time so a missing key stops being something the
+                # chairman discovers from a run that already failed.
+                "secret_scopes": (latest.secret_scopes or []) if latest else [],
                 "usage": usage,
             }
         )
+    return out
+
+
+# ── crews ───────────────────────────────────────────────────────────────────────
+
+
+class CrewTeamIn(BaseModel):
+    name: str
+    role_slug: str
+    employees: list[str] = Field(default_factory=list)
+    lead: str | None = None
+    schedules: dict[str, str] = Field(default_factory=dict)
+
+
+class CrewIn(BaseModel):
+    slug: str = Field(pattern="^[a-z0-9-]{2,64}$")
+    name: str
+    outcome: str
+    ceo_role_slug: str = "ceo"
+    domains: list[str] = Field(default_factory=list)
+    source: str | None = None
+    teams: list[CrewTeamIn] = Field(default_factory=list)
+
+
+@router.post("/crews")
+def create_crew(body: CrewIn, session: Session = Depends(db)) -> dict:
+    """Upsert a crew by slug. Unlike a role there are no versions: a crew is
+    read once, at hiring time, and copied into the project's own teams — so
+    editing one can never reach a company that already started."""
+    unknown_domains = sorted(set(body.domains) - set(ROLE_DOMAINS))
+    if unknown_domains:
+        raise HTTPException(
+            status_code=422,
+            detail=f"unknown domain {', '.join(unknown_domains)} — "
+                   f"pick from {', '.join(ROLE_DOMAINS)}")
+    crew = session.execute(
+        select(Crew).where(Crew.slug == body.slug)).scalar_one_or_none()
+    if crew is None:
+        crew = Crew(id=ids.new_id(ids.CREW), slug=body.slug)
+        session.add(crew)
+    crew.name = body.name
+    crew.outcome = body.outcome
+    crew.ceo_role_slug = body.ceo_role_slug
+    crew.domains = body.domains
+    crew.source = body.source
+    crew.teams = [t.model_dump() for t in body.teams]
+    session.flush()
+    return {"crew_id": crew.id, "slug": crew.slug}
+
+
+@router.get("/crews")
+def list_crews(session: Session = Depends(db)) -> list[dict]:
+    """Every crew, with the roles it hires resolved against this install's
+    library. A crew naming a role the library lacks is still returned, marked
+    — the same courtesy a setup file gets, so the ask stays visible by name
+    instead of the crew silently vanishing from the picker."""
+    library = {
+        role.slug: role
+        for role in session.execute(select(Role)).scalars()
+    }
+    out = []
+    # Not alphabetical: eleven of these are the examples, and examples/README
+    # orders them "in the order worth doing them" — which puts the one-team
+    # starter first and the four-team desks last. Alphabetical put every crew
+    # whose name begins with "A" in front of the ones a new chairman wants.
+    crews = sorted(
+        session.execute(select(Crew)).scalars(),
+        key=lambda c: (0, c.source or "") if (c.source or "").startswith("examples/")
+        else (1, c.name),
+    )
+    for crew in crews:
+        teams = list(crew.teams or [])
+        missing = sorted({
+            slug for slug in
+            [t.get("role_slug") for t in teams] + [crew.ceo_role_slug]
+            if slug and slug not in library
+        })
+        out.append({
+            "slug": crew.slug,
+            "name": crew.name,
+            "outcome": crew.outcome,
+            "ceo_role_slug": crew.ceo_role_slug,
+            "domains": crew.domains or [],
+            "source": crew.source,
+            "teams": [
+                {
+                    **team,
+                    "role_name": (
+                        library[team["role_slug"]].name
+                        if team.get("role_slug") in library else None
+                    ),
+                }
+                for team in teams
+            ],
+            "missing_role_slugs": missing,
+        })
     return out
 
 
@@ -512,6 +703,8 @@ def export_project(project_id: str, include_values: bool = False,
             "slug": role.slug,
             "name": role.name,
             "is_ceo_role": role.is_ceo_role,
+            "category": role.category,
+            "domains": role.domains or [],
             "description": version.description,
             "system_prompt": version.system_prompt,
             "model": version.model,

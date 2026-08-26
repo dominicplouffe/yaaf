@@ -1,0 +1,28 @@
+{
+  "slug": "read-the-filings",
+  "name": "Read the filings",
+  "outcome": "A sourced read on a company's filings, checked before it reaches you.",
+  "ceo_role_slug": "ceo",
+  "domains": [
+    "markets"
+  ],
+  "source": "examples/10-read-the-filings",
+  "teams": [
+    {
+      "role_slug": "equity-analyst",
+      "name": "Research",
+      "employees": [
+        "Maya",
+        "Tobias"
+      ],
+      "lead": "Maya"
+    },
+    {
+      "role_slug": "compliance-officer",
+      "name": "Review",
+      "employees": [
+        "Owen"
+      ]
+    }
+  ]
+}

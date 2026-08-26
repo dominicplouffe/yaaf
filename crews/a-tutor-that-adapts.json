@@ -1,0 +1,21 @@
+{
+  "slug": "a-tutor-that-adapts",
+  "name": "A tutor that adapts",
+  "outcome": "A curriculum that changes based on what you actually got wrong.",
+  "ceo_role_slug": "ceo",
+  "domains": [
+    "education"
+  ],
+  "source": "examples/05-a-tutor-that-adapts",
+  "teams": [
+    {
+      "role_slug": "tutor",
+      "name": "Teaching",
+      "employees": [
+        "Iris",
+        "Nils"
+      ],
+      "lead": "Iris"
+    }
+  ]
+}

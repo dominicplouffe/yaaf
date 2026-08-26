@@ -467,6 +467,14 @@ class Role(Base):
     slug: Mapped[str] = mapped_column(String(64), unique=True)
     name: Mapped[str] = mapped_column(String(120))
     is_ceo_role: Mapped[bool] = mapped_column(Boolean, default=False)
+    # How the chairman finds this role when hiring. Identity, like
+    # is_ceo_role — deliberately NOT on RoleVersion: editing a prompt must
+    # never silently refile a role, and a pinned team must never show a
+    # category its role has since moved out of. Null is legal and means
+    # "uncategorised", which the pickers show rather than hide.
+    category: Mapped[str | None] = mapped_column(String(32))
+    # Which worlds it knows: ["markets", "data"]. A filter, never a folder.
+    domains: Mapped[list] = mapped_column(JSONVariant, default=list)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 
@@ -484,6 +492,38 @@ class RoleVersion(Base):
     # {"bash": true, "web": true, "github": false}
     tool_permissions: Mapped[dict] = mapped_column(JSONVariant, default=dict)
     secret_scopes: Mapped[list] = mapped_column(JSONVariant, default=list)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class Crew(Base):
+    """A named job with a team already on it.
+
+    Categories make thirty roles findable; they do nothing about the harder
+    question, which is who you actually need. A crew answers that by starting
+    from the work: pick "Read the filings" and the team list fills in, fully
+    editable. It is a starting point the chairman edits, never a black box —
+    nothing here is referenced again once the project exists.
+    """
+
+    __tablename__ = "crews"
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    slug: Mapped[str] = mapped_column(String(64), unique=True)
+    name: Mapped[str] = mapped_column(String(120))
+    # One sentence, in the chairman's language: what exists at the end.
+    outcome: Mapped[str] = mapped_column(Text)
+    # Which CEO runs it. A markets desk wants the CIO, not the generic CEO —
+    # which is the whole reason the chairman now gets to choose one at all.
+    ceo_role_slug: Mapped[str] = mapped_column(String(64), default="ceo")
+    domains: Mapped[list] = mapped_column(JSONVariant, default=list)
+    # [{"name": "Research", "role_slug": "equity-analyst",
+    #   "employees": ["Maya", "Tobias"], "lead": "Maya",
+    #   "schedules": {"Maya": "07:00"}}] — the TeamSpec shape the create-project
+    # body already takes, so applying a crew is a straight copy.
+    teams: Mapped[list] = mapped_column(JSONVariant, default=list)
+    # Where it came from: "examples/10-read-the-filings" or "authored". Shown
+    # so a chairman can go read the worked example behind the crew.
+    source: Mapped[str | None] = mapped_column(String(120))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 

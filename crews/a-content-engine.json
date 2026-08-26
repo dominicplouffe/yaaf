@@ -1,0 +1,33 @@
+{
+  "slug": "a-content-engine",
+  "name": "A content engine",
+  "outcome": "Published posts aimed at real search intent, measured by response.",
+  "ceo_role_slug": "ceo",
+  "domains": [
+    "general"
+  ],
+  "source": "authored",
+  "teams": [
+    {
+      "name": "Research",
+      "role_slug": "researcher",
+      "employees": [
+        "Rey"
+      ]
+    },
+    {
+      "name": "Editorial",
+      "role_slug": "blog-writer",
+      "employees": [
+        "Ada"
+      ]
+    },
+    {
+      "name": "Growth",
+      "role_slug": "marketer",
+      "employees": [
+        "Sol"
+      ]
+    }
+  ]
+}

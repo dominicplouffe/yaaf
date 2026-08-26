@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { get, McpServerEntry, patch, post, ProjectBundle, RoleSummary } from "../api";
+import { CrewSummary, get, McpServerEntry, patch, post, ProjectBundle, RoleSummary } from "../api";
 import {
   BLANK_DATA_SOURCE,
   DataSourceDraft,
@@ -13,6 +13,7 @@ import {
   savedName,
   sourceReady,
 } from "../datasource";
+import { CeoPicker, HirePanel, needsOf, roughMonthly } from "../roles";
 import { SecretInput } from "../ui";
 
 interface TeamDraft {
@@ -20,6 +21,10 @@ interface TeamDraft {
   name: string;
   employees: string; // comma-separated names
   lead: string;
+  // Daily wake times per employee, carried in from a crew. "An overnight crew"
+  // is nothing but its schedule, so dropping this on the way to submit would
+  // hand the chairman a day-shift team wearing the wrong name.
+  schedules?: Record<string, string>;
 }
 
 interface CredentialDraft {
@@ -92,7 +97,47 @@ const RUN_PRESETS = [
 
 // Remembered across projects — there is one chairman on this install, and
 // retyping your own email every time was pure friction.
+/** The four decisions, and the one line each is answering. Shown in the rail
+    so the chairman knows how much is left before they start typing. */
+const STEPS = [
+  { n: 1, name: "The job", detail: "What this company is for" },
+  { n: 2, name: "The company", detail: "Who does the work" },
+  { n: 3, name: "The money & the rules", detail: "What it may spend, how it behaves" },
+  { n: 4, name: "Review & create", detail: "What you're signing" },
+];
+
+/** Does the brief say the four things a CEO needs to plan from it?
+
+    Straight out of CREATING_A_PROJECT.md, which spends twenty lines on how to
+    write a goal — advice that until now lived only in the docs while the form
+    offered a 90px box and no help at all. Heuristics, deliberately loose:
+    this nudges, it never blocks, and a goal with none of them ticked still
+    creates a project. */
+function briefChecks(goal: string): { label: string; ok: boolean }[] {
+  const g = goal.toLowerCase();
+  return [
+    {
+      label: "Names an outcome, not an activity",
+      ok: /\b(produce|deliver|ship|build|audit|answer|find|publish|reach|win)\w*\b/.test(g),
+    },
+    {
+      label: "Names a deliverable and who it's for",
+      ok: /\b(deck|report|brief|memo|post|article|dashboard|game|curriculum|audit|analysis|newsletter|proposal|site|app)\w*\b/.test(g),
+    },
+    {
+      label: "Gives a deadline",
+      ok: /\b(by|before|within|each|every)\b/.test(g)
+        && /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|\d{4}-\d{2}-\d{2}|\d{1,2}(st|nd|rd|th)|day|week|month|quarter)\w*\b/.test(g),
+    },
+    {
+      label: "Says where the inputs come from",
+      ok: /\b(data source|from the|provided|connected|attached|account|repo|repository|export|spreadsheet|inbox|api)\w*\b/.test(g),
+    },
+  ];
+}
+
 const CHAIRMAN_KEY = "yaaf.chairman";
+const ONE_PAGE_KEY = "yaaf.newproject.onepage";
 
 export default function NewProject() {
   const navigate = useNavigate();
@@ -144,6 +189,32 @@ export default function NewProject() {
   const [timezone, setTimezone] = useState(
     () => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
   const [startNow, setStartNow] = useState(true);
+  // Which CEO runs it. Was never asked: the form took whichever CEO role the
+  // database returned first, so an install carrying both `ceo` and `cio` could
+  // hand a markets desk the generic CEO — the one agent the chairman ever
+  // speaks to. Empty until the library lands, then defaulted below.
+  const [ceoSlug, setCeoSlug] = useState("");
+  // Which team row is choosing a role, or null. One panel, reused per row.
+  const [hireOpen, setHireOpen] = useState<number | null>(null);
+  const [crews, setCrews] = useState<CrewSummary[]>([]);
+
+  // Four steps, because there are four decisions here that need the
+  // chairman's judgement: what the company is for, who does the work, what it
+  // may spend, and whether to sign it. Everything else is derived, filled by a
+  // preset, or something this form already says you can do later in Settings.
+  //
+  // `onePage` renders all four stacked — the same fields, the same state, the
+  // same submit. It exists because a wizard's one real cost is that you cannot
+  // see everything at once, and because someone reviewing a loaded setup file
+  // wants the whole thing in front of them.
+  const [step, setStep] = useState(1);
+  const [onePage, setOnePage] = useState(
+    () => localStorage.getItem(ONE_PAGE_KEY) === "yes");
+  function setView(one: boolean) {
+    setOnePage(one);
+    localStorage.setItem(ONE_PAGE_KEY, one ? "yes" : "no");
+  }
+  const on = (n: number) => onePage || step === n;
 
   // A setup file downloaded from a project's Settings. Loading one prefills
   // the whole form; the file's full constitution/config and any role
@@ -158,8 +229,22 @@ export default function NewProject() {
   } | null>(null);
 
   useEffect(() => {
+    // A library with no crews is normal before `yaaf seed-crews` has run, and
+    // must never take the role list down with it.
+    get<CrewSummary[]>("/admin/crews").then(setCrews).catch(() => {});
     get<RoleSummary[]>("/admin/roles")
-      .then((rows) => { setRoles(rows); setRolesLoaded(true); })
+      .then((rows) => {
+        setRoles(rows);
+        setRolesLoaded(true);
+        // Default, not a silent decision: `ceo` if it exists, else the first
+        // CEO role the library has. The chairman sees which one is selected
+        // and can change it.
+        setCeoSlug((current) => {
+          if (current) return current;
+          const ceos = rows.filter((r) => r.is_ceo_role);
+          return ceos.find((r) => r.slug === "ceo")?.slug ?? ceos[0]?.slug ?? "";
+        });
+      })
       .catch((e: Error) => setError(e.message));
     // Existing slugs, so the auto-picked one can dedupe without a failed submit.
     get<{ slug: string }[]>("/observe/projects")
@@ -197,7 +282,6 @@ export default function NewProject() {
     setReportHours(knobs.report);
   }
 
-  const workerRoles = roles.filter((r) => !r.is_ceo_role);
   const ceoRole = roles.find((r) => r.is_ceo_role);
 
   function setTeam(i: number, patch: Partial<TeamDraft>) {
@@ -206,6 +290,58 @@ export default function NewProject() {
 
   // Roles actually used by the drafted teams — the only sensible grant targets.
   const usedRoleSlugs = [...new Set(teams.map((t) => t.role_slug).filter(Boolean))];
+  const hiredRoles = usedRoleSlugs
+    .map((slug) => roles.find((r) => r.slug === slug))
+    .filter(Boolean) as RoleSummary[];
+
+  /** The keys this staffing actually needs, gathered from the roles hired.
+
+      Turned the right way round: the form used to offer a blank credential and
+      ask which roles should receive it, which meant knowing what a Market Data
+      Engineer wants before you had one. Every role has always declared its
+      secret_scopes; this reads them and names the key, so a setup blocker
+      appears while you are choosing rather than at the 4xx after submit. */
+  const requiredScopes = (() => {
+    const byScope = new Map<string, { scope: string; words: string; roles: string[] }>();
+    for (const role of hiredRoles) {
+      for (const need of needsOf(role.secret_scopes ?? [])) {
+        const row = byScope.get(need.scope)
+          ?? { scope: need.scope, words: need.words, roles: [] };
+        row.roles.push(role.name);
+        byScope.set(need.scope, row);
+      }
+    }
+    return [...byScope.values()];
+  })();
+
+  /** A step with something wrong on it gets a dot in the rail, rather than the
+      chairman finding out at submit after twenty-eight fields. */
+  function problemsOn(n: number): string | null {
+    if (n === 1) {
+      if (!name.trim()) return "This company needs a name";
+      if (goal.trim().length < 10) return "The CEO plans from the goal — it cannot be empty";
+      return null;
+    }
+    if (n === 2) {
+      if (missingRoleSlugs.length) {
+        return `This install's library has no ${missingRoleSlugs.join(", ")}`;
+      }
+      if (!ceoSlug && !bundle?.project.ceo_role_slug) return "Nobody is running this company";
+      const staffed = teams.filter((t) => t.role_slug && t.name.trim());
+      if (!staffed.length) return "Nobody is doing the work";
+      if (!solo && staffed.some((t) => !t.employees.trim())) {
+        return "A team with no employees does no work";
+      }
+      return null;
+    }
+    if (n === 3) {
+      if (!billingKey.trim() && runtime !== "mock") {
+        return "Without a billing key the project is created but cannot start";
+      }
+      return null;
+    }
+    return null;
+  }
 
   function setCredential(i: number, patch: Partial<CredentialDraft>) {
     setCredentials((prev) => prev.map((c, j) => (j === i ? { ...c, ...patch } : c)));
@@ -266,6 +402,11 @@ export default function NewProject() {
       const billing = parsed.secrets.find((s) =>
         p.billing_secret_name ? s.name === p.billing_secret_name : s.kind === "billing");
       if (billing?.value) setBillingKey(billing.value);
+      // The file's whole job here is review-and-supply-keys, so land on the
+      // step that shows the company it describes rather than the first field
+      // of eleven sections it already filled.
+      if (p.ceo_role_slug) setCeoSlug(p.ceo_role_slug);
+      setStep(4);
       setTeams(
         p.teams.length
           ? p.teams.map((t) => ({
@@ -315,9 +456,12 @@ export default function NewProject() {
     ? [...new Set([...teams.map((t) => t.role_slug), bundleCeoSlug].filter((s) => s && !known(s)))]
     : [];
 
+  // Every role, not just the worker ones: the review step names the CEO
+  // through here too, and a CEO role searched only among workers never
+  // resolves — which showed the chairman "cio" where the name should be.
   function roleLabel(slug: string): string {
     return (
-      workerRoles.find((r) => r.slug === slug)?.name ??
+      roles.find((r) => r.slug === slug)?.name ??
       newBundleRoles.find((r) => r.slug === slug)?.name ??
       slug
     );
@@ -438,8 +582,10 @@ export default function NewProject() {
         }
         setRoles(await get<RoleSummary[]>("/admin/roles"));
       }
-      const ceoSlug = bundle?.project.ceo_role_slug ?? ceoRole?.slug;
-      if (!ceoSlug) throw new Error("No CEO role in the library — create one on the Roles page first.");
+      // The file's choice wins when one was loaded — its teams were designed
+      // around that CEO — otherwise the chairman's.
+      const chosenCeo = bundle?.project.ceo_role_slug ?? ceoSlug ?? ceoRole?.slug;
+      if (!chosenCeo) throw new Error("No CEO role in the library — create one on the Roles page first.");
       await post("/admin/users", {
         email: chairmanEmail.trim(),
         display_name: chairmanName.trim() || chairmanEmail.trim(),
@@ -477,7 +623,7 @@ export default function NewProject() {
         },
         integrations: { ...(bundle?.project.integrations ?? {}), runtime },
         ...(bundle?.project.github_repo ? { github_repo: bundle.project.github_repo } : {}),
-        ceo_role_slug: ceoSlug,
+        ceo_role_slug: chosenCeo,
         ceo_name: bundle?.project.ceo_name ?? "CEO",
         ...(bundle?.project.ceo_daily_at ? { ceo_daily_at: bundle.project.ceo_daily_at } : {}),
         ...(bundle?.project.ceo_model_override
@@ -494,7 +640,10 @@ export default function NewProject() {
             const keep = (settings?: Record<string, string>) =>
               Object.fromEntries(
                 Object.entries(settings ?? {}).filter(([n]) => employees.includes(n)));
-            const schedules = keep(fromBundle?.schedules);
+            // A crew's wakes and a file's wakes reach here the same way; the
+            // file wins when both are present, because loading one is the more
+            // deliberate act.
+            const schedules = keep({ ...t.schedules, ...fromBundle?.schedules });
             const modelOverrides = keep(fromBundle?.model_overrides);
             return {
               role_slug: t.role_slug,
@@ -537,7 +686,7 @@ export default function NewProject() {
             project_id: created.id,
             name: cred.name.trim(),
             value: cred.value,
-            role_scopes: cred.grants.filter((g) => usedRoleSlugs.includes(g) || g === ceoSlug),
+            role_scopes: cred.grants.filter((g) => usedRoleSlugs.includes(g) || g === chosenCeo),
             kind: "service",
           });
         }
@@ -664,13 +813,44 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
 
   return (
     <>
-      <h1>New project</h1>
-      <p className="subtitle">
-        These are the limits your agents will run under. Set them here, and change any of them
-        later in Settings → Rules in force — every change is recorded and takes effect at once.
-      </p>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 14, flexWrap: "wrap" }}>
+        <div style={{ flex: 1, minWidth: 260 }}>
+          <h1>New project</h1>
+          <p className="subtitle" style={{ marginBottom: 0 }}>
+            A small company that works while you're away. You can change everything
+            afterwards except its shape.
+          </p>
+        </div>
+        {/* The wizard is a view, not a replacement: same state, same submit. */}
+        <div className="viewtog" role="group" aria-label="View">
+          <button type="button" className={onePage ? "" : "on"}
+            onClick={() => setView(false)}>Guided</button>
+          <button type="button" className={onePage ? "on" : ""}
+            onClick={() => setView(true)}>All on one page</button>
+        </div>
+      </div>
       {error && <div className="error">{error}</div>}
-      <form onSubmit={submit} style={{ maxWidth: 760 }}>
+      <div className="wiz">
+        <nav className={`steprail${onePage ? " flat" : ""}`} aria-label="Steps">
+          {STEPS.map((s) => {
+            const problems = problemsOn(s.n);
+            return (
+              <button type="button" key={s.n} disabled={onePage}
+                className={(!onePage && step === s.n ? "on " : "")
+                  + (!onePage && s.n < step ? "done" : "")}
+                aria-current={!onePage && step === s.n}
+                onClick={() => setStep(s.n)}>
+                <span className="sn">
+                  <i>{!onePage && s.n < step ? "✓" : s.n}</i>{s.name}
+                  {problems && <span className="sw" title={problems}>●</span>}
+                </span>
+                <span className="sd">{s.detail}</span>
+              </button>
+            );
+          })}
+        </nav>
+      <form onSubmit={submit} className="stepbody">
+        {on(1) && <>
         <div className="card" style={{ marginBottom: 10 }}>
           <label className="field">Start from a setup file (optional)</label>
           <p className="help" style={{ marginTop: 0 }}>
@@ -695,6 +875,86 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             </p>
           )}
         </div>
+        <div className="card">
+          <div className="row">
+            <div>
+              <label className="field">Name</label>
+              <input
+                value={name}
+                onChange={(e) => {
+                  setName(e.target.value);
+                  if (!slugEdited && !bundle) setSlug(dedupedSlug(slugify(e.target.value)));
+                }}
+                required
+              />
+            </div>
+            <div>
+              <label className="field">Slug — picked for you from the name</label>
+              <input
+                value={slug}
+                onChange={(e) => { setSlug(e.target.value); setSlugEdited(true); }}
+                pattern="[a-z0-9\-]{2,64}"
+                required
+              />
+              <div className="help" style={{ marginTop: 4 }}>
+                a-z, 0-9, dashes. Deduped against existing projects; edit it if you care.
+              </div>
+            </div>
+          </div>
+          <div className="row">
+            <div>
+              <label className="field">Chairman email (you)</label>
+              <input
+                type="email"
+                value={chairmanEmail}
+                onChange={(e) => setChairmanEmail(e.target.value)}
+                required
+              />
+            </div>
+            <div>
+              <label className="field">Chairman display name</label>
+              <input value={chairmanName} onChange={(e) => setChairmanName(e.target.value)} />
+            </div>
+          </div>
+          <p className="help" style={{ marginTop: 4 }}>
+            Your identity on approvals and boardroom messages — remembered for the next
+            project. If SMTP is configured on the server (<code>YAAF_SMTP_HOST</code> in{" "}
+            <code>deploy/.env</code>), needs, assists and budget alerts also email you here;
+            without it, nothing is sent and this is identity only.
+          </p>
+        </div>
+
+
+        <div className="card" style={{ marginBottom: 10 }}>
+          <label className="field">
+            Goal — what this company exists to achieve
+          </label>
+          <p className="help" style={{ margin: "0 0 6px" }}>
+            The CEO plans from this and nothing else, so it is worth more of your
+            time than everything below it put together. Brief it the way you would
+            brief a competent human running the company for you.
+          </p>
+          <div className="goalwrap">
+            <textarea value={goal} onChange={(e) => setGoal(e.target.value)}
+              required minLength={10} className="goalbox"
+              placeholder="Audit the customer's Amazon PPC account and produce a plain-English deck a non-technical business owner can act on: where money is being wasted, which campaigns to fix first, and expected savings. The account data comes from the connected &quot;ppc&quot; data source. Final deck by August 20th." />
+            <div className="brief">
+              <div className="bt">Does your brief say…</div>
+              <ul>
+                {briefChecks(goal).map((c) => (
+                  <li key={c.label} className={c.ok ? "ok" : ""}>
+                    <b>{c.ok ? "✓" : "○"}</b>{c.label}
+                  </li>
+                ))}
+              </ul>
+              <p className="help" style={{ marginTop: 8 }}>
+                Advisory only — you can create with none of these ticked. A weak
+                goal ("analyze the PPC data") gets you a company that putters.
+              </p>
+            </div>
+          </div>
+        </div>
+
         <div className="card" style={{ marginBottom: 10 }}>
           <label className="field">What kind of company is this?</label>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
@@ -750,6 +1010,160 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             </div>
           )}
         </div>
+        </>}
+
+        {on(2) && <>
+        <h2>The company</h2>
+        <div className="card" style={{ marginBottom: 10 }}>
+          <label className="field">Who runs it — the only agent that speaks to you</label>
+          <p className="help" style={{ margin: "0 0 8px" }}>
+            The CEO owns the plan and is the only agent that creates top-level
+            work. Frozen once the project starts.
+          </p>
+          <CeoPicker roles={roles} value={ceoSlug} onChange={setCeoSlug} />
+        </div>
+        <h2>Teams</h2>
+        {missingRoleSlugs.length > 0 && (
+          <p className="help" style={{ color: "var(--warn, var(--ink-2))" }}>
+            This setup file hires {missingRoleSlugs.length === 1 ? "a role" : "roles"} this
+            install does not have: <strong>{missingRoleSlugs.join(", ")}</strong>. The examples
+            hire from the role library by slug rather than carrying their prompts, so a role
+            added to the repository after this install was seeded is not here yet. Load the
+            missing ones from your checkout — <code>./update_single_server.sh</code>, or{" "}
+            <code>yaaf seed-roles roles/ --only-missing</code> — then reload this page and load
+            the file again. Until then, pick a role this install does have for each team.
+            {missingRoleSlugs.includes(bundleCeoSlug) && (
+              <>
+                {" "}<strong>{bundleCeoSlug}</strong> is the CEO's role, which this form has no
+                picker for — the project cannot be created until the library has it.
+              </>
+            )}
+          </p>
+        )}
+        {solo && (
+          <p className="subtitle">
+            This setup file is a solo project: the CEO is the only team's sole member, so the
+            employee fields stay empty.
+          </p>
+        )}
+        {teams.map((team, i) => (
+          <div className="card" key={i} style={{ marginBottom: 10 }}>
+            <div className="row">
+              <div>
+                <label className="field">Role</label>
+                <select
+                  value={team.role_slug}
+                  onChange={(e) => setTeam(i, { role_slug: e.target.value })}
+                  hidden
+                  aria-hidden="true"
+                >
+                  <option value={team.role_slug}>{team.role_slug}</option>
+                </select>
+                <button type="button" className="rolepick"
+                  onClick={() => setHireOpen(i)}>
+                  {team.role_slug
+                    ? (rolesLoaded && !known(team.role_slug)
+                      // The role the file asked for, when this install has
+                      // never heard of it: named rather than dropped, so the
+                      // ask stays visible and submit can refuse it by name.
+                      ? `${team.role_slug} — not in this install's role library`
+                      : roleLabel(team.role_slug))
+                    : "Choose a role…"}
+                </button>
+                {team.role_slug && known(team.role_slug) && (
+                  <div className="help" style={{ marginTop: 4 }}>
+                    {(() => {
+                      const r = roles.find((x) => x.slug === team.role_slug);
+                      const needs = needsOf(r?.secret_scopes ?? []);
+                      return needs.length
+                        ? `Needs ${needs.map((n) => n.words).join(" and ")}.`
+                        : "Needs no outside key.";
+                    })()}
+                  </div>
+                )}
+              </div>
+              <div>
+                <label className="field">Team name</label>
+                <input value={team.name} onChange={(e) => setTeam(i, { name: e.target.value })} />
+              </div>
+            </div>
+            <div className="row">
+              <div>
+                <label className="field">Employees (comma-separated names)</label>
+                <input
+                  value={team.employees}
+                  onChange={(e) => setTeam(i, { employees: e.target.value })}
+                  placeholder="Ada, Lin"
+                />
+              </div>
+              <div>
+                <label className="field">Lead (defaults to first; a sole employee leads itself)</label>
+                <input value={team.lead} onChange={(e) => setTeam(i, { lead: e.target.value })} />
+              </div>
+            </div>
+            <div className="actions">
+              <button
+                type="button"
+                className="small danger"
+                onClick={() => setTeams((prev) => prev.filter((_, j) => j !== i))}
+                disabled={teams.length === 1}
+              >
+                Remove team
+              </button>
+            </div>
+          </div>
+        ))}
+        <button
+          type="button"
+          onClick={() => setTeams((prev) => [...prev, { role_slug: "", name: "", employees: "", lead: "" }])}
+        >
+          + Add team
+        </button>
+
+        </>}
+
+        {on(3) && <>
+        <div className="card" style={{ marginTop: 10 }}>
+          <label className="field">Billing — the key your agents think with</label>
+          <div className="row">
+            <div>
+              <select value={billingMode} onChange={(e) => setBillingMode(e.target.value)}>
+                <option value="api_key">Anthropic API key — budget in USD</option>
+                <option value="subscription">Claude subscription token — budget in tokens</option>
+              </select>
+            </div>
+            <div>
+              <SecretInput
+                value={billingKey}
+                onChange={setBillingKey}
+                placeholder={billingMode === "api_key"
+                  ? "sk-ant-…" : "the OAuth token from `claude setup-token`"}
+              />
+            </div>
+          </div>
+          <p className="help">
+            Stored encrypted, attached as this project's billing credential, never injected
+            into a sandbox. Leave it blank and the project is created but cannot start —
+            connect the key later in Settings.
+          </p>
+          <button type="button" className="small" style={{ marginTop: 4 }}
+            onClick={() => setShowAdvanced((v) => !v)}>
+            {showAdvanced ? "hide advanced" : "advanced…"}
+          </button>
+          {showAdvanced && (
+            <div style={{ marginTop: 8, maxWidth: 380 }}>
+              <label className="field">Runtime</label>
+              <select value={runtime} onChange={(e) => setRuntime(e.target.value)}>
+                <option value="agent_sdk">agent_sdk — real model in the sandbox</option>
+                <option value="mock">mock — scripted, $0 (CI / tire-kicking)</option>
+              </select>
+              <p className="help">
+                Mock runs no model and needs no key — for testing the platform itself.
+              </p>
+            </div>
+          )}
+        </div>
+
         <div className="card" style={{ marginBottom: 10 }}>
           <label className="field">Who runs it?</label>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
@@ -807,199 +1221,225 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             section below. Adjust any of them there, now or later in Settings.
           </p>
         </div>
+        <h2>Constitution (frozen at creation)</h2>
         <div className="card">
           <div className="row">
             <div>
-              <label className="field">Name</label>
+              <label className="field">Queue ceiling (open team tasks)</label>
               <input
-                value={name}
-                onChange={(e) => {
-                  setName(e.target.value);
-                  if (!slugEdited && !bundle) setSlug(dedupedSlug(slugify(e.target.value)));
-                }}
-                required
+                type="number"
+                min={1}
+                value={queueCeiling}
+                onChange={(e) => setQueueCeiling(+e.target.value)}
               />
             </div>
             <div>
-              <label className="field">Slug — picked for you from the name</label>
+              <label className="field">Drought window (hours without verified external evidence)</label>
               <input
-                value={slug}
-                onChange={(e) => { setSlug(e.target.value); setSlugEdited(true); }}
-                pattern="[a-z0-9-]{2,64}"
-                required
+                type="number"
+                min={1}
+                value={droughtHours}
+                onChange={(e) => setDroughtHours(+e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="row">
+            <div>
+              <label className="field">Monthly budget cap (USD)</label>
+              <input type="number" min={0} value={usdCap} onChange={(e) => setUsdCap(+e.target.value)} />
+            </div>
+            <div>
+              <label className="field">Approval threshold (USD per spend)</label>
+              <input
+                type="number"
+                min={0}
+                value={approvalThreshold}
+                onChange={(e) => setApprovalThreshold(+e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="row">
+            <div>
+              <label className="field">Hours between unprompted status reports</label>
+              <input
+                type="number"
+                min={0}
+                step={0.5}
+                value={reportHours}
+                onChange={(e) => setReportHours(+e.target.value)}
+              />
+              <div className="help" style={{ marginTop: 4 }}>0 = no cadence, report freely.</div>
+            </div>
+            <div>
+              <label className="field">Only report during these hours (optional)</label>
+              <input
+                value={reportWindow}
+                onChange={(e) => setReportWindow(e.target.value)}
+                placeholder="09:00-20:00"
+              />
+            </div>
+          </div>
+          <div className="row">
+            <div>
+              <label className="field">Your timezone</label>
+              <input
+                value={timezone}
+                onChange={(e) => setTimezone(e.target.value)}
+                placeholder="America/New_York"
               />
               <div className="help" style={{ marginTop: 4 }}>
-                a-z, 0-9, dashes. Deduped against existing projects; edit it if you care.
+                Guessed from your browser — every local time in the rules reads this zone.
               </div>
             </div>
-          </div>
-          <label className="field">Goal — what this company exists to achieve</label>
-          <textarea value={goal} onChange={(e) => setGoal(e.target.value)} required minLength={10} />
-          <div className="row">
             <div>
-              <label className="field">Chairman email (you)</label>
-              <input
-                type="email"
-                value={chairmanEmail}
-                onChange={(e) => setChairmanEmail(e.target.value)}
-                required
-              />
-            </div>
-            <div>
-              <label className="field">Chairman display name</label>
-              <input value={chairmanName} onChange={(e) => setChairmanName(e.target.value)} />
-            </div>
-          </div>
-          <p className="help" style={{ marginTop: 4 }}>
-            Your identity on approvals and boardroom messages — remembered for the next
-            project. If SMTP is configured on the server (<code>YAAF_SMTP_HOST</code> in{" "}
-            <code>deploy/.env</code>), needs, assists and budget alerts also email you here;
-            without it, nothing is sent and this is identity only.
-          </p>
-          <label className="field">
-            Controlled domains (comma-separated) — evidence from these can never count as external
-          </label>
-          <input
-            value={controlledDomains}
-            onChange={(e) => setControlledDomains(e.target.value)}
-            placeholder="myproject.example, github.com/myorg"
-          />
-        </div>
-
-        <div className="card" style={{ marginTop: 10 }}>
-          <label className="field">Billing — the key your agents think with</label>
-          <div className="row">
-            <div>
-              <select value={billingMode} onChange={(e) => setBillingMode(e.target.value)}>
-                <option value="api_key">Anthropic API key — budget in USD</option>
-                <option value="subscription">Claude subscription token — budget in tokens</option>
-              </select>
-            </div>
-            <div>
-              <SecretInput
-                value={billingKey}
-                onChange={setBillingKey}
-                placeholder={billingMode === "api_key"
-                  ? "sk-ant-…" : "the OAuth token from `claude setup-token`"}
-              />
-            </div>
-          </div>
-          <p className="help">
-            Stored encrypted, attached as this project's billing credential, never injected
-            into a sandbox. Leave it blank and the project is created but cannot start —
-            connect the key later in Settings.
-          </p>
-          <button type="button" className="small" style={{ marginTop: 4 }}
-            onClick={() => setShowAdvanced((v) => !v)}>
-            {showAdvanced ? "hide advanced" : "advanced…"}
-          </button>
-          {showAdvanced && (
-            <div style={{ marginTop: 8, maxWidth: 380 }}>
-              <label className="field">Runtime</label>
-              <select value={runtime} onChange={(e) => setRuntime(e.target.value)}>
-                <option value="agent_sdk">agent_sdk — real model in the sandbox</option>
-                <option value="mock">mock — scripted, $0 (CI / tire-kicking)</option>
-              </select>
-              <p className="help">
-                Mock runs no model and needs no key — for testing the platform itself.
-              </p>
-            </div>
-          )}
-        </div>
-
-        <h2>Teams</h2>
-        {missingRoleSlugs.length > 0 && (
-          <p className="help" style={{ color: "var(--warn, var(--ink-2))" }}>
-            This setup file hires {missingRoleSlugs.length === 1 ? "a role" : "roles"} this
-            install does not have: <strong>{missingRoleSlugs.join(", ")}</strong>. The examples
-            hire from the role library by slug rather than carrying their prompts, so a role
-            added to the repository after this install was seeded is not here yet. Load the
-            missing ones from your checkout — <code>./update_single_server.sh</code>, or{" "}
-            <code>yaaf seed-roles roles/ --only-missing</code> — then reload this page and load
-            the file again. Until then, pick a role this install does have for each team.
-            {missingRoleSlugs.includes(bundleCeoSlug) && (
-              <>
-                {" "}<strong>{bundleCeoSlug}</strong> is the CEO's role, which this form has no
-                picker for — the project cannot be created until the library has it.
-              </>
-            )}
-          </p>
-        )}
-        {solo && (
-          <p className="subtitle">
-            This setup file is a solo project: the CEO is the only team's sole member, so the
-            employee fields stay empty.
-          </p>
-        )}
-        {teams.map((team, i) => (
-          <div className="card" key={i} style={{ marginBottom: 10 }}>
-            <div className="row">
-              <div>
-                <label className="field">Role</label>
-                <select
-                  value={team.role_slug}
-                  onChange={(e) => setTeam(i, { role_slug: e.target.value })}
-                >
-                  <option value="">— pick a role —</option>
-                  {workerRoles.map((r) => (
-                    <option key={r.slug} value={r.slug}>
-                      {r.name} ({r.model ?? "default"})
-                    </option>
-                  ))}
-                  {newBundleRoles
-                    .filter((r) => !r.is_ceo_role)
-                    .map((r) => (
-                      <option key={r.slug} value={r.slug}>
-                        {r.name} — new, from the setup file
-                      </option>
-                    ))}
-                  {/* The role the file asked for, when this install has never
-                      heard of it. Held in the picker rather than dropped, so
-                      the ask is visible and submit can refuse it by name. */}
-                  {rolesLoaded && !known(team.role_slug) && (
-                    <option value={team.role_slug}>
-                      {team.role_slug} — not in this install's role library
-                    </option>
-                  )}
-                </select>
-              </div>
-              <div>
-                <label className="field">Team name</label>
-                <input value={team.name} onChange={(e) => setTeam(i, { name: e.target.value })} />
-              </div>
-            </div>
-            <div className="row">
-              <div>
-                <label className="field">Employees (comma-separated names)</label>
+              <label className="field">External evidence must be verified</label>
+              <label style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 8 }}>
                 <input
-                  value={team.employees}
-                  onChange={(e) => setTeam(i, { employees: e.target.value })}
-                  placeholder="Ada, Lin"
+                  type="checkbox"
+                  style={{ width: "auto" }}
+                  checked={requireVerification}
+                  onChange={(e) => setRequireVerification(e.target.checked)}
                 />
-              </div>
-              <div>
-                <label className="field">Lead (defaults to first; a sole employee leads itself)</label>
-                <input value={team.lead} onChange={(e) => setTeam(i, { lead: e.target.value })} />
-              </div>
-            </div>
-            <div className="actions">
-              <button
-                type="button"
-                className="small danger"
-                onClick={() => setTeams((prev) => prev.filter((_, j) => j !== i))}
-                disabled={teams.length === 1}
-              >
-                Remove team
-              </button>
+                <span className="help">
+                  On, evidence counts only once the platform fetches and checks it.
+                </span>
+              </label>
             </div>
           </div>
-        ))}
-        <button
-          type="button"
-          onClick={() => setTeams((prev) => [...prev, { role_slug: "", name: "", employees: "", lead: "" }])}
-        >
-          + Add team
-        </button>
+            <label className="field">
+              Controlled domains (comma-separated) — evidence from these can never count as external
+            </label>
+            <input
+              value={controlledDomains}
+              onChange={(e) => setControlledDomains(e.target.value)}
+              placeholder="myproject.example, github.com/myorg"
+            />
+            <div className="help" style={{ marginTop: 4 }}>
+              Your own website, <code>github:your-account</code>. Agents must prove
+              progress with evidence from outside the company, and anything on a
+              property you control cannot count as outside.
+            </div>
+          <p className="help">
+            {bundle
+              ? "Everything else (external-evidence floor, wake caps, memory caps, refusal caps…) " +
+                "comes from the setup file, and every rule is editable later in Settings."
+              : "Everything else (external-evidence floor, wake caps, memory caps, refusal caps…) " +
+                "takes the lana-derived defaults, and every rule is editable later in Settings."}
+          </p>
+        </div>
+
+        </>}
+
+        {on(4) && <>
+        <h2>Review &amp; create</h2>
+        <p className="subtitle">
+          This is the company that will exist. Everything here is still editable —
+          step back, or switch to <strong>All on one page</strong>.
+        </p>
+        <div className="card" style={{ marginBottom: 10 }}>
+          {/* Name and address live here too, not only on step 1: a loaded setup
+              file lands straight on this step, and picking a slug that does not
+              collide is the one thing that user must still do. */}
+          <div className="row">
+            <div>
+              <label className="field">Name</label>
+              <input value={name} onChange={(e) => {
+                setName(e.target.value);
+                if (!slugEdited && !bundle) setSlug(dedupedSlug(slugify(e.target.value)));
+              }} required />
+            </div>
+            <div>
+              <label className="field">Address</label>
+              <input value={slug} pattern="[a-z0-9\-]{2,64}" required
+                onChange={(e) => { setSlug(e.target.value); setSlugEdited(true); }} />
+              <div className="help" style={{ marginTop: 4 }}>
+                {existingSlugs.includes(slug)
+                  ? "A project already uses this address — pick another."
+                  : "Deduped against your existing projects."}
+              </div>
+            </div>
+          </div>
+          <label className="field" style={{ marginTop: 12 }}>Goal</label>
+          <div className="help" style={{ whiteSpace: "pre-wrap" }}>
+            {goal.trim() || "Nothing written yet — the CEO plans from this and nothing else."}
+          </div>
+        </div>
+
+        <div className="card" style={{ marginBottom: 10 }}>
+          <div className="orgline">
+            <strong>CEO</strong>
+            <span className="chip accent">{roleLabel(bundle?.project.ceo_role_slug ?? ceoSlug)}</span>
+            <span className="help">the only agent that speaks to you</span>
+          </div>
+          {teams.filter((t) => t.role_slug && t.name).map((t, i) => (
+            <div className="orgline" key={i}>
+              <strong>{t.name}</strong>
+              <span className="chip">{roleLabel(t.role_slug)}</span>
+              <span className="help">
+                {t.employees.trim() || (solo ? "the CEO, working alone" : "nobody yet")}
+              </span>
+            </div>
+          ))}
+          <div className="orgline">
+            <strong>Shape</strong>
+            <span className="chip">{MODES.find((m) => m.value === mode)?.label ?? mode}</span>
+            <span className="help">{MODES.find((m) => m.value === mode)?.blurb}</span>
+          </div>
+          <div className="orgline">
+            <strong>Cap</strong>
+            <span className="chip">${usdCap}/mo</span>
+            <span className="help">
+              ≈ ${roughMonthly(hiredRoles)}/mo at this staffing — the project pauses
+              itself at the cap
+            </span>
+          </div>
+        </div>
+
+        {/* What it needs before it can start, derived from who was actually
+            hired. The roles have always declared this; nothing ever showed it,
+            so the first sign of a missing key was a run that failed asking for
+            one. Every row is a real credential you can still rename, re-scope
+            or remove below. */}
+        <h2>Before it can start</h2>
+        <div className="card" style={{ marginBottom: 10 }}>
+          <div className="needline">
+            <span>
+              <strong>Billing key</strong>
+              <div className="help">Agents cannot run keyless.</div>
+            </span>
+            <span>
+              {billingKey.trim()
+                ? <span className="badge good">connected above</span>
+                : <span className="badge warn">add it on the previous step, or in Settings</span>}
+            </span>
+          </div>
+          {requiredScopes.length === 0 ? (
+            <div className="needline">
+              <span className="help">
+                Nothing else — none of your hires needs an outside key.
+              </span>
+              <span />
+            </div>
+          ) : requiredScopes.map((need) => {
+            const filled = credentials.some(
+              (c) => c.name.trim() === need.scope && c.value.trim());
+            return (
+              <div className="needline" key={need.scope}>
+                <span>
+                  <strong>{need.words}</strong>
+                  <div className="help">
+                    goes to {need.roles.join(" · ")}
+                  </div>
+                </span>
+                <span>
+                  {filled
+                    ? <span className="badge good">filled in below</span>
+                    : <span className="badge warn">add it below, or in Settings later</span>}
+                </span>
+              </div>
+            );
+          })}
+        </div>
 
         <h2>Service credentials (optional)</h2>
         <p className="subtitle">
@@ -1126,100 +1566,6 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
           + Add data source
         </button>
 
-        <h2>Constitution (frozen at creation)</h2>
-        <div className="card">
-          <div className="row">
-            <div>
-              <label className="field">Queue ceiling (open team tasks)</label>
-              <input
-                type="number"
-                min={1}
-                value={queueCeiling}
-                onChange={(e) => setQueueCeiling(+e.target.value)}
-              />
-            </div>
-            <div>
-              <label className="field">Drought window (hours without verified external evidence)</label>
-              <input
-                type="number"
-                min={1}
-                value={droughtHours}
-                onChange={(e) => setDroughtHours(+e.target.value)}
-              />
-            </div>
-          </div>
-          <div className="row">
-            <div>
-              <label className="field">Monthly budget cap (USD)</label>
-              <input type="number" min={0} value={usdCap} onChange={(e) => setUsdCap(+e.target.value)} />
-            </div>
-            <div>
-              <label className="field">Approval threshold (USD per spend)</label>
-              <input
-                type="number"
-                min={0}
-                value={approvalThreshold}
-                onChange={(e) => setApprovalThreshold(+e.target.value)}
-              />
-            </div>
-          </div>
-          <div className="row">
-            <div>
-              <label className="field">Hours between unprompted status reports</label>
-              <input
-                type="number"
-                min={0}
-                step={0.5}
-                value={reportHours}
-                onChange={(e) => setReportHours(+e.target.value)}
-              />
-              <div className="help" style={{ marginTop: 4 }}>0 = no cadence, report freely.</div>
-            </div>
-            <div>
-              <label className="field">Only report during these hours (optional)</label>
-              <input
-                value={reportWindow}
-                onChange={(e) => setReportWindow(e.target.value)}
-                placeholder="09:00-20:00"
-              />
-            </div>
-          </div>
-          <div className="row">
-            <div>
-              <label className="field">Your timezone</label>
-              <input
-                value={timezone}
-                onChange={(e) => setTimezone(e.target.value)}
-                placeholder="America/New_York"
-              />
-              <div className="help" style={{ marginTop: 4 }}>
-                Guessed from your browser — every local time in the rules reads this zone.
-              </div>
-            </div>
-            <div>
-              <label className="field">External evidence must be verified</label>
-              <label style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 8 }}>
-                <input
-                  type="checkbox"
-                  style={{ width: "auto" }}
-                  checked={requireVerification}
-                  onChange={(e) => setRequireVerification(e.target.checked)}
-                />
-                <span className="help">
-                  On, evidence counts only once the platform fetches and checks it.
-                </span>
-              </label>
-            </div>
-          </div>
-          <p className="help">
-            {bundle
-              ? "Everything else (external-evidence floor, wake caps, memory caps, refusal caps…) " +
-                "comes from the setup file, and every rule is editable later in Settings."
-              : "Everything else (external-evidence floor, wake caps, memory caps, refusal caps…) " +
-                "takes the lana-derived defaults, and every rule is editable later in Settings."}
-          </p>
-        </div>
-
         <div className="actions">
           <label style={{ display: "flex", gap: 6, alignItems: "center",
             opacity: canStartNow ? 1 : 0.55 }}>
@@ -1240,7 +1586,62 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             {busy ? "Creating…" : "Create project"}
           </button>
         </div>
+        </>}
+        {hireOpen !== null && (
+          <HirePanel
+            roles={roles}
+            crews={crews}
+            loaded={rolesLoaded}
+            selected={teams[hireOpen]?.role_slug ? [teams[hireOpen].role_slug] : []}
+            goal={goal}
+            onToggle={(slug) => {
+              const i = hireOpen;
+              setTeams((prev) => prev.map((t, j) => {
+                if (j !== i) return t;
+                if (t.role_slug === slug) return { ...t, role_slug: "" };
+                // Name the team after the role unless the chairman named it.
+                const named = t.name.trim()
+                  ? t.name
+                  : (roles.find((r) => r.slug === slug)?.name.split(" / ")[0] ?? "");
+                return { ...t, role_slug: slug, name: named };
+              }));
+              setHireOpen(null);
+            }}
+            onApplyCrew={(crew) => {
+              // A crew fills the team list and stays fully editable — the
+              // employees, leads and schedules come from the worked example
+              // it was lifted from, so it lands as a company rather than a
+              // list of job titles.
+              setTeams(crew.teams.map((t) => ({
+                role_slug: t.role_slug,
+                name: t.name,
+                employees: t.employees.join(", "),
+                lead: t.lead ?? "",
+                schedules: t.schedules,
+              })));
+              if (crew.ceo_role_slug) setCeoSlug(crew.ceo_role_slug);
+              setHireOpen(null);
+            }}
+            onClose={() => setHireOpen(null)}
+            title="Who's on this team?"
+          />
+        )}
+
+        {!onePage && (
+          <div className="stepnav">
+            {step > 1 && (
+              <button type="button" onClick={() => setStep(step - 1)}>← Back</button>
+            )}
+            <div className="spacer" />
+            {step < 4 && (
+              <button type="button" className="primary" onClick={() => setStep(step + 1)}>
+                Next — {STEPS[step].name} →
+              </button>
+            )}
+          </div>
+        )}
       </form>
+      </div>
     </>
   );
 }

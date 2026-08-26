@@ -43,7 +43,18 @@ header.
 
 ## Roles
 
-The platform-wide role library. Each role shows its current version, its
+The platform-wide role library, grouped into the six aisles the hiring desk
+uses — **Leadership & Direction**, **Research & Analysis**, **Build &
+Engineering**, **Design & Content**, **Challenge & Control**, **Growth &
+Customers** — with a search box, a filter for what a role works on (markets,
+data, games, education, or any project), and a CSV export of the whole library.
+
+A role's aisle and its domains live on the role, not the version, so refiling
+one never stamps a new version and never puts a live team behind its prompt.
+A role you write yourself can be left unfiled; it sits under **Uncategorised**
+at the bottom of every list and is never filtered away.
+
+Each role shows its current version, its
 system prompt, model and effort, tool permissions, secret scopes — and its
 **blast radius**: which projects run it, at which version.
 
@@ -53,9 +64,26 @@ remind you about. An edit never silently changes a running company.
 
 ## New project
 
-The wizard: name and slug, the goal (the CEO plans from this and nothing else),
-your email, billing mode, controlled domains, which teams to hire, and any
-constitution overrides. [CREATING_A_PROJECT.md](CREATING_A_PROJECT.md) walks
+Four steps, one per decision that actually needs you:
+
+1. **The job** — name, and the goal the CEO plans from and nothing else. The
+   goal gets a large box and a live checklist of the four things a brief should
+   say (an outcome, a deliverable and who it's for, a deadline, where the inputs
+   come from). Advisory — you can create with none of them ticked. Then the
+   project's shape, which is frozen here.
+2. **The company** — which CEO runs it, and the hiring desk: fourteen **crews**
+   (a named job with a team already on it, eleven of them the `examples/`), or
+   thirty roles by aisle with search, filters, depth and cost, and what each one
+   needs before it can work.
+3. **The money and the rules** — the billing key, and the presets that fill the
+   constitution. Every rule the preset wrote stays visible and editable, marked
+   when you change one.
+4. **Review & create** — the company as it will exist, and what it still needs
+   before it can start.
+
+Nothing is hidden behind a step: the **All on one page** toggle renders the
+same state as one scroll, with the same fields and the same submit, and the
+choice is remembered. Loading a setup file lands straight on **Review**. [CREATING_A_PROJECT.md](CREATING_A_PROJECT.md) walks
 through it in plain English; [`examples/`](../examples/) has eleven projects you
 import and run, in the order worth doing them.
 

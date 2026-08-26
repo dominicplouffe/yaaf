@@ -1,0 +1,33 @@
+{
+  "slug": "a-game-you-can-play",
+  "name": "A game you can play",
+  "outcome": "A playable mobile game, and a ranked list of what to fix next.",
+  "ceo_role_slug": "ceo",
+  "domains": [
+    "games"
+  ],
+  "source": "examples/08-a-game-you-can-play",
+  "teams": [
+    {
+      "role_slug": "game-developer",
+      "name": "Build",
+      "employees": [
+        "Kit"
+      ]
+    },
+    {
+      "role_slug": "game-ux-designer",
+      "name": "Feel",
+      "employees": [
+        "Juno"
+      ]
+    },
+    {
+      "role_slug": "game-analyst",
+      "name": "Design",
+      "employees": [
+        "Wren"
+      ]
+    }
+  ]
+}

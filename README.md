@@ -381,6 +381,7 @@ yaaf/server     the platform: API, policy engine (the refusals), dispatcher,
 yaaf/runner     leases runs, launches sandbox containers, meters everything
 yaaf/cli        `yaaf` — admin/observe CLI, incl. `yaaf experiment`
 web/            the chairman's dashboard (React, served at /app)
+crews/          pre-staffed teams — a named job with a team already on it
 roles/          starter role library: general-purpose, a tutor, an analyst,
                 a markets desk, a mobile-game studio, a data-science bench
 examples/       eleven importable projects (.md + .json) — two fundamentals,

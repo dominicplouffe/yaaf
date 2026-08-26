@@ -1,0 +1,16 @@
+{
+  "slug": "one-idea-thirty-days",
+  "name": "One idea, thirty days",
+  "outcome": "An idea taken to a first paying customer, or killed with a reason.",
+  "ceo_role_slug": "ceo",
+  "domains": [
+    "general"
+  ],
+  "source": "examples/09-one-idea-thirty-days",
+  "teams": [
+    {
+      "role_slug": "gtm",
+      "name": "Desk"
+    }
+  ]
+}

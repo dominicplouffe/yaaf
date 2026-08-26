@@ -1,0 +1,32 @@
+{
+  "slug": "tell-me-what-changed",
+  "name": "Tell me what changed",
+  "outcome": "A short brief each morning on what moved in a space you watch.",
+  "ceo_role_slug": "ceo",
+  "domains": [
+    "general"
+  ],
+  "source": "examples/07-tell-me-what-changed",
+  "teams": [
+    {
+      "role_slug": "researcher",
+      "name": "Watch",
+      "employees": [
+        "Rey",
+        "Sol"
+      ],
+      "lead": "Rey",
+      "schedules": {
+        "Rey": "07:00",
+        "Sol": "07:30"
+      }
+    },
+    {
+      "role_slug": "writer",
+      "name": "Editorial",
+      "employees": [
+        "Ada"
+      ]
+    }
+  ]
+}

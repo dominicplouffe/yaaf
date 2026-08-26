@@ -1,10 +1,10 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import {
   get,
   HealthCheck,
+  OrgView,
   post,
-  RoleSummary,
   RunRow,
   SpendReport,
   TaskRow,
@@ -26,6 +26,7 @@ import {
   runHealth,
   Skeleton,
 } from "../../ui";
+import { HirePanel, gapsFor, needsOf, useRoleLibrary } from "../../roles";
 import type { ProjectCtx } from "../Project";
 
 interface ArtifactFile {
@@ -704,8 +705,9 @@ export default function Overview({
                 ))}
               </div>
               <p className="help" style={{ margin: "8px 0 0" }}>
-                {open} open{stuck > 0 && `, ${stuck} blocked`}
-                {teamTasks.length === 0 && "no work on its board"}
+                {teamTasks.length === 0
+                  ? "no work on its board"
+                  : `${open} open${stuck > 0 ? `, ${stuck} blocked` : ""}`}
               </p>
               {/* Teams pin their role version at creation; edited roles apply
                   only when the chairman explicitly adopts them. */}
@@ -726,7 +728,7 @@ export default function Overview({
             </div>
           );
         })}
-        <AddTeam projectId={projectId} onAdded={reloadOrg} />
+        <AddTeam projectId={projectId} org={org} onAdded={reloadOrg} />
       </div>
 
       <AsOf at={asOf} error={error} />
@@ -734,19 +736,45 @@ export default function Overview({
   );
 }
 
-function AddTeam({ projectId, onAdded }: { projectId: string; onAdded: () => void }) {
-  const [roles, setRoles] = useState<RoleSummary[]>([]);
-  const [roleSlug, setRoleSlug] = useState("");
+/** Hiring onto a company that already exists.
+
+    The other door into the same panel. Here the chairman is not browsing —
+    they know the symptom ("nothing gets checked", "nobody writes it up"), so
+    this one opens on the gaps its own roster implies before it offers the
+    library. */
+function AddTeam({ projectId, org, onAdded }: {
+  projectId: string;
+  org: OrgView | null;
+  onAdded: () => void;
+}) {
+  const { roles, crews, loaded, error: libraryError } = useRoleLibrary();
+  const [open, setOpen] = useState(false);
+  const [picked, setPicked] = useState<string[]>([]);
   const [teamName, setTeamName] = useState("");
   const [employees, setEmployees] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
-    get<RoleSummary[]>("/admin/roles")
-      .then((all) => setRoles(all.filter((r) => !r.is_ceo_role)))
-      .catch(() => {});
-  }, []);
+  const roleSlug = picked[0] ?? "";
+  const role = roles.find((r) => r.slug === roleSlug);
+
+  // Which roles this project already runs, and under which team name — shown
+  // on the row so hiring a second Data Analyst is a choice, not an accident.
+  const alreadyOn: Record<string, string> = {};
+  for (const team of org?.teams ?? []) {
+    if (team.role_slug) alreadyOn[team.role_slug] = team.name;
+  }
+  const roster = roles.filter((r) => r.slug in alreadyOn);
+  const gaps = gapsFor(roster).filter(
+    (gap) => gap.suggest.some((slug) => !(slug in alreadyOn)));
+
+  // One role at a time here: a team is a role plus its people, and the names
+  // are the part only the chairman can supply.
+  function toggle(slug: string) {
+    setPicked((prev) => (prev[0] === slug ? [] : [slug]));
+    const next = roles.find((r) => r.slug === slug);
+    if (next && !teamName.trim()) setTeamName(next.name.split(" / ")[0]);
+  }
 
   async function submit() {
     setBusy(true);
@@ -759,6 +787,7 @@ function AddTeam({ projectId, onAdded }: { projectId: string; onAdded: () => voi
       });
       setTeamName("");
       setEmployees("");
+      setPicked([]);
       onAdded();
     } catch (e) {
       setError((e as Error).message);
@@ -768,32 +797,65 @@ function AddTeam({ projectId, onAdded }: { projectId: string; onAdded: () => voi
   }
 
   return (
-    <details className="card">
-      <summary>＋ Add a team</summary>
+    <div className="card">
+      <strong>＋ Add a team</strong>
       {error && <div className="error">{error}</div>}
-      <label className="field">Role (from the library)</label>
-      <select value={roleSlug} onChange={(e) => setRoleSlug(e.target.value)}>
-        <option value="">— pick a role —</option>
-        {roles.map((role) => (
-          <option key={role.slug} value={role.slug}>
-            {role.name} ({role.model ?? "default"})
-          </option>
-        ))}
-      </select>
-      <label className="field">Team name</label>
-      <input value={teamName} onChange={(e) => setTeamName(e.target.value)} placeholder="Content" />
-      <label className="field">Employees (comma-separated names; first is lead if several)</label>
-      <input value={employees} onChange={(e) => setEmployees(e.target.value)} placeholder="Blogger" />
-      <div className="actions">
-        <button
-          className="primary small"
-          disabled={busy || !roleSlug || !teamName.trim() || !employees.trim()}
-          onClick={submit}
-        >
-          Add team
+      {gaps.length > 0 && !roleSlug && (
+        <p className="help" style={{ margin: "6px 0 0" }}>
+          {gaps[0].sentence}
+        </p>
+      )}
+      <div className="actions" style={{ marginTop: 8 }}>
+        <button className="small" onClick={() => setOpen(true)}>
+          {role ? `Role: ${role.name} — change` : "Choose a role…"}
         </button>
-        <span className="help">The CEO sees the new team in its next context and can plan for it.</span>
       </div>
-    </details>
+      {role && (
+        <>
+          <label className="field">Team name</label>
+          <input value={teamName} onChange={(e) => setTeamName(e.target.value)}
+            placeholder="Content" />
+          <label className="field">
+            Employees (comma-separated names; first is lead if several)
+          </label>
+          <input value={employees} onChange={(e) => setEmployees(e.target.value)}
+            placeholder="Blogger" />
+          {needsOf(role.secret_scopes ?? []).length > 0 && (
+            <p className="help" style={{ marginTop: 6 }}>
+              {role.name} needs{" "}
+              {needsOf(role.secret_scopes ?? []).map((n) => n.words).join(" and ")} —
+              add it in Settings → Credentials, scoped to this role, or its runs
+              will fail asking for it.
+            </p>
+          )}
+          <div className="actions">
+            <button
+              className="primary small"
+              disabled={busy || !roleSlug || !teamName.trim() || !employees.trim()}
+              onClick={submit}
+            >
+              Add team
+            </button>
+            <span className="help">
+              The CEO sees the new team in its next context and can plan for it.
+            </span>
+          </div>
+        </>
+      )}
+      {open && (
+        <HirePanel
+          roles={roles}
+          crews={crews}
+          loaded={loaded}
+          error={libraryError}
+          selected={picked}
+          onToggle={toggle}
+          onClose={() => setOpen(false)}
+          alreadyOn={alreadyOn}
+          gaps={gaps}
+          title="Who's missing?"
+        />
+      )}
+    </div>
   );
 }

@@ -1,0 +1,28 @@
+{
+  "slug": "settle-an-argument",
+  "name": "Settle an argument",
+  "outcome": "A sourced answer to a question two people disagree about.",
+  "ceo_role_slug": "ceo",
+  "domains": [
+    "general"
+  ],
+  "source": "examples/02-settle-an-argument",
+  "teams": [
+    {
+      "role_slug": "researcher",
+      "name": "Research",
+      "employees": [
+        "Rey",
+        "Sol"
+      ],
+      "lead": "Rey"
+    },
+    {
+      "role_slug": "writer",
+      "name": "Editorial",
+      "employees": [
+        "Ada"
+      ]
+    }
+  ]
+}
