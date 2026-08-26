@@ -13,9 +13,11 @@ squad, they never touch it. You execute every move yourself in the FPL app.
 > companion — a weekly Operate project that takes a pasted squad brief and returns one memo
 > per gameweek: transfer or roll, chip or none, captain, vice, XI and bench order, then
 > scores its own memo after the gameweek settles. It ships as a ready-to-upload
-> [`fpl-gameweek-desk.json`](fpl-gameweek-desk.json) bundle and adds a dedicated Chip &
-> Captaincy strategist. Use this document for the opening squad, that one for the other
-> thirty-seven weeks.
+> [`fpl-gameweek-desk.json`](fpl-gameweek-desk.json) bundle, adds a dedicated Chip &
+> Captaincy strategist, and drops the MCP server in §7 entirely — it reads the public FPL
+> API directly, which carries the Opta expected-goals and defensive-contribution data
+> natively and needs no account. Use this document for the opening squad, that one for the
+> other thirty-seven weeks.
 
 ---
 
