@@ -83,23 +83,20 @@ export function buildItems(projects: DeskProject[], reload: () => void): Item[] 
   for (const p of projects) {
     const to = `/projects/${p.id}`;
 
+    // A paused company is never a row. Pausing is a state, not a request: it
+    // sits there until someone resumes it, and a row that says so every day is
+    // reporting a fact the chairman can already see in the roster below —
+    // where paused companies keep their red dot and their reason.
+    //
+    // This holds however the pause happened, the platform's own included. A
+    // budget-exhausted pause still emails him the moment it trips
+    // (enforce_budget -> chairman_notify), so nothing is lost by keeping it out
+    // of the list; what is gained is a count that means something. Parking four
+    // companies used to pin the badge at four forever, and a badge that is
+    // permanently non-zero is one the chairman stops reading — which costs him
+    // the approval that auto-denies tomorrow.
+    //
     // ── tier 1: stopped, and only the chairman restarts it ──────────────
-    if (p.status === "paused") {
-      items.push({
-        // "paused", never "stopped": stopped is a real and different status in
-        // this system — terminal, and off the desk entirely. A badge that
-        // borrowed its word would describe a resumable company as a dead one.
-        key: `${p.id}-paused`, tier: 1, at: 0, project: p, kind: "paused",
-        what: (
-          <>
-            <b>Nothing is running here.</b>{" "}
-            {p.status_reason ?? "The platform paused this company."}
-          </>
-        ),
-        consequence: <span className="tick hot">it stays paused — indefinitely</span>,
-        actions: <Link className="act pri" to={to}>Review &amp; resume</Link>,
-      });
-    }
     for (const bet of p.expired_bets) {
       items.push({
         key: bet.id, tier: 1, at: 0, project: p, kind: "bet expired",
