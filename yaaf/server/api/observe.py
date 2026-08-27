@@ -55,7 +55,7 @@ from yaaf.core.models import (
     VerificationStatus,
     utcnow,
 )
-from yaaf.server import policy, typing_state
+from yaaf.server import agenda, briefing, policy, typing_state
 from yaaf.server.deps import admin_auth, db
 from yaaf.server.dispatcher import activity_state, chat_session_live
 from yaaf.server.velocity import commitment_projection, project_velocity, standing_record
@@ -309,6 +309,57 @@ def desk(live: bool = False, session: Session = Depends(db)) -> dict:
             "last_run_at": last_run_at.isoformat() if last_run_at else None,
         })
     return {"as_of": now.isoformat(), "finished": finished, "projects": projects_out}
+
+
+@router.get("/briefing")
+def briefing_all(hours: float | None = None, since: str | None = None,
+                 session: Session = Depends(db)) -> dict:
+    """"What happened while I was away", across every live company.
+
+    Each company is read on its OWN window by default — the mark is per
+    project, and reading one company's brief must not silently consume
+    another's. `hours` or `since` forces one shared window instead, which is
+    what a "show me the last 24 hours" control wants.
+
+    Purely a read. The mark moves only through
+    `POST /admin/projects/{id}/briefing/seen`, so polling this page can never
+    lose the chairman a window he has not looked at yet.
+    """
+    at = _parse_since(since)
+    return briefing.desk_briefing(session, since=at, hours=hours)
+
+
+@router.get("/projects/{project_id}/briefing")
+def project_briefing(project_id: str, hours: float | None = None,
+                     since: str | None = None,
+                     session: Session = Depends(db)) -> dict:
+    project = _project(session, project_id)
+    at = _parse_since(since)
+    if at is None and hours:
+        at = utcnow() - timedelta(hours=hours)
+    return briefing.project_briefing(session, project, since=at)
+
+
+@router.get("/projects/{project_id}/agenda")
+def project_agenda(project_id: str, days: int = agenda.DEFAULT_DAYS,
+                   session: Session = Depends(db)) -> dict:
+    """What this company is scheduled to do next: the wakes, the meeting, the
+    rhythm, the clocks that run out, and the promise."""
+    project = _project(session, project_id)
+    return agenda.project_agenda(session, project, days=days)
+
+
+def _parse_since(raw: str | None) -> datetime | None:
+    if not raw:
+        return None
+    try:
+        at = datetime.fromisoformat(raw)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail="`since` must be an ISO datetime, e.g. 2026-08-24T09:00:00Z",
+        ) from exc
+    return at if at.tzinfo else at.replace(tzinfo=UTC)
 
 
 def _delivery_outstanding(session: Session, project: Project) -> list[str]:

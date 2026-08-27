@@ -375,6 +375,19 @@ class ConstitutionDoc(BaseModel):
         None, group="Reporting to you", label="Only report during these hours",
         help="'09:00-20:00' in your local time, or blank for any hour.")
 
+    # The briefing. Everything above governs what the *company* may say to the
+    # chairman and costs a model call to produce. This one is the platform
+    # writing to him from rows it already holds: no run, no token, no wake, and
+    # so no reason to gate it on a budget or an empty board. It exists because
+    # the only mail he ever got was an alarm, and a company that writes to you
+    # exclusively with bad news is one you stop opening.
+    brief_daily_at: str | None = _rule(
+        None, group="Reporting to you", label="A daily briefing at this time",
+        help="'08:00' in your timezone, or blank for none. What happened since the last "
+             "one — scope settled, work closed, proof verified, money spent, what decided "
+             "itself, and what is now waiting on you. Composed from the record at zero "
+             "tokens, so it arrives on a paused project and a broke one too.")
+
     # One timezone, read by the reporting window, the daily CEO wake and every
     # recurring rhythm. It used to be set twice — once here and once in project
     # config for the daily wake — which is one place too many to get it wrong.
@@ -480,6 +493,15 @@ class ConstitutionDoc(BaseModel):
             raise ValueError(
                 f"{raw!r} is not a time of day: write it 'HH:MM' in your timezone, or "
                 "leave it blank for no daily wake")
+        return raw
+
+    @field_validator("brief_daily_at")
+    @classmethod
+    def _brief_time_is_readable(cls, raw: str | None) -> str | None:
+        if raw is not None and parse_hhmm(raw) is None:
+            raise ValueError(
+                f"{raw!r} is not a time of day: write it 'HH:MM' in your timezone, or "
+                "leave it blank for no daily briefing")
         return raw
 
     def overlay(self, changes: dict[str, Any]) -> ConstitutionDoc:

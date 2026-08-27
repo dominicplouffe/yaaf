@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 import secrets as pysecrets
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -74,7 +74,7 @@ from yaaf.core.models import (
     VerificationStatus,
     utcnow,
 )
-from yaaf.server import policy
+from yaaf.server import briefing, policy
 from yaaf.server.api.agent import WAKE_CHANNEL
 from yaaf.server.deps import admin_auth, db
 
@@ -2048,6 +2048,34 @@ def boardroom_post(
     session.add(message)
     notify(session, WAKE_CHANNEL, project.id)
     return {"id": message.id}
+
+
+class BriefingSeen(BaseModel):
+    # The mark is normally "now", but a client that rendered a briefing a
+    # moment ago should stamp the window IT showed rather than the instant the
+    # button was pressed — otherwise anything that landed while the panel was
+    # on screen is silently swallowed.
+    until: datetime | None = None
+
+
+@router.post("/projects/{project_id}/briefing/seen")
+def briefing_seen(project_id: str, body: BriefingSeen | None = None,
+                  session: Session = Depends(db)) -> dict:
+    """Move the chairman's read mark for one company.
+
+    Deliberately an explicit act, not a side effect of fetching the briefing:
+    the desk polls, and a mark that moved on every poll would mean the window
+    was always empty and "since you were last here" would never survive a tab
+    left open. Nothing else in the system reads this column, so a wrong stamp
+    costs one window of narrative and no governance.
+    """
+    project = _get_project(session, project_id)
+    at = (body.until if body and body.until else None)
+    if at is not None and at.tzinfo is None:
+        at = at.replace(tzinfo=UTC)
+    stamped = briefing.mark_read(session, project, at)
+    return {"ok": stamped, "project_id": project.id,
+            "last_briefed_at": (at or utcnow()).isoformat() if stamped else None}
 
 
 # ── approvals, hypotheses, amendments, threads ─────────────────────────────────
