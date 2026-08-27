@@ -11,8 +11,9 @@ discipline is the product.
 from __future__ import annotations
 
 import logging
+import os
 import secrets as pysecrets
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -74,7 +75,7 @@ from yaaf.core.models import (
     VerificationStatus,
     utcnow,
 )
-from yaaf.server import policy
+from yaaf.server import briefing, policy
 from yaaf.server.api.agent import WAKE_CHANNEL
 from yaaf.server.deps import admin_auth, db
 
@@ -2048,6 +2049,103 @@ def boardroom_post(
     session.add(message)
     notify(session, WAKE_CHANNEL, project.id)
     return {"id": message.id}
+
+
+class RehearseIn(BaseModel):
+    # The same object `POST /admin/projects` takes, or a whole setup file with
+    # it under a `project` key. Nothing is created here — it is handed to a
+    # throwaway process that builds its own database and throws it away.
+    spec: dict
+    days: int = Field(default=30, ge=1, le=90)
+    usd_per_run: float | None = Field(default=None, ge=0)
+
+
+#: The drill is CPU-bound and short (a few seconds). This is the wall it dies
+#: at, so a pathological spec cannot pin a request worker.
+REHEARSAL_TIMEOUT_S = 180
+
+
+@router.post("/rehearse")
+def rehearse(body: RehearseIn) -> dict:
+    """Run a spec as a company for nothing, and report what happened.
+
+    **In a subprocess, always.** The drill re-points the process-global engine
+    in :mod:`yaaf.core.db` at a throwaway SQLite file, and doing that inside
+    the API process would re-point the *server* — every request after it would
+    be answered from a scratch database. So the work happens in
+    `python -m yaaf.rehearsal`, which owns its own globals and takes them to
+    the grave. The drill also asserts its database is the file it created and
+    refuses to start otherwise, so the isolation is checked at both ends.
+
+    The spec travels on a temp file rather than argv: it can be tens of
+    kilobytes, and a process list is not a place to put a chairman's goal.
+    """
+    import json as jsonlib
+    import subprocess
+    import sys
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory(prefix="yaaf-rehearse-") as tmp:
+        spec_path = Path(tmp) / "spec.json"
+        spec_path.write_text(jsonlib.dumps(body.spec))
+        argv = [sys.executable, "-m", "yaaf.rehearsal", str(spec_path),
+                "--json", "--days", str(body.days)]
+        if body.usd_per_run:
+            argv += ["--usd-per-run", str(body.usd_per_run)]
+        # The child never reads this, because the drill points itself at the
+        # file it creates — it is set anyway so that a future code path which
+        # DID read it could not reach the live database by accident.
+        env = {**os.environ, "YAAF_DATABASE_URL": f"sqlite:///{tmp}/unused.db"}
+        try:
+            done = subprocess.run(argv, capture_output=True, text=True,
+                                  timeout=REHEARSAL_TIMEOUT_S, env=env, check=False)
+        except subprocess.TimeoutExpired as exc:
+            raise HTTPException(
+                status_code=504,
+                detail=(f"the rehearsal did not finish within {REHEARSAL_TIMEOUT_S}s. "
+                        "That is itself a finding — something in this spec does not "
+                        "settle."),
+            ) from exc
+    if not done.stdout.strip():
+        raise HTTPException(
+            status_code=500,
+            detail=f"the rehearsal produced nothing: {(done.stderr or '')[-500:]}")
+    try:
+        return jsonlib.loads(done.stdout)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"the rehearsal produced unreadable output: {done.stdout[:300]}",
+        ) from exc
+
+
+class BriefingSeen(BaseModel):
+    # The mark is normally "now", but a client that rendered a briefing a
+    # moment ago should stamp the window IT showed rather than the instant the
+    # button was pressed — otherwise anything that landed while the panel was
+    # on screen is silently swallowed.
+    until: datetime | None = None
+
+
+@router.post("/projects/{project_id}/briefing/seen")
+def briefing_seen(project_id: str, body: BriefingSeen | None = None,
+                  session: Session = Depends(db)) -> dict:
+    """Move the chairman's read mark for one company.
+
+    Deliberately an explicit act, not a side effect of fetching the briefing:
+    the desk polls, and a mark that moved on every poll would mean the window
+    was always empty and "since you were last here" would never survive a tab
+    left open. Nothing else in the system reads this column, so a wrong stamp
+    costs one window of narrative and no governance.
+    """
+    project = _get_project(session, project_id)
+    at = (body.until if body and body.until else None)
+    if at is not None and at.tzinfo is None:
+        at = at.replace(tzinfo=UTC)
+    stamped = briefing.mark_read(session, project, at)
+    return {"ok": stamped, "project_id": project.id,
+            "last_briefed_at": (at or utcnow()).isoformat() if stamped else None}
 
 
 # ── approvals, hypotheses, amendments, threads ─────────────────────────────────

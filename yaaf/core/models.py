@@ -475,6 +475,15 @@ class ProjectMember(Base):
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
     role: Mapped[str] = mapped_column(String(16))  # "chairman" | "observer"
+    # When this member last read the briefing — the "since you were last here"
+    # mark. Per member and per project on purpose: reading one company's brief
+    # says nothing about having read another's, and a single box-wide mark
+    # would silently swallow whichever company he did not open.
+    #
+    # NULL means never read, which the briefing reads as "since the project
+    # started" rather than "since forever": a first visit should summarise the
+    # company, not an empty window.
+    last_briefed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
 
 # ── constitution (frozen policy) ────────────────────────────────────────────────

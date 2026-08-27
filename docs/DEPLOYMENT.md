@@ -19,7 +19,7 @@ each is called out.
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"      # Python 3.12+
-.venv/bin/python -m pytest tests/            # 539 tests, offline; 1 skips without Postgres
+.venv/bin/python -m pytest tests/            # 626 tests, offline; 1 skips without Postgres
 
 # 1. The dashboard is built, not shipped: web/dist is gitignored, and without
 #    it the API serves a JSON note instead of /app.

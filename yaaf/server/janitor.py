@@ -24,6 +24,7 @@ import random
 import time
 from datetime import UTC, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -35,6 +36,7 @@ from yaaf.core.constitution import (
     apply_due_amendments,
     effective,
     effective_version,
+    parse_hhmm,
 )
 from yaaf.core.db import db_session, notify
 from yaaf.core.models import (
@@ -48,6 +50,7 @@ from yaaf.core.models import (
     CommitmentStatus,
     Cycle,
     CycleStatus,
+    Heartbeat,
     Hypothesis,
     HypothesisStatus,
     LedgerEntry,
@@ -75,7 +78,7 @@ from yaaf.core.models import (
     Team,
     utcnow,
 )
-from yaaf.server import policy
+from yaaf.server import briefing, policy
 from yaaf.server.notify import chairman_notify
 from yaaf.server.verifier import verify_pending_evidence
 
@@ -133,6 +136,12 @@ def _janitor_project(session: Session, project: Project) -> None:
             f"The chairman amended the constitution (reason: {amendment.reason}). "
             f"Changes now in force: {amendment.changes}. Plan accordingly.",
         )
+    # Before the running-only gate on purpose. The briefing is composed from
+    # rows at zero tokens, so it can — and must — reach a company the platform
+    # paused for an exhausted budget: that is precisely the morning its
+    # chairman needs to hear from it, and the morning a model-written status
+    # could not be afforded.
+    send_daily_brief(session, project)
     if project.status != ProjectStatus.RUNNING:
         return
     try:
@@ -181,6 +190,86 @@ def _notice_agent(session: Session, project: Project, agent_id: str, kind: str, 
         Notice(id=ids.new_id(ids.NOTICE), project_id=project.id, agent_id=agent_id,
                kind=kind, body=body)
     )
+
+
+# ── the briefing ────────────────────────────────────────────────────────────────
+
+#: The dedup heartbeat for the daily push, hung off the CEO agent like every
+#: other wall-clock cadence. Distinct from the chairman's READ mark
+#: (`project_members.last_briefed_at`): the email's window runs from the last
+#: email, the panel's from the last time he actually looked. Sharing one mark
+#: would mean the mail silently ate the window the panel was going to show.
+BRIEF_BEAT = "chairman_brief"
+
+
+def send_daily_brief(session: Session, project: Project) -> bool:
+    """The company writes to its chairman once a day, whatever the news.
+
+    Every other outbound mail in this system is an alarm — a budget gone, a
+    meeting unattended, an approval about to expire — and a correspondent who
+    only ever brings bad news is one you stop reading. This is the letter that
+    arrives when nothing is wrong, which is what makes the alarms legible when
+    they come.
+
+    Zero tokens by construction: composed from rows, no run, no wake, no model.
+    So it survives an exhausted budget and an empty board, the same reasoning
+    that has the janitor open a review with the budget gone.
+
+    Terminal companies are excluded. A stopped or completed one has nothing
+    left to report and a daily mail about it forever is how a chairman learns
+    to filter this address.
+    """
+    if project.status not in (ProjectStatus.RUNNING, ProjectStatus.PAUSED):
+        return False
+    try:
+        cons = effective(session, project.id)
+    except LookupError:
+        return False
+    raw = cons.brief_daily_at
+    when = parse_hhmm(raw) if raw else None
+    if when is None:
+        return False
+    try:
+        tz = ZoneInfo(cons.timezone)
+    except Exception:  # pragma: no cover - the rule validates this on write
+        log.warning("project %s has an unreadable timezone; briefing skipped", project.slug)
+        return False
+
+    now = utcnow()
+    local = now.astimezone(tz)
+    target = local.replace(hour=when.hour, minute=when.minute, second=0, microsecond=0)
+    if local < target:
+        return False
+    ceo = policy.ceo_of(session, project.id)
+    if ceo is None:
+        return False
+    beat = session.execute(
+        select(Heartbeat).where(Heartbeat.agent_id == ceo.id,
+                                Heartbeat.name == BRIEF_BEAT)
+    ).scalar_one_or_none()
+    if beat is not None and beat.last_fired_at.astimezone(tz).date() >= local.date():
+        return False
+
+    since = beat.last_fired_at if beat is not None else project.created_at
+    if since.tzinfo is None:
+        since = since.replace(tzinfo=UTC)
+    # Stamped BEFORE the send, and deliberately: chairman_notify is
+    # fire-and-forget over a thread, so there is no delivery result to wait
+    # for, and a stamp that only landed on success would re-send the same
+    # briefing every tick against a dead SMTP host.
+    if beat is None:
+        session.add(Heartbeat(agent_id=ceo.id, name=BRIEF_BEAT, last_fired_at=now))
+    else:
+        beat.last_fired_at = now
+
+    brief = briefing.project_briefing(session, project, cons, since=since, until=now)
+    chairman_notify(
+        session, project,
+        f"briefing — {brief['headline'][:100]}",
+        briefing.render_text(brief),
+    )
+    log.info("sent the daily briefing for %s", project.slug)
+    return True
 
 
 # ── the plan: does it hold yet? ─────────────────────────────────────────────────

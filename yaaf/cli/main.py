@@ -354,6 +354,111 @@ def dashboard(project: str) -> None:
 
 
 @app.command()
+def rehearse(
+    spec_file: str,
+    days: int = typer.Option(30, "--days", help="the window the pacing arithmetic covers"),
+    usd_per_run: float = typer.Option(
+        0.0, "--usd-per-run",
+        help="what you actually pay for a run; without it the drill reports the "
+             "break-even instead of inventing a price"),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """Run a project spec as a company for nothing, before you fund it.
+
+    The real platform — dispatcher, janitor, policy engine, every refusal — on
+    the mock runtime, against your own spec. It tells you whether the thing
+    gets off the ground, how often it will stop and wait for you, what it costs
+    in runs, and which of the four limits paces it. It opens no sockets, runs
+    no commands out of the file, and touches no database but the throwaway one
+    it creates.
+
+    Needs no deployment and no API key: `yaaf rehearse examples/01-your-first-hour.json`
+    works on a fresh checkout.
+    """
+    import json as _json
+
+    from yaaf import rehearsal
+    from yaaf.rehearsal import report as rehearsal_report
+
+    try:
+        result = rehearsal.rehearse(
+            rehearsal.load_spec(spec_file), days=days,
+            usd_per_run=usd_per_run or None)
+    except rehearsal.RehearsalError as exc:
+        typer.echo(f"rehearsal: {exc}")
+        raise typer.Exit(2) from exc
+    typer.echo(_json.dumps(result, indent=2, default=str) if as_json
+               else rehearsal_report.render_text(result))
+    if not result["ok"]:
+        raise typer.Exit(1)
+
+
+@app.command()
+def briefing(
+    project: str = typer.Argument(None, help="a slug or id; omit for every live company"),
+    hours: float = typer.Option(0, "--hours", help="force a window instead of your read mark"),
+    seen: bool = typer.Option(False, "--seen", help="mark it read, so the next window starts here"),
+) -> None:
+    """What happened since you last read one — as prose, not four tables.
+
+    Composed by the platform from the record at zero tokens, which is why it
+    works on a paused company and a broke one. Reading never moves your mark;
+    `--seen` does, and only for the window this command just printed.
+    """
+    from yaaf.server.briefing import render_text
+
+    with _client() as client:
+        query = f"?hours={hours}" if hours else ""
+        if project is None:
+            response = client.get(f"/observe/briefing{query}")
+            briefs = (response.json() or {}).get("projects", []) if response.is_success else []
+        else:
+            response = client.get(
+                f"/observe/projects/{_resolve_project(client, project)}/briefing{query}")
+            briefs = [response.json()] if response.is_success else []
+        if not response.is_success:
+            _show(response)
+            return
+        if not briefs:
+            typer.echo("No live companies.")
+            return
+        for brief in briefs:
+            typer.echo(f"\n── {brief['name']} " + "─" * max(0, 60 - len(brief["name"])))
+            typer.echo(render_text(brief))
+        if seen:
+            for brief in briefs:
+                client.post(f"/admin/projects/{brief['project_id']}/briefing/seen",
+                            json={"until": brief["until"]})
+            typer.echo(f"\nMarked {len(briefs)} briefing(s) read.")
+
+
+@app.command()
+def agenda(project: str, days: int = typer.Option(14, "--days")) -> None:
+    """What this company is scheduled to do next: the wakes, the standing
+    meeting, the rhythm, the clocks that run out, and the promise."""
+    with _client() as client:
+        response = client.get(
+            f"/observe/projects/{_resolve_project(client, project)}/agenda?days={days}")
+        if not response.is_success:
+            _show(response)
+            return
+        view = response.json()
+        typer.echo(f"next {view['days']} days · {view['timezone']}")
+        for rhythm in view["rhythms"]:
+            when = (rhythm["next"] or "")[:16].replace("T", " ")
+            typer.echo(f"  ~ {rhythm['label']}: {rhythm['every']}"
+                       + (f" (next {when})" if when else ""))
+        for event in view["events"]:
+            typer.echo(f"  {event['day']}  {event['label']}")
+            if event["detail"]:
+                typer.echo(f"              {event['detail']}")
+        for note in view["notes"]:
+            typer.echo(f"  ! {note}")
+        if not view["events"] and not view["rhythms"]:
+            typer.echo("  nothing scheduled in this window.")
+
+
+@app.command()
 def board(project: str) -> None:
     with _client() as client:
         _show(client.get(f"/observe/projects/{_resolve_project(client, project)}/board"))

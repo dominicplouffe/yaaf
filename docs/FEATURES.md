@@ -259,7 +259,115 @@ decision, and configuration change. The dashboard surfaces it as:
 - **Audit log** — including every refusal, so a refusal storm names the wall:
   which agent, which rule, and what to say instead.
 
-## 12. Talking to your company
+## 12. Three tenses, not one
+
+Every screen used to be in the present. The Desk said what needs you *now*, the
+Overview said what is true *now*, and reconstructing a weekend meant reading
+four tables in Records by hand.
+
+**The briefing — what happened while you were away.** One composed narrative
+per company: scope that settled, work that closed, proof the platform verified
+or refused, deliverables published, what it cost, what decided itself in your
+absence, what the CEO decided on its own authority, what you decided, and what
+that leaves waiting on you. It reads on the Desk (every live company), on each
+project's Overview, from `yaaf briefing`, and — with `brief_daily_at` set — in
+your inbox every morning.
+
+- **Composed from the record at zero tokens.** No run, no wake, no model call.
+  Which is why it still arrives on a company the platform paused for an
+  exhausted budget, on one with an empty board, and on one that is broke — the
+  three mornings you most need to hear something, and the three a
+  model-written status could not be afforded. Same reasoning as the janitor
+  opening a review with the budget gone.
+- **It grades nothing.** Every line counts something the platform already wrote
+  down under its own rules: a requirement is met because the platform ran the
+  test, evidence counts because the verifier fetched it. R-00 and standing
+  requirements are held out of "settled true" on exactly the grounds velocity
+  holds them out of pace — a plan gate lifting is not scope landing, and an
+  obligation met every cycle by design is not progress.
+- **The window is yours and has visible edges.** "Since you were last here" is
+  a real mark, moved only when you acknowledge the panel — reading it never
+  moves it, so a tab left open overnight does not eat your weekend. A first
+  visit summarises the whole company rather than an empty minute.
+- **Silence says which kind it is.** A company that did nothing still ships its
+  pulse: open tasks, runs in flight, when it last ran. Nothing wrong and
+  nothing happening are different screens.
+- **Two marks, two meanings.** The daily email's window runs from the last
+  email; the panel's runs from the last time you looked. The mail cannot eat
+  the story the screen was going to tell.
+
+**The agenda — what it is going to do next.** A fourteen-day strip on each
+project's Overview (and `yaaf agenda`): the wall-clock wakes, the standing
+review, the cycle roll, bet kill dates, approval and spot-check expiries, the
+budget reset, and the promised delivery date with the platform's own projection
+beside it. Recurring wakes are drawn as *rhythms* — one fact with a cadence and
+a next firing — rather than fourteen copies of one event. Every time is read in
+the constitution's one timezone from the same heartbeats the dispatcher reads,
+so a wake it draws is a wake that will run. And it explains its own blanks: why
+the next review is not scheduled while one sits open, that nobody is on a
+clock, that a paused company has no schedule at all.
+
+## 13. A fire drill, before you spend a cent
+
+The riskiest moment in this product is the one before the first real run: you
+write a goal, hire a crew off a wizard, hand over an API key and a budget, and
+go to bed. Until now the only preflight was a static checklist — is the billing
+credential shaped like a credential, is a team on an outdated role version —
+and a static check cannot answer the question you are actually asking.
+
+**`yaaf rehearse spec.json`**, and a button on the New-project form's
+**Review & create** step, runs your spec as a company for nothing. It is the
+same machinery CI uses to drive a whole company for $0 — the mock runtime, the
+dispatcher, the janitor, the policy engine, every refusal — pointed at your
+configuration instead of a scripted scenario. It needs no deployment and no
+key: `yaaf rehearse examples/01-your-first-hour.json` works on a fresh
+checkout.
+
+Four things come back:
+
+- **The walk.** Roles resolve, teams hire, the CEO wakes, scope is proposed,
+  the plan gate does its arithmetic, the board opens, work is claimed and
+  closed with evidence, a requirement settles true — each with the beat it
+  happened on, or the reason it did not. A configuration that fails does not
+  report "it didn't work"; it reports *where it stopped*, in the platform's own
+  words. A role your library cannot resolve, a schedule naming nobody, a
+  company with no team in it: each is named, with what to do about it.
+- **How often it will stop and wait for you.** The drill plays the chairman and
+  counts every time it had to — accept scope, sign the date, judge an
+  observable, decide a spend. That number is the autonomy dial made concrete,
+  and nothing else in the product could produce it before the money was spent.
+  Move one switch and run it again to see the difference.
+- **What it costs and what paces it.** The plan in runs against your caps, and
+  `capacity.py`'s four limits — because a daily total is not the only wall, and
+  a crew whose critical path runs through one agent's hourly wake ceiling looks
+  perfectly healthy at rest. On a box that has never priced a run the report
+  gives the **break-even**: what a run must cost for the plan to fit. One
+  number you can check against a bill you have already seen, instead of a total
+  invented from a price nobody measured.
+- **What it did not exercise**, in plain sight. Every test the drill's crew
+  writes is an `observable`, so no command out of a spec file is ever run;
+  evidence carries no URL, so the verifier never reaches the network; no
+  credential is read and no socket is opened. It asserts its database is the
+  throwaway SQLite file it created and refuses to start otherwise, and the API
+  route runs it in a subprocess — the engine is a process-global, and a drill
+  inside the server would re-point the server.
+
+**The one thing it changes about your rules.** Seven values are relaxed for the
+duration — the per-agent and per-project hourly ceilings, the daily ceiling,
+concurrency, the CEO's heartbeat, and the dispatcher's batching windows —
+because every one of them measures *wall-clock time*, and a drill compresses a
+fortnight into seconds. Left in force they bind on the first beat and report a
+stall the compression caused. They are relaxed, the report says which and why,
+and their real effect is computed from your own numbers as arithmetic rather
+than guessed at by simulation. Every other rule you wrote is in force exactly
+as written.
+
+**What it cannot tell you** — and says so, at the bottom of every report — is
+whether a real model does the job well. The crew is competent and dull by
+construction, so a clean drill is evidence about your *configuration* and no
+evidence at all about your *company*.
+
+## 14. Talking to your company
 
 - **The Boardroom** is a chat, not a ticket queue. Every running project keeps
   a **resident CEO chat session**, so replies land in seconds — typing
@@ -273,7 +381,7 @@ decision, and configuration change. The dashboard surfaces it as:
   enforces it from the next call. Scope is limited to your reporting
   preferences — everything else in the constitution is yours to change directly.
 
-## 13. Deliverables and files
+## 15. Deliverables and files
 
 - **Artifacts** are finished deliverables persisted to the artifact store
   (local disk, or any S3-compatible store — MinIO, R2, AWS).
@@ -281,7 +389,7 @@ decision, and configuration change. The dashboard surfaces it as:
   read-only, so you can see work in progress, not just what shipped.
 - **Preview and download** from the Deliverables tab.
 
-## 14. Setup that can't silently fail
+## 16. Setup that can't silently fail
 
 - **Health checklist** on each project's Overview names anything misconfigured
   — dead billing, a credential that isn't a URL, an untested data source, a
@@ -299,17 +407,21 @@ decision, and configuration change. The dashboard surfaces it as:
   sharing. **Project clone** produces a running twin on the same install,
   credential values and all, optionally aimed at a new goal.
 
-## 15. Proving it works
+## 17. Proving it works
 
-- **539 tests** run offline on SQLite and on Postgres in CI: an invariant suite
+- **626 tests** run offline on SQLite and on Postgres in CI: an invariant suite
   that attacks every rule over HTTP, chaos tests (crash, reap, retry), golden
   transcript evals that gate prompt edits, and end-to-end runs against a mock
   model.
 - **Mock runtime** (`runtime: mock`) swaps the Agent SDK for scripted
   behaviours, which is how CI drives a whole company — planning, decomposition,
   claims, completions, evidence, every governance trip — for $0. Behaviours are
-  registered in code; **none ship by default**, so a mock project on your own
-  install reads its context and exits. It is the test harness, not a demo mode.
+  registered in code, and a mock project you start yourself still reads its
+  context and exits: none is registered for it. The one thing that does ship a
+  crew is the [fire drill](#13-a-fire-drill-before-you-spend-a-cent), which
+  registers a generic one for the length of a rehearsal and clears it after.
+  Still the test harness rather than a demo mode — but now the test harness is
+  pointed at your configuration as well as at ours.
 
 ---
 

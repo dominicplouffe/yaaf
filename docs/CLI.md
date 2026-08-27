@@ -96,6 +96,9 @@ yaaf stop  my-slug --reason "shipped"
 | Command | Shows |
 |---|---|
 | `yaaf projects` | Every project with status and headline numbers. |
+| `yaaf rehearse SPEC_FILE [--days N] [--usd-per-run N] [--json]` | **A fire drill: run the spec as a company for nothing, before you fund it.** Needs no deployment and no key — `yaaf rehearse examples/01-your-first-hour.json` works on a fresh checkout. See [FEATURES §13](FEATURES.md). |
+| `yaaf briefing [PROJECT] [--hours N] [--seen]` | **What happened since you last read one.** Omit the project for every live company. Composed from the record at zero tokens, so it works on a paused company and a broke one. Reading never moves your mark; `--seen` does, and only to the edge of the window it just printed. |
+| `yaaf agenda PROJECT [--days 14]` | **What it is scheduled to do next**: the wall-clock wakes, the standing meeting, the cycle roll, the kill dates, the clocks that decide themselves, and the promised date with the platform's projection beside it. |
 | `yaaf dashboard PROJECT` | The full project dashboard payload. |
 | `yaaf board PROJECT` | The task board. |
 | `yaaf org PROJECT` | Teams, leads, employees, who's awake. |
@@ -156,3 +159,32 @@ yaaf start my-slug
 
 yaaf say my-slug "Morning. What's the plan for the week?"
 ```
+
+## Before you spend anything
+
+```bash
+yaaf rehearse my-spec.json                  # does this configuration work?
+yaaf rehearse my-spec.json --usd-per-run 2  # and what does it cost at your price?
+```
+
+Runs the real platform on the mock runtime against your spec: the walk from
+roles resolving to a requirement settling true, every point the company would
+stop and wait for you, the plan in runs against your caps, and which of the
+four limits paces it. Opens no sockets, runs no commands out of the file, and
+touches no database but the throwaway one it creates.
+
+Exit code 0 when the company gets off the ground, 1 when it does not, 2 when
+the spec itself could not be read — so it drops straight into CI beside your
+other checks.
+
+## Coming back after a few days
+
+```bash
+yaaf briefing                 # every live company, each on its own read mark
+yaaf briefing my-slug --seen  # read one, and start the next window here
+yaaf agenda my-slug           # and what the next fortnight holds
+```
+
+Set `brief_daily_at` (Settings → **Rules in force** → Rhythm & reporting, or
+`yaaf amend`) and the same briefing arrives by email every morning without
+anyone typing anything.
