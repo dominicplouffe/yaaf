@@ -132,6 +132,48 @@ class ProjectMode(enum.StrEnum):
     OPERATE = "operate"
 
 
+class FlagKind(enum.StrEnum):
+    """Why the platform decided the chairman needs to hear something.
+
+    Every one of these is arithmetic or a failed test — never a judgement the
+    CEO makes about whether the news is worth his time. That distinction is the
+    whole point: the CEO that prompted this had written "run ration is the
+    binding constraint" in its own notes three hours before telling its
+    chairman "solid progress".
+    """
+
+    STANDING_MISSED = "standing_missed"    # an obligation failed its check
+    DEADLINE_AT_RISK = "deadline_at_risk"  # capacity slack went negative
+    CYCLE_MISSED = "cycle_missed"          # a cycle rolled with scope unmet
+    WORK_STARVED = "work_starved"          # a cap stopped work with tasks ready
+
+
+class FlagStatus(enum.StrEnum):
+    OPEN = "open"          # tripped, and the chairman has not been told
+    RAISED = "raised"      # said out loud in the boardroom, with a proposal
+    RESOLVED = "resolved"  # the condition cleared
+
+
+class Recurrence(enum.StrEnum):
+    """Is this requirement done once, or due every cycle?
+
+    Deliver and Explore only ever have the first kind: a thing that must be
+    true at the end, met once and closed. Operate runs on a rhythm, and most of
+    what it owes is owed again next cycle — the gameweek memo, the morning
+    inbox sweep, the hourly routing check. Expressed as TERMINAL, those became
+    one row met once, and a company that had shipped 1 of 38 memos looked
+    finished. Expressed as prose, they were invisible to every check the
+    platform runs.
+
+    A STANDING requirement is met against a CYCLE (see RequirementCycleResult)
+    and reopens when the next one starts. Its history — "met in 23 of the last
+    24 cycles" — is what an Operate project has instead of a burndown.
+    """
+
+    TERMINAL = "terminal"
+    STANDING = "standing"
+
+
 class RequirementStatus(enum.StrEnum):
     """A requirement is a thing that must be true at the end.
 
@@ -252,6 +294,19 @@ class RunKind(enum.StrEnum):
     # chat is not work — but it authenticates, meters, heartbeats, and revokes
     # exactly like a run.
     CHAT_SESSION = "chat_session"
+    # Reading the inbox. A wake whose ONLY reason is ordinary unread messages —
+    # nothing from the chairman, nothing in the boardroom, no task, no notice,
+    # no heartbeat. It runs, it is logged, it is billed to the ledger like any
+    # other run, and it spends its OWN ceiling rather than the company's work
+    # allowance.
+    #
+    # 57% of every run one audited company ever spent was this: agents waking
+    # to read a message and reply "Ack". At the daily reset, three of the first
+    # four runs went to agents reading the message that told them not to work —
+    # which consumed the hourly ceiling, so the two agents actually holding
+    # ready tasks got nothing. Reading is not free, but charging it to the same
+    # purse as the work means the reading crowds the work out.
+    INBOX_RUN = "inbox_run"
 
 
 class ApprovalKind(enum.StrEnum):
@@ -300,6 +355,10 @@ class LedgerKind(enum.StrEnum):
 
 class NoticeKind(enum.StrEnum):
     DROUGHT = "drought"
+    # The platform decided the chairman needs to hear something. Urgent by
+    # construction: a flag delivered on the next scheduled status is a warning
+    # that arrives after the deadline it was about.
+    FLAG_OPENED = "flag_opened"
     HYPOTHESIS_EXPIRED = "hypothesis_expired"
     BUDGET_WARNING = "budget_warning"
     BUDGET_EXHAUSTED = "budget_exhausted"
@@ -658,6 +717,12 @@ class Requirement(Base):
     # Same shape as a task's: {"type": "command", ...} | {"type": "observable", ...}
     acceptance_test: Mapped[dict] = mapped_column(JSONVariant)
     status: Mapped[str] = mapped_column(String(16), default=RequirementStatus.PROPOSED)
+    # Met once and closed, or owed again every cycle. TERMINAL everywhere
+    # except Operate, where a standing requirement is the normal shape and
+    # `met_at` means "met for the cycle it was last met in".
+    recurrence: Mapped[str] = mapped_column(
+        String(16), default=Recurrence.TERMINAL, server_default=Recurrence.TERMINAL
+    )
     # The waterfall axis. Ordered, chairman-owned, and gated: work may only be
     # created for requirements in the open stage or earlier.
     stage: Mapped[int] = mapped_column(Integer, default=1)
@@ -998,6 +1063,104 @@ class Cycle(Base):
     opened_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     closed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     narrative: Mapped[str | None] = mapped_column(Text)  # uncapped, on purpose
+    # What this turn is FOR, in the CEO's words. Operate cycles had a number
+    # and a narrative but never a goal, so "produce the gameweek memo" lived in
+    # prose in a chat message where nothing could check it or count it.
+    goal: Mapped[str | None] = mapped_column(Text)
+    # When this cycle's work is actually due — which is NOT the same as when it
+    # rolls, and for anything driven by the outside world is not on the
+    # calendar at all. A gameweek deadline moves every week; a warehouse cutoff
+    # moves with the carrier. Null falls back to the constitution's rhythm.
+    due_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # Where `due_at` came from. The CEO may record a deadline because a
+    # deadline is a FACT to be discovered, not a promise to be made — but a
+    # fact has provenance: {"kind": "calendar"} or {"kind": "data", "url": ...,
+    # "fetched_at": ..., "snapshot_sha256": ...}. The rule that the CEO cannot
+    # write a date still governs promises; this is not one. Whether the work
+    # will BE done by then remains the platform's arithmetic.
+    due_source: Mapped[dict | None] = mapped_column(JSONVariant)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class RequirementCycleResult(Base):
+    """One standing requirement, judged for one cycle.
+
+    A terminal requirement has a single `met_at` and that is the whole story. A
+    standing one needs a row per turn, because the story IS the pattern: met in
+    23 of the last 24 cycles is an operating record, and "met" on its own is
+    not. The platform writes these the same way it writes `met_at` — only after
+    running the acceptance test itself.
+    """
+
+    __tablename__ = "requirement_cycle_results"
+    __table_args__ = (
+        UniqueConstraint("requirement_id", "cycle_id"),
+        Index("ix_reqcycle_project_cycle", "project_id", "cycle_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    requirement_id: Mapped[str] = mapped_column(String(40))
+    cycle_id: Mapped[str] = mapped_column(String(40))
+    # MET or one of the open statuses, judged at the moment the cycle closed.
+    status: Mapped[str] = mapped_column(String(16))
+    met_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    met_by_run_id: Mapped[str | None] = mapped_column(String(40))
+    check_output: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class Flag(Base):
+    """An obligation to speak, with a state of its own.
+
+    Every mechanism around CEO-to-chairman reporting was a brake. The cadence
+    refuses an unprompted status between slots; `may_post_status_now` is a
+    permission. Nothing anywhere ever REQUIRED the CEO to say anything — so a
+    CEO sitting on a red cycle with a closed cadence slot could not raise it at
+    all, and one that was asked directly answered "solid progress".
+
+    A flag is the accelerator. The platform opens it from arithmetic or a
+    failed test, it overrides the cadence brake, and it cannot be closed by
+    staying quiet: it closes by being RAISED in the boardroom with a proposal.
+    Closing one dismissively is a CEO doing its job well — "failed on one
+    order, the warehouse API was down four minutes, it self-healed, no action
+    needed". Leaving it open while reporting that all is well is the thing that
+    is no longer available.
+
+    `raised_at` is null while the chairman has not been told, and the project
+    screen shows that count. It is the property that makes the mechanism
+    trustworthy without being trusted: if it ever stops working, the silence is
+    visible rather than inferred.
+    """
+
+    __tablename__ = "flags"
+    __table_args__ = (
+        Index("ix_flags_project_status", "project_id", "status"),
+        # One live flag per condition. A capacity forecast recomputed every
+        # tick must not open a new flag every tick.
+        UniqueConstraint("project_id", "kind", "subject_id", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    kind: Mapped[str] = mapped_column(String(24))
+    status: Mapped[str] = mapped_column(String(16), default=FlagStatus.OPEN)
+    # What the flag is ABOUT — a requirement id, a cycle id — so recomputing
+    # the same condition finds the existing flag instead of opening another.
+    subject_id: Mapped[str | None] = mapped_column(String(40))
+    summary: Mapped[str] = mapped_column(Text)
+    # The numbers that tripped it, kept verbatim. A flag that cannot show its
+    # arithmetic is an alarm, and an alarm is just anxiety forwarded to the
+    # chairman's desk.
+    arithmetic: Mapped[dict | None] = mapped_column(JSONVariant)
+    opened_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    raised_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    raised_in_message_id: Mapped[str | None] = mapped_column(String(40))
+    # What the CEO proposed doing about it. Required to raise: the value a CEO
+    # adds over a monitoring alert is the sentence after the bad news.
+    proposal: Mapped[str | None] = mapped_column(Text)
+    resolution: Mapped[str | None] = mapped_column(Text)
+    closed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 
@@ -1184,6 +1347,17 @@ class Run(Base):
     # change must never silently re-attribute historical spend.
     model: Mapped[str | None] = mapped_column(String(64))
     effort: Mapped[str | None] = mapped_column(String(16))
+    # Did this run change anything? Incremented by the API layer on every
+    # accepted write — a task claimed or closed, a message posted, evidence
+    # filed, a memory written, scope moved. Zero means the run woke, thought,
+    # and left the company exactly as it found it.
+    produced: Mapped[int] = mapped_column(Integer, default=0)
+    # Whether this run spends the work allowance. True at birth and set False
+    # at finalize when `produced` is zero, because a wake cannot be known to be
+    # empty until it has happened — the refund is necessarily retroactive.
+    # Still logged, still billed to the ledger, still visible on the Runs page:
+    # what it stops doing is crowding out work.
+    metered: Mapped[bool] = mapped_column(Boolean, default=True)
     trace_path: Mapped[str | None] = mapped_column(Text)
     # Store uri of {"system_prompt", "context_pack"} — what the run actually
     # sent to the model, stashed beside the trace.

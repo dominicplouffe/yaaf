@@ -87,7 +87,9 @@ interface PlanView {
     remaining: number;
     weeks_left_at_pace: number | null;
     runs_3w: { total: number; dead: number; failure_share: number;
-      attributed_share: number; usd: number };
+      attributed_share: number; usd: number;
+      work: number; inbox: number; noop: number;
+      inbox_share: number; noop_share: number };
     worst_failure: { key: string; failure_load: number; statement: string } | null;
   };
   requirements?: PlanRequirement[];
@@ -831,6 +833,28 @@ export default function Plan({ ctx }: { ctx: ProjectCtx }) {
                 {data.velocity.worst_failure
                   ? ` — ${data.velocity.worst_failure.key} worst at ${data.velocity.worst_failure.failure_load}`
                   : ""}
+              </div>
+            </div>
+          )}
+          {data.velocity && data.velocity.runs_3w.total > 0 &&
+           data.velocity.runs_3w.inbox + data.velocity.runs_3w.noop > 0 && (
+            /* What the company spent talking to itself. Its own broadcasts
+               generate this traffic, so it is the one cost that can be priced
+               before it is paid — and until it was counted, 57% of every run
+               one company ever spent was an agent reading a message. */
+            <div className="tile">
+              <div className="label">Overhead</div>
+              <div className="value">
+                {Math.round(
+                  ((data.velocity.runs_3w.inbox + data.velocity.runs_3w.noop) /
+                    data.velocity.runs_3w.total) * 100,
+                )}
+                <small>%</small>
+              </div>
+              <div className="sub">
+                {data.velocity.runs_3w.inbox} reading the inbox,{" "}
+                {data.velocity.runs_3w.noop} that changed nothing — of{" "}
+                {data.velocity.runs_3w.total} runs
               </div>
             </div>
           )}

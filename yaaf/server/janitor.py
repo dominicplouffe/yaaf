@@ -58,7 +58,9 @@ from yaaf.core.models import (
     Project,
     ProjectMode,
     ProjectStatus,
+    Recurrence,
     Requirement,
+    RequirementCycleResult,
     RequirementEvent,
     RequirementStatus,
     Review,
@@ -161,6 +163,7 @@ def _janitor_project(session: Session, project: Project) -> None:
     warn_drought(session, project, cons)
     warn_stall(session, project, cons)
     warn_memory_pressure(session, project, cons)
+    evaluate_flags(session, project, cons)
 
 
 def _notice_ceo(session: Session, project: Project, kind: str, body: str) -> None:
@@ -583,15 +586,27 @@ def check_finished_requirements(session: Session, project: Project,
 # ── the Operate rhythm: cycles roll here, and the learning loop rides them ──────
 
 
-def next_cycle_roll(opened_at, cons: ConstitutionDoc):
+def next_cycle_roll(opened_at, cons: ConstitutionDoc, cycle: Cycle | None = None):
     """When the cycle that opened at `opened_at` rolls, in UTC.
 
     All local arithmetic happens in the constitution's one timezone. Monthly
     and quarterly days are 1-28 by validation — the 29th-31st were refused at
     the rule, not clamped here, so this never has to guess what the chairman
     meant by "the 30th" in February.
+
+    A cycle carrying its own `due_at` rolls on THAT, and the constitution's
+    rhythm is the fallback. This is the difference between a company whose work
+    is paced by the calendar and one paced by the world: a gameweek deadline
+    lands on a different day every week, a warehouse cutoff moves with the
+    carrier, and a rhythm that cannot follow them is a rhythm the work ignores.
     """
     from zoneinfo import ZoneInfo
+
+    # The world's date beats the calendar's, when the world has given us one.
+    if cycle is not None and cycle.due_at is not None:
+        from yaaf.server.dispatcher import _utc
+
+        return _utc(cycle.due_at)
 
     try:
         tz = ZoneInfo(cons.timezone)
@@ -600,7 +615,14 @@ def next_cycle_roll(opened_at, cons: ConstitutionDoc):
 
     local = opened_at.astimezone(tz)
     midnight = {"hour": 0, "minute": 0, "second": 0, "microsecond": 0}
-    if cons.cycle_frequency == "daily":
+    if cons.cycle_frequency == "hourly":
+        # The inbox sweep, the routing check: rhythms shorter than a day, where
+        # snapping to midnight would mean one cycle a day. The boundary is the
+        # top of the next hour, so cycles line up with the wake ceilings that
+        # bound them.
+        boundary = (local + timedelta(hours=1)).replace(
+            minute=0, second=0, microsecond=0)
+    elif cons.cycle_frequency == "daily":
         boundary = (local + timedelta(days=1)).replace(**midnight)
     elif cons.cycle_frequency == "weekly":
         ahead = (cons.cycle_day - local.weekday()) % 7
@@ -654,7 +676,7 @@ def roll_cycles(session: Session, project: Project, cons: ConstitutionDoc) -> No
         opened = _open_cycle(session, project, last + 1)
         log.info("opened cycle #%s for %s", opened.ordinal, project.slug)
         return
-    if now < next_cycle_roll(cycle.opened_at, cons):
+    if now < next_cycle_roll(cycle.opened_at, cons, cycle):
         return
 
     scope = policy.scope_requirements(session, project.id)  # the open cycle's
@@ -708,10 +730,40 @@ def roll_cycles(session: Session, project: Project, cons: ConstitutionDoc) -> No
             log.warning("project %s paused: two skipped cycles", project.slug)
             return
 
+    # A standing requirement is judged for the cycle that just closed and then
+    # starts again. Without this an Operate company that owes the same thing
+    # every week had one row, met once, and looked finished after the first —
+    # while the platform had no way to check the other thirty-seven.
+    standing = [r for r in accepted if r.recurrence == Recurrence.STANDING]
+    for requirement in standing:
+        session.add(RequirementCycleResult(
+            id=ids.new_id(ids.REQUIREMENT_RESULT),
+            project_id=project.id,
+            requirement_id=requirement.id,
+            cycle_id=cycle.id,
+            status=requirement.status,
+            met_at=requirement.met_at,
+            met_by_run_id=requirement.met_by_run_id,
+            check_output=(requirement.check_output or "")[:4000] or None,
+        ))
+
     new = _open_cycle(session, project, cycle.ordinal + 1)
     carried = unsettled + [r for r in scope if r.status == RequirementStatus.PROPOSED]
     for requirement in carried:
         requirement.cycle_id = new.id
+
+    # Reopened, not re-proposed: the chairman accepted this obligation once and
+    # it stays accepted. What resets is whether it has been honoured THIS turn.
+    for requirement in standing:
+        requirement.cycle_id = new.id
+        if requirement.status == RequirementStatus.MET:
+            requirement.status = RequirementStatus.PENDING
+            requirement.met_at = None
+            requirement.met_by_run_id = None
+            policy.record_requirement_event(
+                session, requirement, RequirementStatus.PENDING, "janitor",
+                note=f"standing requirement reopened for cycle {new.ordinal}",
+                from_status=RequirementStatus.MET)
 
     plan = policy.plan_requirement(session, project.id)
     if plan is not None and plan.status == RequirementStatus.MET:
@@ -735,6 +787,37 @@ def roll_cycles(session: Session, project: Project, cons: ConstitutionDoc) -> No
     )
     log.info("rolled cycle #%s → #%s for %s (%s)",
              cycle.ordinal, new.ordinal, project.slug, cycle.status)
+
+
+# ── flags: the obligation to speak ──────────────────────────────────────────────
+
+
+def evaluate_flags(session: Session, project: Project, cons: ConstitutionDoc) -> None:
+    """Recompute the trip conditions, and wake the CEO when one fires.
+
+    In the janitor for the same reason cycles roll here: news the chairman
+    needs must not depend on the company having runs left to notice it. The
+    notice is what turns an open flag into a wake — a flag nobody is told about
+    until the next scheduled status is a flag that arrives after the deadline
+    it was warning about.
+    """
+    from yaaf.server import flags as flag_lib
+
+    try:
+        opened = flag_lib.evaluate(session, project, cons)
+    except Exception:
+        log.warning("flag evaluation failed for %s", project.slug, exc_info=True)
+        return
+    if not opened:
+        return
+    _notice_ceo(
+        session, project, NoticeKind.FLAG_OPENED,
+        f"{opened} flag(s) opened: the platform's own arithmetic says something is "
+        "wrong that the chairman has not been told. Read `situation.flags`, say it in "
+        "the boardroom with the numbers and what you propose cutting or raising, then "
+        "close each with flag_raise. The reporting cadence does not hold you here, and "
+        "he can see how many are unraised — so saying nothing is not a quiet option.",
+    )
 
 
 # ── explore: a window, not a scope ──────────────────────────────────────────────

@@ -277,6 +277,22 @@ class ConstitutionDoc(BaseModel):
              "company can spend a whole day's allowance in the first hour and then sit "
              "dead until midnight with work stranded on the board. This is a trailing "
              "hour, not a clock hour, so it clears continuously rather than in a lump.")
+    # The inbox lane. Reading is real cost — every wake is a paid model call —
+    # but it is not work, and billing it to the work allowance is how a
+    # company's own chatter eats the runs its deliverables needed. These are
+    # the walls that keep "reading is cheap" from meaning "reading is free".
+    inbox_runs_per_project_per_day: int = _rule(
+        40, ge=0, group="Wake-loop brakes", label="Inbox runs per day, whole project",
+        help="Wakes that only read messages, across every agent. Separate from the work "
+             "allowance: an agent catching up on its channels no longer crowds out an "
+             "agent holding a ready task. Still every-one-a-paid-model-call, so it has a "
+             "ceiling of its own. 0 stops message-only wakes entirely — agents then read "
+             "their channels on the next wake they were having anyway.")
+    inbox_runs_per_project_per_hour: int = _rule(
+        8, ge=0, group="Wake-loop brakes", label="Inbox runs per hour, whole project",
+        help="The pacing brake for the inbox lane, for the same reason the work lane has "
+             "one: a broadcast to leadership makes every agent unread at the same instant, "
+             "and without this they all wake in the same minute.")
     pair_breaker_messages: int = _rule(
         10, ge=2, group="Wake-loop brakes", label="Messages before a thread freezes",
         help="Two agents talking this many times in one thread with nothing landing are "
@@ -372,10 +388,13 @@ class ConstitutionDoc(BaseModel):
     # times read the constitution's one timezone.
     cycle_frequency: str = _rule(
         "weekly", group="Operate rhythm", label="How often a cycle rolls",
-        choices=["daily", "weekly", "monthly", "quarterly"],
-        help="Operate projects only: 'daily', 'weekly', 'monthly' or 'quarterly'. Each "
-             "roll closes the cycle, carries unfinished scope forward, reopens the plan "
-             "gate, and hands the CEO the last three cycles' narratives verbatim.")
+        choices=["hourly", "daily", "weekly", "monthly", "quarterly"],
+        help="Operate projects only. Each roll closes the cycle, carries unfinished "
+             "scope forward, reopens the plan gate, and hands the CEO the last three "
+             "cycles' narratives verbatim. 'hourly' is for rhythms shorter than a day "
+             "— an inbox swept every morning, an order queue checked on the hour. A "
+             "cycle that carries its own due-by rolls on that instead, so work paced "
+             "by the outside world is not forced onto the calendar.")
     cycle_day: int = _rule(
         0, ge=0, le=28, group="Operate rhythm", label="Which day the cycle rolls",
         help="Weekly: 0=Monday … 6=Sunday. Monthly and quarterly: the day of the month, "
@@ -437,9 +456,10 @@ class ConstitutionDoc(BaseModel):
     @field_validator("cycle_frequency")
     @classmethod
     def _frequency_is_known(cls, raw: str) -> str:
-        if raw not in ("daily", "weekly", "monthly", "quarterly"):
+        if raw not in ("hourly", "daily", "weekly", "monthly", "quarterly"):
             raise ValueError(
-                f"{raw!r} is not a cycle frequency: daily, weekly, monthly or quarterly")
+                f"{raw!r} is not a cycle frequency: hourly, daily, weekly, monthly "
+                "or quarterly")
         return raw
 
     @model_validator(mode="after")

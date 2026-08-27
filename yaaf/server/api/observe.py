@@ -58,7 +58,7 @@ from yaaf.core.models import (
 from yaaf.server import policy, typing_state
 from yaaf.server.deps import admin_auth, db
 from yaaf.server.dispatcher import activity_state, chat_session_live
-from yaaf.server.velocity import commitment_projection, project_velocity
+from yaaf.server.velocity import commitment_projection, project_velocity, standing_record
 
 router = APIRouter(dependencies=[Depends(admin_auth)])
 
@@ -326,6 +326,38 @@ def _current_cycle_view(session: Session, project: Project) -> dict | None:
     return {"ordinal": cycle.ordinal, "opened_at": cycle.opened_at.isoformat()}
 
 
+@router.get("/projects/{project_id}/flags")
+def project_flags(project_id: str, session: Session = Depends(db)) -> dict:
+    """What the platform decided the chairman needs to hear, and whether the
+    CEO has actually said it.
+
+    `unraised` is the number that matters and the reason this endpoint exists.
+    A CEO reporting "solid progress" beside two flags it has not raised is
+    self-refuting on the chairman's own screen — which is what makes the
+    mechanism trustworthy without asking him to trust it.
+    """
+    from yaaf.server import flags as flag_lib
+
+    project = _project(session, project_id)
+    rows = flag_lib.open_flags(session, project.id)
+    return {
+        "unraised": sum(1 for f in rows if f.status == "open"),
+        "flags": [
+            {
+                "id": f.id,
+                "kind": f.kind,
+                "status": f.status,
+                "summary": f.summary,
+                "arithmetic": f.arithmetic,
+                "opened_at": f.opened_at.isoformat() if f.opened_at else None,
+                "raised_at": f.raised_at.isoformat() if f.raised_at else None,
+                "proposal": f.proposal,
+            }
+            for f in rows
+        ],
+    }
+
+
 @router.get("/projects/{project_id}")
 def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
     project = _project(session, project_id)
@@ -552,6 +584,19 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
                 "seeing the project; if this persists, check the runner's logs.",
                 "runs")
 
+    # News the CEO has been told to deliver and has not. Loud on purpose: the
+    # whole point of a flag is that nobody has to notice it themselves.
+    from yaaf.server import flags as flag_lib
+
+    unraised = flag_lib.unraised_count(session, project.id)
+    if unraised:
+        add("flags", "warn",
+            f"{unraised} flag(s) opened by the platform that your CEO has not yet "
+            "raised with you — each one is arithmetic or a failed check, not an "
+            "opinion. It is required to bring them to the boardroom with a proposal, "
+            "and the reporting cadence does not hold it back from doing so.",
+            "boardroom")
+
     # Liveness. Every other check on this page asks "is this project set up
     # correctly?"; this one asks "is it working right now?" — the question that
     # had no answer anywhere in the product. A company that has spent its daily
@@ -717,6 +762,10 @@ def plan_view(project_id: str, session: Session = Depends(db)) -> dict:
         "open_stage": policy.open_stage(session, project.id),
         "critical_path": policy.critical_path(session, project.id),
         "velocity": project_velocity(session, project.id),
+        # What an Operate project has instead of a burndown: a burndown of work
+        # that recurs is a flat line, and the shape that carries the
+        # information is which obligation slipped, in which turn.
+        "standing": standing_record(session, project.id),
         "requirements": [
             {
                 "id": r.id,

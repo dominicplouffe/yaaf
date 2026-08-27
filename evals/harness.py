@@ -69,13 +69,16 @@ from yaaf.core.models import (  # noqa: E402
     Hypothesis,
     Message,
     Project,
-    RunKind,
     Task,
     utcnow,
 )
 from yaaf.runner.backends import mock as mock_backend  # noqa: E402
 from yaaf.runner.daemon import execute_job, lease_and_prepare  # noqa: E402
-from yaaf.server.dispatcher import MESSAGE_COALESCE_MINUTES, dispatch_once  # noqa: E402
+from yaaf.server.dispatcher import (  # noqa: E402
+    MESSAGE_COALESCE_MINUTES,
+    MODEL_RUN_KINDS,
+    dispatch_once,
+)
 from yaaf.server.janitor import janitor_once  # noqa: E402
 from yaaf.server.policy import (  # noqa: E402
     OPEN_TASK_STATUSES,
@@ -289,10 +292,14 @@ def _tick(client: TestClient, transcript: list[dict], tick_no: int) -> int:
     jobs = lease_and_prepare(limit=16)
     transcript.append({"event": "tick", "n": tick_no, "jobs": len(jobs)})
     for job in jobs:
-        if job.kind == RunKind.AGENT_RUN:
+        # Both lanes are the agent thinking; only a platform check is not. An
+        # inbox run testing false here fell through to the check branch and ran
+        # with no behavior attached, so an agent that woke to read its mail
+        # silently did nothing at all.
+        if job.kind in MODEL_RUN_KINDS:
             agent_name = job.context_pack.get("you", {}).get("name", "?")
             transcript.append(
-                {"event": "run_start", "agent": agent_name, "kind": "agent_run",
+                {"event": "run_start", "agent": agent_name, "kind": job.kind,
                  "trigger": job.trigger}
             )
             recorder = RecordingClient(client, transcript, agent_name)

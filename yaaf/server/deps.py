@@ -91,4 +91,39 @@ def run_auth(
     project = session.get(Project, run.project_id)
     # Exception handler uses this to count refusals against the right run.
     request.state.run_id = run.id
+    _count_production(request, run)
     return RunContext(run=run, agent=agent, project=project)
+
+
+#: Agent routes whose mutating calls change nothing about the company.
+#: `typing` is a presence flag the boardroom draws; `chat_usage` books tokens
+#: the session already spent. A run that did only these did nothing, and
+#: counting them as production would make the no-op refund unclaimable by the
+#: very lane — reading the mail — that it exists for.
+UNPRODUCTIVE_AGENT_PATHS = frozenset({"/agent/typing", "/agent/chat_usage"})
+
+
+def _count_production(request: Request, run: Run) -> None:
+    """Record that this run is changing something.
+
+    A run's cost is known the moment it starts; whether it was worth anything
+    is not. So the platform counts mutating calls as they are authorised, and
+    :func:`yaaf.runner.daemon.finalize` refunds the run's work allowance if the
+    count is still zero when it ends — the wake happened, the model was paid,
+    and the company was left exactly as it was found.
+
+    Counted on the REQUEST'S OWN session rather than in middleware with a
+    session of its own: a second connection per write serialises against the
+    first under SQLite and turns every agent write into lock contention.
+
+    Counted at authorisation rather than on the response, which means a call
+    that is admitted and then refused by policy still counts. That is the safe
+    direction — it can only ever leave a run metered that might have been
+    refunded, never the reverse, and a refusal is already its own signal.
+    """
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        return
+    path = request.url.path
+    if not path.startswith("/agent/") or path in UNPRODUCTIVE_AGENT_PATHS:
+        return
+    run.produced = (run.produced or 0) + 1

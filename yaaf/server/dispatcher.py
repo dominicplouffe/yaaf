@@ -86,12 +86,19 @@ URGENT_NOTICE_KINDS = {NoticeKind.BUDGET_WARNING, NoticeKind.BUDGET_EXHAUSTED,
                        # A stall notice that waited out a batching window would
                        # be extending the exact silence it exists to report.
                        NoticeKind.STALLED,
-                       NoticeKind.COMMITMENT_AT_RISK, NoticeKind.COMMITMENT_BREACHED}
+                       NoticeKind.COMMITMENT_AT_RISK, NoticeKind.COMMITMENT_BREACHED,
+                       # A flag that waits out a batching window is a warning
+                       # delivered after the deadline it was warning about.
+                       NoticeKind.FLAG_OPENED}
 
 # A commitment that stopped holding needs a re-forecast wake even on a day
 # ordinary work already spent the allowance — that wake is one of the three
 # things the reserved governance slice exists for.
-COMMITMENT_NOTICE_KINDS = {NoticeKind.COMMITMENT_AT_RISK, NoticeKind.COMMITMENT_BREACHED}
+COMMITMENT_NOTICE_KINDS = {NoticeKind.COMMITMENT_AT_RISK, NoticeKind.COMMITMENT_BREACHED,
+                           # Telling the chairman the date will not hold IS
+                           # governance, and the day the allowance is gone is
+                           # exactly the day he most needs to hear it.
+                           NoticeKind.FLAG_OPENED}
 
 
 def dispatcher_loop() -> None:  # pragma: no cover - thin loop around dispatch_all
@@ -176,17 +183,65 @@ UNMETERED_RUN_KINDS = (
     RunKind.REQUIREMENT_CHECK,
 )
 
+# Kinds that spend the INBOX allowance instead of the work allowance. Same
+# logging, same ledger, same visibility — a different purse. See
+# RunKind.INBOX_RUN for why reading had to stop being billed as work.
+INBOX_RUN_KINDS = (RunKind.INBOX_RUN,)
+
+#: Neither work nor inbox: everything the work allowance must ignore.
+NON_WORK_RUN_KINDS = (*UNMETERED_RUN_KINDS, *INBOX_RUN_KINDS)
+
+#: Queued kinds where an AGENT thinks, as opposed to the platform running a
+#: check in a container. Both are a model call, both authenticate with the
+#: project's billing credential, both are the agent acting. Anything asking
+#: "was this an agent or the platform?" must consult this rather than test
+#: against AGENT_RUN alone — the inbox lane was invisible to two such places
+#: the day it was added, and one of them silently stopped running agents.
+MODEL_RUN_KINDS = (RunKind.AGENT_RUN, RunKind.INBOX_RUN)
+
+
+def run_kind_for_reasons(reasons: list[dict]) -> str:
+    """Work, or just reading?
+
+    An inbox run is a wake with nothing behind it but ordinary unread
+    messages — no task, no notice, no heartbeat, no cycle plan, and nothing
+    from the chairman or the boardroom (those set `urgent` on the reason and
+    are work by definition: an unanswered owner is not correspondence).
+
+    Deciding this at wake time rather than after the fact is what lets the
+    dispatcher gate the two lanes separately, which is the entire point: the
+    company had 4 runs an hour and spent all four on agents acknowledging a
+    message, while the two agents holding ready tasks waited an hour.
+    """
+    if not reasons:
+        return RunKind.AGENT_RUN
+    for reason in reasons:
+        if reason.get("kind") != "messages":
+            return RunKind.AGENT_RUN
+        if reason.get("urgent"):
+            return RunKind.AGENT_RUN
+    return RunKind.INBOX_RUN
+
 
 def daily_runs_used(session: Session, project: Project, since) -> int:
-    """Runs created today, queued or historical, that spend the allowance."""
+    """Runs created today, queued or historical, that spend the WORK allowance.
+
+    Two exclusions beyond the unmetered kinds. Inbox runs spend their own
+    ceiling, so reading cannot crowd out working. And a run that finished
+    having changed nothing is refunded (`metered=False`) — the company was not
+    slowed by it, so the allowance should not act as though it was. Queued rows
+    always count: a wake that has not run yet cannot be known to be empty, and
+    the pessimistic read is the safe one.
+    """
     used = session.execute(
         select(func.count(Run.id)).where(Run.project_id == project.id,
-                                         Run.kind.not_in(UNMETERED_RUN_KINDS),
+                                         Run.kind.not_in(NON_WORK_RUN_KINDS),
+                                         Run.metered.is_(True),
                                          Run.created_at >= since)
     ).scalar_one()
     used += session.execute(
         select(func.count(RunQueue.id)).where(RunQueue.project_id == project.id,
-                                              RunQueue.kind.not_in(UNMETERED_RUN_KINDS),
+                                              RunQueue.kind.not_in(NON_WORK_RUN_KINDS),
                                               RunQueue.created_at >= since)
     ).scalar_one()
     return used
@@ -197,6 +252,26 @@ def hourly_runs_used(session: Session, project: Project, now) -> int:
     refills in a lump, which is how a project spends its whole day before
     lunch; this is the same count over a window that clears continuously."""
     return daily_runs_used(session, project, now - timedelta(hours=1))
+
+
+def inbox_runs_used(session: Session, project: Project, since) -> int:
+    """The reading lane's own count, on the same shape as the work lane.
+
+    No `metered` filter: an inbox run that produced nothing is the ordinary
+    case — reading and finding nothing worth acting on is the job — and
+    refunding it would leave the lane with no ceiling at all.
+    """
+    used = session.execute(
+        select(func.count(Run.id)).where(Run.project_id == project.id,
+                                         Run.kind.in_(INBOX_RUN_KINDS),
+                                         Run.created_at >= since)
+    ).scalar_one()
+    used += session.execute(
+        select(func.count(RunQueue.id)).where(RunQueue.project_id == project.id,
+                                              RunQueue.kind.in_(INBOX_RUN_KINDS),
+                                              RunQueue.created_at >= since)
+    ).scalar_one()
+    return used
 
 
 def _in_flight(session: Session, project: Project) -> int:
@@ -231,10 +306,9 @@ def _is_governance(reasons: list[dict]) -> bool:
 
 def _dispatch_project(session: Session, project: Project, cons: ConstitutionDoc) -> int:
     now = utcnow()
+    start = day_start(now)
 
-    today = daily_runs_used(session, project, day_start(now))
-    if today >= cons.runs_per_project_per_day:
-        return 0
+    today = daily_runs_used(session, project, start)
     # Past this line ordinary work is done for the day and only governance may
     # still spend. The reservation is against the *daily* ceiling alone: the
     # hourly brake below clears continuously, so it can only ever delay a
@@ -251,7 +325,22 @@ def _dispatch_project(session: Session, project: Project, cons: ConstitutionDoc)
     # fixed window with no rate limit: six agents at six wakes an hour is
     # thirty-six an hour, so a hundred-run day is gone in under three hours and
     # the company sleeps until midnight with tasks still on the board.
-    if hourly_runs_used(session, project, now) >= cons.runs_per_project_per_hour:
+    #
+    # Both walls are now computed rather than returned on, because they bound
+    # the WORK lane only. A company out of work runs may still read its mail,
+    # and — the case this was written for — a company whose hourly ceiling went
+    # to four agents acknowledging a broadcast may still run the two agents
+    # holding ready tasks.
+    work_blocked = (today >= cons.runs_per_project_per_day
+                    or hourly_runs_used(session, project, now)
+                    >= cons.runs_per_project_per_hour)
+
+    inbox_today = inbox_runs_used(session, project, start)
+    inbox_hour = inbox_runs_used(session, project, now - timedelta(hours=1))
+    inbox_blocked = (inbox_today >= cons.inbox_runs_per_project_per_day
+                     or inbox_hour >= cons.inbox_runs_per_project_per_hour)
+
+    if work_blocked and inbox_blocked:
         return 0
 
     max_concurrent = _max_concurrent(cons)
@@ -274,15 +363,30 @@ def _dispatch_project(session: Session, project: Project, cons: ConstitutionDoc)
         reasons = _wake_reasons(session, project, cons, agent)
         if not reasons:
             continue
-        if governance_only and not _is_governance(reasons):
-            continue
+        # Which purse this wake spends, decided before it is queued so the two
+        # lanes can be gated independently. Reading the mail must not be
+        # stopped by an exhausted work allowance, and must not consume one.
+        kind = run_kind_for_reasons(reasons)
+        if kind == RunKind.INBOX_RUN:
+            # Counted as we go: one tick may enqueue several agents, and a
+            # broadcast makes every agent unread in the same instant — exactly
+            # the case the hourly ceiling exists for.
+            if inbox_blocked or inbox_hour >= cons.inbox_runs_per_project_per_hour:
+                continue
+            inbox_hour += 1
+            inbox_today += 1
+        else:
+            if work_blocked:
+                continue
+            if governance_only and not _is_governance(reasons):
+                continue
         task_id = _primary_task(reasons)
         session.add(
             RunQueue(
                 id=ids.new_id(ids.RUN),
                 project_id=project.id,
                 agent_id=agent.id,
-                kind=RunKind.AGENT_RUN,
+                kind=kind,
                 trigger={"type": "wake", "reasons": reasons},
                 task_id=task_id,
                 # What this run is FOR, resolved at wake time. 62% of runs in
@@ -880,6 +984,8 @@ def activity_state(session: Session, project: Project, cons: ConstitutionDoc) ->
     start = day_start(now)
     used = daily_runs_used(session, project, start)
     used_hour = hourly_runs_used(session, project, now)
+    inbox_today = inbox_runs_used(session, project, start)
+    inbox_hour = inbox_runs_used(session, project, now - timedelta(hours=1))
     in_flight = _in_flight(session, project)
     max_concurrent = _max_concurrent(cons)
     # The same clamp `_dispatch_project` enforces with: past this line ordinary
@@ -1008,6 +1114,16 @@ def activity_state(session: Session, project: Project, cons: ConstitutionDoc) ->
             "reserved": reserved,
             "ordinary_cap": max(0, cons.runs_per_project_per_day - reserved),
             "active": governance_only,
+        },
+        # The reading lane, on the same shape as the work lane. Reported even
+        # when it is not the gate, because the question it answers — "how much
+        # of today went to the company talking to itself?" — is one nobody
+        # could ask before, and the answer was 57%.
+        "inbox_runs": {
+            "used_today": inbox_today,
+            "cap_today": cons.inbox_runs_per_project_per_day,
+            "used_this_hour": inbox_hour,
+            "cap_this_hour": cons.inbox_runs_per_project_per_hour,
         },
         "wake_ceiling": {
             "cap": cons.wakes_per_agent_per_hour,
@@ -1216,6 +1332,7 @@ def _wake_reasons(
             and not (m.sender_agent_id is None and m.sender_user_id is None)
         ]
         actionable = 0
+        channel_urgent = False
         for message in unread:
             root_id = message.thread_id or message.id
             if _breaker_trips(session, project, cons, message):
@@ -1229,11 +1346,17 @@ def _wake_reasons(
             if (message.sender_user_id is not None
                     or channel_kinds.get(channel_id) == ChannelKind.BOARDROOM):
                 urgent = True
+                channel_urgent = True
             if oldest_at is None or message.created_at < oldest_at:
                 oldest_at = message.created_at
         if actionable:
+            # `urgent` rides on the reason because the lane is decided from it:
+            # the chairman speaking, or anything in the boardroom, is work and
+            # spends the work allowance. Ordinary agent-to-agent traffic is
+            # reading, and spends the inbox ceiling instead.
             message_reasons.append(
-                {"kind": "messages", "channel_id": channel_id, "count": actionable})
+                {"kind": "messages", "channel_id": channel_id,
+                 "count": actionable, "urgent": channel_urgent})
     if message_reasons:
         ripe = oldest_at <= now - timedelta(minutes=MESSAGE_COALESCE_MINUTES)
         if urgent or ripe or total >= MESSAGE_COALESCE_COUNT:

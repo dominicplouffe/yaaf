@@ -310,7 +310,15 @@ def _chairman_state(session: Session, project: Project, agent: Agent, now) -> di
     # reply is always allowed, and it is the one post that is never a status.
     unanswered = last_chairman is not None and (last_report is None or last_chairman > last_report)
     slot = policy.next_report_slot(cadence, last_report)
-    may_report = unanswered or slot is None or now >= slot
+    # An open flag is not merely PERMITTED past the cadence — it is the one
+    # thing that requires a post. Every other mechanism here is a brake, which
+    # is how a CEO sitting on a red cycle with a closed slot ended up unable to
+    # raise it at all, and how one that was asked directly said "solid
+    # progress" instead.
+    from yaaf.server import flags as flag_lib
+
+    unraised = flag_lib.unraised_count(session, project.id)
+    may_report = unanswered or slot is None or now >= slot or bool(unraised)
     state = {
         "boardroom_channel_id": boardroom.id,
         "your_last_report_at": last_report.isoformat() if last_report else None,
@@ -324,7 +332,16 @@ def _chairman_state(session: Session, project: Project, agent: Agent, now) -> di
         start, end = cadence.window
         state["window_local"] = (f"{start.strftime('%H:%M')}-{end.strftime('%H:%M')} "
                                  f"{cadence.tz.key}")
-    if cadence.enforced:
+    state["unraised_flags"] = unraised
+    if unraised:
+        state["note"] = (
+            f"{unraised} flag(s) the chairman has NOT been told about. The cadence does "
+            "not hold you here — raising these is the reason this run may post. Say what "
+            "tripped, quote the arithmetic, and propose what to cut or raise; then close "
+            "each one with flag_raise citing the message. Deciding it is not worth his "
+            "time is a judgement you do not have: he can see the count."
+        )
+    elif cadence.enforced:
         state["note"] = (
             "The platform enforces this: an unprompted boardroom status posted before "
             "next_slot_at is REFUSED. Replying to an unanswered message from him is always "
@@ -520,6 +537,35 @@ def _memory_usage(session: Session, agent: Agent, cons: ConstitutionDoc) -> dict
     return usage
 
 
+def _capacity(session: Session, project: Project, cons: ConstitutionDoc) -> dict | None:
+    """The deadline arithmetic, when there is a deadline to do it against.
+
+    Silent on projects with no date in play — an Explore company has a window
+    and a Deliver one has a commitment, and inventing a target to forecast
+    against would be worse than saying nothing.
+    """
+    from yaaf.server.capacity import capacity_forecast
+
+    target = None
+    if project.mode == ProjectMode.OPERATE:
+        cycle = policy.current_cycle(session, project.id)
+        if cycle is not None and cycle.due_at is not None:
+            target = cycle.due_at
+    if target is None:
+        commitment = policy.open_commitment(session, project.id)
+        if commitment is not None:
+            target = commitment.deliver_by
+    if target is None:
+        return None
+    return capacity_forecast(session, project, cons, target)
+
+
+def _flags(session: Session, project: Project) -> list[dict]:
+    from yaaf.server import flags as flag_lib
+
+    return flag_lib.flags_for_context(session, project.id)
+
+
 def _situation(session: Session, project: Project, cons: ConstitutionDoc) -> dict:
     """Whether this company is moving, and if not, why — the platform's own
     answer rather than the CEO's reconstruction of one.
@@ -529,6 +575,14 @@ def _situation(session: Session, project: Project, cons: ConstitutionDoc) -> dic
     inventing a cause". It was never given any way to observe whether a cap was
     hit. Asked why the company was idle it did the only thing it could: it
     guessed, from an empty directory, out loud, to the chairman.
+
+    Four blocks `activity_state` computes used to be dropped here, and each one
+    was a question the CEO could not answer about its own company: how many runs
+    were really its to spend, how many agents may move at once, when the next
+    held agent frees, and which agents those are. Asked whether a deadline would
+    hold, it did arithmetic against the only number it had — the daily cap — and
+    was wrong sixty seconds after the reset, because the hourly ceiling, the
+    per-agent wake slots and the concurrency cap were all invisible to it.
     """
     from yaaf.server.dispatcher import activity_state
     from yaaf.server.janitor import month_to_date
@@ -544,9 +598,47 @@ def _situation(session: Session, project: Project, cons: ConstitutionDoc) -> dic
         "why": f"{state['brief']['headline']} {state['brief']['detail']}",
         "clears_at": state["brief"]["clears_at"],
         "runs_today": {"used": state["daily_runs"]["used"],
-                       "cap": state["daily_runs"]["cap"]},
+                       "cap": state["daily_runs"]["cap"],
+                       "resets_at": state["daily_runs"]["resets_at"]},
         "runs_this_hour": {"used": state["pacing"]["used"],
-                           "cap": state["pacing"]["cap"]},
+                           "cap": state["pacing"]["cap"],
+                           "frees_at": state["pacing"]["frees_at"]},
+        # Ordinary work stops at the daily cap MINUS this, so `runs_today.cap`
+        # alone overstates what the company may actually spend on work — by two
+        # runs of twelve on the project this was found in. Sent always, not only
+        # when the reserve is the active gate, because a forecast made at noon
+        # needs the number that will bind at four.
+        "governance_reserve": state["governance_reserve"],
+        # What the company spent on talking to itself. Its own broadcasts are
+        # what generate this traffic, so it is the one cost the CEO can price
+        # before paying it: a message to leadership wakes every agent that
+        # reads that channel.
+        "inbox_runs": state["inbox_runs"],
+        # Opened by the platform from arithmetic or a failed test, never by
+        # your judgement about whether the news is worth his time. An open flag
+        # is an obligation to speak; it closes by being raised with a proposal,
+        # not by going quiet, and until it is he can see it sitting there.
+        "flags": _flags(session, project),
+        # Whether the open work actually fits before the cycle's due date,
+        # computed by the same code that decides whether a run may start. This
+        # is the answer to "will it be ready by then" — do not derive your own.
+        "capacity": _capacity(session, project, cons),
+        # One run per agent at a time, and at most this many across the company.
+        # Never disclosed before, in prose or in state.
+        "concurrency": state["concurrency"],
+        # The cap was in the constitution prose; which agents are AT it, and
+        # when the first slot frees, were not.
+        "wake_ceiling": state["wake_ceiling"],
+        "coalescing": state["coalescing"],
+        # Per agent: what each is holding and whether it can move. This is what
+        # turns "will the memo be written by Thursday" from a guess into a
+        # lookup — the chain is only as fast as the agents that can wake.
+        "agents": [
+            {k: r[k] for k in ("name", "kind", "busy", "pending",
+                               "wakes_last_hour", "wake_cap",
+                               "wake_slot_frees_at", "batching_until")}
+            for r in state["agents"]
+        ],
         "budget": {
             "unit": "usd" if usd_mode else "tokens",
             "spent": round(usd, 2) if usd_mode else tokens,
@@ -562,7 +654,13 @@ def _situation(session: Session, project: Project, cons: ConstitutionDoc) -> dic
         "note": ("This is the platform's own reading, computed by the same code that "
                  "decides whether to start a run. If the chairman asks why nothing is "
                  "happening, this is the answer — quote it rather than reasoning from "
-                 "what you can see in a directory."),
+                 "what you can see in a directory. If he asks whether something will be "
+                 "DONE by a time, do not divide the daily cap in your head: four separate "
+                 "limits gate a run and they are all above — the ordinary daily allowance "
+                 "(cap minus governance_reserve), the trailing-hour ceiling, one wake per "
+                 "agent per hour, and how many agents may run at once. `agents` says which "
+                 "of them can actually move and when. A chain of work is only as fast as "
+                 "the agents that can wake for it."),
     }
 
 
@@ -772,13 +870,19 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
                 r for r in policy.scope_requirements(session, project.id)
                 if r.status == RequirementStatus.MET
             ])
-            from yaaf.server.velocity import project_velocity
+            from yaaf.server.velocity import project_velocity, standing_record
 
             # The pace, in the pack. The audited CEO's board view carried six
             # fields per task and not one timestamp, so it could not answer
             # "are we faster than last week" — and a planner that cannot see
             # its own pace can only plan by optimism.
             pack["velocity"] = project_velocity(session, project.id)
+            # How the recurring obligations have actually gone. "Met in 23 of
+            # the last 24 cycles" is a fact about an Operate company that no
+            # burndown could express and no prose could be checked against.
+            record = standing_record(session, project.id)
+            if record:
+                pack["standing"] = record
             pack["scope"] = {
                 "met": int(met),
                 "open": len([r for r in requirements

@@ -411,8 +411,10 @@ def test_string_rules_with_a_fixed_set_offer_it(client):
               client.get("/admin/constitution/schema", headers=ADMIN).json()}
 
     assert fields["approval_timeout_decision"]["choices"] == ["deny", "approve"]
+    # 'hourly' joined the list when Operate learned rhythms shorter than a day
+    # — an inbox swept every morning, an order queue checked on the hour.
     assert fields["cycle_frequency"]["choices"] == [
-        "daily", "weekly", "monthly", "quarterly"]
+        "hourly", "daily", "weekly", "monthly", "quarterly"]
 
     # Defaults ride along too: the editor flags a rule that differs from stock.
     assert fields["queue_ceiling"]["default"] == 8

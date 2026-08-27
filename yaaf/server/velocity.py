@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 from yaaf.core.constitution import ConstitutionDoc
 from yaaf.core.models import (
     Project,
+    Recurrence,
     Requirement,
     RequirementEvent,
     RequirementStatus,
@@ -47,10 +48,31 @@ DEAD_STATUSES = (RunStatus.FAILED, RunStatus.REAPED, RunStatus.KILLED,
 
 
 def _met_count(session: Session, project_id: str, since) -> int:
-    """MET transitions in the window, excluding R-00 — the plan opening is the
-    gate lifting, not scope landing, and counting it would gift every project
-    one free unit of pace in its first week."""
+    """MET transitions in the window that represent scope actually landing.
+
+    Two exclusions, both about not inflating the denominator of a promise.
+
+    R-00 is the plan gate lifting, not scope landing, and counting it would
+    gift every project one free unit of pace in its first week.
+
+    Standing requirements are excluded for a sharper reason. They are met
+    again every cycle by design — the memo, the sweep, the routing check — so
+    an Operate project owing three of them weekly would post three met-events a
+    week forever. Fed to `commitment_projection`, that pace divides the
+    remaining scope into an ever-nearer delivery date, and the platform would
+    promise the chairman a date its own rhythm had manufactured. Whether a
+    standing obligation is being honoured is a real question with a real
+    answer — "met in 23 of the last 24 cycles" — and it lives in
+    RequirementCycleResult, where it cannot be mistaken for progress.
+    """
     plan = policy.plan_requirement(session, project_id)
+    standing = [
+        r.id for r in session.execute(
+            select(Requirement).where(
+                Requirement.project_id == project_id,
+                Requirement.recurrence == Recurrence.STANDING)
+        ).scalars()
+    ]
     stmt = (
         select(func.count(RequirementEvent.id))
         .where(
@@ -61,19 +83,76 @@ def _met_count(session: Session, project_id: str, since) -> int:
     )
     if plan is not None:
         stmt = stmt.where(RequirementEvent.requirement_id != plan.id)
+    if standing:
+        stmt = stmt.where(RequirementEvent.requirement_id.not_in(standing))
     return session.execute(stmt).scalar_one()
 
 
+def standing_record(session: Session, project_id: str, cycles: int = 12) -> list[dict]:
+    """How the standing obligations have actually gone, cycle by cycle.
+
+    What an Operate project has instead of a burndown. A burndown of work that
+    recurs is a flat line; this is the shape that carries the information —
+    which obligation slipped, and in which turn.
+    """
+    from yaaf.core.models import Cycle, RequirementCycleResult
+
+    recent = list(session.execute(
+        select(Cycle).where(Cycle.project_id == project_id)
+        .order_by(Cycle.ordinal.desc()).limit(cycles)
+    ).scalars())
+    if not recent:
+        return []
+    ids_in_window = {c.id for c in recent}
+    rows: dict[str, dict] = {}
+    for result in session.execute(
+        select(RequirementCycleResult).where(
+            RequirementCycleResult.project_id == project_id)
+    ).scalars():
+        if result.cycle_id not in ids_in_window:
+            continue
+        entry = rows.setdefault(result.requirement_id, {"met": 0, "judged": 0})
+        entry["judged"] += 1
+        if result.status == RequirementStatus.MET:
+            entry["met"] += 1
+    out = []
+    for requirement in session.execute(
+        select(Requirement).where(
+            Requirement.project_id == project_id,
+            Requirement.recurrence == Recurrence.STANDING)
+    ).scalars():
+        entry = rows.get(requirement.id, {"met": 0, "judged": 0})
+        out.append({
+            "key": requirement.key,
+            "statement": requirement.statement[:200],
+            "met": entry["met"],
+            "judged": entry["judged"],
+            "status_now": requirement.status,
+        })
+    return sorted(out, key=lambda r: r["key"])
+
+
 def _runs_in_window(session: Session, project_id: str, since) -> dict:
+    """What the window's runs were, and — since the split — what they were FOR.
+
+    Three lanes, because one number hid the finding that started all of this:
+    57% of every run an audited company ever spent was an agent waking to read
+    a message. Its own broadcasts generated that traffic, and neither the CEO
+    nor the chairman could see it, so nobody could price a message before
+    sending it. `inbox` is reading; `noop` is a wake that changed nothing and
+    was refunded; `work` is the rest.
+    """
     total, dead, attributed, usd, attributed_usd = 0, 0, 0, 0.0, 0.0
+    inbox, noop, work = 0, 0, 0
     rows = session.execute(
-        select(Run.status, Run.requirement_id, Run.cost_usd).where(
+        select(Run.status, Run.requirement_id, Run.cost_usd, Run.kind,
+               Run.metered, Run.produced).where(
             Run.project_id == project_id,
             Run.kind != RunKind.CHAT_SESSION,
             Run.created_at >= since,
         )
     ).all()
-    for status, requirement_id, cost in rows:
+    for status, requirement_id, cost, kind, metered, produced in rows:
         total += 1
         if status in DEAD_STATUSES:
             dead += 1
@@ -81,6 +160,12 @@ def _runs_in_window(session: Session, project_id: str, since) -> dict:
             attributed += 1
             attributed_usd += cost or 0.0
         usd += cost or 0.0
+        if kind == RunKind.INBOX_RUN:
+            inbox += 1
+        elif metered is False or (produced == 0 and status == RunStatus.DONE):
+            noop += 1
+        else:
+            work += 1
     return {
         "total": total,
         "dead": dead,
@@ -89,6 +174,12 @@ def _runs_in_window(session: Session, project_id: str, since) -> dict:
         "attributed_share": round(attributed / total, 3) if total else 0.0,
         "usd": round(usd, 2),
         "attributed_usd": round(attributed_usd, 2),
+        # The tax, made countable.
+        "work": work,
+        "inbox": inbox,
+        "noop": noop,
+        "inbox_share": round(inbox / total, 3) if total else 0.0,
+        "noop_share": round(noop / total, 3) if total else 0.0,
     }
 
 

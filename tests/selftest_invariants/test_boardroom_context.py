@@ -75,6 +75,57 @@ def test_the_ceo_is_handed_the_reason_the_company_is_quiet(client):
     assert situation["unreachable_work"]["gated"] == 1
 
 
+def test_the_ceo_can_see_every_limit_that_gates_a_run(client):
+    """Four separate limits decide whether a run starts, and the CEO used to be
+    shown one of them.
+
+    Asked whether a deadline would hold, it divided the daily cap in its head —
+    "ten ordinary runs, four needed, six spare" — and was wrong sixty seconds
+    after the reset, because the governance reserve, the trailing-hour ceiling,
+    the per-agent wake slots and the concurrency cap were all invisible to it.
+    Every one of them was already computed by the same function that decides
+    whether to start a run; `_situation` simply dropped them on the floor.
+    """
+    project = make_project(client)
+    _drain()
+
+    _, ceo = live_token(project["id"], project["ceo_agent_id"], kind="chat_session")
+    situation = client.get("/agent/context", headers=bearer(ceo)).json()["situation"]
+
+    # Ordinary work stops at the daily cap MINUS the reserve, so the cap alone
+    # overstates what may be spent on work.
+    reserve = situation["governance_reserve"]
+    assert reserve["ordinary_cap"] <= situation["runs_today"]["cap"]
+    assert reserve["reserved"] >= 0
+    assert "active" in reserve
+
+    # Never disclosed before this, in prose or in state.
+    assert situation["concurrency"]["cap"] >= 1
+    assert "in_flight" in situation["concurrency"]
+
+    # The cap was in the constitution prose; which agents are AT it was not.
+    assert situation["wake_ceiling"]["cap"] >= 1
+    assert "frees_at" in situation["wake_ceiling"]
+    assert "agents_held" in situation["wake_ceiling"]
+
+    # And the per-agent rows that turn "will this be done by Thursday" from a
+    # guess into a lookup: a chain is only as fast as the agents that can wake.
+    agents = situation["agents"]
+    assert agents, "the CEO must be able to see its own roster's wake state"
+    assert any(a["kind"] == "ceo" for a in agents)
+    for row in agents:
+        assert set(row) == {"name", "kind", "busy", "pending", "wakes_last_hour",
+                            "wake_cap", "wake_slot_frees_at", "batching_until"}
+
+    # The reset and thaw times ride along, so a forecast can name when capacity
+    # returns rather than guessing at midnight.
+    assert situation["runs_today"]["resets_at"]
+    assert "frees_at" in situation["runs_this_hour"]
+
+    # And it is told not to do the arithmetic that was wrong.
+    assert "do not divide the daily cap" in situation["note"]
+
+
 def test_the_board_the_ceo_reads_shows_which_work_is_gated(client):
     """A gated task read as ordinary open work on the CEO's own board, so a CEO
     asked why nothing was happening looked at its context, saw work in hand,

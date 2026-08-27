@@ -40,6 +40,8 @@ from yaaf.core.models import (
     LedgerKind,
     Memory,
     Message,
+    ProjectMode,
+    Recurrence,
     Requirement,
     RequirementEdge,
     RequirementStatus,
@@ -1053,6 +1055,11 @@ class RequirementPropose(BaseModel):
     stage: int = Field(default=1, ge=1, le=50)
     est_runs: int | None = Field(default=None, ge=1, le=10_000)
     depends_on: list[str] = Field(default_factory=list)
+    # Met once, or owed again every cycle. Operate only — Deliver and Explore
+    # have an end, and an obligation that never closes there would be a
+    # requirement the project could never satisfy.
+    recurrence: str = Field(default=Recurrence.TERMINAL,
+                            pattern="^(terminal|standing)$")
 
 
 @router.post("/requirements")
@@ -1073,6 +1080,15 @@ def propose_requirement(
     # scope is refused before affordability is even asked.
     policy.check_scope_within_commitment(session, ctx.project, cons)
     policy.check_plan_affordable(session, ctx.project, cons, body.est_runs or 0)
+    if (body.recurrence == Recurrence.STANDING
+            and ctx.project.mode != ProjectMode.OPERATE):
+        raise Refusal(
+            "A standing requirement is owed again every cycle, and only Operate runs "
+            f"on cycles — this project is {ctx.project.mode}. Here a requirement is a "
+            "thing that must be true at the end, so one that never closed would be one "
+            "the project could never satisfy.",
+            status_code=422,
+        )
     cycle = policy.current_cycle(session, ctx.project.id)
     requirement = Requirement(
         id=ids.new_id(ids.REQUIREMENT),
@@ -1083,6 +1099,7 @@ def propose_requirement(
         acceptance_test=body.acceptance_test,
         status=RequirementStatus.PROPOSED,
         stage=body.stage,
+        recurrence=body.recurrence,
         est_runs=body.est_runs,
         est_runs_first=body.est_runs,
         proposed_by_agent_id=ctx.agent.id,
@@ -1106,8 +1123,15 @@ def propose_requirement(
         "requirement_id": requirement.id,
         "key": requirement.key,
         "status": requirement.status,
+        "recurrence": requirement.recurrence,
         "note": ("Proposed, not scope. The chairman accepts requirements; until he does, "
-                 "no work may be created for this one."),
+                 "no work may be created for this one.")
+        + (" Standing: he accepts this obligation ONCE and it is owed every cycle "
+           "from then on. Each roll records whether it was honoured, and a cycle "
+           "that closes without it raises a flag — so the pattern is a fact rather "
+           "than a claim. It never counts toward delivery pace: an obligation met "
+           "on its rhythm is not progress toward an end."
+           if requirement.recurrence == Recurrence.STANDING else ""),
     }
 
 
@@ -1222,6 +1246,219 @@ def propose_commitment(
         "note": ("Proposed to the chairman. The date is the platform's own projection "
                  "— you did not write it and cannot. He accepts it (with this date or "
                  "his own), or declines; nothing binds until he does."),
+    }
+
+
+class FlagRaiseIn(BaseModel):
+    flag_id: str
+    # The boardroom message in which it was actually said. The flag closes
+    # because the chairman was told, and this is the proof.
+    message_id: str
+    proposal: str = Field(min_length=20, max_length=4000)
+
+
+@router.get("/flags")
+def list_flags(ctx: RunContext = Depends(run_auth), session: Session = Depends(db)) -> dict:
+    """What the platform has decided the chairman needs to hear."""
+    from yaaf.server import flags as flag_lib
+
+    rows = flag_lib.flags_for_context(session, ctx.project.id)
+    unraised = sum(1 for f in rows if not f["raised"])
+    return {
+        "flags": rows,
+        "unraised": unraised,
+        "note": (
+            "Each of these was opened by arithmetic or a failed check, not by anyone's "
+            "judgement about whether it matters. Raise it in the boardroom with the "
+            "numbers and a proposal, then close it with flag_raise. The chairman can "
+            "see how many are unraised, so saying nothing is not a quiet option."
+            if unraised else "Nothing outstanding."
+        ),
+    }
+
+
+@router.post("/flags/raise")
+def raise_flag(
+    body: FlagRaiseIn, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
+) -> dict:
+    """Close a flag by having told the chairman, with what you propose doing.
+
+    A flag cannot be closed by going quiet, and it cannot be closed by an alarm
+    either. The proposal is required because a flag without one is anxiety
+    forwarded to his desk: what a CEO adds over a monitoring alert is the
+    sentence after the bad news — what broke, the arithmetic, the ways out, the
+    one you would pick, and what you need from him.
+
+    Closing it dismissively is legitimate and expected. "Failed on one order,
+    the warehouse API was down four minutes, it self-healed, no action needed"
+    is this verb working exactly as intended. What is no longer available is
+    leaving it open while reporting that everything is fine.
+    """
+    from yaaf.core.models import Flag, FlagStatus
+
+    if ctx.agent.kind != AgentKind.CEO:
+        raise Refusal(
+            "Only the CEO speaks to the chairman. If you can see something he should "
+            "know, tell the CEO — a suggestion survives your run.",
+            status_code=403,
+        )
+    flag = session.get(Flag, body.flag_id)
+    if flag is None or flag.project_id != ctx.project.id:
+        raise Refusal("No such flag.", status_code=404)
+    if flag.status != FlagStatus.OPEN:
+        raise Refusal(
+            f"That flag is already {flag.status}. One telling is enough.",
+            status_code=409,
+        )
+
+    message = session.get(Message, body.message_id)
+    boardroom = session.execute(
+        select(Channel).where(Channel.project_id == ctx.project.id,
+                              Channel.kind == ChannelKind.BOARDROOM)
+    ).scalars().first()
+    if (message is None or boardroom is None or message.channel_id != boardroom.id
+            or message.sender_agent_id != ctx.agent.id):
+        raise Refusal(
+            "message_id must be a boardroom message you posted. The flag closes "
+            "because the chairman was told; the message is the proof, and without it "
+            "this verb would just be a way of marking bad news as handled.",
+            status_code=422,
+        )
+
+    flag.status = FlagStatus.RAISED
+    flag.raised_at = utcnow()
+    flag.raised_in_message_id = message.id
+    flag.proposal = body.proposal.strip()
+    session.add(AuditLog(
+        id=ids.new_id(ids.AUDIT), project_id=ctx.project.id,
+        actor=f"agent:{ctx.agent.id}", action="flag.raised",
+        entity="flag", entity_id=flag.id,
+        detail={"kind": flag.kind, "message_id": message.id,
+                "proposal": flag.proposal[:500]},
+    ))
+    return {
+        "flag_id": flag.id,
+        "status": flag.status,
+        "note": "Raised. He has it, with what you propose — that is the job.",
+    }
+
+
+class CycleGoalIn(BaseModel):
+    goal: str = Field(min_length=10, max_length=4000)
+    # A deadline the world imposes. Optional: many rhythms are just a rhythm.
+    due_at: datetime | None = None
+    # Where the date came from. Required WITH a date, never without one.
+    due_source_kind: str | None = Field(default=None, pattern="^(calendar|data)$")
+    due_source_url: str | None = Field(default=None, max_length=2000)
+    due_source_note: str | None = Field(default=None, max_length=2000)
+    due_source_fetched_at: datetime | None = None
+    due_source_sha256: str | None = Field(default=None, max_length=64)
+
+
+@router.post("/cycle_goal")
+def set_cycle_goal(
+    body: CycleGoalIn, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
+) -> dict:
+    """What this turn of the rhythm is for, and when its work is actually due.
+
+    A deadline the outside world imposes is a FACT, not a promise — the
+    gameweek deadline, the carrier's cutoff, the filing date. The rule that the
+    CEO cannot write a date governs promises against scope, and this is not
+    one: nothing here says the work WILL be done, only when the world stops
+    accepting it. So the CEO may record it, and must say where it came from.
+
+    Whether the work will be done by then stays where it belongs — in
+    `capacity_forecast`, computed by the same code that decides whether a run
+    may start, and reported whether or not it flatters anyone.
+
+    Before this, an Operate cycle had a number and a narrative but no goal and
+    no due-by, so both lived in prose in a chat message. Nothing could check
+    them, count them, or notice when one was about to be missed.
+    """
+    if ctx.agent.kind != AgentKind.CEO:
+        raise Refusal(
+            "The cycle's goal is the whole company's, so the CEO sets it. If you "
+            "believe this cycle is aimed at the wrong thing, say so to the CEO — a "
+            "suggestion survives your run.",
+            status_code=403,
+        )
+    if ctx.project.mode != ProjectMode.OPERATE:
+        raise Refusal(
+            f"Cycles belong to Operate projects; this one is {ctx.project.mode}. "
+            "Deliver promises a date through a commitment, and Explore has a window "
+            "rather than a rhythm.",
+            status_code=422,
+        )
+    cycle = policy.current_cycle(session, ctx.project.id)
+    if cycle is None:
+        raise Refusal("No cycle is open yet; the janitor opens one within a tick.",
+                      status_code=409)
+
+    source = None
+    if body.due_at is not None:
+        if body.due_source_kind is None:
+            raise Refusal(
+                "A due date needs its provenance. You may record a deadline because a "
+                "deadline is a fact you discovered, not a date you wrote — and a fact "
+                "cites its source. Pass due_source_kind='data' with the URL you read "
+                "it from, or 'calendar' when it follows from the rhythm itself.",
+                status_code=422,
+            )
+        if body.due_source_kind == "data" and not body.due_source_url:
+            raise Refusal(
+                "due_source_kind='data' means you read this date somewhere. Name the "
+                "URL, so the next cycle can check whether it moved.",
+                status_code=422,
+            )
+        source = {
+            "kind": body.due_source_kind,
+            "url": body.due_source_url,
+            "note": body.due_source_note,
+            "fetched_at": (body.due_source_fetched_at.isoformat()
+                           if body.due_source_fetched_at else None),
+            "snapshot_sha256": body.due_source_sha256,
+            "recorded_by": ctx.agent.id,
+            "recorded_at": utcnow().isoformat(),
+        }
+
+    cycle.goal = body.goal.strip()
+    if body.due_at is not None:
+        cycle.due_at = body.due_at
+        cycle.due_source = source
+
+    session.add(AuditLog(
+        id=ids.new_id(ids.AUDIT), project_id=ctx.project.id,
+        actor=f"agent:{ctx.agent.id}", action="cycle.goal_set",
+        entity="cycle", entity_id=cycle.id,
+        detail={"goal": cycle.goal[:500],
+                "due_at": cycle.due_at.isoformat() if cycle.due_at else None,
+                "due_source": cycle.due_source},
+    ))
+
+    forecast = None
+    if cycle.due_at is not None:
+        from yaaf.server.capacity import capacity_forecast
+
+        forecast = capacity_forecast(
+            session, ctx.project, effective(session, ctx.project.id), cycle.due_at)
+
+    return {
+        "cycle": cycle.ordinal,
+        "goal": cycle.goal,
+        "due_at": cycle.due_at.isoformat() if cycle.due_at else None,
+        "rolls_on_due_at": cycle.due_at is not None,
+        "capacity": forecast,
+        "note": (
+            "Recorded. The cycle now rolls on this date rather than the "
+            "constitution's rhythm."
+            if cycle.due_at is not None else
+            "Recorded. No due date, so this cycle rolls on the constitution's rhythm."
+        ) + (
+            " The capacity block is the platform's own arithmetic on whether the open "
+            "work fits before then — if `feasible` is false, that is a fact to take to "
+            "the chairman now, with the numbers and what you propose cutting or raising."
+            if forecast is not None else ""
+        ),
     }
 
 

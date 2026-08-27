@@ -50,6 +50,7 @@ from yaaf.runner.backends import get_backend
 from yaaf.runner.types import RunJob, RunResult
 from yaaf.server import policy
 from yaaf.server.contextpack import build_context_pack, build_system_prompt, role_version_for
+from yaaf.server.dispatcher import MODEL_RUN_KINDS, NON_WORK_RUN_KINDS
 
 log = logging.getLogger("yaaf.runner")
 
@@ -511,6 +512,19 @@ def finalize(job: RunJob, result: RunResult, was_revoked: bool = False) -> None:
         _clear_staged_inputs(job)
         run.summary = (result.summary or "")[:4000]
 
+        # Outcome metering. A wake cannot be known to be empty until it has
+        # happened, so the refund is retroactive: the run is logged, billed to
+        # the ledger and shown on the Runs page exactly as before, but it stops
+        # counting against the work allowance. The company was not slowed by a
+        # run that changed nothing, and the allowance should not pretend it was.
+        #
+        # Only ever a refund, never a charge: a run that DID produce keeps the
+        # `metered=True` it was born with. And only for the work lane — an
+        # inbox run producing nothing is the ordinary case, and refunding those
+        # would leave that lane with no ceiling at all.
+        if run.kind not in NON_WORK_RUN_KINDS and not run.produced:
+            run.metered = False
+
         if (result.tokens_in or result.tokens_out or result.cache_creation_tokens
                 or result.cache_read_tokens or run.cost_usd):
             session.add(
@@ -569,7 +583,7 @@ def _flag_credential_failure(session: Session, project: Project, run: Run) -> No
     ))
     recent = session.execute(
         select(Run)
-        .where(Run.project_id == project.id, Run.kind == RunKind.AGENT_RUN,
+        .where(Run.project_id == project.id, Run.kind.in_(MODEL_RUN_KINDS),
                Run.finished_at.is_not(None))
         .order_by(Run.finished_at.desc())
         .limit(3)
