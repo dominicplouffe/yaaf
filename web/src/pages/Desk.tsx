@@ -56,6 +56,13 @@ export interface Item {
   /** Epoch ms of the consequence — the sort key inside a tier. Tier 1 has
       already happened (0); tier 3 never does (+∞). */
   at: number;
+  /** Whether `at` is a real future deadline, as opposed to a sort position.
+      Two tier-2 rows have no deadline at all: an active drought is happening
+      now and ends when evidence lands rather than on a clock, and an unsigned
+      date waits indefinitely. Only a clocked row may be quoted as "the soonest
+      resolves itself in X" — the headline names a deadline, so it has to come
+      from something that has one. */
+  clocked?: boolean;
   project: DeskProject;
   kind: string;
   what: React.ReactNode;
@@ -163,7 +170,8 @@ export function buildItems(projects: DeskProject[], reload: () => void): Item[] 
     }
     if (w.commitment) {
       items.push({
-        key: `${p.id}-commitment`, tier: 2, at: NEVER - 1, project: p, kind: "sign the date",
+        key: `${p.id}-commitment`, tier: 2, at: NEVER - 1, project: p,
+        kind: "sign the date",
         what: (
           <>
             The CEO proposes delivering <b>{w.commitment.scope_count} requirement
@@ -183,8 +191,8 @@ export function buildItems(projects: DeskProject[], reload: () => void): Item[] 
     // ── tier 2: it resolves without you, at a time we can name ──────────
     for (const a of p.pending_approvals) {
       items.push({
-        key: a.id, tier: 2, at: new Date(a.expires_at).getTime(), project: p,
-        kind: a.kind.replaceAll("_", " "),
+        key: a.id, tier: 2, at: new Date(a.expires_at).getTime(), clocked: true,
+        project: p, kind: a.kind.replaceAll("_", " "),
         what: (
           <>
             {a.title}
@@ -209,8 +217,8 @@ export function buildItems(projects: DeskProject[], reload: () => void): Item[] 
     }
     for (const bet of p.kill_dates_soon) {
       items.push({
-        key: bet.id, tier: 2, at: new Date(bet.kill_date).getTime(), project: p,
-        kind: "kill date",
+        key: bet.id, tier: 2, at: new Date(bet.kill_date).getTime(), clocked: true,
+        project: p, kind: "kill date",
         what: <>“{clip(bet.statement, 120)}”</>,
         consequence: (
           <>
@@ -246,7 +254,8 @@ export function buildItems(projects: DeskProject[], reload: () => void): Item[] 
     } else if (droughtShown && d.last_countable_at) {
       const startsAt = new Date(d.last_countable_at).getTime() + d.window_hours * 3_600_000;
       items.push({
-        key: `${p.id}-drought`, tier: 2, at: startsAt, project: p, kind: "drought",
+        key: `${p.id}-drought`, tier: 2, at: startsAt, clocked: true, project: p,
+        kind: "drought",
         what: (
           <>
             <b>{Math.floor(hoursSince(d.last_countable_at))}h</b> without verified external
@@ -267,10 +276,15 @@ export function buildItems(projects: DeskProject[], reload: () => void): Item[] 
     // fraction is worth knowing and has no clock at all.
     const b = p.budget;
     const frac = b.cap > 0 ? b.spent / b.cap : 0;
-    const pace = b.unit === "usd" ? paceDate(b.spent, b.cap) : null;
+    // paceDate is spent-over-elapsed-days against the cap: arithmetic, not
+    // currency. Gating it on USD left token-billed projects with no dated
+    // warning at all before enforce_budget paused them, and told them their
+    // spending had stopped while runs were burning tokens.
+    const pace = paceDate(b.spent, b.cap);
     if (frac < 1 && pace) {
       items.push({
-        key: `${p.id}-budget`, tier: 2, at: pace.getTime(), project: p, kind: "budget",
+        key: `${p.id}-budget`, tier: 2, at: pace.getTime(), clocked: true, project: p,
+        kind: "budget",
         what: (
           <>
             {fmtUnit(b.spent, b.unit)} of {fmtUnit(b.cap, b.unit)} spent — at this pace the cap
@@ -293,7 +307,7 @@ export function buildItems(projects: DeskProject[], reload: () => void): Item[] 
         ),
         consequence: (
           <span className="tick cold">
-            nothing yet — spending has stopped, so there is no date to give you
+            nothing yet — at this rate the cap holds to the end of the month
           </span>
         ),
         actions: <Link className="act lnk" to={`${to}/settings`}>see the spend →</Link>,
@@ -358,9 +372,7 @@ export default function Desk() {
   const live = data.projects;
   const items = buildItems(live, reload);
   const needing = items.filter((i) => i.tier <= 2);
-  // The headline names a deadline, so it may only come from an item that has
-  // one: an unsigned commitment sits in tier 2 without a clock.
-  const soonest = items.find((i) => i.tier === 2 && i.at < NEVER - 1);
+  const soonest = items.find((i) => i.tier === 2 && i.clocked);
   const running = live.filter((p) => p.status === "running").length;
   const lastRun = live
     .map((p) => p.last_run_at)
@@ -471,7 +483,13 @@ export default function Desk() {
         </div>
       )}
 
-      {live.length > 0 && <CompanyStrip live={live} finished={data.finished} />}
+          {live.length > 0 && (
+        <CompanyStrip
+          live={live}
+          finished={data.finished}
+          needing={new Set(needing.map((i) => i.project.id))}
+        />
+      )}
     </>
   );
 }
@@ -514,13 +532,20 @@ function EmptyDesk({ finished }: { finished: number }) {
 /** Navigation, not a metrics table — the Projects page is that, and this used
     to be a second copy of it. Name, state, and whether it is asking for
     something. */
-function CompanyStrip({ live, finished }: { live: DeskProject[]; finished: number }) {
+function CompanyStrip(
+  { live, finished, needing }:
+  { live: DeskProject[]; finished: number; needing: Set<string> },
+) {
   return (
     <div className="roster">
       <div className="sh">Live companies · {live.length}</div>
       {live.map((p) => {
-        const needsYou =
-          p.pending_approvals.length + p.expired_bets.length + (p.status === "paused" ? 1 : 0);
+        // Read off the list above rather than recounted here. A second
+        // definition drifted immediately: this one predated the dial rows, so
+        // a company showing "accept scope" in the list read "12m ago" in the
+        // roster — the exact contradiction the rest of this page exists to
+        // stop.
+        const needsYou = needing.has(p.id);
         const dot = p.status === "running" ? "run" : p.status === "paused" ? "pau" : "stp";
         return (
           <div className="crow" key={p.id}>
@@ -529,8 +554,8 @@ function CompanyStrip({ live, finished }: { live: DeskProject[]; finished: numbe
             <span className="gl">
               {p.status === "running" ? clip(p.goal, 70) : `${p.status} — ${clip(p.status_reason ?? p.goal, 60)}`}
             </span>
-            <span className={`rt ${needsYou > 0 ? "need" : ""}`}>
-              {needsYou > 0 ? "needs you" : fmtAgo(p.last_run_at)}
+            <span className={`rt ${needsYou ? "need" : ""}`}>
+              {needsYou ? "needs you" : fmtAgo(p.last_run_at)}
             </span>
           </div>
         );

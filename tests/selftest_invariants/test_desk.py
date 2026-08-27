@@ -277,3 +277,53 @@ def test_an_autonomous_project_is_never_chased_for_either(client):
     assert _notices(project["id"], "commitment.proposal_nag") == []
     assert _desk(client, live=True)["projects"][0]["awaiting_you"] == {
         "plan": 0, "verdicts": [], "commitment": None}
+
+
+def test_the_inbox_never_contradicts_the_desk_about_a_verdict(client):
+    """The one failure mode worth naming: the desk says a company needs nothing
+    while the janitor mails "nothing downstream can start until you rule".
+
+    nag_observable_requirements predates the dial and took `cons` without ever
+    reading it, so it chased the chairman daily even where verdict_policy had
+    handed the verdict to the CEO. That was survivable while the desk showed no
+    verdicts either — both channels were consistently silent. It stopped being
+    survivable when the desk started reading policy.awaiting_chairman, which
+    returns nothing here: the page and the badge then said "clear" while the
+    inbox said "act now", and a chairman who catches that once stops believing
+    the page.
+    """
+    project = make_project(client, slug="autonomous", constitution=AUTONOMOUS)
+    with db_session() as session:
+        session.add(Requirement(
+            id=ids.new_id(ids.REQUIREMENT), project_id=project["id"], key="R-10",
+            statement="Five named write-ups are published and reachable.",
+            acceptance_test={"type": "observable", "target": "https://example.org/notes"},
+            status=RequirementStatus.CHECKING, stage=1, est_runs=4,
+        ))
+    with db_session() as session:
+        janitor_once(session)
+
+    assert _notices(project["id"], "requirement.verdict_nag") == [], (
+        "the CEO holds the verdict here — chasing the chairman contradicts the "
+        "desk, which shows nothing waiting"
+    )
+    assert _desk(client, live=True)["projects"][0]["awaiting_you"]["verdicts"] == []
+
+
+def test_a_supervised_verdict_is_still_chased(client):
+    """The other half of the same rule: where the chairman does hold the
+    verdict, the requirement is frozen on him and the mail must still go."""
+    project = make_project(client, slug="supervised")
+    with db_session() as session:
+        session.add(Requirement(
+            id=ids.new_id(ids.REQUIREMENT), project_id=project["id"], key="R-10",
+            statement="Five named write-ups are published and reachable.",
+            acceptance_test={"type": "observable", "target": "https://example.org/notes"},
+            status=RequirementStatus.CHECKING, stage=1, est_runs=4,
+        ))
+    with db_session() as session:
+        janitor_once(session)
+
+    assert len(_notices(project["id"], "requirement.verdict_nag")) == 1
+    assert [v["key"] for v in
+            _desk(client, live=True)["projects"][0]["awaiting_you"]["verdicts"]] == ["R-10"]

@@ -1790,7 +1790,17 @@ def nag_observable_requirements(
     CHECKING and waits. There was no expiry, no nag and no email — one notice to
     the CEO at the moment it parked, and then silence for as long as it took.
     Nagged on the approval cadence, because it is the same kind of wait.
+
+    Only where he actually holds the verdict. This function predates the dial
+    and took `cons` without reading it, which was survivable while the desk
+    showed no verdicts either — both channels were consistently silent under
+    `ceo_judgment`. It stopped being survivable when the desk started reading
+    policy.awaiting_chairman: the page and the badge said "nothing waiting"
+    while this mailed "nothing downstream can start until you rule", and a
+    chairman who catches the two disagreeing once stops believing the page.
     """
+    if policy.ceo_holds(cons, "verdict_policy"):
+        return
     cutoff = utcnow() - timedelta(days=1)
     for req in session.execute(
         select(Requirement).where(Requirement.project_id == project.id,
