@@ -15,6 +15,19 @@ vendor accounts. The single exception is example 04, which needs a **free**
 GitHub account, and needs one because doing something in the world and proving
 it happened is the entire lesson.
 
+**Except to look first, which costs nothing.** Every file here runs as a fire
+drill on a bare checkout — no deployment, no key, no dollars:
+
+```bash
+yaaf rehearse examples/01-your-first-hour.json
+```
+
+It runs the spec as a real company with scripted agents in place of models, and
+walks you through what the platform actually does with it: the plan proposed,
+the gate closing, the board opening, work claimed and closed, and every point
+the company stops and waits for **you**. Reading that once before you spend
+anything is the cheapest hour in this directory.
+
 ---
 
 ## Part 1 · Fundamentals

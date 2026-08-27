@@ -354,6 +354,46 @@ def dashboard(project: str) -> None:
 
 
 @app.command()
+def rehearse(
+    spec_file: str,
+    days: int = typer.Option(30, "--days", help="the window the pacing arithmetic covers"),
+    usd_per_run: float = typer.Option(
+        0.0, "--usd-per-run",
+        help="what you actually pay for a run; without it the drill reports the "
+             "break-even instead of inventing a price"),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """Run a project spec as a company for nothing, before you fund it.
+
+    The real platform — dispatcher, janitor, policy engine, every refusal — on
+    the mock runtime, against your own spec. It tells you whether the thing
+    gets off the ground, how often it will stop and wait for you, what it costs
+    in runs, and which of the four limits paces it. It opens no sockets, runs
+    no commands out of the file, and touches no database but the throwaway one
+    it creates.
+
+    Needs no deployment and no API key: `yaaf rehearse examples/01-your-first-hour.json`
+    works on a fresh checkout.
+    """
+    import json as _json
+
+    from yaaf import rehearsal
+    from yaaf.rehearsal import report as rehearsal_report
+
+    try:
+        result = rehearsal.rehearse(
+            rehearsal.load_spec(spec_file), days=days,
+            usd_per_run=usd_per_run or None)
+    except rehearsal.RehearsalError as exc:
+        typer.echo(f"rehearsal: {exc}")
+        raise typer.Exit(2) from exc
+    typer.echo(_json.dumps(result, indent=2, default=str) if as_json
+               else rehearsal_report.render_text(result))
+    if not result["ok"]:
+        raise typer.Exit(1)
+
+
+@app.command()
 def briefing(
     project: str = typer.Argument(None, help="a slug or id; omit for every live company"),
     hours: float = typer.Option(0, "--hours", help="force a window instead of your read mark"),

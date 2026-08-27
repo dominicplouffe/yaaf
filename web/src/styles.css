@@ -1101,3 +1101,32 @@ button.rolepick { width: 100%; text-align: left; background: var(--surface-2); }
   .astrip, .amonths { display: none; }
   .bedge { display: none; }
 }
+
+/* ── the fire drill: the company, run for nothing ─────────────────────────────
+   Never styled as an alarm. A drill that finds a problem has done its job
+   perfectly, and a red panel would train a chairman to dread pressing the one
+   button on this form that saves him money. */
+/* Explicitly left, because this panel renders inside the review step's cards
+   and inherits whatever alignment the surrounding layout happens to have. */
+.drill { margin-top: 12px; border-top: 1px solid var(--grid); padding-top: 12px;
+  text-align: left; }
+.drill ul, .drill li, .drill p { text-align: left; }
+.drill-verdict { font-size: 13.5px; font-weight: 600; line-height: 1.5; margin-bottom: 10px; }
+.drill-verdict.ok { color: var(--good); }
+.drill-verdict.miss { color: var(--warning); }
+.drill-h {
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.8px;
+  color: var(--muted); font-weight: 600; margin: 14px 0 6px;
+}
+.drill-walk { list-style: none; margin: 0; padding: 0;
+  display: flex; flex-direction: column; gap: 2px; }
+.drill-walk li { display: flex; gap: 8px; align-items: baseline; font-size: 12.5px; }
+.drill-walk .dm { font-family: var(--mono); width: 10px; flex: none; color: var(--muted); }
+.drill-walk li.ok .dm { color: var(--good); }
+.drill-walk li.na { opacity: 0.5; }
+.drill-walk .dl { flex: none; }
+.drill-walk .dd { color: var(--muted); min-width: 0; flex: 1; }
+.drill-walk .dt { font-size: 10.5px; color: var(--muted); white-space: nowrap; }
+.drill-list { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px;
+  font-size: 12.5px; }
+.drill-list.quiet { opacity: 0.75; }

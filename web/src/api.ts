@@ -585,6 +585,47 @@ export interface DeskView {
   projects: DeskProject[];
 }
 
+// ── the fire drill: the company, run for nothing ───────────────────────────────
+
+export interface RehearsalStep {
+  key: string;
+  label: string;
+  ok: boolean;
+  /** True for steps this project's SHAPE makes inapplicable — an Explore
+      company has no plan gate and no commitment by design, and drawing those
+      as misses would report an absent feature as a broken one. */
+  na?: boolean;
+  detail: string | null;
+  tick: number | null;
+}
+
+export interface RehearsalReport {
+  ok: boolean;
+  verdict: string;
+  spec: { slug: string | null; name: string | null; mode: string; goal: string; teams: number };
+  ticks: number;
+  walk: RehearsalStep[];
+  /** Grouped: a crew that hits one wall nine times has one problem. */
+  refusals: { path: string; error: string; count: number; agents: string[] }[];
+  /** Every point the company stopped and waited for a human. The autonomy
+      dial in numbers, which nothing else could produce before the money. */
+  interventions: { kind: string; count: number; first_tick: number; examples: string[] }[];
+  /** Facts about the company's shape that no refusal reports — a CEO with
+      nobody to give work to never files a task, so there is no wall to see. */
+  findings?: string[];
+  plan?: { requirements: number; estimated_runs: number; adjusted_runs: number;
+           multiplier: number };
+  capacity?: { feasible: boolean; why: string; available: number; needed: number;
+               slack: number; chain_hours: number };
+  money?: { unit: "usd" | "tokens"; cap: number | null; runs: number;
+            usd_per_run: number | null; source: string | null; total: number | null;
+            break_even_usd_per_run: number | null; fits: boolean | null; why?: string };
+  health?: HealthCheck[];
+  relaxed: { rule: string; why: string }[];
+  not_exercised: string[];
+  caveat: string;
+}
+
 // ── the briefing: the past tense ───────────────────────────────────────────────
 
 export interface BriefingLine {

@@ -7,7 +7,7 @@ concurrency model to get wrong.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 
 from sqlalchemy import create_engine, event, text
@@ -61,6 +61,34 @@ def reset_for_tests(url: str) -> None:
         _engine.dispose()
     _engine = create_engine(url, pool_pre_ping=True)
     _session_factory = sessionmaker(bind=_engine, expire_on_commit=False)
+
+
+def swap_engine(url: str) -> Callable[[], None]:
+    """Point the module at `url` and hand back the undo.
+
+    The engine is a process-global, so anything that borrows it — the fire
+    drill borrows it for a throwaway SQLite file — has to give it back or
+    every later caller in that process is silently talking to the wrong
+    database, or to one that has since been deleted.
+
+    Restoring by URL is not good enough: `str(engine().url)` masks the
+    password, so a Postgres deployment would come back with a literal `***`
+    where its credentials were. The engine OBJECT is what gets put back, which
+    is also why the borrowed one is disposed here rather than left to a
+    finalizer.
+    """
+    global _engine, _session_factory
+    previous_engine, previous_factory = _engine, _session_factory
+    _engine = create_engine(url, pool_pre_ping=True)
+    _session_factory = sessionmaker(bind=_engine, expire_on_commit=False)
+    borrowed = _engine
+
+    def restore() -> None:
+        global _engine, _session_factory
+        borrowed.dispose()
+        _engine, _session_factory = previous_engine, previous_factory
+
+    return restore
 
 
 # Ensure UTC on every connection so timestamp comparisons are unambiguous.

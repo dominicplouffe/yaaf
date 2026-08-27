@@ -381,7 +381,12 @@ def test_the_agenda_and_the_dispatcher_agree_on_the_next_wake(client):
                               last_fired_at=utcnow()))
     after = agenda(client, project)
     fired = next(r for r in after["rhythms"] if r["kind"] == "ceo_daily")
-    assert datetime.fromisoformat(fired["next"]) > utcnow() + timedelta(hours=1)
+    # Tomorrow's, not "an hour away": at 23:13 UTC tomorrow's 00:01 is 48
+    # minutes off, and an assertion phrased as a duration fails for the whole
+    # last hour of every day while being right about nothing.
+    nxt = datetime.fromisoformat(fired["next"])
+    assert (nxt.hour, nxt.minute) == (0, 1)
+    assert nxt.date() > utcnow().date()
 
 
 def test_a_project_with_no_constitution_does_not_take_the_page_down(client):

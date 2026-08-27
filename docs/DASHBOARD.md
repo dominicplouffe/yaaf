@@ -125,8 +125,11 @@ Four steps, one per decision that actually needs you:
 3. **The money and the rules** — the billing key, and the presets that fill the
    constitution. Every rule the preset wrote stays visible and editable, marked
    when you change one.
-4. **Review & create** — the company as it will exist, and what it still needs
-   before it can start.
+4. **Review & create** — the company as it will exist, what it still needs
+   before it can start, and **Run a fire drill**: your exact spec run as a
+   company on scripted agents, at no cost and creating nothing, reporting
+   whether it gets off the ground, how often it would stop and wait for you,
+   and what paces it. → [FEATURES §13](FEATURES.md)
 
 Nothing is hidden behind a step: the **All on one page** toggle renders the
 same state as one scroll, with the same fields and the same submit, and the

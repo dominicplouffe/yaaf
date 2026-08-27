@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { CrewSummary, get, McpServerEntry, patch, post, ProjectBundle, RoleSummary } from "../api";
+import { CrewSummary, get, McpServerEntry, patch, post, ProjectBundle,
+  RehearsalReport, RoleSummary } from "../api";
+import Drill from "../drill";
 import {
   BLANK_DATA_SOURCE,
   DataSourceDraft,
@@ -535,6 +537,106 @@ export default function NewProject() {
     );
   }
 
+  // The fire drill. Nothing here creates anything: the spec is run as a
+  // company in a throwaway process on the mock runtime, and what comes back is
+  // a report. It is the one thing on this form that can answer "will this
+  // work?" before the billing key is attached.
+  const [drill, setDrill] = useState<RehearsalReport | null>(null);
+  const [drilling, setDrilling] = useState(false);
+  const [drillError, setDrillError] = useState<string | null>(null);
+
+  async function rehearse() {
+    setDrilling(true);
+    setDrillError(null);
+    setDrill(null);
+    try {
+      const chosenCeo = bundle?.project.ceo_role_slug ?? ceoSlug ?? ceoRole?.slug;
+      if (!chosenCeo) throw new Error("Pick a CEO role first.");
+      // Role definitions a fresh library lacks travel with the spec, so the
+      // drill can resolve them without anything being written here.
+      const spec = { project: projectBody(chosenCeo), roles: newBundleRoles };
+      setDrill(await post<RehearsalReport>("/admin/rehearse", { spec, days: 30 }));
+    } catch (e) {
+      setDrillError((e as Error).message);
+    } finally {
+      setDrilling(false);
+    }
+  }
+
+  /** The project exactly as it will be POSTed — extracted so the fire drill
+      can run the SAME object the submit button would send. A second copy
+      assembled for the rehearsal would be a rehearsal of a different
+      company, which is worse than no rehearsal at all. */
+  function projectBody(chosenCeo: string) {
+    return {
+          slug: slug.trim(),
+          name: name.trim(),
+          goal: goal.trim(),
+          chairman_email: chairmanEmail.trim(),
+          billing_mode: billingMode,
+          mode,
+          ...(mode === "explore" && exploreDeadline
+            ? { deadline: `${exploreDeadline}T23:59:59Z` } : {}),
+          controlled_domains: controlledDomains
+            .split(",")
+            .map((d) => d.trim())
+            .filter(Boolean),
+          constitution: {
+            // A setup file carries the source's full rulebook; the knobs and
+            // the authority preset below override whatever you edited here.
+            ...(bundle?.project.constitution ?? {}),
+            queue_ceiling: queueCeiling,
+            drought_hours: droughtHours,
+            monthly_usd_cap: usdCap,
+            approval_threshold_usd: approvalThreshold,
+            require_evidence_verification: requireVerification,
+            chairman_report_interval_hours: reportHours,
+            chairman_report_window_local: reportWindow.trim() || null,
+            timezone: timezone.trim() || "UTC",
+            // Skipped while a file's hand-mixed Autonomy group stands unanswered:
+            // rounding five deliberate rules to the nearest button is the silent
+            // overwrite this notice exists to stop. Clicking a preset clears it.
+            ...(autonomyNotice
+              ? {}
+              : AUTONOMY_PRESETS.find((p) => p.value === autonomy)?.constitution ?? {}),
+          },
+          integrations: { ...(bundle?.project.integrations ?? {}), runtime },
+          ...(bundle?.project.github_repo ? { github_repo: bundle.project.github_repo } : {}),
+          ceo_role_slug: chosenCeo,
+          ceo_name: bundle?.project.ceo_name ?? "CEO",
+          ...(bundle?.project.ceo_daily_at ? { ceo_daily_at: bundle.project.ceo_daily_at } : {}),
+          ...(bundle?.project.ceo_model_override
+            ? { ceo_model_override: bundle.project.ceo_model_override } : {}),
+          solo,
+          teams: teams
+            .filter((t) => t.role_slug && t.name && (solo || t.employees.trim()))
+            .map((t) => {
+              const employees = t.employees.split(",").map((s) => s.trim()).filter(Boolean);
+              // Daily wakes and model overrides ride the setup file per person.
+              // Filtered to the names still on the form: renaming an employee
+              // here must not turn into a refusal about someone who left.
+              const fromBundle = bundle?.project.teams.find((bt) => bt.name === t.name.trim());
+              const keep = (settings?: Record<string, string>) =>
+                Object.fromEntries(
+                  Object.entries(settings ?? {}).filter(([n]) => employees.includes(n)));
+              // A crew's wakes and a file's wakes reach here the same way; the
+              // file wins when both are present, because loading one is the more
+              // deliberate act.
+              const schedules = keep({ ...t.schedules, ...fromBundle?.schedules });
+              const modelOverrides = keep(fromBundle?.model_overrides);
+              return {
+                role_slug: t.role_slug,
+                name: t.name.trim(),
+                employees,
+                lead: t.lead.trim() || undefined,
+                ...(Object.keys(schedules).length ? { schedules } : {}),
+                ...(Object.keys(modelOverrides).length
+                  ? { model_overrides: modelOverrides } : {}),
+              };
+            }),
+    };
+  }
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
@@ -623,73 +725,7 @@ export default function NewProject() {
         localStorage.setItem(CHAIRMAN_KEY, JSON.stringify(
           { email: chairmanEmail.trim(), name: chairmanName.trim() }));
       } catch { /* remembering is a convenience, never a requirement */ }
-      const body = {
-        slug: slug.trim(),
-        name: name.trim(),
-        goal: goal.trim(),
-        chairman_email: chairmanEmail.trim(),
-        billing_mode: billingMode,
-        mode,
-        ...(mode === "explore" && exploreDeadline
-          ? { deadline: `${exploreDeadline}T23:59:59Z` } : {}),
-        controlled_domains: controlledDomains
-          .split(",")
-          .map((d) => d.trim())
-          .filter(Boolean),
-        constitution: {
-          // A setup file carries the source's full rulebook; the knobs and
-          // the authority preset below override whatever you edited here.
-          ...(bundle?.project.constitution ?? {}),
-          queue_ceiling: queueCeiling,
-          drought_hours: droughtHours,
-          monthly_usd_cap: usdCap,
-          approval_threshold_usd: approvalThreshold,
-          require_evidence_verification: requireVerification,
-          chairman_report_interval_hours: reportHours,
-          chairman_report_window_local: reportWindow.trim() || null,
-          timezone: timezone.trim() || "UTC",
-          // Skipped while a file's hand-mixed Autonomy group stands unanswered:
-          // rounding five deliberate rules to the nearest button is the silent
-          // overwrite this notice exists to stop. Clicking a preset clears it.
-          ...(autonomyNotice
-            ? {}
-            : AUTONOMY_PRESETS.find((p) => p.value === autonomy)?.constitution ?? {}),
-        },
-        integrations: { ...(bundle?.project.integrations ?? {}), runtime },
-        ...(bundle?.project.github_repo ? { github_repo: bundle.project.github_repo } : {}),
-        ceo_role_slug: chosenCeo,
-        ceo_name: bundle?.project.ceo_name ?? "CEO",
-        ...(bundle?.project.ceo_daily_at ? { ceo_daily_at: bundle.project.ceo_daily_at } : {}),
-        ...(bundle?.project.ceo_model_override
-          ? { ceo_model_override: bundle.project.ceo_model_override } : {}),
-        solo,
-        teams: teams
-          .filter((t) => t.role_slug && t.name && (solo || t.employees.trim()))
-          .map((t) => {
-            const employees = t.employees.split(",").map((s) => s.trim()).filter(Boolean);
-            // Daily wakes and model overrides ride the setup file per person.
-            // Filtered to the names still on the form: renaming an employee
-            // here must not turn into a refusal about someone who left.
-            const fromBundle = bundle?.project.teams.find((bt) => bt.name === t.name.trim());
-            const keep = (settings?: Record<string, string>) =>
-              Object.fromEntries(
-                Object.entries(settings ?? {}).filter(([n]) => employees.includes(n)));
-            // A crew's wakes and a file's wakes reach here the same way; the
-            // file wins when both are present, because loading one is the more
-            // deliberate act.
-            const schedules = keep({ ...t.schedules, ...fromBundle?.schedules });
-            const modelOverrides = keep(fromBundle?.model_overrides);
-            return {
-              role_slug: t.role_slug,
-              name: t.name.trim(),
-              employees,
-              lead: t.lead.trim() || undefined,
-              ...(Object.keys(schedules).length ? { schedules } : {}),
-              ...(Object.keys(modelOverrides).length
-                ? { model_overrides: modelOverrides } : {}),
-            };
-          }),
-      };
+      const body = projectBody(chosenCeo);
       const created = await post<{
         id: string;
         webhooks?: { github: { url: string; secret: string };
@@ -1604,6 +1640,26 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
         >
           + Add data source
         </button>
+
+        {/* The drill. It sits above the create button because that is the
+            order the question comes in: a chairman about to hand over a budget
+            wants to know the thing works, and until now the only way to find
+            out was to hand over the budget. */}
+        <h2>Try it for nothing first</h2>
+        <div className="card" style={{ marginBottom: 10 }}>
+          <div className="hire-foot">
+            <button type="button" onClick={rehearse} disabled={drilling}>
+              {drilling ? "Running the drill…" : "Run a fire drill"}
+            </button>
+            <span className="help">
+              Runs this exact spec as a company on scripted agents — no model calls,
+              no money, nothing created. Tells you whether it gets off the ground,
+              how often it will stop and wait for you, and what paces it.
+            </span>
+          </div>
+          {drillError && <div className="error" style={{ marginTop: 10 }}>{drillError}</div>}
+          {drill && <Drill report={drill} />}
+        </div>
 
         <div className="actions">
           <label style={{ display: "flex", gap: 6, alignItems: "center",

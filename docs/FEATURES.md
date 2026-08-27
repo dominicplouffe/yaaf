@@ -307,7 +307,67 @@ so a wake it draws is a wake that will run. And it explains its own blanks: why
 the next review is not scheduled while one sits open, that nobody is on a
 clock, that a paused company has no schedule at all.
 
-## 13. Talking to your company
+## 13. A fire drill, before you spend a cent
+
+The riskiest moment in this product is the one before the first real run: you
+write a goal, hire a crew off a wizard, hand over an API key and a budget, and
+go to bed. Until now the only preflight was a static checklist — is the billing
+credential shaped like a credential, is a team on an outdated role version —
+and a static check cannot answer the question you are actually asking.
+
+**`yaaf rehearse spec.json`**, and a button on the New-project form's
+**Review & create** step, runs your spec as a company for nothing. It is the
+same machinery CI uses to drive a whole company for $0 — the mock runtime, the
+dispatcher, the janitor, the policy engine, every refusal — pointed at your
+configuration instead of a scripted scenario. It needs no deployment and no
+key: `yaaf rehearse examples/01-your-first-hour.json` works on a fresh
+checkout.
+
+Four things come back:
+
+- **The walk.** Roles resolve, teams hire, the CEO wakes, scope is proposed,
+  the plan gate does its arithmetic, the board opens, work is claimed and
+  closed with evidence, a requirement settles true — each with the beat it
+  happened on, or the reason it did not. A configuration that fails does not
+  report "it didn't work"; it reports *where it stopped*, in the platform's own
+  words. A role your library cannot resolve, a schedule naming nobody, a
+  company with no team in it: each is named, with what to do about it.
+- **How often it will stop and wait for you.** The drill plays the chairman and
+  counts every time it had to — accept scope, sign the date, judge an
+  observable, decide a spend. That number is the autonomy dial made concrete,
+  and nothing else in the product could produce it before the money was spent.
+  Move one switch and run it again to see the difference.
+- **What it costs and what paces it.** The plan in runs against your caps, and
+  `capacity.py`'s four limits — because a daily total is not the only wall, and
+  a crew whose critical path runs through one agent's hourly wake ceiling looks
+  perfectly healthy at rest. On a box that has never priced a run the report
+  gives the **break-even**: what a run must cost for the plan to fit. One
+  number you can check against a bill you have already seen, instead of a total
+  invented from a price nobody measured.
+- **What it did not exercise**, in plain sight. Every test the drill's crew
+  writes is an `observable`, so no command out of a spec file is ever run;
+  evidence carries no URL, so the verifier never reaches the network; no
+  credential is read and no socket is opened. It asserts its database is the
+  throwaway SQLite file it created and refuses to start otherwise, and the API
+  route runs it in a subprocess — the engine is a process-global, and a drill
+  inside the server would re-point the server.
+
+**The one thing it changes about your rules.** Seven values are relaxed for the
+duration — the per-agent and per-project hourly ceilings, the daily ceiling,
+concurrency, the CEO's heartbeat, and the dispatcher's batching windows —
+because every one of them measures *wall-clock time*, and a drill compresses a
+fortnight into seconds. Left in force they bind on the first beat and report a
+stall the compression caused. They are relaxed, the report says which and why,
+and their real effect is computed from your own numbers as arithmetic rather
+than guessed at by simulation. Every other rule you wrote is in force exactly
+as written.
+
+**What it cannot tell you** — and says so, at the bottom of every report — is
+whether a real model does the job well. The crew is competent and dull by
+construction, so a clean drill is evidence about your *configuration* and no
+evidence at all about your *company*.
+
+## 14. Talking to your company
 
 - **The Boardroom** is a chat, not a ticket queue. Every running project keeps
   a **resident CEO chat session**, so replies land in seconds — typing
@@ -321,7 +381,7 @@ clock, that a paused company has no schedule at all.
   enforces it from the next call. Scope is limited to your reporting
   preferences — everything else in the constitution is yours to change directly.
 
-## 14. Deliverables and files
+## 15. Deliverables and files
 
 - **Artifacts** are finished deliverables persisted to the artifact store
   (local disk, or any S3-compatible store — MinIO, R2, AWS).
@@ -329,7 +389,7 @@ clock, that a paused company has no schedule at all.
   read-only, so you can see work in progress, not just what shipped.
 - **Preview and download** from the Deliverables tab.
 
-## 15. Setup that can't silently fail
+## 16. Setup that can't silently fail
 
 - **Health checklist** on each project's Overview names anything misconfigured
   — dead billing, a credential that isn't a URL, an untested data source, a
@@ -347,17 +407,21 @@ clock, that a paused company has no schedule at all.
   sharing. **Project clone** produces a running twin on the same install,
   credential values and all, optionally aimed at a new goal.
 
-## 16. Proving it works
+## 17. Proving it works
 
-- **603 tests** run offline on SQLite and on Postgres in CI: an invariant suite
+- **626 tests** run offline on SQLite and on Postgres in CI: an invariant suite
   that attacks every rule over HTTP, chaos tests (crash, reap, retry), golden
   transcript evals that gate prompt edits, and end-to-end runs against a mock
   model.
 - **Mock runtime** (`runtime: mock`) swaps the Agent SDK for scripted
   behaviours, which is how CI drives a whole company — planning, decomposition,
   claims, completions, evidence, every governance trip — for $0. Behaviours are
-  registered in code; **none ship by default**, so a mock project on your own
-  install reads its context and exits. It is the test harness, not a demo mode.
+  registered in code, and a mock project you start yourself still reads its
+  context and exits: none is registered for it. The one thing that does ship a
+  crew is the [fire drill](#13-a-fire-drill-before-you-spend-a-cent), which
+  registers a generic one for the length of a rehearsal and clears it after.
+  Still the test harness rather than a demo mode — but now the test harness is
+  pointed at your configuration as well as at ours.
 
 ---
 
