@@ -36,6 +36,23 @@ interface ArtifactFile {
   size: number;
   modified: string | null;
 }
+/** An obligation to speak, opened by the platform from arithmetic or a failed
+    check — never by the CEO deciding the news was worth your time. */
+interface FlagRow {
+  id: string;
+  kind: string;
+  status: string;
+  summary: string;
+  arithmetic: Record<string, unknown> | null;
+  opened_at: string | null;
+  raised_at: string | null;
+  proposal: string | null;
+}
+interface FlagsView {
+  unraised: number;
+  flags: FlagRow[];
+}
+
 interface FilesView {
   workspace: { path: string; size: number; modified: string }[];
   artifacts: ArtifactFile[];
@@ -262,11 +279,39 @@ function ModeStrip({ dash, reload }: { dash: import("../../api").Dashboard;
     );
   }
   if (dash.mode === "operate" && dash.cycle) {
+    const c = dash.cycle;
+    // With a date in play the honest question is not "when did this open" but
+    // "does the work reach it". That answer is arithmetic — the same the
+    // dispatcher gates on — so it is stated here rather than left to be asked
+    // for in the boardroom and answered from memory.
+    if (c.due_at && c.capacity) {
+      const cap = c.capacity;
+      return (
+        <div className={`strip${cap.feasible ? "" : " serious"}`} style={{ marginTop: 12 }}>
+          <div className="grow">
+            <b>
+              Cycle {c.ordinal} is due {fmtWhen(c.due_at)} —{" "}
+              {cap.feasible ? "the work fits." : "the work does not fit."}
+            </b>
+            <div className="sb">
+              {c.goal ? <>{clip(c.goal)}<br /></> : null}
+              {cap.why}. {cap.basis}.
+              {cap.retry_reserve > 0 && (
+                <> Holding back {cap.retry_reserve} run(s) for retries.</>
+              )}
+              {c.due_source?.kind === "data" && c.due_source.url && (
+                <> Date read from <span className="mono">{c.due_source.url}</span>.</>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
     return (
       <p className="help" style={{ margin: "12px 0 0" }}>
-        Cycle {dash.cycle.ordinal}, open since {fmtWhen(dash.cycle.opened_at)} — each
-        cycle plans fresh, and the CEO opens it by reading the last three cycles'
-        narratives.
+        Cycle {c.ordinal}, open since {fmtWhen(c.opened_at)}
+        {c.goal ? <> — {clip(c.goal)}</> : <> — each cycle plans fresh, and the CEO opens
+        it by reading the last three cycles' narratives.</>}
       </p>
     );
   }
@@ -294,6 +339,10 @@ export default function Overview({
   const { data: files } = usePoll(
     () => get<FilesView>(`/observe/projects/${projectId}/files`),
     20000,
+  );
+  const { data: flagsView } = usePoll(
+    () => get<FlagsView>(`/observe/projects/${projectId}/flags`),
+    8000,
   );
   const [repinMsg, setRepinMsg] = useState<string | null>(null);
 
@@ -343,6 +392,23 @@ export default function Overview({
       </div>,
     );
   }
+  // A RAISED flag is the CEO having brought you a problem with a proposal —
+  // "here is what broke, here are the numbers, here is what I would do, say
+  // the word". That is a decision waiting on you, so it sits with the others.
+  for (const f of (flagsView?.flags ?? []).filter((f) => f.status === "raised")) {
+    needs.push(
+      <div className="arow" key={f.id}>
+        <span className="chip serious">{f.kind.replaceAll("_", " ")}</span>
+        <div className="grow">
+          <div className="tt">{clip(f.summary)}</div>
+          <div className="sb">
+            {f.proposal ? `proposes: ${clip(f.proposal)}` : "raised without a proposal"}
+          </div>
+        </div>
+        <Link to={`/projects/${projectId}/boardroom`}>read it →</Link>
+      </div>,
+    );
+  }
   for (const h of expiredBets) {
     needs.push(
       <div className="arow" key={h.id}>
@@ -364,6 +430,30 @@ export default function Overview({
   // matters. It is the most valuable optional thing on the page; it is still
   // optional.
   const watch: React.ReactNode[] = [];
+  // An UNRAISED flag is different in kind from everything else on this page:
+  // nothing is waiting on you, and there is nothing to decide. It is the one
+  // signal that your CEO has news it has not brought you — which is the whole
+  // reason flags exist. The failure this was built for was a CEO that had
+  // written "run ration is the binding constraint" in its own notes and then
+  // told its chairman "solid progress". Drawn here, cheerfulness in the
+  // boardroom is self-refuting rather than something you have to catch.
+  const unraised = (flagsView?.flags ?? []).filter((f) => f.status === "open");
+  for (const f of unraised) {
+    watch.push(
+      <div className="wrow" key={f.id}>
+        <span className="badge serious">not yet raised</span>
+        <div className="grow">
+          {clip(f.summary)}{" "}
+          <span className="help">
+            — the platform opened this{f.opened_at ? ` ${fmtWhenShort(f.opened_at)}` : ""}; your
+            CEO is required to bring it to the boardroom with a proposal, and the reporting
+            cadence does not hold it back.
+          </span>
+        </div>
+        <Link to={`/projects/${projectId}/boardroom`}>ask about it →</Link>
+      </div>,
+    );
+  }
   if (unaudited >= 3) {
     watch.push(
       <div className="wrow" key="audit">

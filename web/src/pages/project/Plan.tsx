@@ -92,6 +92,16 @@ interface PlanView {
       inbox_share: number; noop_share: number };
     worst_failure: { key: string; failure_load: number; statement: string } | null;
   };
+  /** What an Operate project has instead of a burndown: a burndown of work
+      that recurs is a flat line, and the shape that carries the information is
+      which obligation slipped, and in which turn. */
+  standing?: {
+    key: string;
+    statement: string;
+    met: number;
+    judged: number;
+    status_now: string;
+  }[];
   requirements?: PlanRequirement[];
 }
 
@@ -873,6 +883,37 @@ export default function Plan({ ctx }: { ctx: ProjectCtx }) {
               <div className="sub">{sums.budget.why}</div>
             </div>
           )}
+        </div>
+      )}
+
+      {data.standing && data.standing.length > 0 && (
+        /* The operating record. A standing obligation is owed again every
+           cycle, so "met" on its own says nothing — the pattern is the fact,
+           and before this it lived in prose where nothing could check it. */
+        <div className="card" style={{ marginBottom: 14 }}>
+          <div className="label" style={{ marginBottom: 8 }}>Owed every cycle</div>
+          {data.standing.map((r) => {
+            const missed = r.judged > 0 && r.met < r.judged;
+            return (
+              <div className="wrow" key={r.key}>
+                <span className={`badge ${missed ? "warn" : "good"}`}>
+                  {r.met}/{r.judged}
+                </span>
+                <div className="grow">
+                  <b className="mono">{r.key}</b> {r.statement}
+                  <div className="help">
+                    {r.judged === 0
+                      ? "no cycle has closed on it yet"
+                      : missed
+                        ? `missed ${r.judged - r.met} of the last ${r.judged} cycles`
+                        : `met in all ${r.judged} cycles judged so far`}
+                    {" — "}
+                    {r.status_now === "met" ? "done for this cycle" : "open this cycle"}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
 

@@ -146,13 +146,13 @@ def _runs_in_window(session: Session, project_id: str, since) -> dict:
     inbox, noop, work = 0, 0, 0
     rows = session.execute(
         select(Run.status, Run.requirement_id, Run.cost_usd, Run.kind,
-               Run.metered, Run.produced).where(
+               Run.metered).where(
             Run.project_id == project_id,
             Run.kind != RunKind.CHAT_SESSION,
             Run.created_at >= since,
         )
     ).all()
-    for status, requirement_id, cost, kind, metered, produced in rows:
+    for status, requirement_id, cost, kind, metered in rows:
         total += 1
         if status in DEAD_STATUSES:
             dead += 1
@@ -162,7 +162,11 @@ def _runs_in_window(session: Session, project_id: str, since) -> dict:
         usd += cost or 0.0
         if kind == RunKind.INBOX_RUN:
             inbox += 1
-        elif metered is False or (produced == 0 and status == RunStatus.DONE):
+        elif metered is False:
+            # `metered` is the ONLY honest signal. Inferring a no-op from
+            # produced == 0 reads every run that predates the counter as
+            # having done nothing: on the first deploy this reported 26 of 42
+            # runs as waste, which was the backfill talking, not the company.
             noop += 1
         else:
             work += 1

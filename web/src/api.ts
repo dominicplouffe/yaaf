@@ -265,7 +265,26 @@ export interface Dashboard {
       Empty array = ready for the chairman's confirmation. Null elsewhere. */
   delivery_outstanding: string[] | null;
   /** Operate: the open turn of the rhythm. */
-  cycle: { ordinal: number; opened_at: string } | null;
+  cycle: {
+    ordinal: number;
+    opened_at: string;
+    goal: string | null;
+    due_at: string | null;
+    due_source: { kind: string; url: string | null; note: string | null } | null;
+    /** The platform's own arithmetic on whether the open work reaches the date.
+        Four numbers and never a point estimate — see yaaf/server/capacity.py. */
+    capacity: {
+      available: number;
+      needed: number;
+      retry_reserve: number;
+      slack: number;
+      chain_hours: number;
+      hours_left: number;
+      feasible: boolean;
+      why: string;
+      basis: string;
+    } | null;
+  } | null;
   integrations: Record<string, unknown>;
   github_repo: string | null;
   billing_secret_id: string | null;

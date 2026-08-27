@@ -318,12 +318,32 @@ def _delivery_outstanding(session: Session, project: Project) -> list[str]:
 
 
 def _current_cycle_view(session: Session, project: Project) -> dict | None:
+    """The open cycle, with what it is for and whether it will make its date.
+
+    The ordinal and the open date were all this carried, which is why the
+    chairman's screen could say "cycle 1, open since Wednesday" beside a memo
+    that was not going to be written in time. The goal, the due-by and the
+    platform's own arithmetic about reaching it all belong in the same line.
+    """
     if project.mode != "operate":
         return None
     cycle = policy.current_cycle(session, project.id)
     if cycle is None:
         return None
-    return {"ordinal": cycle.ordinal, "opened_at": cycle.opened_at.isoformat()}
+    view = {
+        "ordinal": cycle.ordinal,
+        "opened_at": cycle.opened_at.isoformat(),
+        "goal": cycle.goal,
+        "due_at": cycle.due_at.isoformat() if cycle.due_at else None,
+        "due_source": cycle.due_source,
+        "capacity": None,
+    }
+    if cycle.due_at is not None:
+        from yaaf.server.capacity import capacity_forecast
+
+        view["capacity"] = capacity_forecast(
+            session, project, effective(session, project.id), cycle.due_at)
+    return view
 
 
 @router.get("/projects/{project_id}/flags")
