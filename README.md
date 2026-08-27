@@ -143,6 +143,26 @@ budget, accept the slip. Each is recorded with your reason and shown at the
 
 <img src="docs/screenshots/review.png" alt="The Review tab: pace, requirements met, commitment state, budget, audit coverage and the worst offender, with the CEO's variance narrative and the chairman's six levers">
 
+## What happened, and what happens next
+
+Every screen here used to be in the present tense, and the only mail you ever
+got was an alarm. Two more now exist, and neither costs a model call.
+
+**The briefing** is what happened since you last looked — scope settled, work
+closed, proof verified or refused, money spent, what decided itself while you
+were out, and what that leaves waiting on you. Composed from the record rather
+than written by an agent, which is why it grades nothing and why it still
+arrives on the morning the platform paused the company for an exhausted budget.
+Set a time and it lands in your inbox daily; the same panel opens the Desk,
+with a window that starts where you last read to.
+
+**The agenda** is the fortnight ahead: the wall-clock wakes, the standing
+review, the cycle roll, the kill dates, the clocks that decide themselves, and
+the promised date with the platform's projection beside it — drawn from the
+same heartbeats the dispatcher reads, so a wake it shows is a wake that runs.
+A company that runs while you sleep and will not show you its calendar is a
+haunted one.
+
 ## The rest of the map
 
 Money, verification, containment and the audit trail are above. The rest —
@@ -157,8 +177,9 @@ full reference in **[docs/FEATURES.md](docs/FEATURES.md)**:
 | **Money** | USD or token budgets, a separate real-world spend envelope, idempotent purchases, revenue only by signed webhook. |
 | **Sandbox & proof** | Chromium in the box, an assist protocol for human-only steps, a CEO-judgment metric on close quality. |
 | **Chat** | A resident CEO session: Boardroom and Slack answer in seconds, without consuming the work queue's caps. |
+| **Three tenses** | A briefing composed from the record — what happened while you were away, at zero tokens, so it still lands the morning the budget ran out — and a calendar of what the company is scheduled to do next. |
 | **Integrations** | Slack (Socket Mode — no public URL), GitHub repo-per-project, MCP data sources, signed webhooks, S3 artifacts, email alerts. → [INTEGRATIONS](docs/INTEGRATIONS.md) |
-| **Proof it works** | 539 offline tests, chaos tests, golden-transcript evals that gate prompt edits, a $0 scripted CI run of a whole company. |
+| **Proof it works** | 603 offline tests, chaos tests, golden-transcript evals that gate prompt edits, a $0 scripted CI run of a whole company. |
 
 ## What you give up
 
@@ -236,7 +257,7 @@ first hour](examples/01-your-first-hour.md)**.
 | [Examples](examples/) | Eleven projects to import |
 | [Features](docs/FEATURES.md) | The complete feature reference |
 | [Dashboard](docs/DASHBOARD.md) | Every screen, and what you do there |
-| [Governance](docs/GOVERNANCE.md) | All 49 rules and their defaults |
+| [Governance](docs/GOVERNANCE.md) | All 52 rules and their defaults |
 | [Autonomy](docs/AUTONOMY.md) | How much the CEO decides without you |
 | [Integrations](docs/INTEGRATIONS.md) | Slack, GitHub, MCP, webhooks, billing, storage |
 | [Deployment](docs/DEPLOYMENT.md) | Install, configure, back up, upgrade |
@@ -250,7 +271,7 @@ Index: **[docs/](docs/)**.
 
 ```
 yaaf/server     API, policy engine (the refusals), dispatcher, janitor,
-                evidence verifier, Slack bridge
+                evidence verifier, briefing and agenda composers, Slack bridge
 yaaf/runner     leases runs, launches sandbox containers, meters everything
 yaaf/cli        `yaaf` — admin/observe CLI and spend reporting
 web/            the chairman's dashboard (React, served at /app)

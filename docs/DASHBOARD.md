@@ -56,6 +56,26 @@ are undelegable at every setting, and the **spot-check** exists precisely
 because a CEO may be judging its own closes. Authority is configuration;
 integrity is structure, and the Desk draws that line where the server does.
 
+### Since you were last here
+
+Above the ranked list, and answering the earlier question: **what happened
+while I was away?** One block per company that moved — scope that settled,
+work that closed, proof the platform verified or refused, what it cost, what
+decided itself in your absence, and what that has left waiting on you. A
+company that did nothing collapses to one line, and still says whether that
+was a quiet week or a dead one.
+
+The window is *since you last read this*, not a fixed 24 hours, and its edges
+are printed so you can see what the numbers cover. **Reading never moves the
+mark** — the page polls, and a window that reset on every fetch would always be
+empty. *Mark read* moves it, and moves it to the edge of the window you were
+shown, so anything that landed while the panel sat open survives to the next
+read.
+
+None of it costs a model call: it is composed from the record. That is what
+lets it arrive on a company the platform paused for an exhausted budget, which
+is the morning you most want to hear from it.
+
 **The hero state is an empty desk**, and it proves it rather than asserting
 it: how many companies are working, when something last ran, and when the next
 clock fires. *Nothing is wrong* and *nothing is happening* are different
@@ -161,10 +181,38 @@ absence is clutter. See [project shapes](#project-shapes) below.
 
 ## Overview — the state of the company
 
+Read top to bottom it is three tenses: what needs you, what happened, what is
+true now, what happens next.
+
 - **Needs you** — the decisions the Desk surfaces, scoped to this project. A
   quiet project says "nothing waiting on you here."
+- **What happened** — this company's briefing, on your own read mark. The same
+  panel as the Desk's, minus the company name, with *Mark read* beside it.
 - **Is it working?** — working now, runs today against the daily ceiling, runs
   that ended early, and spend today.
+- **What happens next** — the calendar. Fourteen days by default (7 or 30 on
+  the toggle), read in the constitution's one timezone.
+  - **Rhythms** are the recurring wakes — the CEO's daily standup, any agent
+    you put on a clock, the planning heartbeat — each with its cadence, its
+    true next firing, and a mark on every day it touches. The planning
+    heartbeat says when it will be *skipped*, because a cadence that silently
+    does not fire on an empty board reads as a broken one.
+  - **Events** happen once, and the strip colours them by what kind of date
+    they are: something that **resolves itself** (an approval auto-deciding, a
+    bet's kill date, spot-checks expiring), a **deadline** (the promised
+    delivery, a cycle roll, an Explore deadline), a **meeting** (the standing
+    review), or the platform's own **projection** — drawn hollow, because a
+    projection is arithmetic and not a promise anyone made.
+  - It **explains its blanks**: why the next review is not scheduled while one
+    sits open, that nobody is on a wall-clock wake, that a paused company has
+    no schedule at all. A blank column where your weekly meeting should be is
+    worse than a sentence saying why.
+
+  Everything on it is computed from the same heartbeats and rules the
+  dispatcher and the janitor read, so a wake drawn here is a wake that will
+  actually run. What is deliberately absent is the date your burn rate lands
+  on the cap — that arithmetic lives on the Desk, and a second copy of it here
+  would be a second definition to drift.
 - **Your deliverable** — the most recent published artifact, drafts included.
 - **The plan** — live bets, the open board against the queue ceiling, verified
   proof in the drought window, and the **CEO-judgment metric**: how much of
@@ -306,7 +354,7 @@ Data; everything after is occasional.
 
 **Governance**
 
-- **Rules in force** — all 49 constitution rules, each with its own help text
+- **Rules in force** — all 52 constitution rules, each with its own help text
   and its stock default, behind six tabs: Money, Pace & brakes, How work is
   run, Autonomy, Memory, Rhythm & reporting. Edits span tabs; a tray at the
   foot of the pane lists every pending one, takes the required written reason,
@@ -342,6 +390,7 @@ Everything you can do, and nothing you can't:
 - Extend an expired bet — once — or kill one.
 - Unfreeze a thread the circuit breaker froze.
 - Spot-audit completed work and evidence.
+- Mark a briefing read, which is what sets where the next window starts.
 - Start, pause, stop a project.
 - Configure billing, credentials, data sources, and integrations.
 - Clone, export, and repin teams to new role versions.

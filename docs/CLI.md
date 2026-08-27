@@ -96,6 +96,8 @@ yaaf stop  my-slug --reason "shipped"
 | Command | Shows |
 |---|---|
 | `yaaf projects` | Every project with status and headline numbers. |
+| `yaaf briefing [PROJECT] [--hours N] [--seen]` | **What happened since you last read one.** Omit the project for every live company. Composed from the record at zero tokens, so it works on a paused company and a broke one. Reading never moves your mark; `--seen` does, and only to the edge of the window it just printed. |
+| `yaaf agenda PROJECT [--days 14]` | **What it is scheduled to do next**: the wall-clock wakes, the standing meeting, the cycle roll, the kill dates, the clocks that decide themselves, and the promised date with the platform's projection beside it. |
 | `yaaf dashboard PROJECT` | The full project dashboard payload. |
 | `yaaf board PROJECT` | The task board. |
 | `yaaf org PROJECT` | Teams, leads, employees, who's awake. |
@@ -156,3 +158,15 @@ yaaf start my-slug
 
 yaaf say my-slug "Morning. What's the plan for the week?"
 ```
+
+## Coming back after a few days
+
+```bash
+yaaf briefing                 # every live company, each on its own read mark
+yaaf briefing my-slug --seen  # read one, and start the next window here
+yaaf agenda my-slug           # and what the next fortnight holds
+```
+
+Set `brief_daily_at` (Settings → **Rules in force** → Rhythm & reporting, or
+`yaaf amend`) and the same briefing arrives by email every morning without
+anyone typing anything.

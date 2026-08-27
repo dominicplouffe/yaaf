@@ -75,10 +75,22 @@ def test_a_daily_wake_is_one_rhythm_not_fourteen_events(client):
     assert "ceo_daily" in rhythm_kinds(payload)
     daily = next(r for r in payload["rhythms"] if r["kind"] == "ceo_daily")
     assert daily["every"] == "every day at 09:00 (UTC)"
-    assert len(daily["days"]) >= 13
     assert daily["next"] is not None
     # And none of it leaked into the dated events.
     assert "ceo_daily" not in kinds(payload)
+
+
+def test_a_rhythm_never_claims_a_day_the_strip_does_not_have(client):
+    """The UTC horizon and the strip's last LOCAL day differ by one wherever
+    the zone offset is not zero. A rhythm bounded by the former paints a
+    fifteenth column onto a fourteen-column strip, where it silently vanishes
+    — a wake the chairman was shown and then was not."""
+    project = make_project(client, slug="offby")
+    amend(client, project, ceo_daily_at="09:00", timezone="Pacific/Auckland")
+    payload = agenda(client, project, days=14)
+    daily = next(r for r in payload["rhythms"] if r["kind"] == "ceo_daily")
+    assert set(daily["days"]) <= set(payload["day_list"])
+    assert len(daily["days"]) in (13, 14)
 
 
 def test_the_wake_time_is_read_in_the_constitution_s_one_timezone(client):
@@ -215,7 +227,7 @@ def test_the_promise_and_the_projection_are_drawn_as_different_things(client):
     assert promise["tone"] == "deadline"
     assert projection["tone"] == "projection"
     assert "later than the promise" in projection["detail"]
-    assert "1 requirement(s) were in scope" in promise["detail"]
+    assert "1 requirement was in scope" in promise["detail"]
 
 
 def test_events_are_ordered_by_when_they_happen(client):

@@ -354,6 +354,71 @@ def dashboard(project: str) -> None:
 
 
 @app.command()
+def briefing(
+    project: str = typer.Argument(None, help="a slug or id; omit for every live company"),
+    hours: float = typer.Option(0, "--hours", help="force a window instead of your read mark"),
+    seen: bool = typer.Option(False, "--seen", help="mark it read, so the next window starts here"),
+) -> None:
+    """What happened since you last read one — as prose, not four tables.
+
+    Composed by the platform from the record at zero tokens, which is why it
+    works on a paused company and a broke one. Reading never moves your mark;
+    `--seen` does, and only for the window this command just printed.
+    """
+    from yaaf.server.briefing import render_text
+
+    with _client() as client:
+        query = f"?hours={hours}" if hours else ""
+        if project is None:
+            response = client.get(f"/observe/briefing{query}")
+            briefs = (response.json() or {}).get("projects", []) if response.is_success else []
+        else:
+            response = client.get(
+                f"/observe/projects/{_resolve_project(client, project)}/briefing{query}")
+            briefs = [response.json()] if response.is_success else []
+        if not response.is_success:
+            _show(response)
+            return
+        if not briefs:
+            typer.echo("No live companies.")
+            return
+        for brief in briefs:
+            typer.echo(f"\n── {brief['name']} " + "─" * max(0, 60 - len(brief["name"])))
+            typer.echo(render_text(brief))
+        if seen:
+            for brief in briefs:
+                client.post(f"/admin/projects/{brief['project_id']}/briefing/seen",
+                            json={"until": brief["until"]})
+            typer.echo(f"\nMarked {len(briefs)} briefing(s) read.")
+
+
+@app.command()
+def agenda(project: str, days: int = typer.Option(14, "--days")) -> None:
+    """What this company is scheduled to do next: the wakes, the standing
+    meeting, the rhythm, the clocks that run out, and the promise."""
+    with _client() as client:
+        response = client.get(
+            f"/observe/projects/{_resolve_project(client, project)}/agenda?days={days}")
+        if not response.is_success:
+            _show(response)
+            return
+        view = response.json()
+        typer.echo(f"next {view['days']} days · {view['timezone']}")
+        for rhythm in view["rhythms"]:
+            when = (rhythm["next"] or "")[:16].replace("T", " ")
+            typer.echo(f"  ~ {rhythm['label']}: {rhythm['every']}"
+                       + (f" (next {when})" if when else ""))
+        for event in view["events"]:
+            typer.echo(f"  {event['day']}  {event['label']}")
+            if event["detail"]:
+                typer.echo(f"              {event['detail']}")
+        for note in view["notes"]:
+            typer.echo(f"  ! {note}")
+        if not view["events"] and not view["rhythms"]:
+            typer.echo("  nothing scheduled in this window.")
+
+
+@app.command()
 def board(project: str) -> None:
     with _client() as client:
         _show(client.get(f"/observe/projects/{_resolve_project(client, project)}/board"))

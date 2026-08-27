@@ -259,7 +259,55 @@ decision, and configuration change. The dashboard surfaces it as:
 - **Audit log** — including every refusal, so a refusal storm names the wall:
   which agent, which rule, and what to say instead.
 
-## 12. Talking to your company
+## 12. Three tenses, not one
+
+Every screen used to be in the present. The Desk said what needs you *now*, the
+Overview said what is true *now*, and reconstructing a weekend meant reading
+four tables in Records by hand.
+
+**The briefing — what happened while you were away.** One composed narrative
+per company: scope that settled, work that closed, proof the platform verified
+or refused, deliverables published, what it cost, what decided itself in your
+absence, what the CEO decided on its own authority, what you decided, and what
+that leaves waiting on you. It reads on the Desk (every live company), on each
+project's Overview, from `yaaf briefing`, and — with `brief_daily_at` set — in
+your inbox every morning.
+
+- **Composed from the record at zero tokens.** No run, no wake, no model call.
+  Which is why it still arrives on a company the platform paused for an
+  exhausted budget, on one with an empty board, and on one that is broke — the
+  three mornings you most need to hear something, and the three a
+  model-written status could not be afforded. Same reasoning as the janitor
+  opening a review with the budget gone.
+- **It grades nothing.** Every line counts something the platform already wrote
+  down under its own rules: a requirement is met because the platform ran the
+  test, evidence counts because the verifier fetched it. R-00 and standing
+  requirements are held out of "settled true" on exactly the grounds velocity
+  holds them out of pace — a plan gate lifting is not scope landing, and an
+  obligation met every cycle by design is not progress.
+- **The window is yours and has visible edges.** "Since you were last here" is
+  a real mark, moved only when you acknowledge the panel — reading it never
+  moves it, so a tab left open overnight does not eat your weekend. A first
+  visit summarises the whole company rather than an empty minute.
+- **Silence says which kind it is.** A company that did nothing still ships its
+  pulse: open tasks, runs in flight, when it last ran. Nothing wrong and
+  nothing happening are different screens.
+- **Two marks, two meanings.** The daily email's window runs from the last
+  email; the panel's runs from the last time you looked. The mail cannot eat
+  the story the screen was going to tell.
+
+**The agenda — what it is going to do next.** A fourteen-day strip on each
+project's Overview (and `yaaf agenda`): the wall-clock wakes, the standing
+review, the cycle roll, bet kill dates, approval and spot-check expiries, the
+budget reset, and the promised delivery date with the platform's own projection
+beside it. Recurring wakes are drawn as *rhythms* — one fact with a cadence and
+a next firing — rather than fourteen copies of one event. Every time is read in
+the constitution's one timezone from the same heartbeats the dispatcher reads,
+so a wake it draws is a wake that will run. And it explains its own blanks: why
+the next review is not scheduled while one sits open, that nobody is on a
+clock, that a paused company has no schedule at all.
+
+## 13. Talking to your company
 
 - **The Boardroom** is a chat, not a ticket queue. Every running project keeps
   a **resident CEO chat session**, so replies land in seconds — typing
@@ -273,7 +321,7 @@ decision, and configuration change. The dashboard surfaces it as:
   enforces it from the next call. Scope is limited to your reporting
   preferences — everything else in the constitution is yours to change directly.
 
-## 13. Deliverables and files
+## 14. Deliverables and files
 
 - **Artifacts** are finished deliverables persisted to the artifact store
   (local disk, or any S3-compatible store — MinIO, R2, AWS).
@@ -281,7 +329,7 @@ decision, and configuration change. The dashboard surfaces it as:
   read-only, so you can see work in progress, not just what shipped.
 - **Preview and download** from the Deliverables tab.
 
-## 14. Setup that can't silently fail
+## 15. Setup that can't silently fail
 
 - **Health checklist** on each project's Overview names anything misconfigured
   — dead billing, a credential that isn't a URL, an untested data source, a
@@ -299,9 +347,9 @@ decision, and configuration change. The dashboard surfaces it as:
   sharing. **Project clone** produces a running twin on the same install,
   credential values and all, optionally aimed at a new goal.
 
-## 15. Proving it works
+## 16. Proving it works
 
-- **539 tests** run offline on SQLite and on Postgres in CI: an invariant suite
+- **603 tests** run offline on SQLite and on Postgres in CI: an invariant suite
   that attacks every rule over HTTP, chaos tests (crash, reap, retry), golden
   transcript evals that gate prompt edits, and end-to-end runs against a mock
   model.

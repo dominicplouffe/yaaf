@@ -30,7 +30,7 @@ says so when one is missing.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
@@ -106,16 +106,20 @@ def _event(at: datetime, kind: str, label: str, tz: ZoneInfo, *,
 
 
 def _rhythm(kind: str, label: str, every: str, nxt: datetime | None,
-            horizon: datetime, tz: ZoneInfo, *, detail: str | None = None,
+            last_day: date, tz: ZoneInfo, *, detail: str | None = None,
             daily: bool = True) -> dict:
     """A recurring wake, reduced to what a fourteen-day strip can show: the
-    sentence, the true next firing, and which local days it lands on."""
+    sentence, the true next firing, and which local days it lands on.
+
+    Bounded by the strip's last LOCAL day rather than by the UTC horizon: the
+    two differ by one wherever the zone offset is not zero, and a rhythm that
+    claimed a fifteenth day would be painting a column the strip does not have.
+    """
     days: list[str] = []
-    if nxt is not None and nxt <= horizon:
+    if nxt is not None and nxt.astimezone(tz).date() <= last_day:
         if daily:
             cursor = nxt.astimezone(tz).date()
-            last = horizon.astimezone(tz).date()
-            while cursor <= last:
+            while cursor <= last_day:
                 days.append(cursor.isoformat())
                 cursor += timedelta(days=1)
         else:
@@ -160,7 +164,7 @@ def _next_daily(session: Session, agent: Agent, raw: str, tz: ZoneInfo,
 
 
 def _wake_rhythms(session: Session, project: Project, cons: ConstitutionDoc,
-                  now: datetime, horizon: datetime, tz: ZoneInfo) -> list[dict]:
+                  now: datetime, last_day: date, tz: ZoneInfo) -> list[dict]:
     rhythms: list[dict] = []
     agents = list(session.execute(
         select(Agent).where(Agent.project_id == project.id,
@@ -179,7 +183,7 @@ def _wake_rhythms(session: Session, project: Project, cons: ConstitutionDoc,
             "ceo_daily", f"{ceo.name} — daily wake",
             f"every day at {cons.ceo_daily_at} ({cons.timezone})",
             _next_daily(session, ceo, cons.ceo_daily_at, tz, now, "daily"),
-            horizon, tz, detail="the standup: the CEO plans on a wall clock",
+            last_day, tz, detail="the standup: the CEO plans on a wall clock",
         ))
 
     for agent in sorted(agents, key=lambda a: a.name):
@@ -190,7 +194,7 @@ def _wake_rhythms(session: Session, project: Project, cons: ConstitutionDoc,
             "agent_daily", f"{agent.name} — daily wake",
             f"every day at {agent.daily_at} ({cons.timezone})",
             _next_daily(session, agent, agent.daily_at, tz, now, "agent_daily"),
-            horizon, tz, detail=where,
+            last_day, tz, detail=where,
         ))
 
     if ceo is not None and cons.ceo_heartbeat_hours:
@@ -208,7 +212,7 @@ def _wake_rhythms(session: Session, project: Project, cons: ConstitutionDoc,
         )
         rhythms.append(_rhythm(
             "ceo_planning", f"{ceo.name} — planning wake",
-            f"every {hours:g}h", nxt, horizon, tz, detail=idle_note,
+            f"every {hours:g}h", nxt, last_day, tz, detail=idle_note,
         ))
     return rhythms
 
@@ -271,10 +275,11 @@ def _commitment_events(session: Session, project: Project, tz: ZoneInfo) -> list
     ).scalar_one_or_none()
     if commitment is None:
         return []
+    scope_n = len(commitment.scope_snapshot or [])
     out = [_event(
         commitment.deliver_by, "deliver_by", "Promised delivery", tz,
-        detail=(f"{len(commitment.scope_snapshot or [])} requirement(s) were in scope "
-                "when you signed"),
+        detail=(f"{scope_n} requirement{'' if scope_n == 1 else 's'} "
+                f"{'was' if scope_n == 1 else 'were'} in scope when you signed"),
         tone="deadline", where="plan",
     )]
     projected = _aware(commitment.projected_done_at)
@@ -333,19 +338,23 @@ def _clock_events(session: Session, project: Project, tz: ZoneInfo,
     in_window = [s for s in samples if _aware(s.expires_at) <= horizon]
     if in_window:
         soonest = _aware(in_window[0].expires_at)
+        n = len(in_window)
         out.append(_event(
             soonest, "audit_expiry",
-            f"{len(in_window)} spot-check(s) expire unreviewed", tz,
+            f"{n} spot-check{'' if n == 1 else 's'} expire"
+            f"{'s' if n == 1 else ''} unreviewed", tz,
             detail="nothing blocks — those closes just stand unaudited",
             tone="consequence", where="work",
         ))
     if project.mode == ProjectMode.EXPLORE and project.deadline is not None:
         deadline = _aware(project.deadline)
         if now <= deadline <= horizon:
+            # No `where`: an Explore company has no Plan tab by design, and a
+            # link to a screen its own shape does not have is worse than none.
             out.append(_event(
                 deadline, "explore_deadline", "The deadline you set", tz,
                 detail="nothing pauses itself — you are told, and the judgment is yours",
-                tone="deadline", where="plan",
+                tone="deadline",
             ))
     return out
 
@@ -375,6 +384,8 @@ def project_agenda(session: Session, project: Project,
     now = utcnow()
     horizon = now + timedelta(days=days)
     tz = _zone(cons)
+    first = now.astimezone(tz).date()
+    last_day = first + timedelta(days=days - 1)
 
     notes: list[str] = []
     events: list[dict] = []
@@ -391,7 +402,7 @@ def project_agenda(session: Session, project: Project,
             + (project.status_reason or "")
         )
     else:
-        rhythms = _wake_rhythms(session, project, cons, now, horizon, tz)
+        rhythms = _wake_rhythms(session, project, cons, now, last_day, tz)
         review, why_not = _review_event(session, project, cons, tz)
         if review is not None and datetime.fromisoformat(review["at"]) <= horizon:
             events.append(review)
@@ -417,7 +428,6 @@ def project_agenda(session: Session, project: Project,
                 "a daily time is how you get a standup.")
 
     events.sort(key=lambda e: e["at"])
-    first = now.astimezone(tz).date()
     return {
         "as_of": now.isoformat(),
         "days": days,

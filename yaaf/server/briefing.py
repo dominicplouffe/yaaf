@@ -737,7 +737,12 @@ def _headline(project: Project, lines: list[dict], money: dict, pulse: dict,
     if not parts and counts.get("plan_gate_closed"):
         parts.append("the plan gate closed and the board opened")
     if not parts:
-        parts.append("activity, but nothing that settled")
+        # Nothing landed. Rather than a shrug, promote the loudest thing that
+        # DID happen — a stall, a frozen thread, an approval that timed out is
+        # the headline of that window, and burying it under "activity, but
+        # nothing settled" is how a bad week reads as a dull one.
+        setback = next((line for line in lines if line["tone"] == "bad"), None)
+        parts.append("Nothing settled" + (f" — {setback['text']}" if setback else ""))
     sentence = ", ".join(parts)
     if money["window"]:
         unit = "$" if money["unit"] == "usd" else ""

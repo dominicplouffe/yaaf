@@ -26,6 +26,8 @@ import {
   runHealth,
   Skeleton,
 } from "../../ui";
+import Agenda from "../../agenda";
+import { ProjectBriefing } from "../../briefing";
 import { HirePanel, gapsFor, needsOf, useRoleLibrary } from "../../roles";
 import type { ProjectCtx } from "../Project";
 
@@ -566,6 +568,13 @@ export default function Overview({
 
       <ModeStrip dash={dash} reload={reload} />
 
+      {/* Past, present, future, in that order. The three tenses used to be one
+          — everything on this page described the current instant, and a
+          chairman back from a weekend had no screen that could tell him what
+          the weekend had contained or what the week was going to hold. */}
+      <h2 className="zone">What happened</h2>
+      <ProjectBriefing projectId={projectId} />
+
       {/* Is it working? The question a chairman asks first and the product
           answered nowhere: runs that ended early were a grey aside on a tab
           three clicks away, in the same weight as everything else. */}
@@ -679,6 +688,13 @@ export default function Overview({
       )}
 
       {/* What came out. The point of the project, previously seven tabs away. */}
+      {/* The schedule the platform will actually run — the wakes, the standing
+          meeting, the rhythm, the clocks that decide themselves, and the
+          promise with the projection beside it. An autonomous company that
+          will not show you its calendar is a haunted one. */}
+      <h2 className="zone">What happens next</h2>
+      <Agenda projectId={projectId} />
+
       <h2 className="zone">Your deliverable</h2>
       <div className="wbox">
         {latestArtifacts.length === 0 ? (
