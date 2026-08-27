@@ -527,15 +527,6 @@ export interface DeskProject {
   budget: { unit: "usd" | "tokens"; spent: number; cap: number; warn_ratio: number };
   open_tasks: number;
   queue_ceiling: number;
-  /** Which of the five autonomy switches the chairman still holds. Where a
-      switch reads "ceo", the CEO does that job and the desk must not ask. */
-  authority: {
-    plan: "chairman" | "ceo";
-    scope: "chairman" | "ceo";
-    commitment: "chairman" | "ceo";
-    verdict: "chairman" | "ceo";
-    capability: "chairman" | "ceo";
-  };
   /** Populated only for switches the chairman holds — empty on an autonomous
       project because the CEO decides these rather than parking them. */
   awaiting_you: {

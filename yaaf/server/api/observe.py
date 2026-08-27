@@ -57,12 +57,7 @@ from yaaf.core.models import (
 )
 from yaaf.server import policy, typing_state
 from yaaf.server.deps import admin_auth, db
-from yaaf.server.dispatcher import (
-    activity_state,
-    chat_session_live,
-    daily_runs_used,
-    day_start,
-)
+from yaaf.server.dispatcher import activity_state, chat_session_live
 from yaaf.server.velocity import commitment_projection, project_velocity
 
 router = APIRouter(dependencies=[Depends(admin_auth)])
@@ -272,33 +267,11 @@ def desk(live: bool = False, session: Session = Depends(db)) -> dict:
             },
             "open_tasks": len(policy.open_top_level_tasks(session, project.id)),
             "queue_ceiling": cons.queue_ceiling,
-            # Only the daily-run gate, not the full activity_state: this loop
-            # already runs a dozen aggregates per project, and walking every
-            # agent of every project would make the landing page the most
-            # expensive request we serve. It is also the gate that actually
-            # stops companies — the rest need the project page.
-            "runs_today": {
-                "used": daily_runs_used(session, project, day_start(now)),
-                "cap": cons.runs_per_project_per_day,
-            },
-            # Which of the five authority switches the chairman still holds.
-            # The desk is the one screen that must never ask for a decision the
-            # constitution has already delegated: where the dial says `ceo`,
-            # the CEO does that job and is audited for it, and a row asking the
-            # chairman to do it too would be asking for a decision he gave away.
-            "authority": {
-                "plan": "ceo" if policy.ceo_holds(cons, "plan_authority") else "chairman",
-                "scope": "ceo" if policy.ceo_holds(cons, "scope_authority") else "chairman",
-                "commitment": ("ceo" if policy.ceo_holds(cons, "commitment_authority")
-                               else "chairman"),
-                "verdict": "ceo" if policy.ceo_holds(cons, "verdict_policy") else "chairman",
-                "capability": ("ceo" if policy.ceo_holds(cons, "capability_authority")
-                               else "chairman"),
-            },
-            # The three things the Supervised preset says the chairman does.
-            # Each is computed only where he actually holds the switch — where
-            # the CEO holds it there is nothing waiting, because the CEO does
-            # not park it, it decides it.
+            # The three things the Supervised preset says the chairman does,
+            # each computed only where he actually holds that switch. Where the
+            # CEO holds it there is nothing waiting — it decides rather than
+            # parking — so an autonomous project reads empty here, and the dial
+            # itself rides the project dashboard for anyone who needs it.
             "awaiting_you": _awaiting_chairman(session, project, cons),
             "evidence_7d": policy.countable_external_evidence(session, project.id, week_ago),
             # Yesterday, paired: spend on its own is a vanity number, and

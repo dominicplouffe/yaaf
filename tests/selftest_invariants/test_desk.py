@@ -132,11 +132,7 @@ def test_a_supervised_desk_asks_for_the_three_things_it_is_for(client):
     project = make_project(client, slug="supervised")
     _stage_all_three(project["id"])
 
-    row = _desk(client, live=True)["projects"][0]
-    assert row["authority"] == {"plan": "chairman", "scope": "chairman",
-                                "commitment": "chairman", "verdict": "chairman",
-                                "capability": "chairman"}
-    waiting = row["awaiting_you"]
+    waiting = _desk(client, live=True)["projects"][0]["awaiting_you"]
     assert waiting["plan"] == 1
     assert [v["key"] for v in waiting["verdicts"]] == ["R-10"]
     assert waiting["commitment"]["scope_count"] == 2
@@ -150,10 +146,9 @@ def test_an_autonomous_desk_asks_for_none_of_them(client):
     project = make_project(client, slug="autonomous", constitution=AUTONOMOUS)
     _stage_all_three(project["id"])
 
+    # Same three rows in the database as the supervised case above; the only
+    # difference is the constitution.
     row = _desk(client, live=True)["projects"][0]
-    assert row["authority"]["plan"] == "ceo"
-    assert row["authority"]["verdict"] == "ceo"
-    assert row["authority"]["commitment"] == "ceo"
     assert row["awaiting_you"] == {"plan": 0, "verdicts": [], "commitment": None}
 
 
