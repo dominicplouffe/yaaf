@@ -158,7 +158,7 @@ full reference in **[docs/FEATURES.md](docs/FEATURES.md)**:
 | **Sandbox & proof** | Chromium in the box, an assist protocol for human-only steps, a CEO-judgment metric on close quality. |
 | **Chat** | A resident CEO session: Boardroom and Slack answer in seconds, without consuming the work queue's caps. |
 | **Integrations** | Slack (Socket Mode — no public URL), GitHub repo-per-project, MCP data sources, signed webhooks, S3 artifacts, email alerts. → [INTEGRATIONS](docs/INTEGRATIONS.md) |
-| **Proof it works** | 530 offline tests, chaos tests, golden-transcript evals that gate prompt edits, a $0 scripted CI run of a whole company. |
+| **Proof it works** | 533 offline tests, chaos tests, golden-transcript evals that gate prompt edits, a $0 scripted CI run of a whole company. |
 
 ## What you give up
 

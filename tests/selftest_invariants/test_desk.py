@@ -8,9 +8,20 @@ frozen forever on a terminal project, and the page polls every ten seconds.
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 from tests.conftest import ADMIN, make_project
+from yaaf.core import ids
 from yaaf.core.db import db_session
-from yaaf.core.models import Project, ProjectStatus
+from yaaf.core.models import (
+    Commitment,
+    CommitmentStatus,
+    Project,
+    ProjectStatus,
+    Requirement,
+    RequirementStatus,
+    utcnow,
+)
 
 
 def _desk(client, live: bool):
@@ -74,3 +85,92 @@ def test_the_desk_reports_yesterday_as_a_pair(client):
     row = desk["projects"][0]
     assert row["spend_24h"] == 0.0
     assert row["evidence_24h"] == 0
+
+
+# ── the autonomy dial decides what is even eligible for a row ────────────────
+
+AUTONOMOUS = {
+    "plan_authority": "ceo",
+    "scope_authority": "ceo",
+    "commitment_authority": "ceo",
+    "verdict_policy": "ceo_judgment",
+    "capability_authority": "ceo",
+}
+
+
+def _stage_all_three(project_id: str) -> None:
+    """One of each thing the Supervised preset says the chairman does: scope to
+    accept, a date to sign, and an observable close to judge."""
+    with db_session() as session:
+        session.add(Requirement(
+            id=ids.new_id(ids.REQUIREMENT), project_id=project_id, key="R-09",
+            statement="The landing page converts at 2% over a fortnight.",
+            acceptance_test={"type": "observable",
+                             "target": "https://example.org/metrics shows >=2%"},
+            status=RequirementStatus.PROPOSED, stage=1, est_runs=4,
+        ))
+        session.add(Requirement(
+            id=ids.new_id(ids.REQUIREMENT), project_id=project_id, key="R-10",
+            statement="Five named write-ups are published and reachable.",
+            acceptance_test={"type": "observable",
+                             "target": "https://example.org/notes lists five"},
+            status=RequirementStatus.CHECKING, stage=1, est_runs=4,
+        ))
+        session.add(Commitment(
+            id=ids.new_id(ids.COMMITMENT), project_id=project_id,
+            status=CommitmentStatus.PROPOSED,
+            deliver_by=utcnow() + timedelta(days=14), scope_snapshot=["R-01", "R-02"],
+        ))
+
+
+def test_a_supervised_desk_asks_for_the_three_things_it_is_for(client):
+    """Accept scope, sign the date, judge the unverifiable close. These are the
+    Supervised preset's whole job description, and each one blocks the company
+    on a human until it happens."""
+    project = make_project(client, slug="supervised")
+    _stage_all_three(project["id"])
+
+    row = _desk(client, live=True)["projects"][0]
+    assert row["authority"] == {"plan": "chairman", "scope": "chairman",
+                                "commitment": "chairman", "verdict": "chairman",
+                                "capability": "chairman"}
+    waiting = row["awaiting_you"]
+    assert waiting["plan"] == 1
+    assert [v["key"] for v in waiting["verdicts"]] == ["R-10"]
+    assert waiting["commitment"]["scope_count"] == 2
+
+
+def test_an_autonomous_desk_asks_for_none_of_them(client):
+    """Same three rows staged, same data — but the constitution put all three
+    in the CEO's hands. Asking the chairman anyway would be asking for a
+    decision he deliberately gave away, and the emptiness here is the dial
+    working rather than nothing having happened."""
+    project = make_project(client, slug="autonomous", constitution=AUTONOMOUS)
+    _stage_all_three(project["id"])
+
+    row = _desk(client, live=True)["projects"][0]
+    assert row["authority"]["plan"] == "ceo"
+    assert row["authority"]["verdict"] == "ceo"
+    assert row["authority"]["commitment"] == "ceo"
+    assert row["awaiting_you"] == {"plan": 0, "verdicts": [], "commitment": None}
+
+
+def test_autonomy_never_delegates_the_undelegable_approvals(client):
+    """Authority is configuration; integrity is structure. Money over the
+    threshold, legal ambiguity, a credential the CEO does not hold and a step
+    only a human can take stay on the desk at every setting — so a fully
+    autonomous project still surfaces them."""
+    from yaaf.core.models import Approval, ApprovalKind, ApprovalStatus
+
+    project = make_project(client, slug="autonomous", constitution=AUTONOMOUS)
+    with db_session() as session:
+        session.add(Approval(
+            id=ids.new_id(ids.APPROVAL), project_id=project["id"],
+            kind=ApprovalKind.SPEND, requested_by_agent_id=project["ceo_agent_id"],
+            title="Filings data licence", body="I recommend it strongly.",
+            amount_usd=4800, status=ApprovalStatus.PENDING,
+            expires_at=utcnow() + timedelta(days=2),
+        ))
+
+    row = _desk(client, live=True)["projects"][0]
+    assert [a["kind"] for a in row["pending_approvals"]] == ["spend"]

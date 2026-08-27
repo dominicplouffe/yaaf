@@ -43,6 +43,19 @@ promise that something has a consequence attached.
 **Only live companies appear.** Stopped and completed ones are the Projects
 page's business; they get one line at the foot of the roster.
 
+**The autonomy dial decides what is eligible for a row.** Where the
+constitution says `ceo`, the CEO accepts its own scope, signs the platform's
+projected date and judges its own observables — so those never reach this page,
+and a line at the foot says which companies decide their own and where the
+record is. Where the chairman holds a switch, the thing waiting on him is a row
+here: proposed scope to accept, a date to sign, an observable close to judge.
+See [AUTONOMY.md](AUTONOMY.md).
+
+What the dial never moves: **spend, legal, tool-request and assist approvals**
+are undelegable at every setting, and the **spot-check** exists precisely
+because a CEO may be judging its own closes. Authority is configuration;
+integrity is structure, and the Desk draws that line where the server does.
+
 **The hero state is an empty desk**, and it proves it rather than asserting
 it: how many companies are working, when something last ran, and when the next
 clock fires. *Nothing is wrong* and *nothing is happening* are different

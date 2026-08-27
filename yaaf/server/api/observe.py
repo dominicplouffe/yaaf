@@ -27,6 +27,7 @@ from yaaf.core.models import (
     AuditSampleStatus,
     Channel,
     Commitment,
+    CommitmentStatus,
     Evidence,
     EvidenceKind,
     Hypothesis,
@@ -48,6 +49,7 @@ from yaaf.core.models import (
     RunKind,
     RunQueue,
     Secret,
+    SuccessTestKind,
     Suggestion,
     Task,
     TaskStatus,
@@ -133,6 +135,58 @@ def projects(session: Session = Depends(db)) -> list[dict]:
         {"id": p.id, "slug": p.slug, "name": p.name, "status": p.status, "goal": p.goal}
         for p in session.execute(select(Project).order_by(Project.created_at)).scalars()
     ]
+
+
+def _awaiting_chairman(session: Session, project: Project, cons) -> dict:
+    """What this project is blocked on the chairman for, per the autonomy dial.
+
+    Read the emptiness literally: on a fully autonomous project every list here
+    is empty, and not because the work vanished — because the CEO accepts its
+    own plan, signs the platform's projected date, and judges its observables
+    itself, each on the record and disclosed. Asking the chairman as well would
+    be asking for a decision he gave away.
+    """
+    out: dict = {"plan": 0, "verdicts": [], "commitment": None}
+
+    if not policy.ceo_holds(cons, "plan_authority"):
+        # Proposed scope is not scope. The CEO cannot build against it and
+        # cannot accept it here, so the requirement waits.
+        out["plan"] = int(session.execute(
+            select(func.count(Requirement.id)).where(
+                Requirement.project_id == project.id,
+                Requirement.status == RequirementStatus.PROPOSED,
+            )
+        ).scalar_one())
+
+    if not policy.ceo_holds(cons, "verdict_policy"):
+        # All work closed, and the acceptance test is an observable no script
+        # can run. The janitor's own words to the CEO: "You cannot mark it met
+        # and neither can anyone here." Nothing but the chairman moves it.
+        out["verdicts"] = [
+            {"key": r.key, "statement": r.statement}
+            for r in session.execute(
+                select(Requirement).where(
+                    Requirement.project_id == project.id,
+                    Requirement.status == RequirementStatus.CHECKING,
+                ).order_by(Requirement.key)
+            ).scalars()
+            if (r.acceptance_test or {}).get("type") == SuccessTestKind.OBSERVABLE
+        ]
+
+    if not policy.ceo_holds(cons, "commitment_authority"):
+        proposed = session.execute(
+            select(Commitment).where(
+                Commitment.project_id == project.id,
+                Commitment.status == CommitmentStatus.PROPOSED,
+            ).order_by(Commitment.created_at.desc()).limit(1)
+        ).scalar_one_or_none()
+        if proposed is not None:
+            out["commitment"] = {
+                "id": proposed.id,
+                "deliver_by": proposed.deliver_by.isoformat(),
+                "scope_count": len(proposed.scope_snapshot or []),
+            }
+    return out
 
 
 @router.get("/desk")
@@ -264,6 +318,25 @@ def desk(live: bool = False, session: Session = Depends(db)) -> dict:
                 "used": daily_runs_used(session, project, day_start(now)),
                 "cap": cons.runs_per_project_per_day,
             },
+            # Which of the five authority switches the chairman still holds.
+            # The desk is the one screen that must never ask for a decision the
+            # constitution has already delegated: where the dial says `ceo`,
+            # the CEO does that job and is audited for it, and a row asking the
+            # chairman to do it too would be asking for a decision he gave away.
+            "authority": {
+                "plan": "ceo" if policy.ceo_holds(cons, "plan_authority") else "chairman",
+                "scope": "ceo" if policy.ceo_holds(cons, "scope_authority") else "chairman",
+                "commitment": ("ceo" if policy.ceo_holds(cons, "commitment_authority")
+                               else "chairman"),
+                "verdict": "ceo" if policy.ceo_holds(cons, "verdict_policy") else "chairman",
+                "capability": ("ceo" if policy.ceo_holds(cons, "capability_authority")
+                               else "chairman"),
+            },
+            # The three things the Supervised preset says the chairman does.
+            # Each is computed only where he actually holds the switch — where
+            # the CEO holds it there is nothing waiting, because the CEO does
+            # not park it, it decides it.
+            "awaiting_you": _awaiting_chairman(session, project, cons),
             "evidence_7d": policy.countable_external_evidence(session, project.id, week_ago),
             # Yesterday, paired: spend on its own is a vanity number, and
             # evidence on its own hides what it cost. Together they are the one

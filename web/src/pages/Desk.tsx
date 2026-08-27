@@ -32,7 +32,21 @@ import {
     able to trust.
 
     Companies that are over do not appear at all (`?live=true`): a stopped or
-    completed company cannot need anything, and every number on it is frozen. */
+    completed company cannot need anything, and every number on it is frozen.
+
+    The autonomy dial decides what is even eligible for a row. Where the
+    constitution says `ceo`, the CEO accepts its own plan, signs the platform's
+    projected date and judges its own observables — each on the record and
+    disclosed — so asking the chairman as well would be asking for a decision
+    he deliberately gave away. The server does that filtering (`awaiting_you`
+    is computed per switch), and an autonomous project simply has no such rows.
+
+    What the dial never moves: spend, legal, tool_request and assist approvals
+    are undelegable at every setting — money over the threshold, legal
+    ambiguity, a credential the CEO does not hold, and a step only a human can
+    take. Nor does it move the spot-check, which exists precisely *because* a
+    CEO judges its own closes. Authority is configuration; integrity is
+    structure, and the desk draws the line in the same place the server does. */
 
 type Tier = 1 | 2 | 3;
 
@@ -107,6 +121,62 @@ export function buildItems(projects: DeskProject[], reload: () => void): Item[] 
         ),
         consequence: <span className="tick hot">those agents stay stuck until you unfreeze</span>,
         actions: <Link className="act pri" to={`${to}/records/messages`}>Review the thread</Link>,
+      });
+    }
+
+    // The dial's own three. Each list is server-side empty where the CEO
+    // holds that switch, so an autonomous project reaches none of this.
+    const w = p.awaiting_you;
+    for (const v of w.verdicts) {
+      items.push({
+        key: `${p.id}-verdict-${v.key}`, tier: 1, at: 0, project: p, kind: "your verdict",
+        what: (
+          <>
+            <b>{v.key}</b> has no work left open and its acceptance test is an observable
+            no script can run: “{clip(v.statement, 130)}”
+          </>
+        ),
+        consequence: (
+          <span className="tick hot">
+            it stays frozen — the CEO cannot mark it met, and neither can anyone there
+          </span>
+        ),
+        actions: <Link className="act pri" to={`${to}/plan`}>Judge it</Link>,
+      });
+    }
+    if (w.plan > 0) {
+      items.push({
+        key: `${p.id}-plan`, tier: 1, at: 0, project: p, kind: "accept scope",
+        what: (
+          <>
+            The CEO proposed <b>{w.plan} requirement{w.plan === 1 ? "" : "s"}</b> and is
+            waiting on you.
+          </>
+        ),
+        consequence: (
+          <span className="tick hot">
+            proposed scope is not scope — no work can be built against it
+          </span>
+        ),
+        actions: <Link className="act pri" to={`${to}/plan`}>Review the plan</Link>,
+      });
+    }
+    if (w.commitment) {
+      items.push({
+        key: `${p.id}-commitment`, tier: 2, at: NEVER - 1, project: p, kind: "sign the date",
+        what: (
+          <>
+            The CEO proposes delivering <b>{w.commitment.scope_count} requirement
+            {w.commitment.scope_count === 1 ? "" : "s"}</b> by{" "}
+            <b>{fmtWhenShort(w.commitment.deliver_by)}</b>.
+          </>
+        ),
+        consequence: (
+          <span className="tick cold">
+            the company keeps working, but it is promising nothing until you sign
+          </span>
+        ),
+        actions: <Link className="act pri" to={`${to}/plan`}>Sign or move it</Link>,
       });
     }
 
@@ -288,7 +358,9 @@ export default function Desk() {
   const live = data.projects;
   const items = buildItems(live, reload);
   const needing = items.filter((i) => i.tier <= 2);
-  const soonest = items.find((i) => i.tier === 2);
+  // The headline names a deadline, so it may only come from an item that has
+  // one: an unsigned commitment sits in tier 2 without a clock.
+  const soonest = items.find((i) => i.tier === 2 && i.at < NEVER - 1);
   const running = live.filter((p) => p.status === "running").length;
   const lastRun = live
     .map((p) => p.last_run_at)
@@ -463,6 +535,7 @@ function CompanyStrip({ live, finished }: { live: DeskProject[]; finished: numbe
           </div>
         );
       })}
+      <DelegatedNote live={live} />
       {finished > 0 && (
         <div className="fin">
           {finished} finished compan{finished === 1 ? "y is" : "ies are"} not shown here →{" "}
@@ -472,3 +545,52 @@ function CompanyStrip({ live, finished }: { live: DeskProject[]; finished: numbe
     </div>
   );
 }
+
+/** Why an autonomous desk is quiet.
+
+    Without this the page has two indistinguishable kinds of silence: nothing
+    happened, and something happened that the CEO was authorised to decide.
+    The second is the whole point of the dial, but an empty screen cannot say
+    so — and a chairman who cannot tell them apart will eventually stop
+    believing the empty screen, which is the one state this page most needs to
+    be trusted in.
+
+    Informational by construction: it names what is being decided elsewhere and
+    where to read it, and never asks for anything. */
+function DelegatedNote({ live }: { live: DeskProject[] }) {
+  const SWITCHES = [
+    { key: "plan", one: "accepts its own scope", many: "accept their own scope" },
+    { key: "commitment", one: "signs its own date", many: "sign their own date" },
+    { key: "verdict", one: "judges its own observables", many: "judge their own observables" },
+  ] as const;
+
+  const delegated = live.filter((p) => SWITCHES.some((s) => p.authority[s.key] === "ceo"));
+  if (delegated.length === 0) return null;
+  const solo = delegated.length === 1;
+
+  // Name the powers actually in use across these companies, rather than a
+  // count of switches nobody thinks in.
+  const powers = SWITCHES.filter((s) => delegated.some((p) => p.authority[s.key] === "ceo"))
+    .map((s) => (solo ? s.one : s.many));
+  const list =
+    powers.length <= 1
+      ? powers[0]
+      : `${powers.slice(0, -1).join(", ")} and ${powers[powers.length - 1]}`;
+
+  return (
+    <div className="fin">
+      {solo ? "1 company " : `${delegated.length} companies `}
+      {list}. Those decisions are the CEO’s under the constitution, so they never reach
+      this page — every one is recorded in{" "}
+      {solo ? (
+        <>
+          that company’s{" "}
+          <Link to={`/projects/${delegated[0].id}/records/decisions`}>Decisions</Link> record.
+        </>
+      ) : (
+        "each company’s Decisions record."
+      )}
+    </div>
+  );
+}
+
