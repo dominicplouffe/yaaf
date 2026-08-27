@@ -533,9 +533,16 @@ function CompanyStrip(
   { live, finished, needing }:
   { live: DeskProject[]; finished: number; needing: Set<string> },
 ) {
+  // "Live" was wrong the moment paused companies stopped being rows: this
+  // counts every non-terminal company, so three parked ones and a working one
+  // read as "Live companies · 4" while three sat there with red dots. Say both
+  // numbers instead — the running count is the one being asked about.
+  const running = live.filter((p) => p.status === "running").length;
   return (
     <div className="roster">
-      <div className="sh">Live companies · {live.length}</div>
+      <div className="sh">
+        Companies · {live.length} · {running} running
+      </div>
       {live.map((p) => {
         // Read off the list above rather than recounted here. A second
         // definition drifted immediately: this one predated the dial rows, so
