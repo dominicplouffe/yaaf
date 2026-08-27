@@ -11,8 +11,8 @@ company retroactively. The split starts at deploy.
 
 Guarded, as every post-baseline revision must be.
 
-Revision ID: 0012
-Revises: 0011
+Revision ID: 0013
+Revises: 0012
 """
 
 from __future__ import annotations
@@ -22,8 +22,8 @@ from alembic import op
 
 from yaaf.core.migration_ops import add_column_if_missing, has_column
 
-revision = "0012"
-down_revision = "0011"
+revision = "0013"
+down_revision = "0012"
 branch_labels = None
 depends_on = None
 

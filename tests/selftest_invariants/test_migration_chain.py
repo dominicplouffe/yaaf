@@ -18,6 +18,8 @@ So two things are pinned here:
 
 from __future__ import annotations
 
+import contextlib
+import os
 import tempfile
 from pathlib import Path
 
@@ -54,10 +56,25 @@ STAGE_8_COLUMNS = (
 # 0007 creates them and 0012 drops them again, so they exist only in the middle
 # of the chain and never in the models. `projects.topology` outlived them.
 STAGE_9_COLUMNS = (("projects", "topology"),)
+# 0013 + 0014: outcome metering, cycle goals and due-bys, standing
+# requirements, and the flag. Listed here for the reason the header gives —
+# without the entry, the fixture builds these from today's models, the guarded
+# create_table finds them already present, and the upgrade path they exist to
+# defend is never walked.
+STAGE_10_TABLES = ("flags", "requirement_cycle_results")
+STAGE_10_COLUMNS = (
+    ("runs", "produced"),
+    ("runs", "metered"),
+    ("cycles", "goal"),
+    ("cycles", "due_at"),
+    ("cycles", "due_source"),
+    ("requirements", "recurrence"),
+)
 
 REMOVED_TABLES = (STAGE_1_TABLES + STAGE_5_TABLES + STAGE_6_TABLES
-                  + STAGE_7_TABLES + STAGE_8_TABLES)
-REMOVED_COLUMNS = STAGE_1_COLUMNS + STAGE_8_COLUMNS + STAGE_9_COLUMNS
+                  + STAGE_7_TABLES + STAGE_8_TABLES + STAGE_10_TABLES)
+REMOVED_COLUMNS = (STAGE_1_COLUMNS + STAGE_8_COLUMNS + STAGE_9_COLUMNS
+                   + STAGE_10_COLUMNS)
 
 
 def _alembic_config(url: str) -> Config:
@@ -117,7 +134,13 @@ def scratch_db(monkeypatch):
     """
     from yaaf.core.config import settings
 
-    path = tempfile.mktemp(suffix=".db")
+    # mkstemp, not mktemp: the name is reserved rather than merely guessed, and
+    # the file is removed afterwards. The old form leaked one database per test
+    # per run — 185 of them had accumulated in /tmp on the box this was found
+    # on, which is a slow way to fill a disk with schemas nobody reads.
+    handle, path = tempfile.mkstemp(suffix=".db")
+    os.close(handle)
+    os.unlink(path)  # SQLite wants to create it itself
     url = f"sqlite:///{path}"
     monkeypatch.setenv("YAAF_DATABASE_URL", url)
     settings.cache_clear()
@@ -125,6 +148,9 @@ def scratch_db(monkeypatch):
         yield url
     finally:
         settings.cache_clear()
+        for leftover in (path, f"{path}-wal", f"{path}-shm"):
+            with contextlib.suppress(OSError):
+                os.unlink(leftover)
 
 
 def test_an_empty_database_migrates_to_exactly_the_models(scratch_db):
