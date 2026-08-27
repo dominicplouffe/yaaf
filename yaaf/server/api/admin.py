@@ -658,12 +658,11 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
 
 
 # Config keys that are this install's plumbing, not the project's design:
-# Slack wiring, webhook signing secrets, experiment bookkeeping. Everything
-# else in integrations (runtime, data sources…) travels with the bundle.
-# A full backup (include_values=true) keeps all of these except `experiment`,
-# whose ids mean nothing off this install.
+# Slack wiring and webhook signing secrets. Everything else in integrations
+# (runtime, data sources…) travels with the bundle. A full backup
+# (include_values=true) keeps all of them.
 _NON_PORTABLE_INTEGRATION_KEYS = frozenset(
-    {"slack", "github_webhook_secret", "webhook_secret", "experiment"}
+    {"slack", "github_webhook_secret", "webhook_secret"}
 )
 
 
@@ -746,14 +745,12 @@ def export_project(project_id: str, include_values: bool = False,
 
     billing_secret_name = None
     if include_values:
-        # The backup half: everything travels, decrypted. Only `experiment`
-        # bookkeeping stays behind (its ids name rows on this install) and
-        # data-source check verdicts (stale claims about this install's
+        # The backup half: everything travels, decrypted. Only data-source
+        # check verdicts stay behind (stale claims about this install's
         # network — the import proves reachability itself).
         from yaaf.core.crypto import decrypt
 
-        integrations = {k: v for k, v in (project.integrations or {}).items()
-                        if k != "experiment"}
+        integrations = dict(project.integrations or {})
         if "mcp_servers" in integrations:
             integrations["mcp_servers"] = [
                 {k: v for k, v in entry.items() if k != "last_check"}
@@ -838,10 +835,10 @@ def export_project(project_id: str, include_values: bool = False,
     }
 
 
-# Config a twin must not inherit: this project's own webhook signing keys and
-# its experiment bookkeeping. Slack is handled separately below — its tokens
-# travel, its room bindings do not.
-_NON_CLONABLE_INTEGRATION_KEYS = frozenset({"github_webhook_secret", "webhook_secret", "experiment"})
+# Config a twin must not inherit: this project's own webhook signing keys.
+# Slack is handled separately below — its tokens travel, its room bindings do
+# not.
+_NON_CLONABLE_INTEGRATION_KEYS = frozenset({"github_webhook_secret", "webhook_secret"})
 
 
 class ProjectCloneIn(BaseModel):
@@ -911,8 +908,8 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
         # source's teams and people exactly, so the source's recorded shape is
         # true of it by construction — but omitting it let the model default
         # ("ceo_leads_workers") overwrite that truth, and a solo twin came back
-        # claiming a hierarchy it does not have. This is the fact the topology
-        # experiment compares, and it is frozen at creation like the rest.
+        # claiming a hierarchy it does not have. Like mode, it is frozen at
+        # creation, so getting it wrong here cannot be corrected later.
         topology=source.topology,
         deadline=None if deadline_expired else source.deadline,
         billing_mode=source.billing_mode,
@@ -1087,6 +1084,37 @@ def _revoke_running(session: Session, project_id: str) -> int:
         select(RunQueue).where(RunQueue.project_id == project_id)
     ).scalars():
         session.delete(queued)
+    return n
+
+
+def _void_pending_approvals(session: Session, project_id: str, why: str) -> int:
+    """Close out a terminal project's open requests. Ending a company answers
+    them by making them moot, and leaving them PENDING has two costs: they keep
+    their clock, so the janitor expires them days later and writes a denial into
+    the record of a company that no longer exists — and until then they sit on
+    the chairman's desk asking for a decision that cannot matter.
+
+    Always EXPIRED, never the constitution's `approval_timeout_decision`. An
+    install that auto-approves on timeout must not approve a $4,800 spend
+    because the company it belonged to was shut down: ending a company decides
+    nothing on the merits, so the deny-shaped outcome is the only honest one.
+
+    No notice to the requester, unlike every other approval outcome. A notice is
+    consumed by a run, and a terminal project never runs again — the audit row
+    is the record here.
+    """
+    n = 0
+    now = utcnow()
+    for approval in session.execute(
+        select(Approval).where(
+            Approval.project_id == project_id,
+            Approval.status == ApprovalStatus.PENDING,
+        )
+    ).scalars():
+        approval.status = ApprovalStatus.EXPIRED
+        approval.decision_note = f"voided unanswered: {why}"
+        approval.decided_at = now
+        n += 1
     return n
 
 
@@ -1866,9 +1894,11 @@ def stop_project(
     project.status = ProjectStatus.STOPPED
     project.status_reason = body.reason or "stopped by chairman"
     revoked = _revoke_running(session, project.id)
+    voided = _void_pending_approvals(session, project.id, "the project was stopped")
     _audit(session, project.id, "project.stop", "project", project.id,
-           {"revoked_runs": revoked})
-    return {"id": project.id, "status": project.status, "revoked_runs": revoked}
+           {"revoked_runs": revoked, "voided_approvals": voided})
+    return {"id": project.id, "status": project.status, "revoked_runs": revoked,
+            "voided_approvals": voided}
 
 
 @router.post("/projects/{project_id}/complete")
@@ -1938,10 +1968,7 @@ def complete_project(project_id: str, session: Session = Depends(db)) -> dict:
     project.status = ProjectStatus.COMPLETED
     project.status_reason = f"delivered: {receipt['met']} requirement(s) true"
     revoked = _revoke_running(session, project.id)
-    for queued in session.execute(
-        select(RunQueue).where(RunQueue.project_id == project.id)
-    ).scalars():
-        session.delete(queued)
+    voided = _void_pending_approvals(session, project.id, "the project was completed")
 
     lines = []
     for r in rows:
@@ -1966,9 +1993,10 @@ def complete_project(project_id: str, session: Session = Depends(db)) -> dict:
                  f"promised {receipt['commitment']['deliver_by'][:10]}."
                  if receipt["commitment"] else "")),
     ))
-    _audit(session, project.id, "project.complete", "project", project.id, receipt)
+    _audit(session, project.id, "project.complete", "project", project.id,
+           {**receipt, "voided_approvals": voided})
     return {"id": project.id, "status": project.status, "receipt": receipt,
-            "revoked_runs": revoked}
+            "revoked_runs": revoked, "voided_approvals": voided}
 
 
 class AgentPause(BaseModel):
@@ -2940,180 +2968,6 @@ def remove_requirement_edge(body: EdgeRemove, session: Session = Depends(db)) ->
                                  body.reason)
     except policy.Refusal as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
-
-
-# ── the topology experiment: one variable, three arms, four numbers ─────────────
-
-TOPOLOGIES = ("solo", "ceo_team", "ceo_leads_workers")
-
-
-class ExperimentRequirementIn(BaseModel):
-    statement: str = Field(min_length=10, max_length=2000)
-    acceptance_test: dict
-    stage: int = Field(default=1, ge=1, le=50)
-    est_runs: int = Field(ge=1, le=10_000)
-
-
-class ExperimentCreate(BaseModel):
-    name: str = Field(min_length=3, max_length=200)
-    slug_base: str = Field(pattern="^[a-z0-9-]{2,48}$")
-    goal: str = Field(min_length=10)
-    chairman_email: str
-    requirements: list[ExperimentRequirementIn] = Field(min_length=1, max_length=30)
-    topologies: list[str] = Field(
-        default_factory=lambda: list(TOPOLOGIES), min_length=1, max_length=3)
-    ceo_role_slug: str = "ceo"
-    worker_role_slug: str
-    # Employees per arm, CEO excluded. Solo ignores it; ceo_team gets this
-    # many one-person teams; ceo_leads_workers one team of this many.
-    team_size: int = Field(default=2, ge=1, le=6)
-    constitution: dict = Field(default_factory=dict)
-    billing_mode: str = Field(default="api_key", pattern="^(api_key|subscription)$")
-    start: bool = True
-
-
-def _arm_teams(topology: str, worker_role: str, team_size: int) -> tuple[list[TeamSpec], bool]:
-    """The three shapes, and only these three — identical but for this."""
-    if topology == "solo":
-        return [TeamSpec(role_slug=worker_role, name="Solo", employees=[])], True
-    if topology == "ceo_team":
-        return [
-            TeamSpec(role_slug=worker_role, name=f"Member {i}",
-                     employees=[f"Member {i}"])
-            for i in range(1, team_size + 1)
-        ], False
-    return [TeamSpec(
-        role_slug=worker_role, name="Team",
-        employees=[f"Worker {i}" for i in range(1, team_size + 1)],
-        lead="Worker 1",
-    )], False
-
-
-@router.post("/experiments")
-def create_experiment(body: ExperimentCreate, session: Session = Depends(db)) -> dict:
-    """One goal, one chairman-authored requirement set, one constitution — N
-    projects differing in exactly one variable. The set and the constitution
-    freeze on the experiment row, so "the arms were identical" is a checkable
-    fact rather than a claim about setup care. Scope is chairman-authored and
-    accepted at birth in every arm: the CEOs plan HOW, never WHAT, which is
-    what keeps the denominator identical across topologies."""
-    from yaaf.core.models import Experiment, ExperimentArm
-
-    unknown = sorted(set(body.topologies) - set(TOPOLOGIES))
-    if unknown or len(set(body.topologies)) != len(body.topologies):
-        raise HTTPException(
-            status_code=422,
-            detail=f"topologies must be distinct picks from {', '.join(TOPOLOGIES)}")
-    if "ceo_leads_workers" in body.topologies and body.team_size < 2:
-        raise HTTPException(
-            status_code=422,
-            detail="ceo_leads_workers needs team_size >= 2 — a lead with no workers "
-                   "is just ceo_team wearing a hat")
-    try:
-        doc = ConstitutionDoc.model_validate(
-            {**ConstitutionDoc().model_dump(), **body.constitution})
-        for req in body.requirements:
-            policy.validate_success_test(doc, req.acceptance_test)
-    except policy.Refusal as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
-    except Exception as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-    chairman = session.execute(
-        select(User).where(User.email == body.chairman_email)).scalar_one_or_none()
-    if chairman is None:
-        raise HTTPException(status_code=422, detail="chairman user does not exist")
-
-    experiment = Experiment(
-        id=ids.new_id(ids.EXPERIMENT),
-        name=body.name,
-        goal=body.goal,
-        requirement_set=[r.model_dump() for r in body.requirements],
-        constitution=doc.model_dump(),
-        chairman_user_id=chairman.id,
-    )
-    session.add(experiment)
-    session.flush()
-
-    arms_out = []
-    for topology in body.topologies:
-        teams, solo = _arm_teams(topology, body.worker_role_slug, body.team_size)
-        created = create_project(ProjectCreate(
-            slug=f"{body.slug_base}-{topology.replace('_', '-')}",
-            name=f"{body.name} — {topology}",
-            goal=body.goal,
-            chairman_email=body.chairman_email,
-            billing_mode=body.billing_mode,
-            mode="deliver",
-            constitution=body.constitution,
-            integrations={"experiment": {"id": experiment.id, "topology": topology}},
-            ceo_role_slug=body.ceo_role_slug,
-            teams=teams,
-            solo=solo,
-        ), session)
-        for req in body.requirements:
-            add_requirement(created["id"], ChairmanRequirementIn(
-                statement=req.statement,
-                acceptance_test=req.acceptance_test,
-                stage=req.stage,
-                est_runs=req.est_runs,
-                note=f"experiment '{body.name}': identical scope in every arm",
-            ), session)
-        if body.start:
-            start_project(created["id"], session)
-        session.add(ExperimentArm(
-            id=ids.new_id(ids.EXPERIMENT_ARM),
-            experiment_id=experiment.id,
-            project_id=created["id"],
-            topology=topology,
-        ))
-        arms_out.append({"topology": topology, "project_id": created["id"],
-                         "slug": f"{body.slug_base}-{topology.replace('_', '-')}"})
-
-    _audit(session, None, "experiment.create", "experiment", experiment.id,
-           {"name": body.name, "topologies": body.topologies,
-            "requirements": len(body.requirements)})
-    return {"id": experiment.id, "name": experiment.name, "arms": arms_out,
-            "note": ("Arms run concurrently under identical constitutions and "
-                     "identical chairman-authored scope. Compared on cost per "
-                     "requirement met, wall-clock to first attested evidence, share "
-                     "of spend producing nothing, and words per delivered byte — "
-                     "the report is on the Experiments page.")}
-
-
-class ExperimentClose(BaseModel):
-    reason: str = Field(default="", max_length=2000)
-
-
-@router.post("/experiments/{experiment_id}/close")
-def close_experiment(
-    experiment_id: str, body: ExperimentClose, session: Session = Depends(db)
-) -> dict:
-    """Stop every still-running arm and freeze the reading. The report stays
-    readable forever — closing ends the spend, not the record."""
-    from yaaf.core.models import Experiment, ExperimentArm
-
-    experiment = session.get(Experiment, experiment_id)
-    if experiment is None:
-        raise HTTPException(status_code=404, detail="unknown experiment")
-    if experiment.status != "running":
-        raise HTTPException(status_code=409, detail=f"already {experiment.status}")
-    stopped = 0
-    for arm in session.execute(
-        select(ExperimentArm).where(ExperimentArm.experiment_id == experiment.id)
-    ).scalars():
-        project = session.get(Project, arm.project_id)
-        if project is not None and not ProjectStatus(project.status).is_terminal:
-            project.status = ProjectStatus.STOPPED
-            project.status_reason = (
-                "experiment closed" + (f": {body.reason}" if body.reason else ""))
-            _revoke_running(session, project.id)
-            stopped += 1
-    experiment.status = "closed"
-    experiment.closed_at = utcnow()
-    _audit(session, None, "experiment.close", "experiment", experiment.id,
-           {"reason": body.reason, "arms_stopped": stopped})
-    return {"id": experiment.id, "status": experiment.status, "arms_stopped": stopped}
 
 
 # ── the review: six levers, each recorded with a reason ─────────────────────────

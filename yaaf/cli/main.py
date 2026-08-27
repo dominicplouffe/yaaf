@@ -19,17 +19,9 @@ import typer
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 
 
-def _register_experiment() -> None:
-    # Imported lazily at module bottom: experiment.py imports _client from here.
-    from yaaf.cli.experiment import experiment_app
-
-    app.add_typer(experiment_app, name="experiment",
-                  help="The M2 baseline-experiment harness (docs/M2_PROTOCOL.md).")
-
-
 def _register_spend() -> None:
-    # Same registration shape as the experiment harness: spend.py drags in
-    # SQLAlchemy and server-side helpers the HTTP commands never need.
+    # Registered lazily at module bottom: spend.py drags in SQLAlchemy and
+    # server-side helpers the HTTP commands never need.
     from yaaf.cli.spend import spend_report
 
     app.command(name="spend-report")(spend_report)
@@ -472,7 +464,6 @@ def audit_evidence(evidence_id: str, ok: bool = typer.Option(..., "--ok/--bad"),
                           json={"ok": ok, "note": note}))
 
 
-_register_experiment()
 _register_spend()
 
 if __name__ == "__main__":

@@ -14,9 +14,6 @@ notes.txt
 web/node_modules/
 web/dist/
 
-# M2 experiment blind-judging bundles (contain sealed mappings)
-m2-bundles/
-
 # Per-role egress config, regenerated from the live role library every 15s by
 # the runner. All of it is machine state — the allowlists carry site domains,
 # and roles.conf carries one port block per role in THAT box's database. It

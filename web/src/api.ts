@@ -527,7 +527,17 @@ export interface DeskProject {
   budget: { unit: "usd" | "tokens"; spent: number; cap: number; warn_ratio: number };
   open_tasks: number;
   queue_ceiling: number;
+  /** Populated only for switches the chairman holds — empty on an autonomous
+      project because the CEO decides these rather than parking them. */
+  awaiting_you: {
+    plan: number;
+    verdicts: { key: string; statement: string }[];
+    commitment: { id: string; deliver_by: string; scope_count: number } | null;
+  };
   evidence_7d: number;
+  /** Yesterday, paired — the "burned money, proved nothing" signal. */
+  spend_24h: number;
+  evidence_24h: number;
   ceo_judgment: {
     tasks_created: number;
     tasks_with_verified_external: number;
@@ -550,14 +560,9 @@ export interface DeskProject {
 
 export interface DeskView {
   as_of: string;
-  away: {
-    since: string;
-    tasks_completed: number;
-    evidence_verified: number;
-    usd_spent: number;
-    runs: number;
-    refusal_storms: number;
-  };
+  /** Terminal companies (stopped, completed). Always counted, even when
+      `?live=true` has kept them out of `projects`. */
+  finished: number;
   projects: DeskProject[];
 }
 

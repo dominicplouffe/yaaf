@@ -32,6 +32,5 @@ Start here if you're new; skim the table if you're not.
 | Doc | What it covers |
 |---|---|
 | [PLAN.md](PLAN.md) | The thesis, the kill conditions, what is built, and what is deliberately not. |
-| [M2_PROTOCOL.md](M2_PROTOCOL.md) | The org-vs-single-agent experiment: arms, controls, blind judging, pre-registered decision rule. |
 | [projects/](projects/) | Full worked project definitions from real use, longer than an example. |
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | How to work on yaaf itself. |
