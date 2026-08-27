@@ -535,7 +535,6 @@ function CompanyStrip({ live, finished }: { live: DeskProject[]; finished: numbe
           </div>
         );
       })}
-      <DelegatedNote live={live} />
       {finished > 0 && (
         <div className="fin">
           {finished} finished compan{finished === 1 ? "y is" : "ies are"} not shown here →{" "}
@@ -546,51 +545,4 @@ function CompanyStrip({ live, finished }: { live: DeskProject[]; finished: numbe
   );
 }
 
-/** Why an autonomous desk is quiet.
-
-    Without this the page has two indistinguishable kinds of silence: nothing
-    happened, and something happened that the CEO was authorised to decide.
-    The second is the whole point of the dial, but an empty screen cannot say
-    so — and a chairman who cannot tell them apart will eventually stop
-    believing the empty screen, which is the one state this page most needs to
-    be trusted in.
-
-    Informational by construction: it names what is being decided elsewhere and
-    where to read it, and never asks for anything. */
-function DelegatedNote({ live }: { live: DeskProject[] }) {
-  const SWITCHES = [
-    { key: "plan", one: "accepts its own scope", many: "accept their own scope" },
-    { key: "commitment", one: "signs its own date", many: "sign their own date" },
-    { key: "verdict", one: "judges its own observables", many: "judge their own observables" },
-  ] as const;
-
-  const delegated = live.filter((p) => SWITCHES.some((s) => p.authority[s.key] === "ceo"));
-  if (delegated.length === 0) return null;
-  const solo = delegated.length === 1;
-
-  // Name the powers actually in use across these companies, rather than a
-  // count of switches nobody thinks in.
-  const powers = SWITCHES.filter((s) => delegated.some((p) => p.authority[s.key] === "ceo"))
-    .map((s) => (solo ? s.one : s.many));
-  const list =
-    powers.length <= 1
-      ? powers[0]
-      : `${powers.slice(0, -1).join(", ")} and ${powers[powers.length - 1]}`;
-
-  return (
-    <div className="fin">
-      {solo ? "1 company " : `${delegated.length} companies `}
-      {list}. Those decisions are the CEO’s under the constitution, so they never reach
-      this page — every one is recorded in{" "}
-      {solo ? (
-        <>
-          that company’s{" "}
-          <Link to={`/projects/${delegated[0].id}/records/decisions`}>Decisions</Link> record.
-        </>
-      ) : (
-        "each company’s Decisions record."
-      )}
-    </div>
-  );
-}
 

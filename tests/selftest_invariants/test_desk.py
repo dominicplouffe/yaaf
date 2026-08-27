@@ -14,6 +14,7 @@ from tests.conftest import ADMIN, make_project
 from yaaf.core import ids
 from yaaf.core.db import db_session
 from yaaf.core.models import (
+    AuditLog,
     Commitment,
     CommitmentStatus,
     Project,
@@ -22,6 +23,7 @@ from yaaf.core.models import (
     RequirementStatus,
     utcnow,
 )
+from yaaf.server.janitor import janitor_once
 
 
 def _desk(client, live: bool):
@@ -174,3 +176,109 @@ def test_autonomy_never_delegates_the_undelegable_approvals(client):
 
     row = _desk(client, live=True)["projects"][0]
     assert [a["kind"] for a in row["pending_approvals"]] == ["spend"]
+
+
+# ── the inbox and the desk agree, and neither is silent ──────────────────────
+
+
+def _notices(project_id: str, action: str) -> list[dict]:
+    """The nag's cadence lives in the audit trail rather than a column, so that
+    is where the test reads it — the same row the chairman can read back."""
+    with db_session() as session:
+        return [
+            {"entity_id": r.entity_id, "detail": r.detail}
+            for r in session.query(AuditLog).filter(
+                AuditLog.project_id == project_id, AuditLog.action == action
+            ).all()
+        ]
+
+
+def test_scope_waiting_on_the_chairman_reaches_him_by_email(client):
+    """yaaf used to run this exactly backwards. When the dial gives the CEO the
+    signature it emails the chairman the moment it signs; when the chairman
+    holds it, proposed scope landed and nothing was sent under any setting. It
+    told him when a decision had been taken *for* him and went quiet when one
+    was waiting *on* him.
+    """
+    project = make_project(client, slug="supervised")
+    with db_session() as session:
+        for key in ("R-09", "R-10"):
+            session.add(Requirement(
+                id=ids.new_id(ids.REQUIREMENT), project_id=project["id"], key=key,
+                statement=f"{key}: five named write-ups are published and reachable.",
+                acceptance_test={"type": "observable", "target": "https://example.org/x"},
+                status=RequirementStatus.PROPOSED, stage=1, est_runs=4,
+                created_at=utcnow() - timedelta(hours=6),
+            ))
+
+    with db_session() as session:
+        janitor_once(session)
+
+    sent = _notices(project["id"], "scope.proposal_nag")
+    assert len(sent) == 1, "one mail for the batch, not one per requirement"
+    assert sent[0]["detail"]["count"] == 2
+
+    # Chased daily, not announced once: a notice that arrived while he was away
+    # is indistinguishable from one never sent.
+    with db_session() as session:
+        janitor_once(session)
+    assert len(_notices(project["id"], "scope.proposal_nag")) == 1, "not per tick"
+
+
+def test_a_freshly_proposed_batch_is_left_to_settle(client):
+    """A planning run proposes scope in bulk. Nagging on the first tick would
+    mail the chairman mid-run and again as the rest arrived."""
+    project = make_project(client, slug="supervised")
+    with db_session() as session:
+        session.add(Requirement(
+            id=ids.new_id(ids.REQUIREMENT), project_id=project["id"], key="R-09",
+            statement="Just proposed, this second.",
+            acceptance_test={"type": "observable", "target": "https://example.org/x"},
+            status=RequirementStatus.PROPOSED, stage=1, est_runs=4,
+        ))
+    with db_session() as session:
+        janitor_once(session)
+    assert _notices(project["id"], "scope.proposal_nag") == []
+
+
+def test_an_unsigned_delivery_date_is_chased(client):
+    """Until it is signed the company is working without a promise — so no slip
+    can freeze new scope and nothing tells him when the date stops holding."""
+    project = make_project(client, slug="supervised")
+    with db_session() as session:
+        session.add(Commitment(
+            id=ids.new_id(ids.COMMITMENT), project_id=project["id"],
+            status=CommitmentStatus.PROPOSED, deliver_by=utcnow() + timedelta(days=14),
+            scope_snapshot=["R-01", "R-02"],
+            created_at=utcnow() - timedelta(hours=6),
+        ))
+    with db_session() as session:
+        janitor_once(session)
+    assert len(_notices(project["id"], "commitment.proposal_nag")) == 1
+
+
+def test_an_autonomous_project_is_never_chased_for_either(client):
+    """The CEO holds both switches, so nothing is waiting and nothing should
+    arrive. The desk and the inbox read the same definition, so an empty page
+    and a quiet inbox mean the same thing rather than disagreeing."""
+    project = make_project(client, slug="autonomous", constitution=AUTONOMOUS)
+    with db_session() as session:
+        session.add(Requirement(
+            id=ids.new_id(ids.REQUIREMENT), project_id=project["id"], key="R-09",
+            statement="Proposed, but the CEO accepts its own scope here.",
+            acceptance_test={"type": "observable", "target": "https://example.org/x"},
+            status=RequirementStatus.PROPOSED, stage=1, est_runs=4,
+            created_at=utcnow() - timedelta(hours=6),
+        ))
+        session.add(Commitment(
+            id=ids.new_id(ids.COMMITMENT), project_id=project["id"],
+            status=CommitmentStatus.PROPOSED, deliver_by=utcnow() + timedelta(days=14),
+            scope_snapshot=["R-01"], created_at=utcnow() - timedelta(hours=6),
+        ))
+    with db_session() as session:
+        janitor_once(session)
+
+    assert _notices(project["id"], "scope.proposal_nag") == []
+    assert _notices(project["id"], "commitment.proposal_nag") == []
+    assert _desk(client, live=True)["projects"][0]["awaiting_you"] == {
+        "plan": 0, "verdicts": [], "commitment": None}

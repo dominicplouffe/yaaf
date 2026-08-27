@@ -2072,6 +2072,58 @@ def check_roles_exist(session: Session, slugs: list[str]) -> None:
 # Advised setting (announce, wait a window, silence means go) lands, it is one
 # function's change instead of a hunt across five files.
 
+def awaiting_chairman(session: Session, project: Project, cons: ConstitutionDoc) -> dict:
+    """What this project is blocked on the chairman for, per the autonomy dial.
+
+    One definition, because two of them would drift: the desk renders this, the
+    sidebar counts it, and the janitor chases it by email. A page that says a
+    company needs nothing while the janitor is mailing about it — or the
+    reverse — is worse than either alone.
+
+    Read the emptiness literally. On a fully autonomous project every entry
+    here is empty, and not because the work vanished: the CEO accepts its own
+    plan, adopts the platform's projected date and judges its own observables,
+    each on the record and disclosed. Asking the chairman as well would be
+    asking for a decision he gave away.
+    """
+    from yaaf.core.models import Commitment, CommitmentStatus, SuccessTestKind
+
+    out: dict = {"plan": [], "verdicts": [], "commitment": None}
+
+    if not ceo_holds(cons, "plan_authority"):
+        # Proposed scope is not scope: the CEO may not build against it and may
+        # not accept it, so the requirement waits on a human or on nothing.
+        out["plan"] = list(session.execute(
+            select(Requirement).where(
+                Requirement.project_id == project.id,
+                Requirement.status == RequirementStatus.PROPOSED,
+            ).order_by(Requirement.key)
+        ).scalars())
+
+    if not ceo_holds(cons, "verdict_policy"):
+        # All work closed, and the acceptance test is an observable no script
+        # can run. The janitor's own words to the CEO: "You cannot mark it met
+        # and neither can anyone here."
+        out["verdicts"] = [
+            r for r in session.execute(
+                select(Requirement).where(
+                    Requirement.project_id == project.id,
+                    Requirement.status == RequirementStatus.CHECKING,
+                ).order_by(Requirement.key)
+            ).scalars()
+            if (r.acceptance_test or {}).get("type") == SuccessTestKind.OBSERVABLE
+        ]
+
+    if not ceo_holds(cons, "commitment_authority"):
+        out["commitment"] = session.execute(
+            select(Commitment).where(
+                Commitment.project_id == project.id,
+                Commitment.status == CommitmentStatus.PROPOSED,
+            ).order_by(Commitment.created_at.desc()).limit(1)
+        ).scalar_one_or_none()
+    return out
+
+
 def ceo_holds(cons: ConstitutionDoc, switch: str) -> bool:
     value = getattr(cons, switch)
     return value == ("ceo_judgment" if switch == "verdict_policy" else "ceo")

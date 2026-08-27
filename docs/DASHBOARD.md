@@ -45,11 +45,11 @@ page's business; they get one line at the foot of the roster.
 
 **The autonomy dial decides what is eligible for a row.** Where the
 constitution says `ceo`, the CEO accepts its own scope, signs the platform's
-projected date and judges its own observables — so those never reach this page,
-and a line at the foot says which companies decide their own and where the
-record is. Where the chairman holds a switch, the thing waiting on him is a row
-here: proposed scope to accept, a date to sign, an observable close to judge.
-See [AUTONOMY.md](AUTONOMY.md).
+projected date and judges its own observables, so those never reach this page.
+Where the chairman holds a switch, the thing waiting on him is a row here:
+proposed scope to accept, a date to sign, an observable close to judge. Each is
+also chased by email until it is acted on — the page and the inbox read one
+definition, so they cannot disagree. See [AUTONOMY.md](AUTONOMY.md).
 
 What the dial never moves: **spend, legal, tool-request and assist approvals**
 are undelegable at every setting, and the **spot-check** exists precisely

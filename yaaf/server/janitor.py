@@ -22,7 +22,7 @@ import json
 import logging
 import random
 import time
-from datetime import timedelta
+from datetime import UTC, timedelta
 from pathlib import Path
 
 from sqlalchemy import func, select
@@ -149,6 +149,7 @@ def _janitor_project(session: Session, project: Project) -> None:
     check_finished_requirements(session, project, cons)
     check_stalled_requirements(session, project)
     nag_observable_requirements(session, project, cons)
+    nag_awaiting_chairman(session, project, cons)
     check_commitments(session, project, cons)
     draw_audit_samples(session, project, cons)
     expire_audit_samples(session, project)
@@ -1832,6 +1833,120 @@ def nag_observable_requirements(
         )
         log.info("nagged chairman on observable requirement %s (%s)",
                  req.key, project.slug)
+
+
+# Long enough for a planning run to finish proposing. The CEO proposes scope in
+# a batch, so nagging on the first tick would mail the chairman mid-run and then
+# again as the rest arrived; long enough that a chairman already at his desk
+# accepts it before hearing from us at all.
+PROPOSAL_SETTLE_HOURS = 3
+PROPOSAL_NAG_HOURS = 24  # then chased once a day, like every other open wait
+
+
+def _nagged_within(session: Session, project: Project, action: str,
+                   entity_id: str, hours: int) -> tuple[bool, bool]:
+    """(recently nagged, ever nagged) for one thing.
+
+    The cadence lives in the audit trail rather than a column, the same shape
+    nag_observable_requirements uses: it wants to be readable as a record, and
+    "we told him, on this date" is a fact about the project either way.
+    """
+    ever = int(session.execute(
+        select(func.count(AuditLog.id)).where(
+            AuditLog.project_id == project.id,
+            AuditLog.action == action,
+            AuditLog.entity_id == entity_id)
+    ).scalar_one())
+    if not ever:
+        return False, False
+    recent = int(session.execute(
+        select(func.count(AuditLog.id)).where(
+            AuditLog.project_id == project.id,
+            AuditLog.action == action,
+            AuditLog.entity_id == entity_id,
+            AuditLog.at >= utcnow() - timedelta(hours=hours))
+    ).scalar_one())
+    return bool(recent), True
+
+
+def nag_awaiting_chairman(
+    session: Session, project: Project, cons: ConstitutionDoc
+) -> None:
+    """Chase the two waits that had no voice: proposed scope, and a proposed
+    delivery date.
+
+    Both were silent in a way that ran exactly backwards. When the dial gives
+    the CEO the signature, the chairman is emailed the moment it signs ("CEO
+    committed to 2026-09-10"). When the chairman holds it — the default — the
+    commitment landed as PROPOSED and nothing was sent at all. Proposed scope
+    was never announced under any setting. So yaaf told him when a decision had
+    been taken *for* him, and went quiet when one was waiting *on* him.
+
+    Batched per project, because a planning run proposes scope in bulk and
+    eight emails for eight requirements is how a chairman learns to filter the
+    sender. Chased daily until acted on rather than announced once, because a
+    one-shot notice that arrives while he is away is indistinguishable from
+    never having been sent.
+
+    The definition of "waiting" is policy.awaiting_chairman — the same one the
+    desk renders, so the page and the inbox cannot disagree.
+    """
+    waiting = policy.awaiting_chairman(session, project, cons)
+    settled = utcnow() - timedelta(hours=PROPOSAL_SETTLE_HOURS)
+
+    proposed = [r for r in waiting["plan"] if r.created_at.replace(tzinfo=UTC) <= settled]
+    if proposed:
+        # Keyed on the project: the wait is "there is scope to accept", not one
+        # per requirement, and the whole point is to send one mail rather than
+        # one each.
+        recent, ever = _nagged_within(session, project, "scope.proposal_nag",
+                                      project.id, PROPOSAL_NAG_HOURS)
+        if not recent:
+            keys = ", ".join(r.key for r in proposed[:10])
+            more = "" if len(proposed) <= 10 else f" (+{len(proposed) - 10} more)"
+            session.add(AuditLog(
+                id=ids.new_id(ids.AUDIT), project_id=project.id, actor="system:janitor",
+                action="scope.proposal_nag", entity="project", entity_id=project.id,
+                detail={"count": len(proposed), "keys": [r.key for r in proposed]},
+            ))
+            chairman_notify(
+                session, project,
+                f"{len(proposed)} requirement(s) waiting on you to accept",
+                f"The CEO proposed {len(proposed)} requirement(s): {keys}{more}.\n\n"
+                + "\n".join(f"  {r.key} — {r.statement[:200]}" for r in proposed[:10])
+                + "\n\nProposed scope is not scope. No work can be created against any "
+                  "of these until you accept them, so the plan they belong to cannot "
+                  "start. Open the Plan tab to accept, reword, or decline."
+                + ("" if not ever else "\n\nThis is a repeat — they are still waiting."),
+            )
+            log.info("nagged chairman on %d proposed requirement(s) (%s)",
+                     len(proposed), project.slug)
+
+    commitment = waiting["commitment"]
+    if commitment is not None and commitment.created_at.replace(tzinfo=UTC) <= settled:
+        recent, ever = _nagged_within(session, project, "commitment.proposal_nag",
+                                      commitment.id, PROPOSAL_NAG_HOURS)
+        if not recent:
+            session.add(AuditLog(
+                id=ids.new_id(ids.AUDIT), project_id=project.id, actor="system:janitor",
+                action="commitment.proposal_nag", entity="commitment",
+                entity_id=commitment.id,
+                detail={"deliver_by": commitment.deliver_by.isoformat()},
+            ))
+            chairman_notify(
+                session, project,
+                f"a delivery date is waiting on your signature: "
+                f"{commitment.deliver_by:%Y-%m-%d}",
+                f"The CEO proposes delivering {len(commitment.scope_snapshot or [])} "
+                f"requirement(s) by {commitment.deliver_by:%Y-%m-%d}. The date is the "
+                "platform's own projection of measured pace — the CEO did not write it "
+                "and cannot.\n\nNothing binds until you sign: until then the company "
+                "is working without a promise, so no slip can freeze new scope and "
+                "nothing tells you when the date stops holding. Open the Plan tab to "
+                "sign it, or set your own."
+                + ("" if not ever else "\n\nThis is a repeat — it is still unsigned."),
+            )
+            log.info("nagged chairman on an unsigned commitment (%s)", project.slug)
 
 
 def warn_stall(session: Session, project: Project, cons: ConstitutionDoc) -> None:
