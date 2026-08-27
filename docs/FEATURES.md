@@ -301,7 +301,7 @@ decision, and configuration change. The dashboard surfaces it as:
 
 ## 15. Proving it works
 
-- **526 tests** run offline on SQLite and on Postgres in CI: an invariant suite
+- **530 tests** run offline on SQLite and on Postgres in CI: an invariant suite
   that attacks every rule over HTTP, chaos tests (crash, reap, retry), golden
   transcript evals that gate prompt edits, and end-to-end runs against a mock
   model.

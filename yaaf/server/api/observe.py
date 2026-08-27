@@ -36,6 +36,7 @@ from yaaf.core.models import (
     MemoryScope,
     Message,
     Project,
+    ProjectStatus,
     Requirement,
     RequirementEvent,
     RequirementStatus,
@@ -49,7 +50,6 @@ from yaaf.core.models import (
     Secret,
     Suggestion,
     Task,
-    TaskEvent,
     TaskStatus,
     Team,
     VerificationStatus,
@@ -136,25 +136,37 @@ def projects(session: Session = Depends(db)) -> list[dict]:
 
 
 @router.get("/desk")
-def desk(session: Session = Depends(db)) -> dict:
-    """Cross-project attention for the landing page: decisions waiting on the
-    chairman, countdowns worth watching, what happened while they were away,
-    and one comparable row per project — in one request, so the Desk answers
-    "what needs me?" without the UI fanning out per project."""
+def desk(live: bool = False, session: Session = Depends(db)) -> dict:
+    """Cross-project rollup: decisions waiting on the chairman, countdowns
+    worth watching, and one comparable row per project — in one request, so a
+    page answers "what needs me?" without fanning out per project.
+
+    `live=true` drops the terminal projects (stopped, completed) entirely,
+    which is what the Desk wants: a company that is over cannot need anything,
+    and every aggregate below is frozen forever on one, so computing them six
+    times a minute buys nothing. The Projects page is the archive and asks for
+    the default, everything.
+    """
     now = utcnow()
     day_ago = now - timedelta(hours=24)
     week_ago = now - timedelta(days=7)
     soon = now + timedelta(days=7)
+    TERMINAL = (ProjectStatus.STOPPED, ProjectStatus.COMPLETED)
 
     def aware(dt: datetime | None) -> datetime | None:
         if dt is None:
             return None
         return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
 
-    away = {"since": day_ago.isoformat(), "tasks_completed": 0,
-            "evidence_verified": 0, "usd_spent": 0.0, "runs": 0, "refusal_storms": 0}
+    finished = int(session.execute(
+        select(func.count(Project.id)).where(Project.status.in_(TERMINAL))
+    ).scalar_one())
+    listing = select(Project).order_by(Project.created_at)
+    if live:
+        listing = listing.where(Project.status.not_in(TERMINAL))
+
     projects_out: list[dict] = []
-    for project in session.execute(select(Project).order_by(Project.created_at)).scalars():
+    for project in session.execute(listing).scalars():
         cons = effective(session, project.id)
         month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         usd, tokens_in, tokens_out, cache_creation, cache_read = session.execute(
@@ -253,6 +265,19 @@ def desk(session: Session = Depends(db)) -> dict:
                 "cap": cons.runs_per_project_per_day,
             },
             "evidence_7d": policy.countable_external_evidence(session, project.id, week_ago),
+            # Yesterday, paired: spend on its own is a vanity number, and
+            # evidence on its own hides what it cost. Together they are the one
+            # question worth asking about a day nobody watched — did it buy
+            # anything? — so they travel as a pair or not at all.
+            "spend_24h": round(float(session.execute(
+                select(func.coalesce(func.sum(LedgerEntry.usd), 0.0)).where(
+                    LedgerEntry.project_id == project.id,
+                    LedgerEntry.at >= day_ago,
+                    LedgerEntry.kind != LedgerKind.REVENUE,
+                )
+            ).scalar_one()), 4),
+            "evidence_24h": policy.countable_external_evidence(
+                session, project.id, day_ago),
             "ceo_judgment": policy.ceo_judgment(session, project.id),
             "pending_approvals": pending,
             "expired_bets": expired_bets,
@@ -274,43 +299,7 @@ def desk(session: Session = Depends(db)) -> dict:
             "runs_running": int(running),
             "last_run_at": last_run_at.isoformat() if last_run_at else None,
         })
-        away["tasks_completed"] += int(
-            session.execute(
-                select(func.count(TaskEvent.id)).where(
-                    TaskEvent.project_id == project.id,
-                    TaskEvent.to_status == TaskStatus.DONE,
-                    TaskEvent.at >= day_ago,
-                )
-            ).scalar_one()
-        )
-        away["evidence_verified"] += policy.countable_external_evidence(
-            session, project.id, day_ago
-        )
-        away["usd_spent"] += float(
-            session.execute(
-                select(func.coalesce(func.sum(LedgerEntry.usd), 0.0)).where(
-                    LedgerEntry.project_id == project.id, LedgerEntry.at >= day_ago
-                )
-            ).scalar_one()
-        )
-        away["runs"] += int(
-            session.execute(
-                select(func.count(Run.id)).where(
-                    Run.project_id == project.id, Run.started_at >= day_ago
-                )
-            ).scalar_one()
-        )
-        away["refusal_storms"] += int(
-            session.execute(
-                select(func.count(Run.id)).where(
-                    Run.project_id == project.id,
-                    Run.status == "terminated_refusals",
-                    Run.started_at >= day_ago,
-                )
-            ).scalar_one()
-        )
-    away["usd_spent"] = round(away["usd_spent"], 4)
-    return {"as_of": now.isoformat(), "away": away, "projects": projects_out}
+    return {"as_of": now.isoformat(), "finished": finished, "projects": projects_out}
 
 
 def _delivery_outstanding(session: Session, project: Project) -> list[str]:

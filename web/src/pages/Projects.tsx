@@ -26,15 +26,22 @@ export default function Projects() {
 
   const projects = data.projects;
   // Live companies first, then the ones paused mid-flight, then not-yet-started
-  // drafts; the stopped archive reads last.
+  // drafts; the finished archive reads last.
+  //
+  // `completed` needs its own section even though it looks like one more
+  // terminal state: without it a delivered company fell through to the
+  // fallback and was filed under "Drafts — never started", which is the
+  // opposite of what it is. An unknown status now lands in the archive, where
+  // a stranger is merely out of place rather than actively misdescribed.
   const sections: { key: string; title: string; items: DeskProject[] }[] = [
     { key: "running", title: "Running", items: [] },
     { key: "paused", title: "Paused", items: [] },
     { key: "draft", title: "Drafts — never started", items: [] },
+    { key: "completed", title: "Completed — delivered, and the platform proved it", items: [] },
     { key: "stopped", title: "Stopped — the archive stays readable", items: [] },
   ];
   for (const p of projects) {
-    (sections.find((s) => s.key === p.status) ?? sections[2]).items.push(p);
+    (sections.find((s) => s.key === p.status) ?? sections[sections.length - 1]).items.push(p);
   }
 
   return (
@@ -86,7 +93,7 @@ function ProjectCard({ p }: { p: DeskProject }) {
   const meterCls = frac >= 1 ? "over" : frac >= p.budget.warn_ratio ? "warn" : "";
   const judgment =
     p.ceo_judgment.conversion === null ? null : Math.round(p.ceo_judgment.conversion * 100);
-  const stopped = p.status === "stopped";
+  const stopped = p.status === "stopped" || p.status === "completed";
 
   return (
     <div className="card" style={stopped ? { opacity: 0.65 } : undefined}>

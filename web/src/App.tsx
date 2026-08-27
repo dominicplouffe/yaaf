@@ -1,11 +1,31 @@
 import { Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom";
-import { getToken } from "./api";
+import { DeskView, get, getToken } from "./api";
+import { usePoll } from "./hooks";
 import Login from "./pages/Login";
-import Desk from "./pages/Desk";
+import Desk, { buildItems } from "./pages/Desk";
 import Projects from "./pages/Projects";
 import NewProject from "./pages/NewProject";
 import ProjectPage from "./pages/Project";
 import Roles from "./pages/Roles";
+
+/** The count beside Desk in the sidebar. Only tier 1 and 2 — things with a
+    consequence if ignored — because a badge that counts optional work teaches
+    the chairman to ignore the badge.
+
+    It counts the Desk's own items rather than re-deriving them from the same
+    fields: a second copy of "what counts as needing you" would drift from the
+    page within a release, and a badge that disagrees with the list under it is
+    worse than no badge. Building a few unused nodes twice a minute is the
+    cheaper half of that trade.
+
+    Its own poll, at a third of the Desk's rate — the sidebar is on every page
+    and the number does not need to be fresher than that. */
+function DeskCount() {
+  const { data } = usePoll(() => get<DeskView>("/observe/desk?live=true"), 30000);
+  if (!data) return null;
+  const n = buildItems(data.projects, () => {}).filter((i) => i.tier <= 2).length;
+  return n > 0 ? <span className="n">{n}</span> : null;
+}
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
@@ -16,6 +36,7 @@ function Shell({ children }: { children: React.ReactNode }) {
         </div>
         <NavLink to="/desk" className={({ isActive }) => "navlink" + (isActive ? " active" : "")}>
           Desk
+          <DeskCount />
         </NavLink>
         <NavLink to="/projects" className={({ isActive }) => "navlink" + (isActive ? " active" : "")}>
           Projects

@@ -1,196 +1,300 @@
 import { Link } from "react-router-dom";
 import { DeskProject, DeskView, get } from "../api";
 import { usePoll } from "../hooks";
-import { statusBadge } from "./Projects";
 import {
   clip,
   DecideButtons,
-  clockClass,
   fmtAgo,
-  fmtLeft,
+  fmtSoon,
   fmtUnit,
   fmtWhenShort,
   hoursSince,
   paceDate,
 } from "../ui";
 
-/** The landing page: everything that needs the chairman, across every company.
-    Zones in triage order — waiting on you → worth watching → while you were
-    away → one comparable row per company. The hero state is an empty desk. */
+/** The chairman's desk: one question, asked once — what breaks if I close this
+    tab?
+
+    Everything here is ranked by *time to consequence*, which the platform
+    already knows: approvals auto-deny, bets auto-block their tasks, budgets
+    auto-pause. Three tiers, and the soonest deadline is the top row whoever
+    owns it — the page never sorts by which company was created first.
+
+      1  stopped      it has stopped, and only the chairman restarts it
+      2  on a clock   it resolves without him, at a time we can name
+      3  drifting     nothing breaks; the claim just gets weaker
+
+    Only tiers 1 and 2 are counted anywhere, because the count is a promise: a
+    number above zero means something has a consequence attached. Tier 3 is
+    real work — it is the difference between "done means verified" being true
+    and being a slogan — but nothing expires and no agent is blocked, so
+    padding the count with it would spend the one number a chairman has to be
+    able to trust.
+
+    Companies that are over do not appear at all (`?live=true`): a stopped or
+    completed company cannot need anything, and every number on it is frozen. */
+
+type Tier = 1 | 2 | 3;
+
+export interface Item {
+  key: string;
+  tier: Tier;
+  /** Epoch ms of the consequence — the sort key inside a tier. Tier 1 has
+      already happened (0); tier 3 never does (+∞). */
+  at: number;
+  project: DeskProject;
+  kind: string;
+  what: React.ReactNode;
+  consequence: React.ReactNode;
+  actions?: React.ReactNode;
+}
+
+const NEVER = Number.MAX_SAFE_INTEGER;
+// A floor under the "spent, proved nothing" row, so it can't fire on a few
+// cents of overnight cache traffic. Arbitrary, and deliberately so: there is
+// no principled number here, only a threshold below which the row is noise.
+const SPEND_FLOOR_USD = 1;
+
+export function buildItems(projects: DeskProject[], reload: () => void): Item[] {
+  const items: Item[] = [];
+  const now = Date.now();
+
+  for (const p of projects) {
+    const to = `/projects/${p.id}`;
+
+    // ── tier 1: stopped, and only the chairman restarts it ──────────────
+    if (p.status === "paused") {
+      items.push({
+        // "paused", never "stopped": stopped is a real and different status in
+        // this system — terminal, and off the desk entirely. A badge that
+        // borrowed its word would describe a resumable company as a dead one.
+        key: `${p.id}-paused`, tier: 1, at: 0, project: p, kind: "paused",
+        what: (
+          <>
+            <b>Nothing is running here.</b>{" "}
+            {p.status_reason ?? "The platform paused this company."}
+          </>
+        ),
+        consequence: <span className="tick hot">it stays paused — indefinitely</span>,
+        actions: <Link className="act pri" to={to}>Review &amp; resume</Link>,
+      });
+    }
+    for (const bet of p.expired_bets) {
+      items.push({
+        key: bet.id, tier: 1, at: 0, project: p, kind: "bet expired",
+        what: (
+          <>
+            “{clip(bet.statement, 120)}” hit its kill date {fmtWhenShort(bet.kill_date)}
+            {(bet.blocked_tasks ?? 0) > 0 && (
+              <>, and <b>{bet.blocked_tasks} task(s) are blocked</b> behind it</>
+            )}.
+          </>
+        ),
+        consequence: (
+          <span className="tick">the CEO pivots — you hold the one extension</span>
+        ),
+        actions: <Link className="act pri" to={`${to}/work`}>Decide</Link>,
+      });
+    }
+    if (p.frozen_threads > 0) {
+      items.push({
+        key: `${p.id}-frozen`, tier: 1, at: 0, project: p, kind: "thread frozen",
+        what: (
+          <>
+            The pair breaker froze <b>{p.frozen_threads} thread(s)</b> — two agents were
+            talking in a loop.
+          </>
+        ),
+        consequence: <span className="tick hot">those agents stay stuck until you unfreeze</span>,
+        actions: <Link className="act pri" to={`${to}/records/messages`}>Review the thread</Link>,
+      });
+    }
+
+    // ── tier 2: it resolves without you, at a time we can name ──────────
+    for (const a of p.pending_approvals) {
+      items.push({
+        key: a.id, tier: 2, at: new Date(a.expires_at).getTime(), project: p,
+        kind: a.kind.replaceAll("_", " "),
+        what: (
+          <>
+            {a.title}
+            {a.amount_usd !== null && (
+              <> — <b className="mono">${a.amount_usd.toLocaleString()}</b></>
+            )}
+          </>
+        ),
+        consequence: (
+          <>
+            <span className="tick hot">auto-denied {fmtSoon(a.expires_at)}</span>
+            <span className="dim">· silence is a decision here</span>
+          </>
+        ),
+        actions: (
+          <>
+            <DecideButtons approvalId={a.id} onDone={reload} />
+            <Link className="act lnk" to={`${to}/records/decisions`}>read the request →</Link>
+          </>
+        ),
+      });
+    }
+    for (const bet of p.kill_dates_soon) {
+      items.push({
+        key: bet.id, tier: 2, at: new Date(bet.kill_date).getTime(), project: p,
+        kind: "kill date",
+        what: <>“{clip(bet.statement, 120)}”</>,
+        consequence: (
+          <>
+            <span className="tick">expires {fmtSoon(bet.kill_date)}</span>
+            <span className="dim">· then its tasks block and the CEO re-plans</span>
+          </>
+        ),
+        actions: <Link className="act lnk" to={`${to}/work`}>see the bet →</Link>,
+      });
+    }
+
+    // A drought is the platform refusing new internal work until proof lands.
+    // Active is happening now, so it sorts to the head of the clock tier;
+    // approaching is dated from the last countable evidence.
+    const d = p.drought;
+    const droughtShown = d.active || (d.applies && d.last_countable_at !== null
+      && hoursSince(d.last_countable_at) >= d.window_hours * 0.5);
+    if (d.active) {
+      items.push({
+        key: `${p.id}-drought`, tier: 2, at: now, project: p, kind: "drought",
+        what: (
+          <>
+            No verified external evidence in <b>{d.window_hours}h</b>.
+          </>
+        ),
+        consequence: (
+          <span className="tick hot">
+            happening now — new internal work is being refused until proof lands
+          </span>
+        ),
+        actions: <Link className="act pri" to={`${to}/work`}>See the proof</Link>,
+      });
+    } else if (droughtShown && d.last_countable_at) {
+      const startsAt = new Date(d.last_countable_at).getTime() + d.window_hours * 3_600_000;
+      items.push({
+        key: `${p.id}-drought`, tier: 2, at: startsAt, project: p, kind: "drought",
+        what: (
+          <>
+            <b>{Math.floor(hoursSince(d.last_countable_at))}h</b> without verified external
+            evidence, of {d.window_hours}h.
+          </>
+        ),
+        consequence: (
+          <span className="tick">
+            the platform starts refusing internal work {fmtSoon(new Date(startsAt).toISOString())}
+          </span>
+        ),
+        actions: <Link className="act lnk" to={`${to}/work`}>see the proof →</Link>,
+      });
+    }
+
+    // Budget. A cap already reached pauses the project, which is the tier-1
+    // row above; a projected landing is a real clock; a high-but-static
+    // fraction is worth knowing and has no clock at all.
+    const b = p.budget;
+    const frac = b.cap > 0 ? b.spent / b.cap : 0;
+    const pace = b.unit === "usd" ? paceDate(b.spent, b.cap) : null;
+    if (frac < 1 && pace) {
+      items.push({
+        key: `${p.id}-budget`, tier: 2, at: pace.getTime(), project: p, kind: "budget",
+        what: (
+          <>
+            {fmtUnit(b.spent, b.unit)} of {fmtUnit(b.cap, b.unit)} spent — at this pace the cap
+            lands <b>{fmtWhenShort(pace.toISOString())}</b>.
+          </>
+        ),
+        consequence: (
+          <span className="tick">the platform pauses the company at 100%</span>
+        ),
+        actions: <Link className="act lnk" to={`${to}/settings`}>raise or steer →</Link>,
+      });
+    } else if (frac < 1 && frac >= b.warn_ratio) {
+      items.push({
+        key: `${p.id}-budget`, tier: 3, at: NEVER, project: p, kind: "budget",
+        what: (
+          <>
+            {Math.round(frac * 100)}% of the monthly cap used — {fmtUnit(b.spent, b.unit)} of{" "}
+            {fmtUnit(b.cap, b.unit)}.
+          </>
+        ),
+        consequence: (
+          <span className="tick cold">
+            nothing yet — spending has stopped, so there is no date to give you
+          </span>
+        ),
+        actions: <Link className="act lnk" to={`${to}/settings`}>see the spend →</Link>,
+      });
+    }
+
+    // ── tier 3: nothing breaks; the claim gets weaker ───────────────────
+    if (p.audit.unaudited >= 3) {
+      items.push({
+        key: `${p.id}-audit`, tier: 3, at: NEVER, project: p, kind: "spot-check",
+        what: (
+          <>
+            <b>{p.audit.unaudited} finished tasks</b> nobody has checked. The agents marked
+            these done and wrote their own evidence for it.
+          </>
+        ),
+        consequence: (
+          <span className="tick cold">
+            nothing breaks — but nothing independent says the work is real
+          </span>
+        ),
+        actions: (
+          <Link className="act" to={`${to}/work?audit=1`}>Check 5 at random</Link>
+        ),
+      });
+    }
+    // Money moved and nothing outside the company confirmed anything. Distinct
+    // from the drought, which counts hours rather than dollars — so it is
+    // suppressed while a drought row is already speaking for this company.
+    // USD only: a zero here in token billing means "not priced in dollars",
+    // not "spent nothing".
+    if (b.unit === "usd" && !droughtShown && p.spend_24h >= SPEND_FLOOR_USD
+        && p.evidence_24h === 0 && p.status === "running") {
+      items.push({
+        key: `${p.id}-spend-noproof`, tier: 3, at: NEVER, project: p, kind: "no proof",
+        what: (
+          <>
+            <b>${p.spend_24h.toLocaleString(undefined, { maximumFractionDigits: 2 })}</b> spent
+            in the last 24h, and nothing verified by anyone outside the company.
+          </>
+        ),
+        consequence: (
+          <span className="tick cold">
+            nothing breaks — the work may be real, but only the agents say so
+          </span>
+        ),
+        actions: <Link className="act lnk" to={`${to}/work`}>see what it bought →</Link>,
+      });
+    }
+  }
+
+  return items.sort((x, y) => x.tier - y.tier || x.at - y.at);
+}
+
 export default function Desk() {
-  const { data, error, reload } = usePoll(() => get<DeskView>("/observe/desk"), 10000);
+  const { data, error, reload } = usePoll(
+    () => get<DeskView>("/observe/desk?live=true"), 10000);
 
   if (error) return <div className="error">{error}</div>;
   if (!data) return <p className="subtitle">Loading…</p>;
 
-  const projects = data.projects;
-
-  // ── waiting on you: decisions only a human can make ──
-  const waiting: React.ReactNode[] = [];
-  for (const p of projects) {
-    if (p.status === "paused") {
-      waiting.push(
-        <div className="arow" key={`${p.id}-paused`}>
-          <span className="pj">{p.name}</span>
-          <span className="chip critical">paused</span>
-          <div className="grow">
-            <div className="tt">{p.status_reason ?? "Paused — decide what changes, then resume"}</div>
-            <div className="sb">the project stays paused until you act</div>
-          </div>
-          <Link to={`/projects/${p.id}`}>review &amp; resume →</Link>
-        </div>,
-      );
-    }
-    for (const a of p.pending_approvals) {
-      waiting.push(
-        <div className="arow" key={a.id}>
-          <span className="pj">{p.name}</span>
-          <span className="chip accent">{a.kind.replaceAll("_", " ")}</span>
-          <div className="grow">
-            <div className="tt">
-              {a.title}
-              {a.amount_usd !== null && <span className="mono"> — ${a.amount_usd.toLocaleString()}</span>}
-            </div>
-            <div className="sb">silence denies automatically at the deadline</div>
-          </div>
-          <span className={`clock ${clockClass(a.expires_at)}`}>
-            expires in {fmtLeft(a.expires_at).replace(" left", "")} → auto-deny
-          </span>
-          <DecideButtons approvalId={a.id} onDone={reload} />
-          <Link to={`/projects/${p.id}/records/decisions`}>context →</Link>
-        </div>,
-      );
-    }
-    for (const bet of p.expired_bets) {
-      waiting.push(
-        <div className="arow" key={bet.id}>
-          <span className="pj">{p.name}</span>
-          <span className="chip serious">bet expired</span>
-          <div className="grow">
-            <div className="tt">“{clip(bet.statement)}” hit its kill date {fmtWhenShort(bet.kill_date)}</div>
-            <div className="sb">
-              {bet.blocked_tasks ?? 0} task(s) auto-blocked · you hold the one extension — or let it
-              stand and the CEO pivots
-            </div>
-          </div>
-          <Link to={`/projects/${p.id}/work`}>decide →</Link>
-        </div>,
-      );
-    }
-  }
-
-  // ── worth watching: the system will handle these, but you'd rather know now ──
-  const watch: React.ReactNode[] = [];
-  // Spot-checking is deliberately not in "Waiting on you": nothing expires and
-  // no agent is blocked on it, so listing it beside an approval that auto-denies
-  // would pad the one count the chairman has to be able to trust.
-  for (const p of projects) {
-    if (p.audit.unaudited >= 3 && p.status !== "stopped") {
-      watch.push(
-        <div className="wrow" key={`${p.id}-audit`}>
-          <span className="pj">{p.name}</span>
-          <span className="badge">spot-check</span>
-          <div className="grow">
-            <b>
-              {p.audit.unaudited} finished {p.audit.unaudited === 1 ? "task" : "tasks"} nobody
-              has checked.
-            </b>{" "}
-            The agents marked these done and wrote their own evidence for it. Two minutes on
-            five at random: you see what each task had to prove and what the agent claimed, and
-            you say whether you believe it.
-          </div>
-          <Link to={`/projects/${p.id}/work?audit=1`}>check 5 now →</Link>
-        </div>,
-      );
-    }
-  }
-  for (const p of projects) {
-    const b = p.budget;
-    const frac = b.cap > 0 ? b.spent / b.cap : 0;
-    const pace = b.unit === "usd" ? paceDate(b.spent, b.cap) : null;
-    if (frac >= 1) {
-      // Exhausted budgets pause the project, which already lands in "waiting".
-    } else if (frac >= b.warn_ratio || pace) {
-      watch.push(
-        <div className="wrow" key={`${p.id}-budget`}>
-          <span className="pj">{p.name}</span>
-          <span className="badge warn">budget {Math.round(frac * 100)}%</span>
-          <div className="grow">
-            {fmtUnit(b.spent, b.unit)} of {fmtUnit(b.cap, b.unit)}
-            {pace && (
-              <>
-                {" "}— at this pace the cap lands <strong>{fmtWhenShort(pace.toISOString())}</strong>; the
-                platform pauses the project at 100%
-              </>
-            )}
-          </div>
-          <span className="mini-meter warn"><i style={{ width: `${Math.min(frac, 1) * 100}%` }} /></span>
-          <Link to={`/projects/${p.id}/settings`}>raise or steer →</Link>
-        </div>,
-      );
-    }
-    const d = p.drought;
-    if (d.active) {
-      watch.push(
-        <div className="wrow" key={`${p.id}-drought`}>
-          <span className="pj">{p.name}</span>
-          <span className="badge serious">drought</span>
-          <div className="grow">
-            No verified external evidence in {d.window_hours}h — the platform is refusing new
-            internal work until proof lands
-          </div>
-          <Link to={`/projects/${p.id}/work`}>see the proof →</Link>
-        </div>,
-      );
-    } else if (d.applies && d.last_countable_at) {
-      const elapsed = hoursSince(d.last_countable_at);
-      if (elapsed >= d.window_hours * 0.5) {
-        watch.push(
-          <div className="wrow" key={`${p.id}-drought`}>
-            <span className="pj">{p.name}</span>
-            <span className="badge warn">drought {Math.floor(elapsed)}h / {d.window_hours}h</span>
-            <div className="grow">
-              {Math.floor(elapsed)} hours without verified external evidence — at {d.window_hours}h
-              the platform starts refusing internal work
-            </div>
-            <Link to={`/projects/${p.id}/work`}>see the proof →</Link>
-          </div>,
-        );
-      }
-    }
-    for (const bet of p.kill_dates_soon) {
-      watch.push(
-        <div className="wrow" key={bet.id}>
-          <span className="pj">{p.name}</span>
-          <span className="badge warn">kill date {fmtLeft(bet.kill_date).replace(" left", "")}</span>
-          <div className="grow">“{clip(bet.statement)}” — {fmtWhenShort(bet.kill_date)}</div>
-          <Link to={`/projects/${p.id}/work`}>see the bet →</Link>
-        </div>,
-      );
-    }
-    if (p.frozen_threads > 0) {
-      watch.push(
-        <div className="wrow" key={`${p.id}-frozen`}>
-          <span className="pj">{p.name}</span>
-          <span className="badge serious">thread frozen</span>
-          <div className="grow">
-            {p.frozen_threads} frozen thread(s) — the pair breaker tripped; those agents are stuck
-            until you unfreeze
-          </div>
-          <Link to={`/projects/${p.id}/records/messages`}>review thread →</Link>
-        </div>,
-      );
-    }
-  }
-
-  // The next clock makes "nothing" verifiably nothing rather than silence.
-  const clocks: { at: string; label: string }[] = [];
-  for (const p of projects) {
-    for (const a of p.pending_approvals) clocks.push({ at: a.expires_at, label: `${p.name}'s approval deadline` });
-    for (const bet of p.kill_dates_soon) clocks.push({ at: bet.kill_date, label: `${p.name}'s kill date` });
-  }
-  clocks.sort((x, y) => x.at.localeCompare(y.at));
-  const running = projects.filter((p) => p.status === "running").length;
+  const live = data.projects;
+  const items = buildItems(live, reload);
+  const needing = items.filter((i) => i.tier <= 2);
+  const soonest = items.find((i) => i.tier === 2);
+  const running = live.filter((p) => p.status === "running").length;
+  const lastRun = live
+    .map((p) => p.last_run_at)
+    .filter((v): v is string => v !== null)
+    .sort()
+    .at(-1) ?? null;
 
   return (
     <>
@@ -198,126 +302,173 @@ export default function Desk() {
         <h1>Your desk</h1>
         <div className="spacer" />
         <span className="asof">
-          as of {new Date(data.as_of).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
+          as of{" "}
+          {new Date(data.as_of).toLocaleTimeString(undefined, {
+            hour: "2-digit", minute: "2-digit",
+          })}
         </span>
       </div>
-      <p className="subtitle">Everything that needs you, across every company you chair.</p>
+      {needing.length > 0 && (
+        <p className="subtitle">
+          <b>
+            {needing.length} thing{needing.length === 1 ? "" : "s"} need
+            {needing.length === 1 ? "s" : ""} you.
+          </b>
+          {soonest && (
+            <> The soonest resolves itself{" "}
+              <span className="tick">{fmtSoon(new Date(soonest.at).toISOString())}</span>.
+            </>
+          )}
+        </p>
+      )}
 
-      {waiting.length === 0 && watch.length === 0 && projects.length > 0 && (
-        <div className="card" style={{ textAlign: "center", padding: "36px 20px" }}>
-          <div style={{ fontSize: 19, fontWeight: 700 }}>Nothing needs you.</div>
-          <div className="help" style={{ marginTop: 6 }}>
-            {running} compan{running === 1 ? "y is" : "ies are"} working.
-            {clocks.length > 0 && <> Next clock: {clocks[0].label}, {fmtLeft(clocks[0].at)}.</>}
+      {live.length === 0 && (
+        <EmptyDesk finished={data.finished} />
+      )}
+
+      {items.length > 0 && (
+        <div className="list">
+          {items.map((it) => (
+            <div className={`item t${it.tier}`} key={it.key}>
+              <div className="stripe" />
+              <div className="ib">
+                <div className="irow1">
+                  <Link className="co" to={`/projects/${it.project.id}`}>
+                    {it.project.name}
+                  </Link>
+                  <span className={`kind k${it.tier}`}>{it.kind}</span>
+                </div>
+                <div className="what">{it.what}</div>
+                <div className="cons">
+                  <span className="lbl">If you do nothing</span>
+                  {it.consequence}
+                </div>
+                {it.actions && <div className="acts">{it.actions}</div>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {live.length > 0 && needing.length === 0 && running > 0 && (
+        <div className="quiet ok">
+          <div className="mark">Nothing needs you.</div>
+          <div className="sub">
+            No decision is blocked, no clock is running out, and nothing has stopped. The
+            proof it is actually working:
+          </div>
+          <div className="proof">
+            <div className="pf">
+              <div className="pv">{running}</div>
+              <div className="pl">compan{running === 1 ? "y" : "ies"} working</div>
+            </div>
+            <div className="pf">
+              <div className="pv">{fmtAgo(lastRun)}</div>
+              <div className="pl">last run</div>
+            </div>
+            <div className="pf">
+              <div className="pv">{soonest ? fmtSoon(new Date(soonest.at).toISOString()) : "none"}</div>
+              <div className="pl">next clock</div>
+            </div>
           </div>
         </div>
       )}
-      {projects.length === 0 && (
-        <div className="card">
-          No projects yet. <Link to="/projects/new">Create the first one.</Link>
+
+      {live.length > 0 && running === 0 && (
+        <div className="quiet bad">
+          <div className="mark">Nothing is running.</div>
+          <div className="sub">
+            You have {live.length} compan{live.length === 1 ? "y" : "ies"} that could be
+            working and {live.length === 1 ? "it is not" : "none is"}. No agent is doing
+            anything right now — which is <b>not</b> the same as all clear.
+          </div>
+          <div className="proof">
+            <div className="pf">
+              <div className="pv">{live.filter((p) => p.status === "paused").length}</div>
+              <div className="pl">paused</div>
+            </div>
+            <div className="pf">
+              <div className="pv">{live.filter((p) => p.status === "draft").length}</div>
+              <div className="pl">never started</div>
+            </div>
+            <div className="pf">
+              <div className="pv">{fmtAgo(lastRun)}</div>
+              <div className="pl">last run</div>
+            </div>
+          </div>
         </div>
       )}
 
-      {waiting.length > 0 && (
-        <>
-          <h2 className="zone hot">Waiting on you <span className="cnt">{waiting.length}</span></h2>
-          <div className="arows">{waiting}</div>
-        </>
-      )}
-
-      {watch.length > 0 && (
-        <>
-          <h2 className="zone">Worth watching <span className="cnt">{watch.length}</span></h2>
-          <div className="wbox">{watch}</div>
-        </>
-      )}
-
-      {projects.length > 0 && (
-        <>
-          <h2 className="zone">
-            While you were away
-            <span style={{ letterSpacing: 0, textTransform: "none" }}>· last 24h</span>
-          </h2>
-          <div className="stats-row">
-            <div className="stat">
-              <div className="v">{data.away.tasks_completed}</div>
-              <div className="l">tasks completed</div>
-            </div>
-            <div className="stat">
-              <div className="v">{data.away.evidence_verified}</div>
-              <div className="l">external evidence verified</div>
-            </div>
-            <div className="stat">
-              <div className="v">${data.away.usd_spent.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
-              <div className="l">spent across {data.away.runs} runs</div>
-            </div>
-            <div className="stat">
-              <div className="v">{data.away.refusal_storms}</div>
-              <div className="l">refusal storm(s) — runs terminated</div>
-            </div>
-          </div>
-
-          <h2 className="zone">Your companies <span className="cnt">{projects.length}</span></h2>
-          <table>
-            <thead>
-              <tr>
-                <th>Company</th>
-                <th>Status</th>
-                <th className="num">Needs you</th>
-                <th className="num">Open tasks</th>
-                <th className="num">Evidence 7d</th>
-                <th className="num">CEO judgment</th>
-                <th>Spend this month</th>
-                <th>Last activity</th>
-              </tr>
-            </thead>
-            <tbody>
-              {projects.map((p) => (
-                <CompanyRow key={p.id} p={p} />
-              ))}
-            </tbody>
-          </table>
-        </>
-      )}
+      {live.length > 0 && <CompanyStrip live={live} finished={data.finished} />}
     </>
   );
 }
 
-function CompanyRow({ p }: { p: DeskProject }) {
-  // Only things with a consequence if ignored: an approval that auto-denies, a
-  // bet past its kill date, a project the platform paused. The optional
-  // spot-check used to be counted here too, which meant a card could shout
-  // "1 waiting on you" when the honest answer was "nothing is".
-  const needsYou =
-    p.pending_approvals.length +
-    p.expired_bets.length +
-    (p.status === "paused" ? 1 : 0);
-  const frac = p.budget.cap > 0 ? p.budget.spent / p.budget.cap : 0;
-  const meterCls = frac >= 1 ? "over" : frac >= p.budget.warn_ratio ? "warn" : "";
+/** No live companies at all. Two different situations wearing one card would be
+    the old bug: a chairman whose four companies all delivered is not a new
+    user, and must not be shown the new-user screen. */
+function EmptyDesk({ finished }: { finished: number }) {
+  if (finished > 0) {
+    return (
+      <div className="quiet ok">
+        <div className="mark">Every company has finished.</div>
+        <div className="sub">
+          All {finished} of your companies were completed or stopped. Nothing is running
+          because there is nothing left to run — for a Deliver company that is the end
+          state, not a fault.
+        </div>
+        <div className="acts" style={{ justifyContent: "center" }}>
+          <Link className="act pri" to="/projects/new">Start another company</Link>
+          <Link className="act lnk" to="/projects">review what they delivered →</Link>
+        </div>
+      </div>
+    );
+  }
   return (
-    <tr>
-      <td>
-        <Link to={`/projects/${p.id}`}><strong>{p.name}</strong></Link>
-        <div className="help">{p.goal.length > 80 ? p.goal.slice(0, 80) + "…" : p.goal}</div>
-      </td>
-      <td>{statusBadge(p.status)}</td>
-      <td className="num">{needsYou > 0 ? <strong>{needsYou}</strong> : <span className="help">—</span>}</td>
-      <td className="num">{p.open_tasks} / {p.queue_ceiling}</td>
-      <td className="num">{p.evidence_7d}</td>
-      <td className="num">
-        {p.ceo_judgment.conversion === null ? (
-          <span className="help">no bets yet</span>
-        ) : (
-          `${Math.round(p.ceo_judgment.conversion * 100)}%`
-        )}
-      </td>
-      <td>
-        <span className={`mini-meter ${meterCls}`}><i style={{ width: `${Math.min(frac, 1) * 100}%` }} /></span>
-        <span className="mono">
-          {fmtUnit(p.budget.spent, p.budget.unit)}/{fmtUnit(p.budget.cap, p.budget.unit)}
-        </span>
-      </td>
-      <td>{fmtAgo(p.last_run_at)}</td>
-    </tr>
+    <div className="quiet">
+      <div className="mark">You don’t chair a company yet.</div>
+      <div className="sub">
+        A company is a CEO agent, a team, a goal and a budget. Once one is running, this
+        page collects every decision it can’t make without you — and stays empty the rest
+        of the time.
+      </div>
+      <div className="acts" style={{ justifyContent: "center" }}>
+        <Link className="act pri" to="/projects/new">Create your first company</Link>
+      </div>
+    </div>
+  );
+}
+
+/** Navigation, not a metrics table — the Projects page is that, and this used
+    to be a second copy of it. Name, state, and whether it is asking for
+    something. */
+function CompanyStrip({ live, finished }: { live: DeskProject[]; finished: number }) {
+  return (
+    <div className="roster">
+      <div className="sh">Live companies · {live.length}</div>
+      {live.map((p) => {
+        const needsYou =
+          p.pending_approvals.length + p.expired_bets.length + (p.status === "paused" ? 1 : 0);
+        const dot = p.status === "running" ? "run" : p.status === "paused" ? "pau" : "stp";
+        return (
+          <div className="crow" key={p.id}>
+            <span className={`dot ${dot}`} />
+            <Link className="nm" to={`/projects/${p.id}`}>{p.name}</Link>
+            <span className="gl">
+              {p.status === "running" ? clip(p.goal, 70) : `${p.status} — ${clip(p.status_reason ?? p.goal, 60)}`}
+            </span>
+            <span className={`rt ${needsYou > 0 ? "need" : ""}`}>
+              {needsYou > 0 ? "needs you" : fmtAgo(p.last_run_at)}
+            </span>
+          </div>
+        );
+      })}
+      {finished > 0 && (
+        <div className="fin">
+          {finished} finished compan{finished === 1 ? "y is" : "ies are"} not shown here →{" "}
+          <Link to="/projects">Projects</Link>
+        </div>
+      )}
+    </div>
   );
 }

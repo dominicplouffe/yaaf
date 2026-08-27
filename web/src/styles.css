@@ -301,11 +301,6 @@ pre.block {
 .arow .grow { flex: 1; min-width: 220px; }
 .arow .tt { font-weight: 600; font-size: 13.5px; }
 .arow .sb { color: var(--muted); font-size: 12px; margin-top: 1px; }
-.pj {
-  font-family: var(--mono); font-size: 11px; color: var(--ink-2);
-  background: var(--surface-2); border: 1px solid var(--grid);
-  border-radius: 5px; padding: 2px 7px; flex: none;
-}
 .clock { font-family: var(--mono); font-size: 11px; font-weight: 600; white-space: nowrap; }
 .clock.warn { color: var(--warning); }
 .clock.serious { color: var(--serious); }
@@ -330,13 +325,6 @@ pre.block {
 .chip.critical { color: var(--critical); border-color: rgba(208, 59, 59, 0.4); background: rgba(208, 59, 59, 0.1); }
 .chip.accent { color: var(--accent); border-color: rgba(57, 135, 229, 0.4); background: rgba(57, 135, 229, 0.1); }
 
-.stats-row { display: flex; gap: 10px; flex-wrap: wrap; }
-.stat {
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: var(--radius); padding: 10px 14px; min-width: 170px; flex: 1;
-}
-.stat .v { font-size: 18px; font-weight: 650; }
-.stat .l { font-size: 12px; color: var(--muted); margin-top: 2px; }
 
 .mini-meter {
   width: 88px; height: 5px; border-radius: 3px; background: var(--surface-2);
@@ -875,3 +863,118 @@ button.rolepick { width: 100%; text-align: left; background: var(--surface-2); }
 }
 .needline:last-child { border-bottom: 0; }
 @media (max-width: 620px) { .needline { grid-template-columns: minmax(0, 1fr); } }
+
+/* ── the desk: one ranked list, three tiers of consequence ───────────────────── */
+/* Severity is position first, colour second: tier 1 has already happened, tier 2
+   happens on a clock, tier 3 never does. The stripe repeats what the order
+   already said, so colour is never the only carrier. */
+.list { display: flex; flex-direction: column; gap: 8px; }
+.item {
+  display: grid; grid-template-columns: 3px 1fr;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); overflow: hidden;
+}
+.item .stripe { background: var(--grid); }
+.item.t1 .stripe { background: var(--critical); }
+.item.t2 .stripe { background: var(--warning); }
+.item .ib { padding: 12px 14px; display: flex; flex-direction: column; gap: 7px; }
+.item .irow1 { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.item .co {
+  font-family: var(--mono); font-size: 11px; letter-spacing: 0.04em;
+  color: var(--ink-2); background: var(--surface-2); border: 1px solid var(--grid);
+  border-radius: 5px; padding: 2px 7px; flex: none;
+}
+.item .co:hover { color: var(--ink); border-color: var(--muted); }
+.item .kind {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.09em;
+  text-transform: uppercase; border-radius: 4px; padding: 2px 7px; white-space: nowrap;
+}
+.item .kind.k1 { background: rgba(208, 59, 59, 0.16); color: #f08b8b; }
+.item .kind.k2 { background: rgba(250, 178, 25, 0.14); color: #f5c65e; }
+.item .kind.k3 { background: var(--surface-2); color: var(--muted); }
+.item .what { font-size: 13.5px; line-height: 1.5; }
+/* Line 2 of every row, in the same place every time: what happens if the
+   chairman does nothing. It used to be grey subtext under the title. */
+.item .cons {
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  font-size: 12.5px; padding-left: 11px; border-left: 2px solid var(--grid);
+}
+.item .cons .lbl {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.09em;
+  text-transform: uppercase; color: var(--muted); flex: none;
+}
+.item .tick { font-family: var(--mono); color: var(--warning); font-weight: 600; }
+.item .tick.hot { color: var(--critical); }
+.item .tick.cold { color: var(--muted); font-weight: 400; }
+.item .dim { color: var(--muted); }
+.acts { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+/* Links that act like buttons. Real <button>s keep .small — this is for the
+   row actions that are navigation. */
+.acts .act {
+  display: inline-block; font-size: 12.5px; line-height: 1.5; padding: 4px 12px;
+  border-radius: 6px; border: 1px solid var(--grid); background: var(--surface-2);
+  color: var(--ink); white-space: nowrap;
+}
+.acts .act:hover { border-color: var(--muted); }
+.acts .act.pri { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 500; }
+.acts .act.lnk { background: transparent; border-color: transparent; color: var(--accent); padding: 4px 2px; }
+
+/* An empty desk has to prove it is empty rather than just look it: silence with
+   a timestamp on it is trustworthy, silence alone is ambiguous. */
+.quiet {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 30px 24px; text-align: center;
+}
+.quiet .mark { font-size: 15px; font-weight: 700; margin-bottom: 6px; }
+.quiet.ok .mark { color: var(--good); }
+.quiet.bad .mark { color: var(--warning); }
+.quiet .sub { font-size: 13px; color: var(--ink-2); max-width: 52ch; margin: 0 auto 14px; }
+.quiet .proof {
+  display: flex; justify-content: center; flex-wrap: wrap;
+  border-top: 1px solid var(--border); padding-top: 14px;
+}
+.quiet .pf { padding: 0 20px; border-right: 1px solid var(--border); }
+.quiet .pf:last-child { border-right: 0; }
+.quiet .pv { font-family: var(--mono); font-size: 15px; font-weight: 600; }
+.quiet .pl { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.quiet .acts { justify-content: center; }
+
+/* The company roster: navigation, not the Projects table a second time. */
+.roster { margin-top: 22px; border-top: 1px solid var(--border); padding-top: 12px; }
+.roster .sh {
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--muted); margin-bottom: 8px;
+}
+.crow {
+  display: flex; align-items: center; gap: 10px; padding: 6px 0;
+  border-bottom: 1px solid var(--grid); font-size: 13px;
+}
+.crow:last-of-type { border-bottom: 0; }
+.crow .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.crow .dot.run { background: var(--good); }
+.crow .dot.pau { background: var(--critical); }
+.crow .dot.stp { background: var(--muted); }
+.crow .nm { font-weight: 500; color: var(--ink); flex: none; }
+.crow .nm:hover { color: var(--accent); }
+.crow .gl {
+  color: var(--muted); font-size: 12px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.crow .rt {
+  margin-left: auto; font-family: var(--mono); font-size: 11px;
+  color: var(--muted); flex: none;
+}
+.crow .rt.need { color: var(--warning); font-weight: 600; }
+.roster .fin {
+  margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--grid);
+  font-size: 12px; color: var(--muted);
+}
+
+/* The sidebar count. A number above zero is a promise that something has a
+   consequence attached, which is why tier 3 never reaches it. */
+.navlink .n {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 17px; height: 17px; padding: 0 5px; margin-left: 7px;
+  border-radius: 999px; background: var(--critical); color: #fff;
+  font-family: var(--mono); font-size: 10.5px; font-weight: 700;
+}

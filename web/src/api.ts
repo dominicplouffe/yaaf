@@ -528,6 +528,9 @@ export interface DeskProject {
   open_tasks: number;
   queue_ceiling: number;
   evidence_7d: number;
+  /** Yesterday, paired — the "burned money, proved nothing" signal. */
+  spend_24h: number;
+  evidence_24h: number;
   ceo_judgment: {
     tasks_created: number;
     tasks_with_verified_external: number;
@@ -550,14 +553,9 @@ export interface DeskProject {
 
 export interface DeskView {
   as_of: string;
-  away: {
-    since: string;
-    tasks_completed: number;
-    evidence_verified: number;
-    usd_spent: number;
-    runs: number;
-    refusal_storms: number;
-  };
+  /** Terminal companies (stopped, completed). Always counted, even when
+      `?live=true` has kept them out of `projects`. */
+  finished: number;
   projects: DeskProject[];
 }
 

@@ -21,18 +21,33 @@ the intended way to run a company.
 
 ## Desk — "what needs me?"
 
-The daily triage screen, zoned in the order you'd actually work it:
+One ranked list, sorted by **time to consequence** — how long until a thing
+resolves itself without you. The soonest deadline is the top row whoever owns
+it; the page never sorts by which company was created first.
 
-1. **Waiting on you** — decisions only a human can make: pending approvals,
-   paused projects (with why), expired bets awaiting extend-or-kill, frozen
-   threads.
-2. **Worth watching** — nothing is blocked, but something is drifting: budget
-   pace, an evidence drought, a bet nearing its kill date.
-3. **While you were away** — what moved since you last looked.
-4. **One row per company** — status, budget, open work, last activity, all
-   comparable at a glance.
+1. **Stopped** — it has stopped and only you restart it: a paused company, a
+   bet past its kill date with tasks blocked behind it, a thread the pair
+   breaker froze.
+2. **On a clock** — it resolves without you at a time the platform can name:
+   an approval that auto-denies, a kill date, a budget whose burn lands on the
+   cap, an evidence drought.
+3. **Drifting** — nothing breaks, the claim just gets weaker: finished tasks
+   nobody spot-checked, a day that spent money and verified nothing.
 
-**The hero state is an empty desk.** If nothing needs you, the screen says so.
+Every row says the same three things in the same order: what happened, **what
+happens if you do nothing**, and the action.
+
+Only tiers 1 and 2 are counted in the sidebar badge — a number above zero is a
+promise that something has a consequence attached.
+
+**Only live companies appear.** Stopped and completed ones are the Projects
+page's business; they get one line at the foot of the roster.
+
+**The hero state is an empty desk**, and it proves it rather than asserting
+it: how many companies are working, when something last ran, and when the next
+clock fires. *Nothing is wrong* and *nothing is happening* are different
+screens — if you have companies that could be working and none is, the desk
+says so instead of congratulating you.
 
 ## Projects
 
