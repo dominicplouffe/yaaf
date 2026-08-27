@@ -124,6 +124,71 @@ def test_approval_expires_to_deny_and_wakes_requester(client):
         assert notices, "requester must be woken with the default-deny"
 
 
+def test_ending_a_project_voids_its_pending_approvals(client):
+    """A finished company's open requests are moot, and leaving them PENDING
+    leaks: the janitor returns early on anything that is not RUNNING, so it
+    never reaches expire_approvals — the request would sit pending forever,
+    showing on the chairman's desk with a deadline further in the past every
+    day, asking for a decision that cannot matter.
+    """
+    project = make_project(client)
+    _, ceo_token = live_token(project["id"], project["ceo_agent_id"])
+    approval = client.post(
+        "/agent/approvals",
+        json={"kind": "spend", "title": "Data licence", "body": "I recommend it strongly.",
+              "amount_usd": 4800},
+        headers=bearer(ceo_token),
+    ).json()
+
+    from yaaf.core.models import Approval
+
+    stopped = client.post(f"/admin/projects/{project['id']}/stop",
+                          json={"reason": "changed my mind"}, headers=ADMIN)
+    assert stopped.status_code == 200
+    assert stopped.json()["voided_approvals"] == 1
+
+    with db_session() as session:
+        row = session.get(Approval, approval["id"])
+        assert row.status == "expired"
+        assert row.decided_at is not None
+        assert "stopped" in row.decision_note
+        # Nobody decided it, so nobody is recorded as having decided it.
+        assert row.decided_by_user_id is None
+
+    # The desk asks for pending approvals; a stopped company must offer none.
+    desk = client.get("/observe/desk", headers=ADMIN).json()
+    assert all(not p["pending_approvals"] for p in desk["projects"])
+
+    # And no later tick reopens or re-decides it.
+    with db_session() as session:
+        janitor_once(session)
+    with db_session() as session:
+        assert session.get(Approval, approval["id"]).status == "expired"
+
+
+def test_ending_a_project_never_approves_what_it_was_asking_for(client):
+    """`approval_timeout_decision: approve` is about a chairman who did not
+    answer in time — not about a company that no longer exists. Ending one
+    decides nothing on the merits, so the deny-shaped outcome is the only
+    honest one; the alternative is that shutting a company down silently buys
+    the last thing it asked for.
+    """
+    project = make_project(client, constitution={"approval_timeout_decision": "approve"})
+    _, ceo_token = live_token(project["id"], project["ceo_agent_id"])
+    approval = client.post(
+        "/agent/approvals",
+        json={"kind": "spend", "title": "Data licence", "body": "I recommend it strongly.",
+              "amount_usd": 4800},
+        headers=bearer(ceo_token),
+    ).json()
+
+    from yaaf.core.models import Approval
+
+    client.post(f"/admin/projects/{project['id']}/stop", json={}, headers=ADMIN)
+    with db_session() as session:
+        assert session.get(Approval, approval["id"]).status == "expired"
+
+
 def test_budget_cap_auto_pauses_and_revokes(client):
     project = make_project(client, constitution={"monthly_usd_cap": 100})
     run_id, ceo_token = live_token(project["id"], project["ceo_agent_id"])

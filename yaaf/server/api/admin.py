@@ -1087,6 +1087,37 @@ def _revoke_running(session: Session, project_id: str) -> int:
     return n
 
 
+def _void_pending_approvals(session: Session, project_id: str, why: str) -> int:
+    """Close out a terminal project's open requests. Ending a company answers
+    them by making them moot, and leaving them PENDING has two costs: they keep
+    their clock, so the janitor expires them days later and writes a denial into
+    the record of a company that no longer exists — and until then they sit on
+    the chairman's desk asking for a decision that cannot matter.
+
+    Always EXPIRED, never the constitution's `approval_timeout_decision`. An
+    install that auto-approves on timeout must not approve a $4,800 spend
+    because the company it belonged to was shut down: ending a company decides
+    nothing on the merits, so the deny-shaped outcome is the only honest one.
+
+    No notice to the requester, unlike every other approval outcome. A notice is
+    consumed by a run, and a terminal project never runs again — the audit row
+    is the record here.
+    """
+    n = 0
+    now = utcnow()
+    for approval in session.execute(
+        select(Approval).where(
+            Approval.project_id == project_id,
+            Approval.status == ApprovalStatus.PENDING,
+        )
+    ).scalars():
+        approval.status = ApprovalStatus.EXPIRED
+        approval.decision_note = f"voided unanswered: {why}"
+        approval.decided_at = now
+        n += 1
+    return n
+
+
 @router.post("/projects/{project_id}/teams")
 def add_team(project_id: str, body: TeamSpec, session: Session = Depends(db)) -> dict:
     """Add a team to an existing project: agents, derived lead, team channel."""
@@ -1863,9 +1894,11 @@ def stop_project(
     project.status = ProjectStatus.STOPPED
     project.status_reason = body.reason or "stopped by chairman"
     revoked = _revoke_running(session, project.id)
+    voided = _void_pending_approvals(session, project.id, "the project was stopped")
     _audit(session, project.id, "project.stop", "project", project.id,
-           {"revoked_runs": revoked})
-    return {"id": project.id, "status": project.status, "revoked_runs": revoked}
+           {"revoked_runs": revoked, "voided_approvals": voided})
+    return {"id": project.id, "status": project.status, "revoked_runs": revoked,
+            "voided_approvals": voided}
 
 
 @router.post("/projects/{project_id}/complete")
@@ -1935,10 +1968,7 @@ def complete_project(project_id: str, session: Session = Depends(db)) -> dict:
     project.status = ProjectStatus.COMPLETED
     project.status_reason = f"delivered: {receipt['met']} requirement(s) true"
     revoked = _revoke_running(session, project.id)
-    for queued in session.execute(
-        select(RunQueue).where(RunQueue.project_id == project.id)
-    ).scalars():
-        session.delete(queued)
+    voided = _void_pending_approvals(session, project.id, "the project was completed")
 
     lines = []
     for r in rows:
@@ -1963,9 +1993,10 @@ def complete_project(project_id: str, session: Session = Depends(db)) -> dict:
                  f"promised {receipt['commitment']['deliver_by'][:10]}."
                  if receipt["commitment"] else "")),
     ))
-    _audit(session, project.id, "project.complete", "project", project.id, receipt)
+    _audit(session, project.id, "project.complete", "project", project.id,
+           {**receipt, "voided_approvals": voided})
     return {"id": project.id, "status": project.status, "receipt": receipt,
-            "revoked_runs": revoked}
+            "revoked_runs": revoked, "voided_approvals": voided}
 
 
 class AgentPause(BaseModel):
