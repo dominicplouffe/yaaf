@@ -50,11 +50,13 @@ STAGE_8_COLUMNS = (
     ("projects", "deadline"),
     ("requirements", "cycle_id"),
 )
-STAGE_9_TABLES = ("experiments", "experiment_arms")
+# Stage 9's own tables (`experiments`, `experiment_arms`) are absent on purpose:
+# 0007 creates them and 0012 drops them again, so they exist only in the middle
+# of the chain and never in the models. `projects.topology` outlived them.
 STAGE_9_COLUMNS = (("projects", "topology"),)
 
 REMOVED_TABLES = (STAGE_1_TABLES + STAGE_5_TABLES + STAGE_6_TABLES
-                  + STAGE_7_TABLES + STAGE_8_TABLES + STAGE_9_TABLES)
+                  + STAGE_7_TABLES + STAGE_8_TABLES)
 REMOVED_COLUMNS = STAGE_1_COLUMNS + STAGE_8_COLUMNS + STAGE_9_COLUMNS
 
 

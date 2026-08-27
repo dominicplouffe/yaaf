@@ -310,11 +310,11 @@ def test_solo_twin_keeps_the_ceo_inside_its_team(client):
 
 
 def test_a_twin_records_the_shape_it_actually_has(client):
-    """Topology is stored rather than inferred precisely so the stage-9
-    experiment compares a recorded fact that cannot drift. The clone left it out
-    of the constructor and the model default is 'ceo_leads_workers', so every
-    solo twin came back claiming a hierarchy of one — the same omission that
-    turned Deliver twins into Explore ones, on the field the experiment reads.
+    """Topology is stored rather than inferred precisely so the org shape stays
+    a recorded fact that cannot drift. The clone left it out of the constructor
+    and the model default is 'ceo_leads_workers', so every solo twin came back
+    claiming a hierarchy of one — the same omission that turned Deliver twins
+    into Explore ones.
 
     The twin rebuilds the source's teams and people exactly, so the source's
     recorded shape is true of the twin by construction. All three shapes, since

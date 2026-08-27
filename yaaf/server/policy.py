@@ -652,8 +652,8 @@ def check_task_claim(session: Session, project: Project, agent: Agent, task: Tas
     # relaxed there: with one agent in the company, there is nobody to hand it
     # to, and refusing would mean a solo project could never claim anything.
     # This is a real difference in what "done" is worth between topologies —
-    # a solo arm self-grades every observable — and the topology experiment
-    # should read it as a cost of solo, not pretend the arms are equivalent.
+    # a solo company self-grades every observable — and it is a cost of running
+    # solo, not a free pass.
     if task.created_by_agent_id == agent.id and _has_another_agent(session, agent):
         raise Refusal(
             "You wrote this task's success test, so you may not also be the one it "

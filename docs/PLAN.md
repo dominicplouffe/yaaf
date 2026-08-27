@@ -30,9 +30,11 @@ is how a company stays busy without finishing.
 **1. Does the org structure beat one agent?** Nothing here proves a hierarchy
 is worth its token cost. Hierarchy's main product is lossy summarization at
 each boundary; CEO judgement — what to queue, kill, and prioritize — is the
-actual product, and everything else is transport. So the repo ships a
-controlled experiment rather than an assumption: see
-[M2_PROTOCOL.md](M2_PROTOCOL.md) and `yaaf experiment`.
+actual product, and everything else is transport. This is still open, and
+nothing in the repo settles it. What the repo does give you is a fair
+comparison to run yourself: solo mode puts one agent under byte-identical
+governance, so the same goal can be handed to a hierarchy and to a single
+brain and the bills compared.
 
 **2. Can the framework keep its own rules?** Every forcing function names its
 enforcement mechanism. A notification is not an enforcement mechanism. The test
@@ -56,7 +58,7 @@ The chairman may extend a kill date once, in writing, with the reason recorded
 
 ## What exists
 
-The platform is built and tested: 526 offline tests, including chaos tests and
+The platform is built and tested: 524 offline tests, including chaos tests and
 golden-transcript evals, green on SQLite and Postgres in CI.
 
 | Layer | State |
@@ -71,18 +73,14 @@ golden-transcript evals, green on SQLite and Postgres in CI.
 | Evidence verification, webhooks, spot-audit, CEO-judgment metric | Built. |
 | Dashboard — Desk, Overview, Boardroom, Plan, Work, Review, Deliverables, Records, Settings | Built. |
 | Integrations — Slack (Socket Mode), GitHub, MCP data sources, S3, email | Built. |
-| Experiment harness — `yaaf experiment init/status/export/judge/score/decide` | Built. |
-| **The org-vs-solo experiment itself** | **Not run.** This is the current milestone. |
 
 ## What is next
 
-1. **Run M2.** Freeze the protocol, run both arms on the agreed goal pairs,
-   blind-judge, and apply the pre-registered decision rule. This is the gate;
-   everything else waits behind whether the answer is yes.
-2. **Act on the answer.** If the org loses, the org machinery is shelved and
-   the governance harness continues for single agents. If it wins, the next
-   work is making the CEO's planning better — the context pack and the eval
-   suite are where that happens, not the prompt.
+1. **Make the CEO's planning better.** The context pack and the eval suite are
+   where that happens, not the prompt.
+2. **Keep the solo path first-class.** Whatever the org layer turns out to be
+   worth, a single agent under the same governance has to stay a real way to
+   run yaaf — it is the control the first question is judged against.
 
 ## Deliberately not built
 
@@ -126,4 +124,3 @@ golden-transcript evals, green on SQLite and Postgres in CI.
 
 - [FEATURES.md](FEATURES.md) — the complete feature reference.
 - [GOVERNANCE.md](GOVERNANCE.md) — every rule and its default.
-- [M2_PROTOCOL.md](M2_PROTOCOL.md) — the experiment that decides the gate.

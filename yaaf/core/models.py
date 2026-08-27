@@ -401,8 +401,8 @@ class Project(Base):
     deadline: Mapped[datetime | None] = mapped_column(UTCDateTime)
     # The org shape, computed at creation from the team specs: solo (one brain
     # plans and executes), ceo_team (flat — the CEO talks to individuals), or
-    # ceo_leads_workers (the full hierarchy). Stored so the stage-9 experiment
-    # compares a recorded fact, never an inference that could drift.
+    # ceo_leads_workers (the full hierarchy). Stored so the org shape stays a
+    # recorded fact, never an inference that could drift.
     topology: Mapped[str] = mapped_column(String(24), default="ceo_leads_workers",
                                           server_default="ceo_leads_workers")
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
@@ -1322,48 +1322,6 @@ class Notice(Base):
     body: Mapped[str] = mapped_column(Text)
     consumed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     consumed_by_run_id: Mapped[str | None] = mapped_column(String(40))
-    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
-
-
-class Experiment(Base):
-    """The chairman's suspicion, made answerable: is the employee layer worth
-    it? One goal, one chairman-authored requirement set, one constitution —
-    copied to N projects that differ in exactly one variable, the topology —
-    run concurrently and compared on cost per requirement met.
-
-    The requirement set and constitution are frozen here so "the arms were
-    identical" is a checkable fact about this row, not a claim about setup
-    care. One known asymmetry is reported rather than hidden: solo is exempt
-    from requester-owns-the-test, so a solo arm self-grades its observables —
-    a real cost of that topology, priced in the reading, not papered over.
-    """
-
-    __tablename__ = "experiments"
-
-    id: Mapped[str] = mapped_column(String(40), primary_key=True)
-    name: Mapped[str] = mapped_column(String(200))
-    goal: Mapped[str] = mapped_column(Text)
-    # [{statement, acceptance_test, stage, est_runs}] — chairman-authored,
-    # copied verbatim into every arm as accepted scope.
-    requirement_set: Mapped[list] = mapped_column(JSONVariant)
-    constitution: Mapped[dict] = mapped_column(JSONVariant)
-    chairman_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
-    status: Mapped[str] = mapped_column(String(16), default="running")
-    closed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
-    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
-
-
-class ExperimentArm(Base):
-    __tablename__ = "experiment_arms"
-    __table_args__ = (UniqueConstraint("experiment_id", "topology"),)
-
-    id: Mapped[str] = mapped_column(String(40), primary_key=True)
-    experiment_id: Mapped[str] = mapped_column(ForeignKey("experiments.id"))
-    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
-    topology: Mapped[str] = mapped_column(String(24))
-    # The stop rule's mark: budget breached with nothing met → halted and
-    # reported, never left burning.
-    stopped_reason: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 

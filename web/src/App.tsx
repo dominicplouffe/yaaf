@@ -6,7 +6,6 @@ import Projects from "./pages/Projects";
 import NewProject from "./pages/NewProject";
 import ProjectPage from "./pages/Project";
 import Roles from "./pages/Roles";
-import Experiments from "./pages/Experiments";
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
@@ -23,9 +22,6 @@ function Shell({ children }: { children: React.ReactNode }) {
         </NavLink>
         <NavLink to="/roles" className={({ isActive }) => "navlink" + (isActive ? " active" : "")}>
           Role library
-        </NavLink>
-        <NavLink to="/experiments" className={({ isActive }) => "navlink" + (isActive ? " active" : "")}>
-          Experiments
         </NavLink>
         <NavLink to="/projects/new" className={({ isActive }) => "navlink" + (isActive ? " active" : "")}>
           + New project
@@ -95,14 +91,6 @@ export default function App() {
         element={
           <Shell>
             <Roles />
-          </Shell>
-        }
-      />
-      <Route
-        path="/experiments"
-        element={
-          <Shell>
-            <Experiments />
           </Shell>
         }
       />

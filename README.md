@@ -214,7 +214,7 @@ Everything yaaf does, and where it's documented. Full reference:
 | **Audit** | Every message, task transition, run, dollar, decision, amendment, and refusal — queryable and on screen. |
 | **Chat** | A resident CEO session per project: the Boardroom answers in seconds, and so does Slack. Chatting never consumes the work queue's caps. |
 | **Integrations** | Slack (Socket Mode — no public URL), GitHub repo-per-project, external MCP servers as one-form data sources, signed webhooks, S3-compatible artifacts, email/webhook alerts. → [INTEGRATIONS](docs/INTEGRATIONS.md) |
-| **Proof it works** | 526 offline tests, chaos tests, golden-transcript evals that gate prompt edits, a $0 scripted runtime CI drives a whole company through, and `yaaf experiment`. → [M2_PROTOCOL](docs/M2_PROTOCOL.md) |
+| **Proof it works** | 524 offline tests, chaos tests, golden-transcript evals that gate prompt edits, and a $0 scripted runtime CI drives a whole company through. |
 
 ## What you give up
 
@@ -239,14 +239,13 @@ yourself. Use a skill.
 ## The honest part
 
 Multi-agent hierarchies are mostly vibes right now — nobody has shown that a
-CEO + team beats one good agent with the same budget and rules. yaaf doesn't
-assume it either: the repo ships a controlled experiment
-([docs/M2_PROTOCOL.md](docs/M2_PROTOCOL.md), `yaaf experiment`) that runs an org
-arm against a single-agent arm under identical governance, blind-judges the
-results, and applies a pre-registered decision rule. If the org loses, the org
-part of this framework gets shelved — and the governance layer (requirements,
-verification, budgets, audit, sandbox) still stands on its own for single
-agents. Either way, you get the answer instead of the vibes.
+CEO + team beats one good agent with the same budget and rules, and yaaf does
+not claim to have shown it either. What it does give you is a fair way to find
+out for yourself: **solo mode** runs a single agent under byte-identical
+governance, so you can hand the same goal to a hierarchy and to one brain and
+compare the bills. And if the org layer turns out not to be worth it, the
+governance layer underneath — requirements, verification, budgets, audit,
+sandbox — still stands on its own for a single agent.
 
 ## Quickstart
 
@@ -379,7 +378,7 @@ Index: **[docs/](docs/)**.
 yaaf/server     the platform: API, policy engine (the refusals), dispatcher,
                 janitor, evidence verifier, Slack bridge
 yaaf/runner     leases runs, launches sandbox containers, meters everything
-yaaf/cli        `yaaf` — admin/observe CLI, incl. `yaaf experiment`
+yaaf/cli        `yaaf` — admin/observe CLI and spend reporting
 web/            the chairman's dashboard (React, served at /app)
 crews/          pre-staffed teams — a named job with a team already on it
 roles/          starter role library: general-purpose, a tutor, an analyst,
@@ -395,9 +394,8 @@ tests/          invariant suite that attacks every rule over HTTP, chaos
 
 Actively developed, pre-1.0, APIs still moving. The platform (requirements and
 commitments, governance, autonomy, sandbox, integrations, dashboard, eval +
-chaos suites, CI) is built and tested; the org-vs-single-agent experiment is the
-current milestone. Expect sharp edges; read [docs/PLAN.md](docs/PLAN.md) for
-where this is going and what would kill it.
+chaos suites, CI) is built and tested. Expect sharp edges; read
+[docs/PLAN.md](docs/PLAN.md) for where this is going and what would kill it.
 
 ## License
 

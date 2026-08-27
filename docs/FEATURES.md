@@ -37,9 +37,8 @@ employees and a lead. The CEO is the only agent that plans.
   pinned until you explicitly **repin** them — an edit never silently changes a
   running company.
 - **Solo mode** places the CEO as the sole member of the only team, so one
-  brain plans *and* executes under byte-identical policy. This is the
-  single-agent arm of the experiment, and a legitimate way to run yaaf if you
-  just want the guardrails.
+  brain plans *and* executes under byte-identical policy — a legitimate way
+  to run yaaf if you just want the guardrails.
 
 **The hierarchy is the message bus.** Employees speak in their team room; leads
 also in leadership; the CEO in leadership and the boardroom. Cross-team needs
@@ -302,7 +301,7 @@ decision, and configuration change. The dashboard surfaces it as:
 
 ## 15. Proving it works
 
-- **526 tests** run offline on SQLite and on Postgres in CI: an invariant suite
+- **524 tests** run offline on SQLite and on Postgres in CI: an invariant suite
   that attacks every rule over HTTP, chaos tests (crash, reap, retry), golden
   transcript evals that gate prompt edits, and end-to-end runs against a mock
   model.
@@ -311,10 +310,6 @@ decision, and configuration change. The dashboard surfaces it as:
   claims, completions, evidence, every governance trip — for $0. Behaviours are
   registered in code; **none ship by default**, so a mock project on your own
   install reads its context and exits. It is the test harness, not a demo mode.
-- **`yaaf experiment`** runs the org-vs-single-agent experiment described in
-  [M2_PROTOCOL.md](M2_PROTOCOL.md): two arms under identical governance, blind
-  bundles, judge-model plus human rubric passes, and a pre-registered decision
-  rule.
 
 ---
 

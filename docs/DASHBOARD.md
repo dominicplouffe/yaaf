@@ -15,7 +15,6 @@ the intended way to run a company.
 | **Desk** | The landing page. Everything needing you, across every company. |
 | **Projects** | Your portfolio — one comparable row per company. |
 | **Roles** | The role library, and each role's blast radius. |
-| **Experiments** | Paired org-vs-solo runs and their verdicts ([M2_PROTOCOL.md](M2_PROTOCOL.md)). |
 | **New project** | The creation wizard. |
 
 ---

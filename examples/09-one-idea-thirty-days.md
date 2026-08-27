@@ -54,9 +54,7 @@ what this example is for.
 **Solo** puts the CEO as the sole member of the only team: one brain plans
 *and* executes, under **byte-identical policy**. Every rule still binds — the
 queue ceiling, the evidence rules, the budget, the audit, the spot-check. What
-disappears is the hierarchy, not the discipline. (This is also the single-agent
-arm of the org-vs-solo experiment in
-[docs/M2_PROTOCOL.md](../docs/M2_PROTOCOL.md).)
+disappears is the hierarchy, not the discipline.
 
 **Explore** is the shape for a question you cannot write requirements for yet.
 There is no plan gate and no Plan tab — instead the agent states falsifiable
@@ -101,7 +99,7 @@ punished for reporting "nothing here" learns to find something.
 ## Try this next
 
 - Run it **twice on the same question** — once solo like this, once with a
-  three-person org — and compare cost and output. That is `yaaf experiment`
-  done by hand, and it is the question yaaf itself is unsure about.
+  three-person org — and compare cost and output. That is the question yaaf
+  itself is unsure about, and you can settle it for your own work.
 - Then **[10 — Read the filings](10-read-the-filings.md)**, for the strictest
   sourcing rules in the set.

@@ -131,11 +131,6 @@ def _janitor_project(session: Session, project: Project) -> None:
             f"The chairman amended the constitution (reason: {amendment.reason}). "
             f"Changes now in force: {amendment.changes}. Plan accordingly.",
         )
-    # The experiment stop rule watches PAUSED projects too: budget
-    # exhaustion pauses first, and the rule is the verdict on top.
-    from yaaf.server.experiments import check_experiment_arms
-
-    check_experiment_arms(session, project)
     if project.status != ProjectStatus.RUNNING:
         return
     try:

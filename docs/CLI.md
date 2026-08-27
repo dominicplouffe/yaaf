@@ -140,27 +140,6 @@ current calendar month.
 > `YAAF_DATABASE_URL`, not `YAAF_API`/`YAAF_ADMIN_TOKEN`. Run it where the
 > server runs, or point `YAAF_DATABASE_URL` at the same Postgres.
 
-## The experiment harness
-
-`yaaf experiment` runs the org-vs-single-agent experiment in
-[M2_PROTOCOL.md](M2_PROTOCOL.md). Two arms per goal, identical governance,
-blind judging, a pre-registered decision rule.
-
-| Command | What it does |
-|---|---|
-| `yaaf experiment init SPEC` | Provision both arms for every goal pair. Created **paused** — you start each pair's arms within 24h of each other, per protocol. |
-| `yaaf experiment status SPEC` | Live metric table per pair and arm. |
-| `yaaf experiment export SPEC …` | Bundle each arm's deliverables under sealed random labels. The label→arm mapping is written separately — **do not open it until scores are recorded.** |
-| `yaaf experiment judge …` | Judge-model passes over every blind bundle (needs `ANTHROPIC_API_KEY`). |
-| `yaaf experiment score BUNDLES LABEL FITNESS CRAFT UTILITY` | Record your own rubric pass for one blind bundle. |
-| `yaaf experiment decide …` | Unseal the mapping, compute the preregistered composites, apply the decision rule, write the result document. Run only after judging. |
-
-The spec shape and a worked pair of goals live in
-[`experiments/m2.spec.json`](../experiments/m2.spec.json); the protocol, the
-rubric and the decision rule are in [M2_PROTOCOL.md](M2_PROTOCOL.md). The solo
-arm is ordinary solo mode — see
-[`examples/09-one-idea-thirty-days.md`](../examples/09-one-idea-thirty-days.md).
-
 ---
 
 ## A full provisioning script

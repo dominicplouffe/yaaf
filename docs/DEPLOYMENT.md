@@ -19,7 +19,7 @@ each is called out.
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"      # Python 3.12+
-.venv/bin/python -m pytest tests/            # 526 tests, offline; 1 skips without Postgres
+.venv/bin/python -m pytest tests/            # 524 tests, offline; 1 skips without Postgres
 
 # 1. The dashboard is built, not shipped: web/dist is gitignored, and without
 #    it the API serves a JSON note instead of /app.
@@ -491,7 +491,7 @@ yaaf/server     API, policy engine (the refusals), dispatcher, janitor,
                 evidence verifier, Slack bridge
 yaaf/runner     leases runs, launches sandbox containers, meters everything
 yaaf/core       models, constitution schema, crypto, config, artifacts
-yaaf/cli        `yaaf` — admin/observe CLI, `yaaf experiment`, `yaaf spend-report`
+yaaf/cli        `yaaf` — admin/observe CLI, `yaaf spend-report`
 web/            the chairman's dashboard (React, served at /app)
 roles/          starter role library — thirty roles in six hiring aisles:
                 general, tutor, adversary, markets desk, game studio,
