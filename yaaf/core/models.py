@@ -1572,5 +1572,16 @@ class FoundingThread(Base):
     draft_bundle: Mapped[dict | None] = mapped_column(JSONVariant)
     # Set once the chairman turns a draft into a real company.
     created_project_id: Mapped[str | None] = mapped_column(String(40))
+    # A turn runs in a background thread and takes minutes, so two questions
+    # outlive the request that started it and cannot be answered from the
+    # in-memory progress store alone.
+    #
+    # Stamped when a turn starts, cleared when it ends. Still set with nothing
+    # running means the process died mid-turn — which is otherwise a thread
+    # that silently lost five minutes of work and looks merely idle.
+    turn_started_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # The last failure, kept because people refresh the moment something looks
+    # wrong, and an error that lived only in the browser would not survive it.
+    last_error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)

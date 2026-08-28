@@ -10,6 +10,7 @@ in `evals/`, not here.
 from __future__ import annotations
 
 import json
+import time
 import types
 
 import pytest
@@ -50,6 +51,10 @@ def founder(client, monkeypatch):
                           json={"value": API_KEY, "mode": "api_key"}, headers=ADMIN)
     assert response.status_code == 200, response.text
 
+    from yaaf.founder import progress
+
+    progress.clear()
+
     calls: list[dict] = []
     # The FounderTools the turn was built with, captured as it is made, so the
     # stub can call the very tools the CLI would have been offered.
@@ -63,9 +68,14 @@ def founder(client, monkeypatch):
     monkeypatch.setattr("yaaf.founder.tools.build_server", spy_build)
 
     def script(reply="Explore, because you are still choosing what to build.",
-               tool_calls=(), raises=None):
+               tool_calls=(), raises=None, blocks_on=None):
         async def fake_run(prompt, opts, stderr_sink=None, thread_id=""):
             calls.append({"prompt": prompt, "opts": opts, "env": dict(opts.env)})
+            if blocks_on is not None:
+                # Held open so a test can look at a turn while it is in flight —
+                # which is the state the whole change exists to make legible.
+                import anyio
+                await anyio.to_thread.run_sync(blocks_on.wait)
             if raises is not None:
                 raise raises
             # The tools the model would have called, called the way the CLI
@@ -89,14 +99,34 @@ def _tool_payload(entry) -> dict:
     return json.loads(entry["result"]["content"][0]["text"])
 
 
+def start(client, message: str, thread_id: str | None = None):
+    """Say something and wait for the turn, the way the page does.
+
+    The turn runs on a background thread now, so a test that read the response
+    body for a reply would be reading the moment *before* the work — which is
+    the whole point of the change, and worth exercising rather than shortcutting.
+    """
+    if thread_id is None:
+        response = client.post("/admin/founder/threads",
+                               json={"message": message}, headers=ADMIN)
+    else:
+        response = client.post(f"/admin/founder/threads/{thread_id}/say",
+                               json={"message": message}, headers=ADMIN)
+    if response.status_code != 202:
+        return response
+    thread_id = response.json()["id"]
+    for _ in range(200):
+        state = client.get(f"/admin/founder/threads/{thread_id}", headers=ADMIN).json()
+        if not state["running"]:
+            return state
+        time.sleep(0.05)
+    raise AssertionError("the turn never settled")
+
+
 def test_the_founder_drafts_a_whole_company_from_one_brief(client, founder):
     founder(tool_calls=[("propose_bundle", {"project": PROJECT})])
 
-    response = client.post("/admin/founder/threads",
-                           json={"message": "I want to find an idea and sell it."},
-                           headers=ADMIN)
-    assert response.status_code == 200, response.text
-    thread = response.json()
+    thread = start(client, "I want to find an idea and sell it.")
 
     assert thread["draft_bundle"]["project"]["slug"] == "sell-something"
     # The draft is a whole setup bundle, not a fragment: the review screen
@@ -110,14 +140,13 @@ def test_the_conversation_is_replayed_on_the_next_turn(client, founder):
     lose the argument — so the transcript is the state, not a CLI session."""
     calls = founder(reply="First answer.",
                     tool_calls=[("propose_bundle", {"project": PROJECT})])
-    thread = client.post("/admin/founder/threads",
-                         json={"message": "Design me a company."}, headers=ADMIN).json()
+    thread = start(client, "Design me a company.")
 
     founder(reply="Second answer.")
-    client.post(f"/admin/founder/threads/{thread['id']}/say",
-                json={"message": "Fewer teams, please."}, headers=ADMIN)
+    start(client, "Fewer teams, please.", thread["id"])
 
-    prompt = calls[-1]["prompt"]
+    # `calls` records tool invocations too, so take the last actual turn.
+    prompt = next(c["prompt"] for c in reversed(calls) if "prompt" in c)
     assert "Design me a company." in prompt
     assert "First answer." in prompt
     assert "Fewer teams, please." in prompt
@@ -129,10 +158,7 @@ def test_the_conversation_is_replayed_on_the_next_turn(client, founder):
 def test_a_draft_the_create_endpoint_would_reject_is_refused(client, founder):
     calls = founder(tool_calls=[("propose_bundle", {"project": {
         "slug": "NOT A SLUG", "name": "x", "goal": "too short"}})])
-    response = client.post("/admin/founder/threads",
-                           json={"message": "build me something"}, headers=ADMIN)
-    assert response.status_code == 200, response.text
-    assert response.json()["draft_bundle"] is None
+    assert start(client, "build me something")["draft_bundle"] is None
     refusal = _tool_payload(calls[-1])
     assert refusal["ok"] is False
     assert any("slug" in problem for problem in refusal["problems"])
@@ -140,7 +166,7 @@ def test_a_draft_the_create_endpoint_would_reject_is_refused(client, founder):
 
 def test_the_library_is_searchable_and_reports_what_a_role_needs(client, founder):
     calls = founder(tool_calls=[("search_roles", {})])
-    client.post("/admin/founder/threads", json={"message": "who can I hire?"}, headers=ADMIN)
+    start(client, "who can I hire?")
     result = _tool_payload(calls[-1])
     assert {"ceo", "worker"} <= {r["slug"] for r in result["roles"]}
     assert all("needs_credentials" in r for r in result["roles"])
@@ -148,7 +174,7 @@ def test_the_library_is_searchable_and_reports_what_a_role_needs(client, founder
 
 def test_rehearse_before_a_draft_exists_is_an_answer_not_a_crash(client, founder):
     calls = founder(tool_calls=[("rehearse", {})])
-    client.post("/admin/founder/threads", json={"message": "run the drill"}, headers=ADMIN)
+    start(client, "run the drill")
     assert "propose_bundle" in _tool_payload(calls[-1])["error"]
 
 
@@ -166,14 +192,14 @@ def test_the_founder_runs_on_the_credential_the_agents_run_on(client, founder):
         return next(c["env"] for c in reversed(calls) if "env" in c)
 
     calls = founder()
-    client.post("/admin/founder/threads", json={"message": "hello"}, headers=ADMIN)
+    start(client, "hello")
     assert last_env(calls)["ANTHROPIC_API_KEY"] == API_KEY
     assert "CLAUDE_CODE_OAUTH_TOKEN" not in last_env(calls)
 
     client.put("/admin/founder/credential",
                json={"value": OAUTH_TOKEN, "mode": "subscription"}, headers=ADMIN)
     calls = founder()
-    client.post("/admin/founder/threads", json={"message": "hello again"}, headers=ADMIN)
+    start(client, "hello again")
     assert last_env(calls)["CLAUDE_CODE_OAUTH_TOKEN"] == OAUTH_TOKEN
     assert "ANTHROPIC_API_KEY" not in last_env(calls)
 
@@ -206,40 +232,65 @@ def test_a_credential_in_the_wrong_mode_is_refused_when_pasted(client, mode, val
         "credential_configured"] is False
 
 
-def test_a_rejected_credential_is_a_sentence_not_a_blank_500(client, founder):
-    """Every model failure used to escape as a 500 with an empty body."""
+@pytest.mark.parametrize(
+    "kind,message,expect",
+    [
+        ("auth", "the model rejected this credential.", "rejected this credential"),
+        ("busy", "rate limited — try again shortly.", "rate limited"),
+        ("stalled", "nothing has happened for 300s while running the fire drill "
+                    "on the draft. That is a hang rather than slow work.", "fire drill"),
+    ],
+)
+def test_a_failed_turn_says_why_and_survives_a_refresh(client, founder, kind, message, expect):
+    """A failed turn no longer has an HTTP status to be.
+
+    The request that started it was answered minutes earlier, so the reason has
+    to live somewhere a later fetch can find it — which is also what makes it
+    survive the refresh people do the moment something looks wrong. Every one
+    of these was a bare 500 with an empty body once.
+    """
     from yaaf.founder.session import FounderModelError
 
-    founder(raises=FounderModelError("auth", "the model rejected this credential."))
-    response = client.post("/admin/founder/threads",
-                           json={"message": "design me a company"}, headers=ADMIN)
-    assert response.status_code == 422
-    assert "rejected this credential" in response.json()["detail"]
+    founder(raises=FounderModelError(kind, message))
+    thread = start(client, "design me a company")
+
+    assert expect in thread["last_error"]
+    assert thread["running"] is False
+    # Not "interrupted": the turn failed and said so, rather than vanishing.
+    assert thread["interrupted"] is False
+
+    # And live, while it is still in the store, with a kind the page can style by.
+    state = client.get(f"/admin/founder/threads/{thread['id']}/progress",
+                       headers=ADMIN).json()
+    assert state["kind"] == kind
+    assert expect in state["error"]
+
+    # A refresh — a fresh fetch that never saw the failure happen — still finds it.
+    again = client.get(f"/admin/founder/threads/{thread['id']}", headers=ADMIN).json()
+    assert expect in again["last_error"]
 
 
-def test_an_overloaded_model_is_a_retry_not_a_failure(client, founder):
-    from yaaf.founder.session import FounderModelError
-
-    founder(raises=FounderModelError("busy", "rate limited — try again shortly."))
-    response = client.post("/admin/founder/threads",
-                           json={"message": "design me a company"}, headers=ADMIN)
-    assert response.status_code == 503
-
-
-def test_a_missing_cli_names_the_image_that_needs_it(client, founder):
+def test_a_missing_cli_names_the_image_that_needs_it():
     from claude_agent_sdk import CLINotFoundError
 
-    from yaaf.founder.session import FounderModelError, _classify
+    from yaaf.founder.session import _classify
 
     error = _classify(CLINotFoundError("claude not found"))
     assert error.kind == "cli_missing"
     assert "deploy/Dockerfile" in str(error)
 
-    founder(raises=FounderModelError(error.kind, str(error)))
-    response = client.post("/admin/founder/threads",
-                           json={"message": "hi"}, headers=ADMIN)
-    assert response.status_code == 500
-    assert "Dockerfile" in response.json()["detail"]
+
+def test_the_next_turn_clears_the_last_failure(client, founder):
+    from yaaf.founder.session import FounderModelError
+
+    founder(raises=FounderModelError("busy", "rate limited."))
+    thread = start(client, "design me a company")
+    assert thread["last_error"]
+
+    founder(reply="Here it is.", tool_calls=[("propose_bundle", {"project": PROJECT})])
+    settled = start(client, "try again", thread["id"])
+    assert settled["last_error"] is None
+    assert settled["draft_bundle"]["project"]["slug"] == "sell-something"
 
 
 def test_without_a_platform_credential_the_founder_says_so(client):
@@ -278,7 +329,7 @@ def test_the_founder_gets_six_tools_and_no_way_to_act(client, founder):
     from yaaf.founder import tools
 
     calls = founder()
-    client.post("/admin/founder/threads", json={"message": "hello"}, headers=ADMIN)
+    start(client, "hello")
     opts = calls[0]["opts"]
 
     assert opts.allowed_tools == tools.ALLOWED_TOOLS
@@ -329,9 +380,7 @@ def test_the_founding_conversation_becomes_the_ceo_briefing(client, founder):
 
     founder(reply="Explore. Here are my assumptions.",
             tool_calls=[("propose_bundle", {"project": PROJECT})])
-    thread = client.post("/admin/founder/threads",
-                         json={"message": "I want to find an idea and sell it."},
-                         headers=ADMIN).json()
+    thread = start(client, "I want to find an idea and sell it.")
 
     created = client.post("/admin/projects",
                           json={**PROJECT, "chairman_email": "chair@example.com"},
@@ -437,9 +486,7 @@ def test_a_rule_this_platform_does_not_have_is_refused(client, founder):
     run invented `reporting_cadence`, which is why this is checked."""
     calls = founder(tool_calls=[("propose_bundle", {"project": {
         **PROJECT, "constitution": {"reporting_cadence": 4}}})])
-    response = client.post("/admin/founder/threads",
-                           json={"message": "design me a company"}, headers=ADMIN)
-    assert response.json()["draft_bundle"] is None
+    assert start(client, "design me a company")["draft_bundle"] is None
     problems = _tool_payload(calls[-1])["problems"]
     assert any("reporting_cadence" in p for p in problems)
     # And it is told what the field is really called, so it can fix it now.
@@ -507,8 +554,7 @@ def test_a_turn_narrates_itself_while_it_runs(client, founder):
             tool_calls=[("search_roles", {}),
                         ("propose_bundle", {"project": PROJECT})])
 
-    thread = client.post("/admin/founder/threads",
-                         json={"message": "design me a company"}, headers=ADMIN).json()
+    thread = start(client, "design me a company")
 
     state = client.get(f"/admin/founder/threads/{thread['id']}/progress",
                        headers=ADMIN).json()
@@ -519,20 +565,6 @@ def test_a_turn_narrates_itself_while_it_runs(client, founder):
     assert any("Explore" in label for label in labels)
     assert state["running"] is False
     assert all(step["state"] == "done" for step in state["steps"])
-
-
-def test_progress_names_the_step_a_stalled_turn_died_on(client, founder):
-    """'It is stuck' and 'it is stuck grading the goal' are different facts."""
-    from yaaf.founder.session import FounderModelError
-
-    founder(raises=FounderModelError(
-        "stalled", "nothing has happened for 300s while running the fire drill "
-                   "on the draft. That is a hang rather than slow work."))
-    response = client.post("/admin/founder/threads",
-                           json={"message": "design me a company"}, headers=ADMIN)
-    assert response.status_code == 504
-    assert "fire drill" in response.json()["detail"]
-    assert "hang rather than slow work" in response.json()["detail"]
 
 
 def test_only_silence_counts_against_the_watchdog():
@@ -587,3 +619,100 @@ def test_a_silent_stream_is_cut_off_and_says_what_it_was_doing():
         asyncio.run(exercise())
     assert caught.value.kind == "stalled"
     assert "fire drill" in str(caught.value)
+
+
+# ── the turn outlives the request ───────────────────────────────────────────────
+
+
+def test_the_request_returns_before_the_turn_finishes(client, founder):
+    """The point of the whole change.
+
+    Held on the request, a five-minute turn is lost to any refresh, ended by
+    any reverse proxy (nginx cuts at 60s, Cloudflare at 100), and holds a
+    threadpool slot throughout.
+    """
+    import threading
+
+    from yaaf.founder import progress
+
+    release = threading.Event()
+    founder(reply="Done.", blocks_on=release)
+
+    response = client.post("/admin/founder/threads",
+                           json={"message": "design me a company"}, headers=ADMIN)
+    assert response.status_code == 202, response.text
+    thread = response.json()
+
+    # Answered, and still working: the chairman's own words are already there,
+    # the Founder's are not yet.
+    assert thread["running"] is True
+    assert [t["role"] for t in thread["turns"]] == ["chairman"]
+    assert progress.is_running(thread["id"])
+
+    # A second turn on the same thread is refused rather than interleaved.
+    second = client.post(f"/admin/founder/threads/{thread['id']}/say",
+                         json={"message": "and another thing"}, headers=ADMIN)
+    assert second.status_code == 409
+    assert "already working" in second.json()["detail"]
+
+    release.set()
+    for _ in range(200):
+        state = client.get(f"/admin/founder/threads/{thread['id']}", headers=ADMIN).json()
+        if not state["running"]:
+            break
+        time.sleep(0.05)
+    assert [t["role"] for t in state["turns"]] == ["chairman", "founder"]
+    assert state["interrupted"] is False
+
+
+def test_a_reload_rejoins_a_running_turn(client, founder):
+    """Five minutes of work must survive the refresh people do when something
+    looks slow. A fresh fetch that never saw the turn start still finds it
+    running, and still gets its result."""
+    import threading
+
+    release = threading.Event()
+    founder(reply="Here it is.",
+            tool_calls=[("propose_bundle", {"project": PROJECT})],
+            blocks_on=release)
+
+    thread = client.post("/admin/founder/threads",
+                         json={"message": "design me a company"}, headers=ADMIN).json()
+
+    # What a reloaded page does: list threads, find the open one, poll it.
+    listed = client.get("/admin/founder/threads", headers=ADMIN).json()["threads"]
+    open_one = next(t for t in listed if not t["created_project_id"])
+    assert open_one["id"] == thread["id"]
+    assert client.get(f"/admin/founder/threads/{open_one['id']}",
+                      headers=ADMIN).json()["running"] is True
+
+    release.set()
+    for _ in range(200):
+        state = client.get(f"/admin/founder/threads/{open_one['id']}",
+                           headers=ADMIN).json()
+        if not state["running"]:
+            break
+        time.sleep(0.05)
+    assert state["draft_bundle"]["project"]["slug"] == "sell-something"
+
+
+def test_a_turn_lost_to_a_restart_says_so_rather_than_looking_idle(client, founder):
+    """In-memory progress dies with the process. Without the stamp on the row,
+    a thread that lost five minutes of work to a restart is indistinguishable
+    from one that was never asked anything."""
+    from yaaf.core.db import db_session
+    from yaaf.core.models import FoundingThread, utcnow
+    from yaaf.founder import progress
+
+    founder(reply="Done.")
+    thread = start(client, "design me a company")
+    assert thread["interrupted"] is False
+
+    # A turn was under way; the process that was running it is gone.
+    with db_session() as session:
+        session.get(FoundingThread, thread["id"]).turn_started_at = utcnow()
+    progress.clear()
+
+    reloaded = client.get(f"/admin/founder/threads/{thread['id']}", headers=ADMIN).json()
+    assert reloaded["running"] is False
+    assert reloaded["interrupted"] is True

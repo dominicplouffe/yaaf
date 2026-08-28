@@ -13,6 +13,8 @@ the chairman has created one and hands the CEO the conversation it came from.
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -30,6 +32,7 @@ from yaaf.core.models import (
 )
 from yaaf.founder import agent as founder_agent
 from yaaf.founder import progress
+from yaaf.founder import runner as founder_runner
 from yaaf.founder.session import FounderModelError
 from yaaf.server.deps import admin_auth, db
 
@@ -73,6 +76,7 @@ def _render(thread: FoundingThread) -> dict:
     runs through the CLI, which owns the tool calls and the thinking, so none
     of that reaches us to be filtered out here.
     """
+    running = progress.is_running(thread.id)
     return {
         "id": thread.id,
         "title": thread.title,
@@ -82,6 +86,12 @@ def _render(thread: FoundingThread) -> dict:
         ],
         "draft_bundle": thread.draft_bundle,
         "created_project_id": thread.created_project_id,
+        "running": running,
+        # Stamped but nothing running means the process died mid-turn. Saying so
+        # is the difference between "your turn was lost, send it again" and a
+        # thread that looks idle for no reason.
+        "interrupted": bool(thread.turn_started_at) and not running,
+        "last_error": thread.last_error,
         "created_at": thread.created_at,
         "updated_at": thread.updated_at,
     }
@@ -180,9 +190,10 @@ def start_thread(body: StartIn, session: Session = Depends(db)) -> dict:
     )
     session.add(thread)
     session.flush()
-    if body.message and body.message.strip():
+    started = bool(body.message and body.message.strip())
+    if started:
         _say(session, thread, body.message.strip())
-    return _render(thread)
+    return _accepted(_render(thread)) if started else _render(thread)
 
 
 @router.get("/threads")
@@ -208,26 +219,56 @@ class SayIn(BaseModel):
     message: str = Field(min_length=1, max_length=40_000)
 
 
-#: How a failed turn reaches the chairman. Every one of these was a bare 500
-#: with an empty body once, which is how a chairman with a subscription token
-#: in an API-key field ended up with nothing to go on at all.
-_STATUS_FOR = {
-    "auth": 422,        # his to fix, and the message says how
-    "busy": 503,        # nobody's fault; try again
-    "cli_missing": 500, # ours: the image is wrong
-    "stalled": 504,     # it went quiet; the conversation is still there
-    "unknown": 500,
-}
+def _accepted(body: dict) -> JSONResponse:
+    """202: recorded and under way, not finished.
+
+    The reply and the draft land on a later GET. A failed turn no longer has an
+    HTTP status to be — the request that started it was answered minutes
+    earlier — so its message travels on the thread (`last_error`) and in the
+    progress store, with a `kind` the page can style by.
+    """
+    return JSONResponse(status_code=202, content=jsonable_encoder(body))
 
 
 def _say(session: Session, thread: FoundingThread, message: str) -> None:
-    try:
-        founder_agent.say(session, thread, message)
-    except platform.NoPlatformCredential as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except FounderModelError as exc:
-        raise HTTPException(status_code=_STATUS_FOR.get(exc.kind, 500),
-                            detail=str(exc)) from exc
+    """Record the message and hand the turn to a background thread.
+
+    Nothing here waits on a model. The turn takes minutes, and a request that
+    holds it loses the work to a refresh, to any reverse proxy, and to a
+    threadpool slot held for the duration.
+
+    The credential is checked *now* rather than in the thread, because a
+    missing key is the chairman's to fix and he should be told on the request
+    that asked, not through a failed turn.
+    """
+    if progress.is_running(thread.id):
+        raise HTTPException(
+            status_code=409,
+            detail="this thread is already working on a turn — wait for it to finish",
+        )
+    if not platform.has_credential(session):
+        raise HTTPException(status_code=422, detail=str(platform.NoPlatformCredential(
+            "no platform credential is configured. Set one in Settings so "
+            "product-wide conversations (the Founder) can run; a project's own "
+            "billing key is never used for them.")))
+    founder_agent.start_turn(session, thread, message)
+    # After the commit, so the thread the worker loads already has the message
+    # on it. `db()` commits when the request returns.
+    _after_commit(session, lambda: founder_runner.submit(thread.id))
+
+
+def _after_commit(session: Session, work) -> None:
+    """Run `work` once this request's transaction lands.
+
+    The worker opens its own session and would otherwise race the commit,
+    reading a thread whose new message is not there yet — and then answering
+    the message before it.
+    """
+    from sqlalchemy import event
+
+    @event.listens_for(session, "after_commit", once=True)
+    def _fire(_session):  # pragma: no cover - exercised through every say
+        work()
 
 
 @router.post("/threads/{thread_id}/say")
@@ -239,7 +280,7 @@ def say(thread_id: str, body: SayIn, session: Session = Depends(db)) -> dict:
             detail="this thread already became a company; talk to its CEO in the boardroom",
         )
     _say(session, thread, body.message.strip())
-    return _render(thread)
+    return _accepted(_render(thread))
 
 
 @router.get("/threads/{thread_id}/progress")

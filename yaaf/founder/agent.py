@@ -36,7 +36,7 @@ from yaaf.founder.prompt import system_prompt
 log = logging.getLogger("yaaf.founder")
 
 
-def _prompt(thread: FoundingThread, message: str) -> str:
+def _prompt(thread: FoundingThread) -> str:
     """The turn, with everything the model needs to continue an argument.
 
     The draft goes in whole. It is the object under discussion, the model has
@@ -60,17 +60,34 @@ def _prompt(thread: FoundingThread, message: str) -> str:
             "propose_bundle — sending the whole thing, not a patch — whenever the "
             "chairman's message changes it."
         )
-    parts.append(f"CHAIRMAN: {message}")
     return "\n\n".join(parts)
 
 
-def say(session: Session, thread: FoundingThread, message: str) -> dict:
-    """Run one chairman turn to completion and persist what happened.
+def start_turn(session: Session, thread: FoundingThread, message: str) -> None:
+    """Record what the chairman said, and mark a turn as owing a reply.
 
-    Raises :class:`~yaaf.core.platform.NoPlatformCredential` when no key is
-    installed, and :class:`~yaaf.founder.session.FounderModelError` when the
-    model turn fails — both carry a sentence the API hands straight to the
-    chairman, because the alternative is the blank 500 this replaced.
+    Runs on the request's session and commits with it, so his own words appear
+    the instant he sends them. Everything after this takes minutes and belongs
+    somewhere the request is not waiting on.
+    """
+    turns = list(thread.transcript or [])
+    turns.append({"role": "chairman", "text": message})
+    thread.transcript = turns
+    thread.turn_started_at = utcnow()
+    thread.last_error = None
+    if not thread.title:
+        thread.title = message.strip().split("\n")[0][:200]
+    thread.updated_at = utcnow()
+    progress.begin(thread.id)
+
+
+def run_turn(session: Session, thread: FoundingThread) -> dict:
+    """Run the model turn whose message is already the last thing said.
+
+    Called on a background thread with a session of its own. Raises
+    :class:`~yaaf.core.platform.NoPlatformCredential` or
+    :class:`~yaaf.founder.session.FounderModelError`; the caller records the
+    failure on the thread rather than letting it die in a log nobody reads.
     """
     env = platform.founder_env(session)
     model = platform.founder_model(session)
@@ -88,28 +105,17 @@ def say(session: Session, thread: FoundingThread, message: str) -> dict:
         mcp_servers={tools.SERVER: founder_tools.server},
         allowed_tools=tools.ALLOWED_TOOLS,
     )
-    # The endpoint is sync and FastAPI runs it in a worker thread, so this owns
-    # its event loop for the length of the turn. The turn narrates itself into
-    # `progress` while it runs, which the page polls — a five-minute request
-    # with a silent spinner on it is indistinguishable from a hang.
-    progress.begin(thread.id)
-    try:
-        reply = asyncio.run(
-            founder_session.run(_prompt(thread, message), opts, thread_id=thread.id))
-    except BaseException:
-        progress.end(thread.id, ok=False)
-        raise
-    progress.end(thread.id)
+    # This thread owns its event loop for the length of the turn. The turn
+    # narrates itself into `progress` while it runs, which the page polls.
+    reply = asyncio.run(founder_session.run(_prompt(thread), opts, thread_id=thread.id))
 
     turns = list(thread.transcript or [])
-    turns.append({"role": "chairman", "text": message})
     if reply:
         turns.append({"role": "founder", "text": reply})
     thread.transcript = turns
     thread.draft_bundle = state.get("draft")
+    thread.turn_started_at = None
     thread.updated_at = utcnow()
-    if not thread.title:
-        thread.title = message.strip().split("\n")[0][:200]
     session.flush()
     return {"reply": reply, "draft_bundle": thread.draft_bundle}
 

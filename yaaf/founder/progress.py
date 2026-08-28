@@ -68,6 +68,10 @@ class Turn:
     last_activity: float = field(default_factory=time.time)
     running: bool = True
     ended_at: float | None = None
+    # Carried here as well as on the row: the page sees a failure the moment it
+    # happens rather than waiting for the next full fetch.
+    error: str | None = None
+    kind: str | None = None
 
 
 _lock = threading.Lock()
@@ -135,11 +139,13 @@ def touch(thread_id: str) -> None:
             turn.last_activity = time.time()
 
 
-def end(thread_id: str, *, ok: bool = True) -> None:
+def end(thread_id: str, *, ok: bool = True, error: str | None = None,
+        kind: str | None = None) -> None:
     with _lock:
         turn = _turns.get(thread_id)
         if turn is None:
             return
+        turn.error, turn.kind = error, kind
         now = time.time()
         for step in turn.steps:
             if step.state == "running":
@@ -147,6 +153,13 @@ def end(thread_id: str, *, ok: bool = True) -> None:
                 step.finished_at = now
         turn.running = False
         turn.ended_at = now
+
+
+def is_running(thread_id: str) -> bool:
+    """Whether a turn is in flight — the guard against two at once."""
+    with _lock:
+        turn = _turns.get(thread_id)
+        return turn is not None and turn.running
 
 
 def stalled_for(thread_id: str) -> float:
@@ -175,11 +188,14 @@ def read(thread_id: str) -> dict:
     with _lock:
         turn = _turns.get(thread_id)
         if turn is None:
-            return {"running": False, "steps": [], "seconds": 0.0}
+            return {"running": False, "steps": [], "seconds": 0.0,
+                    "error": None, "kind": None}
         return {
             "running": turn.running,
             "seconds": round((turn.ended_at or time.time()) - turn.started_at, 1),
             "steps": [step.as_dict() for step in turn.steps],
+            "error": turn.error,
+            "kind": turn.kind,
         }
 
 

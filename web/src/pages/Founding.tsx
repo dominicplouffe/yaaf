@@ -8,6 +8,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { ApiError, del, get, post, ProjectBundle, put } from "../api";
+import Markdown from "../Markdown";
 import { SecretInput } from "../ui";
 
 interface Turn {
@@ -21,6 +22,22 @@ interface Thread {
   turns: Turn[];
   draft_bundle: ProjectBundle | null;
   created_project_id: string | null;
+  /** A turn is in flight on the server — not on this request. */
+  running: boolean;
+  /** A turn was under way when the process that ran it went away. */
+  interrupted: boolean;
+  /** Why the last turn failed, kept so it survives a reload. */
+  last_error: string | null;
+}
+
+/** A step label is a line of the Founder's own markdown. It belongs on one
+ *  row, so the emphasis is stripped rather than rendered. */
+function plain(text: string): string {
+  return text
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/(^|\s)\*([^*]+)\*/g, "$1$2")
+    .replace(/^#+\s*/, "");
 }
 
 interface Step {
@@ -65,7 +82,7 @@ function Steps({ progress }: { progress: Progress | null }) {
               <span className="step-mark">
                 {step.state === "done" ? "✓" : step.state === "failed" ? "✕" : "•"}
               </span>
-              <span className="step-label">{step.label}</span>
+              <span className="step-label">{plain(step.label)}</span>
               <span className="step-secs">{step.seconds}s</span>
             </li>
           ))}
@@ -230,7 +247,16 @@ export default function Founding() {
         threads: { id: string; created_project_id: string | null }[];
       }>("/admin/founder/threads");
       const open = threads.find((t) => !t.created_project_id);
-      if (open) setThread(await get<Thread>(`/admin/founder/threads/${open.id}`));
+      if (!open) return;
+      const resumed = await get<Thread>(`/admin/founder/threads/${open.id}`);
+      setThread(resumed);
+      // A turn that was under way when the server went away. Saying so beats a
+      // thread that looks idle for no reason and quietly lost five minutes.
+      if (resumed.interrupted) {
+        setError("That turn was interrupted before it finished — send it again.");
+      } else if (resumed.last_error) {
+        setError(resumed.last_error);
+      }
     } catch {
       /* a fresh screen is a fine fallback */
     }
@@ -245,17 +271,30 @@ export default function Founding() {
     bottom.current?.scrollIntoView({ behavior: "smooth" });
   }, [thread?.turns.length, busy, progress?.steps.length]);
 
-  // Only while a turn is in flight. The endpoint reads an in-process store and
-  // touches no database, so a two-second poll costs nothing.
+  // The turn belongs to the server, so this is the only thing waiting on it.
+  // A turn started a second ago and one found still running after a reload are
+  // the same case, which is what makes a refresh mid-draft survivable.
+  const running = thread?.running ?? false;
   useEffect(() => {
-    if (!busy || !thread) return;
+    if (!running || !thread) return;
     let live = true;
+    setBusy(true);
     const tick = async () => {
       try {
-        const next = await get<Progress>(`/admin/founder/threads/${thread.id}/progress`);
-        if (live) setProgress(next);
+        const [next, state] = await Promise.all([
+          get<Thread>(`/admin/founder/threads/${thread.id}`),
+          get<Progress>(`/admin/founder/threads/${thread.id}/progress`),
+        ]);
+        if (!live) return;
+        setProgress(state);
+        if (!next.running) {
+          setThread(next);
+          setBusy(false);
+          // The turn's own failure, which outlived the request that started it.
+          if (next.last_error) setError(next.last_error);
+        }
       } catch {
-        /* the turn's own error is the one worth showing */
+        /* a dropped poll is not worth reporting; the next one will do */
       }
     };
     void tick();
@@ -264,7 +303,7 @@ export default function Founding() {
       live = false;
       clearInterval(timer);
     };
-  }, [busy, thread?.id]);
+  }, [running, thread?.id]);
 
   async function send() {
     const text = message.trim();
@@ -276,24 +315,18 @@ export default function Founding() {
     // Founder works, rather than sitting in the box looking unsent.
     setMessage("");
     try {
-      // The thread is created empty first, so it has an id before the long
-      // turn starts. Otherwise the very first message — the drafting turn,
-      // the one that takes minutes — is the one turn with nothing to poll,
-      // which is exactly the case that looked like a hang.
-      let target = thread;
-      if (!target) {
-        target = await post<Thread>("/admin/founder/threads", {});
-        setThread(target);
-      }
-      const next = await post<Thread>(`/admin/founder/threads/${target.id}/say`,
-                                      { message: text });
+      // The turn runs on the server, not on this request: the POST comes back
+      // in milliseconds with the chairman's own words already on the thread,
+      // and the polling effect below waits for the rest.
+      const next = thread
+        ? await post<Thread>(`/admin/founder/threads/${thread.id}/say`, { message: text })
+        : await post<Thread>("/admin/founder/threads", { message: text });
       setThread(next);
     } catch (err) {
       setMessage(text);
+      setBusy(false);
       if (err instanceof ApiError && err.status === 422) void loadStatus();
       setError((err as Error).message);
-    } finally {
-      setBusy(false);
     }
   }
 
@@ -364,7 +397,13 @@ export default function Founding() {
           {turns.map((turn, i) => (
             <div key={i} className={`turn turn-${turn.role}`}>
               <div className="turn-who">{turn.role === "chairman" ? "You" : "The Founder"}</div>
-              <div className="turn-text">{turn.text}</div>
+              <div className="turn-text">
+                {/* The Founder writes markdown — headings, bold, lists, backticked
+                    constitution keys. Rendering it as source was making the most
+                    carefully written thing on the page the hardest to read. The
+                    chairman types plain text, so his turns stay verbatim. */}
+                {turn.role === "founder" ? <Markdown>{turn.text}</Markdown> : turn.text}
+              </div>
             </div>
           ))}
           {busy && <Steps progress={progress} />}

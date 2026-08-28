@@ -1249,6 +1249,9 @@ button.rolepick { width: 100%; text-align: left; background: var(--surface-2); }
   color: var(--muted); }
 .turn-text { white-space: pre-wrap; border-radius: var(--radius); padding: 10px 14px;
   border: 1px solid var(--border); }
+/* A rendered turn brings its own block spacing; pre-wrap on top of it would
+   double every gap the markdown already made. */
+.turn-text:has(> .markdown) { white-space: normal; }
 .turn-chairman .turn-text { background: var(--surface-2); }
 /* The Founder's turns carry the accent edge the CEO's boardroom replies do:
    the two are the same relationship at two moments, and reading as one voice
