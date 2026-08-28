@@ -244,8 +244,12 @@ your login token printed at the end. Safe to re-run. The dashboard binds to
 ssh -N -L 8080:localhost:8080 you@your-server   # then open localhost:8080/app
 ```
 
-`--bind 0.0.0.0` publishes it instead — but the admin token is a static bearer,
-so put TLS in front of it first. Afterwards:
+`--bind` publishes it somewhere else instead — `--bind 0.0.0.0` on every
+interface, or repeat the flag to name the ones you want:
+`--bind 127.0.0.1 --bind 192.168.0.5` keeps the tunnel working and adds the LAN
+address. Either way the admin token is a static bearer, so put TLS in front of
+it before an untrusted network sees it. A later bare re-run keeps whatever you
+published on. Afterwards:
 
 ```bash
 ./update_single_server.sh    # pull new code, back up, rebuild, migrate, verify

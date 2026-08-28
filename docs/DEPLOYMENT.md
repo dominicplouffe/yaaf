@@ -94,8 +94,9 @@ that in plain English.
 
 | Flag | Effect |
 |---|---|
-| *(none)* | dashboard on `127.0.0.1:8080`, reachable over an SSH tunnel |
-| `--bind 0.0.0.0` | publish it — read the warning it prints |
+| *(none)* | dashboard on `127.0.0.1:8080`, reachable over an SSH tunnel — or whatever the last run published on |
+| `--bind 0.0.0.0` | publish it on every interface — read the warning it prints |
+| `--bind 127.0.0.1 --bind 192.168.0.5` | repeatable: one published port per address, so localhost and the LAN address both answer |
 | `--port 9090` | somewhere other than 8080 |
 | `--skip-roles` | do not touch the role or crew libraries |
 

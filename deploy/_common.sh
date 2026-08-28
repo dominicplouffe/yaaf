@@ -266,6 +266,15 @@ sync_crew_library() {
   fi
 }
 
+# The address(es) the dashboard is published on, one per line, read back from
+# the generated override so a bare re-run of deploy keeps the binding you last
+# asked for instead of quietly reverting to loopback.
+current_binds() {
+  if [ -f "$REPO/deploy/docker-compose.override.yml" ]; then
+    sed -n 's/.*"\([0-9.]*\):[0-9]\{1,\}:8080".*/\1/p' "$REPO/deploy/docker-compose.override.yml"
+  fi
+}
+
 # The port the dashboard is published on, read back from the generated
 # override so update/kill agree with whatever deploy chose.
 current_port() {
