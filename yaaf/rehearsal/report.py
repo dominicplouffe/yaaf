@@ -413,6 +413,8 @@ def build(client, project_id: str | None, spec: dict, steps: list[dict],
             "never reaches the network",
             "credentials, Slack and data sources — a drill reads no secret and "
             "opens no socket",
+            "the workspace — the drill works in a directory it deletes, and a "
+            "github_repo in the spec is not cloned into it",
         ],
         "caveat": (
             "The crew that ran this is competent and dull by construction. A "
