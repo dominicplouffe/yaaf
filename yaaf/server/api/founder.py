@@ -1,11 +1,11 @@
-"""The founding conversation: designing a company before one exists.
+"""The founding conversation: designing a project before one exists.
 
 Every other admin endpoint acts on a project. These act *before* there is one.
 A founding thread holds a transcript and a draft `project_setup` bundle — the
 same object the importer accepts and the New Project screen posts — so the
 chairman argues with a proposal instead of filling in a form.
 
-Nothing here creates a company, spends a project's money, or binds an agent.
+Nothing here creates a project, spends a project's money, or binds an agent.
 The one endpoint that touches a real project is ``/attach``, which runs *after*
 the chairman has created one and hands the CEO the conversation it came from.
 """
@@ -277,7 +277,7 @@ def say(thread_id: str, body: SayIn, session: Session = Depends(db)) -> dict:
     if thread.created_project_id:
         raise HTTPException(
             status_code=409,
-            detail="this thread already became a company; talk to its CEO in the boardroom",
+            detail="this thread already became a project; talk to its CEO in the boardroom",
         )
     _say(session, thread, body.message.strip())
     return _accepted(_render(thread))
@@ -307,7 +307,7 @@ class AttachIn(BaseModel):
 
 @router.post("/threads/{thread_id}/attach")
 def attach(thread_id: str, body: AttachIn, session: Session = Depends(db)) -> dict:
-    """Record that a thread became a company, and hand the CEO the conversation.
+    """Record that a thread became a project, and hand the CEO the conversation.
 
     The chairman explained what they wanted here, argued about it, and settled
     it. Without this the product would ask them to say all of it a second time

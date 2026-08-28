@@ -239,7 +239,7 @@ print(json.dumps({"name": d["name"], "category": d.get("category"),
 # Crews, on the same contract as roles: load what this install has never seen,
 # leave anything already there alone. A crew is reference data — one is read at
 # hiring time and copied into the project's own teams — so re-seeding can never
-# reach a company that already started, and an edited crew stays edited.
+# reach a project that already started, and an edited crew stays edited.
 sync_crew_library() {
   local port="$1" library slug seeded=0 present=0
   library=$(curl -fsS -H "Authorization: Bearer ${YAAF_ADMIN_TOKEN}" \
@@ -263,6 +263,15 @@ sync_crew_library() {
     ok "$present crew(s) already loaded, none missing"
   else
     ok "seeded $seeded crew(s) — the starting points on the hiring desk"
+  fi
+}
+
+# The address(es) the dashboard is published on, one per line, read back from
+# the generated override so a bare re-run of deploy keeps the binding you last
+# asked for instead of quietly reverting to loopback.
+current_binds() {
+  if [ -f "$REPO/deploy/docker-compose.override.yml" ]; then
+    sed -n 's/.*"\([0-9.]*\):[0-9]\{1,\}:8080".*/\1/p' "$REPO/deploy/docker-compose.override.yml"
   fi
 }
 

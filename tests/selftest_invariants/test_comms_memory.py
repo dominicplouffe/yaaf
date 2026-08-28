@@ -274,7 +274,7 @@ def test_compact_refuses_degenerate_and_cross_scope_folds(client):
     assert mixed.status_code == 422
     assert "scope" in mixed.json()["error"]
 
-    # An id from another company is "unknown", never "not yours" — the refusal
+    # An id from another project is "unknown", never "not yours" — the refusal
     # must not confirm that a row exists somewhere the agent cannot see.
     other = make_project(client, slug="other-co", constitution={"memory_cap_team": 5})
     _, other_lead = live_token(other["id"], agent_by_name(other, "Lead"))
@@ -282,7 +282,7 @@ def test_compact_refuses_degenerate_and_cross_scope_folds(client):
     leaked = client.post(
         "/agent/memory/compact",
         json={"replaces": stranger, "kind": "lesson", "subject": "someone else's memory",
-              "body": "folding another company's entries"},
+              "body": "folding another project's entries"},
         headers=bearer(lead_token),
     )
     assert leaked.status_code == 404

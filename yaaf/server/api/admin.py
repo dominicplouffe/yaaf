@@ -377,7 +377,7 @@ class CrewIn(BaseModel):
 def create_crew(body: CrewIn, session: Session = Depends(db)) -> dict:
     """Upsert a crew by slug. Unlike a role there are no versions: a crew is
     read once, at hiring time, and copied into the project's own teams — so
-    editing one can never reach a company that already started."""
+    editing one can never reach a project that already started."""
     unknown_domains = sorted(set(body.domains) - set(ROLE_DOMAINS))
     if unknown_domains:
         raise HTTPException(
@@ -695,7 +695,7 @@ def export_project(project_id: str, include_values: bool = False,
     `include_values=true`: the full backup, made at the chairman's explicit
     request. Every credential is decrypted into the file — service keys, the
     billing key, Slack tokens, webhook signing keys, OAuth wiring — so a
-    restore recreates the whole company with nothing to re-enter. The file is
+    restore recreates the whole project with nothing to re-enter. The file is
     plaintext; the button that produces one says exactly what is inside.
 
     The New Project page accepts either file."""
@@ -858,7 +858,7 @@ _NON_CLONABLE_INTEGRATION_KEYS = frozenset({"github_webhook_secret", "webhook_se
 class ProjectCloneIn(BaseModel):
     slug: str = Field(pattern="^[a-z0-9-]{2,64}$")
     name: str | None = None  # defaults to the source's name plus " (clone)"
-    # The usual reason to duplicate a company is to point it at the next thing.
+    # The usual reason to duplicate a project is to point it at the next thing.
     # Omit to keep the source's mandate; the machinery is what's being reused.
     goal: str | None = Field(default=None, min_length=10)
 
@@ -877,7 +877,7 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
     What it deliberately does not copy is the source's *history* — runs, tasks,
     bus, memory, artifacts, workspace, amendment log — and its claim on shared
     outside rooms: Slack tokens come along, the channel map does not, because
-    two companies posting into one room is nobody's idea of a twin.
+    two projects posting into one room is nobody's idea of a twin.
     """
     source = _get_project(session, project_id)
     if session.execute(select(Project).where(Project.slug == body.slug)).scalar_one_or_none():
@@ -892,7 +892,7 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
         integrations["slack"] = {**integrations["slack"], "channel_map": {}}
 
     # Not inheriting the source's signing keys is right — they are its own, and
-    # sharing them would let either company's senders attest evidence for the
+    # sharing them would let either project's senders attest evidence for the
     # other. Leaving the twin with *none* is not: github_repo and the controlled
     # domains do come across, so the twin looks wired to GitHub while no inbound
     # event could ever be attested. Every other birth mints these (see
@@ -901,14 +901,14 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
     integrations["github_webhook_secret"] = pysecrets.token_hex(32)
     integrations["webhook_secret"] = pysecrets.token_hex(32)
 
-    # A twin of a Deliver company that comes back as an Explore one is not a
-    # twin: mode decides whether the company has requirements at all, and it is
+    # A twin of a Deliver project that comes back as an Explore one is not a
+    # twin: mode decides whether the project has requirements at all, and it is
     # frozen at creation — so getting it wrong here cannot be corrected later,
     # only deleted and redone. It defaults to EXPLORE on the model, which is
     # what an omission silently produced.
     #
     # The deadline is Explore's window, and copying one verbatim can hand the
-    # twin a date that has already passed — a company the janitor closes at
+    # twin a date that has already passed — a project the janitor closes at
     # birth. A future window carries; a spent one is reported, not inherited.
     deadline_expired = (source.deadline is not None and source.deadline <= utcnow())
     project = Project(
@@ -994,7 +994,7 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
         select(Team).where(Team.project_id == source.id).order_by(Team.created_at)
     ).scalars():
         # The source's pinned version, not _latest_role_version: a twin that
-        # silently upgrades its roles is not running the same company.
+        # silently upgrades its roles is not running the same project.
         team = Team(id=ids.new_id(ids.TEAM), project_id=project.id,
                     role_version_id=source_team.role_version_id, name=source_team.name)
         session.add(team)
@@ -1102,15 +1102,15 @@ def _revoke_running(session: Session, project_id: str) -> int:
 
 
 def _void_pending_approvals(session: Session, project_id: str, why: str) -> int:
-    """Close out a terminal project's open requests. Ending a company answers
+    """Close out a terminal project's open requests. Ending a project answers
     them by making them moot, and leaving them PENDING has two costs: they keep
     their clock, so the janitor expires them days later and writes a denial into
-    the record of a company that no longer exists — and until then they sit on
+    the record of a project that no longer exists — and until then they sit on
     the chairman's desk asking for a decision that cannot matter.
 
     Always EXPIRED, never the constitution's `approval_timeout_decision`. An
     install that auto-approves on timeout must not approve a $4,800 spend
-    because the company it belonged to was shut down: ending a company decides
+    because the project it belonged to was shut down: ending a project decides
     nothing on the merits, so the deny-shaped outcome is the only honest one.
 
     No notice to the requester, unlike every other approval outcome. A notice is
@@ -1680,7 +1680,7 @@ def repin_team(team_id: str, session: Session = Depends(db)) -> dict:
 class ProjectPatch(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
     # The chairman's mandate, not a constitutional rule: it redirects the
-    # company rather than constraining it, and needs no written reason.
+    # project rather than constraining it, and needs no written reason.
     goal: str | None = Field(default=None, min_length=10)
     billing_mode: str | None = Field(default=None, pattern="^(api_key|subscription)$")
     billing_secret_id: str | None = None
@@ -1722,7 +1722,7 @@ def patch_project(project_id: str, body: ProjectPatch, session: Session = Depend
         changed["goal"] = project.goal
         _notice_ceo(
             session, project.id, NoticeKind.GOAL_CHANGED,
-            f"The chairman changed this company's goal.\n\nIT IS NOW: {project.goal}\n\n"
+            f"The chairman changed this project's goal.\n\nIT IS NOW: {project.goal}\n\n"
             f"IT WAS: {was}\n\nEverything already in flight — open tasks, bets, deliverables "
             "— was planned against the old goal. Re-read the backlog against this one before "
             "continuing, and close or re-aim whatever no longer serves it.",
@@ -2085,7 +2085,7 @@ def _carry_library_roles(session: Session, spec: dict) -> dict:
     process happens to be sitting in a checkout with a `roles/` directory. The
     CLI usually is. The server never is — the image ships `yaaf/`, not
     `roles/` — so the dashboard's drill could not resolve a single library
-    role, and every spec that hired one reported a company that would not
+    role, and every spec that hired one reported a project that would not
     start. That is the one verdict a fire drill must never get wrong.
 
     Definitions already carried win: a setup file describing a role this
@@ -2133,7 +2133,7 @@ def _carry_library_roles(session: Session, spec: dict) -> dict:
 
 @router.post("/rehearse")
 def rehearse(body: RehearseIn, session: Session = Depends(db)) -> dict:
-    """Run a spec as a company for nothing, and report what happened.
+    """Run a spec as a project for nothing, and report what happened.
 
     **In a subprocess, always.** The drill re-points the process-global engine
     in :mod:`yaaf.core.db` at a throwaway SQLite file, and doing that inside
@@ -2197,7 +2197,7 @@ class BriefingSeen(BaseModel):
 @router.post("/projects/{project_id}/briefing/seen")
 def briefing_seen(project_id: str, body: BriefingSeen | None = None,
                   session: Session = Depends(db)) -> dict:
-    """Move the chairman's read mark for one company.
+    """Move the chairman's read mark for one project.
 
     Deliberately an explicit act, not a side effect of fetching the briefing:
     the desk polls, and a mark that moved on every poll would mean the window
@@ -2267,7 +2267,7 @@ def decide_approval(
 
 @router.get("/projects/{project_id}/accounts")
 def list_accounts(project_id: str, session: Session = Depends(db)) -> list[dict]:
-    """The account registry: everything the company answers to out in the
+    """The account registry: everything the project answers to out in the
     world. Record-only by decision — winding down is the CEO's call while the
     project runs, and the chairman's reading when he stops it for good."""
     from yaaf.core.models import Account
@@ -2408,7 +2408,7 @@ def constitution_schema() -> list[dict]:
     """Every rule the constitution holds, described well enough to render an
     editor from. Derived from the model itself, so a field added to
     ConstitutionDoc is editable the moment it exists — the settings page used to
-    carry its own list of six, and the rules a stuck company actually needs to
+    carry its own list of six, and the rules a stuck project actually needs to
     change were not on it."""
     schema = ConstitutionDoc.model_json_schema()
     fields = []
@@ -2427,7 +2427,7 @@ def constitution_schema() -> list[dict]:
             # the navigation, and both are decided here so the editor never
             # keeps a list of its own to go stale. The rank rides along because
             # declaration order puts work discipline first, and the tab a stuck
-            # company opens is Money.
+            # project opens is Money.
             "theme": theme,
             "theme_rank": THEME_ORDER.index(theme) if theme in THEME_ORDER else len(THEME_ORDER),
             "type": typed.get("type", "string"),
@@ -2435,7 +2435,7 @@ def constitution_schema() -> list[dict]:
             "maximum": typed.get("maximum", typed.get("exclusiveMaximum")),
             "choices": spec.get("choices"),
             # What the rule would be if nobody had touched it — the editor
-            # marks anything that differs, so "what is this company actually
+            # marks anything that differs, so "what is this project actually
             # running under" is a glance instead of a diff against the docs.
             "default": spec.get("default"),
         })
@@ -2648,7 +2648,7 @@ def decide_audit_sample(
                 f"'{task.title[:200]}'. His note: {body.note[:1000] or '(none)'}\n"
                 "The task stays done — sampling never reopens work by itself — but "
                 "this is on the record, it will be on the next review, and a pattern "
-                "of failed samples is how a company loses the benefit of the doubt.",
+                "of failed samples is how a project loses the benefit of the doubt.",
             )
     _audit(session, row.project_id, "audit_sample.decide", "audit_sample", row.id,
            {"task_id": row.task_id, "ok": body.ok})

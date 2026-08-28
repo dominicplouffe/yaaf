@@ -193,11 +193,11 @@ export function earlyRunSentence(h: ReturnType<typeof runHealth>): string {
   return `${h.early.length} of ${h.todays.length} runs ended before finishing — ${list}.`;
 }
 
-/** Why the company is quiet, in one sentence.
+/** Why the project is quiet, in one sentence.
 
     "Working now: 0" used to read "an idle project costs nothing" whatever the
-    cause, so a company that had spent its whole daily allowance by 01:22 and a
-    company with an empty board looked identical. They are not the same thing:
+    cause, so a project that had spent its whole daily allowance by 01:22 and a
+    project with an empty board looked identical. They are not the same thing:
     one needs nothing from you, the other has work piled up behind a wall and a
     known time it comes down.
 
@@ -215,7 +215,7 @@ export function idleSentence(a: Activity): string {
     presenting "paused by chairman" as an explanation. */
 const UNSPOKEN = new Set(["paused by chairman", "stopped by chairman"]);
 
-/** Why this company is not working, in one brief, whatever the cause.
+/** Why this project is not working, in one brief, whatever the cause.
 
     A project stops for four different reasons — the chairman paused it, the
     chairman stopped it, it spent its budget, or its billing credential died —
@@ -231,7 +231,7 @@ export interface StatusBrief {
       gone — together they let a reader put the banner away, and bring it back
       by itself if the wait outlives its own promise. Paused and stopped carry
       neither: those are not waits, and dismissing them would hide the reason
-      the company is not running. */
+      the project is not running. */
   sig?: string;
   clearsAt?: string | null;
 }
@@ -266,9 +266,9 @@ export function statusBrief(dash: Dashboard): StatusBrief | null {
 
   // Everything below this line is the dispatcher's own words. Three switches
   // used to live here, each knowing a different subset of the backend's gates;
-  // the one that mattered most — a company quietly waiting out a clock — was
+  // the one that mattered most — a project quietly waiting out a clock — was
   // the one none of them covered. `banner` is the server saying whether this
-  // deserves the box at all: concurrency and busy agents mean the company is
+  // deserves the box at all: concurrency and busy agents mean the project is
   // working, and a brief that fires when things are fine stops being read.
   const brief = dash.activity.brief;
   if (!brief?.banner) return null;

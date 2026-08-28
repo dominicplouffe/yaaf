@@ -72,7 +72,7 @@ def restore_roles(client: _Client, directory: Path) -> list[tuple[str, int]]:
 
 def restore_projects(client: _Client, directory: Path, chairman_email: str) -> list[tuple[str, int]]:
     """Projects are created in DRAFT and never started. Restoring a backup must
-    not begin spending money — starting a company stays a deliberate act."""
+    not begin spending money — starting a project stays a deliberate act."""
     out = []
     for path in sorted((directory / "projects").glob("*.json")):
         bundle = json.loads(path.read_text())

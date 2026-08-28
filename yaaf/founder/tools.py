@@ -38,7 +38,7 @@ TOOL_NAMES = ("search_roles", "search_crews", "read_source",
               "grade_goal", "propose_bundle", "rehearse")
 
 #: What the CLI is allowed to run. Only these six — no Bash, no file writes,
-#: no web tools of its own. The Founder drafts a company; it does not act on
+#: no web tools of its own. The Founder drafts a project; it does not act on
 #: the world, and the one tool that touches the outside (`read_source`) reads
 #: and labels what it reads as data.
 ALLOWED_TOOLS = [f"mcp__{SERVER}__{name}" for name in TOOL_NAMES]
@@ -257,7 +257,7 @@ def build_server(session: Session, state: dict, env: dict[str, str],
         progress.finish_step(thread_id)
         return ok(grade.to_dict())
 
-    @tool("propose_bundle", "Put a complete company in front of the chairman. This "
+    @tool("propose_bundle", "Put a complete project in front of the chairman. This "
           "is your deliverable: it replaces the current draft and is what the review "
           "screen shows. It creates nothing and spends nothing. Send the whole "
           "bundle every time, not a patch. `project` takes the shape POST "
@@ -288,14 +288,14 @@ def build_server(session: Session, state: dict, env: dict[str, str],
         if problems:
             # Refused rather than stored: a draft the create endpoint would
             # reject is worse than no draft, because the review screen would
-            # show a company that cannot be built.
+            # show a project that cannot be built.
             return ok({"ok": False, "problems": problems,
                        "hint": "fix these and call propose_bundle again"})
         state["draft"] = bundle
         return ok({"ok": True, "summary": summarise(bundle)})
 
-    @tool("rehearse", "Run the current draft as a company for nothing, on a mock "
-          "runtime, and report what happened. Answers whether a well-behaved company "
+    @tool("rehearse", "Run the current draft as a project for nothing, on a mock "
+          "runtime, and report what happened. Answers whether a well-behaved project "
           "can get off the ground inside these rules — not whether the work would be "
           "good. Costs nothing.",
           {"days": int})
@@ -373,7 +373,7 @@ def constitution_problems(constitution: dict) -> list[str]:
     """Reject a rule this platform does not have.
 
     `ProjectCreate.constitution` is a bare dict, so an invented knob validates,
-    stores, and is then ignored for the life of the company — the chairman
+    stores, and is then ignored for the life of the project — the chairman
     reads `reporting_cadence: 4` on the review screen and believes he set
     something. A real Founder run invented exactly that key, which is the
     reason this function exists.

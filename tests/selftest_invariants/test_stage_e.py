@@ -10,7 +10,7 @@ The lines these tests hold:
   * any agent may file an assist; it rides the approval machinery, lands in
     the boardroom, and the chairman's answer travels back verbatim in the
     notice that wakes the asker
-  * every identity the company creates is a registry row — record-only,
+  * every identity the project creates is a registry row — record-only,
     linking a credential by NAME, never holding a value
   * a signed webhook can wake the CEO or a named agent; the wake is a Notice
     under the ordinary brakes; an unsigned poster wakes nobody

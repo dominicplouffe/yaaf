@@ -39,7 +39,7 @@ GOAL_ELEMENTS = (
 )
 
 #: The three the grammar calls very rarely optional — the ones that stop a
-#: company grading itself. A goal missing any of these is not ready.
+#: project grading itself. A goal missing any of these is not ready.
 LOAD_BEARING = ("finish_line", "anti_metrics", "failure_deliverable")
 
 
@@ -100,7 +100,7 @@ _SHAPE = """{
      "note": "<for present: quote the line that carries it. for weak or missing: "
              "name the specific thing to add, in one sentence>"}
   ],
-  "summary": "<two sentences at most: what this goal will do to a company>"
+  "summary": "<two sentences at most: what this goal will do to a project>"
 }""".replace("%ELEMENTS%", " | ".join(GOAL_ELEMENTS))
 
 _GRADE_SYSTEM = """\

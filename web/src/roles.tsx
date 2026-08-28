@@ -112,7 +112,7 @@ export interface Gap {
 /** Deterministic, free, explainable, and available before a billing key is
     even attached — which is the whole argument against asking a model. Each
     rule reads the roster's categories, domains and secret scopes and says
-    something about *this* company rather than about role theory. */
+    something about *this* project rather than about role theory. */
 export function gapsFor(roster: RoleSummary[]): Gap[] {
   const cats = new Set(roster.map((r) => r.category ?? ""));
   const slugs = new Set(roster.map((r) => r.slug));
@@ -126,7 +126,7 @@ export function gapsFor(roster: RoleSummary[]): Gap[] {
     gaps.push({
       key: "unchecked",
       sentence: "Nobody here checks the numbers before you see them.",
-      because: "This company produces findings and nothing re-derives them — "
+      because: "This project produces findings and nothing re-derives them — "
         + "and the CEO cannot mark its own homework.",
       suggest: domains.has("data") ? ["data-skeptic", "adversary"]
         : domains.has("markets") ? ["risk-manager", "compliance-officer"]
@@ -166,7 +166,7 @@ export function gapsFor(roster: RoleSummary[]): Gap[] {
       key: "unanswered",
       sentence: "You'll get customers, and nobody answers them.",
       because: "What users say when something breaks is the cheapest research "
-        + "this company can get.",
+        + "this project can get.",
       suggest: ["support"],
     });
   }
@@ -210,7 +210,7 @@ export function PickCard({ on, title, blurb, example, onClick, disabled }: {
   );
 }
 
-/** Which CEO runs the company. Until now this was never asked: the form took
+/** Which CEO runs the project. Until now this was never asked: the form took
     whichever CEO role the database returned first, so an install carrying both
     `ceo` and `cio` could hand a markets desk the generic CEO — and the CEO is
     the only agent the chairman ever speaks to. */
@@ -239,7 +239,7 @@ export function CeoPicker({ roles, value, onChange }: {
           blurb={clip(role.description, 130)}
           example={role.domains?.includes("markets")
             ? "pick this for markets work"
-            : "the default — any kind of company"}
+            : "the default — any kind of project"}
           onClick={() => onChange(role.slug)}
         />
       ))}

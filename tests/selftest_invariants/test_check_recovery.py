@@ -1,4 +1,4 @@
-"""Invariant selftests: a lost check can never wedge the company silently.
+"""Invariant selftests: a lost check can never wedge the project silently.
 
 CHECKING is a promise that the platform will move the row itself, so nothing
 else watches it: it wakes nobody, is claimed by nobody, and used to count as

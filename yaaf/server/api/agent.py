@@ -969,7 +969,7 @@ def memory_compact(
         )
     # Scoped to this project in the query, not checked afterwards: two different
     # answers for "no such id" and "another project's id" would tell an agent
-    # whether a row exists in a company it cannot see.
+    # whether a row exists in a project it cannot see.
     rows = list(
         session.execute(
             select(Memory).where(
@@ -1377,7 +1377,7 @@ def set_cycle_goal(
     """
     if ctx.agent.kind != AgentKind.CEO:
         raise Refusal(
-            "The cycle's goal is the whole company's, so the CEO sets it. If you "
+            "The cycle's goal is the whole project's, so the CEO sets it. If you "
             "believe this cycle is aimed at the wrong thing, say so to the CEO — a "
             "suggestion survives your run.",
             status_code=403,
@@ -1503,7 +1503,7 @@ def reset_commitment(
                 "reason": body.reason, "basis": projection.get("basis"),
                 "reset_count": resets},
     ))
-    # The count travels with the disclosure on purpose. One reset is a company
+    # The count travels with the disclosure on purpose. One reset is a project
     # adapting to what it learned; the fourth in a fortnight is a date nobody
     # should believe, and the chairman should not have to count them himself to
     # find that out.
@@ -1840,10 +1840,10 @@ def book_spend(
 # ── needs and credential delegation ─────────────────────────────────────────────
 #
 # Credentials are capabilities (CEO Charter, stage D). A capability the
-# company LACKS becomes a need: a structured ask that lands where the chairman
+# project LACKS becomes a need: a structured ask that lands where the chairman
 # actually is — the boardroom (which the Slack bridge mirrors when connected)
 # plus his out-of-band notification — and is fulfilled in one motion on his
-# side (value stored, roles scoped, need approved). A capability the company
+# side (value stored, roles scoped, need approved). A capability the project
 # HAS is delegated by whoever holds capability_authority: the chairman's
 # tickbox by default, the CEO's own verb when the dial grants it.
 
@@ -1879,7 +1879,7 @@ class AccountIn(BaseModel):
 def account_record(
     body: AccountIn, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
 ) -> dict:
-    """Record an identity the company created in the world. Record-only, and
+    """Record an identity the project created in the world. Record-only, and
     REQUIRED discipline rather than machinery: an account nobody wrote down is
     an orphan the owner discovers on a bill. Store the credential as a secret
     (or file it in your assist/need) and link its NAME here — the registry
@@ -1913,7 +1913,7 @@ def account_record(
                 "owner": row.owner},
     ))
     return {"account_id": row.id, "duplicate": False,
-            "note": "On the registry. The chairman sees everything the company "
+            "note": "On the registry. The chairman sees everything the project "
                     "answers to, which is what makes winding down a reading "
                     "instead of an archaeology."}
 
@@ -2035,7 +2035,7 @@ def need_request(
                 "est_usd_per_month": body.est_usd_per_month},
     ))
     chairman_notify(
-        session, ctx.project, f"The company needs: {body.title}",
+        session, ctx.project, f"The project needs: {body.title}",
         "\n".join(detail_lines) + "\n\nFulfill or decline it on the Decisions screen "
         "— fulfilling stores the credential and scopes the roles in one motion.",
     )
@@ -2053,7 +2053,7 @@ def need_request(
 def credentials_list(
     ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
 ) -> list[dict]:
-    """Names and scopes only, service credentials only — what the company
+    """Names and scopes only, service credentials only — what the project
     holds and who may use it. Values never ride any agent surface, and the
     billing credential is not listed at all."""
     if ctx.agent.kind != AgentKind.CEO:

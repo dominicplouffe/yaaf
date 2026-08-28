@@ -22,7 +22,7 @@ import { fmtAgo, fmtSoon, fmtUnit } from "./ui";
 
     **Congratulate an empty window.** Nothing wrong and nothing happening are
     different screens — the desk already refuses to conflate them — so a quiet
-    company still ships its pulse.
+    project still ships its pulse.
 
     **Outrank the desk.** What is waiting NOW is the desk's question and it
     answers it better. This panel carries the count and hands off. */
@@ -93,7 +93,7 @@ function Waiting({ brief }: { brief: Briefing }) {
   );
 }
 
-/** One company's briefing. `onSeen` is absent on a read-only rendering. */
+/** One project's briefing. `onSeen` is absent on a read-only rendering. */
 export function BriefingBlock({
   brief,
   onSeen,
@@ -155,16 +155,16 @@ export function BriefingBlock({
   );
 }
 
-/** The Desk's panel: every running company on its own mark.
+/** The Desk's panel: every running project on its own mark.
 
     Running only, like the rest of the desk. The endpoint returns every
-    non-terminal company because the window and the mark are per company and a
+    non-terminal project because the window and the mark are per project and a
     caller may want all of them; the desk is the working set, and a paused
-    company's "nothing settled" line is a fact about a company nobody is
+    project's "nothing settled" line is a fact about a project nobody is
     working on.
 
-    Per-company marks rather than one box-wide stamp, because reading one
-    company's brief says nothing about having read another's — and a single
+    Per-project marks rather than one box-wide stamp, because reading one
+    project's brief says nothing about having read another's — and a single
     mark would be moved by opening the first and would swallow the three you
     never looked at. */
 export function DeskBriefingPanel() {
@@ -197,7 +197,7 @@ export function DeskBriefingPanel() {
   const news = live.filter((b) => !b.quiet);
   const silent = live.filter((b) => b.quiet);
 
-  // Every company quiet is not nothing to say — it is the proof-of-life
+  // Every project quiet is not nothing to say — it is the proof-of-life
   // sentence — but it does not deserve the top of the desk, so it collapses to
   // one line above the rows that do have consequences attached.
   if (news.length === 0) {
@@ -206,8 +206,8 @@ export function DeskBriefingPanel() {
         <div className="bpanel-head">
           <span className="bttl">Since you were last here</span>
           <span className="dim">
-            nothing settled in any of your {live.length} running compan
-            {live.length === 1 ? "y" : "ies"}
+            nothing settled in any of your {live.length} running project
+            {live.length === 1 ? "" : "s"}
           </span>
           <div className="spacer" />
           <button className="linkish" onClick={() => setOpen(!open)}>
@@ -235,12 +235,12 @@ export function DeskBriefingPanel() {
       <div className="bpanel-head">
         <span className="bttl">Since you were last here</span>
         <span className="dim">
-          {news.length} compan{news.length === 1 ? "y" : "ies"} moved
+          {news.length} project{news.length === 1 ? "" : "s"} moved
           {silent.length > 0 && `, ${silent.length} quiet`}
         </span>
         <div className="spacer" />
         {/* What the panel drew, not what the endpoint sent: marking a paused
-            company read would consume a window the chairman was never shown. */}
+            project read would consume a window the chairman was never shown. */}
         <button className="linkish" disabled={busy} onClick={() => markRead(live)}>
           {busy ? "marking…" : "Mark all read"}
         </button>
@@ -268,7 +268,7 @@ export function DeskBriefingPanel() {
   );
 }
 
-/** The same panel inside one project, where the company's name is the page. */
+/** The same panel inside one project, where the project's name is the page. */
 export function ProjectBriefing({ projectId }: { projectId: string }) {
   const { data, reload } = usePoll(
     () => get<Briefing>(`/observe/projects/${projectId}/briefing`),

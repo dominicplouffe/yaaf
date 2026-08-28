@@ -1,7 +1,7 @@
 """Invariant selftests: the agenda.
 
 The desk asks which clock runs out soonest. The agenda asks the flatter
-question nothing answered — what is this company going to *do* this week? An
+question nothing answered — what is this project going to *do* this week? An
 autonomous system that will not show you its schedule is a haunted one.
 
 Two properties it has to hold:
@@ -270,10 +270,10 @@ def test_the_day_list_covers_the_window_in_local_days(client):
     assert payload["day_list"] == sorted(payload["day_list"])
 
 
-# ── companies with no schedule ──────────────────────────────────────────────────
+# ── projects with no schedule ──────────────────────────────────────────────────
 
 
-def test_a_paused_company_draws_nothing_and_says_so(client):
+def test_a_paused_project_draws_nothing_and_says_so(client):
     """Drawing a week of wakes that are never going to happen would be a
     calendar lying about the one thing it exists to show."""
     project = make_project(client, slug="halted")
@@ -286,7 +286,7 @@ def test_a_paused_company_draws_nothing_and_says_so(client):
     assert any("waiting on the client" in note for note in payload["notes"])
 
 
-def test_a_draft_company_draws_nothing(client):
+def test_a_draft_project_draws_nothing(client):
     project = make_project(client, slug="unstarted", start=False)
     payload = agenda(client, project)
     assert payload["live"] is False
@@ -347,7 +347,7 @@ def test_the_operate_cycle_roll_is_drawn_with_where_its_date_came_from(client):
     assert "plan gate reopens" in roll["detail"]
 
 
-def test_a_deliver_company_has_no_cycle_on_its_calendar(client):
+def test_a_deliver_project_has_no_cycle_on_its_calendar(client):
     project = deliver_project(client, slug="onceonly")
     assert "cycle_roll" not in kinds(agenda(client, project, days=40))
 

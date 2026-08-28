@@ -68,13 +68,13 @@ const AUTONOMY_PRESETS = [
     blurb: "The CEO accepts its own plan, signs the platform's projected date, and " +
       "judges unverifiable closes itself. Every decision is audited and sent to " +
       "you; all of it is reversible; your buttons never close.",
-    example: "The CEO runs the company; you chair it. Budgets and brakes still bind.",
+    example: "The CEO runs the project; you chair it. Budgets and brakes still bind.",
     constitution: { plan_authority: "ceo", scope_authority: "ceo",
       commitment_authority: "ceo", verdict_policy: "ceo_judgment",
       capability_authority: "ceo" } },
 ] as const;
 
-// How the company runs day to day: pace, money, proof. A preset is nothing
+// How the project runs day to day: pace, money, proof. A preset is nothing
 // but a bundle of ordinary constitution numbers — picking one fills the
 // fields below, every field stays editable here and later in Settings →
 // Rules in force. Deliberately orthogonal to the authority presets above:
@@ -102,8 +102,8 @@ const RUN_PRESETS = [
 /** The four decisions, and the one line each is answering. Shown in the rail
     so the chairman knows how much is left before they start typing. */
 const STEPS = [
-  { n: 1, name: "The job", detail: "What this company is for" },
-  { n: 2, name: "The company", detail: "Who does the work" },
+  { n: 1, name: "The job", detail: "What this project is for" },
+  { n: 2, name: "The org", detail: "Who does the work" },
   { n: 3, name: "The money & the rules", detail: "What it may spend, how it behaves" },
   { n: 4, name: "Review & create", detail: "What you're signing" },
 ];
@@ -146,7 +146,7 @@ export default function NewProject() {
   // A draft handed over by the Founder. It arrives as the same ProjectBundle a
   // setup file carries, so it lands through the same applyBundle path; the
   // thread id rides along so the founding conversation can be handed to the
-  // CEO once the company exists.
+  // CEO once the project exists.
   const handover = (useLocation().state ?? {}) as {
     foundingDraft?: ProjectBundle;
     foundingThreadId?: string;
@@ -213,7 +213,7 @@ export default function NewProject() {
   const [crews, setCrews] = useState<CrewSummary[]>([]);
 
   // Four steps, because there are four decisions here that need the
-  // chairman's judgement: what the company is for, who does the work, what it
+  // chairman's judgement: what the project is for, who does the work, what it
   // may spend, and whether to sign it. Everything else is derived, filled by a
   // preset, or something this form already says you can do later in Settings.
   //
@@ -332,7 +332,7 @@ export default function NewProject() {
       chairman finding out at submit after twenty-eight fields. */
   function problemsOn(n: number): string | null {
     if (n === 1) {
-      if (!name.trim()) return "This company needs a name";
+      if (!name.trim()) return "This project needs a name";
       if (goal.trim().length < 10) return "The CEO plans from the goal — it cannot be empty";
       return null;
     }
@@ -340,7 +340,7 @@ export default function NewProject() {
       if (missingRoleSlugs.length) {
         return `This install's library has no ${missingRoleSlugs.join(", ")}`;
       }
-      if (!ceoSlug && !bundle?.project.ceo_role_slug) return "Nobody is running this company";
+      if (!ceoSlug && !bundle?.project.ceo_role_slug) return "Nobody is running this project";
       const staffed = teams.filter((t) => t.role_slug && t.name.trim());
       if (!staffed.length) return "Nobody is doing the work";
       if (!solo && staffed.some((t) => !t.employees.trim())) {
@@ -394,7 +394,7 @@ export default function NewProject() {
         // is selected and say the file had no opinion.
         setModeNotice(
           "This setup file predates project shapes, so it does not say what kind of " +
-          "company it was. Nothing was changed — confirm the choice above is what you want.",
+          "project it was. Nothing was changed — confirm the choice above is what you want.",
         );
       }
       setRuntime(String(p.integrations["runtime"] ?? "agent_sdk"));
@@ -404,7 +404,7 @@ export default function NewProject() {
       // change it if the twin answers to someone else.
       if (p.chairman_email) setChairmanEmail(p.chairman_email);
       // An Explore window that is still open carries; a spent one would be
-      // refused at create (a company the janitor closes at birth), so it is
+      // refused at create (a project the janitor closes at birth), so it is
       // left blank rather than prefilled into a guaranteed error.
       if (p.deadline && new Date(p.deadline) > new Date()) {
         setExploreDeadline(p.deadline.slice(0, 10));
@@ -415,7 +415,7 @@ export default function NewProject() {
         p.billing_secret_name ? s.name === p.billing_secret_name : s.kind === "billing");
       if (billing?.value) setBillingKey(billing.value);
       // The file's whole job here is review-and-supply-keys, so land on the
-      // step that shows the company it describes rather than the first field
+      // step that shows the project it describes rather than the first field
       // of eleven sections it already filled.
       if (p.ceo_role_slug) setCeoSlug(p.ceo_role_slug);
       setStep(4);
@@ -436,8 +436,8 @@ export default function NewProject() {
       );
       // Who holds the verbs travels in the file too, and the submit below
       // stamps this preset over whatever the file said — so a file exported
-      // from an autonomous company came back supervised, and one exported
-      // from a supervised company could come back autonomous, neither with a
+      // from an autonomous project came back supervised, and one exported
+      // from a supervised project could come back autonomous, neither with a
       // word about it. Same defect as a role slug the picker could not show:
       // the form dropped the file's answer silently. Read it instead.
       const authority = p.constitution as Record<string, string>;
@@ -570,7 +570,7 @@ export default function NewProject() {
   }
 
   // The fire drill. Nothing here creates anything: the spec is run as a
-  // company in a throwaway process on the mock runtime, and what comes back is
+  // project in a throwaway process on the mock runtime, and what comes back is
   // a report. It is the one thing on this form that can answer "will this
   // work?" before the billing key is attached.
   const [drill, setDrill] = useState<RehearsalReport | null>(null);
@@ -598,7 +598,7 @@ export default function NewProject() {
   /** The project exactly as it will be POSTed — extracted so the fire drill
       can run the SAME object the submit button would send. A second copy
       assembled for the rehearsal would be a rehearsal of a different
-      company, which is worse than no rehearsal at all. */
+      project, which is worse than no rehearsal at all. */
   function projectBody(chosenCeo: string) {
     return {
           slug: slug.trim(),
@@ -849,7 +849,7 @@ export default function NewProject() {
           await post(`/admin/founder/threads/${foundingThreadId}/attach`,
                      { project_id: created.id });
         } catch {
-          /* the company exists; a missing briefing is not worth failing on */
+          /* the project exists; a missing briefing is not worth failing on */
         }
       }
       if (startNow && canStartNow) await post(`/admin/projects/${created.id}/start`);
@@ -930,7 +930,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
         <div style={{ flex: 1, minWidth: 260 }}>
           <h1>New project</h1>
           <p className="subtitle" style={{ marginBottom: 0 }}>
-            A small company that works while you're away. You can change everything
+            A small project that works while you're away. You can change everything
             afterwards except its shape.
           </p>
         </div>
@@ -1040,12 +1040,12 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
 
         <div className="card" style={{ marginBottom: 10 }}>
           <label className="field">
-            Goal — what this company exists to achieve
+            Goal — what this project exists to achieve
           </label>
           <p className="help" style={{ margin: "0 0 6px" }}>
             The CEO plans from this and nothing else, so it is worth more of your
             time than everything below it put together. Brief it the way you would
-            brief a competent human running the company for you.
+            brief a competent human running the project for you.
           </p>
           <div className="goalwrap">
             <textarea value={goal} onChange={(e) => setGoal(e.target.value)}
@@ -1062,14 +1062,14 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
               </ul>
               <p className="help" style={{ marginTop: 8 }}>
                 Advisory only — you can create with none of these ticked. A weak
-                goal ("analyze the PPC data") gets you a company that putters.
+                goal ("analyze the PPC data") gets you a project that putters.
               </p>
             </div>
           </div>
         </div>
 
         <div className="card" style={{ marginBottom: 10 }}>
-          <label className="field">What kind of company is this?</label>
+          <label className="field">What kind of project is this?</label>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
             gap: 10, marginTop: 6 }}>
             {MODES.map((m) => (
@@ -1126,7 +1126,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
         </>}
 
         {on(2) && <>
-        <h2>The company</h2>
+        <h2>The project</h2>
         <div className="card" style={{ marginBottom: 10 }}>
           <label className="field">Who runs it — the only agent that speaks to you</label>
           <p className="help" style={{ margin: "0 0 8px" }}>
@@ -1434,7 +1434,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             />
             <div className="help" style={{ marginTop: 4 }}>
               Your own website, <code>github:your-account</code>. Agents must prove
-              progress with evidence from outside the company, and anything on a
+              progress with evidence from outside the project, and anything on a
               property you control cannot count as outside.
             </div>
           <p className="help">
@@ -1451,7 +1451,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
         {on(4) && <>
         <h2>Review &amp; create</h2>
         <p className="subtitle">
-          This is the company that will exist. Everything here is still editable —
+          This is the project that will exist. Everything here is still editable —
           step back, or switch to <strong>All on one page</strong>.
         </p>
         <div className="card" style={{ marginBottom: 10 }}>
@@ -1695,7 +1695,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
               {drilling ? "Running the drill…" : "Run a fire drill"}
             </button>
             <span className="help">
-              Runs this exact spec as a company on scripted agents — no model calls,
+              Runs this exact spec as a project on scripted agents — no model calls,
               no money, nothing created. Tells you whether it gets off the ground,
               how often it will stop and wait for you, and what paces it.
             </span>
@@ -1748,7 +1748,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             onApplyCrew={(crew) => {
               // A crew fills the team list and stays fully editable — the
               // employees, leads and schedules come from the worked example
-              // it was lifted from, so it lands as a company rather than a
+              // it was lifted from, so it lands as a project rather than a
               // list of job titles.
               setTeams(crew.teams.map((t) => ({
                 role_slug: t.role_slug,

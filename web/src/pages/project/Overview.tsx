@@ -238,7 +238,7 @@ function ModeStrip({ dash, reload }: { dash: import("../../api").Dashboard;
           <b>Everything is true. This delivery is ready for your confirmation.</b>
           <div className="sb">
             Completing writes the receipt — including which requirements failed before
-            they passed — and closes the company down cleanly. Until you do, it keeps
+            they passed — and closes the project down cleanly. Until you do, it keeps
             running and spending.
           </div>
           {error && <div className="error">{error}</div>}
@@ -609,7 +609,7 @@ export default function Overview({
               </div>
             </div>
             {/* The denominator is the whole point: 55 means nothing on its own,
-                and showing it without "of 55" is exactly how a company that had
+                and showing it without "of 55" is exactly how a project that had
                 spent its entire day's allowance read as a busy one.
 
                 Three separate gates count runs — the day, the trailing hour,
@@ -690,7 +690,7 @@ export default function Overview({
       {/* What came out. The point of the project, previously seven tabs away. */}
       {/* The schedule the platform will actually run — the wakes, the standing
           meeting, the rhythm, the clocks that decide themselves, and the
-          promise with the projection beside it. An autonomous company that
+          promise with the projection beside it. An autonomous project that
           will not show you its calendar is a haunted one. */}
       <h2 className="zone">What happens next</h2>
       <Agenda projectId={projectId} />
@@ -779,7 +779,7 @@ export default function Overview({
 
       <HealthLine ctx={ctx} />
 
-      <h2 className="zone">The company</h2>
+      <h2 className="zone">The project</h2>
       {repinMsg && <div className="notice-box">{repinMsg}</div>}
       <div className="list-grid">
         <div className="card">
@@ -842,7 +842,7 @@ export default function Overview({
   );
 }
 
-/** Hiring onto a company that already exists.
+/** Hiring onto a project that already exists.
 
     The other door into the same panel. Here the chairman is not browsing —
     they know the symptom ("nothing gets checked", "nobody writes it up"), so

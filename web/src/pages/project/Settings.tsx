@@ -125,7 +125,7 @@ function SlackBridge({
       <p className="subtitle">
         The bus in Postgres stays the source of truth; Slack is a mirror plus an inbound path
         for you alone. Mapped channels mirror outward within ~15s. A Slack outage never blocks
-        the company — messages queue and retry.
+        the project — messages queue and retry.
       </p>
       {existing ? (
         <p className="help">
@@ -997,7 +997,7 @@ function RuleField({
   flash: boolean;
 }) {
   const changed = value !== String(current ?? "");
-  // "Changed from default" is the only cheap way to see what this company has
+  // "Changed from default" is the only cheap way to see what this project has
   // actually been tuned away from stock without diffing against the docs.
   const stock = field.default === null || field.default === undefined
     ? "" : String(field.default);
@@ -1167,7 +1167,7 @@ function AmendmentSave({
 
       {confirming && (
         <ConfirmModal
-          title="This changes the rules your company runs under"
+          title="This changes the rules your project runs under"
           confirmLabel="Change the rules"
           busy={busy}
           onConfirm={save}
@@ -1210,7 +1210,7 @@ function AmendmentSave({
             </li>
             <li>
               Loosening a limit can cost real money: ceilings, wake brakes and budgets are what
-              stop a company spending its way through the night.
+              stop a project spending its way through the night.
             </li>
           </ul>
           <p style={{ marginBottom: 0 }} className="help">
@@ -1356,7 +1356,7 @@ export default function Settings({
   const navigate = useNavigate();
   const [cloneSlug, setCloneSlug] = useState(() => nextInSeries(dash.slug, "-2"));
   const [cloneName, setCloneName] = useState(() => nextInSeries(dash.name, " (clone)"));
-  // The usual reason to duplicate a company is to aim it at the next thing —
+  // The usual reason to duplicate a project is to aim it at the next thing —
   // so the mandate is a field on the form, not something to fix afterwards.
   const [cloneGoal, setCloneGoal] = useState(dash.goal);
   const [goal, setGoal] = useState(dash.goal);
@@ -1504,7 +1504,7 @@ export default function Settings({
       if (twin.copied.slack_rooms_dropped) {
         alert(
           `Twin "${twin.slug}" created with the Slack tokens but no rooms: the channel map ` +
-            "stays behind so two companies never post into one room. Map the twin's rooms in " +
+            "stays behind so two projects never post into one room. Map the twin's rooms in " +
             "its Settings → Integrations when you want it mirrored.",
         );
       }
@@ -1514,7 +1514,7 @@ export default function Settings({
       if (twin.copied.deadline_dropped) {
         alert(
           `Twin "${twin.slug}" created without a deadline: the window it was copied from ` +
-            "has already passed, and inheriting it would have closed this company at birth. " +
+            "has already passed, and inheriting it would have closed this project at birth. " +
             "Set a new one in the twin's Settings.",
         );
       }
@@ -1590,7 +1590,7 @@ export default function Settings({
       <div className="card">
         <p className="help" style={{ marginTop: 0 }}>
           The mandate every agent reads at the top of its context. Unlike the constitution — which
-          constrains the company and is recorded as a formal amendment — this one simply
+          constrains the project and is recorded as a formal amendment — this one simply
           redirects it, so it needs no written reason. The CEO is told what changed
           and asked to re-aim the backlog against it.
         </p>
@@ -1829,14 +1829,14 @@ export default function Settings({
           amendments.
         </p>
         <p className="help" style={{ color: "var(--warn, var(--ink-2))" }}>
-          ⚠ A twin is the same <i>shape</i> of company: its mode ({dash.mode}) and its teams are
+          ⚠ A twin is the same <i>shape</i> of project: its mode ({dash.mode}) and its teams are
           frozen at creation, exactly as this project's were. To change either — or anything else
           the creation form asks — don't twin it: download the setup file below and edit
           everything on the New Project page instead.
         </p>
         <p className="help" style={{ color: "var(--warn, var(--ink-2))" }}>
           ⚠ The twin talks to the outside on its own wiring. Slack tokens come along but the
-          channel map does not (two companies posting into one room helps nobody) — re-map rooms
+          channel map does not (two projects posting into one room helps nobody) — re-map rooms
           in the twin's Settings → Integrations. It also mints its own webhook signing secrets,
           so any outside sender pointed at this project's evidence webhooks must be re-pointed
           at the twin's URLs and secrets before its inbound evidence can be attested.
@@ -2119,7 +2119,7 @@ export default function Settings({
               </tbody>
             </table>
           ) : (
-            <p className="help">Nothing amended yet — this company runs on the rules it was born with.</p>
+            <p className="help">Nothing amended yet — this project runs on the rules it was born with.</p>
           )}
         </details>
 

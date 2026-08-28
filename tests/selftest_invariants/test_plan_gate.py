@@ -304,7 +304,7 @@ def _price_some_runs(project: dict, count: int, usd: float,
 
 def test_speculation_cannot_freeze_the_board(client):
     """Proposals the chairman never took must not make the plan unaffordable —
-    a CEO that could do that could lock its own company out of working by
+    a CEO that could do that could lock its own project out of working by
     thinking out loud."""
     project = deliver_project(client, constitution={"monthly_usd_cap": 100.0})
     token = ceo_token(project)

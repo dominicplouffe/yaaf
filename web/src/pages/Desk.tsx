@@ -19,7 +19,7 @@ import {
     Everything here is ranked by *time to consequence*, which the platform
     already knows: approvals auto-deny, bets auto-block their tasks, budgets
     auto-pause. Three tiers, and the soonest deadline is the top row whoever
-    owns it — the page never sorts by which company was created first.
+    owns it — the page never sorts by which project was created first.
 
       1  stopped      it has stopped, and only the chairman restarts it
       2  on a clock   it resolves without him, at a time we can name
@@ -32,8 +32,8 @@ import {
     padding the count with it would spend the one number a chairman has to be
     able to trust.
 
-    Only a company that is *running* appears here at all. The server drops the
-    terminal ones (`?live=true`) because a stopped or completed company cannot
+    Only a project that is *running* appears here at all. The server drops the
+    terminal ones (`?live=true`) because a stopped or completed project cannot
     need anything and every number on it is frozen; the page then drops draft
     and paused ones too. Neither is working, and the desk is the working set —
     a draft has never started and a pause sits there until someone resumes it,
@@ -83,7 +83,7 @@ const NEVER = Number.MAX_SAFE_INTEGER;
 // no principled number here, only a threshold below which the row is noise.
 const SPEND_FLOOR_USD = 1;
 
-/** What belongs on the desk: a company doing work right now. Exported and
+/** What belongs on the desk: a project doing work right now. Exported and
     used by the sidebar badge too — a second copy of this test would drift, and
     a badge counting rows the page does not show is worse than no badge. */
 export const isLive = (p: DeskProject) => p.status === "running";
@@ -98,7 +98,7 @@ export function buildItems(projects: DeskProject[], reload: () => void): Item[] 
   for (const p of projects.filter(isLive)) {
     const to = `/projects/${p.id}`;
 
-    // A paused company is never a row — it is not on the desk at all (see
+    // A paused project is never a row — it is not on the desk at all (see
     // isLive above). Pausing is a state, not a request: it sits there until
     // someone resumes it, and a row that says so every day is reporting a fact
     // the chairman can already see on Projects.
@@ -107,7 +107,7 @@ export function buildItems(projects: DeskProject[], reload: () => void): Item[] 
     // budget-exhausted pause still emails him the moment it trips
     // (enforce_budget -> chairman_notify), so nothing is lost by keeping it out
     // of the list; what is gained is a count that means something. Parking four
-    // companies used to pin the badge at four forever, and a badge that is
+    // projects used to pin the badge at four forever, and a badge that is
     // permanently non-zero is one the chairman stops reading — which costs him
     // the approval that auto-denies tomorrow.
     //
@@ -193,7 +193,7 @@ export function buildItems(projects: DeskProject[], reload: () => void): Item[] 
         ),
         consequence: (
           <span className="tick cold">
-            the company keeps working, but it is promising nothing until you sign
+            the project keeps working, but it is promising nothing until you sign
           </span>
         ),
         actions: <Link className="act pri" to={`${to}/plan`}>Sign or move it</Link>,
@@ -304,7 +304,7 @@ export function buildItems(projects: DeskProject[], reload: () => void): Item[] 
           </>
         ),
         consequence: (
-          <span className="tick">the platform pauses the company at 100%</span>
+          <span className="tick">the platform pauses the project at 100%</span>
         ),
         actions: <Link className="act lnk" to={`${to}/settings`}>raise or steer →</Link>,
       });
@@ -346,9 +346,9 @@ export function buildItems(projects: DeskProject[], reload: () => void): Item[] 
         ),
       });
     }
-    // Money moved and nothing outside the company confirmed anything. Distinct
+    // Money moved and nothing outside the project confirmed anything. Distinct
     // from the drought, which counts hours rather than dollars — so it is
-    // suppressed while a drought row is already speaking for this company.
+    // suppressed while a drought row is already speaking for this project.
     // USD only: a zero here in token billing means "not priced in dollars",
     // not "spent nothing".
     if (b.unit === "usd" && !droughtShown && p.spend_24h >= SPEND_FLOOR_USD
@@ -358,7 +358,7 @@ export function buildItems(projects: DeskProject[], reload: () => void): Item[] 
         what: (
           <>
             <b>${p.spend_24h.toLocaleString(undefined, { maximumFractionDigits: 2 })}</b> spent
-            in the last 24h, and nothing verified by anyone outside the company.
+            in the last 24h, and nothing verified by anyone outside the project.
           </>
         ),
         consequence: (
@@ -381,10 +381,10 @@ export default function Desk() {
   if (error) return <div className="error">{error}</div>;
   if (!data) return <p className="subtitle">Loading…</p>;
 
-  // `all` is every non-terminal company the server sent; `live` is the desk.
-  // The difference is only ever spent on one thing — saying how many companies
+  // `all` is every non-terminal project the server sent; `live` is the desk.
+  // The difference is only ever spent on one thing — saying how many projects
   // are parked when none is working, so an empty desk can't read as "all
-  // clear" or as "you have no companies".
+  // clear" or as "you have no projects".
   const all = data.projects;
   const live = all.filter(isLive);
   const idle = all.length - live.length;
@@ -464,7 +464,7 @@ export default function Desk() {
           <div className="proof">
             <div className="pf">
               <div className="pv">{running}</div>
-              <div className="pl">compan{running === 1 ? "y" : "ies"} working</div>
+              <div className="pl">project{running === 1 ? "" : "s"} working</div>
             </div>
             <div className="pf">
               <div className="pv">{fmtAgo(lastRun)}</div>
@@ -482,7 +482,7 @@ export default function Desk() {
         <div className="quiet bad">
           <div className="mark">Nothing is running.</div>
           <div className="sub">
-            You have {idle} compan{idle === 1 ? "y" : "ies"} that could be
+            You have {idle} project{idle === 1 ? "" : "s"} that could be
             working and {idle === 1 ? "it is not" : "none is"}. No agent is doing
             anything right now — which is <b>not</b> the same as all clear.
           </div>
@@ -507,7 +507,7 @@ export default function Desk() {
       )}
 
       {running > 0 && (
-        <CompanyStrip
+        <ProjectStrip
           live={live}
           elsewhere={idle + data.finished}
           needing={new Set(needing.map((i) => i.project.id))}
@@ -517,21 +517,21 @@ export default function Desk() {
   );
 }
 
-/** No live companies at all. Two different situations wearing one card would be
-    the old bug: a chairman whose four companies all delivered is not a new
+/** No live projects at all. Two different situations wearing one card would be
+    the old bug: a chairman whose four projects all delivered is not a new
     user, and must not be shown the new-user screen. */
 function EmptyDesk({ finished }: { finished: number }) {
   if (finished > 0) {
     return (
       <div className="quiet ok">
-        <div className="mark">Every company has finished.</div>
+        <div className="mark">Every project has finished.</div>
         <div className="sub">
-          All {finished} of your companies were completed or stopped. Nothing is running
-          because there is nothing left to run — for a Deliver company that is the end
+          All {finished} of your projects were completed or stopped. Nothing is running
+          because there is nothing left to run — for a Deliver project that is the end
           state, not a fault.
         </div>
         <div className="acts" style={{ justifyContent: "center" }}>
-          <Link className="act pri" to="/projects/new">Start another company</Link>
+          <Link className="act pri" to="/projects/new">Start another project</Link>
           <Link className="act lnk" to="/projects">review what they delivered →</Link>
         </div>
       </div>
@@ -539,14 +539,14 @@ function EmptyDesk({ finished }: { finished: number }) {
   }
   return (
     <div className="quiet">
-      <div className="mark">You don’t chair a company yet.</div>
+      <div className="mark">You don’t chair a project yet.</div>
       <div className="sub">
-        A company is a CEO agent, a team, a goal and a budget. Once one is running, this
+        A project is a CEO agent, a team, a goal and a budget. Once one is running, this
         page collects every decision it can’t make without you — and stays empty the rest
         of the time.
       </div>
       <div className="acts" style={{ justifyContent: "center" }}>
-        <Link className="act pri" to="/projects/new">Create your first company</Link>
+        <Link className="act pri" to="/projects/new">Create your first project</Link>
       </div>
     </div>
   );
@@ -555,23 +555,23 @@ function EmptyDesk({ finished }: { finished: number }) {
 /** Navigation, not a metrics table — the Projects page is that, and this used
     to be a second copy of it. Name, state, and whether it is asking for
     something. */
-function CompanyStrip(
+function ProjectStrip(
   { live, elsewhere, needing }:
   { live: DeskProject[]; elsewhere: number; needing: Set<string> },
 ) {
   // Every row here is running, so the header needs one number and the dot is
   // never anything but green. The old version counted every non-terminal
-  // company, and three parked ones beside a working one read as
-  // "Live companies · 4" — a count of companies that were not working.
+  // project, and three parked ones beside a working one read as
+  // "Live projects · 4" — a count of projects that were not working.
   return (
     <div className="roster">
       <div className="sh">
-        Working · {live.length} compan{live.length === 1 ? "y" : "ies"}
+        Working · {live.length} project{live.length === 1 ? "" : "s"}
       </div>
       {live.map((p) => {
         // Read off the list above rather than recounted here. A second
         // definition drifted immediately: this one predated the dial rows, so
-        // a company showing "accept scope" in the list read "12m ago" in the
+        // a project showing "accept scope" in the list read "12m ago" in the
         // roster — the exact contradiction the rest of this page exists to
         // stop.
         const needsYou = needing.has(p.id);
@@ -588,7 +588,7 @@ function CompanyStrip(
       })}
       {elsewhere > 0 && (
         <div className="fin">
-          {elsewhere} compan{elsewhere === 1 ? "y is" : "ies are"} not running — parked,
+          {elsewhere} project{elsewhere === 1 ? " is" : "s are"} not running — parked,
           never started or finished — and not shown here →{" "}
           <Link to="/projects">Projects</Link>
         </div>

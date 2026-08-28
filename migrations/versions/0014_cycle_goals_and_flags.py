@@ -1,6 +1,6 @@
 """Cycle goals, standing requirements, and the flag.
 
-Three changes that together let an Operate company say when its work is due,
+Three changes that together let an Operate project say when its work is due,
 whether it is honouring what recurs, and — the part no mechanism existed for —
 tell its chairman when the answer is no.
 

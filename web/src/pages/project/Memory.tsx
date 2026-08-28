@@ -118,7 +118,7 @@ export default function Memory({ projectId, ctx }: { projectId: string; ctx: Pro
   return (
     <>
       <p className="subtitle">
-        What the company has chosen to remember — the CEO curates project memory, each team's
+        What the project has chosen to remember — the CEO curates project memory, each team's
         lead curates its own. The caps force curation: a full memory refuses new entries until
         its curator folds several into one or forgets one, so what you read here is what they
         consider worth keeping. Nothing is ever deleted or auto-evicted — folded entries stay

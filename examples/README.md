@@ -22,10 +22,10 @@ drill on a bare checkout — no deployment, no key, no dollars:
 yaaf rehearse examples/01-your-first-hour.json
 ```
 
-It runs the spec as a real company with scripted agents in place of models, and
+It runs the spec as a real project with scripted agents in place of models, and
 walks you through what the platform actually does with it: the plan proposed,
 the gate closing, the board opening, work claimed and closed, and every point
-the company stops and waits for **you**. Reading that once before you spend
+the project stops and waits for **you**. Reading that once before you spend
 anything is the cheapest hour in this directory.
 
 ---
@@ -64,7 +64,7 @@ discovery, regulated research, data analysis.
 
 ## The short version of the argument
 
-**A skill is a capability. yaaf is the company.** They are not alternatives —
+**A skill is a capability. yaaf is what wields it.** They are not alternatives —
 yaaf *runs* your skills: a role's `tool_permissions.skills` is an allowlist
 handed straight to the Agent SDK, so a role can be granted exactly the skills it
 should have and no others.
@@ -137,7 +137,7 @@ these ships a goal you edit rather than one you copy, and the part you must
 change is IN CAPITALS so you cannot miss it. Copy the *shape*: what exists at
 the end, who it is for, where the inputs come from, and — the part people skip
 — what would count as working, stated before anyone starts. "Analyze the data"
-produces a company that putters at $8/hour.
+produces a project that putters at $8/hour.
 
 **Done is defined before work starts.** Every requirement and every task carries
 a test, and there are exactly two kinds:
@@ -179,7 +179,7 @@ From [`roles/`](../roles/). These examples hire fifteen of them:
 | `cio`, `equity-analyst`, `compliance-officer` | A markets desk | 10 |
 
 The library holds more than these — a full markets family (eleven roles), a
-fourth game role, and the rest of a general-purpose company (`blog-writer`,
+fourth game role, and the rest of a general-purpose project (`blog-writer`,
 `marketer`, `sales`). Browse them at **Roles** in the dashboard.
 
 Roles are **versioned**. Edit the JSON, re-seed, and existing teams keep running

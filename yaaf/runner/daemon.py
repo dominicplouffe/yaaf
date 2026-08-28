@@ -515,7 +515,7 @@ def finalize(job: RunJob, result: RunResult, was_revoked: bool = False) -> None:
         # Outcome metering. A wake cannot be known to be empty until it has
         # happened, so the refund is retroactive: the run is logged, billed to
         # the ledger and shown on the Runs page exactly as before, but it stops
-        # counting against the work allowance. The company was not slowed by a
+        # counting against the work allowance. The project was not slowed by a
         # run that changed nothing, and the allowance should not pretend it was.
         #
         # Only ever a refund, never a charge: a run that DID produce keeps the
@@ -788,7 +788,7 @@ def _finalize_requirement_check(session: Session, job: RunJob, result: RunResult
 
     A failure does not block or nag: it reopens the requirement and adds to its
     failure load, which is what lets a review say the rate fell because one
-    requirement ate fifty runs rather than that the company got slower.
+    requirement ate fifty runs rather than that the project got slower.
     """
     requirement = session.get(Requirement, job.requirement_id)
     if requirement is None or requirement.status != RequirementStatus.CHECKING:
@@ -959,7 +959,7 @@ def _block_on_repeated_check_failure(
     planner = policy.planner_of(session, task)
     # A subtask's planner is its parent's claimant, and that agent can be gone —
     # or be the very claimant we are blocking. Either way the notice used to go
-    # nowhere at all: the task sat BLOCKED and no one in the company was told.
+    # nowhere at all: the task sat BLOCKED and no one in the project was told.
     # The CEO is the correct fallback; it owns the board.
     if planner is None or planner.id == claimant_id:
         planner = policy.ceo_of(session, task.project_id)

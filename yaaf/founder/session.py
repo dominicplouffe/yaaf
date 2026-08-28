@@ -2,7 +2,7 @@
 
 The Founder and the goal grader both run through the Claude Code CLI, driven
 by ``claude-agent-sdk`` in this process. That is not an implementation detail
-worth hiding — it is the whole point. Every agent in a yaaf company already
+worth hiding — it is the whole point. Every agent in a yaaf project already
 runs on the CLI with a credential in its environment
 (:func:`yaaf.runner.daemon._billing_env`), and a subscription token is a CLI
 credential rather than a Messages API one. Reaching for the Messages API here
@@ -11,7 +11,7 @@ key the chairman already had.
 
 What is different from an agent run is only the isolation: an agent gets a
 Docker sandbox with a workspace, because it acts on the world. The Founder
-drafts a company and calls six read-only tools, so it runs in-process with
+drafts a project and calls six read-only tools, so it runs in-process with
 every built-in tool switched off.
 """
 

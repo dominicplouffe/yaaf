@@ -1,6 +1,6 @@
 """Credentials are capabilities: the recognizer library.
 
-Whatever the chairman stores, the company can use — yaaf never polices what
+Whatever the chairman stores, the project can use — yaaf never polices what
 somebody adds to their own deployment (docs/AUTONOMY.md). What the platform
 owes in return is to make a stored credential *usable*: an env var in a
 sandbox is only a capability if the agent holding it knows what it is for and

@@ -294,7 +294,7 @@ function whyItIsYours(kind: string): string {
     case "legal":
       return "Anything with legal weight is yours by rule, at any autonomy setting.";
     case "tool_request":
-      return "A capability the company does not have — you hold the values.";
+      return "A capability the project does not have — you hold the values.";
     case "assist":
       return "A step only a human can take. The platform hands these over, never defeats them.";
     case "owner_decision":
@@ -330,7 +330,7 @@ function ActionStrip({
   // tab to send anyone to, and proposals are refused there at the door.
   // …unless the dial gave acceptance to the CEO, in which case a proposal is
   // the CEO's own inbox and saying "awaits your acceptance" would be a lie
-  // about who is holding the company up.
+  // about who is holding the project up.
   const ceoAcceptsScope = dash.constitution["plan_authority"] === "ceo";
   const proposedScope = dash.mode !== "explore" && dash.requirements_proposed > 0
     ? dash.requirements_proposed : 0;
@@ -568,7 +568,7 @@ export default function ProjectPage() {
       )}
       {/* One answer to "why is nothing happening?", on every tab — a chairman
           who opens Work to see four tasks sitting still should not have to go
-          to Overview to learn the company ran out of runs at 01:22. */}
+          to Overview to learn the project ran out of runs at 01:22. */}
       <StatusBriefBox dash={dash} projectId={projectId} />
       {error && (
         <div className="error">

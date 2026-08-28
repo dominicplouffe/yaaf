@@ -4,7 +4,7 @@ The default export is the portable *design*: it must recreate the project on
 any install and carries credential names, never values — this is what the
 seed (wipe-survival) machinery stores. `include_values=true` is the full
 backup the chairman downloads on purpose: every value travels, decrypted, so
-a restore rebuilds the whole company with nothing to re-enter."""
+a restore rebuilds the whole project with nothing to re-enter."""
 
 from __future__ import annotations
 

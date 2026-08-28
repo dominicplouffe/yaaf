@@ -21,7 +21,7 @@ Every command that takes a project accepts **either a slug or an id**.
 | Command | What it does |
 |---|---|
 | `yaaf seed-roles [DIR] [--only-missing]` | Load every `*.json` in the directory (default `roles/`) into the role library. Re-running creates new role *versions* — which is how an edited prompt reaches a running install. `--only-missing` skips the slugs the library already has, which is what you want after an update adds roles to the checkout; it still refiles those roles' **category and domains**, because those live on the role rather than the version and so can move without putting a live team behind its prompt. |
-| `yaaf seed-crews [DIR] [--only-missing]` | Load every `*.json` in the directory (default `crews/`) into the crew library — the pre-staffed teams the hiring desk offers. Crews are not versioned: one is read at hiring time and copied into the project's own teams, so re-seeding an edited crew can never reach a company that already started. Run it after `seed-roles`. |
+| `yaaf seed-crews [DIR] [--only-missing]` | Load every `*.json` in the directory (default `crews/`) into the crew library — the pre-staffed teams the hiring desk offers. Crews are not versioned: one is read at hiring time and copied into the project's own teams, so re-seeding an edited crew can never reach a project that already started. Run it after `seed-roles`. |
 | `yaaf create-user EMAIL NAME` | Create a user. Idempotent by email. |
 | `yaaf create-project SPEC_FILE` | Create a project from a JSON spec (shape below). |
 | `yaaf set-secret NAME [--project P] [--scopes a,b] [--kind service\|billing]` | Store an encrypted secret. **The value is prompted** — never echoed, logged, or left in shell history. Omit `--project` for a platform-level secret. |
@@ -40,7 +40,7 @@ Every command that takes a project accepts **either a slug or an id**.
   "chairman_email": "you@example.com",
   "mode": "deliver",
   "billing_mode": "api_key",
-  "controlled_domains": ["mycompany.com"],
+  "controlled_domains": ["myproject.com"],
   "github_repo": "you/my-project",
   "constitution": {"queue_ceiling": 5, "monthly_usd_cap": 300},
   "integrations": {"runtime": "mock"},
@@ -96,8 +96,8 @@ yaaf stop  my-slug --reason "shipped"
 | Command | Shows |
 |---|---|
 | `yaaf projects` | Every project with status and headline numbers. |
-| `yaaf rehearse SPEC_FILE [--days N] [--usd-per-run N] [--json]` | **A fire drill: run the spec as a company for nothing, before you fund it.** Needs no deployment and no key — `yaaf rehearse examples/01-your-first-hour.json` works on a fresh checkout. See [FEATURES §13](FEATURES.md). |
-| `yaaf briefing [PROJECT] [--hours N] [--seen]` | **What happened since you last read one.** Omit the project for every live company. Composed from the record at zero tokens, so it works on a paused company and a broke one. Reading never moves your mark; `--seen` does, and only to the edge of the window it just printed. |
+| `yaaf rehearse SPEC_FILE [--days N] [--usd-per-run N] [--json]` | **A fire drill: run the spec as a project for nothing, before you fund it.** Needs no deployment and no key — `yaaf rehearse examples/01-your-first-hour.json` works on a fresh checkout. See [FEATURES §13](FEATURES.md). |
+| `yaaf briefing [PROJECT] [--hours N] [--seen]` | **What happened since you last read one.** Omit the project for every live project. Composed from the record at zero tokens, so it works on a paused project and a broke one. Reading never moves your mark; `--seen` does, and only to the edge of the window it just printed. |
 | `yaaf agenda PROJECT [--days 14]` | **What it is scheduled to do next**: the wall-clock wakes, the standing meeting, the cycle roll, the kill dates, the clocks that decide themselves, and the promised date with the platform's projection beside it. |
 | `yaaf dashboard PROJECT` | The full project dashboard payload. |
 | `yaaf board PROJECT` | The task board. |
@@ -191,19 +191,19 @@ yaaf rehearse my-spec.json --usd-per-run 2  # and what does it cost at your pric
 ```
 
 Runs the real platform on the mock runtime against your spec: the walk from
-roles resolving to a requirement settling true, every point the company would
+roles resolving to a requirement settling true, every point the project would
 stop and wait for you, the plan in runs against your caps, and which of the
 four limits paces it. Opens no sockets, runs no commands out of the file, and
 touches no database but the throwaway one it creates.
 
-Exit code 0 when the company gets off the ground, 1 when it does not, 2 when
+Exit code 0 when the project gets off the ground, 1 when it does not, 2 when
 the spec itself could not be read — so it drops straight into CI beside your
 other checks.
 
 ## Coming back after a few days
 
 ```bash
-yaaf briefing                 # every live company, each on its own read mark
+yaaf briefing                 # every live project, each on its own read mark
 yaaf briefing my-slug --seen  # read one, and start the next window here
 yaaf agenda my-slug           # and what the next fortnight holds
 ```

@@ -424,7 +424,7 @@ def check_task_gate(cons: ConstitutionDoc, not_before: datetime | None) -> None:
 
     `not_before` is a real and useful verb — it is how a CEO sequences a weekly
     rhythm, or a step that only makes sense after another lands. It is also how
-    a company goes silent for no visible reason: one CEO gated its only open
+    a project goes silent for no visible reason: one CEO gated its only open
     task two hours out, the dispatcher correctly woke nobody, and the chairman
     paused the project with the reason "been idle and I have no idea why".
 
@@ -649,10 +649,10 @@ def check_task_claim(session: Session, project: Project, agent: Agent, task: Tas
     # CEO invented after thirty hours of being lied to, promoted to a rule.
     #
     # Solo mode is exempt, because the rule is unsatisfiable there rather than
-    # relaxed there: with one agent in the company, there is nobody to hand it
+    # relaxed there: with one agent in the project, there is nobody to hand it
     # to, and refusing would mean a solo project could never claim anything.
     # This is a real difference in what "done" is worth between topologies —
-    # a solo company self-grades every observable — and it is a cost of running
+    # a solo project self-grades every observable — and it is a cost of running
     # solo, not a free pass.
     if task.created_by_agent_id == agent.id and _has_another_agent(session, agent):
         raise Refusal(
@@ -677,7 +677,7 @@ def check_task_claim(session: Session, project: Project, agent: Agent, task: Tas
 
 
 def _has_another_agent(session: Session, agent: Agent) -> bool:
-    """Is there anyone else in this company at all? Solo mode is one agent that
+    """Is there anyone else in this project at all? Solo mode is one agent that
     is CEO, sole team member and derived lead; every separation-of-duties rule
     degrades to nothing there, and pretending otherwise would just deadlock."""
     return session.execute(
@@ -848,7 +848,7 @@ def check_requirement_propose(
 ) -> None:
     """Only the CEO proposes scope, and only in a mode that has scope. A lead
     proposing requirements would be a team writing its own definition of done
-    one level down; a proposal in Explore would park the company forever on an
+    one level down; a proposal in Explore would park the project forever on an
     acceptance the mode deliberately gives the chairman no screen to perform."""
     if project.mode == ProjectMode.EXPLORE:
         raise Refusal(
@@ -942,7 +942,7 @@ def would_cycle(session: Session, from_id: str, to_id: str) -> list[str] | None:
 
     A cycle makes the critical path infinite and the dependency gate
     unsatisfiable — every requirement in the loop waits for another one in the
-    same loop, forever, and the company looks idle for a reason no screen could
+    same loop, forever, and the project looks idle for a reason no screen could
     explain. Cheaper to refuse at the edge than to detect as a mystery later.
     """
     if from_id == to_id:
@@ -1306,7 +1306,7 @@ def check_plan_affordable(session: Session, project: Project, cons: Constitution
         f"{budget['runs']} — you are over by roughly {over}.{bias_note} "
         "Cut something, estimate it smaller only if you actually believe it, or put the "
         "budget to the chairman as an approval. Adding scope you cannot pay for is how a "
-        "company arrives at 100% of its cap with nothing finished.",
+        "project arrives at 100% of its cap with nothing finished.",
         status_code=409,
     )
 
@@ -1613,7 +1613,7 @@ def check_commitment_reset(
 
 def commitment_resets(session: Session, commitment: Commitment) -> int:
     """How many times this promise has already been reset by the CEO. Disclosed
-    on every reset: one is a company adapting, four in a fortnight is a date
+    on every reset: one is a project adapting, four in a fortnight is a date
     nobody should believe, and the chairman should not have to count them."""
     return int(session.execute(
         select(func.count(AuditLog.id)).where(
@@ -1693,7 +1693,7 @@ def commitment_scope_frozen(
 def check_scope_within_commitment(
     session: Session, project: Project, cons: ConstitutionDoc
 ) -> None:
-    """The guarantee, as a refusal. When the date stops holding, the company
+    """The guarantee, as a refusal. When the date stops holding, the project
     cannot quietly add work — existing work continues, but a new requirement
     needs the chairman himself, with the slip in front of him."""
     frozen = commitment_scope_frozen(session, project, cons)
@@ -1975,7 +1975,7 @@ def external_spent_this_month(session: Session, project_id: str) -> float:
 
 def pending_purchase_usd(session: Session, project_id: str) -> float:
     """Cleared-but-unfinished purchases. They reserve the envelope: money the
-    company has been told it may move is committed the moment it is cleared,
+    project has been told it may move is committed the moment it is cleared,
     or two overlapping purchases could each clear against the same headroom
     and together bust the wall. A failed finish releases the reservation; a
     stale one can be released by finishing it ok=false after checking with
@@ -2126,7 +2126,7 @@ def awaiting_chairman(session: Session, project: Project, cons: ConstitutionDoc)
 
     One definition, because two of them would drift: the desk renders this, the
     sidebar counts it, and the janitor chases it by email. A page that says a
-    company needs nothing while the janitor is mailing about it — or the
+    project needs nothing while the janitor is mailing about it — or the
     reverse — is worse than either alone.
 
     Read the emptiness literally. On a fully autonomous project every entry
@@ -2185,7 +2185,7 @@ def slip_moves(cons: ConstitutionDoc) -> str:
     said "propose cuts to the chairman" at every setting — advice that is
     simply false on a project whose chairman had already handed over the scope
     and the date, and which pushed the CEO toward the one move that could still
-    stall the company: an approval on a desk nobody had asked to be involved.
+    stall the project: an approval on a desk nobody had asked to be involved.
     """
     holds_scope = ceo_holds(cons, "scope_authority")
     holds_date = ceo_holds(cons, "commitment_authority")
@@ -2358,7 +2358,7 @@ def check_directive_scope(changes: dict) -> None:
     if outside:
         raise Refusal(
             f"You may not set {', '.join(outside)} from a directive. An agent filing its own "
-            f"constitution is how a company votes itself a bigger budget; the only rules you "
+            f"constitution is how a project votes itself a bigger budget; the only rules you "
             f"may file are the ones that limit what you ask of the chairman "
             f"({', '.join(sorted(DIRECTIVE_FIELDS))}). Everything else is his amendment to "
             "make, and yours to recommend.",

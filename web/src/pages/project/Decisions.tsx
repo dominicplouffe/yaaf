@@ -297,7 +297,7 @@ export default function Decisions({ ctx }: { ctx: ProjectCtx }) {
     <>
       <p className="subtitle">
         Approvals expire to <strong>DENY</strong>. That is the whole design: a chairman who never
-        logs in slows the company down, but can never wedge it.
+        logs in slows the project down, but can never wedge it.
       </p>
 
       {pending.length > 0 && (

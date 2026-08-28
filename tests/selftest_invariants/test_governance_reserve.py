@@ -1,9 +1,9 @@
 """Invariant selftests: the reserved governance slice.
 
-The audit's sharpest single finding was a company that spent a whole day's runs
+The audit's sharpest single finding was a project that spent a whole day's runs
 before lunch and then sat dead until midnight. On such a day the brake is
 working — ordinary work *should* stop. What must not stop is the run whose only
-job is to tell the chairman what happened, because the day the company burns
+job is to tell the chairman what happened, because the day the project burns
 its allowance is precisely the day he needs the report.
 
 So the daily ceiling is split: ordinary wakes stop at `cap - reserved`, and
@@ -171,7 +171,7 @@ def test_the_reservation_is_a_rule_the_chairman_can_move(client):
     """It is a limit, so it lives in the constitution — amendable, audited, and
     disclosed to the CEO like every other limit."""
     project = make_project(client, start=False)
-    amend(client, project["id"], reason="this company reports weekly, not daily",
+    amend(client, project["id"], reason="this project reports weekly, not daily",
           reserved_governance_runs=1)
     with db_session() as session:
         assert effective(session, project["id"]).reserved_governance_runs == 1

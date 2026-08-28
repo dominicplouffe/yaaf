@@ -1,14 +1,14 @@
 """Invariant selftests: the fire drill.
 
 A preflight has to be trustworthy in a specific way: it must not lie about
-whether the company works, and it must not do anything a preflight has no
+whether the project works, and it must not do anything a preflight has no
 business doing. Both halves are attacked here.
 
   * it isolates — a throwaway SQLite file it created, asserted rather than
     assumed, because the engine is a process-global and a drill that ran
     inside the API process would re-point the server at its own scratch data
   * it reaches nothing — no command out of a spec file, no evidence URL, no
-    credential, no socket
+    credential, no socket, and no mail to the chairman it invented
   * it relaxes exactly the rules that measure clock time, says which, and
     reports every other rule as the chairman wrote it
   * a broken spec is a legible finding rather than a crash, and a working one
@@ -92,7 +92,7 @@ def test_a_sound_spec_walks_all_the_way_to_a_requirement_settling_true():
         assert steps[key]["ok"], f"{key} not reached: {report['verdict']}"
 
 
-def test_it_counts_every_time_the_company_stopped_and_waited_for_a_human():
+def test_it_counts_every_time_the_project_stopped_and_waited_for_a_human():
     """The autonomy dial in numbers. Nothing else in the product could produce
     this before the money was spent, because the dial decides which verbs park
     and only the work decides how often they come up."""
@@ -118,7 +118,7 @@ def test_an_autonomous_dial_waits_for_nobody():
             < sum(r["count"] for r in supervised["interventions"]))
 
 
-def test_an_explore_company_is_not_marked_down_for_having_no_plan():
+def test_an_explore_project_is_not_marked_down_for_having_no_plan():
     """Explore has no requirements, no plan gate and no commitment BY DESIGN.
     Drawing those as misses would report the absence of a feature as the
     failure of one."""
@@ -154,10 +154,10 @@ def test_a_spec_the_platform_refuses_reports_the_platform_s_own_words():
     assert "not among its employees" in walk(report)["created"]["detail"]
 
 
-def test_a_company_with_nobody_in_it_is_told_so_rather_than_left_to_stall():
+def test_a_project_with_nobody_in_it_is_told_so_rather_than_left_to_stall():
     """The case with no wall to report: a CEO with nobody to give work to never
     files a task, so the refusals list is empty and "it stalled" would be the
-    whole story. The shape of the company is the finding."""
+    whole story. The shape of the project is the finding."""
     report = rehearsal.rehearse(spec(slug="nohands", teams=[]))
     assert not report["ok"]
     assert any("no teams" in f for f in report["findings"])
@@ -201,7 +201,7 @@ def test_the_arithmetic_uses_the_chairman_s_numbers_not_the_relaxed_ones():
 
 
 def test_the_plan_is_reported_as_proposed_not_as_it_stands_at_the_end():
-    """A company that finished everything has no live scope, and `plan_arithmetic`
+    """A project that finished everything has no live scope, and `plan_arithmetic`
     counts live scope. Reporting that would say "it planned nothing" about the
     one drill that went perfectly."""
     report = rehearsal.rehearse(spec())
@@ -284,7 +284,7 @@ def test_every_test_the_crew_writes_is_an_observable():
 def test_it_refuses_to_run_against_a_database_it_did_not_create(tmp_path):
     """The guard that makes the drill safe to invoke from a server. The engine
     is a process-global; a drill that quietly accepted somebody else's database
-    would build a company inside a live deployment. Simulated by making the
+    would build a project inside a live deployment. Simulated by making the
     re-point land somewhere other than the file the drill asked for."""
     from yaaf.core import db as db_module
 
@@ -308,7 +308,7 @@ def test_it_refuses_to_run_against_a_database_it_did_not_create(tmp_path):
 
 def test_the_drill_never_touches_the_caller_s_data():
     """The engine is restored by the fixture; what this proves is that the
-    drill's own company never appears anywhere but its own database."""
+    drill's own project never appears anywhere but its own database."""
     from yaaf.core.db import db_session
     from yaaf.core.models import Project
 
@@ -322,7 +322,7 @@ def test_the_drill_builds_no_workspace_in_the_live_root(tmp_path, monkeypatch):
     """Materializing a job prepares a workspace, and the drill runs the real
     dispatcher — so it mkdir'd `<workspaces_root>/<slug>` in the LIVE root. A
     preflight that promises to create nothing left a directory named after a
-    company that does not exist, and, where the slug matched a real project,
+    project that does not exist, and, where the slug matched a real project,
     reached into that project's own working tree."""
     root = tmp_path / "live-workspaces"
     root.mkdir()
@@ -375,6 +375,85 @@ def test_a_github_backed_spec_is_never_cloned_by_the_drill(tmp_path, monkeypatch
     # And what was there before is back afterwards — the drill hands the global
     # over rather than leaving its own stub for whatever runs next.
     assert daemon_module._clone_workspace is spy
+
+
+def test_a_drill_never_delivers_a_notice_to_the_chairman_it_invented(monkeypatch):
+    """The chairman a drill invents is `rehearsal@localhost`, and the notices a
+    project raises are real — a verdict waiting, a commitment at risk, an audit
+    sample. `chairman_notify` reads its mail and webhook config out of the
+    environment, and the drill inherits the server's, so one fire drill put
+    eight emails and eight outbound POSTs on the wire about a project that does
+    not exist. The batching windows the drill lifts to zero were the only thing
+    that had been holding any of them back."""
+    from yaaf.server import janitor as janitor_module
+    from yaaf.server import notify as notify_module
+
+    monkeypatch.setenv("YAAF_SMTP_HOST", "smtp.example.invalid")
+    monkeypatch.setenv("YAAF_CHAIRMAN_WEBHOOK_URL", "https://hooks.example.invalid/x")
+    delivered: list[tuple] = []
+    monkeypatch.setattr(notify_module, "_send_email",
+                        lambda *args: delivered.append(("email", *args)))
+    monkeypatch.setattr(notify_module, "_send_webhook",
+                        lambda *args: delivered.append(("webhook", *args)))
+
+    # The janitor binds `chairman_notify` at import, so this is the name its
+    # own calls go through. Wrapping rather than replacing it keeps the drill
+    # honest and makes the assertion below non-vacuous: nothing was delivered
+    # BECAUSE the transport had nowhere to go, not because nothing was raised.
+    raised: list[str] = []
+    original = janitor_module.chairman_notify
+
+    def spy(session, project, subject, body):
+        raised.append(subject)
+        return original(session, project, subject, body)
+
+    monkeypatch.setattr(janitor_module, "chairman_notify", spy)
+
+    report = rehearsal.rehearse(spec())
+
+    assert report["ok"], report["verdict"]
+    assert raised, "the drill raised no notice at all; this test proves nothing"
+    assert delivered == []
+
+
+def test_it_gives_the_notification_channels_back_including_the_ones_that_were_unset(
+        monkeypatch):
+    """Same discipline as the state roots: a drill that muted the chairman and
+    kept him muted would leave the real deployment silent for every notice
+    after it — which is the failure mode you would not notice."""
+    from yaaf.core.config import settings
+
+    monkeypatch.setenv("YAAF_SMTP_HOST", "smtp.example.invalid")
+    monkeypatch.delenv("YAAF_CHAIRMAN_WEBHOOK_URL", raising=False)
+    settings.cache_clear()
+
+    rehearsal.rehearse(spec())
+
+    assert os.environ["YAAF_SMTP_HOST"] == "smtp.example.invalid"
+    assert "YAAF_CHAIRMAN_WEBHOOK_URL" not in os.environ
+    assert settings().smtp_host == "smtp.example.invalid"
+    assert settings().chairman_webhook_url == ""
+
+
+def test_it_refuses_to_run_while_a_notification_channel_still_has_a_target(
+        tmp_path, monkeypatch):
+    """The notification half of the database guard: the drill checks that the
+    mute took rather than trusting that it did, and puts the environment back
+    from the refusal path too."""
+    from types import SimpleNamespace
+
+    from yaaf.core import config as config_module
+
+    stub = SimpleNamespace(smtp_host="smtp.example.invalid", chairman_webhook_url="")
+    fake = lambda: stub  # noqa: E731 — a one-liner stand-in for the cached accessor
+    fake.cache_clear = lambda: None
+    monkeypatch.setattr(config_module, "settings", fake)
+
+    before = dict(os.environ)
+    with pytest.raises(rehearsal.RehearsalError) as caught:
+        rehearsal._mute_chairman_notifications()
+    assert "still have somewhere to go" in str(caught.value)
+    assert dict(os.environ) == before
 
 
 def test_it_gives_the_state_roots_back_including_the_ones_that_were_unset(tmp_path,
