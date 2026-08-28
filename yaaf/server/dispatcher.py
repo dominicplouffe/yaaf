@@ -935,7 +935,7 @@ def _activity_brief(state: dict) -> dict:
             "ok", "working",
             f"at the concurrency cap ({c['in_flight']} of {c['cap']}) — working",
             f"At the concurrency cap — {c['in_flight']} of {c['cap']} running.",
-            "The company is working flat out. Raise 'Concurrent runs' in Settings to "
+            "The project is working flat out. Raise 'Concurrent runs' in Settings to "
             "widen it.", banner=False)
 
     if gate == "agents_busy":
@@ -943,7 +943,7 @@ def _activity_brief(state: dict) -> dict:
             "ok", "working",
             "every agent that has work is already running",
             "Every agent with work is already running.",
-            "The company is working. Nothing here needs you.", banner=False)
+            "The project is working. Nothing here needs you.", banner=False)
 
     if behind:
         return brief(

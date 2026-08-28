@@ -277,7 +277,7 @@ def say(thread_id: str, body: SayIn, session: Session = Depends(db)) -> dict:
     if thread.created_project_id:
         raise HTTPException(
             status_code=409,
-            detail="this thread already became a company; talk to its CEO in the boardroom",
+            detail="this thread already became a project; talk to its CEO in the boardroom",
         )
     _say(session, thread, body.message.strip())
     return _accepted(_render(thread))

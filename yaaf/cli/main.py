@@ -395,7 +395,7 @@ def rehearse(
 
 @app.command()
 def briefing(
-    project: str = typer.Argument(None, help="a slug or id; omit for every live company"),
+    project: str = typer.Argument(None, help="a slug or id; omit for every live project"),
     hours: float = typer.Option(0, "--hours", help="force a window instead of your read mark"),
     seen: bool = typer.Option(False, "--seen", help="mark it read, so the next window starts here"),
 ) -> None:
@@ -420,7 +420,7 @@ def briefing(
             _show(response)
             return
         if not briefs:
-            typer.echo("No live companies.")
+            typer.echo("No live projects.")
             return
         for brief in briefs:
             typer.echo(f"\n── {brief['name']} " + "─" * max(0, 60 - len(brief["name"])))

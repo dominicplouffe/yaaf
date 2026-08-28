@@ -370,7 +370,7 @@ def _budget_reset_event(now: datetime, horizon: datetime, tz: ZoneInfo) -> dict 
         return None
     return _event(
         nxt, "budget_reset", "Monthly budget resets", tz,
-        detail="the spend meter returns to zero; a paused company still waits for you",
+        detail="the spend meter returns to zero; a paused project still waits for you",
         tone="flat", where="settings",
     )
 
@@ -398,7 +398,7 @@ def project_agenda(session: Session, project: Project,
     live = project.status == ProjectStatus.RUNNING
     if not live:
         notes.append(
-            f"This company is {project.status}, so nothing below is scheduled to run. "
+            f"This project is {project.status}, so nothing below is scheduled to run. "
             + (project.status_reason or "")
         )
     else:

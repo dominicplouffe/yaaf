@@ -358,7 +358,7 @@ def _slip_moves_for_chairman(cons: ConstitutionDoc) -> str:
     if holds_scope:
         return (
             "The CEO can cut scope itself and will. The date is yours: move it on the "
-            "Plan screen, or leave it and let the freeze hold the company to finishing "
+            "Plan screen, or leave it and let the freeze hold the project to finishing "
             "what is open."
         )
     if holds_date:
@@ -942,7 +942,7 @@ def check_explore_deadline(session: Session, project: Project) -> None:
         f"This month's spend so far: ${usd:,.2f} / {tokens:,} tokens.\n\n"
         "Your call, as it always was: stop it, extend the window (set a new date in "
         "Settings), or convert what worked into a Deliver project with real "
-        "requirements. The company keeps working until you decide.",
+        "requirements. The project keeps working until you decide.",
     )
 
 
@@ -999,7 +999,7 @@ def check_delivery_ready(session: Session, project: Project) -> None:
         session, project, "ready to complete",
         f"Every requirement is settled and {len(met)} of them are true: "
         f"{', '.join(r.key for r in met)}. Confirm completion on the project page — "
-        "it writes the delivery receipt and closes the company down cleanly. "
+        "it writes the delivery receipt and closes the project down cleanly. "
         "Until you do, it keeps running (and spending).",
     )
 
@@ -1201,7 +1201,7 @@ def nag_reviews(session: Session, project: Project) -> None:
             f"It opened {age_hours:.0f}h ago"
             + (" and the CEO's narrative is in" if review.narrative else
                " (the CEO has not filed its narrative yet)")
-            + ". The company keeps working either way — but decisions deferred "
+            + ". The project keeps working either way — but decisions deferred "
               "are decisions the arithmetic makes for you.",
         )
         review.nag_sent_at = now
@@ -2122,7 +2122,7 @@ def nag_awaiting_chairman(
                 f"The CEO proposes delivering {len(commitment.scope_snapshot or [])} "
                 f"requirement(s) by {commitment.deliver_by:%Y-%m-%d}. The date is the "
                 "platform's own projection of measured pace — the CEO did not write it "
-                "and cannot.\n\nNothing binds until you sign: until then the company "
+                "and cannot.\n\nNothing binds until you sign: until then the project "
                 "is working without a promise, so no slip can freeze new scope and "
                 "nothing tells you when the date stops holding. Open the Plan tab to "
                 "sign it, or set your own."
@@ -2177,13 +2177,13 @@ def warn_stall(session: Session, project: Project, cons: ConstitutionDoc) -> Non
 
     _notice_ceo(
         session, project, NoticeKind.STALLED,
-        f"This company has started no run in {cons.stall_hours:g}h and still has work "
+        f"This project has started no run in {cons.stall_hours:g}h and still has work "
         f"open. The platform's own reading: {brief['headline']} {brief['detail']} "
         "Do not guess at a different cause — that sentence is the dispatcher's, not a "
         "summary. Act on it or tell the chairman what you need.",
     )
     chairman_notify(
-        session, project, "the company has gone quiet",
+        session, project, "the project has gone quiet",
         f"No run has started in {cons.stall_hours:g}h and there is still work open.\n\n"
         f"{brief['headline']} {brief['detail']}",
     )

@@ -1377,7 +1377,7 @@ def set_cycle_goal(
     """
     if ctx.agent.kind != AgentKind.CEO:
         raise Refusal(
-            "The cycle's goal is the whole company's, so the CEO sets it. If you "
+            "The cycle's goal is the whole project's, so the CEO sets it. If you "
             "believe this cycle is aimed at the wrong thing, say so to the CEO — a "
             "suggestion survives your run.",
             status_code=403,
@@ -1913,7 +1913,7 @@ def account_record(
                 "owner": row.owner},
     ))
     return {"account_id": row.id, "duplicate": False,
-            "note": "On the registry. The chairman sees everything the company "
+            "note": "On the registry. The chairman sees everything the project "
                     "answers to, which is what makes winding down a reading "
                     "instead of an archaeology."}
 
@@ -2035,7 +2035,7 @@ def need_request(
                 "est_usd_per_month": body.est_usd_per_month},
     ))
     chairman_notify(
-        session, ctx.project, f"The company needs: {body.title}",
+        session, ctx.project, f"The project needs: {body.title}",
         "\n".join(detail_lines) + "\n\nFulfill or decline it on the Decisions screen "
         "— fulfilling stores the credential and scopes the roles in one motion.",
     )

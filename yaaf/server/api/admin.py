@@ -1709,7 +1709,7 @@ def patch_project(project_id: str, body: ProjectPatch, session: Session = Depend
         changed["goal"] = project.goal
         _notice_ceo(
             session, project.id, NoticeKind.GOAL_CHANGED,
-            f"The chairman changed this company's goal.\n\nIT IS NOW: {project.goal}\n\n"
+            f"The chairman changed this project's goal.\n\nIT IS NOW: {project.goal}\n\n"
             f"IT WAS: {was}\n\nEverything already in flight — open tasks, bets, deliverables "
             "— was planned against the old goal. Re-read the backlog against this one before "
             "continuing, and close or re-aim whatever no longer serves it.",
@@ -2635,7 +2635,7 @@ def decide_audit_sample(
                 f"'{task.title[:200]}'. His note: {body.note[:1000] or '(none)'}\n"
                 "The task stays done — sampling never reopens work by itself — but "
                 "this is on the record, it will be on the next review, and a pattern "
-                "of failed samples is how a company loses the benefit of the doubt.",
+                "of failed samples is how a project loses the benefit of the doubt.",
             )
     _audit(session, row.project_id, "audit_sample.decide", "audit_sample", row.id,
            {"task_id": row.task_id, "ok": body.ok})

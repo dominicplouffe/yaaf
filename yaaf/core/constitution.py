@@ -123,15 +123,15 @@ class ConstitutionDoc(BaseModel):
     # Work discipline (lana §3, §5)
     queue_ceiling: int = _rule(
         8, ge=1, group="Work discipline", label="Open tasks at once",
-        help="Top-level tasks the company may have open at once. Forces finishing over "
+        help="Top-level tasks the project may have open at once. Forces finishing over "
              "starting.")
     subtask_ceiling: int = _rule(
         10, ge=1, group="Work discipline", label="Open subtasks per task",
         help="How far a lead may decompose one parent task before it must land something.")
     external_ratio_min: float = _rule(
         0.5, ge=0, le=1, group="Work discipline", label="Minimum share of outward-facing work",
-        help="Fraction of open tasks that must produce evidence from outside the company. "
-             "Stops a company that only talks to itself.")
+        help="Fraction of open tasks that must produce evidence from outside the project. "
+             "Stops a project that only talks to itself.")
     external_ratio_applies_from: int = _rule(
         3, ge=1, group="Work discipline", label="Board size before that share is enforced",
         help="Below this many open tasks the ratio is not checked — three tasks cannot be "
@@ -176,7 +176,7 @@ class ConstitutionDoc(BaseModel):
     approval_timeout_days: int = _rule(
         7, ge=1, group="Autonomy", label="Days before an approval expires",
         help="An unanswered approval decides itself at this point, so a vacationing "
-             "chairman degrades the company instead of deadlocking it.")
+             "chairman degrades the project instead of deadlocking it.")
     approval_timeout_decision: str = _rule(
         "deny", group="Autonomy", label="What an expired approval decides",
         choices=["deny", "approve"],
@@ -216,7 +216,7 @@ class ConstitutionDoc(BaseModel):
     capability_authority: str = _rule(
         "chairman", group="Autonomy", label="Who delegates the credentials",
         choices=["chairman", "ceo"],
-        help="Whatever you store, the company can use — this decides who scopes it to "
+        help="Whatever you store, the project can use — this decides who scopes it to "
              "roles. 'chairman': grants are yours (the CEO files needs). 'ceo': the "
              "CEO re-scopes existing credentials across its own team itself, on the "
              "record. Creating a credential is always yours — you hold the values.")
@@ -239,7 +239,7 @@ class ConstitutionDoc(BaseModel):
     # asking; outside it, the existing approval machinery answers.
     external_monthly_usd_cap: float = _rule(
         500.0, ge=0, group="Budgets", label="Monthly real-world spend (USD)",
-        help="USD the company may spend in the world per month — purchases, "
+        help="USD the project may spend in the world per month — purchases, "
              "subscriptions, services — separate from the model budget and enforced "
              "in EVERY billing mode (token-billed projects used to meter this and "
              "never cap it). A purchase that would cross it is refused with the "
@@ -247,7 +247,7 @@ class ConstitutionDoc(BaseModel):
     max_usd_per_purchase: float = _rule(
         100.0, ge=0, group="Budgets", label="Most one purchase may be, unasked",
         help="USD. A single purchase above this needs an approval even below the "
-             "approval threshold — the line between running the company and "
+             "approval threshold — the line between running the project and "
              "surprising its owner. 0 turns the per-purchase line off.")
 
     # Memory (lana §6b) — caps are refusals; curation is explicit, never auto-evict
@@ -274,7 +274,7 @@ class ConstitutionDoc(BaseModel):
     runs_per_project_per_hour: int = _rule(
         15, ge=1, group="Wake-loop brakes", label="Runs per hour, whole project",
         help="The pacing brake. The daily ceiling refills all at once, so without this a "
-             "company can spend a whole day's allowance in the first hour and then sit "
+             "project can spend a whole day's allowance in the first hour and then sit "
              "dead until midnight with work stranded on the board. This is a trailing "
              "hour, not a clock hour, so it clears continuously rather than in a lump.")
     # The inbox lane. Reading is real cost — every wake is a paid model call —
@@ -325,12 +325,12 @@ class ConstitutionDoc(BaseModel):
         6, ge=1, group="Wake-loop brakes", label="Furthest ahead work may be scheduled",
         help="Hours. A task may carry a start time before which nobody may claim it, "
              "which is how the CEO lays work out in a sequence. Past this many hours it "
-             "is refused: a company should wait for the previous step to land, not for "
-             "a clock. One CEO gated its only open task two hours out and the company "
+             "is refused: a project should wait for the previous step to land, not for "
+             "a clock. One CEO gated its only open task two hours out and the project "
              "sat silent until the chairman paused it.")
     stall_hours: float = _rule(
         3.0, ge=0, group="Wake-loop brakes", label="Hours of silence before you are told",
-        help="A running company with work on its board and no run started for this long "
+        help="A running project with work on its board and no run started for this long "
              "is stalled, whatever the board says. You get one notice naming the exact "
              "cause. 0 turns the watchdog off.")
     max_concurrent_runs: int = _rule(
@@ -342,7 +342,7 @@ class ConstitutionDoc(BaseModel):
         help="Runs kept out of the daily ceiling so a status review, a cycle plan or a "
              "commitment re-forecast can always happen. Ordinary work stops at the daily "
              "cap minus this number; governance runs may use the full cap. Without it the "
-             "day the company burns its allowance by lunch is the day it cannot report "
+             "day the project burns its allowance by lunch is the day it cannot report "
              "that it did. 0 turns the reservation off.")
 
     # The CEO's own cadence. These were project config until the rebuild, which

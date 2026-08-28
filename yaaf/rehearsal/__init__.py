@@ -96,7 +96,7 @@ RELAXED = {
             "no provider"),
     "ceo_heartbeat_hours": (
         0.001, "the CEO plans every few HOURS; a drill that waited for the "
-               "second heartbeat would end after the first and report a company "
+               "second heartbeat would end after the first and report a project "
                "that never got past planning"),
     "ceo_heartbeat_always": (
         True, "an idle planning wake is suppressed to save a full-price run, and "
@@ -273,7 +273,7 @@ def _mute_chairman_notifications():
         raise RehearsalError(
             "the rehearsal refused to run: its chairman notifications still "
             "have somewhere to go. This is the guard that keeps a drill from "
-            "mailing a real person about a company that does not exist.")
+            "mailing a real person about a project that does not exist.")
 
     return restore
 
@@ -586,7 +586,7 @@ def _run(client, project_spec, spec_roles, roles_dir, days, usd_per_run,
         step("started", False, f"it would not start: {detail}")
         return report.build(client, project_id, project_spec, steps, interventions,
                             days, usd_per_run, roles, 0)
-    step("started", True, "the company is running")
+    step("started", True, "the project is running")
 
     # Every refusal the crew collects, kept rather than discarded. `AgentApi`
     # records the 403/409/422 it hit and the runner throws it away; a drill's

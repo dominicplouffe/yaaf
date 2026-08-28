@@ -179,7 +179,7 @@ def runs_available_before(session: Session, project: Project, cons: Constitution
     hours = (until - now).total_seconds() / 3600
     basis = (
         f"{available} run(s) can start in the {hours:.1f}h before the deadline: "
-        f"at most {cons.runs_per_project_per_hour}/hour company-wide and "
+        f"at most {cons.runs_per_project_per_hour}/hour project-wide and "
         f"{cons.wakes_per_agent_per_hour} wake/hour for each of {movers} agent(s) "
         f"with work, against {ordinary_cap} ordinary runs a day"
         + (f" with {resets} daily reset(s) in the window" if resets else

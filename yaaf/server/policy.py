@@ -1306,7 +1306,7 @@ def check_plan_affordable(session: Session, project: Project, cons: Constitution
         f"{budget['runs']} — you are over by roughly {over}.{bias_note} "
         "Cut something, estimate it smaller only if you actually believe it, or put the "
         "budget to the chairman as an approval. Adding scope you cannot pay for is how a "
-        "company arrives at 100% of its cap with nothing finished.",
+        "project arrives at 100% of its cap with nothing finished.",
         status_code=409,
     )
 
@@ -2358,7 +2358,7 @@ def check_directive_scope(changes: dict) -> None:
     if outside:
         raise Refusal(
             f"You may not set {', '.join(outside)} from a directive. An agent filing its own "
-            f"constitution is how a company votes itself a bigger budget; the only rules you "
+            f"constitution is how a project votes itself a bigger budget; the only rules you "
             f"may file are the ones that limit what you ask of the chairman "
             f"({', '.join(sorted(DIRECTIVE_FIELDS))}). Everything else is his amendment to "
             "make, and yours to recommend.",

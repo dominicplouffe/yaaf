@@ -36,9 +36,9 @@ from datetime import timedelta
 #: what turns "it didn't work" into "it stopped here".
 WALK = [
     ("roles", "Roles resolved"),
-    ("created", "Company created"),
+    ("created", "Project created"),
     ("relaxed", "Clock rules lifted for the drill"),
-    ("started", "Company started"),
+    ("started", "Project started"),
     ("woke", "An agent woke"),
     ("plan_proposed", "The CEO proposed a plan"),
     ("scope_accepted", "Scope entered the plan"),
@@ -281,7 +281,7 @@ def _structural_findings(client, project_id: str, capacity: dict) -> list[str]:
     teams = org.get("teams") or []
     if not teams:
         findings.append(
-            "This company has no teams. The CEO is the only agent, and it is the "
+            "This project has no teams. The CEO is the only agent, and it is the "
             "one agent that may not do the work — it plans. Hire somebody, or "
             "run it solo so the CEO is also the hands.")
     else:
@@ -343,9 +343,9 @@ def _group_interventions(interventions: list[dict]) -> list[dict]:
 def _verdict(steps: list[dict], refusals: list[dict]) -> tuple[bool, str]:
     reached = {s["key"] for s in steps if s["ok"]}
     if "started" not in reached:
-        return False, "This company would not start."
+        return False, "This project would not start."
     if "work_closed" in reached:
-        return True, ("This company gets off the ground: it planned, opened its "
+        return True, ("This project gets off the ground: it planned, opened its "
                       "board, did work and closed it with evidence.")
     if "work_created" in reached:
         return False, ("It plans and creates work, but nothing closed. The board "
@@ -414,7 +414,7 @@ def build(client, project_id: str | None, spec: dict, steps: list[dict],
             "credentials, Slack and data sources — a drill reads no secret and "
             "opens no socket",
             "chairman notifications — the mail and webhook channels are unset "
-            "for the duration, so the notices this pretend company raised were "
+            "for the duration, so the notices this pretend project raised were "
             "logged and never delivered to anyone",
             "the workspace — the drill works in a directory it deletes, and a "
             "github_repo in the spec is not cloned into it",
@@ -459,7 +459,7 @@ def build(client, project_id: str | None, spec: dict, steps: list[dict],
 def render_text(report: dict) -> str:
     out: list[str] = []
     spec = report["spec"]
-    out.append(f"Fire drill — {spec['name'] or spec['slug'] or 'your company'} "
+    out.append(f"Fire drill — {spec['name'] or spec['slug'] or 'your project'} "
                f"({spec['mode']})")
     out.append("=" * 72)
     out.append("")
@@ -469,7 +469,7 @@ def render_text(report: dict) -> str:
     out.append("The walk")
     for step in report["walk"]:
         if step.get("na"):
-            out.append(f"  – {step['label']} — not in an Explore company's shape")
+            out.append(f"  – {step['label']} — not in an Explore project's shape")
             continue
         mark = "✓" if step["ok"] else "·"
         beat = f"  beat {step['tick']}" if step["tick"] else ""
@@ -485,14 +485,14 @@ def render_text(report: dict) -> str:
             for example in row["examples"]:
                 out.append(f"      {example}")
         out.append("  Your autonomy dial decides which of these park. Every one is a")
-        out.append("  morning the company is idle until you open the app.")
+        out.append("  morning the project is idle until you open the app.")
         out.append("")
     else:
         out.append("It never had to wait for you.")
         out.append("")
 
     if report.get("findings"):
-        out.append("What the shape of this company means")
+        out.append("What the shape of this project means")
         for finding in report["findings"]:
             out.append(f"  ! {finding}")
         out.append("")
@@ -529,7 +529,7 @@ def render_text(report: dict) -> str:
         out.append("")
     elif money.get("cap"):
         out.append("What it will cost")
-        out.append("  an Explore company has no requirements to estimate, so there "
+        out.append("  an Explore project has no requirements to estimate, so there "
                    "is no plan total to price — its shape is bets and evidence, "
                    f"inside a {money['unit']} cap of {money['cap']:,.0f}")
         out.append("")
@@ -575,7 +575,7 @@ def _capacity_lines(capacity: dict) -> list[str]:
     if capacity.get("chain_hours"):
         lines.append(
             f"the longest serial chain is {capacity['chain_hours']}h: one agent's "
-            "work cannot overlap itself, whatever the company-wide ceilings allow")
+            "work cannot overlap itself, whatever the project-wide ceilings allow")
     if capacity.get("unowned_tasks"):
         lines.append(f"{capacity['unowned_tasks']} task(s) nobody on the roster can "
                      "claim — that is a hiring problem, not a pacing one")

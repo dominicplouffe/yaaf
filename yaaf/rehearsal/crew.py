@@ -131,7 +131,7 @@ def ceo(api: AgentApi, job: RunJob, scope_project: bool | None = None) -> str:
             response = api.post("/agent/requirements", json={
                 "statement": (
                     f"Stage {n + 1} of the goal is complete and can be shown to "
-                    "somebody outside this company"),
+                    "somebody outside this project"),
                 "acceptance_test": {"type": "observable", "target": _OBSERVABLE},
                 "stage": n + 1,
                 "est_runs": EST_RUNS_PER_REQUIREMENT,

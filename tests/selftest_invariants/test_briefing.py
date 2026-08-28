@@ -71,13 +71,13 @@ def close_a_task(client, project: dict, token: str, rid: str) -> str:
 # ── the window ──────────────────────────────────────────────────────────────────
 
 
-def test_a_first_visit_reads_from_the_company_s_birth_not_an_empty_window(client):
+def test_a_first_visit_reads_from_the_project_s_birth_not_an_empty_window(client):
     """NULL mark means never read, which must compose the whole project rather
     than the last nothing. A first briefing that said "nothing happened" about
     a week-old project would be the worst possible first impression: false."""
     project = deliver_project(client)
     payload = brief(client, project)
-    assert payload["window_source"] == "since this company started"
+    assert payload["window_source"] == "since this project started"
     with db_session() as session:
         created = session.get(Project, project["id"]).created_at
     assert payload["since"][:10] == created.replace(tzinfo=UTC).isoformat()[:10]
@@ -256,7 +256,7 @@ def test_the_daily_briefing_fires_once_per_local_day(client, monkeypatch):
     assert len(sent) == 1
 
 
-def test_the_briefing_reaches_a_company_the_platform_paused(client, monkeypatch):
+def test_the_briefing_reaches_a_project_the_platform_paused(client, monkeypatch):
     """The morning a budget ran out is exactly the morning a chairman needs to
     hear from his project — and exactly the morning a model-written status
     could not be afforded. Composed from rows, so it still arrives."""
@@ -275,7 +275,7 @@ def test_the_briefing_reaches_a_company_the_platform_paused(client, monkeypatch)
     assert "is paused — budget exhausted" in sent[0]
 
 
-def test_a_finished_company_stops_writing(client, monkeypatch):
+def test_a_finished_project_stops_writing(client, monkeypatch):
     """A daily mail about a project that is over forever is how a chairman
     learns to filter this address."""
     project = make_project(client, slug="over")
@@ -367,7 +367,7 @@ def test_the_briefing_is_composed_without_spending_a_run(client, monkeypatch):
 # ── the cross-project roll-up ───────────────────────────────────────────────────
 
 
-def test_the_desk_briefing_reads_each_company_on_its_own_mark(client):
+def test_the_desk_briefing_reads_each_project_on_its_own_mark(client):
     """Reading one project's brief must not consume another's — which is the
     whole reason the mark is per project rather than per box."""
     first = deliver_project(client, slug="alpha")
@@ -380,12 +380,12 @@ def test_the_desk_briefing_reads_each_company_on_its_own_mark(client):
 
     payload = client.get("/observe/briefing", headers=ADMIN).json()
     by_slug = {b["slug"]: b for b in payload["projects"]}
-    assert by_slug["alpha"]["window_source"] == "since this company started"
+    assert by_slug["alpha"]["window_source"] == "since this project started"
     assert by_slug["beta"]["window_source"] == "since you last read this"
     assert by_slug["alpha"]["quiet"] is False
 
 
-def test_a_finished_company_is_not_in_the_roll_up(client):
+def test_a_finished_project_is_not_in_the_roll_up(client):
     make_project(client, slug="running-still")
     done = make_project(client, slug="finished")
     client.post(f"/admin/projects/{done['id']}/stop",
@@ -394,13 +394,13 @@ def test_a_finished_company_is_not_in_the_roll_up(client):
     assert [b["slug"] for b in payload["projects"]] == ["running-still"]
 
 
-def test_a_forced_window_applies_to_every_company(client):
+def test_a_forced_window_applies_to_every_project(client):
     make_project(client, slug="one")
     make_project(client, slug="two")
     payload = client.get("/observe/briefing?hours=6", headers=ADMIN).json()
     assert payload["forced_window"] is not None
-    for company in payload["projects"]:
-        assert 5.5 < company["window_hours"] <= 6.5
+    for project in payload["projects"]:
+        assert 5.5 < project["window_hours"] <= 6.5
 
 
 def test_a_malformed_since_is_refused_rather_than_guessed(client):
@@ -432,7 +432,7 @@ def test_the_email_and_the_panel_cannot_disagree(client):
     assert "Waiting on you" in text
 
 
-def test_a_quiet_briefing_still_proves_the_company_is_alive(client):
+def test_a_quiet_briefing_still_proves_the_project_is_alive(client):
     project = make_project(client, slug="pulse")
     with db_session() as session:
         row = session.get(Project, project["id"])
@@ -456,7 +456,7 @@ def test_the_window_never_runs_backwards(client):
     assert payload["since"] == payload["until"]
 
 
-def test_a_draft_company_never_gets_a_daily_briefing(client, monkeypatch):
+def test_a_draft_project_never_gets_a_daily_briefing(client, monkeypatch):
     """Nothing has run, so there is nothing to report and no chairman
     expectation to meet."""
     project = make_project(client, slug="draft-co", start=False)

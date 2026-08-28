@@ -93,7 +93,7 @@ DEAD_STATUSES = (RunStatus.FAILED, RunStatus.REAPED, RunStatus.KILLED,
 #: moved without anybody's say-so, and the chairman is entitled to hear about
 #: it in the same breath as the work.
 SELF_ACTING_NOTICES = {
-    NoticeKind.BUDGET_EXHAUSTED: "the platform paused the company — the monthly budget ran out",
+    NoticeKind.BUDGET_EXHAUSTED: "the platform paused the project — the monthly budget ran out",
     NoticeKind.BUDGET_WARNING: "the budget passed its warning line and the CEO was told to cut burn",
     NoticeKind.COMMITMENT_AT_RISK: "the delivery date moved to AT RISK — new scope is frozen",
     NoticeKind.COMMITMENT_BREACHED: "the delivery date passed with scope still open",
@@ -101,7 +101,7 @@ SELF_ACTING_NOTICES = {
     NoticeKind.COMMITMENT_MET: "every requirement in the commitment settled true",
     NoticeKind.CYCLE_ROLLED: "the cycle rolled — unfinished scope carried forward",
     NoticeKind.EXPLORE_DEADLINE: "the deadline you set has passed",
-    NoticeKind.STALLED: "the company had work and started nothing for hours",
+    NoticeKind.STALLED: "the project had work and started nothing for hours",
     NoticeKind.MEMORY_FULL: "a memory scope hit its cap and is refusing writes",
     NoticeKind.REVENUE: "money came in, booked by a signed webhook",
 }
@@ -136,7 +136,7 @@ def window_start(session: Session, project: Project) -> tuple[datetime, str]:
         return marked, "since you last read this"
     created = _aware(project.created_at)
     if created is not None:
-        return created, "since this company started"
+        return created, "since this project started"
     return utcnow() - timedelta(hours=DEFAULT_WINDOW_HOURS), "the last 24 hours"
 
 
