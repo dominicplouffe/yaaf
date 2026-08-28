@@ -387,8 +387,16 @@ Paste something like this once the health card is clear:
 
 ```bash
 # 0. Look at it for free first — the real platform, scripted agents, $0.
+cd /path/to/yaaf            # from the checkout root: see below
 yaaf rehearse docs/projects/idea-to-customer.json --days 125
 ```
+
+**Run the CLI drill from the repo root.** This file hires from the role
+library rather than shipping its own copies of twelve roles, and the CLI looks
+for that library in `./roles` — from anywhere else every role comes back
+unresolved and the drill reports a company that would not start. The
+dashboard's **fire drill** button on the New-project page has no such
+requirement: it hires from your install's own library.
 
 A clean drill says the company gets off the ground, opens its board, does work
 and closes it with evidence, and never has to wait for you. It says nothing
