@@ -33,7 +33,7 @@ def test_a_read_token_sees_only_read_tools(client):
 def test_out_of_scope_tools_are_absent_not_merely_refused(client):
     """A tool a client can see and cannot use is an invitation to argue.
 
-    Registered here rather than waiting for M2, so the gate is proven by a real
+    Registered here rather than waiting for M3, so the gate is proven by a real
     registration and not by an empty registry that happens to refuse everything.
     """
     from yaaf.server.mcp import registry

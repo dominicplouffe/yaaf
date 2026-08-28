@@ -123,9 +123,18 @@ deployment story is unchanged — one process, one port, one TLS terminator. A
 stdio bridge (`yaaf mcp-stdio`) wraps it for clients that only speak stdio, and
 holds the token in the client's own config rather than in a shell history.
 
-For v1 the token is a bearer, presented as `Authorization: Bearer ymt_…`. Being
-a proper OAuth 2.1 *resource server* — the mirror of what `mcp_oauth.py`
-already does as a client — is the right long-term answer and is M5, not M1.
+**Two ways to present that credential**, and the difference decides which
+clients can connect at all:
+
+- **A static bearer** — `Authorization: Bearer ymt_…`, minted by
+  `yaaf mcp-token mint`. Shipped in M0. Claude Code, Claude Desktop, Cursor and
+  the Messages API's `authorization_token` all accept one.
+- **An OAuth 2.1 access token** — the same row, reached through a consent
+  flow instead of a paste. Required by claude.ai, which offers no field for a
+  header. That is M2, and the next section is what it takes.
+
+Both land on the same `mcp_clients` grant, so scopes, the project allowlist and
+the attribution rules are written once and hold however the client got in.
 
 **Opinion on the implementation:** hand-roll the JSON-RPC surface in FastAPI
 rather than taking the `mcp` SDK dependency. It is seven methods (`initialize`,
@@ -133,6 +142,142 @@ rather than taking the `mcp` SDK dependency. It is seven methods (`initialize`,
 `prompts/get`) over a transport we already run, and we hand-rolled the client
 half of the same spec for the same reason. Revisit if we ever want sampling or
 elicitation, which are genuinely fiddly.
+
+---
+
+## Full claude.ai support
+
+A requirement, not a nice-to-have. Five things stand between M0 and a working
+connector; only three of them are code, and the largest is not the OAuth
+plumbing everyone expects.
+
+### 1. Which clients can connect, and on what
+
+| Client | Credential it accepts | Reaches yaaf how |
+|---|---|---|
+| **Claude Code** | Bearer header, or OAuth | Any URL, `http://localhost:8080/mcp` included |
+| **Claude Desktop / Cursor** | Bearer header, or OAuth | Any URL |
+| **Messages API MCP connector** | `authorization_token` (a bearer) | Public HTTPS only |
+| **claude.ai custom connector** | **OAuth only** — DCR, or a pasted client id/secret | Public HTTPS, inbound from Anthropic |
+
+The web UI has no custom-header field and the request for one was closed as not
+planned, so no amount of bearer-token polish reaches it. OAuth is the only door.
+
+### 2. The server half of the ladder
+
+`mcp_oauth.py` walks this ladder as a client today. M2 serves the other end of
+each rung — the paths are fixed by spec, not by taste:
+
+| Endpoint | Serves | Spec |
+|---|---|---|
+| `POST /mcp` unauthenticated | `401` with `WWW-Authenticate: Bearer resource_metadata="…"` | RFC 9728 §5.1 |
+| `GET /.well-known/oauth-protected-resource[/mcp]` | `{resource, authorization_servers, scopes_supported}` | RFC 9728 |
+| `GET /.well-known/oauth-authorization-server` | `authorization_endpoint`, `token_endpoint`, `registration_endpoint`, `code_challenge_methods_supported: ["S256"]` | RFC 8414 |
+| `POST /oauth/register` | Dynamic client registration | RFC 7591 |
+| `GET /oauth/authorize` | The chairman's login and consent screen | OAuth 2.1 + PKCE |
+| `POST /oauth/token` | Code → access + refresh, audience-bound | OAuth 2.1, RFC 8707 |
+| `POST /oauth/revoke` | Token revocation | RFC 7009 |
+
+Both well-known documents must be served **unauthenticated**, and the
+path-inserted form (`/.well-known/oauth-protected-resource/mcp`) comes first —
+our own client tries it first, and so do others.
+
+Non-negotiables on the token: PKCE `S256` required (not merely supported),
+exact `redirect_uri` match, single-use codes with a 60-second TTL, and audience
+binding — a token minted for a different `resource` is refused here rather than
+accepted for being otherwise valid. That last one is the rule that stops a
+token stolen from another service being replayed at yaaf.
+
+Dynamic client registration is an unauthenticated write endpoint by design,
+which deserves a wall: registrations are capped, and `redirect_uri` hosts are
+checked against an allowlist (`claude.ai`, `claude.com`, plus `localhost` for
+the MCP inspector). Registering a client grants nothing on its own — the
+consent screen does — but an open endpoint that mints rows still gets a limit.
+
+### 3. A chairman login has to exist — this is the real work
+
+`yaaf/server/deps.py` says it plainly: "full user auth arrives with the UI
+milestone." There is one static admin token and no way to authenticate a
+*person* in a browser. OAuth's `/authorize` needs exactly that.
+
+The schema already anticipates it: `users.password_hash` and `users.is_admin`
+exist and are unused, and `argon2-cffi` is already a dependency. So M2 builds
+the smallest real login that satisfies the flow — `yaaf set-password`, an
+argon2id hash, a signed session cookie scoped to `/oauth/*` and nothing else.
+Not a conversion of the SPA to cookie auth; that stays the UI milestone's job.
+
+**The consent screen is where this design gets better than a pasted token.**
+It shows the client's name and redirect host, the scopes it asked for, and a
+checkbox per project — so the allowlist becomes a decision the chairman makes
+at grant time, the way a GitHub app install does, instead of a CLI flag they
+have to remember. A client asking for `configure` on every project has to say
+so on a screen, in words, before anything is issued.
+
+### 4. Tokens rotate; grants and attribution do not
+
+Today `mcp_clients` holds one `token_hash`. OAuth needs refresh and rotation,
+and attribution must survive both — the audit trail names a client for good, so
+that name cannot live on a row that a refresh replaces. M2 splits them:
+
+- `mcp_clients` becomes the **grant**: chairman, client, scopes, projects. It
+  is what `user:<id> via mcp:<client>` points at, and it never rotates.
+- `mcp_tokens` holds access and refresh tokens, hashed, with expiry and a
+  rotation pointer, hanging off the grant.
+- `oauth_clients` and `oauth_codes` carry registration and the in-flight code.
+
+Migration `0019`. The static-bearer path becomes one row in `mcp_tokens` that
+never expires, so M0's tokens keep working unchanged.
+
+### 5. Public exposure is a deployment decision, and the sharp edge
+
+claude.ai connects **inbound from Anthropic's servers**, so yaaf needs a public
+hostname and TLS, with `YAAF_PUBLIC_BASE_URL` set to it — the audience check
+compares against that value, so a wrong one breaks every token.
+
+Publishing the box publishes everything on it unless the proxy says otherwise,
+and `/admin` is the chairman's unscoped bearer surface. **Expose exactly four
+paths and nothing else:**
+
+```
+/mcp                              the surface
+/.well-known/oauth-*              discovery, unauthenticated by spec
+/oauth/*                          registration, consent, token
+                                  (everything else: 404)
+```
+
+`/admin`, `/observe`, `/agent`, `/app` and `/webhooks` stay off the public
+listener. DEPLOYMENT.md gets the Caddy and nginx snippets, because a reader who
+has to invent this will get it wrong once.
+
+### 6. How we test it without claude.ai in the loop
+
+The nice part: **we already ship the client half.** `mcp_oauth.discover()`,
+`register_client()` and the code exchange walk exactly this ladder, and they
+carry a `transport=` seam for tests. So `test_mcp_oauth_server.py` points
+yaaf's own OAuth client at yaaf's own OAuth server, in-process, offline, and
+walks discovery → registration → consent → token → authenticated `initialize`.
+A conformance suite with no external dependency and no live connector.
+
+The attacks that ship with it: PKCE stripped or downgraded to `plain`, a code
+replayed, a code redeemed against a different `redirect_uri`, a token minted
+for another `resource` presented here, scopes widened at the token endpoint
+past what consent granted, and an expired code.
+
+That proves the spec. It does not prove claude.ai accepts it — those are two
+different sentences, and the second needs one real connection against a public
+deployment. M2 is not done until that connection is made.
+
+### 7. What claude.ai will and will not use
+
+Its connector calls **tools**. Resources and prompts may be ignored entirely.
+So the design rule for M1: **every read tool must stand alone**, and nothing
+essential may live only in a resource. Resources stay a Claude Code
+convenience, never the only path to a fact.
+
+Its transport is streamable HTTP (SSE is deprecating). Our POST returns
+`application/json`, which is spec-legal, and our `GET /mcp` answers 405 rather
+than opening a stream, which is also spec-legal — but "legal" and "accepted by
+this client" are the two sentences again, and the live connection settles it.
 
 ---
 
@@ -165,13 +310,13 @@ Status column tracks implementation. `M1`…`M4` are the milestones below.
 
 | Tool | Does | Backing routes | Confirm? | Status |
 |---|---|---|---|---|
-| `boardroom_say` | Talk to the CEO. The highest-value write on the list. | `POST /admin/projects/{id}/boardroom` | no | M2 |
-| `approval_decide` | Decide or fulfil a pending approval. | `POST /admin/approvals/{id}/decide` `/fulfill` | yes | M2 |
-| `requirement_decide` | `verb`: `accept` \| `cut` \| `verdict` \| `reopen` \| `restage` \| `reestimate` \| `reword` \| `unsequence`. | `POST /admin/requirements/{id}/…`, `/admin/requirement_edges/remove` | yes | M2 |
-| `commitment_decide` | `verb`: `accept` \| `decline` \| `move`. | `POST /admin/commitments/{id}/…` | yes | M2 |
-| `review_decide` | `verb`: `lever` \| `close`. | `POST /admin/reviews/{id}/lever` `/close` | yes | M2 |
-| `audit_decide` | Open a spot audit, judge a sample, audit an evidence row or task. | `POST /admin/audit_samples/{id}/decide`, `/admin/evidence/{id}/audit`, `/admin/tasks/{id}/audit` | yes | M2 |
-| `lifecycle` | `verb`: `start` \| `pause` \| `stop` \| `complete` \| `pause_agent` \| `set_schedule` \| `unfreeze_thread` \| `briefing_seen`. | `POST /admin/projects/{id}/start` and siblings | yes, except `briefing_seen` | M2 |
+| `boardroom_say` | Talk to the CEO. The highest-value write on the list. | `POST /admin/projects/{id}/boardroom` | no | M3 |
+| `approval_decide` | Decide or fulfil a pending approval. | `POST /admin/approvals/{id}/decide` `/fulfill` | yes | M3 |
+| `requirement_decide` | `verb`: `accept` \| `cut` \| `verdict` \| `reopen` \| `restage` \| `reestimate` \| `reword` \| `unsequence`. | `POST /admin/requirements/{id}/…`, `/admin/requirement_edges/remove` | yes | M3 |
+| `commitment_decide` | `verb`: `accept` \| `decline` \| `move`. | `POST /admin/commitments/{id}/…` | yes | M3 |
+| `review_decide` | `verb`: `lever` \| `close`. | `POST /admin/reviews/{id}/lever` `/close` | yes | M3 |
+| `audit_decide` | Open a spot audit, judge a sample, audit an evidence row or task. | `POST /admin/audit_samples/{id}/decide`, `/admin/evidence/{id}/audit`, `/admin/tasks/{id}/audit` | yes | M3 |
+| `lifecycle` | `verb`: `start` \| `pause` \| `stop` \| `complete` \| `pause_agent` \| `set_schedule` \| `unfreeze_thread` \| `briefing_seen`. | `POST /admin/projects/{id}/start` and siblings | yes, except `briefing_seen` | M3 |
 
 `requirement_decide` with `verb: verdict` is the single most dangerous call on
 this surface — it is the platform writing "met" on something a script could not
@@ -186,12 +331,12 @@ discovering later.
 
 | Tool | Does | Backing | Confirm? | Status |
 |---|---|---|---|---|
-| `catalog` | Search the role and crew library. | `yaaf/founder/tools.py: search_roles, search_crews` | no | M3 |
-| `read_source` | What a candidate data source actually serves. | `yaaf/founder/tools.py: read_source` | no | M3 |
-| `grade_goal` | Grade a draft goal against [GOAL_GRAMMAR.md](GOAL_GRAMMAR.md) — eight things a goal must contain. | `yaaf/founder/tools.py` | no | M3 |
-| `rehearse` | The fire drill: simulate the company for N days, create nothing. | `POST /admin/rehearse` | no | M3 |
-| `create_project` | Create from a validated bundle. | `POST /admin/projects` | yes | M3 |
-| `clone_project` | Clone an existing one; export a spec. | `POST /admin/projects/{id}/clone`, `GET /export` | yes | M3 |
+| `catalog` | Search the role and crew library. | `yaaf/founder/tools.py: search_roles, search_crews` | no | M4 |
+| `read_source` | What a candidate data source actually serves. | `yaaf/founder/tools.py: read_source` | no | M4 |
+| `grade_goal` | Grade a draft goal against [GOAL_GRAMMAR.md](GOAL_GRAMMAR.md) — eight things a goal must contain. | `yaaf/founder/tools.py` | no | M4 |
+| `rehearse` | The fire drill: simulate the company for N days, create nothing. | `POST /admin/rehearse` | no | M4 |
+| `create_project` | Create from a validated bundle. | `POST /admin/projects` | yes | M4 |
+| `clone_project` | Clone an existing one; export a spec. | `POST /admin/projects/{id}/clone`, `GET /export` | yes | M4 |
 
 The founding flow is deliberately *primitives, not a wizard*. The calling model
 drafts the bundle with the user's real context in hand; `grade_goal` and
@@ -204,11 +349,11 @@ drafting a bundle and being graded on it.
 
 | Tool | Does | Backing | Confirm? | Status |
 |---|---|---|---|---|
-| `project_configure` | Settings, teams, repin a team's role version. | `PATCH /admin/projects/{id}`, `POST /admin/projects/{id}/teams`, `/admin/teams/{id}/repin` | yes | M4 |
-| `data_source` | `verb`: `add` \| `check` \| `oauth_start` \| `remove`. | `POST /admin/projects/{id}/mcp_servers` `/check` `/oauth/start`, `DELETE …/{name}` | yes on `add`/`remove` | M4 |
-| `credential` | Create or scope a secret **by reference only** — the value is never read back, and a value passed in is written and forgotten. | `POST /admin/secrets`, `GET /admin/secrets` (names only) | yes | M4 |
-| `amend` | Propose or cancel a constitution amendment; read the schema. | `POST /admin/projects/{id}/amendments`, `/admin/amendments/{id}/cancel`, `GET /admin/constitution/schema` | yes | M4 |
-| `billing_check` | Verify the project's Anthropic credential works. | `POST /admin/projects/{id}/billing_check` | no | M4 |
+| `project_configure` | Settings, teams, repin a team's role version. | `PATCH /admin/projects/{id}`, `POST /admin/projects/{id}/teams`, `/admin/teams/{id}/repin` | yes | M5 |
+| `data_source` | `verb`: `add` \| `check` \| `oauth_start` \| `remove`. | `POST /admin/projects/{id}/mcp_servers` `/check` `/oauth/start`, `DELETE …/{name}` | yes on `add`/`remove` | M5 |
+| `credential` | Create or scope a secret **by reference only** — the value is never read back, and a value passed in is written and forgotten. | `POST /admin/secrets`, `GET /admin/secrets` (names only) | yes | M5 |
+| `amend` | Propose or cancel a constitution amendment; read the schema. | `POST /admin/projects/{id}/amendments`, `/admin/amendments/{id}/cancel`, `GET /admin/constitution/schema` | yes | M5 |
+| `billing_check` | Verify the project's Anthropic credential works. | `POST /admin/projects/{id}/billing_check` | no | M5 |
 
 **Never exposed, at any scope:** `GET /admin/secrets/{id}/value`, webhook secret
 values (`POST /admin/projects/{id}/webhook_secrets` returns them), the GitHub
@@ -273,8 +418,12 @@ yaaf/server/mcp/tools_create.py # create + configure scopes
 yaaf/server/mcp/resources.py
 yaaf/server/mcp/prompts.py
 yaaf/server/mcp/envelope.py     # untrusted-content wrapping, truncation, paging
+yaaf/server/mcp/oauth_server.py # M2: discovery, registration, authorize, token
+yaaf/server/mcp/consent.py      # M2: the chairman's login and consent screen
+yaaf/server/login.py            # M2: argon2id password check, session cookie
 yaaf/cli/mcp.py                 # `yaaf mcp-token` (mint/list/revoke), `yaaf mcp-stdio`
-migrations/versions/…_mcp_clients.py
+migrations/versions/0018_mcp_clients.py
+migrations/versions/0019_mcp_oauth.py
 ```
 
 Mounted in `yaaf/server/app.py` beside the others:
@@ -296,6 +445,9 @@ separate commit.
 - [x] Tool registry with the scope gate at dispatch, not at the call site
 - [x] `whoami` and `projects`
 - [x] `yaaf mcp-token mint|list|revoke` in the CLI
+- [x] Protocol-version negotiation: echo the version the client asked for when
+      we implement it, offer our latest when we do not. Shipped answering our
+      own version regardless, which is how a handshake dies silently.
 - [x] `test_mcp_auth.py`, `test_mcp_scopes.py` — admin token rejected, run token
       rejected, forged and revoked tokens, out-of-scope tools absent rather than
       refused, foreign project refused by slug and by id in the same words a
@@ -321,7 +473,36 @@ only the tools its scopes hold, and every wrong credential is refused over HTTP.
 risk" is answerable from a client with no browser open. **This is the ship-alone
 milestone** — if only M0+M1 ever land, the thing was worth building.
 
-### M2 — Steer
+### M2 — claude.ai support: OAuth, and a chairman who can log in
+- [ ] Migration `0019`: `mcp_clients` becomes the grant; `mcp_tokens`,
+      `oauth_clients`, `oauth_codes` beside it. M0's static tokens keep working
+      as non-expiring rows.
+- [ ] Resource-server half: 401 with `WWW-Authenticate: … resource_metadata=…`,
+      both well-known documents unauthenticated, audience validation against
+      `YAAF_PUBLIC_BASE_URL`
+- [ ] Authorization-server half: `/oauth/register` (capped, redirect-host
+      allowlisted), `/oauth/authorize`, `/oauth/token`, `/oauth/revoke`; PKCE
+      `S256` required, codes single-use with a 60s TTL
+- [ ] The smallest real chairman login: `yaaf set-password`, argon2id against
+      the `users.password_hash` column that already exists, a signed session
+      cookie scoped to `/oauth/*`
+- [ ] Consent screen: client name and redirect host, requested scopes, a
+      checkbox per project — the allowlist becomes a grant-time decision
+- [ ] `test_mcp_oauth_server.py` — yaaf's own `mcp_oauth` client walks the
+      ladder against yaaf's own server, in-process and offline
+- [ ] `test_mcp_oauth_attacks.py` — PKCE stripped or downgraded to `plain`, code
+      replayed, mismatched `redirect_uri`, token minted for another `resource`,
+      scopes widened at the token endpoint past consent, expired code
+- [ ] DEPLOYMENT.md: public listener exposing `/mcp`, `/.well-known/oauth-*`
+      and `/oauth/*` **only**, with Caddy and nginx snippets
+- [ ] One real connection from claude.ai against a public deployment
+
+**Done when:** the connector is added in the browser from a phone, without a
+token ever being pasted — and `/admin` is not reachable from the internet.
+Spec conformance is the test suite's job; acceptance is the live connection's,
+and both are required.
+
+### M3 — Steer
 - [ ] Confirmation machinery (`confirm_token`: args-hash bound, single-use, 5 min)
 - [ ] Attribution: `user:<id> via mcp:<client>` on every `AuditLog` and `Decision`
 - [ ] The seven steer tools
@@ -334,7 +515,7 @@ milestone** — if only M0+M1 ever land, the thing was worth building.
 **Done when:** an approval can be decided from the client, and the Decisions
 record shows plainly that a machine carried the signature.
 
-### M3 — Found a company
+### M4 — Found a company
 - [ ] Lift `search_roles` / `search_crews` / `read_source` / `grade_goal` out of
       `yaaf/founder/tools.py` into a shared toolset both the Founder and MCP call
 - [ ] `rehearse`, `create_project`, `clone_project`
@@ -345,16 +526,14 @@ record shows plainly that a machine carried the signature.
 **Done when:** a project can be founded end-to-end from a client, and the fire
 drill ran before it existed.
 
-### M4 — Configure
+### M5 — Configure
 - [ ] `project_configure`, `data_source`, `credential`, `amend`, `billing_check`
 - [ ] Denylist enforced in code, with a test that fails if a new admin route
       becomes reachable without being classified
 - [ ] `test_mcp_secrets.py` — no scope, no argument, and no tool returns a
       secret value
 
-### M5 — Later, if wanted
-- [ ] OAuth 2.1 resource server (mirror of `mcp_oauth.py`), so hosted clients
-      connect without a pasted token
+### M6 — Later, if wanted
 - [ ] Change notifications: approvals landing, commitments going at risk
 - [ ] Per-token rate and wake caps, so a looping client cannot bill a project
 - [ ] Multi-chairman: today `user_id` is the chairman; teams need real ACLs
@@ -367,8 +546,8 @@ drill ran before it existed.
    written in the browser, that is evidence the gate is too weak, not that the
    tool is popular.
 2. **Where does the token live for a stdio client?** Client config files are
-   plaintext on disk. Acceptable for a self-hosted single-user product; worth
-   revisiting at M5 with OAuth.
+   plaintext on disk. Acceptable for a self-hosted single-user product, and M2
+   softens it for every client that can do OAuth instead.
 3. **One server or one per project?** One, with a `project` argument. Per-project
    servers would let the client's own permission UI scope things naturally, at
    the cost of N connections. Reconsider if the allowlist proves awkward.

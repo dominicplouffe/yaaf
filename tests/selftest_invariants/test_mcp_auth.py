@@ -91,7 +91,7 @@ def test_agent_run_token_cannot_speak_mcp(client):
     """A run token is an agent's principal. The chairman's surface is not its.
 
     Nothing in the sandbox should be able to walk in here and read the desk,
-    let alone reach the verbs M2 adds — so the two principals stay disjoint.
+    let alone reach the verbs M3 adds — so the two principals stay disjoint.
     """
     from tests.conftest import live_token
 
@@ -131,3 +131,26 @@ def test_minting_refuses_unknown_scopes_and_unchaired_projects(client):
     }, headers=ADMIN)
     assert not_chaired.status_code == 422
     assert "does not chair" in not_chaired.json()["detail"]
+
+
+def test_the_handshake_answers_in_the_version_the_client_asked_for(client):
+    """A client handed a version it did not ask for may simply hang up.
+
+    The failure is silent from the user's side — "could not connect", nothing
+    to act on — so the negotiation is worth an attack of its own.
+    """
+    make_project(client)
+    minted = mint(client)
+
+    for asked in ("2025-06-18", "2025-03-26"):
+        result = rpc(client, minted["token"], "initialize",
+                     {"protocolVersion": asked, "capabilities": {},
+                      "clientInfo": {"name": "test", "version": "1"}}).json()["result"]
+        assert result["protocolVersion"] == asked
+
+    # A version we do not implement gets our latest, not a claim we speak it:
+    # the client then decides. 2024-11-05 is HTTP+SSE and we open no stream.
+    for asked in ("2024-11-05", "1999-01-01", None):
+        params = {"capabilities": {}} if asked is None else {"protocolVersion": asked}
+        result = rpc(client, minted["token"], "initialize", params).json()["result"]
+        assert result["protocolVersion"] == "2025-06-18"

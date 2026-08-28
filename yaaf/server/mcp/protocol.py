@@ -23,6 +23,11 @@ from yaaf.server.mcp.auth import Principal, ToolRefusal
 log = logging.getLogger("yaaf.mcp")
 
 PROTOCOL_VERSION = "2025-06-18"
+#: Versions whose wire shape this surface actually implements, newest first.
+#: Both carry streamable HTTP with the same tools shape; 2024-11-05 is absent
+#: on purpose, because it is HTTP+SSE and we open no stream. Claiming a version
+#: we have not implemented is worse than making the client decide.
+SUPPORTED_VERSIONS = ("2025-06-18", "2025-03-26")
 SERVER_INFO = {"name": "yaaf", "title": "yaaf — the chairman's surface", "version": "0.1.0"}
 
 # JSON-RPC 2.0
@@ -61,8 +66,15 @@ def handle(message: dict, principal: Principal, session: Session) -> dict | None
         return None
 
     if method == "initialize":
+        # Echo the client's version when we speak it. Answering with our own
+        # regardless is how a handshake dies silently: a client that asked for
+        # 2025-03-26 and is handed something else may simply hang up, and the
+        # user sees "could not connect" with nothing to act on. Offering our
+        # latest to a client we cannot match is the spec's own fallback — it
+        # then decides whether to proceed.
+        asked = params.get("protocolVersion")
         return _result(message_id, {
-            "protocolVersion": PROTOCOL_VERSION,
+            "protocolVersion": asked if asked in SUPPORTED_VERSIONS else PROTOCOL_VERSION,
             "capabilities": {"tools": {"listChanged": False}},
             "serverInfo": SERVER_INFO,
             # What the client is holding, said plainly. A model that knows it
