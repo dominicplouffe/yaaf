@@ -114,7 +114,7 @@ def test_the_browser_path_is_untouched(client):
 def test_a_scope_verdict_through_mcp_is_marked_as_machine_carried(client):
     """The sharpest verb on the surface, and the one whose record matters most.
 
-    Accepting scope is the chairman's signature on what the company owes. If a
+    Accepting scope is the chairman's signature on what the project owes. If a
     model carried it, the plan has to say so where the plan is read.
     """
     project = deliver_project(client, slug=SLUG)
@@ -149,7 +149,7 @@ def test_the_preview_itself_writes_nothing(client):
 
 def test_an_agent_cannot_reach_the_steer_verbs_through_this_door(client):
     """The surface exists so a model can act *for* the chairman. It must never
-    become a way for the company's own agents to act *as* one."""
+    become a way for a project's own agents to act *as* one."""
     project = make_project(client, slug=SLUG)
     _, run_token = live_token(project["id"], project["ceo_agent_id"])
     answer = rpc(client, run_token, "tools/call",

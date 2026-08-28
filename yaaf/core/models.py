@@ -1485,7 +1485,7 @@ class McpClient(Base):
     would record the chairman as the one who used them.
 
     This row is the narrowing. `scopes` decides which verbs the client can
-    reach at all, `project_ids` decides which companies it can see, and every
+    reach at all, `project_ids` decides which projects it can see, and every
     write made through it is attributed as machine-mediated for good. Like a
     run token, only the hash is stored: the plaintext is shown once at
     creation and lives thereafter in the client's own config.

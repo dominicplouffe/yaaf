@@ -23,7 +23,7 @@ from yaaf.server.mcp.auth import Principal, ToolRefusal, allowed_projects, resol
 GRAMMAR_PATH = Path(__file__).resolve().parents[2] / "founder" / "GOAL_GRAMMAR.md"
 
 PER_PROJECT = {
-    "briefing": "What changed in this company since you last looked",
+    "briefing": "What changed in this project since you last looked",
     "plan": "Requirements, stages, the commitment and its projection",
     "goal": "The goal the CEO plans from, verbatim",
     "constitution": "The rules in force, and the version number they carry",
@@ -33,7 +33,7 @@ PER_PROJECT = {
 def listing(session: Session, principal: Principal) -> list[dict]:
     rows = [
         {"uri": "yaaf://desk", "name": "The desk",
-         "description": "What needs the chairman, across every company",
+         "description": "What needs the chairman, across every project",
          "mimeType": "application/json"},
         {"uri": "yaaf://docs/goal-grammar", "name": "GOAL_GRAMMAR.md",
          "description": "The eight things a goal has to contain",

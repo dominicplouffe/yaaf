@@ -37,7 +37,7 @@ better founding surface than any form we can draw.
   exists in `yaaf/server/api/observe.py` or `admin.py`. No new verbs, no new
   business logic, no rule that exists here and nowhere else. If a tool needs
   behavior the HTTP surface doesn't have, the HTTP surface gets it first.
-- **Not an agent surface.** `/agent/*` stays unreachable. The company's agents
+- **Not an agent surface.** `/agent/*` stays unreachable. A project's agents
   already have their API; this one is the chairman's.
 - **Not a credential reader.** No secret values, no webhook signing secrets, no
   billing tokens. Not at any scope.
@@ -336,11 +336,11 @@ discovering later.
 | `catalog` | Search the role and crew library. | `yaaf/founder/tools.py: search_roles, search_crews` | no | M4 |
 | `read_source` | What a candidate data source actually serves. | `yaaf/founder/tools.py: read_source` | no | M4 |
 | `grade_goal` | Grade a draft goal against [GOAL_GRAMMAR.md](GOAL_GRAMMAR.md) — eight things a goal must contain. | `yaaf/founder/tools.py` | no | M4 |
-| `rehearse` | The fire drill: simulate the company for N days, create nothing. | `POST /admin/rehearse` | no | M4 |
+| `rehearse` | The fire drill: simulate the project for N days, create nothing. | `POST /admin/rehearse` | no | M4 |
 | `create_project` | Create from a validated bundle. | `POST /admin/projects` | yes | M4 |
 | `clone_project` | Clone an existing one; export a spec. | `POST /admin/projects/{id}/clone`, `GET /export` | yes | M4 |
 
-The founding flow is deliberately *primitives, not a wizard*. The calling model
+The design flow is deliberately *primitives, not a wizard*. The calling model
 drafts the bundle with the user's real context in hand; `grade_goal` and
 `rehearse` are the platform arguing back, free and before anything exists. We do
 **not** proxy the Founder's own threads (`/admin/founder/*`) through MCP — a
@@ -383,7 +383,7 @@ and re-fetchable by the client when it needs to refresh:
 - `brief` — the morning standing across every project
 - `why-at-risk <project>` — the commitment, the pace, the waste, the two levers
 - `spot-audit <project>` — pull a sample and walk it
-- `found <one paragraph>` — draft a company: catalog, grade, rehearse, review
+- `design <one paragraph>` — draft a project: catalog, grade, rehearse, review
 
 ## Conventions
 
@@ -472,7 +472,7 @@ real once something is addressed by project. `projects` is that something.
 **Done when:** ~~a client connects, lists zero tools~~ — a client connects, sees
 only the tools its scopes hold, and every wrong credential is refused over HTTP.
 
-### M1 — Read the company ✅
+### M1 — Read the project ✅
 - [x] The ten remaining read tools (`desk`, `project`, `plan`, `spend`, `work`,
       `proof`, `org`, `channels`, `files`, `record`), each a projection of an
       `observe` handler called as a function — one definition, so a fix to the
@@ -555,16 +555,16 @@ stays in the browser where the chairman is the only reader.
 **Done when:** an approval can be decided from the client, and the record shows
 plainly that a machine carried the signature.
 
-### M4 — Found a company
+### M4 — Design a project
 - [ ] Lift `search_roles` / `search_crews` / `read_source` / `grade_goal` out of
       `yaaf/founder/tools.py` into a shared toolset both the Founder and MCP call
 - [ ] `rehearse`, `create_project`, `clone_project`
-- [ ] Prompts: `brief`, `why-at-risk`, `spot-audit`, `found`
+- [ ] Prompts: `brief`, `why-at-risk`, `spot-audit`, `design`
 - [ ] `test_mcp_founding.py` — a bundle that fails `validate()` cannot be
       created through MCP any more than through the form
 
-**Done when:** a project can be founded end-to-end from a client, and the fire
-drill ran before it existed.
+**Done when:** a project can be designed and created end-to-end from a client,
+and the fire drill ran before it existed.
 
 ### M5 — Configure
 - [ ] `project_configure`, `data_source`, `credential`, `amend`, `billing_check`

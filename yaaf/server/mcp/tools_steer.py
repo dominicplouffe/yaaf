@@ -431,7 +431,7 @@ LIFECYCLE_VERBS = ("start", "pause", "stop", "complete", "pause_agent", "resume_
     "lifecycle",
     scope="steer",
     description=(
-        "Run the company's switches: start, pause, stop or complete a project, pause or "
+        "Run the project's switches: start, pause, stop or complete it, pause or "
         "resume one agent, set an agent's daily wake, unfreeze a frozen thread, or mark "
         "a briefing read. Everything but briefing_seen needs a confirmation."
     ),

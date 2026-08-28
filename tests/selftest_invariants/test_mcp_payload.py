@@ -34,7 +34,7 @@ def text_of(client, token, name, arguments=None) -> str:
 
 
 def noisy_project(client, messages: int = 60) -> dict:
-    """A company with enough said in it that trimming has to happen."""
+    """A project with enough said in it that trimming has to happen."""
     project = make_project(client, slug=SLUG)
     channel = channel_of(client, project["id"], "boardroom")
     _, token = live_token(project["id"], project["ceo_agent_id"])

@@ -2,7 +2,7 @@
 
 The mirror of `yaaf.server.mcp_oauth`, which connects yaaf *to* other people's
 MCP servers as data sources for agents. This package is the other direction:
-reading and steering a company from Claude Code, Claude Desktop, or anything
+reading and steering a project from Claude Code, Claude Desktop, or anything
 else that speaks the protocol.
 
 Every tool is a projection of a route that already exists in

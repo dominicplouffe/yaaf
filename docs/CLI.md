@@ -149,7 +149,7 @@ yaaf mcp-token mint dom-laptop --chairman you@example.com --scopes read --projec
 
 Scopes are `read`, `steer`, `create`, `configure`, and `read` is implied by all
 of them. Start with `read` alone: it is most of the value and none of the risk
-— a client holding it sees every company and signs for nothing. Omitting
+— a client holding it sees every project and signs for nothing. Omitting
 `--project` means every project that chairman chairs, which is a narrowing
 already; naming one narrows it further.
 

@@ -240,7 +240,7 @@ def test_consent_requires_the_chairmans_password_not_the_admin_token(client, pub
 
 def test_a_grant_only_reaches_projects_the_chairman_ticked(client, public):
     """The consent screen is where the allowlist is decided, so it is where the
-    attack lands: approve one company, reach only that one."""
+    attack lands: approve one project, reach only that one."""
     chairman_with_password(client)
     make_project(client, slug="beta")
     registered = register(client)

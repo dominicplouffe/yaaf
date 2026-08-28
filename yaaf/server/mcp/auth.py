@@ -28,7 +28,7 @@ from yaaf.core.models import McpClient, McpToken, Project, utcnow
 from yaaf.core.tokens import hash_token
 
 #: Smallest to largest. `read` is implied by every other scope: a client that
-#: may steer a company can obviously look at it, and a grant that had to list
+#: may steer a project can obviously look at it, and a grant that had to list
 #: both would eventually be issued without the first.
 SCOPES = ("read", "steer", "create", "configure")
 

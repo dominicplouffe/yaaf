@@ -600,7 +600,7 @@ def mcp_token_mint(
     """Mint a scoped MCP client token. The value is printed once and never again.
 
     Start with `read`. It is most of the value and none of the risk: a client
-    with it can see every company and sign for nothing.
+    with it can see every project and sign for nothing.
     """
     with _client() as client:
         _show(client.post("/admin/mcp_clients", json={

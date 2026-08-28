@@ -51,7 +51,7 @@ def whoami(principal: Principal, session: Session, arguments: dict) -> dict:
     "projects",
     scope="read",
     description=(
-        "The companies this client can see: slug, name, status, shape, and the first "
+        "The projects this client can see: slug, name, status, shape, and the first "
         "lines of the goal. Pass `project` (slug or id) to narrow to one."
     ),
     input_schema={
@@ -91,7 +91,7 @@ def _preview(text: str | None) -> str:
     return text if len(text) <= GOAL_PREVIEW else text[:GOAL_PREVIEW].rstrip() + "…"
 
 
-# ── the company, read ───────────────────────────────────────────────────────────
+# ── the project, read ───────────────────────────────────────────────────────────
 #
 # Every tool below is a projection of `yaaf.server.api.observe`, called as a
 # function rather than reimplemented: one query, one definition, and a fix to
@@ -155,7 +155,7 @@ def _schema(**properties) -> dict:
     scope="read",
     description=(
         "The cross-project standing: what is waiting on the chairman everywhere, the "
-        "countdowns worth watching, and one comparable row per company. Start here when "
+        "countdowns worth watching, and one comparable row per project. Start here when "
         "the question is 'what needs me?'."
     ),
     input_schema={
@@ -189,7 +189,7 @@ def desk(principal: Principal, session: Session, arguments: dict) -> dict:
     "project",
     scope="read",
     description=(
-        "One company's cockpit. view: overview (status, spend, org, the deliverable), "
+        "One project's cockpit. view: overview (status, spend, org, the deliverable), "
         "health (the setup checklist), flags (obligations the platform opened), "
         "agenda (what is scheduled), briefing (what changed since you last looked)."
     ),

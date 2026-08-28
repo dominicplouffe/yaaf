@@ -327,7 +327,7 @@ def _consent_form(session: Session, user: User, params: dict) -> str:
     <form method="post" action="/oauth/authorize">
       {_hidden(params)}
       <h3>What it may do</h3>{scope_rows}
-      <h3>Which companies it may see</h3>
+      <h3>Which projects it may see</h3>
       {project_rows or '<p class="muted">You chair no projects yet.</p>'}
       <p class="muted">Untick anything it does not need. Every write this client
       makes is recorded as machine-mediated, and you can revoke it at any time
@@ -340,9 +340,9 @@ def _consent_form(session: Session, user: User, params: dict) -> str:
 
 def _describe(scope: str) -> str:
     return {
-        "read": "see every company you chair, its plan, spend, work and proof",
+        "read": "see every project you chair, its plan, spend, work and proof",
         "steer": "speak to the CEO, decide approvals, accept or cut scope, sign dates",
-        "create": "found new companies and clone existing ones",
+        "create": "create new projects and clone existing ones",
         "configure": "change settings, teams, data sources and credentials",
     }[scope]
 

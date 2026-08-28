@@ -74,7 +74,7 @@ def consent(client, registered: dict, scope="read steer", verifier=VERIFIER,
     assert signed_in.status_code == 200, signed_in.text
     assert "Approve" in signed_in.text
     # The consent screen is the grant: it names the client, the scopes, and one
-    # checkbox per company. That is the allowlist becoming a decision.
+    # checkbox per project. That is the allowlist becoming a decision.
     assert "claude.ai" in signed_in.text
     assert "acme" in signed_in.text
 

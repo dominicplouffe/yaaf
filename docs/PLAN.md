@@ -82,7 +82,7 @@ golden-transcript evals, green on SQLite and Postgres in CI.
    worth, a single agent under the same governance has to stay a real way to
    run yaaf — it is the control the first question is judged against.
 3. **A chairman's MCP server.** yaaf consumes MCP today and exposes nothing.
-   Reading the company from a model client is most of the value and carries
+   Reading a project from a model client is most of the value and carries
    almost no risk; the writes are the interesting part, because handing a model
    the chairman's signature is exactly what the rest of this design refuses.
    Designed and tracked in [MCP_SERVER.md](MCP_SERVER.md), unbuilt.

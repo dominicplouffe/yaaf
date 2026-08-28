@@ -180,7 +180,7 @@ def test_a_read_token_cannot_reach_any_of_this(client):
 
 
 def test_a_steer_token_still_stops_at_the_project_allowlist(client):
-    """Scope says which verbs; the allowlist says which companies. Both, always."""
+    """Scope says which verbs; the allowlist says which projects. Both, always."""
     make_project(client, slug=SLUG)
     beta = make_project(client, slug="beta")
     token = steerer(client, projects=[SLUG])["token"]
