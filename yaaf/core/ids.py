@@ -47,6 +47,8 @@ AUDIT = "audt"
 NOTICE = "ntce"
 SUGGESTION = "sugg"
 ACCOUNT = "acct"
+PLATFORM_SETTING = "pset"
+FOUNDING_THREAD = "fnd"
 
 
 def new_id(prefix: str) -> str:

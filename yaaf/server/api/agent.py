@@ -2098,8 +2098,9 @@ def credential_scope(
         raise Refusal("Nothing to change.", status_code=422)
     if body.add_roles:
         # A grant to a role that does not exist grants nothing while telling
-        # everyone it did — the worst kind of success.
-        policy.check_roles_exist(session, body.add_roles)
+        # everyone it did — the worst kind of success. Which is equally true of
+        # a role that exists in the library but is on nobody's team here.
+        policy.check_roles_on_project(session, ctx.project.id, body.add_roles)
     row = session.execute(
         select(Secret).where(Secret.project_id == ctx.project.id, Secret.name == name)
     ).scalar_one_or_none()

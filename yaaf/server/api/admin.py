@@ -1683,16 +1683,15 @@ class ProjectPatch(BaseModel):
 def _billing_shape_error(mode: str, plaintext: str) -> str | None:
     """Subscription tokens come from `claude setup-token` and start sk-ant-oat;
     API keys start sk-ant-api. A mismatched pair fails every future run with a
-    baffling 'Not logged in' — refuse it while the human is still looking."""
-    is_oauth = plaintext.startswith("sk-ant-oat")
-    if mode == "subscription" and not is_oauth:
-        return ("that credential is not a subscription token (sk-ant-oat…). Run "
-                "`claude setup-token` and paste the result — or switch to API-key mode.")
-    if mode == "api_key" and is_oauth:
-        return ("that credential is a subscription OAuth token, not an API key "
-                "(sk-ant-api…). Paste a key from the Anthropic console — or switch "
-                "to subscription mode.")
-    return None
+    baffling 'Not logged in' — refuse it while the human is still looking.
+
+    The rule itself lives in `yaaf.core.platform` now, because the platform
+    credential the Founder runs on needs the identical check and a chairman
+    should not get a different sentence depending on which form he pasted into.
+    """
+    from yaaf.core.platform import shape_error
+
+    return shape_error(mode, plaintext)
 
 
 @router.patch("/projects/{project_id}")
@@ -2321,7 +2320,7 @@ def fulfill_need(
     if approval.status != ApprovalStatus.PENDING:
         raise HTTPException(status_code=409, detail=f"approval already {approval.status}")
     try:
-        policy.check_roles_exist(session, body.roles)
+        policy.check_roles_on_project(session, approval.project_id, body.roles)
     except policy.Refusal as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     project = _get_project(session, approval.project_id)
@@ -3679,6 +3678,16 @@ def put_secret(body: SecretIn, session: Session = Depends(db)) -> dict:
             "like https://host:3845/mcp, not a bare hostname or a token",
         )
         value = value.strip()  # a pasted trailing newline breaks the mount too
+
+    # Every path that writes role_scopes asks the same question, and this one
+    # was not asking it at all: the Settings table offered all thirty-one
+    # library roles and stored whichever were ticked, including roles this
+    # project never hired.
+    if body.role_scopes:
+        try:
+            policy.check_roles_on_project(session, body.project_id, body.role_scopes)
+        except policy.Refusal as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
     existing = session.execute(
         select(Secret).where(Secret.project_id == body.project_id, Secret.name == body.name)

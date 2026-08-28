@@ -17,6 +17,9 @@ dependencies = [
     "cryptography>=42",
     "argon2-cffi>=23.1",
     "typer>=0.12",
+    # Drives the Claude Code CLI: inside a sandbox for a company's agents, and
+    # in-process for the Founder. One transport, so one credential story — a
+    # subscription token is a CLI credential and not a Messages API one.
     "claude-agent-sdk>=0.1.0",
     "docker>=7.1",
 ]
@@ -44,6 +47,11 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["yaaf*"]
+
+# The goal grammar is read at runtime by the Founder's prompt and by the
+# goal grader, so it has to be in the wheel — not just in the checkout.
+[tool.setuptools.package-data]
+"yaaf.founder" = ["*.md"]
 
 [tool.ruff]
 line-length = 100

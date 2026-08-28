@@ -4,6 +4,7 @@ import { usePoll } from "./hooks";
 import Login from "./pages/Login";
 import Desk, { buildItems } from "./pages/Desk";
 import Projects from "./pages/Projects";
+import Founding from "./pages/Founding";
 import NewProject from "./pages/NewProject";
 import ProjectPage from "./pages/Project";
 import Roles from "./pages/Roles";
@@ -44,8 +45,11 @@ function Shell({ children }: { children: React.ReactNode }) {
         <NavLink to="/roles" className={({ isActive }) => "navlink" + (isActive ? " active" : "")}>
           Role library
         </NavLink>
-        <NavLink to="/projects/new" className={({ isActive }) => "navlink" + (isActive ? " active" : "")}>
-          + New project
+        <NavLink to="/projects/found" className={({ isActive }) => "navlink" + (isActive ? " active" : "")}>
+          + Found a company
+        </NavLink>
+        <NavLink to="/projects/new" className={({ isActive }) => "navlink" + (isActive ? " active" : "")} end>
+          Fill the form myself
         </NavLink>
         <div className="foot">
           ui build {__BUILD_TIME__}
@@ -88,6 +92,14 @@ export default function App() {
         element={
           <Shell>
             <Projects />
+          </Shell>
+        }
+      />
+      <Route
+        path="/projects/found"
+        element={
+          <Shell>
+            <Founding />
           </Shell>
         }
       />

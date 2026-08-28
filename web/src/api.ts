@@ -77,6 +77,7 @@ export async function api<T = unknown>(
 export const get = <T = unknown>(path: string) => api<T>("GET", path);
 export const post = <T = unknown>(path: string, body?: unknown) => api<T>("POST", path, body);
 export const patch = <T = unknown>(path: string, body?: unknown) => api<T>("PATCH", path, body);
+export const put = <T = unknown>(path: string, body?: unknown) => api<T>("PUT", path, body);
 export const del = <T = unknown>(path: string) => api<T>("DELETE", path);
 
 /** GET an endpoint that returns plain text (run traces) — no JSON parsing. */
@@ -736,7 +737,7 @@ export interface HypothesisRow {
 }
 
 export interface OrgView {
-  ceo: { id: string; name: string; status: string } | null;
+  ceo: { id: string; name: string; status: string; role_slug: string | null } | null;
   teams: {
     id: string;
     name: string;

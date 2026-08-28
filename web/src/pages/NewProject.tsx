@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { CrewSummary, get, McpServerEntry, patch, post, ProjectBundle,
   RehearsalReport, RoleSummary } from "../api";
 import Drill from "../drill";
@@ -143,6 +143,15 @@ const ONE_PAGE_KEY = "yaaf.newproject.onepage";
 
 export default function NewProject() {
   const navigate = useNavigate();
+  // A draft handed over by the Founder. It arrives as the same ProjectBundle a
+  // setup file carries, so it lands through the same applyBundle path; the
+  // thread id rides along so the founding conversation can be handed to the
+  // CEO once the company exists.
+  const handover = (useLocation().state ?? {}) as {
+    foundingDraft?: ProjectBundle;
+    foundingThreadId?: string;
+  };
+  const [foundingThreadId] = useState<string | null>(handover.foundingThreadId ?? null);
   const [roles, setRoles] = useState<RoleSummary[]>([]);
   // Distinct from `roles.length`: an install whose library is genuinely empty
   // must still be told which roles a setup file wanted, and a file dropped
@@ -361,17 +370,15 @@ export default function NewProject() {
   // it just cannot START, because its first run would die hunting for a key.
   const canStartNow = runtime === "mock" || !!billingKey.trim();
 
-  async function loadBundle(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setError(null);
+  /** Fill the whole form from a setup bundle.
+   *
+   *  Two things arrive here and they must land identically: a file the
+   *  chairman exported, and a draft the Founder wrote. A second copy of this
+   *  for the Founder would be a second place for "what the file said" and
+   *  "what the form shows" to drift apart, which is the one bug this page
+   *  cannot afford. */
+  function applyBundle(parsed: ProjectBundle) {
     try {
-      const parsed = JSON.parse(await file.text()) as ProjectBundle;
-      if (parsed.yaaf_bundle !== 1 || !parsed.project) {
-        throw new Error(
-          "that file is not a project setup file — download one from a project's Settings",
-        );
-      }
       const p = parsed.project;
       setBundle(parsed);
       setName(p.name);
@@ -460,6 +467,31 @@ export default function NewProject() {
       if (cons.approval_threshold_usd !== undefined) {
         setApprovalThreshold(cons.approval_threshold_usd);
       }
+    } catch (err) {
+      setBundle(null);
+      setError((err as Error).message);
+    }
+  }
+
+  // Once, on arrival. A draft is a proposal to review, so it fills the form
+  // and stops there — the chairman still presses Create.
+  useEffect(() => {
+    if (handover.foundingDraft) applyBundle(handover.foundingDraft);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function loadBundle(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setError(null);
+    try {
+      const parsed = JSON.parse(await file.text()) as ProjectBundle;
+      if (parsed.yaaf_bundle !== 1 || !parsed.project) {
+        throw new Error(
+          "that file is not a project setup file — download one from a project's Settings",
+        );
+      }
+      applyBundle(parsed);
     } catch (err) {
       setBundle(null);
       setError((err as Error).message);
@@ -808,6 +840,17 @@ export default function NewProject() {
         if (created.webhooks) setDone(created.id);
         else navigate(`/projects/${created.id}/settings?s=data`);
         return;
+      }
+      // The chairman already explained all of this to the Founder and argued
+      // it through. Making them say it again to a new CEO is exactly the form
+      // behaviour the Founder exists to remove.
+      if (foundingThreadId) {
+        try {
+          await post(`/admin/founder/threads/${foundingThreadId}/attach`,
+                     { project_id: created.id });
+        } catch {
+          /* the company exists; a missing briefing is not worth failing on */
+        }
       }
       if (startNow && canStartNow) await post(`/admin/projects/${created.id}/start`);
       if (created.webhooks) setDone(created.id);

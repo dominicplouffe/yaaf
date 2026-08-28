@@ -44,6 +44,36 @@ unit of work, and go back to sleep. Everything is recorded.
    a server name — the whole address. (The form will refuse anything else,
    on purpose.)
 
+## Step 0 — Or let the Founder draft it
+
+Everything below describes filling the form yourself, and it still works. But
+the two hardest decisions on that form — the goal, and who to hire — are the
+two the product can now argue with you about.
+
+**+ Found a company** opens a conversation instead of a form. Write what you
+want in a paragraph; the Founder answers with a whole company — goal, shape,
+roster, and the handful of constitution rules it can justify — and then tells
+you what it assumed, what it added that you did not ask for, and what it still
+wants to know. You argue; it revises. When the draft is right, **Review &
+create** drops the whole thing into the form below, where you change anything
+you like, run the fire drill for nothing, and create it.
+
+It needs one thing first: a **platform key**, set once. That is not a project's
+billing key and never becomes one — it pays for product-wide conversations like
+this, and no project's agents ever see it. Every company you create still pays
+its own way.
+
+Two things worth knowing:
+
+- **The conversation is not thrown away.** When you create the project, it is
+  handed to your new CEO as its day-one briefing. You do not have to explain
+  yourself twice.
+- **The goal is graded, not generated and forgotten.** The Founder grades its
+  own draft against [GOAL_GRAMMAR.md](GOAL_GRAMMAR.md) — the eight things a
+  goal has to contain — before it shows you anything. That file is worth
+  reading whether or not you use the Founder; it is what separates a goal that
+  works from one that putters.
+
 ## Step 1 — Create the project
 
 Click **+ New project**. It runs in four steps — the job, the company, the
@@ -58,7 +88,9 @@ existing projects; edit it only if you care what it says.
 
 **The goal — spend your time here.** This is the single most important field.
 The CEO plans everything from it, so write it the way you'd brief a
-competent human running the company for you:
+competent human running the company for you. (This is the field the Founder
+above exists for; [GOAL_GRAMMAR.md](GOAL_GRAMMAR.md) is the long version of the
+advice that follows.)
 
 - Say the **outcome**, not the activities: what exists at the end?
 - Name the **deliverable** and who it's for.

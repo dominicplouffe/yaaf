@@ -1,4 +1,4 @@
-"""The future judge-model hook — interface only, deliberately unimplemented.
+"""Model-graded judgement: transcripts (planned) and goals (shipped).
 
 The golden diff plus declarative expectations catch *mechanical* regressions
 in scripted scenarios: a changed refusal, a lost wake, an extra call. What
@@ -12,6 +12,13 @@ change when the judge lands: a judge consumes a (scenario name, transcript)
 pair — the same normalized event stream the goldens store — and returns a
 verdict. Implementations will call a model; none exists yet, and nothing in
 CI depends on one.
+
+What *is* implemented here is the other half: :func:`grade_goal`, which grades
+a project's goal prose against ``yaaf/founder/GOAL_GRAMMAR.md``. It lives beside the
+transcript hook because both answer the same shape of question — is this any
+good, judged against a written rubric — and keeping one home for that means
+one place to look when a grade seems wrong. It grades a document rather than a
+transcript, so it is a sibling of the hook above, not an implementation of it.
 """
 
 from __future__ import annotations
@@ -53,3 +60,31 @@ def judge_transcript(
         "Judge-model scoring is a planned hook for real-model transcripts; "
         "no implementation ships yet (see evals/README.md)."
     )
+
+
+
+
+# ── grading a goal against the grammar ──────────────────────────────────────────
+#
+# Implemented in `yaaf.founder.grade` because the Founder calls it at runtime
+# and the deployed image ships `yaaf*` only. Re-exported here so the eval
+# harness still has one front door for model-graded judgement.
+
+from yaaf.founder.grade import (  # noqa: E402
+    GOAL_ELEMENTS,
+    LOAD_BEARING,
+    ElementGrade,
+    GoalGrade,
+    grade_goal,
+)
+
+__all__ = [
+    "GOAL_ELEMENTS",
+    "LOAD_BEARING",
+    "ElementGrade",
+    "GoalGrade",
+    "JudgeVerdict",
+    "TranscriptJudge",
+    "grade_goal",
+    "judge_transcript",
+]

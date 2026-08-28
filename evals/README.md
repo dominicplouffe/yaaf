@@ -92,3 +92,19 @@ normalized event stream the goldens store and returns a scored
 `JudgeVerdict`. Capturing real-model runs through the same `RecordingClient`
 is the intended path; no judge implementation ships yet, and CI does not
 depend on one.
+
+## The Founder's grader (opt-in, costs money)
+
+`python -m evals.founder` is not part of the golden suite and never runs in
+CI: it calls a real model. It grades two real artifacts against
+`yaaf/founder/GOAL_GRAMMAR.md` — the chairman's brief as he actually typed it
+(`fixtures/founder_brief.md`) and the goal it eventually produced
+(`docs/projects/idea-to-customer.json`) — and asserts three things:
+
+1. the reference goal grades as **ready** (the grader knows the standard);
+2. the raw brief does **not** (the grader discriminates);
+3. the brief is missing exactly the elements the Founder is specified to
+   supply — anti-metrics, a quality bar, and a failure deliverable.
+
+The third is the one that would rot silently. If the brief starts grading as
+complete on those, the Founder's job has changed and its prompt should say so.

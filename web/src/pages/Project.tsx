@@ -607,7 +607,7 @@ export default function ProjectPage() {
         <Route path="review" element={<Review ctx={ctx} />} />
         <Route path="deliverables" element={<Deliverables projectId={projectId} />} />
         <Route path="records/*" element={<Records ctx={ctx} />} />
-        <Route path="settings" element={<Settings projectId={projectId} dash={dash} reload={reload} />} />
+        <Route path="settings" element={<Settings projectId={projectId} dash={dash} org={org} reload={reload} />} />
 
         {/* Old bookmarks and links from outside the app. Every tab that moved
             keeps working; nobody has to relearn a URL they had written down. */}

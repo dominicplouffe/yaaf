@@ -311,7 +311,9 @@ clock, that a paused company has no schedule at all.
 
 The riskiest moment in this product is the one before the first real run: you
 write a goal, hire a crew off a wizard, hand over an API key and a budget, and
-go to bed. Until now the only preflight was a static checklist — is the billing
+go to bed. (The drill is the second half of that sentence — is the
+configuration survivable. The first half, writing the goal and hiring the crew,
+is [§18](#18-the-founding-conversation).) Until now the only preflight was a static checklist — is the billing
 credential shaped like a credential, is a team on an outdated role version —
 and a static check cannot answer the question you are actually asking.
 
@@ -424,6 +426,51 @@ evidence at all about your *company*.
   pointed at your configuration as well as at ours.
 
 ---
+
+## 18. The founding conversation
+
+Every other part of this product has a company behind it. A CEO proposes a
+plan; teams claim work; an adversary attacks the company's own output; the
+platform refuses a success test it cannot check. The founding moment had a
+form — and the form asks one person, alone, to hand-author a goal of several
+thousand words, an org chart, and a constitution of fifty-odd rules. That is
+not a form problem. It is an authoring problem wearing a form.
+
+**+ Found a company** puts an agent there instead. You write a paragraph; the
+**Founder** replies with a whole company — goal prose, shape, roster, and the
+few constitution rules it can defend — and then says what it assumed, what it
+added that you never asked for, and what it still needs to know. You argue. It
+revises. The draft is the same `project_setup` bundle an export produces, so
+**Review & create** fills the ordinary New-project form with it and everything
+downstream — the fire drill included — is unchanged.
+
+It proposes; you decide. That is the same division the CEO works under, applied
+one step earlier.
+
+Four things make it more than a prompt:
+
+- **A written standard for goals.** [GOAL_GRAMMAR.md](GOAL_GRAMMAR.md) names
+  the eight things a goal has to contain — a finish line and the record that
+  settles it, the metrics that explicitly do not count, the bias marked as a
+  bias, what you will refuse to do yourself, what is owed if it fails. The
+  Founder grades its own draft against that file before showing you anything,
+  and the grader reads the same copy. A goal stays prose; the grammar is what
+  the critic argues from, never a template to fill in.
+- **A roster derived from the goal.** Not a catalogue to browse: what does this
+  work actually require, who in the library does that, and what is the smallest
+  team that covers it. It will argue for fewer people than you asked for, and
+  it tells you up front which credentials the roster will demand — before a run
+  fails at 3am asking for one.
+- **It runs the drill on its own draft.** §13 costs nothing, so there is no
+  reason to hand you a company that cannot get off the ground.
+- **The conversation becomes the briefing.** Everything you explained and
+  argued through is handed to the new CEO as its day-one context. Being asked
+  to say it all again to a fresh agent is exactly the form behaviour this
+  replaces.
+
+It runs on a **platform key** — set once, product-wide, never handed to a
+project's agents. Every company still pays its own way with its own key, and
+the fire drill still costs nothing whether or not a platform key exists.
 
 ## Where to go next
 

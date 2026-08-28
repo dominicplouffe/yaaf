@@ -2066,6 +2066,55 @@ def check_roles_exist(session: Session, slugs: list[str]) -> None:
         )
 
 
+def roles_on_project(session: Session, project_id: str) -> set[str]:
+    """Every role slug this project actually employs.
+
+    Both halves of the org: a team's pinned role version, and the CEO's, which
+    hangs off the agent rather than a team (`Agent.team_id` is null for it). A
+    credential granted to the CEO's role is a real grant, so leaving it out
+    would refuse something that works.
+    """
+    from yaaf.core.models import Agent, Role, RoleVersion, Team
+
+    from_teams = select(Role.slug).join(
+        RoleVersion, RoleVersion.role_id == Role.id
+    ).join(Team, Team.role_version_id == RoleVersion.id).where(Team.project_id == project_id)
+    from_ceo = select(Role.slug).join(
+        RoleVersion, RoleVersion.role_id == Role.id
+    ).join(Agent, Agent.role_version_id == RoleVersion.id).where(Agent.project_id == project_id)
+    return set(session.execute(from_teams).scalars()) | set(session.execute(from_ceo).scalars())
+
+
+def check_roles_on_project(session: Session, project_id: str, slugs: list[str]) -> None:
+    """Refuse a grant to a role this project does not employ.
+
+    `check_roles_exist` asks whether the role exists in the *library*, which is
+    the wrong question: a project with no researcher accepts a grant to
+    `researcher`, stores it, injects it nowhere, and says nothing. The comment
+    on the agent-side grant already names the failure mode — "a grant to a role
+    that does not exist grants nothing while telling everyone it did, the worst
+    kind of success" — and it does not stop at the library.
+
+    The refusal lists the roster, because an error that says no without saying
+    what instead is how a chairman ends up typing employee names into a box
+    that wanted role slugs.
+    """
+    wanted = [slug for slug in dict.fromkeys(slugs) if slug]
+    if not wanted:
+        return
+    employed = roles_on_project(session, project_id)
+    strangers = [slug for slug in wanted if slug not in employed]
+    if not strangers:
+        return
+    roster = ", ".join(sorted(employed)) or "nobody yet — this project has no teams"
+    raise Refusal(
+        f"No role on this project called {', '.join(repr(s) for s in strangers)}. "
+        f"This project employs: {roster}. A grant to a role nobody here has "
+        "reaches no one, so it is refused rather than stored.",
+        status_code=422,
+    )
+
+
 # ── the authority dial, in one place ────────────────────────────────────────────
 #
 # Every "does the CEO hold this?" question routes through here, so the day the
