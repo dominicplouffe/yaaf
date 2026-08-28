@@ -413,6 +413,9 @@ def build(client, project_id: str | None, spec: dict, steps: list[dict],
             "never reaches the network",
             "credentials, Slack and data sources — a drill reads no secret and "
             "opens no socket",
+            "chairman notifications — the mail and webhook channels are unset "
+            "for the duration, so the notices this pretend company raised were "
+            "logged and never delivered to anyone",
             "the workspace — the drill works in a directory it deletes, and a "
             "github_repo in the spec is not cloned into it",
         ],

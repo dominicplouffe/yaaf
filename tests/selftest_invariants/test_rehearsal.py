@@ -8,7 +8,7 @@ business doing. Both halves are attacked here.
     assumed, because the engine is a process-global and a drill that ran
     inside the API process would re-point the server at its own scratch data
   * it reaches nothing — no command out of a spec file, no evidence URL, no
-    credential, no socket
+    credential, no socket, and no mail to the chairman it invented
   * it relaxes exactly the rules that measure clock time, says which, and
     reports every other rule as the chairman wrote it
   * a broken spec is a legible finding rather than a crash, and a working one
@@ -375,6 +375,85 @@ def test_a_github_backed_spec_is_never_cloned_by_the_drill(tmp_path, monkeypatch
     # And what was there before is back afterwards — the drill hands the global
     # over rather than leaving its own stub for whatever runs next.
     assert daemon_module._clone_workspace is spy
+
+
+def test_a_drill_never_delivers_a_notice_to_the_chairman_it_invented(monkeypatch):
+    """The chairman a drill invents is `rehearsal@localhost`, and the notices a
+    company raises are real — a verdict waiting, a commitment at risk, an audit
+    sample. `chairman_notify` reads its mail and webhook config out of the
+    environment, and the drill inherits the server's, so one fire drill put
+    eight emails and eight outbound POSTs on the wire about a company that does
+    not exist. The batching windows the drill lifts to zero were the only thing
+    that had been holding any of them back."""
+    from yaaf.server import janitor as janitor_module
+    from yaaf.server import notify as notify_module
+
+    monkeypatch.setenv("YAAF_SMTP_HOST", "smtp.example.invalid")
+    monkeypatch.setenv("YAAF_CHAIRMAN_WEBHOOK_URL", "https://hooks.example.invalid/x")
+    delivered: list[tuple] = []
+    monkeypatch.setattr(notify_module, "_send_email",
+                        lambda *args: delivered.append(("email", *args)))
+    monkeypatch.setattr(notify_module, "_send_webhook",
+                        lambda *args: delivered.append(("webhook", *args)))
+
+    # The janitor binds `chairman_notify` at import, so this is the name its
+    # own calls go through. Wrapping rather than replacing it keeps the drill
+    # honest and makes the assertion below non-vacuous: nothing was delivered
+    # BECAUSE the transport had nowhere to go, not because nothing was raised.
+    raised: list[str] = []
+    original = janitor_module.chairman_notify
+
+    def spy(session, project, subject, body):
+        raised.append(subject)
+        return original(session, project, subject, body)
+
+    monkeypatch.setattr(janitor_module, "chairman_notify", spy)
+
+    report = rehearsal.rehearse(spec())
+
+    assert report["ok"], report["verdict"]
+    assert raised, "the drill raised no notice at all; this test proves nothing"
+    assert delivered == []
+
+
+def test_it_gives_the_notification_channels_back_including_the_ones_that_were_unset(
+        monkeypatch):
+    """Same discipline as the state roots: a drill that muted the chairman and
+    kept him muted would leave the real deployment silent for every notice
+    after it — which is the failure mode you would not notice."""
+    from yaaf.core.config import settings
+
+    monkeypatch.setenv("YAAF_SMTP_HOST", "smtp.example.invalid")
+    monkeypatch.delenv("YAAF_CHAIRMAN_WEBHOOK_URL", raising=False)
+    settings.cache_clear()
+
+    rehearsal.rehearse(spec())
+
+    assert os.environ["YAAF_SMTP_HOST"] == "smtp.example.invalid"
+    assert "YAAF_CHAIRMAN_WEBHOOK_URL" not in os.environ
+    assert settings().smtp_host == "smtp.example.invalid"
+    assert settings().chairman_webhook_url == ""
+
+
+def test_it_refuses_to_run_while_a_notification_channel_still_has_a_target(
+        tmp_path, monkeypatch):
+    """The notification half of the database guard: the drill checks that the
+    mute took rather than trusting that it did, and puts the environment back
+    from the refusal path too."""
+    from types import SimpleNamespace
+
+    from yaaf.core import config as config_module
+
+    stub = SimpleNamespace(smtp_host="smtp.example.invalid", chairman_webhook_url="")
+    fake = lambda: stub  # noqa: E731 — a one-liner stand-in for the cached accessor
+    fake.cache_clear = lambda: None
+    monkeypatch.setattr(config_module, "settings", fake)
+
+    before = dict(os.environ)
+    with pytest.raises(rehearsal.RehearsalError) as caught:
+        rehearsal._mute_chairman_notifications()
+    assert "still have somewhere to go" in str(caught.value)
+    assert dict(os.environ) == before
 
 
 def test_it_gives_the_state_roots_back_including_the_ones_that_were_unset(tmp_path,

@@ -36,7 +36,9 @@ precisely a test harness aimed at your own configuration.
 **What it never does.** It opens no sockets, runs no commands out of a spec
 file, touches no real database, and reads no credential. Every acceptance test
 the drill's crew writes is an `observable`, so the platform's command lane
-never fires; evidence carries no URL, so the verifier never fetches. It asserts
+never fires; evidence carries no URL, so the verifier never fetches; and its
+chairman notification channels are unset for the duration, so the notices a
+pretend company raises are logged and never mailed to a real person. It asserts
 its own database is a throwaway SQLite file it created and refuses to start
 otherwise, which is the guard that makes it safe to invoke from a server.
 
@@ -226,6 +228,52 @@ def _patch_workspace_clone():
 
     def restore() -> None:
         daemon_module._clone_workspace = previous
+
+    return restore
+
+
+def _mute_chairman_notifications():
+    """Unset the outbound notification channels, and hand back the undo.
+
+    The chairman a drill invents is `rehearsal@localhost`, and the notices a
+    company raises are real: the janitor nags for a verdict, the policy engine
+    reports a budget pause, a commitment goes at risk. Every one of those calls
+    `chairman_notify`, which reads YAAF_SMTP_HOST and YAAF_CHAIRMAN_WEBHOOK_URL
+    out of the environment — and the drill inherits the server's environment.
+    So a deployment with mail configured sent a real email, from a real
+    account, for every notice of a company that does not exist, and the
+    batching windows the drill sets to zero were the one thing that would have
+    held them back. The webhook half is worse: an outbound POST, from the drill
+    whose own report says it opens no socket.
+
+    Unset rather than stubbed, because unset is a state the product already
+    supports and documents — `notify` logs the notice and delivers nothing. The
+    whole real notification path still runs, exactly as the drill runs every
+    other path for real; only the transport has nowhere to go. Same
+    env-and-cache discipline as the state roots, including proving it took.
+    """
+    from yaaf.core.config import settings
+
+    silenced = {"YAAF_SMTP_HOST": "", "YAAF_CHAIRMAN_WEBHOOK_URL": ""}
+    previous = {name: os.environ.get(name) for name in silenced}
+    os.environ.update(silenced)
+    settings.cache_clear()
+
+    def restore() -> None:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+        settings.cache_clear()
+
+    live = settings()
+    if live.smtp_host or live.chairman_webhook_url:
+        restore()
+        raise RehearsalError(
+            "the rehearsal refused to run: its chairman notifications still "
+            "have somewhere to go. This is the guard that keeps a drill from "
+            "mailing a real person about a company that does not exist.")
 
     return restore
 
@@ -457,6 +505,7 @@ def rehearse(spec: dict, *, days: int = 30, usd_per_run: float | None = None,
         restore_engine = _isolate(Path(tmp))
         restore_state = _isolate_state_roots(Path(tmp))
         restore_clone = _patch_workspace_clone()
+        restore_notify = _mute_chairman_notifications()
         restore_pacing = _patch_coalescing()
         client = _client()
         try:
@@ -470,6 +519,7 @@ def rehearse(spec: dict, *, days: int = 30, usd_per_run: float | None = None,
             # one left with its batching window at zero, is a bug that surfaces
             # in whatever unrelated code runs next.
             restore_pacing()
+            restore_notify()
             restore_clone()
             restore_state()
             restore_engine()
