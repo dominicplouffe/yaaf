@@ -16,7 +16,7 @@ export function statusBadge(status: string) {
   return <span className={`badge ${cls}`}>{status}</span>;
 }
 
-/** A project nobody can act on again. Terminal companies are the archive: they
+/** A project nobody can act on again. Terminal projects are the archive: they
     are kept, they are readable, and they are not what this page opens on. */
 function isTerminal(p: DeskProject): boolean {
   return p.status === "stopped" || p.status === "completed";
@@ -26,7 +26,7 @@ function isTerminal(p: DeskProject): boolean {
     bet past its kill date, a project the platform paused. The optional
     spot-check is deliberately not counted — a card that shouts "1 waiting on
     you" when the honest answer is "nothing is" teaches the reader to stop
-    reading the number. Terminal companies can need nothing. */
+    reading the number. Terminal projects can need nothing. */
 function needsYou(p: DeskProject): number {
   if (isTerminal(p)) return 0;
   return p.pending_approvals.length + p.expired_bets.length + (p.status === "paused" ? 1 : 0);
@@ -34,7 +34,7 @@ function needsYou(p: DeskProject): number {
 
 // ── the scopes ─────────────────────────────────────────────────────────────────
 //
-// The old page rendered every company it had, in five always-open sections, as
+// The old page rendered every project it had, in five always-open sections, as
 // one full-size card each. That is fine at four projects and unreadable at
 // forty: the ones that ended — which by definition can never need anything —
 // took the same room as the ones running, and pushed the live portfolio off
@@ -57,21 +57,21 @@ const SCOPES: {
     key: "attention",
     label: "Needs you",
     match: (p) => needsYou(p) > 0,
-    empty: "Nothing is waiting on you. Every live company is running itself.",
+    empty: "Nothing is waiting on you. Every live project is running itself.",
   },
   {
     key: "active",
     label: "Active",
     match: (p) => !isTerminal(p),
     pinned: true,
-    empty: "No live companies. Start one, or look through the archive.",
+    empty: "No live projects. Start one, or look through the archive.",
   },
   { key: "running", label: "Running", match: (p) => p.status === "running",
     empty: "Nothing is running." },
   { key: "paused", label: "Paused", match: (p) => p.status === "paused",
     empty: "Nothing is paused." },
   { key: "draft", label: "Drafts", match: (p) => p.status === "draft",
-    empty: "No drafts — every company here has been started at least once." },
+    empty: "No drafts — every project here has been started at least once." },
   { key: "archived", label: "Archived", match: isTerminal,
     empty: "Nothing has finished yet." },
   { key: "all", label: "All", match: () => true, pinned: true,
@@ -109,7 +109,7 @@ function budgetFrac(p: DeskProject): number {
     a stranger out of place beats a stranger actively lied about.
 
     `open` is whether the group is expanded before anyone touches it. Only the
-    ones that can still do something are: a held company and a finished one are
+    ones that can still do something are: a held project and a finished one are
     a count and a heading until you ask for them, which is the whole difference
     between a page you scroll past and a page you read. Nothing is hidden — the
     heading always carries the true count, and one press opens it. */
@@ -133,7 +133,7 @@ function needsIn(items: DeskProject[]): number {
   return items.reduce((n, p) => n + needsYou(p), 0);
 }
 
-/** The portfolio directory: what companies exist and how each is doing — the
+/** The portfolio directory: what projects exist and how each is doing — the
     Desk answers "what needs me now?"; this page answers "what do I own?".
     Scope, search and sort live in the URL so a particular reading of the
     portfolio is a link you can send; the card/compact choice is a preference
@@ -391,7 +391,7 @@ export default function Projects() {
 }
 
 /** The numbers a chairman compares, computed once for both shapes so a card and
-    its compact row can never disagree about the same company. */
+    its compact row can never disagree about the same project. */
 function vitals(p: DeskProject) {
   const frac = budgetFrac(p);
   return {
@@ -476,7 +476,7 @@ function ProjectCard({ p }: { p: DeskProject }) {
   );
 }
 
-/** The same company on one line. Forty of these scan; forty cards do not — and
+/** The same project on one line. Forty of these scan; forty cards do not — and
     the archive is read by scanning for a name, not by comparing vitals. */
 function ProjectRow({ p }: { p: DeskProject }) {
   const { terminal } = vitals(p);

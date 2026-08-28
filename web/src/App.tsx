@@ -46,7 +46,7 @@ function Shell({ children }: { children: React.ReactNode }) {
           Role library
         </NavLink>
         <NavLink to="/projects/found" className={({ isActive }) => "navlink" + (isActive ? " active" : "")}>
-          + Found a company
+          + Design a project
         </NavLink>
         <NavLink to="/projects/new" className={({ isActive }) => "navlink" + (isActive ? " active" : "")} end>
           Fill the form myself

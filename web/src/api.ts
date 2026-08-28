@@ -111,7 +111,7 @@ export interface ProjectSummary {
   goal: string;
 }
 
-/** The one sentence for why this company is quiet, written server-side beside
+/** The one sentence for why this project is quiet, written server-side beside
     the ladder that decided it.
 
     It used to be written here instead, in three separate switch statements. The
@@ -125,7 +125,7 @@ export interface ActivityBrief {
   short: string;
   headline: string;
   detail: string;
-  /** Does this deserve the box above the tabs? False when the company is
+  /** Does this deserve the box above the tabs? False when the project is
       simply working — a banner that fires when things are fine teaches the
       reader to stop reading it. */
   banner: boolean;
@@ -580,20 +580,20 @@ export interface DeskProject {
 
 export interface DeskView {
   as_of: string;
-  /** Terminal companies (stopped, completed). Always counted, even when
+  /** Terminal projects (stopped, completed). Always counted, even when
       `?live=true` has kept them out of `projects`. */
   finished: number;
   projects: DeskProject[];
 }
 
-// ── the fire drill: the company, run for nothing ───────────────────────────────
+// ── the fire drill: the project, run for nothing ───────────────────────────────
 
 export interface RehearsalStep {
   key: string;
   label: string;
   ok: boolean;
   /** True for steps this project's SHAPE makes inapplicable — an Explore
-      company has no plan gate and no commitment by design, and drawing those
+      project has no plan gate and no commitment by design, and drawing those
       as misses would report an absent feature as a broken one. */
   na?: boolean;
   detail: string | null;
@@ -608,10 +608,10 @@ export interface RehearsalReport {
   walk: RehearsalStep[];
   /** Grouped: a crew that hits one wall nine times has one problem. */
   refusals: { path: string; error: string; count: number; agents: string[] }[];
-  /** Every point the company stopped and waited for a human. The autonomy
+  /** Every point the project stopped and waited for a human. The autonomy
       dial in numbers, which nothing else could produce before the money. */
   interventions: { kind: string; count: number; first_tick: number; examples: string[] }[];
-  /** Facts about the company's shape that no refusal reports — a CEO with
+  /** Facts about the project's shape that no refusal reports — a CEO with
       nobody to give work to never files a task, so there is no wall to see. */
   findings?: string[];
   plan?: { requirements: number; estimated_runs: number; adjusted_runs: number;

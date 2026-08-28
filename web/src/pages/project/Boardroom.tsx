@@ -213,7 +213,7 @@ export default function Boardroom({ projectId, dash }: { projectId: string; dash
             </div>
           </div>
 
-          {/* Why the company is quiet, in the room where that gets asked. It was
+          {/* Why the project is quiet, in the room where that gets asked. It was
               only ever on the Overview tab, so the chairman's way to find out
               was to ask the CEO — which spends a run to get a guess. */}
           {dash.status === "running" && dash.activity.brief.banner && (

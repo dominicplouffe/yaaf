@@ -76,7 +76,7 @@ Two things worth knowing:
 
 ## Step 1 — Create the project
 
-Click **+ New project**. It runs in four steps — the job, the project, the
+Click **+ New project**. It runs in four steps — the job, the org, the
 money and the rules, then review — because those are the four decisions that
 need you; everything else is derived, set by a preset, or something you can do
 later in Settings. Nothing is hidden behind a step: **All on one page** shows

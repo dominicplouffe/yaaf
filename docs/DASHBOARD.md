@@ -118,7 +118,7 @@ Four steps, one per decision that actually needs you:
    say (an outcome, a deliverable and who it's for, a deadline, where the inputs
    come from). Advisory — you can create with none of them ticked. Then the
    project's shape, which is frozen here.
-2. **The project** — which CEO runs it, and the hiring desk: fourteen **crews**
+2. **The org** — which CEO runs it, and the hiring desk: fourteen **crews**
    (a named job with a team already on it, eleven of them the `examples/`), or
    thirty-two roles by aisle with search, filters, depth and cost, and what each one
    needs before it can work.

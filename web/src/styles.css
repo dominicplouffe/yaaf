@@ -423,7 +423,7 @@ pre.block {
 .pcard-vitals b { color: var(--ink); font-variant-numeric: tabular-nums; }
 
 /* ── the portfolio directory (Projects) ──
-   A page that showed every company it had, always open, as one full-size card
+   A page that showed every project it had, always open, as one full-size card
    each. The archive — which can never need anything — cost the same room as the
    live portfolio and pushed it off the first screen. The scope bar, the density
    toggle and the per-group cap below are all one idea: open on the working set,
@@ -474,12 +474,12 @@ pre.block {
    quoting a number — "4 WAITING ON YOU" reads as shouting. */
 .zonetog .chip { text-transform: none; letter-spacing: 0; }
 
-/* Terminal companies are kept legible, not greyed into unreadability: the
+/* Terminal projects are kept legible, not greyed into unreadability: the
    record is the point of keeping them. */
 .pcard.done, .prow.done { opacity: 0.72; }
 .pcard.done:hover, .prow.done:hover { opacity: 1; }
 
-/* One company on one line — the shape the archive is actually read in. */
+/* One project on one line — the shape the archive is actually read in. */
 /* One line, always: a goal that wrapped made every row a different height and
    the column of dates stopped being a column. */
 .prow .sb {
@@ -720,9 +720,9 @@ table.csv td {
 @keyframes modal-in { from { opacity: 0; } to { opacity: 1; } }
 
 /* ── the hiring desk ──────────────────────────────────────────────────────
-   One panel, two doors: the wizard opens it to staff a new company, a live
+   One panel, two doors: the wizard opens it to staff a new project, a live
    project opens it to fill a gap. Dense by default, because the people who
-   run these companies live in spreadsheets and a card that hides four fields
+   run these projects live in spreadsheets and a card that hides four fields
    behind a click is not a kindness. */
 .modal.hire { max-width: 1080px; }
 .hire-head { display: flex; align-items: flex-start; gap: 14px; flex-wrap: wrap; }
@@ -731,7 +731,7 @@ table.csv td {
   border-left: 2px solid var(--accent); border-radius: 6px;
   padding: 8px 12px; font-size: 12.5px; color: var(--ink-2); margin-top: 10px;
 }
-/* A gap is a sentence about their company, not a recommendation engine. */
+/* A gap is a sentence about their project, not a recommendation engine. */
 .card.gap { border-left: 2px solid var(--warning); margin-bottom: 8px; padding: 12px 14px; }
 
 .crew-rail {
@@ -1031,7 +1031,7 @@ button.rolepick { width: 100%; text-align: left; background: var(--surface-2); }
 .quiet .pl { font-size: 11px; color: var(--muted); margin-top: 2px; }
 .quiet .acts { justify-content: center; }
 
-/* The company roster: navigation, not the Projects table a second time. */
+/* The project roster: navigation, not the Projects table a second time. */
 .roster { margin-top: 22px; border-top: 1px solid var(--border); padding-top: 12px; }
 .roster .sh {
   font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.1em;
@@ -1202,7 +1202,7 @@ button.rolepick { width: 100%; text-align: left; background: var(--surface-2); }
   .bedge { display: none; }
 }
 
-/* ── the fire drill: the company, run for nothing ─────────────────────────────
+/* ── the fire drill: the project, run for nothing ─────────────────────────────
    Never styled as an alarm. A drill that finds a problem has done its job
    perfectly, and a red panel would train a chairman to dread pressing the one
    button on this form that saves him money. */
@@ -1231,8 +1231,8 @@ button.rolepick { width: 100%; text-align: left; background: var(--surface-2); }
   font-size: 12.5px; }
 .drill-list.quiet { opacity: 0.75; }
 
-/* ── founding: the conversation that designs a company ──────────────────────
-   A conversation on the left, the company it is drafting on the right. The
+/* ── founding: the conversation that designs a project ──────────────────────
+   A conversation on the left, the project it is drafting on the right. The
    split is the point: the chairman should never have to hold the draft in his
    head while arguing about it. */
 .founding-head { display: flex; align-items: flex-start; justify-content: space-between;

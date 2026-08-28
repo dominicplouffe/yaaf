@@ -848,10 +848,10 @@ export default function Plan({ ctx }: { ctx: ProjectCtx }) {
           )}
           {data.velocity && data.velocity.runs_3w.total > 0 &&
            data.velocity.runs_3w.inbox + data.velocity.runs_3w.noop > 0 && (
-            /* What the company spent talking to itself. Its own broadcasts
+            /* What the project spent talking to itself. Its own broadcasts
                generate this traffic, so it is the one cost that can be priced
                before it is paid — and until it was counted, 57% of every run
-               one company ever spent was an agent reading a message. */
+               one project ever spent was an agent reading a message. */
             <div className="tile">
               <div className="label">Overhead</div>
               <div className="value">
