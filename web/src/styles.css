@@ -1014,7 +1014,15 @@ button.rolepick { width: 100%; text-align: left; background: var(--surface-2); }
   font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px;
   color: var(--ink-2); font-weight: 600;
 }
-.bblock { padding: 10px 0; border-top: 1px solid var(--grid); margin-top: 8px; }
+/* Left, explicitly. This block renders inside the desk panel AND inside the
+   project overview, and a briefing that inherits a centred parent puts its
+   headline and its money line on the centre line while every flex row inside
+   it stays left — three different left edges in one card. */
+.bblock { padding: 10px 0; border-top: 1px solid var(--grid); margin-top: 8px;
+  text-align: left; }
+/* A window in which nothing happened. Dimmer, never a different shape: the
+   pulse and the money line are exactly why it is still on screen. */
+.bblock.bquiet .bline { font-weight: 500; color: var(--ink-2); }
 .bpanel-head + .bblock { border-top: 0; }
 .bhead { display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap; }
 .bpanel .co, .bhrow .co {

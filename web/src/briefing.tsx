@@ -104,8 +104,12 @@ export function BriefingBlock({
   showName?: boolean;
 }) {
   const to = `/projects/${brief.project_id}`;
+  // `bquiet`, not `quiet`: the desk's empty-state card owns `.quiet`, and a
+  // briefing block wearing it inherited a 30px centred card — which centred the
+  // headline and the money line while every flex row inside them stayed left. A
+  // quiet window should read dimmer, not differently shaped.
   return (
-    <div className={`bblock${brief.quiet ? " quiet" : ""}`}>
+    <div className={`bblock${brief.quiet ? " bquiet" : ""}`}>
       <div className="bhead">
         {showName && (
           <Link className="co" to={to}>
