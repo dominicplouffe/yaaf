@@ -120,7 +120,7 @@ Four steps, one per decision that actually needs you:
    project's shape, which is frozen here.
 2. **The company** — which CEO runs it, and the hiring desk: fourteen **crews**
    (a named job with a team already on it, eleven of them the `examples/`), or
-   thirty roles by aisle with search, filters, depth and cost, and what each one
+   thirty-two roles by aisle with search, filters, depth and cost, and what each one
    needs before it can work.
 3. **The money and the rules** — the billing key, and the presets that fill the
    constitution. Every rule the preset wrote stays visible and editable, marked

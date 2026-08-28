@@ -133,7 +133,7 @@ editable list of teams:
   can defend* is the one for our audit: an Analysis team of two Data Analysts
   and a one-person Verification team that re-derives their numbers. Picking a
   crew fills the teams in, names included; change anything you like.
-- **Pick roles yourself** — thirty roles in six aisles (who decides, who finds
+- **Pick roles yourself** — thirty-two roles in six aisles (who decides, who finds
   out what's true, who builds, who writes it up, who checks it, who sells it),
   with a search box and a filter for what each works on. Every role shows what
   it does in a sentence, how deep and expensive it is, and **what it needs** —

@@ -102,6 +102,24 @@ also in the JSON.
 > an agent here made that happen. Do not plan around his audience; for this
 > purpose he does not have one.
 >
+> EVERYTHING A STRANGER SEES HAS TO LOOK LIKE SOMEBODY CARED. This company is
+> staffed by people who love interfaces and cannot leave an ugly one alone, and that
+> is a hiring standard, not a preference: the landing page, the sign-up, the empty
+> state, the pricing table, the receipt email and the error message are all the
+> product, and a consumer decides whether to trust a thing they have never heard of
+> in the first few seconds of looking at it. Functional-but-ugly is not a milestone
+> on the way to good — it is the version that gets no second visit and teaches you
+> nothing about whether the idea works, because you never find out whether they
+> refused the product or refused the presentation. So: a design system before the
+> second screen, one visual voice across the product and the marketing, both themes
+> and both widths checked on the rendered page rather than argued about in a spec,
+> and contrast, focus rings, touch targets and reflow treated as visual defects
+> rather than as somebody else's accessibility checklist. The designer owns the bar.
+> Everyone is held to it — an engineer shipping a screen nobody designed, or a
+> marketer publishing a page that looks like a different company, is the same defect
+> as a broken build. And it is a constraint on ambition, not a licence to gold-plate:
+> pick a scope small enough that what you ship can be genuinely well made by the date.
+>
 > ASK HIM FOR EXACTLY WHAT YOU CANNOT GET YOURSELF, and no more. A domain, a
 > payment processor, a mailbox, hosting, a card for the recurring bills: file a
 > need, say what it is for, what it costs, and what stops without it. If you can
@@ -126,7 +144,7 @@ also in the JSON.
 > What will not be accepted is a year of documents about a product nobody
 > outside this company ever saw.
 
-Five things are doing the work in there, and none of them is decoration:
+Six things are doing the work in there, and none of them is decoration:
 
 - **Five ideas researched to the same depth before any ranking.** Without it a
   company researches its favourite and writes four strawmen around it.
@@ -138,6 +156,9 @@ Five things are doing the work in there, and none of them is decoration:
 - **Distribution is the company's job, in writing.** The one instruction most
   likely to be quietly ignored, because leaning on the founder's audience is
   what every real startup does.
+- **A design bar stated as a hiring standard.** Not "make it look nice" at the
+  end — a constraint on what may be attempted, which is the form that actually
+  binds. See §3.
 - **The honest null.** A post-mortem is a deliverable. A desk punished for
   reporting "nothing here" learns to find something.
 
@@ -145,9 +166,9 @@ Five things are doing the work in there, and none of them is decoration:
 
 ## 3. The roster: every general-purpose role in the library
 
-The library has 31 roles across six aisles. Fifteen of them are markets or
-games specialists and have no business here. Of the sixteen left, this company
-hires **every role whose domain is `general`** — all eleven, the CEO among them
+The library has 32 roles across six aisles. Fifteen of them are markets or
+games specialists and have no business here. Of the seventeen left, this company
+hires **every role whose domain is `general`** — all twelve, the CEO among them
 — plus the one data role that earns its seat:
 
 | Team | Role | Who | Model | What it is for |
@@ -156,6 +177,7 @@ hires **every role whose domain is `general`** — all eleven, the CEO among the
 | **Numbers** | `data-analyst` | Nadia | Sonnet · high | Market sizing whose arithmetic someone else can re-derive, then the funnel: visits, signups, conversion, churn. Every number out of a committed script. |
 | **Red Team** | `adversary` | Vic | Sonnet · xhigh | Attacks the surviving idea before the market does, then breaks the product before customers do. "I could not break it" is a complete deliverable. |
 | **Dry Run** | `operator` | Otto | **Opus · xhigh** | The person who has to make it work on Monday morning. Turns "we'll launch on X" into every object, field and value resolved, and refuses what cannot be executed as written. The seat that catches a go-to-market plan that is a wish. |
+| **Design** | `designer` | Dara | Sonnet · high | Owns how it looks: the design system first, then screens and specs an engineer can build without guessing. Judges the rendered page at both widths and in both themes, and holds everyone else to the same bar. New role — see below. |
 | **Build** | `engineer` | Mika (lead), Sam | Sonnet · xhigh | The product, the infrastructure, the deploys, the payment integration. Decides how, never what. |
 | **Go-to-Market** | `gtm` | Gio | Sonnet · high | Offer, price, packaging, channel, outreach. Puts something payable in front of someone. |
 | **Marketing** | `marketer` | Elena | Sonnet · high | Positioning, channels, campaigns, and the measurement that says which one worked. Optimises for verified external response, not output. |
@@ -167,7 +189,7 @@ hires **every role whose domain is `general`** — all eleven, the CEO among the
 Plus the **CEO** ("Founder", role `ceo`, Opus · high) — the only agent you ever
 talk to, and the only one that creates top-level tasks.
 
-**Fourteen agents in eleven teams.** Two things to know about that number:
+**Fifteen agents in twelve teams.** Two things to know about that number:
 
 - **An idle team costs nothing.** Employees wake when they hold a task or have
   a message worth a run. What paces spending is the run ceilings, not the
@@ -177,7 +199,7 @@ talk to, and the only one that creates top-level tasks.
   below, and why `pair_breaker_messages` is tightened from 10 to 8.
 
 If you would rather start smaller, create it with **Research, Numbers, Red
-Team, Dry Run and Copy**, and add the other six at the pivot — *Add a team*
+Team, Dry Run and Copy**, and add the other seven at the pivot — *Add a team*
 opens the same hiring desk on a running project. The bundle ships the full
 roster because the roster is the answer to "who is in this company", and the
 seats you have not filled are the work that quietly does not get done.
@@ -188,6 +210,50 @@ cannot afford and, on a funnel with forty visitors, cannot use),
 `exec-communicator` (it builds decks for an executive audience, and there isn't
 one), and `tutor` (education). `compliance-officer` is markets-only, but if the
 chosen idea touches health, finance or children's data, hire it that day.
+
+---
+
+### The bar everyone is held to
+
+A design seat is not the same thing as a company that cares, and hiring one is
+the usual way of buying the first while avoiding the second: the designer makes
+a beautiful mockup, the engineer ships what was quick, and the marketer
+publishes a page that looks like a different company. So the bar is in the goal,
+where it binds everyone, and the seat exists to own it rather than to hold it
+alone.
+
+**Dara owns the standard, not a queue of requests.** The first deliverable is a
+design system file in the workspace — type scale, a palette with roles defined
+for light *and* dark, spacing on one base unit, radii and elevation, and specs
+for the components this product actually uses, each in every state. Everything
+afterwards restates that file instead of reinventing it. When the direction
+changes, the file changes first.
+
+**The review is of the rendered thing.** Phone width and desktop width, light
+and dark, with real content and with none, with the longest string a real user
+will plausibly type — looked at in a browser, with screenshots in the workspace,
+not argued about in a spec. The sandbox ships Chromium, so this is an ordinary
+tool rather than a favour to ask the engineers for.
+
+**Accessibility is filed as a visual defect, not a checklist.** 4.5:1 on body
+text, 3:1 on large text and UI edges, a visible focus ring on anything the
+keyboard reaches, 44px touch targets, real labels, text that reflows rather than
+truncating, motion under 200ms that honours `prefers-reduced-motion`, and never
+colour as the only carrier of meaning. Filed that way because a checklist owned
+by nobody is a checklist that gets done in the week it is too late to change
+anything.
+
+**And it is a constraint on ambition, not a licence to gold-plate.** The bar is
+the reason to pick a smaller product, not a reason to miss December with a
+gorgeous half of one. If the design work is what is late, the scope was wrong —
+that is a conversation for the review, and cutting is one of your six levers.
+
+The role — `roles/designer.json`, Product / UI Designer — is new, and general
+enough to hire anywhere: the library had a games UX designer and a games art
+director, and nothing at all for the ordinary case of a web product that has to
+look like somebody cared. Seed it before you create the project (a fresh
+`./update_single_server.sh` does it), or the hiring desk will show the Design
+team's role blank.
 
 ---
 
