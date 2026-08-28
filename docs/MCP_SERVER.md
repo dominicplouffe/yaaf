@@ -1,7 +1,7 @@
 # The chairman's MCP server — chairing yaaf from a model client
 
-**Status: M0 landed — the transport and the principal. Everything from M1 on
-is unbuilt.** This is the design and the tracking doc: the tool surface, the
+**Status: M0 and M1 landed — the transport, the principal, and the whole read
+surface. Everything from M2 on is unbuilt.** This is the design and the tracking doc: the tool surface, the
 security model that makes it safe to ship, and the milestones to check off.
 Update the checkboxes as they land; if a decision here turns out wrong, change
 the doc in the same PR that changes the code.
@@ -294,17 +294,17 @@ Status column tracks implementation. `M1`…`M4` are the milestones below.
 | Tool | Does | Backing routes | Status |
 |---|---|---|---|
 | `whoami` | What this client may do: the chairman it acts for, its scopes, the projects it reaches. | — (the principal describing itself) | **done** (M0) |
-| `desk` | Cross-project standing: what needs you, everywhere. | `GET /observe/desk` | M1 |
+| `desk` | Cross-project standing: what needs you, everywhere. | `GET /observe/desk` | **done** (M1) |
 | `projects` | List the projects this client can see: status, shape, goal preview. | `GET /observe/projects` | **done** (M0) |
-| `project` | One project's cockpit. `view`: `overview` \| `health` \| `flags` \| `agenda` \| `briefing`. | `GET /observe/projects/{id}` + `/health` `/flags` `/agenda` `/briefing` | M1 |
-| `plan` | Requirements by stage, dependencies, burn-up, the commitment and its risk. | `GET /observe/projects/{id}/plan`, `GET /admin/projects/{id}/requirements` | M1 |
-| `spend` | Against the cap, by team; ledger lines. | `GET /observe/projects/{id}/spend` `/ledger` | M1 |
-| `work` | Runs, one run's trace, the context pack it ran on. | `GET /observe/projects/{id}/runs`, `/runs/{id}/trace` `/context` | M1 |
-| `proof` | Evidence, provenance, snapshots, audit samples. | `GET /observe/projects/{id}/evidence` `/audit_samples` `/spot_audit`, `/observe/evidence/{id}/snapshot` | M1 |
-| `org` | Teams, agents, schedules, one agent's detail, the board. | `GET /observe/projects/{id}/org` `/board`, `/observe/agents/{id}` | M1 |
-| `channels` | Channel list and messages. **Wraps agent text.** | `GET /observe/projects/{id}/channels`, `/observe/channels/{id}/messages` | M1 |
-| `files` | Workspace listing and file content. **Wraps agent text.** | `GET /observe/projects/{id}/files` `/files/content` | M1 |
-| `record` | The judgement record. `view`: `decisions` \| `reviews` \| `cycles` \| `hypotheses` \| `suggestions` \| `memories` \| `approvals`. | `GET /observe/projects/{id}/ceo_decisions` and siblings | M1 |
+| `project` | One project's cockpit. `view`: `overview` \| `health` \| `flags` \| `agenda` \| `briefing`. | `GET /observe/projects/{id}` + `/health` `/flags` `/agenda` `/briefing` | **done** (M1) |
+| `plan` | Requirements by stage, dependencies, burn-up, the commitment and its risk. | `GET /observe/projects/{id}/plan`, `GET /admin/projects/{id}/requirements` | **done** (M1) |
+| `spend` | Against the cap, by team; ledger lines. | `GET /observe/projects/{id}/spend` `/ledger` | **done** (M1) |
+| `work` | Runs, one run's trace, the context pack it ran on. | `GET /observe/projects/{id}/runs`, `/runs/{id}/trace` `/context` | **done** (M1) |
+| `proof` | Evidence, provenance, snapshots, audit samples. | `GET /observe/projects/{id}/evidence` `/audit_samples` `/spot_audit`, `/observe/evidence/{id}/snapshot` | **done** (M1) |
+| `org` | Teams, agents, schedules, one agent's detail, the board. | `GET /observe/projects/{id}/org` `/board`, `/observe/agents/{id}` | **done** (M1) |
+| `channels` | Channel list and messages. **Wraps agent text.** | `GET /observe/projects/{id}/channels`, `/observe/channels/{id}/messages` | **done** (M1) |
+| `files` | Workspace listing and file content. **Wraps agent text.** | `GET /observe/projects/{id}/files` `/files/content` | **done** (M1) |
+| `record` | The judgement record. `view`: `decisions` \| `reviews` \| `cycles` \| `hypotheses` \| `suggestions` \| `memories` \| `approvals`. | `GET /observe/projects/{id}/ceo_decisions` and siblings | **done** (M1) |
 
 ### Steer — `steer` scope
 
@@ -387,10 +387,16 @@ and re-fetchable by the client when it needs to refresh:
 
 - **Payload budget.** `observe.py` responses are built for a browser and
   several would eat a context window whole. Every tool summarizes by default,
-  paginates with `cursor`/`limit`, and takes `detail: "full"` for the raw
-  shape. Target: a default result under 2 KB, a `full` result under 25 KB, and
-  a hard truncation with an explicit `truncated: true` marker rather than a
-  silent cut.
+  pages with `limit`, and takes `detail: "full"` for more. Measured rather than
+  guessed (`test_mcp_payload.py`): long strings and long lists give way at
+  6 KB, `full` at 40 KB, and no default read call on a seeded project exceeds
+  8 KB on the wire.
+- **Two ways to be honest about size, and both are required.** A cut is always
+  declared — `truncated: true`, plus a marker in the list counting what was
+  dropped, because a silent truncation is a lie the model cannot detect. And a
+  payload that is merely *wide* — forty small fields, none of them long, which
+  is most of `project` — is reported as `oversize_bytes` and left whole, rather
+  than cut by picking which of the chairman's fields do not matter.
 - **Refusals stay refusals.** The app's `Refusal` handler already returns the
   reason an agent hit a wall. MCP maps it to a tool error carrying the same
   text — a model that gets refused should learn *why*, exactly as an agent
@@ -460,14 +466,24 @@ real once something is addressed by project. `projects` is that something.
 **Done when:** ~~a client connects, lists zero tools~~ — a client connects, sees
 only the tools its scopes hold, and every wrong credential is refused over HTTP.
 
-### M1 — Read the company
-- [ ] The nine remaining read tools (`desk`, `project`, `plan`, `spend`, `work`,
-      `proof`, `org`, `channels`, `files`, `record`)
-- [ ] `envelope.py`: untrusted wrapping, summarize/`full`, pagination, truncation
-- [ ] Resources: desk, briefing, plan, constitution, goal, goal-grammar
-- [ ] `test_mcp_untrusted.py` — an agent-authored message containing an
-      instruction comes back wrapped and inert
-- [ ] `test_mcp_payload.py` — default results stay under budget on a seeded project
+### M1 — Read the company ✅
+- [x] The ten remaining read tools (`desk`, `project`, `plan`, `spend`, `work`,
+      `proof`, `org`, `channels`, `files`, `record`), each a projection of an
+      `observe` handler called as a function — one definition, so a fix to the
+      page fixes the tool
+- [x] `envelope.py`: untrusted wrapping, summarize/`full`, paging, declared cuts
+- [x] `_owned()`: an id reached indirectly — a run id, a channel id, an evidence
+      id read off another project's page — is checked against the project it was
+      addressed with. The allowlist's quiet hole, closed
+- [x] Resources: desk, briefing, plan, constitution, goal, goal-grammar, and
+      `resources/list` / `resources/read` with the capability declared
+- [x] `test_mcp_untrusted.py` — the injection posted as a real agent over the
+      agent API, read back through MCP: wrapped, attributed, and unable to close
+      its own envelope
+- [x] `test_mcp_payload.py` — every default call measured against a ceiling, a
+      cut always declared, an oversize payload reported rather than pretended
+- [x] Compact JSON on the wire: pretty-printing spent a quarter of every
+      result's tokens on whitespace
 
 **Done when:** "what's the standing across my projects, and why is ppc-audit at
 risk" is answerable from a client with no browser open. **This is the ship-alone

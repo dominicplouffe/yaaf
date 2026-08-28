@@ -17,7 +17,7 @@ import logging
 
 from sqlalchemy.orm import Session
 
-from yaaf.server.mcp import registry
+from yaaf.server.mcp import registry, resources
 from yaaf.server.mcp.auth import Principal, ToolRefusal
 
 log = logging.getLogger("yaaf.mcp")
@@ -47,7 +47,9 @@ def _error(message_id, code: int, message: str) -> dict:
 
 
 def _text_content(payload: object) -> list[dict]:
-    text = payload if isinstance(payload, str) else json.dumps(payload, indent=2, default=str)
+    # Compact rather than indented: pretty-printing a 6KB result spends a
+    # quarter of its tokens on whitespace, and the reader is a model.
+    text = payload if isinstance(payload, str) else json.dumps(payload, default=str)
     return [{"type": "text", "text": text}]
 
 
@@ -75,7 +77,8 @@ def handle(message: dict, principal: Principal, session: Session) -> dict | None
         asked = params.get("protocolVersion")
         return _result(message_id, {
             "protocolVersion": asked if asked in SUPPORTED_VERSIONS else PROTOCOL_VERSION,
-            "capabilities": {"tools": {"listChanged": False}},
+            "capabilities": {"tools": {"listChanged": False},
+                             "resources": {"listChanged": False, "subscribe": False}},
             "serverInfo": SERVER_INFO,
             # What the client is holding, said plainly. A model that knows it
             # has read and not steer stops proposing writes it cannot make.
@@ -115,10 +118,22 @@ def handle(message: dict, principal: Principal, session: Session) -> dict | None
             })
         return _result(message_id, {"content": _text_content(payload), "isError": False})
 
+    if method == "resources/list":
+        return _result(message_id, {"resources": resources.listing(session, principal)})
+
+    if method == "resources/read":
+        uri = params.get("uri")
+        if not isinstance(uri, str):
+            return _error(message_id, INVALID_PARAMS, "resources/read needs a uri")
+        try:
+            return _result(message_id, resources.read(session, principal, uri))
+        except ToolRefusal as refusal:
+            return _error(message_id, INVALID_PARAMS, refusal.message)
+
     # Declared in no capability, so a spec-abiding client never asks. Answered
     # rather than errored because some clients probe anyway.
-    if method in ("resources/list", "resources/templates/list"):
-        return _result(message_id, {"resources": [], "resourceTemplates": []})
+    if method == "resources/templates/list":
+        return _result(message_id, {"resourceTemplates": []})
     if method == "prompts/list":
         return _result(message_id, {"prompts": []})
 

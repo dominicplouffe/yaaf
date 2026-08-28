@@ -11,6 +11,12 @@ from __future__ import annotations
 from tests.conftest import ADMIN, make_project
 from tests.selftest_invariants.test_mcp_auth import mint, rpc
 
+#: Every tool the `read` scope holds. Spelled out rather than derived from the
+#: registry: a test that asks the code what it registered cannot notice a write
+#: tool registered under the wrong scope, which is the mistake worth catching.
+READ_TOOLS = {"whoami", "projects", "desk", "project", "plan", "spend", "work",
+              "proof", "org", "channels", "files", "record"}
+
 
 def tools_of(client, token) -> set[str]:
     result = rpc(client, token, "tools/list").json()["result"]
@@ -27,7 +33,7 @@ def call(client, token, name, arguments=None):
 def test_a_read_token_sees_only_read_tools(client):
     make_project(client)
     reader = mint(client, scopes=("read",))
-    assert tools_of(client, reader["token"]) == {"whoami", "projects"}
+    assert tools_of(client, reader["token"]) == READ_TOOLS
 
 
 def test_out_of_scope_tools_are_absent_not_merely_refused(client):
@@ -56,7 +62,7 @@ def test_out_of_scope_tools_are_absent_not_merely_refused(client):
         steerer = mint(client, name="desk", scopes=("steer",))
         assert "pretend_steer" in tools_of(client, steerer["token"])
         # `read` is implied by every larger scope, and the handshake says so.
-        assert {"whoami", "projects"} <= tools_of(client, steerer["token"])
+        assert tools_of(client, steerer["token"]) >= READ_TOOLS
     finally:
         registry.TOOLS.pop("pretend_steer", None)
 
@@ -113,7 +119,7 @@ def test_scope_grants_do_not_leak_between_clients(client):
     make_project(client, slug="acme")
     reader = mint(client, name="reader", scopes=("read",))
     mint(client, name="operator", scopes=("read", "steer", "create"))
-    assert tools_of(client, reader["token"]) == {"whoami", "projects"}
+    assert tools_of(client, reader["token"]) == READ_TOOLS
 
 
 def _json(result: dict) -> dict:
