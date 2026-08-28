@@ -112,7 +112,7 @@ def test_the_window_closing_tells_both_parties_once_and_pauses_nothing(client):
             kind=NoticeKind.EXPLORE_DEADLINE, project_id=project["id"]).count()
         assert notices == 1
 
-    # And the company still works: task creation is not frozen.
+    # And the project still works: task creation is not frozen.
     token = ceo_token(project)
     response = client.post("/agent/tasks", json={
         "team_id": project["teams"][0]["id"], "title": "keep going",
@@ -261,7 +261,7 @@ def test_two_skipped_cycles_pause_the_project_and_email_him(client):
                     .filter_by(project_id=project["id"]).order_by(Cycle.ordinal)]
         assert statuses == [CycleStatus.SKIPPED, CycleStatus.SKIPPED]
 
-    # Resume opens a fresh cycle and the company breathes again.
+    # Resume opens a fresh cycle and the project breathes again.
     assert client.post(f"/admin/projects/{project['id']}/start",
                        headers=ADMIN).status_code == 200
     with db_session() as session:

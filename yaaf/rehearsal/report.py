@@ -4,7 +4,7 @@ Two halves, kept apart on purpose.
 
 **Observed** is what actually happened when the spec was run: the walk from
 roles resolving to work closing with evidence, the walls the crew hit, and
-every point at which the company stopped and waited for a human. These are
+every point at which the project stopped and waited for a human. These are
 facts about the configuration, and the drill can state them flatly.
 
 **Projected** is arithmetic over the plan the drill produced — what it will
@@ -15,7 +15,7 @@ can never quietly disagree with the screens he will look at afterwards.
 
 And one thing that is neither: what a real model would do. The crew is
 competent and dull by construction, so a clean drill is evidence about the
-*configuration* and no evidence at all about the *company*. That sentence
+*configuration* and no evidence at all about the *project*. That sentence
 appears in the rendered report rather than only in this docstring, because a
 caveat nobody reads is a caveat that does not exist.
 
@@ -52,7 +52,7 @@ WALK = [
     ("requirement_met", "A requirement settled true"),
 ]
 
-#: The steps an Explore company has no business reaching. It has no
+#: The steps an Explore project has no business reaching. It has no
 #: requirements, no plan gate and no commitment BY DESIGN — its shape is bets
 #: and evidence — so drawing them as misses would report the absence of a
 #: feature as the failure of one.
@@ -235,7 +235,7 @@ def _plan_arithmetic(project_id: str, cons_doc: dict) -> dict:
     """The plan as PROPOSED, not the plan as it stands at the end.
 
     `plan_arithmetic` counts live scope, which is exactly right for a running
-    company and exactly wrong for a drill: a company that finished everything
+    project and exactly wrong for a drill: a project that finished everything
     reports zero requirements and zero runs, which reads as "it planned
     nothing" when what happened is the opposite. So the totals are recomputed
     over all scope, settled included, at the FIRST estimate — the same number
@@ -265,9 +265,9 @@ def _plan_arithmetic(project_id: str, cons_doc: dict) -> dict:
 
 
 def _structural_findings(client, project_id: str, capacity: dict) -> list[str]:
-    """Facts about the shape of the company that no wall reports.
+    """Facts about the shape of the project that no wall reports.
 
-    A refusal tells you what a company TRIED and was stopped from doing. Some
+    A refusal tells you what a project TRIED and was stopped from doing. Some
     configurations fail earlier than that: a CEO with nobody to give work to
     never files a task at all, so the walls list is empty and the drill would
     otherwise say "it stalled" without saying why. These are the cases where
@@ -311,7 +311,7 @@ def _structural_findings(client, project_id: str, capacity: dict) -> list[str]:
 def _group_refusals(refusals: list[dict]) -> list[dict]:
     """Grouped, because a crew that hits the same wall nine times has one
     problem and not nine. The count is the interesting part: a wall hit once is
-    a company learning its rules, a wall hit nine times is a company that
+    a project learning its rules, a wall hit nine times is a project that
     cannot get past it."""
     grouped: dict[tuple[str, str], dict] = {}
     for refusal in refusals:

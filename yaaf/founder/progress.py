@@ -17,7 +17,7 @@ it never touches the database. The API process is one process
 loses nothing but an animation.
 
 Steps are labelled in the chairman's language rather than the tool's. He is
-being told what his company's designer is doing, not read a call log.
+being told what his project's designer is doing, not read a call log.
 """
 
 from __future__ import annotations

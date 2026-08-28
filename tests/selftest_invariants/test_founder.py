@@ -1,4 +1,4 @@
-"""The founding conversation: a company gets designed before one exists.
+"""The founding conversation: a project gets designed before one exists.
 
 These drive the real endpoints with the model turn stubbed, so what is under
 test is the plumbing — the credential the Founder runs on, the tool surface,
@@ -151,7 +151,7 @@ def test_the_conversation_is_replayed_on_the_next_turn(client, founder):
     assert "First answer." in prompt
     assert "Fewer teams, please." in prompt
     # And the draft under discussion travels whole, so the Founder can revise
-    # a company it can actually see.
+    # a project it can actually see.
     assert "sell-something" in prompt
 
 
@@ -184,7 +184,7 @@ def test_rehearse_before_a_draft_exists_is_an_answer_not_a_crash(client, founder
 def test_the_founder_runs_on_the_credential_the_agents_run_on(client, founder):
     """An API key arrives as ANTHROPIC_API_KEY and a subscription token as
     CLAUDE_CODE_OAUTH_TOKEN — the same two names `_billing_env` hands a
-    company's agents. A second credential story is what broke this once."""
+    project's agents. A second credential story is what broke this once."""
     from yaaf.core.db import db_session
     from yaaf.runner.daemon import _billing_env
 
@@ -323,7 +323,7 @@ def test_the_platform_credential_never_becomes_a_project_secret(client, founder)
 
 
 def test_the_founder_gets_six_tools_and_no_way_to_act(client, founder):
-    """The Founder drafts a company; it does not act on the world. Built-in
+    """The Founder drafts a project; it does not act on the world. Built-in
     tools are off and only these six are allowed — the restriction is the
     design, not a default."""
     from yaaf.founder import tools
@@ -481,7 +481,7 @@ def test_the_cli_subprocess_does_not_inherit_the_platforms_secrets(monkeypatch):
 
 def test_a_rule_this_platform_does_not_have_is_refused(client, founder):
     """`constitution` is a bare dict on the create endpoint, so an invented knob
-    validates, stores, and is ignored for the life of the company — the chairman
+    validates, stores, and is ignored for the life of the project — the chairman
     reads it on the review screen and believes he set something. A real Founder
     run invented `reporting_cadence`, which is why this is checked."""
     calls = founder(tool_calls=[("propose_bundle", {"project": {

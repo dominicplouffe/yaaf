@@ -283,7 +283,7 @@ def test_expiry_records_not_reviewed_and_blocks_nothing(client):
                        json={"ok": True}, headers=ADMIN)
     assert late.status_code == 409, "the moment passed; a late verdict would make coverage lie"
 
-    # Never blocks: the company keeps working exactly as before.
+    # Never blocks: the project keeps working exactly as before.
     another = make_task(client, ceo_token(project), project, rid)
     assert another.status_code == 200, another.text
 

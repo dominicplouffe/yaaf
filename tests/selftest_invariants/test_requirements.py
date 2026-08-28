@@ -410,7 +410,7 @@ def test_a_lead_cannot_assign_itself_the_check_it_wrote(client):
     """The real self-grading path, and the one the audit found: a lead
     decomposes a task, writes the success test, assigns the subtask to itself
     and passes its own check. The convention one CEO invented after thirty
-    hours of being lied to, promoted from something a company must discover to
+    hours of being lied to, promoted from something a project must discover to
     something it starts with."""
     project = deliver_project(client)
     token = ceo_token(project)
@@ -579,7 +579,7 @@ def _queued_checks(project_id: str) -> int:
 
 
 def test_a_failing_acceptance_test_is_not_retried_until_the_work_moves(client):
-    """The loop that ate a company.
+    """The loop that ate a project.
 
     A failed acceptance test returns the requirement to `in_progress`, which is
     the exact state that got it tested — so the janitor tested it again fifteen
@@ -587,7 +587,7 @@ def test_a_failing_acceptance_test_is_not_retried_until_the_work_moves(client):
     nobody had touched since the first attempt. Every one launched a container
     and spent a run against the ceilings, until the trailing hour held 237
     checks against a cap of 15 and no agent could be dispatched at all. The
-    company was locked out of the runs it needed to repair the requirement.
+    project was locked out of the runs it needed to repair the requirement.
 
     The test is a pure function of the workspace. Re-running it unchanged
     cannot produce a new answer.
@@ -644,7 +644,7 @@ def _verdict(client, rid: str, ok: bool, note: str = ""):
 
 
 def test_a_rejected_observable_is_not_re_asked_until_the_work_moves(client):
-    """The chairman's half of the loop that ate a company.
+    """The chairman's half of the loop that ate a project.
 
     The command half was fixed and the observable half was not, because the
     guard keyed on the *checker's* event and an observable never reaches the
@@ -772,7 +772,7 @@ def test_repeated_acceptance_failures_escalate_once_and_then_go_quiet(client):
 def test_platform_checks_do_not_spend_the_companys_run_allowance(client):
     """The ceilings bound agent spend. A check is the platform running a
     command in a container — no model, no token, no dollar — and counting it
-    here is what let a verification storm starve the company of the runs it
+    here is what let a verification storm starve the project of the runs it
     needed to end one."""
     from yaaf.core import ids
     from yaaf.core.models import Run, RunStatus

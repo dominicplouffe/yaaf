@@ -125,7 +125,7 @@ def test_approval_expires_to_deny_and_wakes_requester(client):
 
 
 def test_ending_a_project_voids_its_pending_approvals(client):
-    """A finished company's open requests are moot, and leaving them PENDING
+    """A finished project's open requests are moot, and leaving them PENDING
     leaks: the janitor returns early on anything that is not RUNNING, so it
     never reaches expire_approvals — the request would sit pending forever,
     showing on the chairman's desk with a deadline further in the past every
@@ -155,7 +155,7 @@ def test_ending_a_project_voids_its_pending_approvals(client):
         # Nobody decided it, so nobody is recorded as having decided it.
         assert row.decided_by_user_id is None
 
-    # The desk asks for pending approvals; a stopped company must offer none.
+    # The desk asks for pending approvals; a stopped project must offer none.
     desk = client.get("/observe/desk", headers=ADMIN).json()
     assert all(not p["pending_approvals"] for p in desk["projects"])
 
@@ -168,9 +168,9 @@ def test_ending_a_project_voids_its_pending_approvals(client):
 
 def test_ending_a_project_never_approves_what_it_was_asking_for(client):
     """`approval_timeout_decision: approve` is about a chairman who did not
-    answer in time — not about a company that no longer exists. Ending one
+    answer in time — not about a project that no longer exists. Ending one
     decides nothing on the merits, so the deny-shaped outcome is the only
-    honest one; the alternative is that shutting a company down silently buys
+    honest one; the alternative is that shutting a project down silently buys
     the last thing it asked for.
     """
     project = make_project(client, constitution={"approval_timeout_decision": "approve"})
@@ -378,7 +378,7 @@ def test_amendment_is_audited_and_logged(client):
 def test_every_rule_describes_itself(client):
     """The settings page is generated from this schema. It used to carry its own
     list of six fields instead, which is why the memory caps — the ones a stuck
-    company needs — were unreachable. A rule with no label cannot be rendered,
+    project needs — were unreachable. A rule with no label cannot be rendered,
     so a new rule that forgets one fails here rather than going quietly missing."""
     fields = client.get("/admin/constitution/schema", headers=ADMIN).json()
 

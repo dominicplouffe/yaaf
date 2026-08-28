@@ -1,7 +1,7 @@
-"""The Founder: the agent that designs a company before one exists.
+"""The Founder: the agent that designs a project before one exists.
 
-Every other part of yaaf has a company behind it. A CEO proposes a plan, teams
-claim work, an adversary attacks the company's own output, the platform
+Every other part of yaaf has a project behind it. A CEO proposes a plan, teams
+claim work, an adversary attacks the project's own output, the platform
 refuses a success test it cannot check. The founding moment had a form.
 
 This package is the other half of that: a conversation whose deliverable is a

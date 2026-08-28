@@ -2,7 +2,7 @@
 
 An export deliberately leaves every secret behind — it may travel to an
 install whose master key cannot read them. A clone never leaves this one, so
-the promise is the opposite and much stronger: the twin runs the same company
+the promise is the opposite and much stronger: the twin runs the same project
 on the same credentials, pinned to the same role versions, with its data
 sources proven before anyone looks at it. What it must NOT inherit is the
 source's history or its claim on shared outside rooms."""
@@ -88,7 +88,7 @@ def test_credentials_come_across_with_their_values(client):
 
 
 def test_twin_pins_the_versions_the_source_runs(client):
-    """A twin that silently upgrades its roles is not running the same company
+    """A twin that silently upgrades its roles is not running the same project
     — the failure that makes A/B reruns meaningless."""
     project = make_project(client, start=False)
     with db_session() as session:
@@ -115,7 +115,7 @@ def test_twin_pins_the_versions_the_source_runs(client):
 def test_the_people_keep_their_settings(client):
     """A twin's people are the same people: chairman-set daily wakes, model
     overrides and pause state come across. Dropping daily_at here silently
-    cancelled every standup the chairman had set — a company that looks
+    cancelled every standup the chairman had set — a project that looks
     identical and never checks its inbox at 09:00."""
     from tests.conftest import agent_by_name
     from yaaf.core.models import AgentStatus
@@ -167,7 +167,7 @@ def test_the_org_is_rebuilt_whole_and_empty(client):
 
 
 def test_slack_tokens_travel_but_rooms_do_not(client):
-    """Two companies mirroring into one room is a mess nobody asked for — but
+    """Two projects mirroring into one room is a mess nobody asked for — but
     re-pasting the tokens to avoid it is a chore nobody asked for either."""
     project = make_project(client, start=False)
     client.patch(f"/admin/projects/{project['id']}", json={
@@ -191,7 +191,7 @@ def test_slack_tokens_travel_but_rooms_do_not(client):
         assert wiring["slack"]["bot_token_secret"] == "slack-bot"  # still wired
         assert wiring["slack"]["chairman_slack_user"] == "U123"
         # Its own signing key, never the source's — sharing one would let either
-        # company's senders attest evidence for the other. Absent is not the
+        # project's senders attest evidence for the other. Absent is not the
         # answer though: see test_a_twin_can_attest_inbound_evidence.
         assert wiring["webhook_secret"] != "whsec-not-portable"
         token = session.query(Secret).filter_by(project_id=twin["id"],
@@ -200,11 +200,11 @@ def test_slack_tokens_travel_but_rooms_do_not(client):
 
 
 def test_a_twin_is_the_same_SHAPE_of_company(client):
-    """Mode decides whether a company has requirements at all, and it is frozen
+    """Mode decides whether a project has requirements at all, and it is frozen
     at creation — so a twin that comes back in the wrong one cannot be
     corrected, only deleted and rebuilt. The clone left mode out of the
     constructor and the model default is Explore, so every twin of a Deliver
-    company silently became an Explore company with no Plan tab and nowhere to
+    project silently became an Explore project with no Plan tab and nowhere to
     put its scope. Seen live: a Deliver project twinned, and its plan was gone.
     """
     from datetime import timedelta
@@ -229,7 +229,7 @@ def test_a_twin_is_the_same_SHAPE_of_company(client):
         assert session.get(Project, live.json()["id"]).deadline is not None
 
     # ...but a spent one is not inherited: a deadline in the past would have
-    # the janitor close the window on a company that never opened it.
+    # the janitor close the window on a project that never opened it.
     with db_session() as session:
         session.get(Project, explorer["id"]).deadline = utcnow() - timedelta(days=1)
     stale = _clone(client, explorer["id"], slug="explorer-twin-2")
@@ -259,7 +259,7 @@ def test_the_twin_can_be_aimed_somewhere_new(client):
         assert session.get(Project, project["id"]).goal != "Audit the 2027 catalogue instead."
 
     # Omitting it keeps the source's mandate — duplicating to run the same
-    # company again is just as valid a reason to clone.
+    # project again is just as valid a reason to clone.
     same = _clone(client, project["id"], slug="acme-third").json()
     with db_session() as session:
         assert session.get(Project, same["id"]).goal == session.get(
@@ -345,7 +345,7 @@ def test_a_twin_records_the_shape_it_actually_has(client):
 
 def test_a_twin_can_attest_inbound_evidence(client):
     """Not inheriting the source's signing keys is right — one key across two
-    companies would let either one's senders attest evidence for the other. But
+    projects would let either one's senders attest evidence for the other. But
     the clone dropped them without minting replacements, and github_repo and the
     controlled domains *do* come across: the twin looked wired to GitHub while
     no inbound event could ever be attested, which is the whole point of the

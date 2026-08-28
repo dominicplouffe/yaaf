@@ -332,9 +332,9 @@ def _prepare_session(session: Session, project: Project, ceo: Agent) -> tuple[di
     job.billing_env = {**_billing_env(session, project), **role_secrets}
 
     # Chat gets its own scratch at /workspace: a run's staging must never race
-    # a resident session's. It also gets the company's working tree read-only
+    # a resident session's. It also gets the project's working tree read-only
     # at /company — without that the boardroom CEO could see nothing the
-    # company had made, and reasoned from an empty directory out loud.
+    # project had made, and reasoned from an empty directory out loud.
     workspace = Path(settings().workspaces_root) / f"{project.slug}-chat"
     staging = workspace / ".yaaf"
     staging.mkdir(parents=True, exist_ok=True)

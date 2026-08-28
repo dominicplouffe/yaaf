@@ -81,7 +81,7 @@ def constitution_prose(cons: ConstitutionDoc, project: Project) -> str:
         "suggestion survives.\n"
         f"- Budget: {budget}. At 100% the project auto-pauses.\n"
         # The wake-loop brakes were the one enforced group never stated here,
-        # so a company that had spent its daily runs by 01:22 had a CEO with no
+        # so a project that had spent its daily runs by 01:22 had a CEO with no
         # way to know why it went quiet — and a chairman who asked got an
         # apology instead of an answer. Stating the limit is what lets it say
         # "we are out of runs" instead of "I am sorry".
@@ -209,7 +209,7 @@ def role_version_for(session: Session, agent: Agent) -> RoleVersion | None:
 
 
 #: What /workspace is, per lane. The chat session mounts its own scratch there
-#: and the company's tree read-only at /company; a work run mounts the company's
+#: and the project's tree read-only at /company; a work run mounts the project's
 #: tree directly. Telling both the same story is how a boardroom CEO came to
 #: announce that a project had lost its data — it had run `ls /workspace`,
 #: found its own empty scratch, and believed the paragraph over the disk.
@@ -540,7 +540,7 @@ def _memory_usage(session: Session, agent: Agent, cons: ConstitutionDoc) -> dict
 def _capacity(session: Session, project: Project, cons: ConstitutionDoc) -> dict | None:
     """The deadline arithmetic, when there is a deadline to do it against.
 
-    Silent on projects with no date in play — an Explore company has a window
+    Silent on projects with no date in play — an Explore project has a window
     and a Deliver one has a commitment, and inventing a target to forecast
     against would be worse than saying nothing.
     """
@@ -567,17 +567,17 @@ def _flags(session: Session, project: Project) -> list[dict]:
 
 
 def _situation(session: Session, project: Project, cons: ConstitutionDoc) -> dict:
-    """Whether this company is moving, and if not, why — the platform's own
+    """Whether this project is moving, and if not, why — the platform's own
     answer rather than the CEO's reconstruction of one.
 
     The constitution prose already tells the CEO what the caps *are* and
     instructs it to say plainly when one has stopped the work "rather than
     inventing a cause". It was never given any way to observe whether a cap was
-    hit. Asked why the company was idle it did the only thing it could: it
+    hit. Asked why the project was idle it did the only thing it could: it
     guessed, from an empty directory, out loud, to the chairman.
 
     Four blocks `activity_state` computes used to be dropped here, and each one
-    was a question the CEO could not answer about its own company: how many runs
+    was a question the CEO could not answer about its own project: how many runs
     were really its to spend, how many agents may move at once, when the next
     held agent frees, and which agents those are. Asked whether a deadline would
     hold, it did arithmetic against the only number it had — the daily cap — and
@@ -604,12 +604,12 @@ def _situation(session: Session, project: Project, cons: ConstitutionDoc) -> dic
                            "cap": state["pacing"]["cap"],
                            "frees_at": state["pacing"]["frees_at"]},
         # Ordinary work stops at the daily cap MINUS this, so `runs_today.cap`
-        # alone overstates what the company may actually spend on work — by two
+        # alone overstates what the project may actually spend on work — by two
         # runs of twelve on the project this was found in. Sent always, not only
         # when the reserve is the active gate, because a forecast made at noon
         # needs the number that will bind at four.
         "governance_reserve": state["governance_reserve"],
-        # What the company spent on talking to itself. Its own broadcasts are
+        # What the project spent on talking to itself. Its own broadcasts are
         # what generate this traffic, so it is the one cost the CEO can price
         # before paying it: a message to leadership wakes every agent that
         # reads that channel.
@@ -623,7 +623,7 @@ def _situation(session: Session, project: Project, cons: ConstitutionDoc) -> dic
         # computed by the same code that decides whether a run may start. This
         # is the answer to "will it be ready by then" — do not derive your own.
         "capacity": _capacity(session, project, cons),
-        # One run per agent at a time, and at most this many across the company.
+        # One run per agent at a time, and at most this many across the project.
         # Never disclosed before, in prose or in state.
         "concurrency": state["concurrency"],
         # The cap was in the constitution prose; which agents are AT it, and
@@ -730,7 +730,7 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
             # being worked, and the planner planned around it for a day.
             #
             # not_before for the same reason one layer up: a gated task reads as
-            # ready on this board, so a CEO asked why the company was idle
+            # ready on this board, so a CEO asked why the project was idle
             # looked at its own context, saw open work, and invented a cause.
             "open": [
                 {"id": t.id, "title": t.title, "status": t.status, "team_id": t.team_id,
@@ -745,7 +745,7 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
             "ceiling": cons.queue_ceiling,
             "drought_active": policy.drought_active(session, project.id, cons),
         }
-        # Scope, if this company has any. The board tells the CEO what is
+        # Scope, if this project has any. The board tells the CEO what is
         # moving; this tells it what any of that is FOR — and which
         # requirements it may not touch yet, so the dependency gate is
         # something it can plan around rather than discover as a refusal.
@@ -878,7 +878,7 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
             # its own pace can only plan by optimism.
             pack["velocity"] = project_velocity(session, project.id)
             # How the recurring obligations have actually gone. "Met in 23 of
-            # the last 24 cycles" is a fact about an Operate company that no
+            # the last 24 cycles" is a fact about an Operate project that no
             # burndown could express and no prose could be checked against.
             record = standing_record(session, project.id)
             if record:

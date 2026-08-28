@@ -154,7 +154,7 @@ def desk(live: bool = False, session: Session = Depends(db)) -> dict:
     page answers "what needs me?" without fanning out per project.
 
     `live=true` drops the terminal projects (stopped, completed) entirely,
-    which is what the Desk wants: a company that is over cannot need anything,
+    which is what the Desk wants: a project that is over cannot need anything,
     and every aggregate below is frozen forever on one, so computing them six
     times a minute buys nothing. The Projects page is the archive and asks for
     the default, everything.
@@ -314,10 +314,10 @@ def desk(live: bool = False, session: Session = Depends(db)) -> dict:
 @router.get("/briefing")
 def briefing_all(hours: float | None = None, since: str | None = None,
                  session: Session = Depends(db)) -> dict:
-    """"What happened while I was away", across every live company.
+    """"What happened while I was away", across every live project.
 
-    Each company is read on its OWN window by default — the mark is per
-    project, and reading one company's brief must not silently consume
+    Each project is read on its OWN window by default — the mark is per
+    project, and reading one project's brief must not silently consume
     another's. `hours` or `since` forces one shared window instead, which is
     what a "show me the last 24 hours" control wants.
 
@@ -343,7 +343,7 @@ def project_briefing(project_id: str, hours: float | None = None,
 @router.get("/projects/{project_id}/agenda")
 def project_agenda(project_id: str, days: int = agenda.DEFAULT_DAYS,
                    session: Session = Depends(db)) -> dict:
-    """What this company is scheduled to do next: the wakes, the meeting, the
+    """What this project is scheduled to do next: the wakes, the meeting, the
     rhythm, the clocks that run out, and the promise."""
     project = _project(session, project_id)
     return agenda.project_agenda(session, project, days=days)
@@ -670,13 +670,13 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
 
     # Liveness. Every other check on this page asks "is this project set up
     # correctly?"; this one asks "is it working right now?" — the question that
-    # had no answer anywhere in the product. A company that has spent its daily
+    # had no answer anywhere in the product. A project that has spent its daily
     # runs looks exactly like one with nothing to do on every screen we ship,
     # which is how a hard stop reads as a healthy quiet.
     #
     # The sentence comes from the dispatcher, beside the ladder that decided
     # it. This page used to re-write three of the gates by hand and knew
-    # nothing of the rest, so a company held by pacing, a batching window or a
+    # nothing of the rest, so a project held by pacing, a batching window or a
     # leaderless team reported perfect health while doing nothing at all.
     if project.status == "running":
         try:
@@ -695,7 +695,7 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
             act = activity_state(session, project, live_cons)
             brief = act["brief"]
             # Only the briefs that mean *stopped* are findings. Concurrency and
-            # busy agents mean the company is working, which is not news.
+            # busy agents mean the project is working, which is not news.
             if brief["banner"]:
                 add("activity",
                     "fail" if brief["tone"] == "critical" else "warn",
@@ -923,7 +923,7 @@ def board(project_id: str, session: Session = Depends(db)) -> list[dict]:
             "success_test": t.success_test, "evidence": t.completion_evidence,
             "check_output": t.check_output, "blocked_reason": t.blocked_reason,
             # A gated task is READY and unclaimable, and rendering it as plain
-            # "ready" is what let a company sit silent behind a start time
+            # "ready" is what let a project sit silent behind a start time
             # nobody could see.
             "not_before": t.not_before.isoformat() if t.not_before else None,
             "hypothesis_id": t.hypothesis_id, "audit_status": t.audit_status,

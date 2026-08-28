@@ -5,7 +5,7 @@ The briefing answers the one question every screen in this product refused to
 same discipline as everything else:
 
   * composed from the record, never self-graded and never model-written, so it
-    costs nothing and can therefore arrive on a paused, broke or empty company
+    costs nothing and can therefore arrive on a paused, broke or empty project
   * a window with a visible edge, moved only by an explicit acknowledgement, so
     polling the page cannot silently eat the weekend it is meant to summarise
   * silence that says which kind of silence it is: nothing wrong and nothing
@@ -72,7 +72,7 @@ def close_a_task(client, project: dict, token: str, rid: str) -> str:
 
 
 def test_a_first_visit_reads_from_the_company_s_birth_not_an_empty_window(client):
-    """NULL mark means never read, which must compose the whole company rather
+    """NULL mark means never read, which must compose the whole project rather
     than the last nothing. A first briefing that said "nothing happened" about
     a week-old project would be the worst possible first impression: false."""
     project = deliver_project(client)
@@ -208,7 +208,7 @@ def test_a_quiet_window_says_which_kind_of_quiet_it_is(client):
 
 def test_the_waiting_count_comes_from_the_same_definition_the_desk_uses(client):
     """One definition of what is waiting, or the brief and the desk will
-    disagree about whether a company needs its chairman."""
+    disagree about whether a project needs its chairman."""
     project = deliver_project(client)
     token = ceo_token(project)
     propose(client, token)
@@ -258,7 +258,7 @@ def test_the_daily_briefing_fires_once_per_local_day(client, monkeypatch):
 
 def test_the_briefing_reaches_a_company_the_platform_paused(client, monkeypatch):
     """The morning a budget ran out is exactly the morning a chairman needs to
-    hear from his company — and exactly the morning a model-written status
+    hear from his project — and exactly the morning a model-written status
     could not be afforded. Composed from rows, so it still arrives."""
     project = make_project(client, slug="broke")
     _set_brief_time(client, project, "00:01")
@@ -276,7 +276,7 @@ def test_the_briefing_reaches_a_company_the_platform_paused(client, monkeypatch)
 
 
 def test_a_finished_company_stops_writing(client, monkeypatch):
-    """A daily mail about a company that is over forever is how a chairman
+    """A daily mail about a project that is over forever is how a chairman
     learns to filter this address."""
     project = make_project(client, slug="over")
     _set_brief_time(client, project, "00:01")
@@ -339,7 +339,7 @@ def test_the_push_window_is_the_last_push_not_the_last_read(client, monkeypatch)
 
 def test_the_briefing_is_composed_without_spending_a_run(client, monkeypatch):
     """The claim that makes every other property possible. If this ever starts
-    costing a run, it stops being deliverable on a company that has run out of
+    costing a run, it stops being deliverable on a project that has run out of
     money — which is most of the point."""
     project = make_project(client, slug="free")
     _set_brief_time(client, project, "00:01")
@@ -368,7 +368,7 @@ def test_the_briefing_is_composed_without_spending_a_run(client, monkeypatch):
 
 
 def test_the_desk_briefing_reads_each_company_on_its_own_mark(client):
-    """Reading one company's brief must not consume another's — which is the
+    """Reading one project's brief must not consume another's — which is the
     whole reason the mark is per project rather than per box."""
     first = deliver_project(client, slug="alpha")
     second = make_project(client, slug="beta")

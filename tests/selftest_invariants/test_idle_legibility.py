@@ -1,6 +1,6 @@
-"""Invariant selftests: a quiet company must always be able to say why.
+"""Invariant selftests: a quiet project must always be able to say why.
 
-The bug these pin down is not that companies go idle — most idle is correct and
+The bug these pin down is not that projects go idle — most idle is correct and
 costs nothing. It is that every *kind* of idle rendered as the same reassuring
 sentence. A board whose only task was gated until 03:00 read "nothing blocking —
 a run should start shortly — 1 task(s) ready" for two hours, and the chairman
@@ -50,7 +50,7 @@ GATES = {
     "stalled_requirement", "rework_owed", "awaiting_chairman", "awaiting_ceo",
     "blocked_tasks", "checks_lost", "checking",
 }
-# Gates that mean the company is fine — working, or the platform verifying its
+# Gates that mean the project is fine — working, or the platform verifying its
 # finished work. These never raise the banner.
 FINE = {"concurrency", "agents_busy", "checking", "awaiting_ceo"}
 # The gates that are waiting out a clock. Only these may be dismissed in the
@@ -134,7 +134,7 @@ def test_every_gate_the_ladder_can_name_has_a_sentence():
 
 
 def test_only_stopped_gates_raise_the_banner():
-    """Concurrency, busy agents and checks in flight mean the company is
+    """Concurrency, busy agents and checks in flight mean the project is
     *working*. A banner that fires when things are fine is how a reader learns
     to stop reading it."""
     for gate in (*FINE, None):
@@ -267,7 +267,7 @@ def test_work_owned_by_a_paused_agent_is_not_silent(client):
 def test_a_batched_wake_names_the_minute_it_lands(client):
     """Two ordinary notices are deliberately not worth a full-price run, so the
     dispatcher holds them. That wait is minutes long, entirely correct, and was
-    named nowhere — the most common reason a healthy company looks stopped."""
+    named nowhere — the most common reason a healthy project looks stopped."""
     project = make_project(client)
     _drain()
     with db_session() as session:
@@ -325,7 +325,7 @@ def test_an_empty_board_is_still_quiet_not_stuck(client):
 
 def test_work_cannot_be_gated_further_out_than_the_rule_allows(client):
     """not_before is a real verb — it is how work is sequenced — but a gate the
-    CEO guessed at is how a company goes silent with nobody able to say why.
+    CEO guessed at is how a project goes silent with nobody able to say why.
     Past the limit the refusal tells it to sequence on the predecessor landing."""
     project = make_project(client)
     _, ceo = live_token(project["id"], project["ceo_agent_id"])
@@ -385,7 +385,7 @@ def test_a_leaderless_team_is_given_a_lead_rather_than_left_unclaimable(client):
 
 def test_the_watchdog_speaks_when_a_company_goes_quiet_with_work_open(client):
     """Every gate under this is individually correct and individually invisible.
-    What nobody had was the fact that they add up to a company doing nothing."""
+    What nobody had was the fact that they add up to a project doing nothing."""
     from yaaf.server import janitor
 
     project = make_project(client, constitution={"stall_hours": 2})
@@ -414,7 +414,7 @@ def test_the_watchdog_speaks_when_a_company_goes_quiet_with_work_open(client):
         stalls = session.query(Notice).filter_by(kind=NoticeKind.STALLED).all()
         assert len(stalls) == 1
         # The CEO reads the dispatcher's own sentence, not a paraphrase of it —
-        # a second opinion on why the company is quiet is how it invents one.
+        # a second opinion on why the project is quiet is how it invents one.
         assert "is paused and holds the work" in stalls[0].body
 
     # Told once per window, not once per fifteen seconds.
@@ -451,7 +451,7 @@ def test_the_watchdog_stays_quiet_while_a_gate_names_its_own_clock(client):
 
 def test_one_broken_project_does_not_stop_every_other_one(client):
     """The whole tick used to share a transaction, so a single bad row rolled
-    back and abandoned every company on the box — reported by one stderr line."""
+    back and abandoned every project on the box — reported by one stderr line."""
     import yaaf.server.dispatcher as disp
 
     good = make_project(client, slug="good")

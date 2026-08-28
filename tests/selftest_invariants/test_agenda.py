@@ -1,7 +1,7 @@
 """Invariant selftests: the agenda.
 
 The desk asks which clock runs out soonest. The agenda asks the flatter
-question nothing answered — what is this company going to *do* this week? An
+question nothing answered — what is this project going to *do* this week? An
 autonomous system that will not show you its schedule is a haunted one.
 
 Two properties it has to hold:
@@ -270,7 +270,7 @@ def test_the_day_list_covers_the_window_in_local_days(client):
     assert payload["day_list"] == sorted(payload["day_list"])
 
 
-# ── companies with no schedule ──────────────────────────────────────────────────
+# ── projects with no schedule ──────────────────────────────────────────────────
 
 
 def test_a_paused_company_draws_nothing_and_says_so(client):

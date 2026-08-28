@@ -5,7 +5,7 @@ purpose: a golden transcript has to be byte-stable, so those behaviours know
 the team is called Alpha and the employee is called Emp2. None of that
 survives contact with a chairman's own spec.
 
-This crew knows nothing about the company it is hired into. It reads the
+This crew knows nothing about the project it is hired into. It reads the
 context pack the way a role's system prompt tells a real agent to read it —
 what am I, what is my board, what did the platform just refuse — and takes the
 next legal action. It is deliberately **competent and dull**: it proposes a
@@ -15,7 +15,7 @@ never argues with a refusal.
 That is the honest shape for a fire drill. A crew that behaved badly would
 tell you about the guardrails, which the invariant suite already covers at
 length. What a chairman needs to know before he spends anything is whether a
-*well-behaved* company can get off the ground inside the rules **he** wrote —
+*well-behaved* project can get off the ground inside the rules **he** wrote —
 so every wall this crew hits is a wall his configuration built, not one the
 scenario arranged.
 
@@ -105,14 +105,14 @@ def ceo(api: AgentApi, job: RunJob, scope_project: bool | None = None) -> str:
 
     # `plan` is R-00 — the gate — and it is present exactly while the project
     # owes a plan. `requirements` is the scope under it, and the pack omits the
-    # key entirely when there is none. Either one means this company has scope;
+    # key entirely when there is none. Either one means this project has scope;
     # a fresh Deliver project has the first and not the second, which is
     # precisely the moment the CEO is supposed to act.
     requirements = pack.get("requirements") or []
     gate = pack.get("plan")
     # `scope_project` is the spec's own mode, handed down by the drill because
     # the drill knows it. Inferring it from the pack works right up until every
-    # requirement has settled, at which point a Deliver company looks exactly
+    # requirement has settled, at which point a Deliver project looks exactly
     # like an Explore one and the crew files a task with no requirement — which
     # the platform correctly refuses, and which would read on the report as a
     # wall in the chairman's configuration rather than a guess in ours.
@@ -140,7 +140,7 @@ def ceo(api: AgentApi, job: RunJob, scope_project: bool | None = None) -> str:
                 break
             did.append("proposed scope")
 
-    # 2. A bet. Explore's root object, and harmless elsewhere — a company with
+    # 2. A bet. Explore's root object, and harmless elsewhere — a project with
     #    no falsifiable claim on the table is one that cannot be wrong.
     if not pack.get("hypotheses"):
         response = api.post("/agent/hypotheses", json={
@@ -287,7 +287,7 @@ def employee(api: AgentApi, job: RunJob) -> str:
     ]
     if mine and api.post(f"/agent/tasks/{mine[0]['id']}/claim").status_code == 200:
         return _close(api, mine[0]["id"])
-    # An employee's only route to the backlog, and worth exercising: a company
+    # An employee's only route to the backlog, and worth exercising: a project
     # whose suggestions are refused has a comms problem its chairman should
     # hear about before he funds it.
     api.post("/agent/suggestions", json={

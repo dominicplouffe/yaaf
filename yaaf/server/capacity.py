@@ -50,8 +50,8 @@ from yaaf.server import policy
 #: Trailing window for the measured failure rate.
 FAILURE_WINDOW_DAYS = 7
 
-#: What to assume before there is any history to measure. A company with no
-#: failures yet is not a company that cannot fail, and a reserve of zero on day
+#: What to assume before there is any history to measure. A project with no
+#: failures yet is not a project that cannot fail, and a reserve of zero on day
 #: one is exactly the optimism this module exists to replace.
 DEFAULT_FAILURE_RATE = 0.15
 
@@ -242,7 +242,7 @@ def capacity_forecast(session: Session, project: Project, cons: ConstitutionDoc,
     retry_reserve = round(needed * rate, 1)
 
     # The serial floor. One desk holding three tasks needs three hours at one
-    # wake an hour, whatever the company-wide ceilings allow — this is the
+    # wake an hour, whatever the project-wide ceilings allow — this is the
     # constraint the old prose arithmetic had no way to express.
     wake_cap = max(1, cons.wakes_per_agent_per_hour)
     chain_hours = max((math.ceil(n / wake_cap) for n in needed_by_agent.values()),

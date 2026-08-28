@@ -1,4 +1,4 @@
-"""The fire drill: run the whole company for nothing, before you fund it.
+"""The fire drill: run the whole project for nothing, before you fund it.
 
 The riskiest moment in this product is the one before the first real run. A
 chairman writes a goal, hires a crew off a wizard, hands over an API key and a
@@ -9,7 +9,7 @@ version — and static checks cannot answer the question he is actually asking:
 
 So this drives the real platform, at zero dollars.
 
-It is the same machinery CI already uses to run a whole company for $0 — the
+It is the same machinery CI already uses to run a whole project for $0 — the
 mock runtime, the dispatcher, the janitor, the policy engine, every refusal —
 pointed at *his* spec instead of a scripted scenario. The README calls the mock
 runtime "the test harness, not a demo mode"; that was the right call for a
@@ -38,7 +38,7 @@ file, touches no real database, and reads no credential. Every acceptance test
 the drill's crew writes is an `observable`, so the platform's command lane
 never fires; evidence carries no URL, so the verifier never fetches; and its
 chairman notification channels are unset for the duration, so the notices a
-pretend company raises are logged and never mailed to a real person. It asserts
+pretend project raises are logged and never mailed to a real person. It asserts
 its own database is a throwaway SQLite file it created and refuses to start
 otherwise, which is the guard that makes it safe to invoke from a server.
 
@@ -66,7 +66,7 @@ import httpx
 log = logging.getLogger("yaaf.rehearsal")
 
 #: How many platform beats the drill will run before it gives up. A dispatch →
-#: execute → janitor → chairman cycle is one beat; a healthy company reaches
+#: execute → janitor → chairman cycle is one beat; a healthy project reaches
 #: closed work inside a dozen. The ceiling exists so a spec that has found a
 #: genuine livelock reports that rather than spinning.
 MAX_TICKS = 60
@@ -161,7 +161,7 @@ def _isolate_state_roots(directory: Path):
     `<workspaces_root>/<slug>` before any agent runs. The drill goes down that
     same real path, on purpose: running the actual dispatcher is the point.
     But the root it wrote into was the live one, so a drill that promised to
-    create nothing left a directory named after a company that does not exist
+    create nothing left a directory named after a project that does not exist
     — and, when the spec's slug matched a real project, reached into that
     project's own workspace. A GitHub-backed spec would have gone further and
     cloned into it.
@@ -219,7 +219,7 @@ def _patch_workspace_clone():
     its own report said it opens no socket. Isolating the workspace root moved
     where that clone would land; it did not stop it happening. The repo is not
     what a drill is testing: the scripted crew writes no code, so an empty
-    directory and a checkout run the same company.
+    directory and a checkout run the same project.
     """
     from yaaf.runner import daemon as daemon_module
 
@@ -236,12 +236,12 @@ def _mute_chairman_notifications():
     """Unset the outbound notification channels, and hand back the undo.
 
     The chairman a drill invents is `rehearsal@localhost`, and the notices a
-    company raises are real: the janitor nags for a verdict, the policy engine
+    project raises are real: the janitor nags for a verdict, the policy engine
     reports a budget pause, a commitment goes at risk. Every one of those calls
     `chairman_notify`, which reads YAAF_SMTP_HOST and YAAF_CHAIRMAN_WEBHOOK_URL
     out of the environment — and the drill inherits the server's environment.
     So a deployment with mail configured sent a real email, from a real
-    account, for every notice of a company that does not exist, and the
+    account, for every notice of a project that does not exist, and the
     batching windows the drill sets to zero were the one thing that would have
     held them back. The webhook half is worse: an outbound POST, from the drill
     whose own report says it opens no socket.
@@ -378,7 +378,7 @@ def _be_the_chairman(client: httpx.Client, project_id: str, tick: int,
     Recording this is half the point of the exercise. "How much will this
     actually need me?" is the question the autonomy dial answers in prose and
     nothing in the product could answer in numbers — and it can only be
-    answered by running the company, because the dial decides which verbs park
+    answered by running the project, because the dial decides which verbs park
     and the work decides how often they come up.
 
     The drill answers generously: it accepts scope, signs the date, approves
@@ -489,7 +489,7 @@ def _tick(client: httpx.Client) -> int:
 
 def rehearse(spec: dict, *, days: int = 30, usd_per_run: float | None = None,
              max_ticks: int = MAX_TICKS, roles_dir: Path | None = None) -> dict:
-    """Run `spec` as a company for nothing, and report what happened."""
+    """Run `spec` as a project for nothing, and report what happened."""
     from yaaf.rehearsal import crew, report
     from yaaf.runner.backends import mock as mock_backend
 
@@ -590,7 +590,7 @@ def _run(client, project_spec, spec_roles, roles_dir, days, usd_per_run,
 
     # Every refusal the crew collects, kept rather than discarded. `AgentApi`
     # records the 403/409/422 it hit and the runner throws it away; a drill's
-    # single most useful output is the wall a company keeps walking into, so
+    # single most useful output is the wall a project keeps walking into, so
     # the collector wraps the crew rather than the crew doing its own logging.
     refusals: list[dict] = []
 
@@ -617,7 +617,7 @@ def _run(client, project_spec, spec_roles, roles_dir, days, usd_per_run,
         acted = _be_the_chairman(client, project_id, ticks, interventions)
         report.observe(client, project_id, ticks, steps)
         # Two beats with nobody working and nothing waiting on the chairman is a
-        # company that has said everything it has to say.
+        # project that has said everything it has to say.
         idle = idle + 1 if (worked == 0 and acted == 0) else 0
         if idle >= 2:
             break

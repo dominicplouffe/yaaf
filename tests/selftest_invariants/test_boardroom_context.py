@@ -6,7 +6,7 @@ lies to me". It was not lying. It was reasoning from an empty directory.
 A work run gets a context pack on every wake. A chat session got a system
 prompt written once at container boot and never refreshed — no board, no
 roster, no notices, no budget, and no way to observe whether a cap had stopped
-the company — while that same frozen prompt instructed it to state plainly when
+the project — while that same frozen prompt instructed it to state plainly when
 work had stopped "rather than inventing a cause". Worse, it mounted its own
 empty scratch at /workspace while being told /workspace was "shared by every
 agent on it", so it announced to the chairman that a project had lost its data
@@ -154,8 +154,8 @@ def test_the_board_the_ceo_reads_shows_which_work_is_gated(client):
 
 def test_a_chat_session_is_told_the_truth_about_its_own_disk(client):
     """The single sentence that produced a false statement to the chairman. A
-    work run's /workspace really is the shared company tree; a chat session's is
-    its own empty scratch, and the company's tree is read-only at /company."""
+    work run's /workspace really is the shared project tree; a chat session's is
+    its own empty scratch, and the project's tree is read-only at /company."""
     from yaaf.core.models import Agent as AgentRow
     from yaaf.server.contextpack import build_system_prompt
 

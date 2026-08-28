@@ -146,7 +146,7 @@ def evaluate(session: Session, project: Project, cons: ConstitutionDoc) -> int:
 
     opened = 0
 
-    # 1. A standing obligation the company owed last cycle and did not deliver.
+    # 1. A standing obligation the project owed last cycle and did not deliver.
     #    There is no "blocked" status to read: what makes this knowable is the
     #    per-cycle record, which is the whole reason it exists. A memo owed 38
     #    times and shipped once used to be one row reading MET.

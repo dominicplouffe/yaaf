@@ -7,7 +7,7 @@ can actually answer rather than a fixed 24 hours that is wrong every time he
 is away for a weekend.
 
 Per member and per project deliberately: a box-wide mark would be stamped by
-opening one company and would silently swallow the three he did not open.
+opening one project and would silently swallow the three he did not open.
 
 Guarded, as every post-baseline revision must be: on a fresh install
 `create_all` has already built this from the models.

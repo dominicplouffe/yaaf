@@ -1,9 +1,9 @@
 """Invariant selftests: the reserved governance slice.
 
-The audit's sharpest single finding was a company that spent a whole day's runs
+The audit's sharpest single finding was a project that spent a whole day's runs
 before lunch and then sat dead until midnight. On such a day the brake is
 working — ordinary work *should* stop. What must not stop is the run whose only
-job is to tell the chairman what happened, because the day the company burns
+job is to tell the chairman what happened, because the day the project burns
 its allowance is precisely the day he needs the report.
 
 So the daily ceiling is split: ordinary wakes stop at `cap - reserved`, and

@@ -315,7 +315,7 @@ def test_a_directive_is_said_back_to_him_in_his_own_channel(client):
 
 
 def test_a_directive_may_not_touch_anything_but_his_own_cadence(client):
-    """An agent filing its own constitution is how a company votes itself a
+    """An agent filing its own constitution is how a project votes itself a
     bigger budget. The only rules the CEO may file are the ones that limit what
     it asks of the chairman."""
     project = _with_cadence(client, constitution={})

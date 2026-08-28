@@ -5,7 +5,7 @@ not there to hire from — a role resolves only if the spec carries a definition
 or the process happens to sit in a checkout with a `roles/` directory. The
 server never does: the image ships `yaaf/`, not `roles/`. So the dashboard's
 fire drill resolved nothing, and every spec that hired from the library came
-back "this company would not start" — the one verdict a preflight must never
+back "this project would not start" — the one verdict a preflight must never
 get wrong, because it is indistinguishable from a real misconfiguration.
 
 These tests are about the preparation only and run no drill, which is why they
@@ -52,7 +52,7 @@ def test_a_bare_project_spec_is_served_too_not_only_a_setup_file(client):
                  "teams": [{"role_slug": "worker", "name": "Desk", "employees": ["Ada"]}]})
 
     assert set(by_slug(out)) == {"ceo", "worker"}
-    # The rest of the spec travels untouched — the drill runs the company the
+    # The rest of the spec travels untouched — the drill runs the project the
     # chairman described, not a version of it this function assembled.
     assert out["teams"][0]["employees"] == ["Ada"]
 
@@ -92,7 +92,7 @@ def test_a_role_this_install_has_never_heard_of_is_still_left_unresolved(client)
                  "roles": []})
 
     # Nothing is invented to paper over a real gap: the drill's job is to say
-    # this company cannot be staffed, and it can only say it if it stays true.
+    # this project cannot be staffed, and it can only say it if it stays true.
     assert "nobody" not in by_slug(out)
 
 

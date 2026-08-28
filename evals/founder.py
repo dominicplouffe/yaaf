@@ -6,7 +6,7 @@ model and costs money, so it is opt-in and never runs in CI.
 It grades the two ends of a real, documented gap:
 
 - **The brief** (`fixtures/founder_brief.md`) — what the chairman actually
-  typed to get a company designed.
+  typed to get a project designed.
 - **The goal** (`docs/projects/idea-to-customer.json`) — what came back, which
   he approved and shipped as the worked example.
 
@@ -66,7 +66,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     # Whichever credential this machine has, in the form the CLI reads it —
-    # the same two names every agent in a company runs under.
+    # the same two names every agent in a project runs under.
     env = {name: os.environ[name]
            for name in ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")
            if os.environ.get(name)}

@@ -148,7 +148,7 @@ def seed_crews(
     actually need?", which a categorised role list still leaves to the
     chairman. Crews are not versioned: one is read at hiring time and copied
     into the project's own teams, so re-seeding an edited crew can never reach
-    a company that already started.
+    a project that already started.
 
     Run it after `seed-roles` — a crew hiring a role the library lacks is
     accepted and listed with that slug marked missing, but the picker is more
@@ -201,7 +201,7 @@ def seed(
     """Restore a folder written by `save-seed` onto an empty install.
 
     Roles first, because a project spec names the roles its teams run. Projects
-    are created in draft and never started: a seeded company should not begin
+    are created in draft and never started: a seeded project should not begin
     spending because someone restored a backup.
     """
     from yaaf.core import seed as seedlib
@@ -363,7 +363,7 @@ def rehearse(
              "break-even instead of inventing a price"),
     as_json: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Run a project spec as a company for nothing, before you fund it.
+    """Run a project spec as a project for nothing, before you fund it.
 
     The real platform — dispatcher, janitor, policy engine, every refusal — on
     the mock runtime, against your own spec. It tells you whether the thing
@@ -402,7 +402,7 @@ def briefing(
     """What happened since you last read one — as prose, not four tables.
 
     Composed by the platform from the record at zero tokens, which is why it
-    works on a paused company and a broke one. Reading never moves your mark;
+    works on a paused project and a broke one. Reading never moves your mark;
     `--seen` does, and only for the window this command just printed.
     """
     from yaaf.server.briefing import render_text
@@ -434,7 +434,7 @@ def briefing(
 
 @app.command()
 def agenda(project: str, days: int = typer.Option(14, "--days")) -> None:
-    """What this company is scheduled to do next: the wakes, the standing
+    """What this project is scheduled to do next: the wakes, the standing
     meeting, the rhythm, the clocks that run out, and the promise."""
     with _client() as client:
         response = client.get(

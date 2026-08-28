@@ -1,7 +1,7 @@
 """Invariant selftests: the fire drill.
 
 A preflight has to be trustworthy in a specific way: it must not lie about
-whether the company works, and it must not do anything a preflight has no
+whether the project works, and it must not do anything a preflight has no
 business doing. Both halves are attacked here.
 
   * it isolates — a throwaway SQLite file it created, asserted rather than
@@ -157,7 +157,7 @@ def test_a_spec_the_platform_refuses_reports_the_platform_s_own_words():
 def test_a_company_with_nobody_in_it_is_told_so_rather_than_left_to_stall():
     """The case with no wall to report: a CEO with nobody to give work to never
     files a task, so the refusals list is empty and "it stalled" would be the
-    whole story. The shape of the company is the finding."""
+    whole story. The shape of the project is the finding."""
     report = rehearsal.rehearse(spec(slug="nohands", teams=[]))
     assert not report["ok"]
     assert any("no teams" in f for f in report["findings"])
@@ -201,7 +201,7 @@ def test_the_arithmetic_uses_the_chairman_s_numbers_not_the_relaxed_ones():
 
 
 def test_the_plan_is_reported_as_proposed_not_as_it_stands_at_the_end():
-    """A company that finished everything has no live scope, and `plan_arithmetic`
+    """A project that finished everything has no live scope, and `plan_arithmetic`
     counts live scope. Reporting that would say "it planned nothing" about the
     one drill that went perfectly."""
     report = rehearsal.rehearse(spec())
@@ -284,7 +284,7 @@ def test_every_test_the_crew_writes_is_an_observable():
 def test_it_refuses_to_run_against_a_database_it_did_not_create(tmp_path):
     """The guard that makes the drill safe to invoke from a server. The engine
     is a process-global; a drill that quietly accepted somebody else's database
-    would build a company inside a live deployment. Simulated by making the
+    would build a project inside a live deployment. Simulated by making the
     re-point land somewhere other than the file the drill asked for."""
     from yaaf.core import db as db_module
 
@@ -308,7 +308,7 @@ def test_it_refuses_to_run_against_a_database_it_did_not_create(tmp_path):
 
 def test_the_drill_never_touches_the_caller_s_data():
     """The engine is restored by the fixture; what this proves is that the
-    drill's own company never appears anywhere but its own database."""
+    drill's own project never appears anywhere but its own database."""
     from yaaf.core.db import db_session
     from yaaf.core.models import Project
 
@@ -322,7 +322,7 @@ def test_the_drill_builds_no_workspace_in_the_live_root(tmp_path, monkeypatch):
     """Materializing a job prepares a workspace, and the drill runs the real
     dispatcher — so it mkdir'd `<workspaces_root>/<slug>` in the LIVE root. A
     preflight that promises to create nothing left a directory named after a
-    company that does not exist, and, where the slug matched a real project,
+    project that does not exist, and, where the slug matched a real project,
     reached into that project's own working tree."""
     root = tmp_path / "live-workspaces"
     root.mkdir()
@@ -379,10 +379,10 @@ def test_a_github_backed_spec_is_never_cloned_by_the_drill(tmp_path, monkeypatch
 
 def test_a_drill_never_delivers_a_notice_to_the_chairman_it_invented(monkeypatch):
     """The chairman a drill invents is `rehearsal@localhost`, and the notices a
-    company raises are real — a verdict waiting, a commitment at risk, an audit
+    project raises are real — a verdict waiting, a commitment at risk, an audit
     sample. `chairman_notify` reads its mail and webhook config out of the
     environment, and the drill inherits the server's, so one fire drill put
-    eight emails and eight outbound POSTs on the wire about a company that does
+    eight emails and eight outbound POSTs on the wire about a project that does
     not exist. The batching windows the drill lifts to zero were the only thing
     that had been holding any of them back."""
     from yaaf.server import janitor as janitor_module

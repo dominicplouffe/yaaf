@@ -1,8 +1,8 @@
 """The Founder's conversation loop.
 
-Deliberately not the project runtime. `yaaf/runner/` exists to *run* a company:
+Deliberately not the project runtime. `yaaf/runner/` exists to *run* a project:
 it leases jobs, builds context packs, opens Docker sandboxes, meters spend
-against a project's budget and records runs. The Founder *designs* a company,
+against a project's budget and records runs. The Founder *designs* a project,
 and none of that applies — there is no project to be scoped to, no agent row to
 be, and no budget to charge. Going down that path would mean faking three rows
 for a conversation that needs none of them.
@@ -41,7 +41,7 @@ def _prompt(thread: FoundingThread) -> str:
 
     The draft goes in whole. It is the object under discussion, the model has
     to be able to quote and revise it, and a summary would have the Founder
-    negotiating about a company it can only half see.
+    negotiating about a project it can only half see.
     """
     parts: list[str] = []
     turns = thread.transcript or []

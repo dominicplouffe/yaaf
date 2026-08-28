@@ -39,7 +39,7 @@ GOAL_ELEMENTS = (
 )
 
 #: The three the grammar calls very rarely optional — the ones that stop a
-#: company grading itself. A goal missing any of these is not ready.
+#: project grading itself. A goal missing any of these is not ready.
 LOAD_BEARING = ("finish_line", "anti_metrics", "failure_deliverable")
 
 

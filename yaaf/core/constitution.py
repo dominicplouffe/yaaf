@@ -10,7 +10,7 @@ whenever he likes and it binds from the next call — the delay that used to sit
 in front of behavioural changes protected nobody in practice, and it made
 being wrong about a number cost three days. What survives is the accounting: a
 written reason on every change, an audit entry, and mandatory disclosure to the
-CEO in its next context pack. The company still cannot move its own goalposts;
+CEO in its next context pack. The project still cannot move its own goalposts;
 the man who owns it never had to be stopped from moving them.
 """
 
@@ -70,7 +70,7 @@ def _rule(
     is *generated* from this schema rather than from a hand-kept list beside it.
     That list existed and went stale exactly as you would expect: six of
     twenty-four rules were editable, and the memory caps — the ones a full
-    company actually needs — were not among them.
+    project actually needs — were not among them.
 
     ``choices`` names the values a string rule accepts. The validators below
     already refuse anything else; this only lets the editor draw a menu instead
@@ -106,7 +106,7 @@ GROUP_THEMES = {
 }
 
 #: Tab order on the rules screen — money first, because that is what a stuck
-#: company comes here to change.
+#: project comes here to change.
 THEME_ORDER = [
     "Money",
     "Pace & brakes",
@@ -279,7 +279,7 @@ class ConstitutionDoc(BaseModel):
              "hour, not a clock hour, so it clears continuously rather than in a lump.")
     # The inbox lane. Reading is real cost — every wake is a paid model call —
     # but it is not work, and billing it to the work allowance is how a
-    # company's own chatter eats the runs its deliverables needed. These are
+    # project's own chatter eats the runs its deliverables needed. These are
     # the walls that keep "reading is cheap" from meaning "reading is free".
     inbox_runs_per_project_per_day: int = _rule(
         40, ge=0, group="Wake-loop brakes", label="Inbox runs per day, whole project",
@@ -362,7 +362,7 @@ class ConstitutionDoc(BaseModel):
         help="'09:00' in your timezone, or blank for none. Fires once per local day, at or "
              "after the time. The standup pattern.")
 
-    # The chairman's reporting cadence. A wake ceiling stops the company
+    # The chairman's reporting cadence. A wake ceiling stops the project
     # burning money on itself; this stops it burning money on *him* — the CEO
     # reported thirteen times in 2h20m before it existed. Enforced by
     # policy.check_chairman_report as a refusal on unprompted boardroom posts;
@@ -375,11 +375,11 @@ class ConstitutionDoc(BaseModel):
         None, group="Reporting to you", label="Only report during these hours",
         help="'09:00-20:00' in your local time, or blank for any hour.")
 
-    # The briefing. Everything above governs what the *company* may say to the
+    # The briefing. Everything above governs what the *project* may say to the
     # chairman and costs a model call to produce. This one is the platform
     # writing to him from rows it already holds: no run, no token, no wake, and
     # so no reason to gate it on a budget or an empty board. It exists because
-    # the only mail he ever got was an alarm, and a company that writes to you
+    # the only mail he ever got was an alarm, and a project that writes to you
     # exclusively with bad news is one you stop opening.
     brief_daily_at: str | None = _rule(
         None, group="Reporting to you", label="A daily briefing at this time",
@@ -397,7 +397,7 @@ class ConstitutionDoc(BaseModel):
              "reporting window, the daily wake, a recurring rhythm — is read in this zone.")
 
     # The Operate rhythm. Cycles roll in the janitor — a rhythm firing while
-    # the company is busy or broke must still be recorded — and all local
+    # the project is busy or broke must still be recorded — and all local
     # times read the constitution's one timezone.
     cycle_frequency: str = _rule(
         "weekly", group="Operate rhythm", label="How often a cycle rolls",
@@ -553,7 +553,7 @@ def create_initial(session: Session, project_id: str, doc: ConstitutionDoc) -> C
 
 
 # The fields a CEO may set itself via `directive_file` — the chairman's
-# reporting preferences, which are instructions *to* the company about how to
+# reporting preferences, which are instructions *to* the project about how to
 # treat him rather than limits *on* it. Everything else in the constitution is
 # the chairman's alone to change.
 CADENCE_FIELDS = frozenset({"chairman_report_interval_hours",

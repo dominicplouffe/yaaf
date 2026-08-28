@@ -94,7 +94,7 @@ def janitor_loop() -> None:  # pragma: no cover - thin loop around janitor_all
 def janitor_all() -> None:
     """One sweep, with each project in its own transaction.
 
-    The tick used to share one across every company on the box, so a single bad
+    The tick used to share one across every project on the box, so a single bad
     row rolled back the enforcement pass for all of them — no reaping, no budget
     check, no approval expiry anywhere, reported by one line on stderr. See the
     twin of this in `dispatcher.dispatch_all`.
@@ -137,7 +137,7 @@ def _janitor_project(session: Session, project: Project) -> None:
             f"Changes now in force: {amendment.changes}. Plan accordingly.",
         )
     # Before the running-only gate on purpose. The briefing is composed from
-    # rows at zero tokens, so it can — and must — reach a company the platform
+    # rows at zero tokens, so it can — and must — reach a project the platform
     # paused for an exhausted budget: that is precisely the morning its
     # chairman needs to hear from it, and the morning a model-written status
     # could not be afforded.
@@ -203,7 +203,7 @@ BRIEF_BEAT = "chairman_brief"
 
 
 def send_daily_brief(session: Session, project: Project) -> bool:
-    """The company writes to its chairman once a day, whatever the news.
+    """The project writes to its chairman once a day, whatever the news.
 
     Every other outbound mail in this system is an alarm — a budget gone, a
     meeting unattended, an approval about to expire — and a correspondent who
@@ -215,7 +215,7 @@ def send_daily_brief(session: Session, project: Project) -> bool:
     So it survives an exhausted budget and an empty board, the same reasoning
     that has the janitor open a review with the budget gone.
 
-    Terminal companies are excluded. A stopped or completed one has nothing
+    Terminal projects are excluded. A stopped or completed one has nothing
     left to report and a daily mail about it forever is how a chairman learns
     to filter this address.
     """
@@ -314,7 +314,7 @@ def check_plan(session: Session, project: Project, cons: ConstitutionDoc) -> boo
 
     if not holds and plan.status == RequirementStatus.MET:
         # It stopped adding up. Reopening is not a punishment — it is the
-        # difference between a company that notices and one that spends to the
+        # difference between a project that notices and one that spends to the
         # cap and calls it a surprise.
         from_status = plan.status
         plan.status = RequirementStatus.PENDING
@@ -586,7 +586,7 @@ def check_finished_requirements(session: Session, project: Project,
 
     This lives in the janitor and not the dispatcher on purpose. Deciding that
     a requirement is ready to test costs no tokens and must happen whether or
-    not the company has runs left today: a project that spent its allowance is
+    not the project has runs left today: a project that spent its allowance is
     still allowed to have finished something, and a `met` that waited for
     budget would make the burn-up lie for a day at a time.
 
@@ -684,7 +684,7 @@ def next_cycle_roll(opened_at, cons: ConstitutionDoc, cycle: Cycle | None = None
     meant by "the 30th" in February.
 
     A cycle carrying its own `due_at` rolls on THAT, and the constitution's
-    rhythm is the fallback. This is the difference between a company whose work
+    rhythm is the fallback. This is the difference between a project whose work
     is paced by the calendar and one paced by the world: a gameweek deadline
     lands on a different day every week, a warehouse cutoff moves with the
     carrier, and a rhythm that cannot follow them is a rhythm the work ignores.
@@ -748,7 +748,7 @@ def roll_cycles(session: Session, project: Project, cons: ConstitutionDoc) -> No
     """Close the cycle whose time came, carry the unfinished scope, reopen the
     plan gate, and hand the CEO the last three narratives.
 
-    In the janitor because a rhythm firing while the company is busy or broke
+    In the janitor because a rhythm firing while the project is busy or broke
     must still be recorded, and opening a cycle costs nothing. At most one
     cycle is ever open: close-and-open is one transition, and a project
     paused across many boundaries resumes into ONE new cycle — the janitor
@@ -792,7 +792,7 @@ def roll_cycles(session: Session, project: Project, cons: ConstitutionDoc) -> No
         )
 
     # Two consecutive cycles with nothing made true pause the project: a
-    # rhythm nobody dances to is a bill, not a company.
+    # rhythm nobody dances to is a bill, not a project.
     if cycle.status == CycleStatus.SKIPPED:
         previous = session.execute(
             select(Cycle).where(Cycle.project_id == project.id,
@@ -820,7 +820,7 @@ def roll_cycles(session: Session, project: Project, cons: ConstitutionDoc) -> No
             return
 
     # A standing requirement is judged for the cycle that just closed and then
-    # starts again. Without this an Operate company that owes the same thing
+    # starts again. Without this an Operate project that owes the same thing
     # every week had one row, met once, and looked finished after the first —
     # while the platform had no way to check the other thirty-seven.
     standing = [r for r in accepted if r.recurrence == Recurrence.STANDING]
@@ -885,7 +885,7 @@ def evaluate_flags(session: Session, project: Project, cons: ConstitutionDoc) ->
     """Recompute the trip conditions, and wake the CEO when one fires.
 
     In the janitor for the same reason cycles roll here: news the chairman
-    needs must not depend on the company having runs left to notice it. The
+    needs must not depend on the project having runs left to notice it. The
     notice is what turns an open flag into a wake — a flag nobody is told about
     until the next scheduled status is a flag that arrives after the deadline
     it was warning about.
@@ -1185,7 +1185,7 @@ def open_reviews(session: Session, project: Project, cons: ConstitutionDoc) -> R
 def nag_reviews(session: Session, project: Project) -> None:
     """An unattended meeting chases the chairman — once politely, once loudly —
     and never stops the work. The escalation is a louder email and an audit
-    row, not a brake: a governance meeting that could halt the company would
+    row, not a brake: a governance meeting that could halt the project would
     be a new failure mode, not a fix."""
     review = session.execute(
         select(Review).where(Review.project_id == project.id,
@@ -1750,7 +1750,7 @@ def enforce_budget(session: Session, project: Project, cons: ConstitutionDoc) ->
 def _warn_external_envelope(session: Session, project: Project,
                             cons: ConstitutionDoc) -> None:
     """The real-world spend envelope, warned like the model budget — in every
-    billing mode, because a token-billed company still spends dollars in the
+    billing mode, because a token-billed project still spends dollars in the
     world. Never pauses anything: the wall itself is enforced where a purchase
     is cleared and a spend is booked."""
     cap = cons.external_monthly_usd_cap
@@ -1821,7 +1821,7 @@ def warn_memory_pressure(session: Session, project: Project, cons: ConstitutionD
         # A team with two or more members and no named lead has no curator at
         # all: its memory fills, every member is refused, and there is nobody
         # the platform could ask to fix it. Only the chairman can name a lead,
-        # so this goes to the CEO to escalate — silence here would be a company
+        # so this goes to the CEO to escalate — silence here would be a project
         # quietly unable to remember anything.
         target = curator.id if curator is not None else None
         if target is None:
@@ -1874,7 +1874,7 @@ def elect_missing_leads(session: Session, project: Project) -> None:
     """A team of two or more with nobody named as lead cannot claim its own
     queue: only the lead may claim a team task, and only the lead is woken for
     one. Nothing reported it, so such a team's board sat READY forever while
-    every screen showed a healthy company with work in hand.
+    every screen showed a healthy project with work in hand.
 
     The earliest-created member is the safe answer — it is the same agent
     `effective_lead` already picks when a team has exactly one — and the
@@ -1913,7 +1913,7 @@ def check_stalled_requirements(session: Session, project: Project) -> None:
     `check_finished_requirements` returns early here — correctly, since there is
     nothing to test — so the requirement stays IN_PROGRESS forever with an empty
     board. And an empty board is exactly what suppresses the CEO's planning
-    heartbeat, so the company goes completely silent over work that is still
+    heartbeat, so the project goes completely silent over work that is still
     formally open. Told once per requirement.
     """
     for req in session.execute(
@@ -2132,10 +2132,10 @@ def nag_awaiting_chairman(
 
 
 def warn_stall(session: Session, project: Project, cons: ConstitutionDoc) -> None:
-    """A running company with work in hand that has started nothing for hours.
+    """A running project with work in hand that has started nothing for hours.
 
     Every gate below this is individually correct and individually invisible;
-    what nobody had was the fact that they add up to a company doing nothing.
+    what nobody had was the fact that they add up to a project doing nothing.
     The notice carries the dispatcher's own diagnosis verbatim, so the CEO reads
     the same sentence the chairman does instead of guessing at a cause.
     """

@@ -1,4 +1,4 @@
-"""The agenda: what this company is going to do, before it does it.
+"""The agenda: what this project is going to do, before it does it.
 
 The desk answers "what breaks if I close this tab" — ranked by time to
 consequence, which is the right question when something is wrong. Nothing
@@ -349,7 +349,7 @@ def _clock_events(session: Session, project: Project, tz: ZoneInfo,
     if project.mode == ProjectMode.EXPLORE and project.deadline is not None:
         deadline = _aware(project.deadline)
         if now <= deadline <= horizon:
-            # No `where`: an Explore company has no Plan tab by design, and a
+            # No `where`: an Explore project has no Plan tab by design, and a
             # link to a screen its own shape does not have is worse than none.
             out.append(_event(
                 deadline, "explore_deadline", "The deadline you set", tz,
@@ -361,7 +361,7 @@ def _clock_events(session: Session, project: Project, tz: ZoneInfo,
 
 def _budget_reset_event(now: datetime, horizon: datetime, tz: ZoneInfo) -> dict | None:
     """The budget is measured month-to-date, so the 1st is a real event on this
-    company's calendar: the meter goes back to zero and a company paused for
+    project's calendar: the meter goes back to zero and a project paused for
     an exhausted cap becomes affordable again — though not restarted, which
     stays the chairman's decision."""
     year, month = now.year, now.month
@@ -378,7 +378,7 @@ def _budget_reset_event(now: datetime, horizon: datetime, tz: ZoneInfo) -> dict 
 def project_agenda(session: Session, project: Project,
                    cons: ConstitutionDoc | None = None,
                    days: int = DEFAULT_DAYS) -> dict:
-    """Everything this company is scheduled to do in the next `days`."""
+    """Everything this project is scheduled to do in the next `days`."""
     cons = cons or effective(session, project.id)
     days = max(1, min(int(days), MAX_DAYS))
     now = utcnow()
@@ -391,7 +391,7 @@ def project_agenda(session: Session, project: Project,
     events: list[dict] = []
     rhythms: list[dict] = []
 
-    # A company that is not running has no schedule to draw — the dispatcher
+    # A project that is not running has no schedule to draw — the dispatcher
     # will not wake anybody and the janitor's rhythms do not fire against a
     # terminal project. Saying that plainly beats drawing a week of wakes that
     # are never going to happen.
