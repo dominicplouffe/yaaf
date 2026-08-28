@@ -98,13 +98,13 @@ async def t_board(args):
     "without parent_task_id is refused every time — it is the single most common "
     "refusal on this platform, so check yourself before you send it. "
     "not_before is an ISO 8601 datetime before which the task cannot be claimed. It "
-    "wakes nobody and shows on no screen as work in progress, so a company gated on one "
+    "wakes nobody and shows on no screen as work in progress, so a project gated on one "
     "looks stopped: use it only for a genuine calendar rhythm, never to express 'after "
     "the other task finishes'. For that, create this task WHEN that one lands — you are "
     "woken for it. Gates beyond the constitution's limit are refused. "
     "requirement_id names what this work is FOR and is required outside Explore "
     "projects: a task that serves no requirement is refused, because work that makes "
-    "nothing true is how a company stays busy without finishing. Your context pack's "
+    "nothing true is how a project stays busy without finishing. Your context pack's "
     "`board` and `roster` carry the team ids, agent ids and requirement ids you need — "
     "read them rather than guessing at an id.",
     {
@@ -491,7 +491,7 @@ async def t_account_record(args):
 
 @tool(
     "accounts_list",
-    "The account registry: every identity the company has created in the world. Read "
+    "The account registry: every identity the project has created in the world. Read "
     "it before signing up anywhere (it may already exist) and when winding anything "
     "down.",
     {},
@@ -502,7 +502,7 @@ async def t_accounts_list(args):
 
 @tool(
     "need_request",
-    "CEO only. File a NEED with the chairman: a capability the company lacks — 'I need "
+    "CEO only. File a NEED with the chairman: a capability the project lacks — 'I need "
     "AWS access, give me a key', 'we need a Stripe account', 'SMTP credentials for the "
     "writer'. It reaches him where he reads (boardroom, Slack, email) and he fulfills "
     "it in one motion: the credential lands as an env var for the roles you name, and "
@@ -519,7 +519,7 @@ async def t_need_request(args):
 
 @tool(
     "credentials_list",
-    "CEO only. The credential roster: every service credential the company holds and "
+    "CEO only. The credential roster: every service credential the project holds and "
     "which roles receive it — names and scopes only, never values. Read it before "
     "filing a need (the capability may already exist) or delegating one.",
     {},

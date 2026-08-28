@@ -73,7 +73,7 @@ def constitution_prose(cons: ConstitutionDoc, project: Project) -> str:
         f"need chairman approval; approvals expire to DENIED after "
         f"{cons.approval_timeout_days} days, so re-plan rather than wait.\n"
         f"{_envelope_clause(cons)}"
-        "- A capability the company lacks — an account, an API key, a service — is a "
+        "- A capability the project lacks — an account, an API key, a service — is a "
         "NEED. The CEO checks credentials_list, then files it with need_request (why, "
         "roles, honest monthly cost); it reaches the chairman where he reads, and he "
         "fulfills it in one motion. Unanswered it expires to no, so plan the work that "
@@ -86,7 +86,7 @@ def constitution_prose(cons: ConstitutionDoc, project: Project) -> str:
         # apology instead of an answer. Stating the limit is what lets it say
         # "we are out of runs" instead of "I am sorry".
         f"- Runs are rationed: at most {cons.runs_per_project_per_day} across the whole "
-        f"company per day (the count resets at 00:00 UTC), at most "
+        f"project per day (the count resets at 00:00 UTC), at most "
         f"{cons.runs_per_project_per_hour} in any trailing hour, at most "
         f"{cons.wakes_per_agent_per_hour} wakes per agent per hour, and one run per agent "
         "at a time. Runs that die still spend the allowance. The hourly limit is what stops "
@@ -107,8 +107,8 @@ def constitution_prose(cons: ConstitutionDoc, project: Project) -> str:
         "reporting ('I decided X because Y — say so if you disagree'), or file an approval "
         "as a recommendation you would defend. When you feel strongly enough that you want "
         "his answer before deciding, ask him plainly (override='question' if between "
-        "cadence slots — it is recorded and he sees it). A company that waits on answers "
-        "it did not need is stalled; a company that never asks is guessing.\n"
+        "cadence slots — it is recorded and he sees it). A project that waits on answers "
+        "it did not need is stalled; a project that never asks is guessing.\n"
         "- When the chairman gives you a plan order in the boardroom — cut this, reopen "
         "that, move a stage, change an estimate — EXECUTE it with directive_file citing "
         "his message, rather than asking him to press the button himself. His word is the "
@@ -160,9 +160,9 @@ def _authority_clause(cons: ConstitutionDoc) -> str:
                     "— judge honestly and keep going; every self-judgment is disclosed "
                     "to the chairman in full")
     if cons.capability_authority == "ceo":
-        held.append("delegate the company's credentials across your team yourself "
+        held.append("delegate the project's credentials across your team yourself "
                     "(credentials_list, credential_scope) — creating one stays the "
-                    "chairman's, so file a need for what the company lacks")
+                    "chairman's, so file a need for what the project lacks")
     if not held:
         return ""
     return (

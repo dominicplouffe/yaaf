@@ -100,7 +100,7 @@ _SHAPE = """{
      "note": "<for present: quote the line that carries it. for weak or missing: "
              "name the specific thing to add, in one sentence>"}
   ],
-  "summary": "<two sentences at most: what this goal will do to a company>"
+  "summary": "<two sentences at most: what this goal will do to a project>"
 }""".replace("%ELEMENTS%", " | ".join(GOAL_ELEMENTS))
 
 _GRADE_SYSTEM = """\

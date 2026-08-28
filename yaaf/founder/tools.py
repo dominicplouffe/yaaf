@@ -257,7 +257,7 @@ def build_server(session: Session, state: dict, env: dict[str, str],
         progress.finish_step(thread_id)
         return ok(grade.to_dict())
 
-    @tool("propose_bundle", "Put a complete company in front of the chairman. This "
+    @tool("propose_bundle", "Put a complete project in front of the chairman. This "
           "is your deliverable: it replaces the current draft and is what the review "
           "screen shows. It creates nothing and spends nothing. Send the whole "
           "bundle every time, not a patch. `project` takes the shape POST "
@@ -294,8 +294,8 @@ def build_server(session: Session, state: dict, env: dict[str, str],
         state["draft"] = bundle
         return ok({"ok": True, "summary": summarise(bundle)})
 
-    @tool("rehearse", "Run the current draft as a company for nothing, on a mock "
-          "runtime, and report what happened. Answers whether a well-behaved company "
+    @tool("rehearse", "Run the current draft as a project for nothing, on a mock "
+          "runtime, and report what happened. Answers whether a well-behaved project "
           "can get off the ground inside these rules — not whether the work would be "
           "good. Costs nothing.",
           {"days": int})
