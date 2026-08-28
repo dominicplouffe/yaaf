@@ -1519,3 +1519,58 @@ class Heartbeat(Base):
     agent_id: Mapped[str] = mapped_column(ForeignKey("agents.id"))
     name: Mapped[str] = mapped_column(String(64))
     last_fired_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class PlatformSetting(Base):
+    """Product-wide configuration, above any project.
+
+    Every other setting in this system belongs to a project, because every
+    other setting binds a company. These bind the *platform* — the things that
+    have to be true before a project exists at all, starting with how the
+    Founder pays for the conversation in which a project gets designed.
+
+    Values may be encrypted (`is_secret`), in which case `value` holds
+    ciphertext and only the server ever decrypts it. A platform setting is
+    never injected into a sandbox and never reaches a project's agents: a
+    project still pays its own way with its own attached credential.
+    """
+
+    __tablename__ = "platform_settings"
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    key: Mapped[str] = mapped_column(String(120), unique=True)
+    value: Mapped[str] = mapped_column(Text)
+    is_secret: Mapped[bool] = mapped_column(Boolean, default=False)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)
+
+
+class FoundingThread(Base):
+    """One conversation with the Founder, and the company it is drafting.
+
+    This is deliberately not a Project. Nothing here is a company yet: no
+    agents exist, no money can be spent, no rule binds anyone. It is a
+    transcript and a draft `project_setup` bundle — the same object the
+    importer accepts and the form posts — carried together so the chairman can
+    argue with a proposal instead of filling in a form.
+
+    The draft is replaced wholesale each time the Founder proposes; the
+    transcript is what makes the revision legible, and it is handed to the CEO
+    as its day-one briefing when the project is finally created.
+    """
+
+    __tablename__ = "founding_threads"
+    __table_args__ = (Index("ix_founding_user_at", "user_id", "created_at"),)
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    title: Mapped[str] = mapped_column(String(200), default="")
+    # Anthropic message dicts, verbatim — thinking blocks included, because a
+    # thinking block replayed to the same model must come back unchanged.
+    transcript: Mapped[list] = mapped_column(JSONVariant, default=list)
+    # The current proposal: {"project": {...}, "roles": [...]}, or null before
+    # the Founder has drafted anything.
+    draft_bundle: Mapped[dict | None] = mapped_column(JSONVariant)
+    # Set once the chairman turns a draft into a real company.
+    created_project_id: Mapped[str | None] = mapped_column(String(40))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow, onupdate=utcnow)

@@ -58,11 +58,15 @@ def _web_dist() -> Path | None:
 
 
 def create_app() -> FastAPI:
-    from yaaf.server.api import admin, agent, oauth, observe, webhooks, ws
+    from yaaf.server.api import admin, agent, founder, oauth, observe, webhooks, ws
 
     app = FastAPI(title="yaaf", version="0.1.0")
     app.include_router(agent.router, prefix="/agent", tags=["agent"])
     app.include_router(admin.router, prefix="/admin", tags=["admin"])
+    # The founding conversation, before a project exists. Admin-authenticated
+    # like the rest of the chairman surface; mounted under /admin so it shares
+    # that auth rather than growing a second one.
+    app.include_router(founder.router, prefix="/admin/founder", tags=["founder"])
     app.include_router(observe.router, prefix="/observe", tags=["observe"])
     # Unauthenticated by bearer-token design: senders sign each body with a
     # chairman-provisioned secret instead. See yaaf.server.api.webhooks.

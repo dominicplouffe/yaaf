@@ -1230,3 +1230,49 @@ button.rolepick { width: 100%; text-align: left; background: var(--surface-2); }
 .drill-list { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px;
   font-size: 12.5px; }
 .drill-list.quiet { opacity: 0.75; }
+
+/* ── founding: the conversation that designs a company ──────────────────────
+   A conversation on the left, the company it is drafting on the right. The
+   split is the point: the chairman should never have to hold the draft in his
+   head while arguing about it. */
+.founding-head { display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 16px; }
+.founding-head button { white-space: nowrap; }
+.founding-body { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  gap: 20px; align-items: start; }
+@media (max-width: 1000px) { .founding-body { grid-template-columns: 1fr; } }
+
+.founding-chat { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+
+.turn { display: flex; flex-direction: column; gap: 4px; }
+.turn-who { font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px;
+  color: var(--muted); }
+.turn-text { white-space: pre-wrap; border-radius: var(--radius); padding: 10px 14px;
+  border: 1px solid var(--border); }
+.turn-chairman .turn-text { background: var(--surface-2); }
+/* The Founder's turns carry the accent edge the CEO's boardroom replies do:
+   the two are the same relationship at two moments, and reading as one voice
+   across them is deliberate. */
+.turn-founder .turn-text { background: var(--surface); border-left: 2px solid var(--accent); }
+
+.founding-compose { margin-top: 4px; display: flex; flex-direction: column; gap: 8px; }
+.founding-compose textarea { width: 100%; resize: vertical; font: inherit;
+  background: var(--surface-2); color: var(--ink); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 10px 12px; }
+.founding-compose textarea:focus { outline: none; border-color: var(--accent); }
+.founding-actions { display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; }
+
+.founding-draft { position: sticky; top: 24px; display: flex; flex-direction: column;
+  gap: 12px; min-width: 0; }
+.founding-draft h4 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.8px;
+  color: var(--muted); margin: 16px 0 6px; }
+.founding-draft ul { margin: 0; padding-left: 18px; }
+.founding-draft li { margin-bottom: 3px; }
+/* The goal is the most important thing on this page and it is long. Give it
+   room to be read, and a scroll rather than a truncation — a goal you cannot
+   finish reading is a goal you cannot argue with. */
+.goal-preview { white-space: pre-wrap; font: inherit; color: var(--ink-2);
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 6px; padding: 10px 12px; margin: 0;
+  max-height: 340px; overflow-y: auto; }
