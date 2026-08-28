@@ -32,8 +32,14 @@ import {
     padding the count with it would spend the one number a chairman has to be
     able to trust.
 
-    Companies that are over do not appear at all (`?live=true`): a stopped or
-    completed company cannot need anything, and every number on it is frozen.
+    Only a company that is *running* appears here at all. The server drops the
+    terminal ones (`?live=true`) because a stopped or completed company cannot
+    need anything and every number on it is frozen; the page then drops draft
+    and paused ones too. Neither is working, and the desk is the working set —
+    a draft has never started and a pause sits there until someone resumes it,
+    so neither can break while the tab is closed. They keep their tally in the
+    "nothing is running" card below, which is a number and not a row, and their
+    rows live on Projects.
 
     The autonomy dial decides what is even eligible for a row. Where the
     constitution says `ceo`, the CEO accepts its own plan, signs the platform's
@@ -77,17 +83,25 @@ const NEVER = Number.MAX_SAFE_INTEGER;
 // no principled number here, only a threshold below which the row is noise.
 const SPEND_FLOOR_USD = 1;
 
+/** What belongs on the desk: a company doing work right now. Exported and
+    used by the sidebar badge too — a second copy of this test would drift, and
+    a badge counting rows the page does not show is worse than no badge. */
+export const isLive = (p: DeskProject) => p.status === "running";
+
+const latestRun = (ps: DeskProject[]): string | null =>
+  ps.map((p) => p.last_run_at).filter((v): v is string => v !== null).sort().at(-1) ?? null;
+
 export function buildItems(projects: DeskProject[], reload: () => void): Item[] {
   const items: Item[] = [];
   const now = Date.now();
 
-  for (const p of projects) {
+  for (const p of projects.filter(isLive)) {
     const to = `/projects/${p.id}`;
 
-    // A paused company is never a row. Pausing is a state, not a request: it
-    // sits there until someone resumes it, and a row that says so every day is
-    // reporting a fact the chairman can already see in the roster below —
-    // where paused companies keep their red dot and their reason.
+    // A paused company is never a row — it is not on the desk at all (see
+    // isLive above). Pausing is a state, not a request: it sits there until
+    // someone resumes it, and a row that says so every day is reporting a fact
+    // the chairman can already see on Projects.
     //
     // This holds however the pause happened, the platform's own included. A
     // budget-exhausted pause still emails him the moment it trips
@@ -367,16 +381,18 @@ export default function Desk() {
   if (error) return <div className="error">{error}</div>;
   if (!data) return <p className="subtitle">Loading…</p>;
 
-  const live = data.projects;
+  // `all` is every non-terminal company the server sent; `live` is the desk.
+  // The difference is only ever spent on one thing — saying how many companies
+  // are parked when none is working, so an empty desk can't read as "all
+  // clear" or as "you have no companies".
+  const all = data.projects;
+  const live = all.filter(isLive);
+  const idle = all.length - live.length;
   const items = buildItems(live, reload);
   const needing = items.filter((i) => i.tier <= 2);
   const soonest = items.find((i) => i.tier === 2 && i.clocked);
-  const running = live.filter((p) => p.status === "running").length;
-  const lastRun = live
-    .map((p) => p.last_run_at)
-    .filter((v): v is string => v !== null)
-    .sort()
-    .at(-1) ?? null;
+  const running = live.length;
+  const lastRun = latestRun(live);
 
   return (
     <>
@@ -410,7 +426,7 @@ export default function Desk() {
           it from four tables in Records. */}
       <DeskBriefingPanel />
 
-      {live.length === 0 && (
+      {running === 0 && idle === 0 && (
         <EmptyDesk finished={data.finished} />
       )}
 
@@ -438,7 +454,7 @@ export default function Desk() {
         </div>
       )}
 
-      {live.length > 0 && needing.length === 0 && running > 0 && (
+      {running > 0 && needing.length === 0 && (
         <div className="quiet ok">
           <div className="mark">Nothing needs you.</div>
           <div className="sub">
@@ -462,35 +478,38 @@ export default function Desk() {
         </div>
       )}
 
-      {live.length > 0 && running === 0 && (
+      {running === 0 && idle > 0 && (
         <div className="quiet bad">
           <div className="mark">Nothing is running.</div>
           <div className="sub">
-            You have {live.length} compan{live.length === 1 ? "y" : "ies"} that could be
-            working and {live.length === 1 ? "it is not" : "none is"}. No agent is doing
+            You have {idle} compan{idle === 1 ? "y" : "ies"} that could be
+            working and {idle === 1 ? "it is not" : "none is"}. No agent is doing
             anything right now — which is <b>not</b> the same as all clear.
           </div>
           <div className="proof">
             <div className="pf">
-              <div className="pv">{live.filter((p) => p.status === "paused").length}</div>
+              <div className="pv">{all.filter((p) => p.status === "paused").length}</div>
               <div className="pl">paused</div>
             </div>
             <div className="pf">
-              <div className="pv">{live.filter((p) => p.status === "draft").length}</div>
+              <div className="pv">{all.filter((p) => p.status === "draft").length}</div>
               <div className="pl">never started</div>
             </div>
             <div className="pf">
-              <div className="pv">{fmtAgo(lastRun)}</div>
+              <div className="pv">{fmtAgo(latestRun(all))}</div>
               <div className="pl">last run</div>
             </div>
+          </div>
+          <div className="acts" style={{ justifyContent: "center" }}>
+            <Link className="act lnk" to="/projects">see them on Projects →</Link>
           </div>
         </div>
       )}
 
-          {live.length > 0 && (
+      {running > 0 && (
         <CompanyStrip
           live={live}
-          finished={data.finished}
+          elsewhere={idle + data.finished}
           needing={new Set(needing.map((i) => i.project.id))}
         />
       )}
@@ -537,18 +556,17 @@ function EmptyDesk({ finished }: { finished: number }) {
     to be a second copy of it. Name, state, and whether it is asking for
     something. */
 function CompanyStrip(
-  { live, finished, needing }:
-  { live: DeskProject[]; finished: number; needing: Set<string> },
+  { live, elsewhere, needing }:
+  { live: DeskProject[]; elsewhere: number; needing: Set<string> },
 ) {
-  // "Live" was wrong the moment paused companies stopped being rows: this
-  // counts every non-terminal company, so three parked ones and a working one
-  // read as "Live companies · 4" while three sat there with red dots. Say both
-  // numbers instead — the running count is the one being asked about.
-  const running = live.filter((p) => p.status === "running").length;
+  // Every row here is running, so the header needs one number and the dot is
+  // never anything but green. The old version counted every non-terminal
+  // company, and three parked ones beside a working one read as
+  // "Live companies · 4" — a count of companies that were not working.
   return (
     <div className="roster">
       <div className="sh">
-        Companies · {live.length} · {running} running
+        Working · {live.length} compan{live.length === 1 ? "y" : "ies"}
       </div>
       {live.map((p) => {
         // Read off the list above rather than recounted here. A second
@@ -557,23 +575,21 @@ function CompanyStrip(
         // roster — the exact contradiction the rest of this page exists to
         // stop.
         const needsYou = needing.has(p.id);
-        const dot = p.status === "running" ? "run" : p.status === "paused" ? "pau" : "stp";
         return (
           <div className="crow" key={p.id}>
-            <span className={`dot ${dot}`} />
+            <span className="dot run" />
             <Link className="nm" to={`/projects/${p.id}`}>{p.name}</Link>
-            <span className="gl">
-              {p.status === "running" ? clip(p.goal, 70) : `${p.status} — ${clip(p.status_reason ?? p.goal, 60)}`}
-            </span>
+            <span className="gl">{clip(p.goal, 70)}</span>
             <span className={`rt ${needsYou ? "need" : ""}`}>
               {needsYou ? "needs you" : fmtAgo(p.last_run_at)}
             </span>
           </div>
         );
       })}
-      {finished > 0 && (
+      {elsewhere > 0 && (
         <div className="fin">
-          {finished} finished compan{finished === 1 ? "y is" : "ies are"} not shown here →{" "}
+          {elsewhere} compan{elsewhere === 1 ? "y is" : "ies are"} not running — parked,
+          never started or finished — and not shown here →{" "}
           <Link to="/projects">Projects</Link>
         </div>
       )}

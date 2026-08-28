@@ -155,7 +155,13 @@ export function BriefingBlock({
   );
 }
 
-/** The Desk's panel: every live company on its own mark.
+/** The Desk's panel: every running company on its own mark.
+
+    Running only, like the rest of the desk. The endpoint returns every
+    non-terminal company because the window and the mark are per company and a
+    caller may want all of them; the desk is the working set, and a paused
+    company's "nothing settled" line is a fact about a company nobody is
+    working on.
 
     Per-company marks rather than one box-wide stamp, because reading one
     company's brief says nothing about having read another's — and a single
@@ -185,9 +191,11 @@ export function DeskBriefingPanel() {
     }
   }
 
-  if (!data || data.projects.length === 0) return null;
-  const news = data.projects.filter((b) => !b.quiet);
-  const silent = data.projects.filter((b) => b.quiet);
+  if (!data) return null;
+  const live = data.projects.filter((b) => b.status === "running");
+  if (live.length === 0) return null;
+  const news = live.filter((b) => !b.quiet);
+  const silent = live.filter((b) => b.quiet);
 
   // Every company quiet is not nothing to say — it is the proof-of-life
   // sentence — but it does not deserve the top of the desk, so it collapses to
@@ -198,8 +206,8 @@ export function DeskBriefingPanel() {
         <div className="bpanel-head">
           <span className="bttl">Since you were last here</span>
           <span className="dim">
-            nothing settled in any of your {data.projects.length} live compan
-            {data.projects.length === 1 ? "y" : "ies"}
+            nothing settled in any of your {live.length} running compan
+            {live.length === 1 ? "y" : "ies"}
           </span>
           <div className="spacer" />
           <button className="linkish" onClick={() => setOpen(!open)}>
@@ -208,7 +216,7 @@ export function DeskBriefingPanel() {
         </div>
         {open && (
           <div className="bhushed">
-            {data.projects.map((b) => (
+            {live.map((b) => (
               <div key={b.project_id} className="bhrow">
                 <Link className="co" to={`/projects/${b.project_id}`}>
                   {b.name}
@@ -231,7 +239,9 @@ export function DeskBriefingPanel() {
           {silent.length > 0 && `, ${silent.length} quiet`}
         </span>
         <div className="spacer" />
-        <button className="linkish" disabled={busy} onClick={() => markRead(data.projects)}>
+        {/* What the panel drew, not what the endpoint sent: marking a paused
+            company read would consume a window the chairman was never shown. */}
+        <button className="linkish" disabled={busy} onClick={() => markRead(live)}>
           {busy ? "marking…" : "Mark all read"}
         </button>
       </div>
