@@ -1,9 +1,8 @@
 # The chairman's MCP server — chairing yaaf from a model client
 
-**Status: M0–M4 landed — the transport, the principal, the read surface, OAuth
-with a chairman login, the steer verbs behind two-phase confirmation, and the
-design flow. One line of M2 is unticked and cannot be ticked from here: a real
-connection from claude.ai against a public deployment. M5 is unbuilt.** This is the design and the tracking doc: the tool surface, the
+**Status: the whole surface is built — M0 through M5. One line of M2 is
+unticked and cannot be ticked from here: a real connection from claude.ai
+against a public deployment. M6 is the "later, if wanted" list.** This is the design and the tracking doc: the tool surface, the
 security model that makes it safe to ship, and the milestones to check off.
 Update the checkboxes as they land; if a decision here turns out wrong, change
 the doc in the same PR that changes the code.
@@ -351,11 +350,11 @@ drafting a bundle and being graded on it.
 
 | Tool | Does | Backing | Confirm? | Status |
 |---|---|---|---|---|
-| `project_configure` | Settings, teams, repin a team's role version. | `PATCH /admin/projects/{id}`, `POST /admin/projects/{id}/teams`, `/admin/teams/{id}/repin` | yes | M5 |
-| `data_source` | `verb`: `add` \| `check` \| `oauth_start` \| `remove`. | `POST /admin/projects/{id}/mcp_servers` `/check` `/oauth/start`, `DELETE …/{name}` | yes on `add`/`remove` | M5 |
-| `credential` | Create or scope a secret **by reference only** — the value is never read back, and a value passed in is written and forgotten. | `POST /admin/secrets`, `GET /admin/secrets` (names only) | yes | M5 |
-| `amend` | Propose or cancel a constitution amendment; read the schema. | `POST /admin/projects/{id}/amendments`, `/admin/amendments/{id}/cancel`, `GET /admin/constitution/schema` | yes | M5 |
-| `billing_check` | Verify the project's Anthropic credential works. | `POST /admin/projects/{id}/billing_check` | no | M5 |
+| `project_configure` | Settings, teams, repin a team's role version. | `PATCH /admin/projects/{id}`, `POST /admin/projects/{id}/teams`, `/admin/teams/{id}/repin` | yes | **done** (M5) |
+| `data_source` | `verb`: `add` \| `check` \| `oauth_start` \| `remove`. | `POST /admin/projects/{id}/mcp_servers` `/check` `/oauth/start`, `DELETE …/{name}` | yes on `add`/`remove` | **done** (M5) |
+| `credential` | Create or scope a secret **by reference only** — the value is never read back, and a value passed in is written and forgotten. | `POST /admin/secrets`, `GET /admin/secrets` (names only) | yes | **done** (M5) |
+| `amend` | Propose or cancel a constitution amendment; read the schema. | `POST /admin/projects/{id}/amendments`, `/admin/amendments/{id}/cancel`, `GET /admin/constitution/schema` | yes | **done** (M5) |
+| `billing_check` | Verify the project's Anthropic credential works. | `POST /admin/projects/{id}/billing_check` | no | **done** (M5) |
 
 **Never exposed, at any scope:** `GET /admin/secrets/{id}/value`, webhook secret
 values (`POST /admin/projects/{id}/webhook_secrets` returns them), the GitHub
@@ -585,12 +584,32 @@ and the fire drill ran before it existed.
 **Done when:** a project can be designed and created end-to-end from a client,
 and the fire drill ran before it existed.
 
-### M5 — Configure
-- [ ] `project_configure`, `data_source`, `credential`, `amend`, `billing_check`
-- [ ] Denylist enforced in code, with a test that fails if a new admin route
-      becomes reachable without being classified
-- [ ] `test_mcp_secrets.py` — no scope, no argument, and no tool returns a
-      secret value
+### M5 — Configure ✅
+- [x] `project_configure`, `data_source`, `credential`, `amend`, `billing_check`
+- [x] `surface.py` classifies **every** `/admin` route — reached by a named tool,
+      or withheld with a written reason. Exhaustive rather than negative,
+      because a tool list that merely *lacks* a route is indistinguishable from
+      one that has not caught up: `test_mcp_secrets.py` fails on the first route
+      that is neither, and on any classification naming a route that no longer
+      exists
+- [x] `test_mcp_secrets.py` — no scope, no argument and no tool returns a secret
+      value; the preview does not echo one; neither does the audit row; a data
+      source's bearer is scrubbed from both
+
+**Values move one way.** `credential` writes one and forgets it, because storing
+a credential is a chairman's setup step. Nothing reads one back at any scope —
+`GET /admin/secrets/{id}/value` is withheld in `surface.py` with that reason
+written next to it.
+
+**A platform bug this milestone found, and fixed where it belonged.**
+`ConstitutionDoc` ignores unknown keys, so `POST /admin/projects/{id}/amendments`
+accepted an invented rule, stored it in the amendment row, showed it back to the
+chairman, and never put it in force. The Founder already guarded creation
+against exactly this (`reporting_cadence` was a real run's invention); the
+amendment path had the same hole with a door next to it. The check moved into
+`yaaf.core.constitution.unknown_rules` and now runs on both paths, so the
+browser and this surface refuse it in the same words. Per rule one of this doc:
+the HTTP surface got it first, and the tool inherited it.
 
 ### M6 — Later, if wanted
 - [ ] Change notifications: approvals landing, commitments going at risk

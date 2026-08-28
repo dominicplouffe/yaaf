@@ -372,32 +372,13 @@ def validate(bundle: dict) -> list[str]:
 def constitution_problems(constitution: dict) -> list[str]:
     """Reject a rule this platform does not have.
 
-    `ProjectCreate.constitution` is a bare dict, so an invented knob validates,
-    stores, and is then ignored for the life of the project — the chairman
-    reads `reporting_cadence: 4` on the review screen and believes he set
-    something. A real Founder run invented exactly that key, which is the
-    reason this function exists.
-
-    Near-misses are named because the model can almost always fix it in the
-    same turn once it is told what the field is really called.
+    The check itself lives in `yaaf.core.constitution`, because the amendment
+    path needs the same one — an invented rule refused at creation and accepted
+    at amendment would be a hole with a door next to it.
     """
-    from yaaf.core.constitution import ConstitutionDoc
+    from yaaf.core.constitution import unknown_rules
 
-    known = set(getattr(ConstitutionDoc, "model_fields", None)
-                or {f.name for f in __import__("dataclasses").fields(ConstitutionDoc)})
-    problems = []
-    for key in constitution:
-        if key in known:
-            continue
-        # Prefixes, not whole words: the invented key was `reporting_cadence`
-        # and the real one is `chairman_report_interval_hours` — "reporting"
-        # does not appear in it, but "repor" does.
-        stem = [part[:5] for part in key.split("_") if len(part) > 3]
-        near = sorted(name for name in known if any(part in name for part in stem))[:3]
-        problems.append(
-            f"constitution.{key}: this platform has no such rule"
-            + (f" — did you mean {', '.join(near)}?" if near else ""))
-    return problems[:10]
+    return [f"constitution.{problem}" for problem in unknown_rules(constitution)]
 
 
 def summarise(bundle: dict) -> dict:
