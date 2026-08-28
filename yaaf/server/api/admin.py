@@ -1683,16 +1683,15 @@ class ProjectPatch(BaseModel):
 def _billing_shape_error(mode: str, plaintext: str) -> str | None:
     """Subscription tokens come from `claude setup-token` and start sk-ant-oat;
     API keys start sk-ant-api. A mismatched pair fails every future run with a
-    baffling 'Not logged in' — refuse it while the human is still looking."""
-    is_oauth = plaintext.startswith("sk-ant-oat")
-    if mode == "subscription" and not is_oauth:
-        return ("that credential is not a subscription token (sk-ant-oat…). Run "
-                "`claude setup-token` and paste the result — or switch to API-key mode.")
-    if mode == "api_key" and is_oauth:
-        return ("that credential is a subscription OAuth token, not an API key "
-                "(sk-ant-api…). Paste a key from the Anthropic console — or switch "
-                "to subscription mode.")
-    return None
+    baffling 'Not logged in' — refuse it while the human is still looking.
+
+    The rule itself lives in `yaaf.core.platform` now, because the platform
+    credential the Founder runs on needs the identical check and a chairman
+    should not get a different sentence depending on which form he pasted into.
+    """
+    from yaaf.core.platform import shape_error
+
+    return shape_error(mode, plaintext)
 
 
 @router.patch("/projects/{project_id}")

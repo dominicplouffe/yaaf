@@ -71,7 +71,18 @@ function CredentialGate({ onSaved }: { onSaved: () => void }) {
           <option value="subscription">Claude subscription token</option>
         </select>
       </label>
-      <SecretInput value={value} onChange={setValue} placeholder="sk-ant-…" />
+      <SecretInput
+        value={value}
+        onChange={setValue}
+        placeholder={mode === "subscription" ? "sk-ant-oat…" : "sk-ant-api…"}
+      />
+      <p className="muted">
+        {mode === "subscription"
+          ? "A subscription token comes from `claude setup-token` and starts sk-ant-oat."
+          : "An API key comes from the Anthropic console and starts sk-ant-api."}{" "}
+        Pasting one where the other belongs is refused here rather than failing
+        on your first message.
+      </p>
       {error && <p className="error">{error}</p>}
       <button className="primary" disabled={busy || value.trim().length < 8} onClick={save}>
         {busy ? "Saving…" : "Save and start"}
@@ -281,7 +292,10 @@ export default function Founding() {
             <div className="turn turn-founder">
               <div className="turn-who">The Founder</div>
               <div className="turn-text muted">
-                Reading the role library, drafting, and grading its own goal…
+                Reading the role library, drafting a company, grading its own
+                goal against the grammar, and running the fire drill on what it
+                came up with. <strong>This takes a few minutes</strong> — it is
+                doing the work you would otherwise do on the form.
               </div>
             </div>
           )}
@@ -303,7 +317,7 @@ export default function Founding() {
             <div className="founding-actions">
               <span className="muted">⌘↵ to send</span>
               <button className="primary" disabled={busy || !message.trim()} onClick={send}>
-                {busy ? "Working…" : turns.length ? "Send" : "Draft the company"}
+                {busy ? "Working (minutes)…" : turns.length ? "Send" : "Draft the company"}
               </button>
             </div>
           </div>

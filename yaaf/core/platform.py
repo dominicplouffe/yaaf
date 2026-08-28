@@ -146,15 +146,38 @@ def clear_credential(session: Session) -> bool:
     return True
 
 
-def anthropic_client(session: Session):
-    """An Anthropic client authenticated with the platform credential.
+def founder_env(session: Session) -> dict[str, str]:
+    """The credential, as the environment the Claude Code CLI reads.
 
-    A subscription token authenticates as a bearer token rather than an API
-    key — the same split the per-project billing modes already make.
+    This is deliberately the same two-line split every agent already runs
+    under (:func:`yaaf.runner.daemon._billing_env`): a subscription token is
+    consumed by the CLI, which owns the OAuth exchange, and is not a Messages
+    API credential at all. An earlier version of this module handed the token
+    to the raw Messages API as a bearer token; it 401'd on every subscription,
+    because that is not what the token is for.
+
+    One credential story for the whole product is the point. A key that works
+    for a company's agents works for the Founder, and vice versa.
     """
-    import anthropic
-
     key = credential(session)
     if billing_mode(session) == "subscription":
-        return anthropic.Anthropic(auth_token=key)
-    return anthropic.Anthropic(api_key=key)
+        return {"CLAUDE_CODE_OAUTH_TOKEN": key}
+    return {"ANTHROPIC_API_KEY": key}
+
+
+def shape_error(mode: str, plaintext: str) -> str | None:
+    """Whether this credential can possibly be what its mode says it is.
+
+    Shared with the per-project billing check so both say the same sentence:
+    the message a chairman gets for pasting a subscription token into an
+    API-key field should not depend on which form he pasted it into.
+    """
+    is_oauth = plaintext.startswith("sk-ant-oat")
+    if mode == "subscription" and not is_oauth:
+        return ("that credential is not a subscription token (sk-ant-oat…). Run "
+                "`claude setup-token` and paste the result — or switch to API-key mode.")
+    if mode == "api_key" and is_oauth:
+        return ("that credential is a subscription OAuth token, not an API key "
+                "(sk-ant-api…). Paste a key from the Anthropic console — or switch "
+                "to subscription mode.")
+    return None

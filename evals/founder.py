@@ -23,6 +23,7 @@ apart, nothing downstream works — the Founder grades its own drafts with it.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
 import sys
@@ -64,18 +65,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--model", default="claude-opus-5")
     args = parser.parse_args(argv)
 
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        print("ANTHROPIC_API_KEY is not set; this eval calls a model and costs money.")
+    # Whichever credential this machine has, in the form the CLI reads it —
+    # the same two names every agent in a company runs under.
+    env = {name: os.environ[name]
+           for name in ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")
+           if os.environ.get(name)}
+    if not env:
+        print("set ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN; "
+              "this eval calls a model and costs money.")
         return 2
 
-    import anthropic
-
-    client = anthropic.Anthropic()
-
-    brief = grade_goal(_brief(), client=client, model=args.model)
+    brief = asyncio.run(grade_goal(_brief(), env=env, model=args.model))
     _report("the chairman's brief, as typed", brief)
 
-    goal = grade_goal(_reference_goal(), client=client, model=args.model)
+    goal = asyncio.run(grade_goal(_reference_goal(), env=env, model=args.model))
     _report("the goal it produced (the reference)", goal)
 
     failures: list[str] = []

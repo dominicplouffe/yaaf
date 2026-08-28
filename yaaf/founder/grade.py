@@ -13,6 +13,7 @@ place to look for model-graded judgement.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -86,37 +87,21 @@ class GoalGrade:
         }
 
 
-_GRADE_SCHEMA = {
-    "type": "object",
-    "additionalProperties": False,
-    "required": ["elements", "summary"],
-    "properties": {
-        "elements": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["element", "verdict", "note"],
-                "properties": {
-                    "element": {"type": "string", "enum": list(GOAL_ELEMENTS)},
-                    "verdict": {"type": "string", "enum": ["present", "weak", "missing"]},
-                    "note": {
-                        "type": "string",
-                        "description": (
-                            "For present: quote the line that carries it. For weak or "
-                            "missing: name the specific thing to add, in one sentence. "
-                            "Never 'consider adding more detail'."
-                        ),
-                    },
-                },
-            },
-        },
-        "summary": {
-            "type": "string",
-            "description": "Two sentences at most: what this goal will do to a company.",
-        },
-    },
-}
+#: The shape the grader must answer in. Asked for in the prompt and parsed
+#: back, rather than enforced by `output_config`: the Founder runs through the
+#: Claude Code CLI so the whole product has one credential story, and the CLI
+#: does not expose the Messages API's structured-output parameter. A malformed
+#: answer is recoverable — see `_parse` — and a second way to authenticate
+#: would not be.
+_SHAPE = """{
+  "elements": [
+    {"element": "<one of: %ELEMENTS%>",
+     "verdict": "present | weak | missing",
+     "note": "<for present: quote the line that carries it. for weak or missing: "
+             "name the specific thing to add, in one sentence>"}
+  ],
+  "summary": "<two sentences at most: what this goal will do to a company>"
+}""".replace("%ELEMENTS%", " | ".join(GOAL_ELEMENTS))
 
 _GRADE_SYSTEM = """\
 You grade a yaaf project goal against the goal grammar below. You are a critic, \
@@ -130,6 +115,10 @@ apply — do not mark it missing to be thorough. A note on a missing or weak \
 element must name the specific thing to add, so the author can act on it \
 without asking you a follow-up question.
 
+Answer with JSON and nothing else — no preamble, no code fence, no commentary:
+
+{shape}
+
 The grammar follows, verbatim.
 
 ---
@@ -138,33 +127,48 @@ The grammar follows, verbatim.
 """
 
 
-def grade_goal(goal: str, *, client, model: str = "claude-opus-5") -> GoalGrade:
+def _parse(text: str) -> dict:
+    """The grader's JSON, out of whatever the model wrapped it in.
+
+    A fenced block or a sentence of preamble is a formatting slip, not a
+    failed grade, and re-running costs a model call. Take the outermost object
+    and try that before giving up.
+    """
+    text = text.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
+        text = re.sub(r"\n?```$", "", text.strip())
+    try:
+        return json.loads(text)
+    except ValueError:
+        start, end = text.find("{"), text.rfind("}")
+        if start == -1 or end <= start:
+            raise
+        return json.loads(text[start:end + 1])
+
+
+async def grade_goal(goal: str, *, env: dict[str, str],
+                     model: str = "claude-opus-5") -> GoalGrade:
     """Grade goal prose against the eight elements of the goal grammar.
 
-    The client is injected rather than constructed so this stays usable from
-    three places that resolve credentials differently: the Founder (platform
-    credential), the eval harness (whatever the run is configured with), and a
-    developer at a REPL.
+    Runs on the credential the caller hands it, which is the same environment
+    every agent in this product runs under — an API key or a subscription
+    token, resolved once in `yaaf.core.platform.founder_env`.
     """
-    grammar = GRAMMAR_PATH.read_text()
-    response = client.messages.create(
+    from yaaf.founder.session import run_once
+
+    system = _GRADE_SYSTEM.format(shape=_SHAPE, grammar=GRAMMAR_PATH.read_text())
+    text = await run_once(
+        prompt=f"Grade this goal:\n\n{goal}",
+        system=system,
+        env=env,
         model=model,
-        max_tokens=8000,
-        system=[{
-            "type": "text",
-            "text": _GRADE_SYSTEM.format(grammar=grammar),
-            # The rubric is the same on every call and dwarfs the goal; caching
-            # it is the difference between paying for it once and every time.
-            "cache_control": {"type": "ephemeral"},
-        }],
-        output_config={"format": {"type": "json_schema", "schema": _GRADE_SCHEMA}},
-        messages=[{"role": "user", "content": f"Grade this goal:\n\n{goal}"}],
     )
-    payload = json.loads("".join(b.text for b in response.content if b.type == "text"))
+    payload = _parse(text)
     return GoalGrade(
         elements=[
             ElementGrade(element=e["element"], verdict=e["verdict"], note=e["note"])
             for e in payload["elements"]
         ],
-        summary=payload["summary"],
+        summary=payload.get("summary", ""),
     )
