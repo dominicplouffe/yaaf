@@ -2065,8 +2065,62 @@ class RehearseIn(BaseModel):
 REHEARSAL_TIMEOUT_S = 180
 
 
+def _carry_library_roles(session: Session, spec: dict) -> dict:
+    """Put a definition in the spec for every role it hires from this library.
+
+    The drill builds its own throwaway database, so the live library is not
+    there to hire from: a role resolves only if the spec carries it, or if the
+    process happens to be sitting in a checkout with a `roles/` directory. The
+    CLI usually is. The server never is — the image ships `yaaf/`, not
+    `roles/` — so the dashboard's drill could not resolve a single library
+    role, and every spec that hired one reported a company that would not
+    start. That is the one verdict a fire drill must never get wrong.
+
+    Definitions already carried win: a setup file describing a role this
+    install has not got is exactly the case the carried copy exists for.
+    """
+    project = spec.get("project") if isinstance(spec.get("project"), dict) else spec
+    if not isinstance(project, dict):
+        return spec
+    named = {project.get("ceo_role_slug") or "ceo"}
+    named.update(team.get("role_slug") for team in (project.get("teams") or [])
+                 if isinstance(team, dict) and team.get("role_slug"))
+    carried = [r for r in (spec.get("roles") or []) if isinstance(r, dict)]
+    missing = named - {r.get("slug") for r in carried} - {None}
+    if not missing:
+        return spec
+    out = list(carried)
+    for slug in sorted(missing):
+        role = session.execute(select(Role).where(Role.slug == slug)).scalar_one_or_none()
+        if role is None:
+            continue  # the drill reports it unresolved, which is the truth
+        version = session.execute(
+            select(RoleVersion)
+            .where(RoleVersion.role_id == role.id)
+            .order_by(RoleVersion.version.desc())
+            .limit(1)
+        ).scalar_one()
+        out.append({
+            "slug": role.slug,
+            "name": role.name,
+            "is_ceo_role": role.is_ceo_role,
+            "category": role.category,
+            "domains": role.domains or [],
+            "description": version.description,
+            "system_prompt": version.system_prompt,
+            "model": version.model,
+            "effort": version.effort,
+            # Roles no longer own MCP servers; an old pinned version carrying
+            # the key would 422 on the way into the drill's library.
+            "tool_permissions": {k: v for k, v in (version.tool_permissions or {}).items()
+                                 if k != "mcp_servers"},
+            "secret_scopes": version.secret_scopes,
+        })
+    return {**spec, "roles": out}
+
+
 @router.post("/rehearse")
-def rehearse(body: RehearseIn) -> dict:
+def rehearse(body: RehearseIn, session: Session = Depends(db)) -> dict:
     """Run a spec as a company for nothing, and report what happened.
 
     **In a subprocess, always.** The drill re-points the process-global engine
@@ -2088,7 +2142,7 @@ def rehearse(body: RehearseIn) -> dict:
 
     with tempfile.TemporaryDirectory(prefix="yaaf-rehearse-") as tmp:
         spec_path = Path(tmp) / "spec.json"
-        spec_path.write_text(jsonlib.dumps(body.spec))
+        spec_path.write_text(jsonlib.dumps(_carry_library_roles(session, body.spec)))
         argv = [sys.executable, "-m", "yaaf.rehearsal", str(spec_path),
                 "--json", "--days", str(body.days)]
         if body.usd_per_run:
