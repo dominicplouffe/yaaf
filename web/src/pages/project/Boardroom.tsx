@@ -75,10 +75,20 @@ export default function Boardroom({ projectId, dash }: { projectId: string; dash
     }
   }
 
-  // The CEO is the agent with no team; a running non-check run of theirs is
-  // "the CEO is working on it" — presence without a paid status question.
+  // The CEO is the agent with no team, and these are the two kinds of run that
+  // mean it is working on something a reply could come out of.
+  //
+  // Named rather than excluded. The old test was "any running run of the CEO's
+  // that is not a success_check", and a live chat session is exactly that: a
+  // resident run, no team, running for as long as the session is adopted —
+  // days. So the banner said "the CEO is in a run now" permanently, on the one
+  // page where presence is the whole point, and the rail badge read "in a run"
+  // while the truth was "chat live — replies in seconds". A blocklist gets this
+  // wrong again the next time a run kind is added; a list of what counts does
+  // not.
   const ceoRun = (runs ?? []).find(
-    (r) => r.status === "running" && !r.team_name && r.kind !== "success_check",
+    (r) => r.status === "running" && !r.team_name
+      && (r.kind === "agent_run" || r.kind === "inbox_run"),
   );
   // The wall the live session last hit. A refused task_create looks exactly
   // like a CEO that decided not to bother, and the difference only existed in
