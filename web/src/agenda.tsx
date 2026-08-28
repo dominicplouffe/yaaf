@@ -106,6 +106,7 @@ export default function Agenda({ projectId }: { projectId: string }) {
   const { data, error } = usePoll(
     () => get<AgendaView>(`/observe/projects/${projectId}/agenda?days=${days}`),
     60000,
+    [projectId, days],
   );
 
   if (!data) {

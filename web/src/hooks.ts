@@ -3,8 +3,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 /** Fetch on mount and poll on an interval; exposes reload() for after-action refreshes.
     `at` is when the data last landed — a reader who reconciles against their own
     records needs to know how old a number is, and a stale-but-labelled number
-    beats a blank screen. Data survives an error for exactly that reason. */
-export function usePoll<T>(fn: () => Promise<T>, intervalMs = 5000): {
+    beats a blank screen. Data survives an error for exactly that reason.
+
+    `deps` are the values `fn` reads that the caller can change — a chosen
+    window, a selected channel. The fetcher itself lives in a ref, so without
+    them a click would only take effect on the next tick: the button lights up
+    and the numbers below it keep answering the question you just stopped
+    asking. Naming them here re-fetches at once and restarts the clock. */
+export function usePoll<T>(fn: () => Promise<T>, intervalMs = 5000, deps: unknown[] = []): {
   data: T | null;
   error: string | null;
   at: Date | null;
@@ -27,11 +33,14 @@ export function usePoll<T>(fn: () => Promise<T>, intervalMs = 5000): {
       .catch((e: Error) => setError(e.message));
   }, []);
 
+  // A single string, because the effect's dependency list has to be the same
+  // length on every render and a caller's array is not.
+  const depKey = JSON.stringify(deps);
   useEffect(() => {
     reload();
     const timer = setInterval(reload, intervalMs);
     return () => clearInterval(timer);
-  }, [reload, intervalMs]);
+  }, [reload, intervalMs, depKey]);
 
   return { data, error, at, reload };
 }
