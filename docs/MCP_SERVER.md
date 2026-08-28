@@ -1,9 +1,9 @@
 # The chairman's MCP server — chairing yaaf from a model client
 
-**Status: M0–M3 landed — the transport, the principal, the read surface, OAuth
-with a chairman login, and the steer verbs behind two-phase confirmation. One
-line of M2 is unticked and cannot be ticked from here: a real connection from
-claude.ai against a public deployment. M4 and M5 are unbuilt.** This is the design and the tracking doc: the tool surface, the
+**Status: M0–M4 landed — the transport, the principal, the read surface, OAuth
+with a chairman login, the steer verbs behind two-phase confirmation, and the
+design flow. One line of M2 is unticked and cannot be ticked from here: a real
+connection from claude.ai against a public deployment. M5 is unbuilt.** This is the design and the tracking doc: the tool surface, the
 security model that makes it safe to ship, and the milestones to check off.
 Update the checkboxes as they land; if a decision here turns out wrong, change
 the doc in the same PR that changes the code.
@@ -333,12 +333,12 @@ discovering later.
 
 | Tool | Does | Backing | Confirm? | Status |
 |---|---|---|---|---|
-| `catalog` | Search the role and crew library. | `yaaf/founder/tools.py: search_roles, search_crews` | no | M4 |
-| `read_source` | What a candidate data source actually serves. | `yaaf/founder/tools.py: read_source` | no | M4 |
-| `grade_goal` | Grade a draft goal against [GOAL_GRAMMAR.md](GOAL_GRAMMAR.md) — eight things a goal must contain. | `yaaf/founder/tools.py` | no | M4 |
-| `rehearse` | The fire drill: simulate the project for N days, create nothing. | `POST /admin/rehearse` | no | M4 |
-| `create_project` | Create from a validated bundle. | `POST /admin/projects` | yes | M4 |
-| `clone_project` | Clone an existing one; export a spec. | `POST /admin/projects/{id}/clone`, `GET /export` | yes | M4 |
+| `catalog` | Search the role and crew library. | `yaaf/founder/tools.py: search_roles, search_crews` | no | **done** (M4) |
+| `read_source` | What a candidate data source actually serves. | `yaaf/founder/tools.py: read_source` | no | **done** (M4) |
+| `grade_goal` | Grade a draft goal against [GOAL_GRAMMAR.md](GOAL_GRAMMAR.md) — eight things a goal must contain. | `yaaf/founder/tools.py` | no | **done** (M4) |
+| `rehearse` | The fire drill: simulate the project for N days, create nothing. | `POST /admin/rehearse` | no | **done** (M4) |
+| `create_project` | Create from a validated bundle. | `POST /admin/projects` | yes | **done** (M4) |
+| `clone_project` | Clone an existing one; export a spec. | `POST /admin/projects/{id}/clone`, `GET /export` | yes | **done** (M4) |
 
 The design flow is deliberately *primitives, not a wizard*. The calling model
 drafts the bundle with the user's real context in hand; `grade_goal` and
@@ -555,13 +555,32 @@ stays in the browser where the chairman is the only reader.
 **Done when:** an approval can be decided from the client, and the record shows
 plainly that a machine carried the signature.
 
-### M4 — Design a project
-- [ ] Lift `search_roles` / `search_crews` / `read_source` / `grade_goal` out of
-      `yaaf/founder/tools.py` into a shared toolset both the Founder and MCP call
-- [ ] `rehearse`, `create_project`, `clone_project`
-- [ ] Prompts: `brief`, `why-at-risk`, `spot-audit`, `design`
-- [ ] `test_mcp_founding.py` — a bundle that fails `validate()` cannot be
-      created through MCP any more than through the form
+### M4 — Design a project ✅
+- [x] `catalog`, `read_source`, `grade_goal` call `yaaf/founder/tools.py`
+      directly rather than being lifted into a third module — the functions were
+      already plain and session-scoped, so a shared package would have been a
+      layer with one job and two callers
+- [x] `rehearse`, `create_project`, `clone_project`
+- [x] Prompts: `brief`, `why-at-risk`, `spot-audit`, `design`, with
+      `prompts/list` and `prompts/get`, scope-filtered — a reader is offered the
+      three it can carry out
+- [x] `test_mcp_founding.py` — a draft that fails `validate()` (including an
+      invented constitution rule) is refused here exactly as at the form; the
+      chairman is the token's user and never the argument; a credential is named
+      and never carried; an export refuses to include values; the drill creates
+      nothing
+
+**Three narrowings this scope adds that the HTTP surface does not have.**
+`POST /admin/projects` accepts any `chairman_email`, so the tool overwrites it
+with the token's own user — a model must not create a project chaired by
+somebody else. A billing credential is attached **by name**, never by value, and
+a service credential named in that field is refused. And `grade_goal` runs on
+the *platform* credential, never a project's, because a project that does not
+exist yet has nothing to charge; with none configured it returns the eight
+element names and points at `yaaf://docs/goal-grammar` rather than refusing.
+
+**Done when:** a project can be designed and created end-to-end from a client,
+and the fire drill ran before it existed.
 
 **Done when:** a project can be designed and created end-to-end from a client,
 and the fire drill ran before it existed.

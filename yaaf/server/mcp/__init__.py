@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from yaaf.server.mcp import (  # noqa: F401 - importing registers the tools
     protocol,
+    tools_create,
     tools_read,
     tools_steer,
 )

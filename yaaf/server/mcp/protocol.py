@@ -17,7 +17,7 @@ import logging
 
 from sqlalchemy.orm import Session
 
-from yaaf.server.mcp import registry, resources
+from yaaf.server.mcp import prompts, registry, resources
 from yaaf.server.mcp.auth import Principal, ToolRefusal
 
 log = logging.getLogger("yaaf.mcp")
@@ -78,7 +78,8 @@ def handle(message: dict, principal: Principal, session: Session) -> dict | None
         return _result(message_id, {
             "protocolVersion": asked if asked in SUPPORTED_VERSIONS else PROTOCOL_VERSION,
             "capabilities": {"tools": {"listChanged": False},
-                             "resources": {"listChanged": False, "subscribe": False}},
+                             "resources": {"listChanged": False, "subscribe": False},
+                             "prompts": {"listChanged": False}},
             "serverInfo": SERVER_INFO,
             # What the client is holding, said plainly. A model that knows it
             # has read and not steer stops proposing writes it cannot make.
@@ -130,12 +131,23 @@ def handle(message: dict, principal: Principal, session: Session) -> dict | None
         except ToolRefusal as refusal:
             return _error(message_id, INVALID_PARAMS, refusal.message)
 
+    if method == "prompts/list":
+        return _result(message_id, {"prompts": prompts.listing(principal)})
+
+    if method == "prompts/get":
+        name = params.get("name")
+        if not isinstance(name, str):
+            return _error(message_id, INVALID_PARAMS, "prompts/get needs a name")
+        try:
+            return _result(message_id,
+                           prompts.get(session, principal, name, params.get("arguments") or {}))
+        except ToolRefusal as refusal:
+            return _error(message_id, INVALID_PARAMS, refusal.message)
+
     # Declared in no capability, so a spec-abiding client never asks. Answered
     # rather than errored because some clients probe anyway.
     if method == "resources/templates/list":
         return _result(message_id, {"resourceTemplates": []})
-    if method == "prompts/list":
-        return _result(message_id, {"prompts": []})
 
     return _error(message_id, METHOD_NOT_FOUND, f"unsupported method {method!r}")
 
