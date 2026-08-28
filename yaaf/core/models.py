@@ -109,13 +109,13 @@ class SuccessTestKind(enum.StrEnum):
     # platform: the test is a structural check of the plan itself — is there
     # scope, is it staged, is it estimated, does it fit the money — evaluated
     # in the server rather than in a sandbox. An agent proposing this kind is
-    # refused, because a company that can author its own planning gate does not
+    # refused, because a project that can author its own planning gate does not
     # have one.
     PLAN = "plan"
 
 
 class ProjectMode(enum.StrEnum):
-    """What shape this company takes, chosen once at creation.
+    """What shape this project takes, chosen once at creation.
 
     EXPLORE is the open-ended arm — a goal, bets, evidence, and the chairman's
     judgement on when it has earned its keep. DELIVER ships one thing and then
@@ -161,7 +161,7 @@ class Recurrence(enum.StrEnum):
     true at the end, met once and closed. Operate runs on a rhythm, and most of
     what it owes is owed again next cycle — the gameweek memo, the morning
     inbox sweep, the hourly routing check. Expressed as TERMINAL, those became
-    one row met once, and a company that had shipped 1 of 38 memos looked
+    one row met once, and a project that had shipped 1 of 38 memos looked
     finished. Expressed as prose, they were invisible to every check the
     platform runs.
 
@@ -250,7 +250,7 @@ class CycleStatus(enum.StrEnum):
     unfinished (the unsettled scope carries into the next cycle); SKIPPED
     rolled with nothing ever accepted into it at all — and two consecutive
     SKIPPEDs pause the project, because a rhythm nobody dances to is a bill,
-    not a company.
+    not a project.
     """
 
     OPEN = "open"
@@ -297,10 +297,10 @@ class RunKind(enum.StrEnum):
     # Reading the inbox. A wake whose ONLY reason is ordinary unread messages —
     # nothing from the chairman, nothing in the boardroom, no task, no notice,
     # no heartbeat. It runs, it is logged, it is billed to the ledger like any
-    # other run, and it spends its OWN ceiling rather than the company's work
+    # other run, and it spends its OWN ceiling rather than the project's work
     # allowance.
     #
-    # 57% of every run one audited company ever spent was this: agents waking
+    # 57% of every run one audited project ever spent was this: agents waking
     # to read a message and reply "Ack". At the daily reset, three of the first
     # four runs went to agents reading the message that told them not to work —
     # which consumed the hourly ceiling, so the two agents actually holding
@@ -364,7 +364,7 @@ class NoticeKind(enum.StrEnum):
     BUDGET_EXHAUSTED = "budget_exhausted"
     # The real-world spend envelope (external_monthly_usd_cap) — warned at the
     # same ratio as the model budget, but never pausing anything: the wall is
-    # enforced where money is cleared and booked, not by stopping the company.
+    # enforced where money is cleared and booked, not by stopping the project.
     EXTERNAL_SPEND_WARNING = "external_spend_warning"
     # Money came IN — booked only by a signed webhook, never by an agent, so
     # income can be reported without ever being inventable.
@@ -381,7 +381,7 @@ class NoticeKind(enum.StrEnum):
     TASK_CHECK_FAILED = "task_check_failed"
     TASK_BLOCKED = "task_blocked"
     AGENT_RUN_REAPED = "agent_run_reaped"
-    # The company is running, has work, and has started nothing for hours. Urgent
+    # The project is running, has work, and has started nothing for hours. Urgent
     # by construction: the whole point is that the silence already went on too
     # long, so batching this notice behind another would extend the fault it
     # exists to report.
@@ -435,7 +435,7 @@ class Project(Base):
     goal: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(16), default=ProjectStatus.DRAFT)
     status_reason: Mapped[str | None] = mapped_column(Text)
-    # What shape this company takes. Explore is the default and today's
+    # What shape this project takes. Explore is the default and today's
     # behaviour; outside it, a task must serve a requirement.
     mode: Mapped[str] = mapped_column(String(16), default=ProjectMode.EXPLORE,
                                       server_default=ProjectMode.EXPLORE)
@@ -476,13 +476,13 @@ class ProjectMember(Base):
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
     role: Mapped[str] = mapped_column(String(16))  # "chairman" | "observer"
     # When this member last read the briefing — the "since you were last here"
-    # mark. Per member and per project on purpose: reading one company's brief
+    # mark. Per member and per project on purpose: reading one project's brief
     # says nothing about having read another's, and a single box-wide mark
-    # would silently swallow whichever company he did not open.
+    # would silently swallow whichever project he did not open.
     #
     # NULL means never read, which the briefing reads as "since the project
     # started" rather than "since forever": a first visit should summarise the
-    # company, not an empty window.
+    # project, not an empty window.
     last_briefed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
 
@@ -811,7 +811,7 @@ class Commitment(Base):
     The chairman's ask: "it's impossible to get a delivery date or anything of
     substance that can offer me some sort of guarantee." The guarantee is not
     that the date holds — nobody can promise that. It is that when the date
-    stops holding the company cannot quietly add work: new scope is refused,
+    stops holding the project cannot quietly add work: new scope is refused,
     the chairman is emailed, and what happens next is his decision, made with
     the projection in front of him.
 
@@ -1048,7 +1048,7 @@ class Cycle(Base):
     again on the constitution's rhythm (`cycle_frequency` + `cycle_day`, read
     in the constitution's one timezone).
 
-    Cycles roll in the JANITOR: a rhythm firing while the company is busy or
+    Cycles roll in the JANITOR: a rhythm firing while the project is busy or
     broke must still be recorded, and opening a cycle costs nothing. At most
     one is ever open — a project paused three weeks resumes into one new
     cycle, not twenty-one.
@@ -1179,7 +1179,7 @@ class Review(Base):
     The chairman described it: "status meetings to discuss the goal and
     hypothesis, alter requirements, and judge whether the deadline will be
     met" — all three clauses. The janitor opens, numbers and emails it with
-    ZERO tokens, which is why it happens on exactly the days a busy company
+    ZERO tokens, which is why it happens on exactly the days a busy project
     most needs it. The CEO's variance narrative arrives on a reserved
     governance run (wake reason kind ``review``). The chairman's six levers —
     cut, add, reword, move the date, raise the budget, accept the slip — are
@@ -1359,7 +1359,7 @@ class Run(Base):
     # Did this run change anything? Incremented by the API layer on every
     # accepted write — a task claimed or closed, a message posted, evidence
     # filed, a memory written, scope moved. Zero means the run woke, thought,
-    # and left the company exactly as it found it.
+    # and left the project exactly as it found it.
     produced: Mapped[int] = mapped_column(Integer, default=0)
     # Whether this run spends the work allowance. True at birth and set False
     # at finalize when `produced` is zero, because a wake cannot be known to be
@@ -1376,7 +1376,7 @@ class Run(Base):
 
 
 class Account(Base):
-    """The account registry (CEO Charter, stage E): every identity the company
+    """The account registry (CEO Charter, stage E): every identity the project
     creates out in the world, on the record — record-only by the chairman's
     decision. No orphan signups: when a project is stopped for good, this is
     how its owner sees what exists and settles it. `owner` is situational —
@@ -1525,7 +1525,7 @@ class PlatformSetting(Base):
     """Product-wide configuration, above any project.
 
     Every other setting in this system belongs to a project, because every
-    other setting binds a company. These bind the *platform* — the things that
+    other setting binds a project. These bind the *platform* — the things that
     have to be true before a project exists at all, starting with how the
     Founder pays for the conversation in which a project gets designed.
 
@@ -1545,9 +1545,9 @@ class PlatformSetting(Base):
 
 
 class FoundingThread(Base):
-    """One conversation with the Founder, and the company it is drafting.
+    """One conversation with the Founder, and the project it is drafting.
 
-    This is deliberately not a Project. Nothing here is a company yet: no
+    This is deliberately not a Project. Nothing here is a project yet: no
     agents exist, no money can be spent, no rule binds anyone. It is a
     transcript and a draft `project_setup` bundle — the same object the
     importer accepts and the form posts — carried together so the chairman can
@@ -1570,7 +1570,7 @@ class FoundingThread(Base):
     # The current proposal: {"project": {...}, "roles": [...]}, or null before
     # the Founder has drafted anything.
     draft_bundle: Mapped[dict | None] = mapped_column(JSONVariant)
-    # Set once the chairman turns a draft into a real company.
+    # Set once the chairman turns a draft into a real project.
     created_project_id: Mapped[str | None] = mapped_column(String(40))
     # A turn runs in a background thread and takes minutes, so two questions
     # outlive the request that started it and cannot be answered from the

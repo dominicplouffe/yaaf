@@ -3,7 +3,7 @@
 The forecast stage 5 builds is remaining ÷ velocity, so the pace has to be
 measured on the thing being forecast. Tasks closing is activity; a requirement
 going MET is progress — the audited install had a complete task-throughput
-query and still could not say whether the company was faster than last week.
+query and still could not say whether the project was faster than last week.
 
 Pinned here:
 

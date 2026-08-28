@@ -4,7 +4,7 @@ Every screen this product had was in the present tense. The desk says what
 needs you *now*, the overview says what is true *now*, and Records is four
 tables you read to reconstruct a weekend by hand. A chairman who comes back
 after three days had no way to ask the only question he actually has — what
-happened? — and the only mail he ever got was an alarm. A company that writes
+happened? — and the only mail he ever got was an alarm. A project that writes
 to you exclusively with bad news is one you stop opening.
 
 Two properties make this trustworthy rather than decorative:
@@ -20,13 +20,13 @@ exhausted.
 already wrote down under its own rules: a requirement is MET because the
 platform ran the test, evidence counts because the verifier fetched it. The
 briefing adds no judgement of its own — it is arithmetic over the record, so
-it cannot flatter the company the way a self-authored status can.
+it cannot flatter the project the way a self-authored status can.
 
 The window is the interesting part. "Since you were last here" is not 24
 hours: it is `project_members.last_briefed_at`, stamped when the chairman
 acknowledges the panel, so a weekend away reads as a weekend. NULL means never
 read, which composes from the project's start rather than an empty window — a
-first visit should summarise the company, not nothing.
+first visit should summarise the project, not nothing.
 
 `render_text` is the same content for the daily push. One composer, two
 deliveries: a panel and an email that can never disagree about what happened.
@@ -83,17 +83,17 @@ from yaaf.server import policy
 #: that predates the column, since a new one composes from the project start.
 DEFAULT_WINDOW_HOURS = 24.0
 
-#: Runs that ended without producing anything the company keeps. The same set
+#: Runs that ended without producing anything the project keeps. The same set
 #: velocity calls waste, and named identically so the two cannot drift.
 DEAD_STATUSES = (RunStatus.FAILED, RunStatus.REAPED, RunStatus.KILLED,
                  RunStatus.TERMINATED_REFUSALS)
 
-#: Notices that are the platform acting on the company rather than telling it
+#: Notices that are the platform acting on the project rather than telling it
 #: something. These are the "decided itself" lines: each one is a wall that
 #: moved without anybody's say-so, and the chairman is entitled to hear about
 #: it in the same breath as the work.
 SELF_ACTING_NOTICES = {
-    NoticeKind.BUDGET_EXHAUSTED: "the platform paused the company — the monthly budget ran out",
+    NoticeKind.BUDGET_EXHAUSTED: "the platform paused the project — the monthly budget ran out",
     NoticeKind.BUDGET_WARNING: "the budget passed its warning line and the CEO was told to cut burn",
     NoticeKind.COMMITMENT_AT_RISK: "the delivery date moved to AT RISK — new scope is frozen",
     NoticeKind.COMMITMENT_BREACHED: "the delivery date passed with scope still open",
@@ -101,7 +101,7 @@ SELF_ACTING_NOTICES = {
     NoticeKind.COMMITMENT_MET: "every requirement in the commitment settled true",
     NoticeKind.CYCLE_ROLLED: "the cycle rolled — unfinished scope carried forward",
     NoticeKind.EXPLORE_DEADLINE: "the deadline you set has passed",
-    NoticeKind.STALLED: "the company had work and started nothing for hours",
+    NoticeKind.STALLED: "the project had work and started nothing for hours",
     NoticeKind.MEMORY_FULL: "a memory scope hit its cap and is refusing writes",
     NoticeKind.REVENUE: "money came in, booked by a signed webhook",
 }
@@ -136,7 +136,7 @@ def window_start(session: Session, project: Project) -> tuple[datetime, str]:
         return marked, "since you last read this"
     created = _aware(project.created_at)
     if created is not None:
-        return created, "since this company started"
+        return created, "since this project started"
     return utcnow() - timedelta(hours=DEFAULT_WINDOW_HOURS), "the last 24 hours"
 
 
@@ -175,13 +175,13 @@ def _scope_lines(session: Session, project: Project, since, until) -> list[dict]
     velocity keeps them out of pace:
 
     **R-00 is the plan gate lifting, not scope landing.** Counting it would
-    hand every new company a "requirement settled true" in its first hour, and
+    hand every new project a "requirement settled true" in its first hour, and
     the first briefing a chairman ever reads would be a false one. It gets its
     own line, because the plan starting to add up is real news.
 
     **A standing obligation is met again every cycle by design.** The weekly
     memo going out is worth reporting and is not progress; conflating the two
-    would make an Operate company look like it was finishing three things a
+    would make an Operate project look like it was finishing three things a
     week forever.
     """
     events = list(session.execute(
@@ -322,7 +322,7 @@ def _proof_lines(session: Session, project: Project, since, until) -> list[dict]
     """Evidence, split the way the verifier splits it. An agent writes its own
     evidence row, so the only number worth printing is the one the platform
     stood behind — and a failed check is worth printing louder than a passed
-    one, because it is the case where the company believed itself."""
+    one, because it is the case where the project believed itself."""
     rows = session.execute(
         select(Evidence.verification, func.count(Evidence.id)).where(
             Evidence.project_id == project.id,
@@ -451,7 +451,7 @@ def _run_lines(session: Session, project: Project, since, until) -> list[dict]:
 def _self_acting_lines(session: Session, project: Project, since, until) -> list[dict]:
     """What decided itself. The platform's whole promise is that things resolve
     without the chairman — approvals auto-deny, bets die on their date, budgets
-    pause the company. The cost of that promise is that he can miss all of it,
+    pause the project. The cost of that promise is that he can miss all of it,
     so every automatic resolution in the window is named here.
     """
     lines: list[dict] = []
@@ -588,7 +588,7 @@ def _ceo_authority_lines(session: Session, project: Project, since, until) -> li
     """What the CEO decided on its own authority, where the dial gave it one.
 
     These rows already exist and are already emailed; they are here because a
-    brief that omitted them would be describing a different company than the
+    brief that omitted them would be describing a different project than the
     one the autonomy dial actually built. Under the Supervised dial this is
     empty by construction.
     """
@@ -680,7 +680,7 @@ def _waiting(session: Session, project: Project, cons: ConstitutionDoc) -> dict:
 def _pulse(session: Session, project: Project, since, until) -> dict:
     """*Nothing is wrong* and *nothing is happening* are different screens.
 
-    The desk already refuses to congratulate a chairman whose companies are all
+    The desk already refuses to congratulate a chairman whose projects are all
     idle, and a brief with no lines has exactly the same duty: say whether the
     silence is a quiet week or a dead one. So an empty window still ships the
     three facts that tell them apart.
@@ -762,7 +762,7 @@ def project_briefing(session: Session, project: Project,
                      cons: ConstitutionDoc | None = None,
                      since: datetime | None = None,
                      until: datetime | None = None) -> dict:
-    """One company's briefing over one window. Pure read — the mark is only
+    """One project's briefing over one window. Pure read — the mark is only
     ever stamped by :func:`mark_read`, so polling this page can never lose the
     chairman the window he has not looked at yet."""
     cons = cons or effective(session, project.id)
@@ -810,12 +810,12 @@ def project_briefing(session: Session, project: Project,
 
 def desk_briefing(session: Session, since: datetime | None = None,
                   hours: float | None = None) -> dict:
-    """Every live company, each on its own window.
+    """Every live project, each on its own window.
 
-    Per-company windows rather than one shared clock, because the mark is per
-    company: reading one brief must not consume another's. A caller may force a
+    Per-project windows rather than one shared clock, because the mark is per
+    project: reading one brief must not consume another's. A caller may force a
     single window with `since`/`hours` — the CLI and a "show me the last 24
-    hours" control both want that — and then every company is read on it.
+    hours" control both want that — and then every project is read on it.
     """
     now = utcnow()
     forced = since if since is not None else (

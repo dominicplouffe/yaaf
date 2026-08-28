@@ -10,7 +10,7 @@
 what actually changed and what it means for you.
 
 **What it teaches:** per-agent **schedules**, **external evidence**, and the
-**drought** rule — the mechanism that stops a company producing activity and
+**drought** rule — the mechanism that stops a project producing activity and
 calling it progress.
 
 **What you need:** your Anthropic API key. Everything it reads is public.
@@ -66,13 +66,13 @@ run, so they wake into a board rather than into a decision.
 
 `drought_hours` is 96 on this project. When the platform has seen no verified
 external evidence for that long, **internal task creation is refused**. The
-company may only create work that reaches outside.
+project may only create work that reaches outside.
 
 For a watch desk this is exactly right: if a week goes by with no evidence
 recorded from a primary source, the desk has stopped watching and started
 writing. The refusal says so before you notice.
 
-It is also the rule most worth tuning. Set it too tight and you nag a company
+It is also the rule most worth tuning. Set it too tight and you nag a project
 doing exactly the right thing over a holiday week; too loose and you find out
 in a month.
 

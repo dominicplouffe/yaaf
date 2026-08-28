@@ -4,7 +4,7 @@
 #
 # By default this stops and removes the containers but KEEPS your data: the
 # Postgres volume, deploy/.env, workspaces and artifacts all survive, so
-# ./deploy_single_server.sh brings the same company back.
+# ./deploy_single_server.sh brings the same project back.
 #
 # It also removes the sandbox containers the runner launched. Those are
 # siblings, not compose services, so `docker compose down` leaves them behind —

@@ -28,7 +28,7 @@ failing goals the author was never told about.
 ### 1. A finish line, and the record that settles it  `finish_line`
 
 Not "get customers". Not "grow revenue". A condition that some specific
-artifact either shows or does not show, named precisely enough that the company
+artifact either shows or does not show, named precisely enough that the project
 cannot argue its way past it.
 
 > *"THE FINISH LINE is revenue booked through the payment processor's signed
@@ -36,7 +36,7 @@ cannot argue its way past it.
 
 The second half is the part that does the work. Every goal names *what* should
 be true; a good one also names **where you go to find out**, and picks a record
-the company does not author itself. A finish line the company can write into
+the project does not author itself. A finish line the project can write into
 its own status report is not a finish line.
 
 **Failing:** "Launch the product and get traction."
@@ -44,13 +44,13 @@ its own status report is not a finish line.
 
 ### 2. Anti-metrics — what explicitly does not count  `anti_metrics`
 
-Name the plausible substitutes for success and rule them out, because a company
+Name the plausible substitutes for success and rule them out, because a project
 under pressure will find them.
 
 > *"Signups, waitlists, traffic, stars and compliments are leading indicators,
-> and this company is not graded on leading indicators."*
+> and this project is not graded on leading indicators."*
 
-Without this, a company that cannot reach the finish line will quietly
+Without this, a project that cannot reach the finish line will quietly
 re-aim at the nearest thing it *can* reach, and report that instead. This is
 the single cheapest element to add and the one that prevents the most drift.
 
@@ -106,10 +106,10 @@ to never ship.
 
 ### 6. The human's role, bounded — including what they will refuse to do  `human_role`
 
-The chairman is not a member of the company. Say what they will supply, through
+The chairman is not a member of the project. Say what they will supply, through
 what channel, and — the part people forget — **what they will not do**.
 
-> *"Distribution is this company's job. The chairman will not post about it,
+> *"Distribution is this project's job. The chairman will not post about it,
 > will not email his contacts, and will not introduce you to anyone… for this
 > purpose he does not have one."*
 
@@ -117,16 +117,16 @@ what channel, and — the part people forget — **what they will not do**.
 > sign yourself up for a service and pay for it inside the spend envelope, do
 > that instead of asking."*
 
-Without the refusals, a company will plan around resources you never agreed to
+Without the refusals, a project will plan around resources you never agreed to
 provide, and you will discover this at the worst moment. The negative space is
 more informative than the positive space.
 
 ### 7. Resource posture — with its reason and its release condition  `resource_posture`
 
-Say what the company gets, *why* it is set there, and what would change it.
+Say what the project gets, *why* it is set there, and what would change it.
 
 > *"MONEY AND TIME ARE BOTH SHORT ON PURPOSE. The model budget is small while
-> you are still deciding what to build, because a company that spends its year
+> you are still deciding what to build, because a project that spends its year
 > on research never ships; it will be raised at a review once there is
 > something in the market that feeding would help."*
 
@@ -144,13 +144,13 @@ almost nobody writes it unprompted.
 > and shipped, what was tried in the market and what it returned, and what would
 > have to be different for this to work. That is a real result and it will be
 > read as one. What will not be accepted is a year of documents about a product
-> nobody outside this company ever saw."*
+> nobody outside this project ever saw."*
 
-Two things happen when you write this down. A company that is going to miss
+Two things happen when you write this down. A project that is going to miss
 knows what to do with its last weeks instead of hiding, and — because the
 failure deliverable is itself demanding — it removes the incentive to fake the
 success one. A goal without it quietly implies that failure is unspeakable,
-and companies that cannot speak about failure produce documents instead.
+and projects that cannot speak about failure produce documents instead.
 
 ---
 
@@ -175,7 +175,7 @@ and where none exists say what the goal is silent about.
 **Not every element applies to every project.** A one-week Deliver project with
 a fixed artifact does not need a bias or a resource-release condition, and
 saying so is a valid grade. What is very rarely optional is `finish_line`,
-`anti_metrics` and `failure_deliverable` — those three are what stop a company
+`anti_metrics` and `failure_deliverable` — those three are what stop a project
 from grading itself.
 
 ## What a grade is not

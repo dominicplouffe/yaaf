@@ -1,7 +1,7 @@
 """Platform-level configuration and the credential that pays for it.
 
 Everything else in this system is scoped to a project, because everything else
-binds a company. This module owns the handful of things that have to be true
+binds a project. This module owns the handful of things that have to be true
 *before* a project exists — starting with how the Founder pays for the
 conversation in which a project gets designed.
 
@@ -157,7 +157,7 @@ def founder_env(session: Session) -> dict[str, str]:
     because that is not what the token is for.
 
     One credential story for the whole product is the point. A key that works
-    for a company's agents works for the Founder, and vice versa.
+    for a project's agents works for the Founder, and vice versa.
     """
     key = credential(session)
     if billing_mode(session) == "subscription":

@@ -168,7 +168,7 @@ def test_memory_pressure_warns_the_curator_once(client):
 
 def test_leaderless_team_escalates_to_the_ceo(client):
     """A team with no lead has no curator at all: nobody on the platform may
-    free a slot. Silence there would be a company quietly unable to remember."""
+    free a slot. Silence there would be a project quietly unable to remember."""
     from yaaf.core.constitution import effective
     from yaaf.core.models import Project, Team
     from yaaf.server import janitor
@@ -191,7 +191,7 @@ def test_leaderless_team_escalates_to_the_ceo(client):
 
 # ── why nothing is happening ────────────────────────────────────────────────────
 # The dispatcher decides this ~30x/minute and used to throw it away, so a
-# company that had spent its whole daily allowance and one with an empty board
+# project that had spent its whole daily allowance and one with an empty board
 # were indistinguishable on every screen. activity_state is that decision made
 # readable; these tests pin it to the enforcer it reports on.
 
@@ -443,7 +443,7 @@ def test_the_moment_it_names_is_the_moment_the_dispatcher_agrees(client):
 def test_an_idle_agent_parked_at_its_cap_is_not_reported_as_a_throttle(client):
     """The ceiling only counts as the blocker when it is holding work back. An
     agent that burned its wakes and now has nothing to do is not being
-    throttled, and a banner that said so would fire on a healthy company."""
+    throttled, and a banner that said so would fire on a healthy project."""
     project = make_project(client, constitution={"wakes_per_agent_per_hour": 2})
     _drain()
     ceo = project["ceo_agent_id"]
@@ -457,7 +457,7 @@ def test_an_idle_agent_parked_at_its_cap_is_not_reported_as_a_throttle(client):
 
 def test_the_resident_chat_session_never_counts_against_the_ceiling(client):
     """A chat session is presence, not a wake — it is exempt from the timeout
-    and from the hourly brake alike. Counting it would throttle the company for
+    and from the hourly brake alike. Counting it would throttle the project for
     holding a conversation."""
     from yaaf.core.models import Run, RunKind, RunStatus
 

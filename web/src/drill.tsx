@@ -22,7 +22,7 @@ function Walk({ report }: { report: RehearsalReport }) {
           </span>
           <span className="dl">{step.label}</span>
           <span className="dd">
-            {step.na ? "not in this company's shape" : step.detail}
+            {step.na ? "not in this project's shape" : step.detail}
           </span>
           {step.tick !== null && !step.na && (
             <span className="dt mono">beat {step.tick}</span>
@@ -41,7 +41,7 @@ function Money({ report }: { report: RehearsalReport }) {
   if (!plan?.requirements) {
     return (
       <p className="help">
-        An Explore company has no requirements to estimate, so there is no plan
+        An Explore project has no requirements to estimate, so there is no plan
         total to price — its shape is bets and evidence, inside a cap of{" "}
         {unit}
         {money.cap.toLocaleString()}.
@@ -91,7 +91,7 @@ export default function Drill({ report }: { report: RehearsalReport }) {
 
       {report.findings && report.findings.length > 0 && (
         <>
-          <div className="drill-h">What the shape of this company means</div>
+          <div className="drill-h">What the shape of this project means</div>
           <ul className="drill-list">
             {report.findings.map((finding, i) => (
               <li key={i}>{finding}</li>
@@ -121,7 +121,7 @@ export default function Drill({ report }: { report: RehearsalReport }) {
           </ul>
           <p className="help">
             Your autonomy dial decides which of these park. Every one is a morning
-            the company is idle until you open the app.
+            the project is idle until you open the app.
           </p>
         </>
       )}
@@ -152,7 +152,7 @@ export default function Drill({ report }: { report: RehearsalReport }) {
             <>
               {" "}
               The longest serial chain is {report.capacity.chain_hours}h: one agent's
-              work cannot overlap itself, whatever the company-wide ceilings allow.
+              work cannot overlap itself, whatever the project-wide ceilings allow.
             </>
           )}
         </p>

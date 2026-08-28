@@ -1,4 +1,4 @@
-# FPL Manager — a company that plays your Fantasy Premier League season
+# FPL Manager — a project that plays your Fantasy Premier League season
 
 **You want:** to finish the 2026/27 official FPL season inside the top 100,000 overall,
 without spending your Saturday mornings reading six podcasts and a spreadsheet. **You don't
@@ -405,7 +405,7 @@ wake, and the cycle roll are all read in it.
 propose the cycle's requirements — the memo, the review, the numbers each must carry — and
 they sit on the **Plan** tab as *proposed* until you accept them. Nothing gets created until
 that plan holds and fits the budget. Every cycle roll reopens that gate, which is what turns
-"we should learn from last week" into a step the platform actually makes the company take.
+"we should learn from last week" into a step the platform actually makes the project take.
 
 Why each non-default value:
 
@@ -413,7 +413,7 @@ Why each non-default value:
 |---|---|---|
 | `monthly_usd_cap` | 75 | It's a hobby. Price it deliberately. |
 | `queue_ceiling` | 5 | The rhythm is weekly; fanning out wastes money |
-| `drought_hours` | 336 | An international break is a fortnight with no new match evidence. At 24h the platform would spend every break nagging a company doing exactly the right thing. |
+| `drought_hours` | 336 | An international break is a fortnight with no new match evidence. At 24h the platform would spend every break nagging a project doing exactly the right thing. |
 | `external_ratio_min` | 0.34 | Most gameweek work is analysis; the external scoreboard only lands weekly |
 | `approval_threshold_usd` | 10 | Nothing here should need to buy anything |
 | `chairman_report_interval_hours` | 24 | The anti-chatter brake, enforced as a refusal on unprompted boardroom posts |

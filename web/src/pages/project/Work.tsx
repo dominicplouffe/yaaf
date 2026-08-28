@@ -49,7 +49,7 @@ function Block({ title, children, clampable = true }: {
 }
 
 /** A gated task is stored as READY, and rendering it as "ready" is exactly how
-    a company sat silent for two hours behind a start time nobody could see:
+    a project sat silent for two hours behind a start time nobody could see:
     the row said work was in hand, and it was — just not yet claimable by
     anyone. "scheduled" is the honest word for it. */
 function taskBadge(status: string, notBefore?: string | null) {
@@ -437,7 +437,7 @@ export default function Work({ ctx }: { ctx: ProjectCtx }) {
         <p className="help" style={{ margin: "10px 0 0" }}>
           For each one: <b>does the claim actually prove what the test asked for?</b> Passing
           records that you looked. Failing needs one line saying why, and the CEO is woken with
-          it — that is the only one of the two that changes what the company does next.
+          it — that is the only one of the two that changes what the project does next.
         </p>
       )}
       {/* Two different objects, two grids. A completed task carries a success

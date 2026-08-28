@@ -1,4 +1,4 @@
-"""The founding moment gets a company: platform settings and founding threads.
+"""The founding moment gets a project: platform settings and founding threads.
 
 Two tables, both new, both guarded — on a fresh install `create_all` has
 already built them from the models.

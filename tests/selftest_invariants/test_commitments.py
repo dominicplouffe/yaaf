@@ -2,7 +2,7 @@
 
 The chairman's ask was "a delivery date and anything of substance that can
 offer me some sort of guarantee". The guarantee is not that the date holds —
-nobody can promise that. It is that when the date stops holding the company
+nobody can promise that. It is that when the date stops holding the project
 cannot quietly add work: new scope is refused with the arithmetic in the
 refusal, the chairman is emailed, and what happens next is his decision.
 

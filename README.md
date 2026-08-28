@@ -1,6 +1,6 @@
 # yaaf — Yet Another Agent Framework
 
-**Run a small AI company on your own hardware — with rules the agents can't
+**Run a small AI project on your own hardware — with rules the agents can't
 talk their way out of, and a delivery date they can't quietly break.**
 
 A **CEO** agent plans and prioritizes, teams of **role-based agents** do the
@@ -30,7 +30,7 @@ rules it never held. Break one and it doesn't get a stern reminder — it gets a
 ## Isn't this just a Claude Skill?
 
 **yaaf runs your skills** — a role's `tool_permissions.skills` is an allowlist
-handed to the Agent SDK. A skill is a *capability*. yaaf is the *company* that
+handed to the Agent SDK. A skill is a *capability*. yaaf is what
 decides which capability to point at what, checks it got done, pays for it from
 a capped budget, and keeps the receipt.
 
@@ -70,13 +70,13 @@ a test the platform runs itself.
 - **Nothing but the platform writes "met".** The strongest form of "never
   self-graded" is that the agent-side verb doesn't exist.
 - **A task serving no requirement is refused.** Work that makes nothing true is
-  how a company stays busy without finishing.
+  how a project stays busy without finishing.
 - **Estimates are scored, not trusted.** Estimate is weighed against actual
   cost; the next plan is read at that ratio. Small numbers buy one round.
 
 <img src="docs/screenshots/plan-and-promise.png" alt="The Plan tab: the commitment at risk with its two levers, pace and waste, the burn-up against the committed and projected dates, and requirements in stages with dependencies">
 
-## A delivery date the company can't quietly break
+## A delivery date the project can't quietly break
 
 The CEO proposes a date; it never **writes** one. The platform stamps it from
 its own projection of measured pace, and re-projects every tick. When the
@@ -86,7 +86,7 @@ the date — with a reason, and only to what the arithmetic now says. Who pulls
 those levers is the autonomy setting; that they're the only two is not.
 
 The guarantee isn't that the date holds. It's that when it stops holding, the
-company can't quietly add work and hope.
+project can't quietly add work and hope.
 
 ## What that looks like in practice
 
@@ -118,7 +118,7 @@ does all three and tells you after. Unchanged at either end — the platform
 still verifies what it can, refuses to quietly trust what it can't, caps every
 dollar, and hands security challenges to you. → **[AUTONOMY](docs/AUTONOMY.md)**
 
-## Three shapes of company
+## Three shapes of project
 
 Chosen once at creation, because the rules differ by shape.
 
@@ -149,11 +149,11 @@ budget, accept the slip. Each is recorded with your reason and shown at the
 yaaf rehearse examples/01-your-first-hour.json
 ```
 
-No deployment, no API key, no dollars. It runs your spec as a real company on
+No deployment, no API key, no dollars. It runs your spec as a real project on
 the real platform — dispatcher, janitor, policy engine, every refusal — with
 scripted agents in place of models, and tells you where it stopped: a role your
-library cannot resolve, a schedule attached to nobody, a company with no team
-in it, a plan that will not fit the cap. It also counts every point the company
+library cannot resolve, a schedule attached to nobody, a project with no team
+in it, a plan that will not fit the cap. It also counts every point the project
 would have stopped and waited for **you**, which is the autonomy dial in
 numbers rather than in prose.
 
@@ -172,7 +172,7 @@ got was an alarm. Two more now exist, and neither costs a model call.
 closed, proof verified or refused, money spent, what decided itself while you
 were out, and what that leaves waiting on you. Composed from the record rather
 than written by an agent, which is why it grades nothing and why it still
-arrives on the morning the platform paused the company for an exhausted budget.
+arrives on the morning the platform paused the project for an exhausted budget.
 Set a time and it lands in your inbox daily; the same panel opens the Desk,
 with a window that starts where you last read to.
 
@@ -180,7 +180,7 @@ with a window that starts where you last read to.
 review, the cycle roll, the kill dates, the clocks that decide themselves, and
 the promised date with the platform's projection beside it — drawn from the
 same heartbeats the dispatcher reads, so a wake it shows is a wake that runs.
-A company that runs while you sleep and will not show you its calendar is a
+A project that runs while you sleep and will not show you its calendar is a
 haunted one.
 
 ## The rest of the map
@@ -190,17 +190,17 @@ full reference in **[docs/FEATURES.md](docs/FEATURES.md)**:
 
 | Area | What you get |
 |---|---|
-| **The org** | Versioned role library, teams with leads, CEO-only planning, solo mode. A role edit never silently changes a running company — you repin. |
+| **The org** | Versioned role library, teams with leads, CEO-only planning, solo mode. A role edit never silently changes a running project — you repin. |
 | **The plan** | Ordered stages, a dependency graph with a critical path, a plan gate that checks the arithmetic. |
 | **Loop brakes** | Wake and run ceilings, a circuit breaker for ping-pong threads, refusal caps, suppressed idle wakes, an idempotency ledger. |
 | **Memory** | Project and team scopes with a curator; caps refuse rather than silently evict. |
 | **Money** | USD or token budgets, a separate real-world spend envelope, idempotent purchases, revenue only by signed webhook. |
 | **Sandbox & proof** | Chromium in the box, an assist protocol for human-only steps, a CEO-judgment metric on close quality. |
 | **Chat** | A resident CEO session: Boardroom and Slack answer in seconds, without consuming the work queue's caps. |
-| **Before you pay** | A fire drill: your spec run as a whole company on scripted agents, at $0 — does it get off the ground, how often will it stop and wait for you, what paces it. |
-| **Three tenses** | A briefing composed from the record — what happened while you were away, at zero tokens, so it still lands the morning the budget ran out — and a calendar of what the company is scheduled to do next. |
+| **Before you pay** | A fire drill: your spec run as a whole project on scripted agents, at $0 — does it get off the ground, how often will it stop and wait for you, what paces it. |
+| **Three tenses** | A briefing composed from the record — what happened while you were away, at zero tokens, so it still lands the morning the budget ran out — and a calendar of what the project is scheduled to do next. |
 | **Integrations** | Slack (Socket Mode — no public URL), GitHub repo-per-project, MCP data sources, signed webhooks, S3 artifacts, email alerts. → [INTEGRATIONS](docs/INTEGRATIONS.md) |
-| **Proof it works** | 626 offline tests, chaos tests, golden-transcript evals that gate prompt edits, a $0 scripted CI run of a whole company — and `yaaf rehearse`, which points that same run at your own spec. |
+| **Proof it works** | 626 offline tests, chaos tests, golden-transcript evals that gate prompt edits, a $0 scripted CI run of a whole project — and `yaaf rehearse`, which points that same run at your own spec. |
 
 ## What you give up
 
@@ -226,7 +226,7 @@ layer isn't worth it, the governance layer underneath stands on its own.
 
 ## Quickstart
 
-One script takes a bare box to a running company with real, sandboxed agents:
+One script takes a bare box to a running project with real, sandboxed agents:
 
 ```bash
 curl -fsSL https://get.docker.com | sh          # if docker isn't there yet
@@ -298,7 +298,7 @@ Index: **[docs/](docs/)**.
 yaaf/server     API, policy engine (the refusals), dispatcher, janitor,
                 evidence verifier, briefing and agenda composers, Slack bridge
 yaaf/runner     leases runs, launches sandbox containers, meters everything
-yaaf/rehearsal  the fire drill — your spec run as a company for $0
+yaaf/rehearsal  the fire drill — your spec run as a project for $0
 yaaf/cli        `yaaf` — admin/observe CLI and spend reporting
 web/            the chairman's dashboard (React, served at /app)
 crews/          pre-staffed teams — a named job with a team already on it

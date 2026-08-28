@@ -332,16 +332,16 @@ def _prepare_session(session: Session, project: Project, ceo: Agent) -> tuple[di
     job.billing_env = {**_billing_env(session, project), **role_secrets}
 
     # Chat gets its own scratch at /workspace: a run's staging must never race
-    # a resident session's. It also gets the company's working tree read-only
-    # at /company — without that the boardroom CEO could see nothing the
-    # company had made, and reasoned from an empty directory out loud.
+    # a resident session's. It also gets the project's working tree read-only
+    # at /project — without that the boardroom CEO could see nothing the
+    # project had made, and reasoned from an empty directory out loud.
     workspace = Path(settings().workspaces_root) / f"{project.slug}-chat"
     staging = workspace / ".yaaf"
     staging.mkdir(parents=True, exist_ok=True)
     workspace.chmod(0o777)
     staging.chmod(0o777)
-    company = Path(settings().workspaces_root) / project.slug
-    company.mkdir(parents=True, exist_ok=True)
+    project_tree = Path(settings().workspaces_root) / project.slug
+    project_tree.mkdir(parents=True, exist_ok=True)
     (staging / "system_prompt.txt").write_text(job.system_prompt)
     # A resident session has no context.json — stash the prompt at start so the
     # chairman can see what the session was primed with. Best-effort.
@@ -364,7 +364,7 @@ def _prepare_session(session: Session, project: Project, ceo: Agent) -> tuple[di
         run_id=run.id,
         name=sandbox.chat_container_name(project.slug),
         workspace_dir=str(workspace),
-        company_dir=str(company),
+        project_dir=str(project_tree),
         env=env,
     )
     log.info("chat session prepared for %s (%s)", project.slug, run.id)

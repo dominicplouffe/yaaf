@@ -118,7 +118,7 @@ def test_the_chairman_speaking_is_work_not_correspondence(client):
 def test_a_run_that_changed_nothing_is_refunded(client):
     """Outcome metering. A wake cannot be known to be empty until it has
     happened, so the refund is retroactive — but a run that woke, thought and
-    left the company exactly as it found it did not slow anything down, and the
+    left the project exactly as it found it did not slow anything down, and the
     allowance should not pretend otherwise."""
     project = make_project(client)
     _drain()
@@ -191,8 +191,8 @@ def test_capacity_counts_every_limit_not_just_the_daily_cap(client):
         # cap says — that was exactly the arithmetic error.
         assert forecast["available"] <= 12
         assert "an hour" in forecast["basis"] or "/hour" in forecast["basis"]
-        # A reserve is held back even with no failures on record yet: a company
-        # that has not failed is not a company that cannot.
+        # A reserve is held back even with no failures on record yet: a project
+        # that has not failed is not a project that cannot.
         assert forecast["retry_basis"]
 
 
@@ -280,7 +280,7 @@ def test_a_deadline_is_a_fact_and_needs_its_source(client):
 
 def test_the_due_by_drives_the_roll_not_the_calendar(client):
     """A rhythm that cannot follow the world is a rhythm the work ignores. The
-    platform believed one company rolled on Tuesdays while its real deadline
+    platform believed one project rolled on Tuesdays while its real deadline
     landed on a different day every week."""
     from yaaf.server.janitor import next_cycle_roll
 

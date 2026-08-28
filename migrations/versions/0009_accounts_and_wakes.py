@@ -1,7 +1,7 @@
 """The account registry, and wakes for everyone.
 
 Stage E of the CEO Charter (docs/AUTONOMY.md). `accounts` records every
-identity the company creates in the world — record-only, so wind-down is a
+identity the project creates in the world — record-only, so wind-down is a
 reading, not an archaeology. `agents.daily_at` generalizes the CEO's standup
 to any agent, through the same heartbeat dedup and wake-rate brakes.
 

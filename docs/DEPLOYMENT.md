@@ -14,7 +14,7 @@ subprocess. This is the **contributor** path: if you want to *run* yaaf, use
 [the deploy script](#the-real-thing--your-own-server) below instead.
 
 The compose deployment does four things for you that you have to do by hand
-here. Miss any one and you get a company that looks alive and never moves — so
+here. Miss any one and you get a project that looks alive and never moves — so
 each is called out.
 
 ```bash
@@ -39,7 +39,7 @@ export YAAF_DATABASE_URL=sqlite:////tmp/yaaf.db \
 
 .venv/bin/yaaf-server &     # API, dashboard, dispatcher, janitor
 # 3. The server does NOT execute runs. Without a runner, every run sits in
-#    run_queue forever and the company never does anything at all.
+#    run_queue forever and the project never does anything at all.
 .venv/bin/yaaf-runner &
 .venv/bin/yaaf seed-roles roles/
 ```
@@ -63,13 +63,13 @@ answers through ordinary queued runs instead.
 
 `runtime: mock` (Settings → Advanced) routes runs to `MockBackend` instead of
 the Claude Agent SDK. A behaviour is a plain Python function registered against
-an agent name; the tests and the eval harness register a company's worth of
+an agent name; the tests and the eval harness register a project's worth of
 them (`evals/behaviors.py`) and drive planning, decomposition, claims,
 completions, evidence and every governance trip at $0. That is what CI runs.
 
 **Nothing is registered by default.** On your own install a mock agent reads its
 context pack and exits, which is exactly right for testing the platform and
-useless as a demo. If you want to watch a scripted company move, run the eval
+useless as a demo. If you want to watch a scripted project move, run the eval
 harness (`python -m evals.run`) rather than pointing a project at mock.
 
 ## The real thing — your own server
@@ -151,7 +151,7 @@ gunzip -c backups/<file>.sql.gz | docker compose exec -T db psql -U yaaf -d yaaf
 ```
 
 `kill` keeps your data by default — the Postgres volume, `deploy/.env`,
-workspaces and artifacts all survive, so `deploy` brings the same company
+workspaces and artifacts all survive, so `deploy` brings the same project
 back. `--wipe` destroys the database volume and asks you to type `DESTROY`
 first. It also clears the sandbox containers the runner launched: those are
 siblings rather than compose services, so `docker compose down` leaves them

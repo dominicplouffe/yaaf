@@ -5,7 +5,7 @@ one goal. The feature is gone — the dashboard page, the admin and observe
 endpoints, the stop rule and the models with it — so the tables go too rather
 than linger as schema nothing reads.
 
-`projects.topology` stays: the org shape is a fact about a company, recorded at
+`projects.topology` stays: the org shape is a fact about a project, recorded at
 creation and read by the clone path, and it long outlived what it was first
 added for.
 

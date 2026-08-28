@@ -21,8 +21,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends git curl \
     && rm -rf /var/lib/apt/lists/*
 
 # The control plane runs one agent of its own. The Founder — the conversation
-# that designs a company before one exists — runs on the Claude Code CLI in
-# this process, the same way every agent in a company runs on it inside a
+# that designs a project before one exists — runs on the Claude Code CLI in
+# this process, the same way every agent in a project runs on it inside a
 # sandbox, so that a subscription token works in both places. Without the CLI
 # here the Founder fails on its first message, and only in production: the
 # checkout a developer tests in has one on PATH.

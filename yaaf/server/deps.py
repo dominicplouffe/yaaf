@@ -95,7 +95,7 @@ def run_auth(
     return RunContext(run=run, agent=agent, project=project)
 
 
-#: Agent routes whose mutating calls change nothing about the company.
+#: Agent routes whose mutating calls change nothing about the project.
 #: `typing` is a presence flag the boardroom draws; `chat_usage` books tokens
 #: the session already spent. A run that did only these did nothing, and
 #: counting them as production would make the no-op refund unclaimable by the
@@ -110,7 +110,7 @@ def _count_production(request: Request, run: Run) -> None:
     is not. So the platform counts mutating calls as they are authorised, and
     :func:`yaaf.runner.daemon.finalize` refunds the run's work allowance if the
     count is still zero when it ends — the wake happened, the model was paid,
-    and the company was left exactly as it was found.
+    and the project was left exactly as it was found.
 
     Counted on the REQUEST'S OWN session rather than in middleware with a
     session of its own: a second connection per write serialises against the

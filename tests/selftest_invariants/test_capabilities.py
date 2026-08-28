@@ -1,6 +1,6 @@
 """Invariant selftests: credentials are capabilities (CEO Charter, stage D).
 
-Whatever the chairman stores, the company can use; what the platform owes in
+Whatever the chairman stores, the project can use; what the platform owes in
 return is to make it usable, to carry the asking, and to keep income honest.
 
 The lines these tests hold:

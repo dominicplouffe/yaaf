@@ -58,7 +58,7 @@ def test_a_seeded_project_carries_the_design_and_none_of_the_plumbing(client, tm
     assert restored["goal"] == "Prove the framework works end to end."
     assert restored["constitution"]["queue_ceiling"] == 4
     assert restored["constitution"]["timezone"] == "America/Toronto"
-    assert restored["status"] == "draft", "a restored company must not start spending by itself"
+    assert restored["status"] == "draft", "a restored project must not start spending by itself"
 
 
 def test_a_rule_survives_the_wipe_but_a_limit_left_in_wiring_would_not(client):

@@ -4,7 +4,7 @@ The forecast stage 5 builds is remaining ÷ velocity, so velocity must be
 measured on requirements — a metric needs its own log, and `requirement_events`
 is it. Tasks closing is activity; a requirement going MET is progress. The
 audited install confused the two: 126 tasks completed, 20 side effects, and no
-number anywhere that could say whether the company was faster than last week.
+number anywhere that could say whether the project was faster than last week.
 
 Three numbers travel together, because each is misleading alone:
 
@@ -136,7 +136,7 @@ def _runs_in_window(session: Session, project_id: str, since) -> dict:
     """What the window's runs were, and — since the split — what they were FOR.
 
     Three lanes, because one number hid the finding that started all of this:
-    57% of every run an audited company ever spent was an agent waking to read
+    57% of every run an audited project ever spent was an agent waking to read
     a message. Its own broadcasts generated that traffic, and neither the CEO
     nor the chairman could see it, so nobody could price a message before
     sending it. `inbox` is reading; `noop` is a wake that changed nothing and
@@ -166,7 +166,7 @@ def _runs_in_window(session: Session, project_id: str, since) -> dict:
             # `metered` is the ONLY honest signal. Inferring a no-op from
             # produced == 0 reads every run that predates the counter as
             # having done nothing: on the first deploy this reported 26 of 42
-            # runs as waste, which was the backfill talking, not the company.
+            # runs as waste, which was the backfill talking, not the project.
             noop += 1
         else:
             work += 1

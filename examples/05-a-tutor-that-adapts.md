@@ -11,7 +11,7 @@ worked example, exercises, answer key — and a curriculum that *changes* based 
 the answers you leave for it.
 
 **What it teaches:** **Operate mode**. Cycles, scope that carries forward, and
-the learning loop the platform makes a company take rather than merely
+the learning loop the platform makes a project take rather than merely
 recommending.
 
 **What you need:** your Anthropic API key, and about twenty minutes a week.
@@ -43,7 +43,7 @@ one better informed than the last. That is exactly what Operate is for:
   three is *in the context* when week four is planned, because the platform put
   it there.
 - **Two consecutive empty cycles pause the project.** A rhythm nobody dances to
-  is a bill, not a company — including when the person who stopped showing up
+  is a bill, not a project — including when the person who stopped showing up
   is you.
 
 ## Your half of the loop

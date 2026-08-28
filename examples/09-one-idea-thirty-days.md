@@ -3,7 +3,7 @@
 > **Why not just a Claude Skill?** Because the deliverable is *thirty days of
 > not fooling yourself*. A bet that dies on a date you cannot quietly move,
 > evidence the platform fetches and snapshots rather than takes your word for,
-> and a rule that refuses to let the company write another framework document
+> and a rule that refuses to let the project write another framework document
 > when it has gone two days without finding anything real outside.
 
 **What you get:** one small product idea with an argument that survives attack —
@@ -71,7 +71,7 @@ you.
 ## Watch this rule fire
 
 `drought_hours` is 48 here, deliberately short. Go two days with no verified
-external evidence and internal task creation is **refused** — the company may
+external evidence and internal task creation is **refused** — the project may
 only create work that reaches outside.
 
 That is the anti-navel-gazing rule, and on an idea-hunting project it is the

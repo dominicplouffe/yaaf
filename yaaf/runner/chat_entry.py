@@ -132,7 +132,7 @@ def _situation_block() -> str:
     A chat session is one container that lives for days, and its system prompt
     is written once at boot and never re-read. So the boardroom CEO held no
     board, no roster, no notices, no budget and no idea whether a cap had
-    stopped the company — while being told, in that same frozen prompt, not to
+    stopped the project — while being told, in that same frozen prompt, not to
     invent a cause when work had stopped. It guessed, and the guesses reached
     the chairman as fact. This is the fix: a work run gets a context pack on
     every wake, and now so does every turn of the conversation.
@@ -157,7 +157,7 @@ def _situation_block() -> str:
         "CURRENT STATE (fetched just now — this is the platform's own reading, not a "
         "summary. `situation.why` is the exact sentence the chairman can see on his "
         "screen; if he asks why nothing is happening, that is the answer. Do not "
-        "reason about the company's state from what you can see in a directory):\n"
+        "reason about the project's state from what you can see in a directory):\n"
         f"{json.dumps(keep, indent=2, default=str)}\n\n"
     )
 

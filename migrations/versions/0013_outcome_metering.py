@@ -1,13 +1,13 @@
 """Outcome metering: a run that changed nothing stops spending the work allowance.
 
 Two columns on `runs`. `produced` counts accepted writes as they happen, so the
-platform can tell a wake that moved the company from one that woke, thought and
+platform can tell a wake that moved the project from one that woke, thought and
 left everything as it found it. `metered` is the refund: true at birth, set
 false at finalize when nothing was produced.
 
 Both are backfilled to the pre-change behaviour — every existing run keeps
 counting — because reclassifying history would move the caps under a running
-company retroactively. The split starts at deploy.
+project retroactively. The split starts at deploy.
 
 Guarded, as every post-baseline revision must be.
 

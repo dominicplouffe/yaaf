@@ -31,7 +31,7 @@ force**, as an amendment with a written reason.
 | Preset | What it means | Right when |
 |---|---|---|
 | **Supervised** | You accept scope, sign the delivery date, judge unverifiable closes, and grant credentials. The CEO proposes — and executes any order you give it in the boardroom. | Your first project, or real money is on the line. |
-| **Autonomous** | The CEO accepts its own plan, adopts the platform's projected date, judges unverifiable closes itself, and re-scopes existing credentials across its team. Every decision is audited and sent to you; all of it is reversible; your buttons never close. | You want to chair the company rather than operate it. |
+| **Autonomous** | The CEO accepts its own plan, adopts the platform's projected date, judges unverifiable closes itself, and re-scopes existing credentials across its team. Every decision is audited and sent to you; all of it is reversible; your buttons never close. | You want to chair the project rather than operate it. |
 
 Budgets and loop brakes bind identically under both. "Autonomous" is not
 "unlimited" — it is "does not need to ask".
@@ -127,7 +127,7 @@ one amendment from being turned back.
   check either lands on your desk (`chairman`) or is disclosed to you in full
   (`ceo_judgment`). There is no third path where it disappears.
 - **A promise that stops holding still freezes new scope.** At every setting.
-  What the dial decides is *who* resolves it — not whether the company may
+  What the dial decides is *who* resolves it — not whether the project may
   quietly carry on adding work past a date it is going to miss.
 - **Money is capped and metered.** The monthly budget pauses the project at
   100%. The real-world spend envelope (`external_monthly_usd_cap`) is a hard
@@ -171,7 +171,7 @@ budget sums, so a project is never paused for earning.
 
 ## Credentials as capabilities
 
-Whatever you store, the company can use. yaaf does not police what you add to
+Whatever you store, the project can use. yaaf does not police what you add to
 your own deployment; its job is to make a stored credential *usable* and to
 meter what it buys.
 
@@ -201,13 +201,13 @@ service. That is a rule, not a limitation to be engineered around.
 
 ## Waking on the world
 
-Autonomy is not much use to a company that only wakes on a timer.
+Autonomy is not much use to a project that only wakes on a timer.
 
 - **Signed webhooks** carry a `wake` field that wakes the CEO or a named
   agent, classed urgent, still under every wake-rate brake.
 - **Per-agent daily schedules** (`agents.daily_at`) generalize the CEO's
   standup: a news agent at 07:00, a metrics agent at market close.
-- The **account registry** records every identity the company creates in the
+- The **account registry** records every identity the project creates in the
   world, with a situational owner-of-record — you, or the project itself. It
   is record-only by design: winding a project down is your decision, and the
   registry exists so you can see what needs settling.

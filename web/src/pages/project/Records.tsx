@@ -10,7 +10,7 @@ import Decisions from "./Decisions";
 const VIEWS = [
   ["runs", "Runs", "every model call, why it woke, what it cost"],
   ["messages", "Messages", "every channel you can read but not speak in"],
-  ["memory", "Memory", "what the company chose to remember"],
+  ["memory", "Memory", "what the project chose to remember"],
   ["decisions", "Decisions", "everything you decided, and everything that decided itself"],
 ] as const;
 

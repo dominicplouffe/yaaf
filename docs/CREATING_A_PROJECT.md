@@ -1,6 +1,6 @@
 # Creating a project — a plain-English walkthrough
 
-This guide walks you from nothing to a running AI company, using a real
+This guide walks you from nothing to a running AI project, using a real
 example: an **Amazon PPC audit** — a team of agents that pulls a customer's
 advertising data from a data source, analyzes it, and produces a report a
 human could hand to a paying client.
@@ -10,7 +10,7 @@ an Anthropic API key, and a clear idea of what you want done.
 
 ## What you're actually creating
 
-A project is a small company. It has:
+A project is a small org that runs itself. It has:
 
 - **A CEO agent** that plans: it decides what to work on, creates tasks, and
   reports to you. It's the only agent you ever talk to.
@@ -25,7 +25,7 @@ A project is a small company. It has:
   carrying a test the platform runs itself. Tasks exist to make requirements
   true, and a task serving no requirement is refused.
 
-The company keeps working while you're away. Agents wake up when there's a
+The project keeps working while you're away. Agents wake up when there's a
 reason to (a message from you, a task ready, a scheduled check-in), do one
 unit of work, and go back to sleep. Everything is recorded.
 
@@ -50,8 +50,8 @@ Everything below describes filling the form yourself, and it still works. But
 the two hardest decisions on that form — the goal, and who to hire — are the
 two the product can now argue with you about.
 
-**+ Found a company** opens a conversation instead of a form. Write what you
-want in a paragraph; the Founder answers with a whole company — goal, shape,
+**+ Design a project** opens a conversation instead of a form. Write what you
+want in a paragraph; the Founder answers with a whole project — goal, shape,
 roster, and the handful of constitution rules it can justify — and then tells
 you what it assumed, what it added that you did not ask for, and what it still
 wants to know. You argue; it revises. When the draft is right, **Review &
@@ -60,7 +60,7 @@ you like, run the fire drill for nothing, and create it.
 
 It needs one thing first: a **platform key**, set once. That is not a project's
 billing key and never becomes one — it pays for product-wide conversations like
-this, and no project's agents ever see it. Every company you create still pays
+this, and no project's agents ever see it. Every project you create still pays
 its own way.
 
 Two things worth knowing:
@@ -76,7 +76,7 @@ Two things worth knowing:
 
 ## Step 1 — Create the project
 
-Click **+ New project**. It runs in four steps — the job, the company, the
+Click **+ New project**. It runs in four steps — the job, the org, the
 money and the rules, then review — because those are the four decisions that
 need you; everything else is derived, set by a preset, or something you can do
 later in Settings. Nothing is hidden behind a step: **All on one page** shows
@@ -88,7 +88,7 @@ existing projects; edit it only if you care what it says.
 
 **The goal — spend your time here.** This is the single most important field.
 The CEO plans everything from it, so write it the way you'd brief a
-competent human running the company for you. (This is the field the Founder
+competent human running the project for you. (This is the field the Founder
 above exists for; [GOAL_GRAMMAR.md](GOAL_GRAMMAR.md) is the long version of the
 advice that follows.)
 
@@ -105,7 +105,7 @@ A good goal for our example:
 > the connected "ppc" data source — use real numbers only, never invented
 > ones. Final deck delivered by August 20th.
 
-A weak goal ("analyze the PPC data") gets you a company that putters. Be as
+A weak goal ("analyze the PPC data") gets you a project that putters. Be as
 specific as you'd be with a person.
 
 **What shape is this?** Three cards, and the choice is **frozen at creation**
@@ -120,11 +120,11 @@ because the rules differ by shape:
   cycle. *"A weekly market brief, tracked and improved."* You pick the rhythm
   (daily, weekly, monthly, quarterly) in the constitution.
 
-Outside Explore, the company **plans before it builds**. Its first obligation
+Outside Explore, the project **plans before it builds**. Its first obligation
 is a plan: requirements, ordered into stages, each estimated, adding up to
 something the budget can pay for. Until that holds, no work may be created at
 all. That is a refusal in the server, not a nudge — and it is the difference
-between a company that finishes and a pipeline with no terminus.
+between a project that finishes and a pipeline with no terminus.
 
 **Chairman email** — yours. You're the human in this org chart: it names you
 on approvals and boardroom messages, and if the server has SMTP configured
@@ -187,7 +187,7 @@ Later, on a running project, **Add a team** opens the same desk — but it opens
 on what your roster is missing rather than on the library: *"Nobody here checks
 the numbers before you see them"*, with the two or three hires that close it.
 
-**Constitution.** These are the hard rules the company lives under — spending
+**Constitution.** These are the hard rules the project lives under — spending
 caps, how many tasks can be open at once, how long the CEO can go without
 real evidence before the system pushes back. The defaults are sensible;
 set the **monthly budget cap** to what you're actually willing to spend.
@@ -195,7 +195,7 @@ Changing one later is a formal amendment, made in Settings → Rules in force,
 with a written reason the CEO is shown. There is no waiting period: a rule you
 decide on binds from the very next agent call. What stands in for the old
 cooling-off is the accounting — a written reason, an audit entry, a new
-constitution version, and mandatory disclosure to the CEO. The company still
+constitution version, and mandatory disclosure to the CEO. The project still
 cannot move its own goalposts; you never needed to be stopped from moving
 yours.
 
@@ -333,11 +333,11 @@ want the receipts.
   levers, each recorded with your reason and shown back at the next review
   beside what it bought.
 - **Answer the boardroom.** The CEO escalates real blockers there. A blocked
-  company that's waiting on you says so.
+  project that's waiting on you says so.
 - **Decide approvals.** Any spend over the threshold you set lands in a
   banner across the top of every tab, so you cannot miss it by being on the
   wrong page. Undecided approvals expire to "no" after a week — the
-  company degrades gracefully while you're on vacation; it never deadlocks.
+  project degrades gracefully while you're on vacation; it never deadlocks.
 - **Spot-check.** The **Work** tab deals you a random sample of recent
   completed work and evidence claims. Fail anything that doesn't hold up —
   the CEO is told its team's work is suspect. You are the one reviewer that

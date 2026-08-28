@@ -143,7 +143,7 @@ matter most.
 ## The three traps in this data
 
 They are real, they are in the file, and the goal names all three so you can
-watch whether the company handles them or walks into them.
+watch whether the project handles them or walks into them.
 
 1. **Tiny samples at the top.** The second- and third-highest median salaries
    rest on samples of **7** and **3** graduates, and 32 of the 173 majors have

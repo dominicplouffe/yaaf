@@ -39,11 +39,11 @@ anything is written, so a bad amendment is refused rather than half-applied.
 **There is no cooling-off period.** A rule you decide on binds from the very
 next agent call. What survives is the accounting: a written reason, an audit
 entry, a new constitution version, and mandatory disclosure to the CEO in its
-next context pack. The company still cannot move its own goalposts; you never
+next context pack. The project still cannot move its own goalposts; you never
 needed to be stopped from moving yours.
 
 The one exception to "yours alone": the three **reporting** fields below are
-instructions *to* the company about how to treat you, so the CEO may set them
+instructions *to* the project about how to treat you, so the CEO may set them
 itself from something you actually said in the boardroom — as a **directive**
 that cites your message. Everything else is chairman-only.
 
@@ -85,7 +85,7 @@ Also enforced here, and not tunable because they're structural:
 | Rule | Default | What it does |
 |---|---|---|
 | `approval_threshold_usd` | 250.0 | Spends at or above this — and anything legally ambiguous — wait for you. |
-| `approval_timeout_days` | 7 | An unanswered approval decides itself here, so a vacationing chairman degrades the company instead of deadlocking it. |
+| `approval_timeout_days` | 7 | An unanswered approval decides itself here, so a vacationing chairman degrades the project instead of deadlocking it. |
 | `approval_timeout_decision` | `"deny"` | What that expiry decides. Default-deny: silence is not consent. |
 | `plan_authority` | `"chairman"` | Who accepts proposed scope. `"ceo"`: the CEO accepts its own proposals — the plan gate runs the same arithmetic, every acceptance is audited and sent to you. |
 | `scope_authority` | `"chairman"` | Who may cut, reopen, restage, reestimate, reword and unsequence. `"ceo"` hands the verbs to the CEO, on the record, reversibly. Your routes never close. |
@@ -141,14 +141,14 @@ Memory-heavy roles (research desks, support) need more room than the defaults.
 |---|---|---|
 | `wakes_per_agent_per_hour` | 6 | The runaway-loop brake. Every wake is a paid model call. |
 | `runs_per_project_per_day` | 150 | Daily activity ceiling across every agent. |
-| `runs_per_project_per_hour` | 15 | The pacing brake, on a trailing hour. Without it a company spends the day's allowance by lunch and sits dead until midnight. |
+| `runs_per_project_per_hour` | 15 | The pacing brake, on a trailing hour. Without it a project spends the day's allowance by lunch and sits dead until midnight. |
 | `pair_breaker_messages` | 10 | Two agents this deep in one thread with nothing landing are talking, not working — the thread **freezes** until you unfreeze it. |
 | `max_usd_per_run` | 2.0 | USD one run may spend. It is warned as it approaches and stopped at the line. 0 turns it off. |
 | `refusal_cap_per_run` | 5 | Past this the run's token is revoked. Rephrasing a refused request is not a strategy. |
 | `task_check_failures_before_block` | 3 | A task whose success test fails this often **blocks** and becomes a question for whoever planned it. Counts across re-claims; only a pass resets it. |
 | `requirement_check_failures_before_escalation` | 3 | A requirement whose acceptance test keeps failing this often stops being retried silently and becomes a question — the requirement-level twin of the rule above. |
-| `max_task_gate_hours` | 6 | The furthest ahead work may be scheduled with `not_before`. A gated task wakes nobody and shows on no screen as work in progress, so a company gated on one looks stopped. Gates beyond this are refused. |
-| `stall_hours` | 3.0 | Hours of silence before you are told. A company that quietly stopped is the failure mode this catches. |
+| `max_task_gate_hours` | 6 | The furthest ahead work may be scheduled with `not_before`. A gated task wakes nobody and shows on no screen as work in progress, so a project gated on one looks stopped. Gates beyond this are refused. |
+| `stall_hours` | 3.0 | Hours of silence before you are told. A project that quietly stopped is the failure mode this catches. |
 | `max_concurrent_runs` | 3 | Agents working simultaneously. Protects the provider rate limit every project on the box shares. |
 | `reserved_governance_runs` | 3 | Runs held out of the daily ceiling so a review, a cycle plan or a re-forecast can always happen. Ordinary work stops at the cap minus this. 0 turns it off. |
 
@@ -195,11 +195,11 @@ remember is a suggestion. It's a refusal now.
 
 Replying to something you actually said is always allowed and is not a status.
 
-The first three rules above govern what the *company* may say to you, and every
+The first three rules above govern what the *project* may say to you, and every
 word of it costs a model call. `brief_daily_at` is the opposite direction: the
 platform writing to you from rows it already holds. No run, no wake, no token
 — which is why it is not gated on a budget or an empty board, and why it still
-arrives on the morning the platform paused the company for an exhausted cap.
+arrives on the morning the platform paused the project for an exhausted cap.
 Every other letter you get from this system is an alarm, and a correspondent
 who only ever brings bad news is one you stop reading.
 
@@ -241,7 +241,7 @@ Running every ~15s per project, without an agent asking:
 Start with the defaults — they came out of a real project's burned cycles — and
 change one thing at a time, for a reason you write down.
 
-- **Company feels stalled?** Raise `queue_ceiling` last, not first. Usually the
+- **Project feels stalled?** Raise `queue_ceiling` last, not first. Usually the
   real cause is a drought or the external floor, and the fix is a task that
   reaches outside.
 - **Burn too high?** Lower `wakes_per_agent_per_hour` and

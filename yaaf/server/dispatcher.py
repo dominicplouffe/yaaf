@@ -63,7 +63,7 @@ log = logging.getLogger("yaaf.dispatcher")
 # Wake reasons that may spend the constitution's reserved governance runs.
 # These are the wakes whose job is to *report on* the work — a status review, a
 # new cycle's plan, a commitment that needs re-forecasting — so they must still
-# be possible on a day the company has spent its ordinary allowance.
+# be possible on a day the project has spent its ordinary allowance.
 GOVERNANCE_REASON_KINDS = {"review", "cycle_plan", "commitment"}
 
 # Notice coalescing: the janitor drips notices (a reaped run, a drought, an
@@ -111,7 +111,7 @@ def dispatch_all() -> int:
     """One tick, with each project in its own transaction.
 
     The whole tick used to share one, so an exception anywhere — one project
-    with a broken row — rolled back and abandoned the tick for *every* company
+    with a broken row — rolled back and abandoned the tick for *every* project
     on the box. The only evidence was a line on stderr, and a platform-wide
     stall reads to a chairman exactly like his own project going quiet. A
     project that raises now loses its own tick and nothing else.
@@ -165,7 +165,7 @@ def day_start(now):
     return now.replace(hour=0, minute=0, second=0, microsecond=0)
 
 
-# Kinds that do not spend the company's run allowance. Chat is the talk lane,
+# Kinds that do not spend the project's run allowance. Chat is the talk lane,
 # not work. The two check kinds are the PLATFORM verifying a claim: a command
 # in a container, no model, no token, no dollar — the thing these ceilings
 # exist to bound is agent spend, and a check is none of it.
@@ -175,7 +175,7 @@ def day_start(now):
 # reached 237 checks against a ceiling of 15: the dispatcher returned 0 for
 # eighty minutes straight. The only actor who could have repaired the
 # requirement was the CEO, and the failure had eaten the runs it needed to wake.
-# A verification storm must never be able to starve the company of the work it
+# A verification storm must never be able to starve the project of the work it
 # takes to end one.
 UNMETERED_RUN_KINDS = (
     RunKind.CHAT_SESSION,
@@ -210,7 +210,7 @@ def run_kind_for_reasons(reasons: list[dict]) -> str:
 
     Deciding this at wake time rather than after the fact is what lets the
     dispatcher gate the two lanes separately, which is the entire point: the
-    company had 4 runs an hour and spent all four on agents acknowledging a
+    project had 4 runs an hour and spent all four on agents acknowledging a
     message, while the two agents holding ready tasks waited an hour.
     """
     if not reasons:
@@ -228,7 +228,7 @@ def daily_runs_used(session: Session, project: Project, since) -> int:
 
     Two exclusions beyond the unmetered kinds. Inbox runs spend their own
     ceiling, so reading cannot crowd out working. And a run that finished
-    having changed nothing is refunded (`metered=False`) — the company was not
+    having changed nothing is refunded (`metered=False`) — the project was not
     slowed by it, so the allowance should not act as though it was. Queued rows
     always count: a wake that has not run yet cannot be known to be empty, and
     the pessimistic read is the safe one.
@@ -296,7 +296,7 @@ def _is_governance(reasons: list[dict]) -> bool:
     """Does this wake exist to *report on* the work rather than do it?
 
     Governance wakes may spend the reserved slice of the daily ceiling. The
-    audit's sharpest failure was a company that spent its whole allowance
+    audit's sharpest failure was a project that spent its whole allowance
     before lunch: on such a day ordinary work stopping is the brake working,
     but the status review stopping is the brake eating the one run whose entire
     job is to tell the chairman what happened.
@@ -316,7 +316,7 @@ def _dispatch_project(session: Session, project: Project, cons: ConstitutionDoc)
     #
     # Never more than half the day, whatever the rule says. A reservation of 3
     # against a ceiling of 1 would make every run a governance run and the
-    # company would report on work it was never allowed to do — the brake
+    # project would report on work it was never allowed to do — the brake
     # eating the thing it exists to protect.
     reserved = min(cons.reserved_governance_runs, cons.runs_per_project_per_day // 2)
     governance_only = today >= cons.runs_per_project_per_day - reserved
@@ -324,11 +324,11 @@ def _dispatch_project(session: Session, project: Project, cons: ConstitutionDoc)
     # Pacing. Without this the daily ceiling is the only brake, and it is a
     # fixed window with no rate limit: six agents at six wakes an hour is
     # thirty-six an hour, so a hundred-run day is gone in under three hours and
-    # the company sleeps until midnight with tasks still on the board.
+    # the project sleeps until midnight with tasks still on the board.
     #
     # Both walls are now computed rather than returned on, because they bound
-    # the WORK lane only. A company out of work runs may still read its mail,
-    # and — the case this was written for — a company whose hourly ceiling went
+    # the WORK lane only. A project out of work runs may still read its mail,
+    # and — the case this was written for — a project whose hourly ceiling went
     # to four agents acknowledging a broadcast may still run the two agents
     # holding ready tasks.
     work_blocked = (today >= cons.runs_per_project_per_day
@@ -509,7 +509,7 @@ def _coalesced_until(count: int, oldest, urgent: bool, now, minutes: float, thre
     The dispatcher deliberately refuses to buy a full-price run for one or two
     notices, so it waits for a third or for the oldest to age out. That is
     correct and it is also, on the clock, the single most common reason a
-    healthy company looks stopped — the wait is minutes long and named nowhere.
+    healthy project looks stopped — the wait is minutes long and named nowhere.
     This is the same arithmetic as `_wake_reasons`, read-only, so a screen can
     say which minute it ends.
     """
@@ -634,7 +634,7 @@ def _board_reachability(session: Session, project: Project, cons: ConstitutionDo
     # Whose decision, actually. Each of these three waits on whoever the
     # authority dial says holds the verb — and on a project that delegated
     # them, calling it "awaiting_chairman" told a chairman he was the
-    # bottleneck on a company he had deliberately handed over. R-00 closes by
+    # bottleneck on a project he had deliberately handed over. R-00 closes by
     # arithmetic rather than by a click, but what it waits FOR is scope being
     # accepted, so it follows the same switch.
     ceo_scope = policy.ceo_holds(cons, "plan_authority")
@@ -717,7 +717,7 @@ def _activity_brief(state: dict) -> dict:
     sentence — `tests/selftest_invariants` fails the build if one is missing.
 
     `banner` marks the briefs that deserve the box above the tabs. Concurrency
-    and busy agents mean the company is *working*; a banner that fires when
+    and busy agents mean the project is *working*; a banner that fires when
     things are fine is how a reader learns to stop reading it. `sig` and
     `clears_at` are set only on the briefs that are waiting out a clock, which
     is what makes them dismissible.
@@ -851,7 +851,7 @@ def _activity_brief(state: dict) -> dict:
 
     if gate == "awaiting_chairman":
         # One sentence per cause, because they are not the same refusal and
-        # saying they are cost a company its rework: this read "no work may be
+        # saying they are cost a project its rework: this read "no work may be
         # created until this is settled" whatever the cause, the CEO quoted it
         # to the chairman as fact — the context pack tells it to quote this
         # rather than reason from a directory — and stood down for the night.
@@ -935,7 +935,7 @@ def _activity_brief(state: dict) -> dict:
             "ok", "working",
             f"at the concurrency cap ({c['in_flight']} of {c['cap']}) — working",
             f"At the concurrency cap — {c['in_flight']} of {c['cap']} running.",
-            "The company is working flat out. Raise 'Concurrent runs' in Settings to "
+            "The project is working flat out. Raise 'Concurrent runs' in Settings to "
             "widen it.", banner=False)
 
     if gate == "agents_busy":
@@ -943,7 +943,7 @@ def _activity_brief(state: dict) -> dict:
             "ok", "working",
             "every agent that has work is already running",
             "Every agent with work is already running.",
-            "The company is working. Nothing here needs you.", banner=False)
+            "The project is working. Nothing here needs you.", banner=False)
 
     if behind:
         return brief(
@@ -1117,7 +1117,7 @@ def activity_state(session: Session, project: Project, cons: ConstitutionDoc) ->
         },
         # The reading lane, on the same shape as the work lane. Reported even
         # when it is not the gate, because the question it answers — "how much
-        # of today went to the company talking to itself?" — is one nobody
+        # of today went to the project talking to itself?" — is one nobody
         # could ask before, and the answer was 57%.
         "inbox_runs": {
             "used_today": inbox_today,
@@ -1395,7 +1395,7 @@ def _wake_reasons(
     #    with an empty board and no live bet leaves nothing to plan, and an
     #    idle wake is a full-price run. The first-ever heartbeat always fires
     #    (it bootstraps the project); after that the cadence still advances,
-    #    so a busy company keeps its rhythm and an idle one sleeps until
+    #    so a busy project keeps its rhythm and an idle one sleeps until
     #    something happens (config ceo_heartbeat_always restores always-wake).
     if agent.kind == AgentKind.CEO:
         hours = float(cons.ceo_heartbeat_hours)

@@ -182,19 +182,19 @@ def _chat_filters(project_id: str) -> dict:
 
 def start_chat_container(*, project_id: str, run_id: str, name: str,
                          workspace_dir: str, env: dict[str, str],
-                         company_dir: str | None = None, memory: str = "2g") -> str:
+                         project_dir: str | None = None, memory: str = "2g") -> str:
     """Launch the resident chat entrypoint, detached; returns the container id.
     Same image, network and limits as an agent run — the talk lane gets no extra
     privileges, only a different entrypoint and no timeout.
 
     Mounts differ in exactly one way, and it matters: the session's own scratch
-    is read-write at /workspace, and the *company's* workspace is mounted
-    read-only at /company. Before that second mount the boardroom CEO could see
-    nothing the company had produced — it ran `ls /workspace`, found its own
+    is read-write at /workspace, and the *project's* workspace is mounted
+    read-only at /project. Before that second mount the boardroom CEO could see
+    nothing the project had produced — it ran `ls /workspace`, found its own
     empty scratch, and told the chairman the project had lost its data while
     the file sat on disk two directories away. Read-only because a resident
     session writing into the working tree is the race the split was built to
-    avoid; the CEO reads the company's output, it does not edit it.
+    avoid; the CEO reads the project's output, it does not edit it.
     """
     import docker
 
@@ -208,8 +208,8 @@ def start_chat_container(*, project_id: str, run_id: str, name: str,
         with contextlib.suppress(Exception):
             stale.remove(force=True)
     volumes = {workspace_dir: {"bind": "/workspace", "mode": "rw"}}
-    if company_dir:
-        volumes[company_dir] = {"bind": "/company", "mode": "ro"}
+    if project_dir:
+        volumes[project_dir] = {"bind": "/project", "mode": "ro"}
     container = client.containers.run(
         settings().sandbox_image,
         command=["python3", "/opt/yaaf/chat_entry.py"],

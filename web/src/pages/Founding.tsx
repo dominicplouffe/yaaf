@@ -1,6 +1,6 @@
-// The founding conversation: you talk, a company gets drafted.
+// The founding conversation: you talk, a project gets drafted.
 //
-// The chairman writes a brief; the Founder answers with a whole company. So
+// The chairman writes a brief; the Founder answers with a whole project. So
 // this page is a conversation on the left and the draft it is producing on the
 // right, and there is no form anywhere on it. "Review & create" hands the
 // draft to the New Project screen through the same path a setup file takes.
@@ -61,7 +61,7 @@ interface FounderStatus {
 const PLACEHOLDER =
   "Tell me what you want to exist that doesn't yet.\n\n" +
   "Write it the way you'd brief a competent person you've just hired — messy is " +
-  "fine, and you don't have to be complete. I'll draft the whole company and you " +
+  "fine, and you don't have to be complete. I'll draft the whole project and you " +
   "can argue with it.";
 
 /** What the Founder is doing, while it does it.
@@ -126,7 +126,7 @@ function CredentialGate({ onSaved }: { onSaved: () => void }) {
       <p className="muted">
         This one is the platform's, not a project's. It pays for product-wide
         conversations like this one, and it is never handed to a project's
-        agents — every company you create still pays its own way with its own
+        agents — every project you create still pays its own way with its own
         key. Stored encrypted; only the server reads it.
       </p>
       <label>
@@ -167,7 +167,7 @@ function DraftPanel({ bundle }: { bundle: ProjectBundle | null }) {
       <div className="card muted">
         <h3>No draft yet</h3>
         <p>
-          The company the Founder proposes will appear here — the goal, the
+          The project the Founder proposes will appear here — the goal, the
           shape, who it hires, and the rules it runs under. Nothing on this page
           creates anything or spends anything.
         </p>
@@ -240,7 +240,7 @@ export default function Founding() {
    *  The thread is on the server, so losing it to a page refresh would be a
    *  choice — and an expensive one, because the chairman may have spent ten
    *  minutes arguing a draft into shape. Resume the most recent thread that
-   *  has not already become a company. */
+   *  has not already become a project. */
   async function resume() {
     try {
       const { threads } = await get<{
@@ -354,7 +354,7 @@ export default function Founding() {
   if (status && !status.credential_configured) {
     return (
       <>
-        <h1>Found a company</h1>
+        <h1>Design a project</h1>
         <p className="subtitle">One key, once, before the first conversation.</p>
         <CredentialGate onSaved={loadStatus} />
       </>
@@ -367,7 +367,7 @@ export default function Founding() {
     <div className="founding">
       <header className="founding-head">
         <div>
-          <h1>Found a company</h1>
+          <h1>Design a project</h1>
           <p className="subtitle">
             Describe what you want. The Founder drafts the whole thing — goal,
             shape, roster, rules — and then you argue with it. Nothing here is
@@ -425,7 +425,7 @@ export default function Founding() {
             <div className="founding-actions">
               <span className="muted">⌘↵ to send</span>
               <button className="primary" disabled={busy || !message.trim()} onClick={send}>
-                {busy ? "Working (minutes)…" : turns.length ? "Send" : "Draft the company"}
+                {busy ? "Working (minutes)…" : turns.length ? "Send" : "Draft the project"}
               </button>
             </div>
           </div>

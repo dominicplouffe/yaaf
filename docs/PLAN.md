@@ -23,7 +23,7 @@ Layered on that: **the requirement is the root object.** A requirement is
 something that must be true at the end. It carries an acceptance test the
 platform runs. Tasks exist to make requirements true, and outside Explore mode
 a task serving no requirement is refused — because work that makes nothing true
-is how a company stays busy without finishing.
+is how a project stays busy without finishing.
 
 ## The two questions
 
