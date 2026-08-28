@@ -199,7 +199,7 @@ def test_slack_tokens_travel_but_rooms_do_not(client):
         assert decrypt(token.ciphertext) == "xoxb-token"  # no re-pasting
 
 
-def test_a_twin_is_the_same_SHAPE_of_company(client):
+def test_a_twin_is_the_same_SHAPE_of_project(client):
     """Mode decides whether a project has requirements at all, and it is frozen
     at creation — so a twin that comes back in the wrong one cannot be
     corrected, only deleted and rebuilt. The clone left mode out of the

@@ -92,7 +92,7 @@ def test_a_sound_spec_walks_all_the_way_to_a_requirement_settling_true():
         assert steps[key]["ok"], f"{key} not reached: {report['verdict']}"
 
 
-def test_it_counts_every_time_the_company_stopped_and_waited_for_a_human():
+def test_it_counts_every_time_the_project_stopped_and_waited_for_a_human():
     """The autonomy dial in numbers. Nothing else in the product could produce
     this before the money was spent, because the dial decides which verbs park
     and only the work decides how often they come up."""
@@ -118,7 +118,7 @@ def test_an_autonomous_dial_waits_for_nobody():
             < sum(r["count"] for r in supervised["interventions"]))
 
 
-def test_an_explore_company_is_not_marked_down_for_having_no_plan():
+def test_an_explore_project_is_not_marked_down_for_having_no_plan():
     """Explore has no requirements, no plan gate and no commitment BY DESIGN.
     Drawing those as misses would report the absence of a feature as the
     failure of one."""
@@ -154,7 +154,7 @@ def test_a_spec_the_platform_refuses_reports_the_platform_s_own_words():
     assert "not among its employees" in walk(report)["created"]["detail"]
 
 
-def test_a_company_with_nobody_in_it_is_told_so_rather_than_left_to_stall():
+def test_a_project_with_nobody_in_it_is_told_so_rather_than_left_to_stall():
     """The case with no wall to report: a CEO with nobody to give work to never
     files a task, so the refusals list is empty and "it stalled" would be the
     whole story. The shape of the project is the finding."""

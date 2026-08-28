@@ -33,7 +33,7 @@ def _desk(client, live: bool):
     return response.json()
 
 
-def test_the_live_desk_drops_companies_that_are_over(client):
+def test_the_live_desk_drops_projects_that_are_over(client):
     live_project = make_project(client, slug="still-going")
     done = make_project(client, slug="all-done")
     client.post(f"/admin/projects/{done['id']}/stop",
@@ -52,7 +52,7 @@ def test_the_live_desk_drops_companies_that_are_over(client):
     assert live_project["id"] in {p["id"] for p in everything["projects"]}
 
 
-def test_a_completed_company_leaves_the_desk_too(client):
+def test_a_completed_project_leaves_the_desk_too(client):
     """Both terminal statuses, not just the one the stop button writes. A
     delivered Deliver project is the *success* end state and the most likely
     thing to accumulate, so leaking it here would fill the desk with exactly
@@ -66,7 +66,7 @@ def test_a_completed_company_leaves_the_desk_too(client):
     assert desk["finished"] == 1
 
 
-def test_a_paused_company_stays_on_the_desk(client):
+def test_a_paused_project_stays_on_the_desk(client):
     """Paused is not terminal and is the whole reason the desk exists: the
     project has stopped and only the chairman restarts it."""
     project = make_project(client, slug="halted")

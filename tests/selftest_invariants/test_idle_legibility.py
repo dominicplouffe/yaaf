@@ -383,7 +383,7 @@ def test_a_leaderless_team_is_given_a_lead_rather_than_left_unclaimable(client):
             kind=NoticeKind.LEAD_ELECTED).count() == 1
 
 
-def test_the_watchdog_speaks_when_a_company_goes_quiet_with_work_open(client):
+def test_the_watchdog_speaks_when_a_project_goes_quiet_with_work_open(client):
     """Every gate under this is individually correct and individually invisible.
     What nobody had was the fact that they add up to a project doing nothing."""
     from yaaf.server import janitor

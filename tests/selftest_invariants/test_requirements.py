@@ -152,7 +152,7 @@ def test_explore_has_no_requirements_and_says_so(client):
     assert allowed.status_code == 200, allowed.text
 
 
-def test_an_explore_ceo_cannot_park_the_company_on_an_acceptance(client):
+def test_an_explore_ceo_cannot_park_the_project_on_an_acceptance(client):
     """The kickoff deadlock: an Explore CEO once proposed staged requirements
     and then waited on an acceptance the mode gives the chairman no screen to
     perform. The proposal is refused at the door, and the refusal names both
@@ -769,7 +769,7 @@ def test_repeated_acceptance_failures_escalate_once_and_then_go_quiet(client):
             "the failures still count for the record; only the noise stops"
 
 
-def test_platform_checks_do_not_spend_the_companys_run_allowance(client):
+def test_platform_checks_do_not_spend_the_projects_run_allowance(client):
     """The ceilings bound agent spend. A check is the platform running a
     command in a container — no model, no token, no dollar — and counting it
     here is what let a verification storm starve the project of the runs it

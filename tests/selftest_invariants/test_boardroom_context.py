@@ -43,7 +43,7 @@ def _drain(max_rounds: int = 6) -> None:
     raise AssertionError("dispatcher would not settle")
 
 
-def test_the_ceo_is_handed_the_reason_the_company_is_quiet(client):
+def test_the_ceo_is_handed_the_reason_the_project_is_quiet(client):
     """The exact question the chairman asked and got a wrong answer to. The
     CEO must not have to derive this — two different answers to "why are we
     idle" is worse than one imperfect answer, and the platform's is the one on
@@ -309,7 +309,7 @@ def test_the_boardroom_is_told_when_a_session_dies_mid_question(client):
         assert session.query(Message).filter_by(channel_id=channel_id).count() == before
 
 
-def test_the_chat_container_mounts_the_company_tree_read_only(client):
+def test_the_chat_container_mounts_the_project_tree_read_only(client):
     """The mount that caused the false answer. /project must be there, must be
     the project's real tree, and must be read-only — a resident session writing
     into the working tree is the race the split existed to prevent."""

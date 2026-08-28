@@ -123,7 +123,7 @@ def start(client, message: str, thread_id: str | None = None):
     raise AssertionError("the turn never settled")
 
 
-def test_the_founder_drafts_a_whole_company_from_one_brief(client, founder):
+def test_the_founder_drafts_a_whole_project_from_one_brief(client, founder):
     founder(tool_calls=[("propose_bundle", {"project": PROJECT})])
 
     thread = start(client, "I want to find an idea and sell it.")
@@ -140,14 +140,14 @@ def test_the_conversation_is_replayed_on_the_next_turn(client, founder):
     lose the argument — so the transcript is the state, not a CLI session."""
     calls = founder(reply="First answer.",
                     tool_calls=[("propose_bundle", {"project": PROJECT})])
-    thread = start(client, "Design me a company.")
+    thread = start(client, "Design me a project.")
 
     founder(reply="Second answer.")
     start(client, "Fewer teams, please.", thread["id"])
 
     # `calls` records tool invocations too, so take the last actual turn.
     prompt = next(c["prompt"] for c in reversed(calls) if "prompt" in c)
-    assert "Design me a company." in prompt
+    assert "Design me a project." in prompt
     assert "First answer." in prompt
     assert "Fewer teams, please." in prompt
     # And the draft under discussion travels whole, so the Founder can revise
@@ -252,7 +252,7 @@ def test_a_failed_turn_says_why_and_survives_a_refresh(client, founder, kind, me
     from yaaf.founder.session import FounderModelError
 
     founder(raises=FounderModelError(kind, message))
-    thread = start(client, "design me a company")
+    thread = start(client, "design me a project")
 
     assert expect in thread["last_error"]
     assert thread["running"] is False
@@ -284,7 +284,7 @@ def test_the_next_turn_clears_the_last_failure(client, founder):
     from yaaf.founder.session import FounderModelError
 
     founder(raises=FounderModelError("busy", "rate limited."))
-    thread = start(client, "design me a company")
+    thread = start(client, "design me a project")
     assert thread["last_error"]
 
     founder(reply="Here it is.", tool_calls=[("propose_bundle", {"project": PROJECT})])
@@ -300,7 +300,7 @@ def test_without_a_platform_credential_the_founder_says_so(client):
     assert client.get("/admin/founder/status",
                       headers=ADMIN).json()["credential_configured"] is False
     response = client.post("/admin/founder/threads",
-                           json={"message": "design me a company"}, headers=ADMIN)
+                           json={"message": "design me a project"}, headers=ADMIN)
     assert response.status_code == 422
     assert "platform credential" in response.json()["detail"]
 
@@ -486,7 +486,7 @@ def test_a_rule_this_platform_does_not_have_is_refused(client, founder):
     run invented `reporting_cadence`, which is why this is checked."""
     calls = founder(tool_calls=[("propose_bundle", {"project": {
         **PROJECT, "constitution": {"reporting_cadence": 4}}})])
-    assert start(client, "design me a company")["draft_bundle"] is None
+    assert start(client, "design me a project")["draft_bundle"] is None
     problems = _tool_payload(calls[-1])["problems"]
     assert any("reporting_cadence" in p for p in problems)
     # And it is told what the field is really called, so it can fix it now.
@@ -554,7 +554,7 @@ def test_a_turn_narrates_itself_while_it_runs(client, founder):
             tool_calls=[("search_roles", {}),
                         ("propose_bundle", {"project": PROJECT})])
 
-    thread = start(client, "design me a company")
+    thread = start(client, "design me a project")
 
     state = client.get(f"/admin/founder/threads/{thread['id']}/progress",
                        headers=ADMIN).json()
@@ -639,7 +639,7 @@ def test_the_request_returns_before_the_turn_finishes(client, founder):
     founder(reply="Done.", blocks_on=release)
 
     response = client.post("/admin/founder/threads",
-                           json={"message": "design me a company"}, headers=ADMIN)
+                           json={"message": "design me a project"}, headers=ADMIN)
     assert response.status_code == 202, response.text
     thread = response.json()
 
@@ -677,7 +677,7 @@ def test_a_reload_rejoins_a_running_turn(client, founder):
             blocks_on=release)
 
     thread = client.post("/admin/founder/threads",
-                         json={"message": "design me a company"}, headers=ADMIN).json()
+                         json={"message": "design me a project"}, headers=ADMIN).json()
 
     # What a reloaded page does: list threads, find the open one, poll it.
     listed = client.get("/admin/founder/threads", headers=ADMIN).json()["threads"]
@@ -705,7 +705,7 @@ def test_a_turn_lost_to_a_restart_says_so_rather_than_looking_idle(client, found
     from yaaf.founder import progress
 
     founder(reply="Done.")
-    thread = start(client, "design me a company")
+    thread = start(client, "design me a project")
     assert thread["interrupted"] is False
 
     # A turn was under way; the process that was running it is gone.

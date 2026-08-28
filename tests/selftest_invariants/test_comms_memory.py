@@ -282,7 +282,7 @@ def test_compact_refuses_degenerate_and_cross_scope_folds(client):
     leaked = client.post(
         "/agent/memory/compact",
         json={"replaces": stranger, "kind": "lesson", "subject": "someone else's memory",
-              "body": "folding another company's entries"},
+              "body": "folding another project's entries"},
         headers=bearer(lead_token),
     )
     assert leaked.status_code == 404
