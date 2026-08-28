@@ -493,7 +493,7 @@ yaaf/runner     leases runs, launches sandbox containers, meters everything
 yaaf/core       models, constitution schema, crypto, config, artifacts
 yaaf/cli        `yaaf` — admin/observe CLI, `yaaf spend-report`
 web/            the chairman's dashboard (React, served at /app)
-roles/          starter role library — thirty-one roles in six hiring aisles:
+roles/          starter role library — thirty-two roles in six hiring aisles:
                 general, tutor, adversary, markets desk, game studio,
                 data-science bench
 crews/          fourteen pre-staffed teams the hiring desk offers
