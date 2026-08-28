@@ -2,6 +2,11 @@ __pycache__/
 *.pyc
 .venv/
 *.egg-info/
+# setuptools / `python -m build` output. Sixty-seven files of it were committed
+# once — a stale duplicate of the whole package, still carrying code that had
+# been deleted from the real one, and failing `ruff check .` in CI.
+build/
+dist/
 .env
 .pytest_cache/
 .ruff_cache/
