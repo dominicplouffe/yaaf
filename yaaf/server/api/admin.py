@@ -2320,7 +2320,7 @@ def fulfill_need(
     if approval.status != ApprovalStatus.PENDING:
         raise HTTPException(status_code=409, detail=f"approval already {approval.status}")
     try:
-        policy.check_roles_exist(session, body.roles)
+        policy.check_roles_on_project(session, approval.project_id, body.roles)
     except policy.Refusal as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     project = _get_project(session, approval.project_id)
@@ -3678,6 +3678,16 @@ def put_secret(body: SecretIn, session: Session = Depends(db)) -> dict:
             "like https://host:3845/mcp, not a bare hostname or a token",
         )
         value = value.strip()  # a pasted trailing newline breaks the mount too
+
+    # Every path that writes role_scopes asks the same question, and this one
+    # was not asking it at all: the Settings table offered all thirty-one
+    # library roles and stored whichever were ticked, including roles this
+    # project never hired.
+    if body.role_scopes:
+        try:
+            policy.check_roles_on_project(session, body.project_id, body.role_scopes)
+        except policy.Refusal as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
     existing = session.execute(
         select(Secret).where(Secret.project_id == body.project_id, Secret.name == body.name)

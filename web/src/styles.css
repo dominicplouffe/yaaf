@@ -1297,3 +1297,26 @@ button.rolepick { width: 100%; text-align: left; background: var(--surface-2); }
 @media (prefers-reduced-motion: reduce) {
   .step-running .step-mark { animation: none; }
 }
+
+/* ── who receives a credential ───────────────────────────────────────────────
+   This replaced a free-text box asking for "role slugs, comma-separated", into
+   which the chairman reasonably typed the names of the two people he could see
+   on screen. The people are the point, so they are on the row. */
+.grant-label { font-size: 12px; text-transform: uppercase; letter-spacing: 0.8px;
+  color: var(--muted); margin: 12px 0 6px; }
+.grants { display: flex; flex-direction: column; gap: 6px; }
+.grant { display: flex; align-items: flex-start; gap: 9px; padding: 8px 10px;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface-2); cursor: pointer; transition: border-color 0.12s; }
+.grant:hover { border-color: var(--grid); }
+.grant.on { border-color: var(--accent); }
+.grant input[type="checkbox"] { width: auto; margin: 2px 0 0; flex: none; }
+.grant-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.grant-head { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.grant-head code { background: var(--surface); padding: 1px 6px; border-radius: 4px;
+  font-size: 12px; color: var(--ink-2); }
+.grant .help { margin: 0; }
+/* A grant to a role nobody here has. Shown rather than hidden: hiding it would
+   make a dead grant permanent and invisible. */
+.grant.stranger { border-color: var(--warning); background: rgba(250, 178, 25, 0.08); }
+.grant-sum { margin: 4px 0 0 !important; }

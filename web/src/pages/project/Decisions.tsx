@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AmendmentRow, ApprovalRow, CeoDecisionRow, get, post } from "../../api";
 import { fmtUsd, fmtWhen, usePoll } from "../../hooks";
+import { grantRoles, RoleGrants } from "../../roles";
 import { clockClass, downloadCsv, ExportCsv, fmtLeft } from "../../ui";
 import type { ProjectCtx } from "../Project";
 
@@ -39,10 +40,14 @@ function amendmentBadge(status: AmendmentRow["status"]) {
 function DecisionCard({
   approval,
   dash,
+  org,
   onDecided,
 }: {
   approval: ApprovalRow;
   dash: ProjectCtx["dash"];
+  /** The roster — already polled for the whole project page, so the picker
+      below costs no extra request. */
+  org: ProjectCtx["org"];
   onDecided: () => void;
 }) {
   const [busy, setBusy] = useState(false);
@@ -52,7 +57,16 @@ function DecisionCard({
   // stored, roles scoped, need approved — one form instead of three screens.
   const [secretName, setSecretName] = useState("");
   const [secretValue, setSecretValue] = useState("");
-  const [roles, setRoles] = useState("");
+  const [roles, setRoles] = useState<string[]>([]);
+
+  // The agent that filed the need is on a team, and that team's role is the
+  // answer nine times out of ten. Proposing it makes this a confirmation
+  // rather than a question — the same relationship the CEO has with him.
+  useEffect(() => {
+    if (approval.kind !== "tool_request" || roles.length > 0 || !org) return;
+    const asked = grantRoles(org, approval.requested_by).find((r) => r.asked);
+    if (asked) setRoles([asked.slug]);
+  }, [org, approval.kind, approval.requested_by]);
 
   const usdMode = dash.billing_mode === "api_key";
   const spent = dash.month_to_date.usd;
@@ -123,22 +137,28 @@ function DecisionCard({
             Fulfill in one motion
           </div>
           <p className="help" style={{ marginTop: 0 }}>
-            Store the credential, scope the roles, approve the need — one press. The
-            value is encrypted, reaches only the named roles as an environment
-            variable, and never appears in chat.
+            Store the credential, choose who gets it, approve the need — one press.
+            The value is encrypted and arrives as an environment variable in the
+            sandboxes of the people you tick below. It never appears in chat, and
+            you never see it again either.
           </p>
           <div className="row">
             <input value={secretName} placeholder="Credential name (e.g. aws-key)"
               onChange={(e) => setSecretName(e.target.value)} />
             <input value={secretValue} type="password" placeholder="Value"
               onChange={(e) => setSecretValue(e.target.value)} />
-            <input value={roles} placeholder="Role slugs, comma-separated"
-              onChange={(e) => setRoles(e.target.value)} />
           </div>
+          <div className="grant-label">Who receives it</div>
+          <RoleGrants
+            org={org}
+            selected={roles}
+            onChange={setRoles}
+            askedByAgentId={approval.requested_by}
+            secretName={secretName}
+          />
           <div className="actions" style={{ marginTop: 8 }}>
             <button className="primary"
-              disabled={busy || !secretName.trim() || !secretValue
-                || !roles.trim()}
+              disabled={busy || !secretName.trim() || !secretValue || roles.length === 0}
               onClick={async () => {
                 setBusy(true);
                 setError(null);
@@ -146,7 +166,7 @@ function DecisionCard({
                   await post(`/admin/approvals/${approval.id}/fulfill`, {
                     secret_name: secretName.trim(),
                     value: secretValue,
-                    roles: roles.split(",").map((r) => r.trim()).filter(Boolean),
+                    roles,
                     note: note.trim(),
                   });
                   onDecided();
@@ -290,6 +310,7 @@ export default function Decisions({ ctx }: { ctx: ProjectCtx }) {
               key={a.id}
               approval={a}
               dash={dash}
+              org={ctx.org}
               onDecided={() => {
                 reloadApprovals();
                 ctx.reload();

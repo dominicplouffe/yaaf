@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { CrewSummary, RoleSummary, get } from "./api";
+import { CrewSummary, OrgView, RoleSummary, get } from "./api";
+import { envVarName } from "./datasource";
 import { clip, downloadCsv } from "./ui";
 
 /** Everything the chairman meets when hiring, in one place.
@@ -662,6 +663,152 @@ export function HirePanel({
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+
+// ── who receives a credential ────────────────────────────────────────────────
+
+/** One grantable role, with the people a grant to it would actually reach. */
+export interface GrantRole {
+  slug: string;
+  /** Which teams run it. More than one is why this is grouped by role. */
+  teams: string[];
+  people: string[];
+  /** The agent that filed the need is one of these. */
+  asked: boolean;
+  isCeo: boolean;
+}
+
+/** The roster, as grant targets.
+ *
+ *  Grouped by ROLE, not by team, because that is what a grant is: scoping a
+ *  secret to `engineer` reaches every engineer on the project. Drawing a row
+ *  per team would let a chairman tick "Build" and quietly also hand it to
+ *  "Platform", which is the same lie in a friendlier font.
+ */
+export function grantRoles(org: OrgView | null, askedByAgentId?: string | null): GrantRole[] {
+  const by = new Map<string, GrantRole>();
+  const add = (slug: string | null, team: string, agents: { id: string; name: string }[],
+               isCeo: boolean) => {
+    if (!slug) return;
+    const row = by.get(slug) ?? { slug, teams: [], people: [], asked: false, isCeo };
+    row.teams.push(team);
+    row.people.push(...agents.map((a) => a.name));
+    row.asked = row.asked || agents.some((a) => a.id === askedByAgentId);
+    by.set(slug, row);
+  };
+  for (const team of org?.teams ?? []) add(team.role_slug, team.name, team.agents, false);
+  if (org?.ceo) add(org.ceo.role_slug, "CEO", [{ id: org.ceo.id, name: org.ceo.name }], true);
+  // Whoever asked first: the chairman is confirming a proposal, so put the
+  // thing being proposed where he looks first.
+  return [...by.values()].sort((a, b) =>
+    Number(b.asked) - Number(a.asked) || a.slug.localeCompare(b.slug));
+}
+
+/** Who gets this credential — as people, not slugs.
+ *
+ *  This replaced a free-text box labelled "Role slugs, comma-separated", into
+ *  which the chairman reasonably typed the names of the two people he could
+ *  see on the screen. The field was asking him to translate what he knows
+ *  (who should have this) into an identifier he had no way to look up, and
+ *  then storing a grant that reached nobody when he got it wrong.
+ *
+ *  Same argument as the hiring pickers above: one component, so the two
+ *  screens that answer "who receives this" cannot drift apart again.
+ */
+export function RoleGrants({
+  org, selected, onChange, askedByAgentId, secretName, disabled,
+}: {
+  org: OrgView | null;
+  selected: string[];
+  onChange: (slugs: string[]) => void;
+  askedByAgentId?: string | null;
+  /** Shown in the consequence line, as the variable it will arrive as. */
+  secretName?: string;
+  disabled?: boolean;
+}) {
+  const rows = grantRoles(org, askedByAgentId);
+  // A grant already on the secret for a role nobody here has. Hiding it would
+  // make a dead grant permanent and invisible; it is shown so it can be removed.
+  const strangers = selected.filter((slug) => !rows.some((r) => r.slug === slug));
+
+  const toggle = (slug: string, on: boolean) =>
+    onChange(on ? [...selected, slug] : selected.filter((s) => s !== slug));
+
+  if (!org) return <p className="help">Loading the roster…</p>;
+  if (rows.length === 0) {
+    return (
+      <p className="help">
+        This project has no teams yet, so there is nobody to give a credential to.
+        Hire someone first — a credential granted to no one reaches no one.
+      </p>
+    );
+  }
+
+  const reached = rows.filter((r) => selected.includes(r.slug));
+  return (
+    <div className="grants">
+      {rows.map((role) => (
+        <label key={role.slug} className={`grant${selected.includes(role.slug) ? " on" : ""}`}>
+          <input
+            type="checkbox"
+            checked={selected.includes(role.slug)}
+            disabled={disabled}
+            onChange={(e) => toggle(role.slug, e.target.checked)}
+          />
+          <span className="grant-body">
+            <span className="grant-head">
+              <strong>{role.teams.join(" + ")}</strong>
+              <code>{role.slug}</code>
+              {role.asked && <span className="chip accent">asked for this</span>}
+              {role.isCeo && <span className="chip">plans, does not build</span>}
+            </span>
+            <span className="help">
+              {role.people.join(", ") || "nobody in it yet"}
+              {role.teams.length > 1 && (
+                <> — both teams run <code>{role.slug}</code>, so granting it reaches all of them.</>
+              )}
+            </span>
+          </span>
+        </label>
+      ))}
+
+      {strangers.map((slug) => (
+        <label key={slug} className="grant stranger">
+          <input type="checkbox" checked disabled={disabled}
+                 onChange={() => toggle(slug, false)} />
+          <span className="grant-body">
+            <span className="grant-head">
+              <strong>{slug}</strong>
+              <span className="chip warn">reaches no one</span>
+            </span>
+            <span className="help">
+              Nobody on this project has this role, so this grant does nothing.
+              Untick it to clear it.
+            </span>
+          </span>
+        </label>
+      ))}
+
+      <p className="help grant-sum">
+        {reached.length === 0 ? (
+          strangers.length > 0 ? (
+            // It has a grant; the grant is to nobody. Saying "no roles" here
+            // would contradict the amber row directly above it.
+            <>Nobody — the only role granted is one this project does not have.</>
+          ) : (
+            <>Nobody yet — a credential with no roles is stored but never injected.</>
+          )
+        ) : (
+          <>
+            {secretName ? <code>{envVarName(secretName)}</code> : "It"} reaches{" "}
+            <strong>{reached.flatMap((r) => r.people).join(", ") || "nobody"}</strong>{" "}
+            on their next run. Nobody else sees it, and it never appears in chat.
+          </>
+        )}
+      </p>
     </div>
   );
 }

@@ -885,7 +885,14 @@ def org(project_id: str, session: Session = Depends(db)) -> dict:
             }
         )
     ceo = policy.ceo_of(session, project.id)
-    return {"ceo": {"id": ceo.id, "name": ceo.name, "status": ceo.status} if ceo else None,
+    # The CEO's role hangs off the agent rather than a team, and it is a real
+    # grant target — a credential scoped to it reaches the CEO like any other.
+    # Without the slug here the roster the UI draws would be missing a role the
+    # server accepts, which is the sort of gap that sends people back to typing.
+    ceo_version = session.get(RoleVersion, ceo.role_version_id) if ceo else None
+    ceo_role = session.get(Role, ceo_version.role_id) if ceo_version else None
+    return {"ceo": {"id": ceo.id, "name": ceo.name, "status": ceo.status,
+                    "role_slug": ceo_role.slug if ceo_role else None} if ceo else None,
             "teams": teams}
 
 

@@ -737,7 +737,7 @@ export interface HypothesisRow {
 }
 
 export interface OrgView {
-  ceo: { id: string; name: string; status: string } | null;
+  ceo: { id: string; name: string; status: string; role_slug: string | null } | null;
   teams: {
     id: string;
     name: string;

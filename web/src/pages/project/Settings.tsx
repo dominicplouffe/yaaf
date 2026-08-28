@@ -12,7 +12,6 @@ import {
   patch,
   post,
   ProjectBundle,
-  RoleSummary,
 } from "../../api";
 import {
   BLANK_DATA_SOURCE,
@@ -27,6 +26,7 @@ import {
   sourceReady,
 } from "../../datasource";
 import { fmtWhen, usePoll } from "../../hooks";
+import { RoleGrants } from "../../roles";
 import { ConfirmModal, SecretInput, StoredSecret } from "../../ui";
 
 /** "amazon-audit-v2" → "amazon-audit-v3"; "Acme" → "Acme (clone)". Twins come
@@ -64,38 +64,6 @@ function amendmentBadge(status: AmendmentRow["status"]) {
 
 function hoursUntil(iso: string): number {
   return Math.max(0, Math.ceil((new Date(iso).getTime() - Date.now()) / 3_600_000));
-}
-
-function RoleChecks({
-  roles,
-  selected,
-  onChange,
-}: {
-  roles: RoleSummary[];
-  selected: string[];
-  onChange: (slugs: string[]) => void;
-}) {
-  return (
-    <div className="pill-row">
-      {roles.map((role) => (
-        <label key={role.slug} style={{ display: "flex", gap: 5, alignItems: "center" }}>
-          <input
-            type="checkbox"
-            style={{ width: "auto" }}
-            checked={selected.includes(role.slug)}
-            onChange={(e) =>
-              onChange(
-                e.target.checked
-                  ? [...selected, role.slug]
-                  : selected.filter((slug) => slug !== role.slug),
-              )
-            }
-          />
-          {role.name}
-        </label>
-      ))}
-    </div>
-  );
 }
 
 interface SlackConfig {
@@ -812,6 +780,7 @@ function GithubWorkspace({
 function CredentialsManager({
   projectId,
   dash,
+  org,
   secrets,
   refreshSecrets,
   act,
@@ -819,21 +788,15 @@ function CredentialsManager({
 }: {
   projectId: string;
   dash: Dashboard;
+  org: OrgView | null;
   secrets: SecretRow[];
   refreshSecrets: () => void;
   act: Act;
   busy: boolean;
 }) {
-  const [roles, setRoles] = useState<RoleSummary[]>([]);
   const [name, setName] = useState("");
   const [value, setValue] = useState("");
   const [grants, setGrants] = useState<string[]>([]);
-
-  useEffect(() => {
-    get<RoleSummary[]>("/admin/roles")
-      .then((all) => setRoles(all.filter((r) => !r.is_ceo_role)))
-      .catch(() => {});
-  }, [projectId]);
 
   // Only the credentials the chairman created by hand. The rest are owned by
   // the thing that made them and are edited there, so one object never shows
@@ -876,8 +839,8 @@ function CredentialsManager({
           />
         </div>
       </div>
-      <label className="field">Which roles receive it (nobody, until you grant)</label>
-      <RoleChecks roles={roles} selected={grants} onChange={setGrants} />
+      <label className="field">Who receives it (nobody, until you grant)</label>
+      <RoleGrants org={org} selected={grants} onChange={setGrants} secretName={name} />
       <div className="actions">
         <button
           className="small primary"
@@ -908,7 +871,7 @@ function CredentialsManager({
             <tr>
               <th>Credential</th>
               <th style={{ width: "32%" }}>Value</th>
-              <th style={{ width: "34%" }}>Roles that receive it</th>
+              <th style={{ width: "34%" }}>Who receives it</th>
               <th></th>
             </tr>
           </thead>
@@ -934,10 +897,11 @@ function CredentialsManager({
                   />
                 </td>
                 <td>
-                  <RoleChecks
-                    roles={roles}
+                  <RoleGrants
+                    org={org}
+                    secretName={secret.name}
                     selected={secret.role_scopes}
-                    onChange={(slugs) =>
+                    onChange={(slugs: string[]) =>
                       act(async () => {
                         await post("/admin/secrets", {
                           project_id: projectId,
@@ -1360,10 +1324,14 @@ function WebhookEndpoints({ projectId }: { projectId: string }) {
 export default function Settings({
   projectId,
   dash,
+  org,
   reload,
 }: {
   projectId: string;
   dash: Dashboard;
+  /** The roster, polled once for the whole project page — the tabs used to
+      fetch /org each and disagree with each other. */
+  org: OrgView | null;
   reload: () => void;
 }) {
   const [message, setMessage] = useState<string | null>(null);
@@ -1809,6 +1777,7 @@ export default function Settings({
         <CredentialsManager
           projectId={projectId}
           dash={dash}
+          org={org}
           secrets={secrets}
           refreshSecrets={refreshSecrets}
           act={act}
