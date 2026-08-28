@@ -1,4 +1,4 @@
-# Integrations — connecting your company to the world
+# Integrations — connecting your project to the world
 
 Everything here is **optional** and configured per project from the dashboard.
 Nothing below requires editing a role, redeploying, or touching the CLI, with
@@ -130,7 +130,7 @@ Two operational notes:
 
 **Settings → Integrations → Slack bridge.**
 
-Two things at once: your company's channels **mirror out** to Slack, and you
+Two things at once: your project's channels **mirror out** to Slack, and you
 can **talk to your CEO from Slack** — the same resident chat session as the
 Boardroom, answering in seconds.
 

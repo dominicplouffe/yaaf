@@ -40,7 +40,7 @@ can argue with it.
 | Review | `compliance-officer` | Owen | Reads what is about to ship and says PASS, FIX, or ESCALATE |
 
 The CEO here is `cio` — the same planning charter as the ordinary `ceo`, plus
-a hard line the whole desk runs under: **this company recommends and never
+a hard line the whole desk runs under: **this project recommends and never
 trades.** It never places an order, never touches a brokerage credential, and
 nothing it writes is advice for anyone but you. That is in the role prompt
 three times over, and the goal repeats it, because it is the thing that must

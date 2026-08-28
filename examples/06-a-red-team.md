@@ -110,11 +110,11 @@ Look for it in `redteam-01.md`. If it is not there, ask for it in the Boardroom.
 
 That "requester owns the test" rule has one exemption, and it is worth knowing
 about because it is a real cost rather than a loophole: **solo mode**. With one
-agent in the company there is nobody to hand the check to, so the rule degrades
+agent in the project there is nobody to hand the check to, so the rule degrades
 to nothing and a solo project self-grades every observable.
 
 That is not a bug and it is not swept under the carpet — it is the honest
-difference between running one agent and running a company, and it is why
+difference between running one agent and running a project, and it is why
 [09 — One idea, thirty days](09-one-idea-thirty-days.md) leans so hard on
 *external* evidence the platform fetches itself. When nobody inside can check
 you, the check has to come from outside.

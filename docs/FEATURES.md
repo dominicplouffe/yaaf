@@ -35,7 +35,7 @@ employees and a lead. The CEO is the only agent that plans.
   which version).
 - Editing a role creates a **new version**. Live teams keep the version they
   pinned until you explicitly **repin** them — an edit never silently changes a
-  running company.
+  running project.
 - **Solo mode** places the CEO as the sole member of the only team, so one
   brain plans *and* executes under byte-identical policy — a legitimate way
   to run yaaf if you just want the guardrails.
@@ -69,7 +69,7 @@ Outside Explore mode the root object is not the task, it is the
   a requirement true. The strongest form of "done is never self-graded" is that
   the verb does not exist.
 - **A task that serves no requirement is refused.** Work that makes nothing
-  true is how a company stays busy without finishing.
+  true is how a project stays busy without finishing.
 - **R-00, the plan gate.** A Deliver or Operate project starts owing a plan.
   Until scope exists, is staged, is estimated, and *fits the money*, no work
   may be created. The gate is arithmetic in the server, not a judgement: it
@@ -83,7 +83,7 @@ Outside Explore mode the root object is not the task, it is the
   kept acyclic by a check on insert, with the critical path computed
   server-side.
 
-## 3. A delivery date the company cannot quietly break
+## 3. A delivery date the project cannot quietly break
 
 - **The commitment is a row the platform owns.** The CEO proposes; it never
   writes the date — `deliver_by` is stamped from the platform's own projection,
@@ -107,7 +107,7 @@ Outside Explore mode the root object is not the task, it is the
   the cycle, carries unfinished scope forward, reopens the plan gate, and hands
   the CEO the last three cycles' narratives verbatim. Two consecutive cycles
   with nothing accepted pause the project: a rhythm nobody dances to is a bill,
-  not a company.
+  not a project.
 - **The review is opened by the janitor with zero tokens**, on schedule,
   regardless of budget or an empty board — because a review with nothing on the
   board is the one you most need. It carries the platform's frozen numbers;
@@ -136,7 +136,7 @@ Outside Explore mode the root object is not the task, it is the
   task it has already claimed, and never a subtask of a subtask.
 - **One item at a time.** An agent holding a claimed task cannot claim another.
 - **External-evidence floor.** Once the board is big enough, a minimum share of
-  open tasks must produce evidence from outside the company. Stops a company
+  open tasks must produce evidence from outside the project. Stops a project
   that only talks to itself.
 - **Evidence drought.** With no verified external proof for N hours, the CEO
   may *only* create evidence-producing tasks until proof lands.
@@ -178,7 +178,7 @@ Outside Explore mode the root object is not the task, it is the
   shows whichever unit is native to the project.
 - **Warn, then stop.** At the warn ratio the CEO is told to cut burn; at 100%
   the project **pauses itself** and you get an email/webhook. Restarting is
-  your decision, not the company's.
+  your decision, not the project's.
 - **Billing fails loud.** A missing or wrong-shaped credential is caught by a
   preflight and by the health checklist, not at 9am by a dead run.
 - **Approval threshold.** Spends at or above a USD line — and anything legally
@@ -191,7 +191,7 @@ Outside Explore mode the root object is not the task, it is the
 
 - **Wakes per agent per hour** — the runaway-loop brake. Every wake is a paid
   model call.
-- **Runs per project per day** — the whole-company activity ceiling.
+- **Runs per project per day** — the project-wide activity ceiling.
 - **Pair circuit breaker.** Two agents exchanging N messages in one thread with
   no task changing state are talking, not working: the thread **freezes**. Only
   you can unfreeze it.
@@ -251,7 +251,7 @@ decision, and configuration change. The dashboard surfaces it as:
 - **Runs** — every model call: which agent, which team, why it woke, what it
   cost, its full trace.
 - **Messages** — every channel, including ones you can read but not speak in.
-- **Memory** — what the company chose to remember.
+- **Memory** — what the project chose to remember.
 - **Decisions** — everything you decided, and everything that decided itself
   (expired approvals, auto-pauses, killed bets, frozen threads).
 - **Amendments** — every constitution change with the reason you gave, plus
@@ -266,15 +266,15 @@ Overview said what is true *now*, and reconstructing a weekend meant reading
 four tables in Records by hand.
 
 **The briefing — what happened while you were away.** One composed narrative
-per company: scope that settled, work that closed, proof the platform verified
+per project: scope that settled, work that closed, proof the platform verified
 or refused, deliverables published, what it cost, what decided itself in your
 absence, what the CEO decided on its own authority, what you decided, and what
-that leaves waiting on you. It reads on the Desk (every live company), on each
+that leaves waiting on you. It reads on the Desk (every live project), on each
 project's Overview, from `yaaf briefing`, and — with `brief_daily_at` set — in
 your inbox every morning.
 
 - **Composed from the record at zero tokens.** No run, no wake, no model call.
-  Which is why it still arrives on a company the platform paused for an
+  Which is why it still arrives on a project the platform paused for an
   exhausted budget, on one with an empty board, and on one that is broke — the
   three mornings you most need to hear something, and the three a
   model-written status could not be afforded. Same reasoning as the janitor
@@ -288,8 +288,8 @@ your inbox every morning.
 - **The window is yours and has visible edges.** "Since you were last here" is
   a real mark, moved only when you acknowledge the panel — reading it never
   moves it, so a tab left open overnight does not eat your weekend. A first
-  visit summarises the whole company rather than an empty minute.
-- **Silence says which kind it is.** A company that did nothing still ships its
+  visit summarises the whole project rather than an empty minute.
+- **Silence says which kind it is.** A project that did nothing still ships its
   pulse: open tasks, runs in flight, when it last ran. Nothing wrong and
   nothing happening are different screens.
 - **Two marks, two meanings.** The daily email's window runs from the last
@@ -305,7 +305,7 @@ a next firing — rather than fourteen copies of one event. Every time is read i
 the constitution's one timezone from the same heartbeats the dispatcher reads,
 so a wake it draws is a wake that will run. And it explains its own blanks: why
 the next review is not scheduled while one sits open, that nobody is on a
-clock, that a paused company has no schedule at all.
+clock, that a paused project has no schedule at all.
 
 ## 13. A fire drill, before you spend a cent
 
@@ -318,8 +318,8 @@ credential shaped like a credential, is a team on an outdated role version —
 and a static check cannot answer the question you are actually asking.
 
 **`yaaf rehearse spec.json`**, and a button on the New-project form's
-**Review & create** step, runs your spec as a company for nothing. It is the
-same machinery CI uses to drive a whole company for $0 — the mock runtime, the
+**Review & create** step, runs your spec as a project for nothing. It is the
+same machinery CI uses to drive a whole project for $0 — the mock runtime, the
 dispatcher, the janitor, the policy engine, every refusal — pointed at your
 configuration instead of a scripted scenario. It needs no deployment and no
 key: `yaaf rehearse examples/01-your-first-hour.json` works on a fresh
@@ -333,7 +333,7 @@ Four things come back:
   happened on, or the reason it did not. A configuration that fails does not
   report "it didn't work"; it reports *where it stopped*, in the platform's own
   words. A role your library cannot resolve, a schedule naming nobody, a
-  company with no team in it: each is named, with what to do about it.
+  project with no team in it: each is named, with what to do about it.
 - **How often it will stop and wait for you.** The drill plays the chairman and
   counts every time it had to — accept scope, sign the date, judge an
   observable, decide a spend. That number is the autonomy dial made concrete,
@@ -367,9 +367,9 @@ as written.
 **What it cannot tell you** — and says so, at the bottom of every report — is
 whether a real model does the job well. The crew is competent and dull by
 construction, so a clean drill is evidence about your *configuration* and no
-evidence at all about your *company*.
+evidence at all about your *project*.
 
-## 14. Talking to your company
+## 14. Talking to your project
 
 - **The Boardroom** is a chat, not a ticket queue. Every running project keeps
   a **resident CEO chat session**, so replies land in seconds — typing
@@ -416,7 +416,7 @@ evidence at all about your *company*.
   transcript evals that gate prompt edits, and end-to-end runs against a mock
   model.
 - **Mock runtime** (`runtime: mock`) swaps the Agent SDK for scripted
-  behaviours, which is how CI drives a whole company — planning, decomposition,
+  behaviours, which is how CI drives a whole project — planning, decomposition,
   claims, completions, evidence, every governance trip — for $0. Behaviours are
   registered in code, and a mock project you start yourself still reads its
   context and exits: none is registered for it. The one thing that does ship a
@@ -429,15 +429,15 @@ evidence at all about your *company*.
 
 ## 18. The founding conversation
 
-Every other part of this product has a company behind it. A CEO proposes a
-plan; teams claim work; an adversary attacks the company's own output; the
+Every other part of this product has agents behind it. A CEO proposes a
+plan; teams claim work; an adversary attacks the project's own output; the
 platform refuses a success test it cannot check. The founding moment had a
 form — and the form asks one person, alone, to hand-author a goal of several
 thousand words, an org chart, and a constitution of fifty-odd rules. That is
 not a form problem. It is an authoring problem wearing a form.
 
-**+ Found a company** puts an agent there instead. You write a paragraph; the
-**Founder** replies with a whole company — goal prose, shape, roster, and the
+**+ Design a project** puts an agent there instead. You write a paragraph; the
+**Founder** replies with a whole project — goal prose, shape, roster, and the
 few constitution rules it can defend — and then says what it assumed, what it
 added that you never asked for, and what it still needs to know. You argue. It
 revises. The draft is the same `project_setup` bundle an export produces, so
@@ -462,14 +462,14 @@ Four things make it more than a prompt:
   it tells you up front which credentials the roster will demand — before a run
   fails at 3am asking for one.
 - **It runs the drill on its own draft.** §13 costs nothing, so there is no
-  reason to hand you a company that cannot get off the ground.
+  reason to hand you a project that cannot get off the ground.
 - **The conversation becomes the briefing.** Everything you explained and
   argued through is handed to the new CEO as its day-one context. Being asked
   to say it all again to a fresh agent is exactly the form behaviour this
   replaces.
 
 It runs on a **platform key** — set once, product-wide, never handed to a
-project's agents. Every company still pays its own way with its own key, and
+project's agents. Every project still pays its own way with its own key, and
 the fire drill still costs nothing whether or not a platform key exists.
 
 ## Where to go next

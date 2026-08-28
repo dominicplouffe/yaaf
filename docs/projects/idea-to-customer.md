@@ -1,9 +1,9 @@
-# Idea to Customer — a company that finds a product, builds it, and sells it
+# Idea to Customer — a project that finds a product, builds it, and sells it
 
 **You want:** one software product that did not exist in August to have paying
 customers by New Year's Eve, found and built and sold by agents. **You don't
 want:** four months of confident documents about a product nobody outside the
-company ever saw.
+project ever saw.
 
 This is a full yaaf project definition: the goal, the shape, eleven teams, a
 constitution with a deliberate budget ramp, and the list of things the chairman
@@ -39,7 +39,7 @@ to be the reason 31 December arrives with no revenue.
 **bets with kill dates** and the platform holds them to those dates.
 
 The temptation is Deliver — it has requirements, acceptance tests the platform
-runs itself, and a delivery date. Take it and the company owes a plan before it
+runs itself, and a delivery date. Take it and the project owes a plan before it
 may create any work at all, and in week one it would be writing acceptance
 tests for a product it has not chosen yet. Those requirements would be fiction,
 and the plan gate would be checking the arithmetic of fiction.
@@ -47,7 +47,7 @@ and the plan gate would be checking the arithmetic of fiction.
 Explore is the honest shape for "I do not know what we are building yet". What
 you give up is the plan gate and the projected date; what you keep — the
 budget, the loop brakes, the evidence rules, the drought rule, the audit, the
-weekly review — is every mechanism that actually stops a company fooling
+weekly review — is every mechanism that actually stops a project fooling
 itself.
 
 The bets are where the phases live. Four of them, roughly:
@@ -74,7 +74,7 @@ also in the JSON.
 > Find a software product worth building, build it, put it in front of its
 > market, and take money from strangers before 31 December 2026. Paying
 > customers are the only result that counts. Signups, waitlists, traffic, stars
-> and compliments are leading indicators, and this company is not graded on
+> and compliments are leading indicators, and this project is not graded on
 > leading indicators.
 >
 > PHASE ONE IS A BAKE-OFF, NOT A BRAINSTORM. Produce five candidate ideas and
@@ -82,7 +82,7 @@ also in the JSON.
 > two sentences; who specifically has the problem, named tightly enough that you
 > could go find ten of them this week; what those people do about it today and
 > what that costs them in money, time or risk; the market size with the
-> arithmetic shown and every input sourced to something outside this company;
+> arithmetic shown and every input sourced to something outside this project;
 > what already exists, what it charges, and what its own paying users complain
 > about in public; how it would reach buyers; what it costs to run per customer;
 > and the cheapest test that would prove the whole thing wrong. Then choose one
@@ -96,13 +96,13 @@ also in the JSON.
 > evidence, not on the chairman's taste.
 >
 > THEN BUILD THE SMALLEST VERSION SOMEBODY WOULD PAY FOR, ship it where its
-> buyers already are, and sell it. Distribution is this company's job. The
+> buyers already are, and sell it. Distribution is this project's job. The
 > chairman will not post about it, will not email his contacts, and will not
 > introduce you to anyone. If the market hears about this product, it is because
 > an agent here made that happen. Do not plan around his audience; for this
 > purpose he does not have one.
 >
-> EVERYTHING A STRANGER SEES HAS TO LOOK LIKE SOMEBODY CARED. This company is
+> EVERYTHING A STRANGER SEES HAS TO LOOK LIKE SOMEBODY CARED. This project is
 > staffed by people who love interfaces and cannot leave an ugly one alone, and that
 > is a hiring standard, not a preference: the landing page, the sign-up, the empty
 > state, the pricing table, the receipt email and the error message are all the
@@ -116,7 +116,7 @@ also in the JSON.
 > and contrast, focus rings, touch targets and reflow treated as visual defects
 > rather than as somebody else's accessibility checklist. The designer owns the bar.
 > Everyone is held to it — an engineer shipping a screen nobody designed, or a
-> marketer publishing a page that looks like a different company, is the same defect
+> marketer publishing a page that looks like a different project, is the same defect
 > as a broken build. And it is a constraint on ambition, not a licence to gold-plate:
 > pick a scope small enough that what you ship can be genuinely well made by the date.
 >
@@ -125,14 +125,14 @@ also in the JSON.
 > need, say what it is for, what it costs, and what stops without it. If you can
 > sign yourself up for a service and pay for it inside the spend envelope, do
 > that instead of asking, and record the account you created. He is the enabler
-> and the auditor of this company, never a member of it.
+> and the auditor of this project, never a member of it.
 >
 > MONEY AND TIME ARE BOTH SHORT ON PURPOSE. The model budget is small while you
-> are still deciding what to build, because a company that spends its year on
+> are still deciding what to build, because a project that spends its year on
 > research never ships; it will be raised at a review once there is something in
 > the market that feeding would help. Read cheaply, write briefly, and put the
 > tokens into the two things that are actually hard: finding out what is true
-> outside this company, and getting a working product in front of somebody who
+> outside this project, and getting a working product in front of somebody who
 > might pay for it.
 >
 > THE FINISH LINE is revenue booked through the payment processor's signed
@@ -142,18 +142,18 @@ also in the JSON.
 > what was tried in the market and what it returned, and what would have to be
 > different for this to work. That is a real result and it will be read as one.
 > What will not be accepted is a year of documents about a product nobody
-> outside this company ever saw.
+> outside this project ever saw.
 
 Six things are doing the work in there, and none of them is decoration:
 
 - **Five ideas researched to the same depth before any ranking.** Without it a
-  company researches its favourite and writes four strawmen around it.
+  project researches its favourite and writes four strawmen around it.
 - **A named buyer you could go find ten of this week.** "Small businesses" is
   not a buyer. It is a way of not choosing.
 - **The bias stated as a bias.** You prefer cheap and consumer; you said the
   best idea wins. Both are in there, in that order, so the CEO knows which one
   bends.
-- **Distribution is the company's job, in writing.** The one instruction most
+- **Distribution is the project's job, in writing.** The one instruction most
   likely to be quietly ignored, because leaning on the founder's audience is
   what every real startup does.
 - **A design bar stated as a hiring standard.** Not "make it look nice" at the
@@ -167,7 +167,7 @@ Six things are doing the work in there, and none of them is decoration:
 ## 3. The roster: every general-purpose role in the library
 
 The library has 32 roles across six aisles. Fifteen of them are markets or
-games specialists and have no business here. Of the seventeen left, this company
+games specialists and have no business here. Of the seventeen left, this project
 hires **every role whose domain is `general`** — all twelve, the CEO among them
 — plus the one data role that earns its seat:
 
@@ -201,7 +201,7 @@ talk to, and the only one that creates top-level tasks.
 If you would rather start smaller, create it with **Research, Numbers, Red
 Team, Dry Run and Copy**, and add the other seven at the pivot — *Add a team*
 opens the same hiring desk on a running project. The bundle ships the full
-roster because the roster is the answer to "who is in this company", and the
+roster because the roster is the answer to "who is in this project", and the
 seats you have not filled are the work that quietly does not get done.
 
 **The four roles deliberately left out**, so the omissions are on the record:
@@ -215,10 +215,10 @@ chosen idea touches health, finance or children's data, hire it that day.
 
 ### The bar everyone is held to
 
-A design seat is not the same thing as a company that cares, and hiring one is
+A design seat is not the same thing as a project that cares, and hiring one is
 the usual way of buying the first while avoiding the second: the designer makes
 a beautiful mockup, the engineer ships what was quick, and the marketer
-publishes a page that looks like a different company. So the bar is in the goal,
+publishes a page that looks like a different project. So the bar is in the goal,
 where it binds everyone, and the seat exists to own it rather than to hold it
 alone.
 
@@ -271,7 +271,7 @@ The project starts at these numbers:
 | `max_usd_per_purchase` | **$25** | A domain or a month of hosting goes through unasked. Anything bigger asks you first. |
 | `approval_threshold_usd` | **$50** | Above this, and for anything legally ambiguous, it waits for you. Unanswered approvals expire to **no** in 5 days. |
 | `runs_per_project_per_day` | **40** | The activity ceiling across every agent — roughly one run every 35 minutes, around the clock. |
-| `runs_per_project_per_hour` | **6** | Stops the day's allowance being spent by 10am, which is how a company ends up dead until midnight with work stranded. |
+| `runs_per_project_per_hour` | **6** | Stops the day's allowance being spent by 10am, which is how a project ends up dead until midnight with work stranded. |
 | `max_usd_per_run` | **$1.25** | A run that spends more than this has stopped working and started looping. |
 | `max_concurrent_runs` | **2** | Two agents at a time. Raise with the rest. |
 | `wakes_per_agent_per_hour` | **3** | Halved from the default. |
@@ -300,11 +300,11 @@ to buy is the most reliable way to end December broke and empty-handed.
 measured, verified conversion. This is the one you take from your own pocket
 gladly, because by then the arithmetic is doing the arguing.
 
-**What does not unlock a raise:** running out of budget. A company that hits
+**What does not unlock a raise:** running out of budget. A project that hits
 80% and asks for more has told you how fast it burns, not what it earned. The
 warn ratio exists so the CEO cuts burn; if it comes to you instead, the
 question to ask in the boardroom is which of the last month's runs bought
-anything outside this company.
+anything outside this project.
 
 ---
 
@@ -314,7 +314,7 @@ Three settings decide whether "we're making progress" means anything.
 
 **`controlled_domains`.** Anything on this list can never count as external
 evidence. Put your own sites and `github:your-account` in it before you create
-the project — and then, **the day the company buys its product domain, add
+the project — and then, **the day the project buys its product domain, add
 that too.** Its landing page going live is not evidence that anyone wants the
 product; a stranger on someone else's forum saying they want it is. This is the
 single most important field on the form and it ships with placeholders on
@@ -327,7 +327,7 @@ Work tab, `failed` means the platform fetched it and got a 404 or a mismatch —
 those count for nothing.
 
 **`drought_hours: 72`.** Three days with no verified external evidence and the
-company may only create work that reaches outside. The default is 24 and
+project may only create work that reaches outside. The default is 24 and
 example 09 uses 48; 72 is deliberate here, because there are real stretches —
 the middle of the build — where three days of internal work is honest. If you
 find yourself in a fortnight of green tasks and no verified proof, tighten it
@@ -335,7 +335,7 @@ back to 48 at a review and watch what gets refused.
 
 `external_ratio_min` is **0.4** from three open tasks up: with five open, two
 must reach outside. During the build phase that is the rule doing its job — it
-is what stops a company disappearing into its own codebase for six weeks.
+is what stops a project disappearing into its own codebase for six weeks.
 
 ### Revenue, which is the only finish line
 
@@ -372,7 +372,7 @@ Here is the list, in the order it will arrive, so none of it surprises you:
 | # | The need | When | Yours or theirs | What to do |
 |---|---|---|---|---|
 | 1 | **Anthropic API key** | At creation | Yours | Mandatory — agents cannot run keyless. Stored encrypted, attached as billing, never enters a sandbox. |
-| 2 | **A mailbox for the company** | Week 1 | Yours to create, theirs to use | Every signup needs an address, and it must not be your personal one. A dedicated mailbox, granted as a credential. |
+| 2 | **A mailbox for the project** | Week 1 | Yours to create, theirs to use | Every signup needs an address, and it must not be your personal one. A dedicated mailbox, granted as a credential. |
 | 3 | **A payment card** | Week 1–2 | Yours | **Use a virtual card with a hard monthly limit set to the external cap, not your everyday card.** The envelope is a yaaf rule; the card limit is the one the bank enforces if a rule is ever wrong. Store it as a service credential, scoped to the roles that buy — not to all eleven. |
 | 4 | **A domain** | Week 2–4 | Theirs | With #3 they buy it inside the $25 line without asking. Then **add it to `controlled_domains` the same day.** |
 | 5 | **A GitHub repo + token** | Week 4–6 | Yours | A dedicated account or org, not your main one. Repo events arriving on the signed webhook become platform-attested evidence — this is how "we shipped it" stops being a claim. |
@@ -383,7 +383,7 @@ Here is the list, in the order it will arrive, so none of it surprises you:
 
 **How to answer a need well:** either grant it, or say no and say why in one
 line. A need left to expire decides itself as **no** after five days, and the
-company degrades gracefully — but it degrades. The needs are the whole of your
+project degrades gracefully — but it degrades. The needs are the whole of your
 job here; everything else is spot-checking.
 
 ---
@@ -397,15 +397,15 @@ being honest about before you start.
 list, introduce anyone, or lend your name as the product's founder. You *do*
 sign the things the world requires a human to sign: the payment account, an
 app-store identity, a verification code. That is enabling, and the distinction
-is not a technicality — the first is the audience the company is not allowed to
+is not a technicality — the first is the audience the project is not allowed to
 borrow, the second is a door it cannot legally open by itself.
 
 **Where this will hurt.** Many distribution channels — Reddit, X, Product Hunt,
 the app stores — verify identity, throttle new accounts, and have terms about
 automated posting. The platform will not defeat those, so they arrive as
-assists, and a channel whose terms forbid what the company wants to do there is
+assists, and a channel whose terms forbid what the project wants to do there is
 a channel that is *closed*, not one to route around. Say that to the CEO on day
-one. The channels that stay genuinely open to a company like this are the owned
+one. The channels that stay genuinely open to a project like this are the owned
 and earned ones — a site, search, content, communities you participate in
 honestly, cold outreach that identifies itself, directories, integrations and
 marketplaces. That is a real go-to-market. It is also slower than a founder
@@ -460,11 +460,11 @@ yaaf rehearse docs/projects/idea-to-customer.json --days 125
 **Run the CLI drill from the repo root.** This file hires from the role
 library rather than shipping its own copies of twelve roles, and the CLI looks
 for that library in `./roles` — from anywhere else every role comes back
-unresolved and the drill reports a company that would not start. The
+unresolved and the drill reports a project that would not start. The
 dashboard's **fire drill** button on the New-project page has no such
 requirement: it hires from your install's own library.
 
-A clean drill says the company gets off the ground, opens its board, does work
+A clean drill says the project gets off the ground, opens its board, does work
 and closes it with evidence, and never has to wait for you. It says nothing
 about whether a real model does the job well — the drill's crew is competent
 and dull by construction.
@@ -517,7 +517,7 @@ ready — and then the boardroom brief in §7.
   names a wall you built: probably the drought rule during a long build, or the
   external ratio while the queue is full of plumbing. The audit log names the
   rule and the agent. Amend it deliberately at a review, with a reason — not by
-  a rule-change every time the company complains.
+  a rule-change every time the project complains.
 - **Silence.** `stall_hours` is 12: work on the board and no run started for
   half a day gets you one notice naming the cause. On a project this slow that
   is the number that tells you the difference between thinking and stuck.
@@ -528,7 +528,7 @@ ready — and then the boardroom brief in §7.
 
 Nobody has shown that a CEO plus eleven teams beats one good agent on the same
 budget and the same rules, and this document does not claim it. What this
-project is really testing is narrower and more interesting: **whether a company
+project is really testing is narrower and more interesting: **whether a project
 that is structurally forbidden from borrowing its founder's audience can find a
 product and sell it anyway, inside four months and a few hundred dollars.**
 

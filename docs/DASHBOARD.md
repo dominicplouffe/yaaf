@@ -4,7 +4,7 @@ The chairman's cockpit is a React SPA served by the API at **`/app`**. Log in
 with your admin token (`YAAF_ADMIN_TOKEN`).
 
 Everything below is also reachable from the [CLI](CLI.md), but the dashboard is
-the intended way to run a company.
+the intended way to run a project.
 
 ---
 
@@ -12,8 +12,8 @@ the intended way to run a company.
 
 | | What it's for |
 |---|---|
-| **Desk** | The landing page. Everything needing you, across every company. |
-| **Projects** | Your portfolio — one comparable row per company. |
+| **Desk** | The landing page. Everything needing you, across every project. |
+| **Projects** | Your portfolio — one comparable row per project. |
 | **Roles** | The role library, and each role's blast radius. |
 | **New project** | The creation wizard. |
 
@@ -23,9 +23,9 @@ the intended way to run a company.
 
 One ranked list, sorted by **time to consequence** — how long until a thing
 resolves itself without you. The soonest deadline is the top row whoever owns
-it; the page never sorts by which company was created first.
+it; the page never sorts by which project was created first.
 
-1. **Stopped** — it has stopped and only you restart it: a paused company, a
+1. **Stopped** — it has stopped and only you restart it: a paused project, a
    bet past its kill date with tasks blocked behind it, a thread the pair
    breaker froze.
 2. **On a clock** — it resolves without you at a time the platform can name:
@@ -40,7 +40,7 @@ happens if you do nothing**, and the action.
 Only tiers 1 and 2 are counted in the sidebar badge — a number above zero is a
 promise that something has a consequence attached.
 
-**Only live companies appear.** Stopped and completed ones are the Projects
+**Only live projects appear.** Stopped and completed ones are the Projects
 page's business; they get one line at the foot of the roster.
 
 **The autonomy dial decides what is eligible for a row.** Where the
@@ -59,10 +59,10 @@ integrity is structure, and the Desk draws that line where the server does.
 ### Since you were last here
 
 Above the ranked list, and answering the earlier question: **what happened
-while I was away?** One block per company that moved — scope that settled,
+while I was away?** One block per project that moved — scope that settled,
 work that closed, proof the platform verified or refused, what it cost, what
 decided itself in your absence, and what that has left waiting on you. A
-company that did nothing collapses to one line, and still says whether that
+project that did nothing collapses to one line, and still says whether that
 was a quiet week or a dead one.
 
 The window is *since you last read this*, not a fixed 24 hours, and its edges
@@ -73,18 +73,18 @@ shown, so anything that landed while the panel sat open survives to the next
 read.
 
 None of it costs a model call: it is composed from the record. That is what
-lets it arrive on a company the platform paused for an exhausted budget, which
+lets it arrive on a project the platform paused for an exhausted budget, which
 is the morning you most want to hear from it.
 
 **The hero state is an empty desk**, and it proves it rather than asserting
-it: how many companies are working, when something last ran, and when the next
+it: how many projects are working, when something last ran, and when the next
 clock fires. *Nothing is wrong* and *nothing is happening* are different
-screens — if you have companies that could be working and none is, the desk
+screens — if you have projects that could be working and none is, the desk
 says so instead of congratulating you.
 
 ## Projects
 
-The portfolio view: every company with its status, spend against cap, open
+The portfolio view: every project with its status, spend against cap, open
 work, and last run. Start, pause, and stop live here and in each project's
 header.
 
@@ -107,7 +107,7 @@ system prompt, model and effort, tool permissions, secret scopes — and its
 
 Editing a role creates a **new version**. Live teams keep the version they
 pinned; they move only when you **repin** them, which the health checklist will
-remind you about. An edit never silently changes a running company.
+remind you about. An edit never silently changes a running project.
 
 ## New project
 
@@ -118,16 +118,16 @@ Four steps, one per decision that actually needs you:
    say (an outcome, a deliverable and who it's for, a deadline, where the inputs
    come from). Advisory — you can create with none of them ticked. Then the
    project's shape, which is frozen here.
-2. **The company** — which CEO runs it, and the hiring desk: fourteen **crews**
+2. **The project** — which CEO runs it, and the hiring desk: fourteen **crews**
    (a named job with a team already on it, eleven of them the `examples/`), or
    thirty-two roles by aisle with search, filters, depth and cost, and what each one
    needs before it can work.
 3. **The money and the rules** — the billing key, and the presets that fill the
    constitution. Every rule the preset wrote stays visible and editable, marked
    when you change one.
-4. **Review & create** — the company as it will exist, what it still needs
+4. **Review & create** — the project as it will exist, what it still needs
    before it can start, and **Run a fire drill**: your exact spec run as a
-   company on scripted agents, at no cost and creating nothing, reporting
+   project on scripted agents, at no cost and creating nothing, reporting
    whether it gets off the ground, how often it would stop and wait for you,
    and what paces it. → [FEATURES §13](FEATURES.md)
 
@@ -174,7 +174,7 @@ editable, here and later.
 # Inside a project
 
 Six tabs you live in, then two you open when something looks wrong. Every tab
-carries the same header — status, what the company is working on, spend against
+carries the same header — status, what the project is working on, spend against
 the cap, and the setup light — plus one line answering "why is nothing
 happening?" when the answer is not obvious.
 
@@ -182,15 +182,15 @@ happening?" when the answer is not obvious.
 their shape is bets and evidence — and a tab that only ever explains its own
 absence is clutter. See [project shapes](#project-shapes) below.
 
-## Overview — the state of the company
+## Overview — the state of the project
 
 Read top to bottom it is three tenses: what needs you, what happened, what is
 true now, what happens next.
 
 - **Needs you** — the decisions the Desk surfaces, scoped to this project. A
   quiet project says "nothing waiting on you here."
-- **What happened** — this company's briefing, on your own read mark. The same
-  panel as the Desk's, minus the company name, with *Mark read* beside it.
+- **What happened** — this project's briefing, on your own read mark. The same
+  panel as the Desk's, minus the project name, with *Mark read* beside it.
 - **Is it working?** — working now, runs today against the daily ceiling, runs
   that ended early, and spend today.
 - **What happens next** — the calendar. Fourteen days by default (7 or 30 on
@@ -207,7 +207,7 @@ true now, what happens next.
     review), or the platform's own **projection** — drawn hollow, because a
     projection is arithmetic and not a promise anyone made.
   - It **explains its blanks**: why the next review is not scheduled while one
-    sits open, that nobody is on a wall-clock wake, that a paused company has
+    sits open, that nobody is on a wall-clock wake, that a paused project has
     no schedule at all. A blank column where your weekly meeting should be is
     worse than a sentence saying why.
 
@@ -226,7 +226,7 @@ true now, what happens next.
   link: dead billing, a credential of the wrong shape, an untested data source,
   a team on an outdated role version. **A healthy project collapses this to one
   green line.**
-- **The company** — the org roster: teams, leads, employees, who's awake, and
+- **The project** — the org roster: teams, leads, employees, who's awake, and
   each team's open work.
 
 ## Boardroom — talk to your CEO
@@ -286,7 +286,7 @@ forecast grades. Nothing but the platform ever writes `met`.
 - **All proof.** Every piece of external evidence with its verification status
   — platform-attested, verified claim, or failed check. Only verified or
   attested evidence counts toward the drought and the external-evidence floor,
-  which is why a busy-looking company can still be in a drought. Snapshots are
+  which is why a busy-looking project can still be in a drought. Snapshots are
   viewable; both tables export to CSV.
 
 Bets (hypotheses) with their kill dates live here too: each shows the proof it
@@ -321,7 +321,7 @@ Four ways of asking the same question, kept out of the daily path:
 |---|---|
 | **Runs** | Every model call: agent, team, why it woke, what it cost, and the full trace. |
 | **Messages** | Every channel — including the ones you can read but not speak in. |
-| **Memory** | What the company chose to remember, per scope, with its curation history. |
+| **Memory** | What the project chose to remember, per scope, with its curation history. |
 | **Decisions** | Everything you decided, everything that decided itself (expired approvals, auto-pauses, killed bets, frozen threads), every rule change — and **what the CEO decided** on its own authority. |
 
 ### What the CEO decided
