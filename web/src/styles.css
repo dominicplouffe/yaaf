@@ -1276,3 +1276,21 @@ button.rolepick { width: 100%; text-align: left; background: var(--surface-2); }
   background: var(--surface-2); border: 1px solid var(--border);
   border-radius: 6px; padding: 10px 12px; margin: 0;
   max-height: 340px; overflow-y: auto; }
+
+/* The Founder's running commentary. A drafting turn takes minutes; a spinner
+   over that is indistinguishable from a hang, which is how it was first
+   reported. */
+.steps { list-style: none; margin: 0 0 8px; padding: 0; }
+.step { display: flex; align-items: baseline; gap: 8px; padding: 2px 0; }
+.step-mark { width: 12px; flex: none; text-align: center; }
+.step-label { flex: 1; min-width: 0; }
+.step-secs { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.step-done .step-mark { color: var(--good); }
+.step-failed .step-mark { color: var(--critical); }
+.step-done .step-label { color: var(--muted); }
+.step-running .step-mark { color: var(--accent); animation: step-pulse 1.2s ease-in-out infinite; }
+.step-running .step-label { color: var(--ink); }
+@keyframes step-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+@media (prefers-reduced-motion: reduce) {
+  .step-running .step-mark { animation: none; }
+}

@@ -29,8 +29,8 @@ from sqlalchemy.orm import Session
 
 from yaaf.core import platform
 from yaaf.core.models import FoundingThread, utcnow
+from yaaf.founder import progress, tools
 from yaaf.founder import session as founder_session
-from yaaf.founder import tools
 from yaaf.founder.prompt import system_prompt
 
 log = logging.getLogger("yaaf.founder")
@@ -79,7 +79,7 @@ def say(session: Session, thread: FoundingThread, message: str) -> dict:
     # only thing that writes it, and it is read back once the turn settles, so
     # there is exactly one place a draft can change.
     state: dict = {"draft": thread.draft_bundle}
-    founder_tools = tools.build_server(session, state, env, model)
+    founder_tools = tools.build_server(session, state, env, model, thread.id)
 
     opts = founder_session.options(
         system=system_prompt(),
@@ -89,8 +89,17 @@ def say(session: Session, thread: FoundingThread, message: str) -> dict:
         allowed_tools=tools.ALLOWED_TOOLS,
     )
     # The endpoint is sync and FastAPI runs it in a worker thread, so this owns
-    # its event loop for the length of the turn.
-    reply = asyncio.run(founder_session.run(_prompt(thread, message), opts))
+    # its event loop for the length of the turn. The turn narrates itself into
+    # `progress` while it runs, which the page polls — a five-minute request
+    # with a silent spinner on it is indistinguishable from a hang.
+    progress.begin(thread.id)
+    try:
+        reply = asyncio.run(
+            founder_session.run(_prompt(thread, message), opts, thread_id=thread.id))
+    except BaseException:
+        progress.end(thread.id, ok=False)
+        raise
+    progress.end(thread.id)
 
     turns = list(thread.transcript or [])
     turns.append({"role": "chairman", "text": message})

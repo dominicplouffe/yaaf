@@ -64,15 +64,19 @@ def founder(client, monkeypatch):
 
     def script(reply="Explore, because you are still choosing what to build.",
                tool_calls=(), raises=None):
-        async def fake_run(prompt, opts):
+        async def fake_run(prompt, opts, stderr_sink=None, thread_id=""):
             calls.append({"prompt": prompt, "opts": opts, "env": dict(opts.env)})
             if raises is not None:
                 raise raises
             # The tools the model would have called, called the way the CLI
-            # would call them: through the same in-process MCP server.
+            # would call them: through the same in-process MCP server — so the
+            # steps they narrate are the real ones.
             for name, args in tool_calls:
                 calls.append({"tool": name,
                               "result": await state["tools"].handlers[name]({**args})})
+            if thread_id and reply:
+                from yaaf.founder import progress
+                progress.note(thread_id, reply)
             return reply
 
         monkeypatch.setattr("yaaf.founder.session.run", fake_run)
@@ -440,3 +444,146 @@ def test_a_rule_this_platform_does_not_have_is_refused(client, founder):
     assert any("reporting_cadence" in p for p in problems)
     # And it is told what the field is really called, so it can fix it now.
     assert any("chairman_report_interval_hours" in p for p in problems)
+
+
+# ── minutes, honestly ───────────────────────────────────────────────────────────
+
+
+def test_a_blocking_tool_does_not_wedge_the_event_loop():
+    """The fix that matters most, and the one a passing turn would hide.
+
+    The SDK reads the CLI's stdout as a task on this loop. A tool that blocks
+    it stops the pipe being drained; the CLI blocks on write and both ends
+    stop. The fire drill blocks for up to 180 seconds, so this is a deadlock
+    waiting for a slow enough drill — and a run that happens to survive it is
+    worse than one that fails, because it looks fine.
+    """
+    import asyncio
+    import time
+
+    from yaaf.core.db import db_session
+    from yaaf.founder import progress, tools
+
+    progress.clear()
+
+    async def exercise():
+        with db_session() as session:
+            built = tools.build_server(session, {"draft": None}, {}, "m", "thr")
+            progress.begin("thr")
+            ticks = 0
+
+            async def heartbeat():
+                # Stands in for the SDK's reader: if the loop is blocked this
+                # never runs, which is precisely the failure.
+                nonlocal ticks
+                while True:
+                    await asyncio.sleep(0.01)
+                    ticks += 1
+
+            beat = asyncio.ensure_future(heartbeat())
+            slow = lambda: time.sleep(0.4)  # noqa: E731 — a stand-in for the drill
+            original = tools.read_source
+            tools.read_source = lambda url: (slow(), {"url": url})[1]
+            try:
+                await built.handlers["read_source"]({"url": "https://example.com"})
+            finally:
+                tools.read_source = original
+                beat.cancel()
+            return ticks
+
+    assert asyncio.run(exercise()) > 5, (
+        "the loop stopped while a tool blocked — the CLI's stdout would not "
+        "have been read either")
+
+
+def test_a_turn_narrates_itself_while_it_runs(client, founder):
+    """A five-minute request with a silent spinner is indistinguishable from a
+    hang, which is what the chairman actually hit. The steps stay readable for
+    a short while after the turn so the last poll still finds them."""
+    from yaaf.founder import progress
+
+    progress.clear()
+    founder(reply="Explore, because you are still choosing what to build.",
+            tool_calls=[("search_roles", {}),
+                        ("propose_bundle", {"project": PROJECT})])
+
+    thread = client.post("/admin/founder/threads",
+                         json={"message": "design me a company"}, headers=ADMIN).json()
+
+    state = client.get(f"/admin/founder/threads/{thread['id']}/progress",
+                       headers=ADMIN).json()
+    labels = [step["label"] for step in state["steps"]]
+    assert progress.LABELS["search_roles"] in labels
+    assert progress.LABELS["propose_bundle"] in labels
+    # The Founder's own words are a step too — the most honest signal there is.
+    assert any("Explore" in label for label in labels)
+    assert state["running"] is False
+    assert all(step["state"] == "done" for step in state["steps"])
+
+
+def test_progress_names_the_step_a_stalled_turn_died_on(client, founder):
+    """'It is stuck' and 'it is stuck grading the goal' are different facts."""
+    from yaaf.founder.session import FounderModelError
+
+    founder(raises=FounderModelError(
+        "stalled", "nothing has happened for 300s while running the fire drill "
+                   "on the draft. That is a hang rather than slow work."))
+    response = client.post("/admin/founder/threads",
+                           json={"message": "design me a company"}, headers=ADMIN)
+    assert response.status_code == 504
+    assert "fire drill" in response.json()["detail"]
+    assert "hang rather than slow work" in response.json()["detail"]
+
+
+def test_only_silence_counts_against_the_watchdog():
+    """A turn that is working may run as long as it likes — the chairman's own
+    requirement. What is bounded is silence, not length."""
+    import asyncio
+
+    from yaaf.founder import progress, session
+
+    progress.clear()
+    progress.begin("slow")
+
+    async def exercise():
+        async def chatty():
+            # Longer than the watchdog, but never quiet for longer than a tick.
+            for _ in range(6):
+                await asyncio.sleep(0.02)
+                yield object()
+
+        original = progress.STALL_SECONDS
+        progress.STALL_SECONDS = 0.1
+        try:
+            return [m async for m in session._watched(chatty(), "slow")]
+        finally:
+            progress.STALL_SECONDS = original
+
+    assert len(asyncio.run(exercise())) == 6
+
+
+def test_a_silent_stream_is_cut_off_and_says_what_it_was_doing():
+    import asyncio
+
+    from yaaf.founder import progress, session
+
+    progress.clear()
+    progress.begin("quiet")
+    progress.start_step("quiet", progress.LABELS["rehearse"])
+
+    async def exercise():
+        async def silent():
+            await asyncio.sleep(5)
+            yield object()
+
+        original = progress.STALL_SECONDS
+        progress.STALL_SECONDS = 0.1
+        try:
+            return [m async for m in session._watched(silent(), "quiet")]
+        finally:
+            progress.STALL_SECONDS = original
+
+    with pytest.raises(session.FounderModelError) as caught:
+        asyncio.run(exercise())
+    assert caught.value.kind == "stalled"
+    assert "fire drill" in str(caught.value)

@@ -23,6 +23,18 @@ interface Thread {
   created_project_id: string | null;
 }
 
+interface Step {
+  label: string;
+  state: "running" | "done" | "failed";
+  seconds: number;
+}
+
+interface Progress {
+  running: boolean;
+  seconds: number;
+  steps: Step[];
+}
+
 interface FounderStatus {
   credential_configured: boolean;
   billing_mode: string;
@@ -34,6 +46,42 @@ const PLACEHOLDER =
   "Write it the way you'd brief a competent person you've just hired — messy is " +
   "fine, and you don't have to be complete. I'll draft the whole company and you " +
   "can argue with it.";
+
+/** What the Founder is doing, while it does it.
+ *
+ *  A drafting turn takes minutes — it reads the role library, writes a goal,
+ *  grades that goal against the grammar, and runs the fire drill on what it
+ *  came up with. A spinner over five minutes of that is indistinguishable from
+ *  a hang, which is exactly how it was first reported. */
+function Steps({ progress }: { progress: Progress | null }) {
+  const steps = progress?.steps ?? [];
+  return (
+    <div className="turn turn-founder">
+      <div className="turn-who">The Founder</div>
+      <div className="turn-text">
+        <ul className="steps">
+          {steps.map((step, i) => (
+            <li key={i} className={`step step-${step.state}`}>
+              <span className="step-mark">
+                {step.state === "done" ? "✓" : step.state === "failed" ? "✕" : "•"}
+              </span>
+              <span className="step-label">{step.label}</span>
+              <span className="step-secs">{step.seconds}s</span>
+            </li>
+          ))}
+          {steps.length === 0 && <li className="step step-running">
+            <span className="step-mark">•</span>
+            <span className="step-label">Starting up</span>
+          </li>}
+        </ul>
+        <p className="muted">
+          {Math.round(progress?.seconds ?? 0)}s so far. It takes minutes — it is
+          doing the work you would otherwise do on the form.
+        </p>
+      </div>
+    </div>
+  );
+}
 
 /** The one thing that has to be true before the Founder can talk at all. */
 function CredentialGate({ onSaved }: { onSaved: () => void }) {
@@ -159,6 +207,7 @@ export default function Founding() {
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [progress, setProgress] = useState<Progress | null>(null);
   const bottom = useRef<HTMLDivElement | null>(null);
 
   async function loadStatus() {
@@ -194,20 +243,50 @@ export default function Founding() {
 
   useEffect(() => {
     bottom.current?.scrollIntoView({ behavior: "smooth" });
-  }, [thread?.turns.length, busy]);
+  }, [thread?.turns.length, busy, progress?.steps.length]);
+
+  // Only while a turn is in flight. The endpoint reads an in-process store and
+  // touches no database, so a two-second poll costs nothing.
+  useEffect(() => {
+    if (!busy || !thread) return;
+    let live = true;
+    const tick = async () => {
+      try {
+        const next = await get<Progress>(`/admin/founder/threads/${thread.id}/progress`);
+        if (live) setProgress(next);
+      } catch {
+        /* the turn's own error is the one worth showing */
+      }
+    };
+    void tick();
+    const timer = setInterval(tick, 2000);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, [busy, thread?.id]);
 
   async function send() {
     const text = message.trim();
     if (!text || busy) return;
     setBusy(true);
     setError(null);
+    setProgress(null);
     // Cleared up front so the turn the chairman just took is visible while the
     // Founder works, rather than sitting in the box looking unsent.
     setMessage("");
     try {
-      const next = thread
-        ? await post<Thread>(`/admin/founder/threads/${thread.id}/say`, { message: text })
-        : await post<Thread>("/admin/founder/threads", { message: text });
+      // The thread is created empty first, so it has an id before the long
+      // turn starts. Otherwise the very first message — the drafting turn,
+      // the one that takes minutes — is the one turn with nothing to poll,
+      // which is exactly the case that looked like a hang.
+      let target = thread;
+      if (!target) {
+        target = await post<Thread>("/admin/founder/threads", {});
+        setThread(target);
+      }
+      const next = await post<Thread>(`/admin/founder/threads/${target.id}/say`,
+                                      { message: text });
       setThread(next);
     } catch (err) {
       setMessage(text);
@@ -288,17 +367,7 @@ export default function Founding() {
               <div className="turn-text">{turn.text}</div>
             </div>
           ))}
-          {busy && (
-            <div className="turn turn-founder">
-              <div className="turn-who">The Founder</div>
-              <div className="turn-text muted">
-                Reading the role library, drafting a company, grading its own
-                goal against the grammar, and running the fire drill on what it
-                came up with. <strong>This takes a few minutes</strong> — it is
-                doing the work you would otherwise do on the form.
-              </div>
-            </div>
-          )}
+          {busy && <Steps progress={progress} />}
           <div ref={bottom} />
 
           {error && <p className="error">{error}</p>}

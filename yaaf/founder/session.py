@@ -179,26 +179,44 @@ def assistant_text(message) -> str:
     ).strip()
 
 
-async def run(prompt: str, opts, stderr_sink: list[str] | None = None) -> str:
+async def run(prompt: str, opts, stderr_sink: list[str] | None = None,
+              thread_id: str = "") -> str:
     """Drive one turn to completion and return what the model said.
 
     Errors are classified rather than raised raw: the caller turns `kind` into
     a status code, and the chairman gets a sentence instead of a blank 500.
+
+    There is no deadline. A drafting turn legitimately runs for minutes and the
+    chairman's position is that it may run as long as it is honest about what
+    it is doing. What is bounded is *silence*: every message resets the clock,
+    so a turn that is working is never cut off, and a turn that has said
+    nothing for `STALL_SECONDS` is wedged rather than busy.
     """
+
     from claude_agent_sdk import AssistantMessage, ResultMessage, query
+
+    from yaaf.founder import progress
 
     said: list[str] = []
     try:
-        async for message in query(prompt=prompt, options=opts):
+        async for message in _watched(query(prompt=prompt, options=opts), thread_id):
             if isinstance(message, AssistantMessage):
                 text = assistant_text(message)
                 if text:
                     said.append(text)
+                    # The model saying what it is about to do beats any label
+                    # this code could invent for it.
+                    if thread_id:
+                        progress.note(thread_id, text)
+                elif thread_id:
+                    progress.touch(thread_id)
             elif isinstance(message, ResultMessage):
                 if getattr(message, "is_error", False):
                     raise FounderModelError(
                         "unknown",
                         str(getattr(message, "result", "") or "the model run failed"))
+            elif thread_id:
+                progress.touch(thread_id)
     except FounderModelError:
         raise
     except Exception as exc:  # noqa: BLE001 — every failure becomes a message
@@ -206,6 +224,41 @@ async def run(prompt: str, opts, stderr_sink: list[str] | None = None) -> str:
         log.error("founder model turn failed: %s\nstderr: %s", exc, tail)
         raise _classify(exc, tail) from exc
     return "\n\n".join(said).strip()
+
+
+async def _watched(stream, thread_id: str):
+    """Pass messages through, failing if the stream goes quiet for too long.
+
+    A plain `async for` would wait forever on a wedged CLI, holding the
+    request, a worker thread and the chairman's browser tab with it. This gives
+    silence a deadline without giving the work one.
+    """
+    import anyio
+
+    from yaaf.founder import progress
+
+    if not thread_id:
+        async for message in stream:
+            yield message
+        return
+
+    iterator = stream.__aiter__()
+    while True:
+        try:
+            with anyio.fail_after(progress.STALL_SECONDS):
+                message = await iterator.__anext__()
+        except StopAsyncIteration:
+            return
+        except TimeoutError as exc:
+            doing = progress.current_label(thread_id)
+            raise FounderModelError(
+                "stalled",
+                f"nothing has happened for {int(progress.STALL_SECONDS)}s while "
+                f"{doing.lower()}. That is a hang rather than slow work — the "
+                "conversation is saved, so try again.",
+            ) from exc
+        progress.touch(thread_id)
+        yield message
 
 
 async def run_once(*, prompt: str, system: str, env: dict[str, str], model: str) -> str:

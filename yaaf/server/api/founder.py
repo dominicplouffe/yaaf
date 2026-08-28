@@ -29,6 +29,7 @@ from yaaf.core.models import (
     utcnow,
 )
 from yaaf.founder import agent as founder_agent
+from yaaf.founder import progress
 from yaaf.founder.session import FounderModelError
 from yaaf.server.deps import admin_auth, db
 
@@ -214,6 +215,7 @@ _STATUS_FOR = {
     "auth": 422,        # his to fix, and the message says how
     "busy": 503,        # nobody's fault; try again
     "cli_missing": 500, # ours: the image is wrong
+    "stalled": 504,     # it went quiet; the conversation is still there
     "unknown": 500,
 }
 
@@ -238,6 +240,18 @@ def say(thread_id: str, body: SayIn, session: Session = Depends(db)) -> dict:
         )
     _say(session, thread, body.message.strip())
     return _render(thread)
+
+
+@router.get("/threads/{thread_id}/progress")
+def thread_progress(thread_id: str) -> dict:
+    """What the Founder is doing right now.
+
+    Deliberately touches no database: a turn holds its transaction open for the
+    length of the turn, so anything it wrote would be invisible here until it
+    committed — which is exactly when progress stops being interesting. The
+    store is in-process and ephemeral, like typing state.
+    """
+    return progress.read(thread_id)
 
 
 @router.delete("/threads/{thread_id}")
