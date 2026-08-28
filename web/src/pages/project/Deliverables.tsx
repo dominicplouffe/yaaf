@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { get, getToken } from "../../api";
+import Markdown from "../../Markdown";
 import { fmtWhen, usePoll } from "../../hooks";
 import { AsOf, Skeleton } from "../../ui";
 
@@ -71,6 +72,199 @@ function extOf(name: string): string {
   return name.split(".").pop()?.toLowerCase() ?? "";
 }
 
+/** How to *show* a file, which is not the same question as what it is. A
+    deliverable a chairman has to parse in his head is not a deliverable: a
+    report is prose, a dataset is a table, and a config is indented. Text was
+    the only answer here, so a published report arrived as its own asterisks. */
+type Kind = "html" | "markdown" | "json" | "csv" | "text";
+
+function kindOf(name: string): Kind {
+  const ext = extOf(name);
+  if (ext === "html" || ext === "htm") return "html";
+  if (ext === "md" || ext === "markdown") return "markdown";
+  if (ext === "json") return "json";
+  if (ext === "csv" || ext === "tsv") return "csv";
+  return "text";
+}
+
+/** The label on the toggle, in the words of the thing being toggled. "View
+    source" is right for a page and wrong for a table. */
+const SOURCE_LABEL: Record<Kind, [string, string]> = {
+  html: ["view source", "show the page"],
+  markdown: ["view source", "show the document"],
+  json: ["view raw", "show it formatted"],
+  csv: ["view raw", "show the table"],
+  text: ["", ""],
+};
+
+/** RFC 4180, small enough to own: quoted fields, doubled quotes inside them,
+    and delimiters or newlines that appear inside quotes and must not split
+    anything. A split(",") reader gets every one of those wrong, and gets them
+    wrong silently — the table renders, it just has the columns in the wrong
+    places. */
+function parseDelimited(text: string, delimiter: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (quoted) {
+      if (c !== '"') { field += c; continue; }
+      // "" inside a quoted field is one literal quote, not the end of it.
+      if (text[i + 1] === '"') { field += '"'; i++; } else quoted = false;
+      continue;
+    }
+    if (c === '"') { quoted = true; continue; }
+    if (c === delimiter) { row.push(field); field = ""; continue; }
+    if (c === "\r") continue;
+    if (c === "\n") { row.push(field); rows.push(row); row = []; field = ""; continue; }
+    field += c;
+  }
+  if (field !== "" || row.length > 0) { row.push(field); rows.push(row); }
+  return rows;
+}
+
+/** Half the "CSV" files in the world are semicolon- or tab-separated, and a
+    guess from the extension alone renders those as one very wide column. Count
+    what actually appears outside quotes in the first few lines and believe
+    the file over its name. */
+function sniffDelimiter(text: string, name: string): string {
+  if (extOf(name) === "tsv") return "\t";
+  const head = text.split("\n").slice(0, 5).join("\n");
+  let quoted = false;
+  const seen: Record<string, number> = { ",": 0, ";": 0, "\t": 0, "|": 0 };
+  for (const c of head) {
+    if (c === '"') { quoted = !quoted; continue; }
+    if (!quoted && c in seen) seen[c] += 1;
+  }
+  const best = Object.entries(seen).sort((a, b) => b[1] - a[1])[0];
+  return best[1] > 0 ? best[0] : ",";
+}
+
+// A browser will render a hundred thousand <td>s if asked, slowly, and then
+// the tab stops answering. The rest of the file is one Download away, which is
+// the honest thing to offer — as long as the cut is stated rather than silent.
+const CSV_ROW_LIMIT = 500;
+
+const NUMERIC = /^-?[$€£]?\s*\d[\d,_ ]*(\.\d+)?\s*%?$/;
+
+function Raw({ text }: { text: string }) {
+  return (
+    <pre className="block" style={{ maxHeight: "60vh", overflow: "auto" }}>{text}</pre>
+  );
+}
+
+/** Indented, not reformatted. Pretty-printing is the whole ask — an agent
+    writes one 40KB line and the browser shows a 40KB line — but parsing is
+    also the only way to find out the file is broken, and a chairman is better
+    served by "this is not valid JSON" than by a wall that looks fine. */
+function JsonBlock({ text }: { text: string }) {
+  const pretty = useMemo(() => {
+    try {
+      return { text: JSON.stringify(JSON.parse(text), null, 2), ok: true };
+    } catch (e) {
+      return { text, ok: false, why: (e as Error).message };
+    }
+  }, [text]);
+  return (
+    <>
+      {!pretty.ok && (
+        <p className="help" style={{ margin: "0 0 8px" }}>
+          Not valid JSON ({pretty.why}) — showing the file as written.
+        </p>
+      )}
+      <Raw text={pretty.text} />
+    </>
+  );
+}
+
+/** A table, with the first row as the header — which is a guess, and the only
+    one worth making: a spreadsheet export without a header row is rarer than a
+    reader who cannot tell columns apart without one. */
+function CsvTable({ text, name }: { text: string; name: string }) {
+  const { head, body, total, width } = useMemo(() => {
+    const rows = parseDelimited(text, sniffDelimiter(text, name))
+      .filter((r) => r.length > 1 || r[0] !== "");
+    const width = rows.reduce((w, r) => Math.max(w, r.length), 0);
+    return {
+      head: rows[0] ?? [],
+      body: rows.slice(1, CSV_ROW_LIMIT + 1),
+      total: Math.max(rows.length - 1, 0),
+      width,
+    };
+  }, [text, name]);
+
+  if (width === 0) return <Raw text={text} />;
+  // Ragged rows are normal in exported data. Padding them here keeps every
+  // cell under the header it belongs to; without it a short row silently
+  // shifts every column after it left.
+  const cells = (row: string[]) =>
+    Array.from({ length: width }, (_, i) => row[i] ?? "");
+
+  return (
+    <>
+      <div className="wbox" style={{ maxHeight: "60vh", overflow: "auto" }}>
+        <table className="csv">
+          <thead>
+            <tr>
+              {cells(head).map((h, i) => (
+                <th key={i}>{h || <span className="dim">col {i + 1}</span>}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {body.map((row, r) => (
+              <tr key={r}>
+                {cells(row).map((cell, c) => (
+                  <td key={c} className={NUMERIC.test(cell.trim()) ? "num mono" : ""}>
+                    {cell}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="help" style={{ margin: "6px 0 0" }}>
+        {total > body.length
+          ? `First ${body.length} of ${total} rows · ${width} columns — Download for the whole file.`
+          : `${total} row${total === 1 ? "" : "s"} · ${width} columns`}
+      </p>
+    </>
+  );
+}
+
+/** One file, shown as the thing it is. `asSource` is the escape hatch and
+    never the default: a chairman opening a report wants the report. */
+function PreviewBody(
+  { preview, asSource }: { preview: { name: string; text: string; kind: Kind }; asSource: boolean },
+) {
+  const { name, text, kind } = preview;
+  if (asSource || kind === "text") return <Raw text={text} />;
+  if (kind === "html") {
+    // Agent-written HTML runs in an opaque origin: scripts work so the
+    // charts render, but it can never reach this app's session.
+    return (
+      <iframe
+        className="preview-frame"
+        title={name}
+        sandbox="allow-scripts"
+        srcDoc={text}
+      />
+    );
+  }
+  if (kind === "markdown") {
+    return (
+      <div className="wbox doc" style={{ maxHeight: "60vh", overflow: "auto" }}>
+        <Markdown>{text}</Markdown>
+      </div>
+    );
+  }
+  if (kind === "json") return <JsonBlock text={text} />;
+  return <CsvTable text={text} name={name} />;
+}
+
 /** What the agents published, reframed around what it is rather than where it
     was stored. A deck a chairman cannot look at is not a deliverable, so HTML
     renders as itself; the source is a toggle, not the only option. */
@@ -79,7 +273,8 @@ export default function Deliverables({ projectId }: { projectId: string }) {
     () => get<FilesView>(`/observe/projects/${projectId}/files`),
     15000,
   );
-  const [preview, setPreview] = useState<{ name: string; text: string; html: boolean } | null>(null);
+  const [preview, setPreview] =
+    useState<{ name: string; text: string; kind: Kind } | null>(null);
   const [asSource, setAsSource] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -106,9 +301,8 @@ export default function Deliverables({ projectId }: { projectId: string }) {
         download(blob, name);
         return;
       }
-      const html = ["html", "htm"].includes(extOf(name));
       setAsSource(false);
-      setPreview({ name, text, html });
+      setPreview({ name, text, kind: kindOf(name) });
     } catch (e) {
       setPreviewError((e as Error).message);
     }
@@ -252,27 +446,14 @@ export default function Deliverables({ projectId }: { projectId: string }) {
           <h2 className="zone">
             {preview.name}
             <div className="spacer" />
-            {preview.html && (
+            {preview.kind !== "text" && (
               <button className="small" onClick={() => setAsSource(!asSource)}>
-                {asSource ? "show the page" : "view source"}
+                {SOURCE_LABEL[preview.kind][asSource ? 1 : 0]}
               </button>
             )}
             <button className="small" onClick={() => setPreview(null)}>close</button>
           </h2>
-          {preview.html && !asSource ? (
-            // Agent-written HTML runs in an opaque origin: scripts work so the
-            // charts render, but it can never reach this app's session.
-            <iframe
-              className="preview-frame"
-              title={preview.name}
-              sandbox="allow-scripts"
-              srcDoc={preview.text}
-            />
-          ) : (
-            <pre className="block" style={{ maxHeight: "60vh", overflow: "auto" }}>
-              {preview.text}
-            </pre>
-          )}
+          <PreviewBody preview={preview} asSource={asSource} />
         </div>
       )}
 

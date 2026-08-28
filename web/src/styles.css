@@ -524,6 +524,25 @@ tr.subtask td:first-child { padding-left: 28px; color: var(--ink-2); }
   width: 100%; height: 70vh; border: 1px solid var(--border);
   border-radius: var(--radius); background: #fff;
 }
+/* A published .md read as a document, not as a chat message. `.markdown p` is
+   pre-wrap because an agent's chat line means its own line breaks; a report
+   hard-wrapped at 80 columns in the source means no such thing, and pre-wrap
+   freezes it at 80 columns however wide the window is. */
+.wbox.doc { padding: 16px 20px; }
+.wbox.doc .markdown p { white-space: normal; }
+.wbox.doc .markdown { max-width: 78ch; }
+/* Data, so: dense rows, a header that survives scrolling, and no wrapping —
+   a cell that wraps turns one row into four and the shape of the table, which
+   is the thing being read, disappears. */
+table.csv { font-size: 12.5px; }
+table.csv th {
+  position: sticky; top: 0; z-index: 1; background: var(--surface-2);
+  white-space: nowrap; padding: 7px 10px;
+}
+table.csv td {
+  padding: 5px 10px; white-space: nowrap; vertical-align: middle;
+  max-width: 46ch; overflow: hidden; text-overflow: ellipsis;
+}
 
 /* ── settings: a rail, because eleven headings is not navigation ── */
 .settings-lay { display: grid; grid-template-columns: 190px 1fr; gap: 24px; margin-top: 4px; }
