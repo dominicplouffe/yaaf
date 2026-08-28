@@ -176,3 +176,17 @@ def finish_runs(project_id: str) -> None:
         ):
             run.status = "done"
             run.finished_at = utcnow()
+
+
+@pytest.fixture()
+def public(monkeypatch):
+    """Give the install a browser-facing origin, as a real deployment must.
+
+    Every OAuth token is audience-bound to it, so a suite that skipped this
+    would be testing a different server than the one anybody deploys.
+    """
+    monkeypatch.setenv("YAAF_PUBLIC_BASE_URL", "http://testserver")
+    settings.cache_clear()
+    yield "http://testserver"
+    monkeypatch.delenv("YAAF_PUBLIC_BASE_URL", raising=False)
+    settings.cache_clear()

@@ -51,6 +51,7 @@ from yaaf.core.models import (
     Hypothesis,
     HypothesisStatus,
     McpClient,
+    McpToken,
     Message,
     Notice,
     NoticeKind,
@@ -3797,11 +3798,18 @@ def create_mcp_client(body: McpClientIn, session: Session = Depends(db)) -> dict
         id=ids.new_id(ids.MCP_CLIENT),
         name=body.name,
         user_id=chairman.id,
-        token_hash=token_hash,
         scopes=sorted(set(body.scopes)),
         project_ids=project_ids,
     )
     session.add(row)
+    session.flush()
+    # A CLI token is one row in the same table an OAuth access token lands in,
+    # with no expiry and no audience. One validation path serves both, so a
+    # rule proven for the browser holds for the terminal.
+    session.add(McpToken(
+        id=ids.new_id(ids.MCP_TOKEN), client_id=row.id, kind="static",
+        token_hash=token_hash,
+    ))
     _audit(session, None, "mcp_client.create", "mcp_client", row.id,
            {"name": row.name, "scopes": row.scopes, "projects": project_ids})
     return {
@@ -3833,5 +3841,35 @@ def revoke_mcp_client(client_id: str, session: Session = Depends(db)) -> dict:
         raise HTTPException(status_code=404, detail="unknown MCP client")
     if row.revoked_at is None:
         row.revoked_at = utcnow()
+        # And every token issued under it. Revoking the grant while its access
+        # token still validates would be a button that looks like it worked.
+        for token_row in session.execute(
+                select(McpToken).where(McpToken.client_id == row.id)).scalars():
+            token_row.revoked_at = token_row.revoked_at or utcnow()
         _audit(session, None, "mcp_client.revoke", "mcp_client", row.id, {"name": row.name})
     return {"id": row.id, "name": row.name, "revoked_at": row.revoked_at}
+
+
+class PasswordIn(BaseModel):
+    email: str
+    password: str = Field(min_length=12)
+
+
+@router.post("/users/password")
+def set_user_password(body: PasswordIn, session: Session = Depends(db)) -> dict:
+    """Give a chairman a password, so a browser can authenticate them.
+
+    The admin token authenticates a *client*; OAuth's consent screen has to
+    know which person is at the keyboard. This is the seam between the two, and
+    the only thing on the admin surface that writes `users.password_hash`.
+    """
+    from yaaf.server import login as login_module
+
+    try:
+        user = login_module.set_password(session, body.email.strip().lower(), body.password)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from None
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    _audit(session, None, "user.set_password", "user", user.id, {"email": user.email})
+    return {"id": user.id, "email": user.email}

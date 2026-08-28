@@ -17,7 +17,12 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-from yaaf.core.migration_ops import create_index_if_missing, create_table_if_missing, has_table
+from yaaf.core.migration_ops import (
+    create_index_if_missing,
+    create_table_if_missing,
+    has_column,
+    has_table,
+)
 
 revision = "0018"
 down_revision = "0017"
@@ -39,7 +44,14 @@ def upgrade() -> None:
         sa.Column("revoked_at", sa.DateTime(timezone=True), nullable=True),
     )
     # Unique, because two clients sharing a hash would make attribution a lie.
-    create_index_if_missing("ix_mcp_clients_hash", "mcp_clients", ["token_hash"], unique=True)
+    #
+    # Guarded on the column, not just the index: 0019 moves the hash out to
+    # `mcp_tokens`, so on a fresh install create_all builds this table from
+    # today's models — without `token_hash` — and indexing it would take the
+    # whole chain down on a database that has nothing wrong with it.
+    if has_column("mcp_clients", "token_hash"):
+        create_index_if_missing("ix_mcp_clients_hash", "mcp_clients",
+                                ["token_hash"], unique=True)
 
 
 def downgrade() -> None:

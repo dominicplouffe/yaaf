@@ -362,6 +362,64 @@ are separate — rebuild both** when you change something that affects each.
 
 ---
 
+## Exposing the MCP server to claude.ai
+
+Only needed if you want to chair from the browser. Claude Code and Claude
+Desktop reach `http://localhost:8080/mcp` with a minted token and need none of
+this ([MCP_SERVER.md](MCP_SERVER.md)).
+
+claude.ai connects **inbound, from Anthropic's servers**, so the install needs a
+public hostname and TLS. Two things follow, and the second one bites.
+
+**Set the origin.** The OAuth audience is derived from it, so a wrong value
+breaks every token with a message about the wrong resource:
+
+```bash
+YAAF_PUBLIC_BASE_URL=https://yaaf.example.com
+```
+
+**Publish four paths and nothing else.** Publishing the box publishes `/admin`,
+which is your unscoped bearer surface — the one the whole MCP design exists to
+avoid handing out. The public listener serves discovery, the consent flow and
+the MCP endpoint; everything else 404s and stays on your private listener.
+
+```nginx
+server {
+    server_name yaaf.example.com;
+    listen 443 ssl;
+
+    location = /mcp                          { proxy_pass http://127.0.0.1:8080; }
+    location ^~ /.well-known/oauth-           { proxy_pass http://127.0.0.1:8080; }
+    location ^~ /oauth/                       { proxy_pass http://127.0.0.1:8080; }
+    location / { return 404; }
+}
+```
+
+```caddy
+yaaf.example.com {
+    @public path /mcp /.well-known/oauth-* /oauth/*
+    handle @public { reverse_proxy 127.0.0.1:8080 }
+    handle { respond 404 }
+}
+```
+
+**Give the chairman a password.** The consent screen authenticates a *person*;
+the admin token authenticates a client and is refused there on purpose.
+
+```bash
+yaaf set-password you@example.com     # prompted, argon2id, never echoed
+```
+
+Then in claude.ai: **Settings → Connectors → Add custom connector**, URL
+`https://yaaf.example.com/mcp`. It registers itself (RFC 7591), sends you to
+your own consent screen, and you tick the scopes and the companies it may see.
+Start with `read` alone.
+
+If a client's redirect host is not `claude.ai`, registration refuses it — widen
+`YAAF_MCP_REDIRECT_HOSTS` deliberately, never by default.
+
+---
+
 ## Configuration
 
 Everything **operational** is environment (`YAAF_`-prefixed, also readable from

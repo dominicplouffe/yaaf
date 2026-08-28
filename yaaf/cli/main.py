@@ -569,6 +569,18 @@ def audit_evidence(evidence_id: str, ok: bool = typer.Option(..., "--ok/--bad"),
                           json={"ok": ok, "note": note}))
 
 
+@app.command()
+def set_password(email: str) -> None:
+    """Give a chairman a password, so they can sign in to the consent screen.
+
+    Needed only for OAuth clients — claude.ai among them, which offers no field
+    for a pasted token. A terminal client with a minted token never sees this.
+    """
+    value = typer.prompt("Password", hide_input=True, confirmation_prompt=True)
+    with _client() as client:
+        _show(client.post("/admin/users/password", json={"email": email, "password": value}))
+
+
 # ── MCP clients ─────────────────────────────────────────────────────────────────
 
 mcp_token = typer.Typer(no_args_is_help=True, help="Tokens for model clients that speak MCP.")

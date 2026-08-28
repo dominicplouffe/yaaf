@@ -60,6 +60,7 @@ def _web_dist() -> Path | None:
 def create_app() -> FastAPI:
     from yaaf.server import mcp
     from yaaf.server.api import admin, agent, founder, oauth, observe, webhooks, ws
+    from yaaf.server.mcp import oauth_server
 
     app = FastAPI(title="yaaf", version="0.1.0")
     app.include_router(agent.router, prefix="/agent", tags=["agent"])
@@ -82,6 +83,11 @@ def create_app() -> FastAPI:
     # yaaf as an MCP server: the chairman's surface for a model client. Its own
     # principal, never the admin bearer — see yaaf/server/mcp/auth.py.
     app.include_router(mcp.router, prefix="/mcp", tags=["mcp"])
+    # Its OAuth half: discovery at the root (unauthenticated by spec — a client
+    # that cannot read these cannot learn how to authenticate), and the consent
+    # flow beside the data-source callback that already lives under /oauth.
+    app.include_router(oauth_server.well_known, tags=["mcp"])
+    app.include_router(oauth_server.router, prefix="/oauth", tags=["mcp"])
 
     @app.exception_handler(Refusal)
     def refusal_handler(request: Request, exc: Refusal) -> JSONResponse:

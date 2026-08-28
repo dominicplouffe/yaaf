@@ -18,6 +18,12 @@ def mint() -> tuple[str, str]:
     return plaintext, hash_token(plaintext)
 
 
+def mint_prefixed(prefix: str) -> tuple[str, str]:
+    """Return (plaintext, sha256hex) for any credential in this family."""
+    plaintext = f"{prefix}_{secrets.token_urlsafe(32)}"
+    return plaintext, hash_token(plaintext)
+
+
 def mint_mcp() -> tuple[str, str]:
     """Return (plaintext, sha256hex) for an MCP client token.
 
@@ -26,8 +32,7 @@ def mint_mcp() -> tuple[str, str]:
     client's config file, so a token found in a log has to be identifiable at
     a glance as the thing to revoke. Storage is the same — hash only.
     """
-    plaintext = f"ymt_{secrets.token_urlsafe(32)}"
-    return plaintext, hash_token(plaintext)
+    return mint_prefixed("ymt")
 
 
 def hash_token(plaintext: str) -> str:

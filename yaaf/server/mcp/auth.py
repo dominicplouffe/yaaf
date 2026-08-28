@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 
 from yaaf.core.config import settings
 from yaaf.core.db import session_factory
-from yaaf.core.models import McpClient, Project, utcnow
+from yaaf.core.models import McpClient, McpToken, Project, utcnow
 from yaaf.core.tokens import hash_token
 
 #: Smallest to largest. `read` is implied by every other scope: a client that
@@ -37,6 +37,31 @@ mcp_bearer = HTTPBearer(
     scheme_name="McpToken",
     description="An MCP client token (yaaf mcp-token mint)",
 )
+
+
+def base_url() -> str:
+    """The origin this install answers on, as the outside world sees it."""
+    return (settings().public_base_url or settings().api_base_url).rstrip("/")
+
+
+def canonical_resource() -> str:
+    """The audience every token minted here is bound to (RFC 8707).
+
+    Lives beside the principal rather than with the OAuth endpoints, because
+    the *resource server* is what has to know its own name: it is the half that
+    refuses a token minted for somewhere else.
+    """
+    return f"{base_url()}/mcp"
+
+
+def challenge() -> str:
+    """The RFC 9728 pointer that starts discovery, for a 401's WWW-Authenticate.
+
+    A client that arrives with no credential learns from this header alone
+    where to go and ask for one. Without it, discovery is guesswork.
+    """
+    return (f'Bearer realm="yaaf", '
+            f'resource_metadata="{base_url()}/.well-known/oauth-protected-resource/mcp"')
 
 
 class ToolRefusal(Exception):
@@ -94,7 +119,7 @@ def mcp_auth(
         raise HTTPException(
             status_code=401,
             detail="missing bearer token",
-            headers={"WWW-Authenticate": "Bearer"},
+            headers={"WWW-Authenticate": challenge()},
         )
     token = credentials.credentials.strip()
     # Named explicitly, and first, so the refusal teaches instead of reading as
@@ -108,17 +133,34 @@ def mcp_auth(
                 "token instead (`yaaf mcp-token mint`) — the chairman's bearer "
                 "is unscoped and unattributable, and a model must hold neither."
             ),
-            headers={"WWW-Authenticate": "Bearer"},
+            headers={"WWW-Authenticate": challenge()},
         )
-    client = session.execute(
-        select(McpClient).where(McpClient.token_hash == hash_token(token))
+    row = session.execute(
+        select(McpToken).where(McpToken.token_hash == hash_token(token))
     ).scalar_one_or_none()
-    if client is None:
+    if row is None or row.kind == "refresh":
+        # A refresh token is not an access token, however valid it looks. The
+        # token endpoint is the only place it means anything.
         raise HTTPException(status_code=401, detail="unknown MCP client token",
-                            headers={"WWW-Authenticate": "Bearer"})
-    if client.revoked_at is not None:
+                            headers={"WWW-Authenticate": challenge()})
+    if row.revoked_at is not None:
         raise HTTPException(status_code=401, detail="this MCP client token was revoked",
-                            headers={"WWW-Authenticate": "Bearer"})
+                            headers={"WWW-Authenticate": challenge()})
+    if row.expires_at is not None and row.expires_at < utcnow():
+        raise HTTPException(status_code=401, detail="this access token expired; refresh it",
+                            headers={"WWW-Authenticate": challenge()})
+    # RFC 8707. A token minted for another resource is refused here even when
+    # it is otherwise perfectly valid — the rule that stops one stolen from
+    # another service being replayed at yaaf. CLI tokens name no audience.
+    if row.resource and row.resource.rstrip("/") != canonical_resource().rstrip("/"):
+        raise HTTPException(
+            status_code=401,
+            detail=f"this token was minted for {row.resource}, not {canonical_resource()}",
+            headers={"WWW-Authenticate": challenge()})
+    client = session.get(McpClient, row.client_id)
+    if client is None or client.revoked_at is not None:
+        raise HTTPException(status_code=401, detail="this MCP client token was revoked",
+                            headers={"WWW-Authenticate": challenge()})
     client.last_used_at = utcnow()
     request.state.mcp_client = client.id
     return Principal(

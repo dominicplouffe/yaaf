@@ -1,7 +1,9 @@
 # The chairman's MCP server — chairing yaaf from a model client
 
-**Status: M0 and M1 landed — the transport, the principal, and the whole read
-surface. Everything from M2 on is unbuilt.** This is the design and the tracking doc: the tool surface, the
+**Status: M0, M1 and M2 landed — the transport, the principal, the whole read
+surface, and OAuth with a chairman login. One line of M2 is unticked and cannot
+be ticked from here: a real connection from claude.ai against a public
+deployment. Everything from M3 on is unbuilt.** This is the design and the tracking doc: the tool surface, the
 security model that makes it safe to ship, and the milestones to check off.
 Update the checkboxes as they land; if a decision here turns out wrong, change
 the doc in the same PR that changes the code.
@@ -100,7 +102,7 @@ only a hash (`yaaf/core/tokens.py`):
 |---|---|
 | `id` | `mcpc_…` (new prefix in `yaaf/core/ids.py`) |
 | `name` | What it is, for the audit trail: `"dom-laptop"`, `"claude-desktop"` |
-| `token_hash` | SHA-256 only. Plaintext is shown once at creation and never again. |
+| *(the secret)* | Moved to `mcp_tokens` in M2, so refresh can rotate it without changing what the audit trail names. Hashes only, either way. |
 | `user_id` | The chairman this client acts for. Writes are attributed here. |
 | `scopes` | Subset of `read`, `steer`, `create`, `configure` |
 | `project_ids` | Allowlist, or empty for "every project this user chairs" |
@@ -489,29 +491,33 @@ only the tools its scopes hold, and every wrong credential is refused over HTTP.
 risk" is answerable from a client with no browser open. **This is the ship-alone
 milestone** — if only M0+M1 ever land, the thing was worth building.
 
-### M2 — claude.ai support: OAuth, and a chairman who can log in
-- [ ] Migration `0019`: `mcp_clients` becomes the grant; `mcp_tokens`,
-      `oauth_clients`, `oauth_codes` beside it. M0's static tokens keep working
-      as non-expiring rows.
-- [ ] Resource-server half: 401 with `WWW-Authenticate: … resource_metadata=…`,
+### M2 — claude.ai support: OAuth, and a chairman who can log in ⏳
+- [x] Migration `0019`: `mcp_clients` becomes the grant; `mcp_tokens`,
+      `oauth_clients`, `oauth_codes` beside it. M0's static tokens are carried
+      across as non-expiring rows and keep working
+- [x] Resource-server half: 401 with `WWW-Authenticate: … resource_metadata=…`,
       both well-known documents unauthenticated, audience validation against
       `YAAF_PUBLIC_BASE_URL`
-- [ ] Authorization-server half: `/oauth/register` (capped, redirect-host
+- [x] Authorization-server half: `/oauth/register` (capped, redirect-host
       allowlisted), `/oauth/authorize`, `/oauth/token`, `/oauth/revoke`; PKCE
-      `S256` required, codes single-use with a 60s TTL
-- [ ] The smallest real chairman login: `yaaf set-password`, argon2id against
-      the `users.password_hash` column that already exists, a signed session
-      cookie scoped to `/oauth/*`
-- [ ] Consent screen: client name and redirect host, requested scopes, a
+      `S256` required, codes single-use with a 60s TTL, refresh rotation that
+      treats a replay as theft and revokes the whole grant
+- [x] The smallest real chairman login: `yaaf set-password`, argon2id against
+      the `users.password_hash` column that already existed, a signed session
+      cookie scoped to `/oauth`
+- [x] Consent screen: client name and redirect host, requested scopes, a
       checkbox per project — the allowlist becomes a grant-time decision
-- [ ] `test_mcp_oauth_server.py` — yaaf's own `mcp_oauth` client walks the
+- [x] `test_mcp_oauth_server.py` — yaaf's own `mcp_oauth` client walks the
       ladder against yaaf's own server, in-process and offline
-- [ ] `test_mcp_oauth_attacks.py` — PKCE stripped or downgraded to `plain`, code
-      replayed, mismatched `redirect_uri`, token minted for another `resource`,
-      scopes widened at the token endpoint past consent, expired code
-- [ ] DEPLOYMENT.md: public listener exposing `/mcp`, `/.well-known/oauth-*`
+- [x] `test_mcp_oauth_attacks.py` — PKCE stripped or downgraded to `plain`, code
+      replayed, mismatched or unregistered `redirect_uri`, token minted for
+      another `resource`, scopes widened past consent, expired code, replayed
+      refresh, and the admin token offered in place of a person
+- [x] DEPLOYMENT.md: public listener exposing `/mcp`, `/.well-known/oauth-*`
       and `/oauth/*` **only**, with Caddy and nginx snippets
-- [ ] One real connection from claude.ai against a public deployment
+- [ ] **One real connection from claude.ai against a public deployment.** The
+      suite proves conformance; only this proves acceptance, and it needs a
+      hostname no test can conjure
 
 **Done when:** the connector is added in the browser from a phone, without a
 token ever being pasted — and `/admin` is not reachable from the internet.
