@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import os
 import secrets as pysecrets
+from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import Literal
 
@@ -87,13 +88,22 @@ log = logging.getLogger("yaaf.admin")
 router = APIRouter(dependencies=[Depends(admin_auth)])
 
 
+#: Who the audit trail should name for writes on this surface.
+#:
+#: "user:admin" is true when the chairman is holding the bearer themselves. It
+#: is a lie when a model client is driving through MCP, and the difference has
+#: to survive into a review six weeks later — so the MCP layer sets this for
+#: the duration of a call rather than every handler growing an actor argument.
+ACTOR: ContextVar[str] = ContextVar("yaaf_audit_actor", default="user:admin")
+
+
 def _audit(session: Session, project_id: str | None, action: str, entity: str,
            entity_id: str | None, detail: dict | None = None) -> None:
     session.add(
         AuditLog(
             id=ids.new_id(ids.AUDIT),
             project_id=project_id,
-            actor="user:admin",
+            actor=ACTOR.get(),
             action=action,
             entity=entity,
             entity_id=entity_id,

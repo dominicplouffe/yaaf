@@ -17,7 +17,11 @@ from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
-from yaaf.server.mcp import protocol, tools_read  # noqa: F401 - registers the tools
+from yaaf.server.mcp import (  # noqa: F401 - importing registers the tools
+    protocol,
+    tools_read,
+    tools_steer,
+)
 from yaaf.server.mcp.auth import Principal, mcp_auth, mcp_db
 
 router = APIRouter()

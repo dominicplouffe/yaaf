@@ -22,6 +22,7 @@ from tests.oauth_flow import (
     exchange,
     register,
 )
+from tests.selftest_invariants.test_mcp_scopes import READ_TOOLS, STEER_TOOLS
 
 
 def authorize_params(registered: dict, **overrides) -> dict:
@@ -136,9 +137,9 @@ def test_scopes_cannot_be_widened_at_the_token_endpoint(client, public):
 
     tools = client.post("/mcp", headers=bearer(issued.json()["access_token"]),
                         json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"}).json()
-    assert {t["name"] for t in tools["result"]["tools"]} \
-        == {"whoami", "projects", "desk", "project", "plan", "spend", "work", "proof",
-            "org", "channels", "files", "record"}
+    held = {t["name"] for t in tools["result"]["tools"]}
+    # Exactly what "read steer" holds — not the wider set the request asked for.
+    assert held == READ_TOOLS | STEER_TOOLS
 
 
 def test_a_token_minted_for_another_resource_is_refused_here(client, public, monkeypatch):

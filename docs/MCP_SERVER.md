@@ -1,9 +1,9 @@
 # The chairman's MCP server — chairing yaaf from a model client
 
-**Status: M0, M1 and M2 landed — the transport, the principal, the whole read
-surface, and OAuth with a chairman login. One line of M2 is unticked and cannot
-be ticked from here: a real connection from claude.ai against a public
-deployment. Everything from M3 on is unbuilt.** This is the design and the tracking doc: the tool surface, the
+**Status: M0–M3 landed — the transport, the principal, the read surface, OAuth
+with a chairman login, and the steer verbs behind two-phase confirmation. One
+line of M2 is unticked and cannot be ticked from here: a real connection from
+claude.ai against a public deployment. M4 and M5 are unbuilt.** This is the design and the tracking doc: the tool surface, the
 security model that makes it safe to ship, and the milestones to check off.
 Update the checkboxes as they land; if a decision here turns out wrong, change
 the doc in the same PR that changes the code.
@@ -312,13 +312,13 @@ Status column tracks implementation. `M1`…`M4` are the milestones below.
 
 | Tool | Does | Backing routes | Confirm? | Status |
 |---|---|---|---|---|
-| `boardroom_say` | Talk to the CEO. The highest-value write on the list. | `POST /admin/projects/{id}/boardroom` | no | M3 |
-| `approval_decide` | Decide or fulfil a pending approval. | `POST /admin/approvals/{id}/decide` `/fulfill` | yes | M3 |
-| `requirement_decide` | `verb`: `accept` \| `cut` \| `verdict` \| `reopen` \| `restage` \| `reestimate` \| `reword` \| `unsequence`. | `POST /admin/requirements/{id}/…`, `/admin/requirement_edges/remove` | yes | M3 |
-| `commitment_decide` | `verb`: `accept` \| `decline` \| `move`. | `POST /admin/commitments/{id}/…` | yes | M3 |
-| `review_decide` | `verb`: `lever` \| `close`. | `POST /admin/reviews/{id}/lever` `/close` | yes | M3 |
-| `audit_decide` | Open a spot audit, judge a sample, audit an evidence row or task. | `POST /admin/audit_samples/{id}/decide`, `/admin/evidence/{id}/audit`, `/admin/tasks/{id}/audit` | yes | M3 |
-| `lifecycle` | `verb`: `start` \| `pause` \| `stop` \| `complete` \| `pause_agent` \| `set_schedule` \| `unfreeze_thread` \| `briefing_seen`. | `POST /admin/projects/{id}/start` and siblings | yes, except `briefing_seen` | M3 |
+| `boardroom_say` | Talk to the CEO. The highest-value write on the list. | `POST /admin/projects/{id}/boardroom` | no | **done** (M3) |
+| `approval_decide` | Decide or fulfil a pending approval. | `POST /admin/approvals/{id}/decide` `/fulfill` | yes | **done** (M3) |
+| `requirement_decide` | `verb`: `accept` \| `cut` \| `verdict` \| `reopen` \| `restage` \| `reestimate` \| `reword` \| `unsequence`. | `POST /admin/requirements/{id}/…`, `/admin/requirement_edges/remove` | yes | **done** (M3) |
+| `commitment_decide` | `verb`: `accept` \| `decline` \| `move`. | `POST /admin/commitments/{id}/…` | yes | **done** (M3) |
+| `review_decide` | `verb`: `lever` \| `close`. | `POST /admin/reviews/{id}/lever` `/close` | yes | **done** (M3) |
+| `audit_decide` | Open a spot audit, judge a sample, audit an evidence row or task. | `POST /admin/audit_samples/{id}/decide`, `/admin/evidence/{id}/audit`, `/admin/tasks/{id}/audit` | yes | **done** (M3) |
+| `lifecycle` | `verb`: `start` \| `pause` \| `stop` \| `complete` \| `pause_agent` \| `set_schedule` \| `unfreeze_thread` \| `briefing_seen`. | `POST /admin/projects/{id}/start` and siblings | yes, except `briefing_seen` | **done** (M3) |
 
 `requirement_decide` with `verb: verdict` is the single most dangerous call on
 this surface — it is the platform writing "met" on something a script could not
@@ -410,9 +410,13 @@ and re-fetchable by the client when it needs to refresh:
   CEO, and a wake is a metered run. The MCP surface is a spend surface: it
   obeys the project's budget guard like everything else, and a paused project
   refuses the write rather than queueing it.
-- **Two-phase confirmation is server-side.** The preview response carries a
-  `confirm_token`; the write is refused without it. Do not rely on the host
-  client's permission prompt — that is a prompt, and prompts are suggestions.
+- **Two-phase confirmation is server-side** (`confirm.py`). The preview carries
+  a `confirm` token bound to a hash of the arguments; the write is refused
+  without it. Do not rely on the host client's permission prompt — that is a
+  prompt, and prompts are suggestions. What it defends against is not a
+  determined adversary holding the token; it is the ordinary failure this
+  surface invites — a confident model, a channel message telling it what to do,
+  and a verb in reach.
 
 ## File layout
 
@@ -524,18 +528,32 @@ token ever being pasted — and `/admin` is not reachable from the internet.
 Spec conformance is the test suite's job; acceptance is the live connection's,
 and both are required.
 
-### M3 — Steer
-- [ ] Confirmation machinery (`confirm_token`: args-hash bound, single-use, 5 min)
-- [ ] Attribution: `user:<id> via mcp:<client>` on every `AuditLog` and `Decision`
-- [ ] The seven steer tools
-- [ ] `test_mcp_confirm.py` — one-call writes refused; a token replayed, expired,
-      or reused with mutated arguments is refused
-- [ ] `test_mcp_attribution.py` — no write on this path produces a bare
-      `user:<id>` actor
-- [ ] Golden evals re-recorded if any refusal text moved
+### M3 — Steer ✅
+- [x] Confirmation machinery (migration `0020`, `mcp_confirmations`): the token
+      is bound to a hash of the tool *and its exact arguments*, single-use, five
+      minutes, and belongs to the client that previewed it
+- [x] Attribution: `admin.ACTOR`, a contextvar the MCP layer sets for the length
+      of a call, so the handlers' own audit rows — the ones a reviewer actually
+      reads — say `user:<id> via mcp:<client>` rather than `user:admin`. Plus one
+      `mcp.<tool>` row per call, so the claim does not rest on every handler
+      remembering to write one
+- [x] The seven steer tools
+- [x] `test_mcp_confirm.py` — one-call writes changed nothing; replayed, expired,
+      another client's, invented, and — the one that matters — an approval for a
+      pause spent on a stop
+- [x] `test_mcp_attribution.py` — no write on this path produces a bare
+      `user:admin` actor, the browser path is unrelabelled, and a preview writes
+      nothing at all
+- [x] Golden evals unmoved (nothing agent-visible changed)
 
-**Done when:** an approval can be decided from the client, and the Decisions
-record shows plainly that a machine carried the signature.
+**Two decisions worth keeping visible.** `boardroom_say` is *not* gated: speech
+is reversible and constant, and a preview on every sentence would cost two calls
+for the tool a chairman uses most. And `approvals/{id}/fulfill` is absent
+entirely — fulfilling a credential need means pasting a secret value, so it
+stays in the browser where the chairman is the only reader.
+
+**Done when:** an approval can be decided from the client, and the record shows
+plainly that a machine carried the signature.
 
 ### M4 — Found a company
 - [ ] Lift `search_roles` / `search_crews` / `read_source` / `grade_goal` out of

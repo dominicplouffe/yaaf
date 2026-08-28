@@ -1592,6 +1592,31 @@ class OAuthCode(Base):
     used_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
 
+class McpConfirmation(Base):
+    """A write this client previewed and may now perform, once.
+
+    Rule 4 of docs/MCP_SERVER.md: an irreversible write cannot happen in one
+    call. The preview issues this row; the write spends it. Server-side rather
+    than left to the host client's permission prompt, because a prompt is a
+    suggestion and this platform's whole argument is that rules are not.
+
+    The fingerprint is a hash of the tool and its exact arguments, so the
+    second call cannot be a different write wearing the first one's approval.
+    """
+
+    __tablename__ = "mcp_confirmations"
+    __table_args__ = (Index("ix_mcp_confirmations_token", "token_hash", unique=True),)
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    client_id: Mapped[str] = mapped_column(String(40))
+    token_hash: Mapped[str] = mapped_column(String(64))
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    tool: Mapped[str] = mapped_column(String(40))
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    used_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
 class AuditLog(Base):
     __tablename__ = "audit_log"
     __table_args__ = (Index("ix_audit_project_at", "project_id", "at"),)
