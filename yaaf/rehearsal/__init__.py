@@ -54,6 +54,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
@@ -146,6 +147,86 @@ def _isolate(directory: Path):
             f"file it created ({live}). This is the guard that keeps a drill "
             "away from a real deployment.")
     Base.metadata.create_all(engine())
+    return restore
+
+
+def _isolate_state_roots(directory: Path):
+    """Point the workspace and artifact roots inside the drill's temp dir, and
+    hand back the undo.
+
+    The dispatcher materializes a job, and materializing a job prepares a
+    workspace — `runner/daemon._prepare_workspace` mkdirs
+    `<workspaces_root>/<slug>` before any agent runs. The drill goes down that
+    same real path, on purpose: running the actual dispatcher is the point.
+    But the root it wrote into was the live one, so a drill that promised to
+    create nothing left a directory named after a company that does not exist
+    — and, when the spec's slug matched a real project, reached into that
+    project's own workspace. A GitHub-backed spec would have gone further and
+    cloned into it.
+
+    It also could not run where the drill is actually invoked from: the API
+    container mounts the workspaces volume read-only, exactly because the API
+    has no business writing agent workspaces, so the dashboard's fire drill
+    died on `OSError: [Errno 30] Read-only file system` before it could report
+    anything at all. Both halves are the same bug, and the fix is the one the
+    database already had — the drill works in a directory it created and takes
+    to the grave.
+
+    `settings()` is an lru_cache over an env-read object, so the cache is
+    cleared on the way in and again on the way out; the environment goes back
+    exactly as it was, missing keys included.
+    """
+    from yaaf.core.config import settings
+
+    roots = {"YAAF_WORKSPACES_ROOT": directory / "workspaces",
+             "YAAF_ARTIFACTS_ROOT": directory / "artifacts"}
+    previous = {name: os.environ.get(name) for name in roots}
+    for name, path in roots.items():
+        path.mkdir(parents=True, exist_ok=True)
+        os.environ[name] = str(path)
+    settings.cache_clear()
+
+    def restore() -> None:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+        settings.cache_clear()
+
+    live = settings()
+    if str(directory) not in live.workspaces_root:
+        # Put the environment back before refusing, the way the engine guard
+        # does: a drill that bailed out holding the roots would leave the rest
+        # of this process writing somewhere it never chose.
+        restore()
+        raise RehearsalError(
+            "the rehearsal refused to run: its workspace root is not the "
+            f"throwaway directory it created ({live.workspaces_root}). This is "
+            "the guard that keeps a drill away from a real deployment.")
+
+    return restore
+
+
+def _patch_workspace_clone():
+    """Stop a GitHub-backed spec cloning its repo, and hand back the undo.
+
+    Preparing a workspace clones the project's repo on first touch, and the
+    drill goes down that same real path — so a spec carrying `github_repo`
+    made the fire drill shell out to `git clone` and reach the network, while
+    its own report said it opens no socket. Isolating the workspace root moved
+    where that clone would land; it did not stop it happening. The repo is not
+    what a drill is testing: the scripted crew writes no code, so an empty
+    directory and a checkout run the same company.
+    """
+    from yaaf.runner import daemon as daemon_module
+
+    previous = daemon_module._clone_workspace
+    daemon_module._clone_workspace = lambda *args, **kwargs: None
+
+    def restore() -> None:
+        daemon_module._clone_workspace = previous
+
     return restore
 
 
@@ -374,6 +455,8 @@ def rehearse(spec: dict, *, days: int = 30, usd_per_run: float | None = None,
 
     with tempfile.TemporaryDirectory(prefix="yaaf-rehearsal-") as tmp:
         restore_engine = _isolate(Path(tmp))
+        restore_state = _isolate_state_roots(Path(tmp))
+        restore_clone = _patch_workspace_clone()
         restore_pacing = _patch_coalescing()
         client = _client()
         try:
@@ -387,6 +470,8 @@ def rehearse(spec: dict, *, days: int = 30, usd_per_run: float | None = None,
             # one left with its batching window at zero, is a bug that surfaces
             # in whatever unrelated code runs next.
             restore_pacing()
+            restore_clone()
+            restore_state()
             restore_engine()
 
 

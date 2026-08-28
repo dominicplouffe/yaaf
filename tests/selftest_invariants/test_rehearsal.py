@@ -18,6 +18,7 @@ business doing. Both halves are attacked here.
 from __future__ import annotations
 
 import json
+import os
 
 import pytest
 
@@ -315,6 +316,108 @@ def test_the_drill_never_touches_the_caller_s_data():
     with db_session() as session:
         slugs = {p.slug for p in session.query(Project).all()}
     assert "ephemeral" not in slugs
+
+
+def test_the_drill_builds_no_workspace_in_the_live_root(tmp_path, monkeypatch):
+    """Materializing a job prepares a workspace, and the drill runs the real
+    dispatcher — so it mkdir'd `<workspaces_root>/<slug>` in the LIVE root. A
+    preflight that promises to create nothing left a directory named after a
+    company that does not exist, and, where the slug matched a real project,
+    reached into that project's own working tree."""
+    root = tmp_path / "live-workspaces"
+    root.mkdir()
+    monkeypatch.setenv("YAAF_WORKSPACES_ROOT", str(root))
+    monkeypatch.setenv("YAAF_ARTIFACTS_ROOT", str(tmp_path / "live-artifacts"))
+
+    report = rehearsal.rehearse(spec(slug="ephemeral"))
+
+    assert report["ok"], report["verdict"]
+    assert list(root.iterdir()) == []
+
+
+def test_a_state_root_it_cannot_write_never_stops_it(tmp_path, monkeypatch):
+    """Where the drill is actually invoked from, the live root is not merely
+    the wrong place to write — it is unwritable. The API container mounts the
+    workspaces volume read-only, because the API has no business writing agent
+    workspaces, and the dashboard's fire drill died on an OSError from that
+    mount before it could report anything at all. Simulated with a root whose
+    parent is a file, which no permission bit can make writable."""
+    blocked = tmp_path / "not-a-directory"
+    blocked.write_text("a file sits where the volume would be mounted")
+    monkeypatch.setenv("YAAF_WORKSPACES_ROOT", str(blocked / "workspaces"))
+    monkeypatch.setenv("YAAF_ARTIFACTS_ROOT", str(blocked / "artifacts"))
+
+    report = rehearsal.rehearse(spec())
+
+    assert report["ok"], report["verdict"]
+    assert walk(report)["work_claimed"]["ok"], walk(report)["work_claimed"]["detail"]
+
+
+def test_a_github_backed_spec_is_never_cloned_by_the_drill(tmp_path, monkeypatch):
+    """The drill says it opens no socket. Preparing a workspace clones the
+    project's repo on first touch, so a spec carrying `github_repo` made it
+    shell out to `git clone` and reach the network — a promise broken by the
+    one path the drill deliberately runs for real."""
+    from yaaf.runner import daemon as daemon_module
+
+    monkeypatch.setenv("YAAF_WORKSPACES_ROOT", str(tmp_path / "live-workspaces"))
+    called: list[tuple] = []
+
+    def spy(*args, **kwargs):
+        called.append(args)
+
+    monkeypatch.setattr(daemon_module, "_clone_workspace", spy)
+
+    report = rehearsal.rehearse(spec(github_repo="someone/private-repo"))
+
+    assert report["ok"], report["verdict"]
+    assert called == []
+    # And what was there before is back afterwards — the drill hands the global
+    # over rather than leaving its own stub for whatever runs next.
+    assert daemon_module._clone_workspace is spy
+
+
+def test_it_gives_the_state_roots_back_including_the_ones_that_were_unset(tmp_path,
+                                                                         monkeypatch):
+    """Same discipline as the engine and the batching windows: a global the
+    drill borrowed and kept would leave every later caller in this process
+    writing into a directory that has been deleted."""
+    from yaaf.core.config import settings
+
+    monkeypatch.setenv("YAAF_WORKSPACES_ROOT", str(tmp_path / "live-workspaces"))
+    monkeypatch.delenv("YAAF_ARTIFACTS_ROOT", raising=False)
+    settings.cache_clear()
+    before = settings().artifacts_root
+
+    rehearsal.rehearse(spec())
+
+    assert os.environ["YAAF_WORKSPACES_ROOT"] == str(tmp_path / "live-workspaces")
+    assert "YAAF_ARTIFACTS_ROOT" not in os.environ
+    assert settings().artifacts_root == before
+
+
+def test_it_refuses_a_workspace_root_that_is_not_the_one_it_created(tmp_path,
+                                                                    monkeypatch):
+    """The workspace half of the database guard: the drill checks that the
+    root it is about to write into is the throwaway one, rather than trusting
+    that the re-point landed. Simulated by making the settings it reads back
+    report somebody else's directory."""
+    from types import SimpleNamespace
+
+    from yaaf.core import config as config_module
+
+    stub = SimpleNamespace(workspaces_root=str(tmp_path / "somebody-elses"),
+                           artifacts_root=str(tmp_path / "somebody-elses"))
+    fake = lambda: stub  # noqa: E731 — a one-liner stand-in for the cached accessor
+    fake.cache_clear = lambda: None
+    monkeypatch.setattr(config_module, "settings", fake)
+
+    before = dict(os.environ)
+    with pytest.raises(rehearsal.RehearsalError) as caught:
+        rehearsal._isolate_state_roots(tmp_path / "drill")
+    assert "throwaway directory it created" in str(caught.value)
+    # And it put the environment back on the way out, from the refusal path too.
+    assert dict(os.environ) == before
 
 
 # ── the rendering ───────────────────────────────────────────────────────────────
