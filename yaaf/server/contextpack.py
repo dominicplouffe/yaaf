@@ -209,7 +209,7 @@ def role_version_for(session: Session, agent: Agent) -> RoleVersion | None:
 
 
 #: What /workspace is, per lane. The chat session mounts its own scratch there
-#: and the project's tree read-only at /company; a work run mounts the project's
+#: and the project's tree read-only at /project; a work run mounts the project's
 #: tree directly. Telling both the same story is how a boardroom CEO came to
 #: announce that a project had lost its data — it had run `ls /workspace`,
 #: found its own empty scratch, and believed the paragraph over the disk.
@@ -230,13 +230,13 @@ WORKSPACE_RUN = (
     "never try to defeat a security challenge."
 )
 WORKSPACE_CHAT = (
-    "TWO DIRECTORIES, and the difference matters. /company is the company's real "
+    "TWO DIRECTORIES, and the difference matters. /project is the project's real "
     "workspace, READ-ONLY: everything every agent has ever produced is in there, "
     "and it is the same tree their runs write to. Look there before you tell the "
-    "chairman what does or does not exist — `ls /company` is cheap and being "
+    "chairman what does or does not exist — `ls /project` is cheap and being "
     "wrong out loud is not. /workspace is your own scratch, writable, and empty "
-    "by design; nothing in it is the company's work and its emptiness means "
-    "nothing about the company. If you need to write a file, write it in "
+    "by design; nothing in it is the project's work and its emptiness means "
+    "nothing about the project. If you need to write a file, write it in "
     "/workspace, and remember no agent run will ever see it."
 )
 

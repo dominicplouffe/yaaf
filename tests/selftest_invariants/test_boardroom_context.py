@@ -15,6 +15,7 @@ while the file sat on disk in the directory it could not see.
 
 from __future__ import annotations
 
+import re
 from datetime import timedelta
 
 from tests.conftest import ADMIN, bearer, live_token, make_project
@@ -155,7 +156,7 @@ def test_the_board_the_ceo_reads_shows_which_work_is_gated(client):
 def test_a_chat_session_is_told_the_truth_about_its_own_disk(client):
     """The single sentence that produced a false statement to the chairman. A
     work run's /workspace really is the shared project tree; a chat session's is
-    its own empty scratch, and the project's tree is read-only at /company."""
+    its own empty scratch, and the project's tree is read-only at /project."""
     from yaaf.core.models import Agent as AgentRow
     from yaaf.server.contextpack import build_system_prompt
 
@@ -167,13 +168,15 @@ def test_a_chat_session_is_told_the_truth_about_its_own_disk(client):
         chat_prompt = build_system_prompt(session, ceo, row, lane="chat")
 
     assert "shared by every agent on it" in run_prompt
-    assert "/company" not in run_prompt
+    # The mount, not the "/projects/..." of an API path: a bare substring test
+    # would start passing or failing on an unrelated URL entering the prompt.
+    assert not re.search(r"/project(?![s\w])", run_prompt)
 
-    assert "/company" in chat_prompt
+    assert re.search(r"/project(?![s\w])", chat_prompt)
     assert "READ-ONLY" in chat_prompt
     assert "shared by every agent on it" not in chat_prompt, (
         "the claim that produced the false answer must not reach the chat lane")
-    assert "means nothing about the company" in chat_prompt, (
+    assert "means nothing about the project" in chat_prompt, (
         "an empty scratch must be named as meaningless, not left to be interpreted")
 
 
@@ -307,7 +310,7 @@ def test_the_boardroom_is_told_when_a_session_dies_mid_question(client):
 
 
 def test_the_chat_container_mounts_the_company_tree_read_only(client):
-    """The mount that caused the false answer. /company must be there, must be
+    """The mount that caused the false answer. /project must be there, must be
     the project's real tree, and must be read-only — a resident session writing
     into the working tree is the race the split existed to prevent."""
     from unittest.mock import patch
@@ -322,9 +325,9 @@ def test_the_chat_container_mounts_the_company_tree_read_only(client):
         with patch.object(chat, "stash_context_doc", return_value=""):
             launch, _ = chat._prepare_session(session, row, ceo)
 
-    assert launch["company_dir"].endswith("/acme")
+    assert launch["project_dir"].endswith("/acme")
     assert launch["workspace_dir"].endswith("/acme-chat")
-    assert launch["company_dir"] != launch["workspace_dir"]
+    assert launch["project_dir"] != launch["workspace_dir"]
 
     with patch("docker.from_env") as docker_from_env:
         containers = docker_from_env.return_value.containers
@@ -334,9 +337,9 @@ def test_the_chat_container_mounts_the_company_tree_read_only(client):
         sandbox.start_chat_container(project_id=project["id"], run_id="run_x",
                                      name="c", env={}, **{
                                          k: launch[k] for k in
-                                         ("workspace_dir", "company_dir")})
+                                         ("workspace_dir", "project_dir")})
         volumes = containers.run.call_args.kwargs["volumes"]
-    assert volumes[launch["company_dir"]] == {"bind": "/company", "mode": "ro"}
+    assert volumes[launch["project_dir"]] == {"bind": "/project", "mode": "ro"}
     assert volumes[launch["workspace_dir"]] == {"bind": "/workspace", "mode": "rw"}
 
 
