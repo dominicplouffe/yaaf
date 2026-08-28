@@ -569,6 +569,50 @@ def audit_evidence(evidence_id: str, ok: bool = typer.Option(..., "--ok/--bad"),
                           json={"ok": ok, "note": note}))
 
 
+# ── MCP clients ─────────────────────────────────────────────────────────────────
+
+mcp_token = typer.Typer(no_args_is_help=True, help="Tokens for model clients that speak MCP.")
+app.add_typer(mcp_token, name="mcp-token")
+
+
+@mcp_token.command("mint")
+def mcp_token_mint(
+    name: str = typer.Argument(..., help="What this client is: 'dom-laptop', 'claude-desktop'"),
+    chairman: str = typer.Option(..., "--chairman", help="Email of the chairman it acts for"),
+    scopes: str = typer.Option("read", "--scopes",
+                               help="Comma-separated: read, steer, create, configure"),
+    project: list[str] = typer.Option(None, "--project",
+                                      help="Slug or id, repeatable; omit for all this "
+                                           "chairman's projects"),
+) -> None:
+    """Mint a scoped MCP client token. The value is printed once and never again.
+
+    Start with `read`. It is most of the value and none of the risk: a client
+    with it can see every company and sign for nothing.
+    """
+    with _client() as client:
+        _show(client.post("/admin/mcp_clients", json={
+            "name": name,
+            "chairman_email": chairman,
+            "scopes": [s.strip() for s in scopes.split(",") if s.strip()],
+            "projects": list(project or []),
+        }))
+
+
+@mcp_token.command("list")
+def mcp_token_list() -> None:
+    """Every client token, what it holds, and when it was last used."""
+    with _client() as client:
+        _show(client.get("/admin/mcp_clients"))
+
+
+@mcp_token.command("revoke")
+def mcp_token_revoke(client_id: str) -> None:
+    """Revoke a client token. The row survives — the audit trail names it."""
+    with _client() as client:
+        _show(client.request("DELETE", f"/admin/mcp_clients/{client_id}"))
+
+
 _register_spend()
 
 if __name__ == "__main__":

@@ -1,10 +1,10 @@
 # The chairman's MCP server — chairing yaaf from a model client
 
-**Status: proposed. Nothing below is built.** This is the design and the
-tracking doc: the tool surface, the security model that makes it safe to ship,
-and the milestones to check off. Update the checkboxes as they land; if a
-decision here turns out wrong, change the doc in the same PR that changes the
-code.
+**Status: M0 landed — the transport and the principal. Everything from M1 on
+is unbuilt.** This is the design and the tracking doc: the tool surface, the
+security model that makes it safe to ship, and the milestones to check off.
+Update the checkboxes as they land; if a decision here turns out wrong, change
+the doc in the same PR that changes the code.
 
 Today yaaf speaks MCP in one direction only. A project connects *external* MCP
 servers as data sources ([INTEGRATIONS.md](INTEGRATIONS.md)), and
@@ -72,7 +72,7 @@ house rule 1, and the invariant test that attacks it, per house rule 2.
 | # | Rule | Enforced by | Attacked in |
 |---|---|---|---|
 | 1 | An MCP client is never the admin principal. | A third principal (`mcp_auth`) with its own token table; `settings().admin_token` is not accepted on `/mcp` at all. | `test_mcp_auth.py` |
-| 2 | A token holds only the scopes and projects it was issued for. | Scope check per tool, project allowlist checked against the resolved project on every call — including ids reached indirectly (a `run_id` in another project resolves to 404). | `test_mcp_scopes.py` |
+| 2 | A token holds only the scopes and projects it was issued for. | The scope is checked at dispatch against the tool's declaration, never at the call site; every project-addressed tool resolves its reference through `resolve_project`, which refuses a project outside the allowlist in the same words as one that does not exist. | `test_mcp_scopes.py` |
 | 3 | Every write is attributed as machine-mediated, permanently. | `AuditLog.actor` is written as `user:<id> via mcp:<client>`; the field is never the bare `user:<id>` form on this path. | `test_mcp_attribution.py` |
 | 4 | Irreversible writes cannot happen in one call. | Server-issued `confirm_token`: bound to a hash of the exact arguments, single-use, 5-minute TTL. A second call with different arguments is refused. | `test_mcp_confirm.py` |
 | 5 | Agent-authored text is data, never instruction. | Every tool result carrying agent-written content wraps it in an `<untrusted_agent_content>` envelope naming the agent, and no tool result is ever executed as a directive. | `test_mcp_untrusted.py` |
@@ -148,8 +148,9 @@ Status column tracks implementation. `M1`…`M4` are the milestones below.
 
 | Tool | Does | Backing routes | Status |
 |---|---|---|---|
+| `whoami` | What this client may do: the chairman it acts for, its scopes, the projects it reaches. | — (the principal describing itself) | **done** (M0) |
 | `desk` | Cross-project standing: what needs you, everywhere. | `GET /observe/desk` | M1 |
-| `projects` | List projects with status, mode, spend, flags. | `GET /observe/projects` | M1 |
+| `projects` | List the projects this client can see: status, shape, goal preview. | `GET /observe/projects` | **done** (M0) |
 | `project` | One project's cockpit. `view`: `overview` \| `health` \| `flags` \| `agenda` \| `briefing`. | `GET /observe/projects/{id}` + `/health` `/flags` `/agenda` `/briefing` | M1 |
 | `plan` | Requirements by stage, dependencies, burn-up, the commitment and its risk. | `GET /observe/projects/{id}/plan`, `GET /admin/projects/{id}/requirements` | M1 |
 | `spend` | Against the cap, by team; ledger lines. | `GET /observe/projects/{id}/spend` `/ledger` | M1 |
@@ -288,19 +289,28 @@ separate commit.
 
 ## Milestones
 
-### M0 — Skeleton and the principal
-- [ ] `mcp_clients` table + migration + `mcpc`/`ymt_` ids
-- [ ] `mcp_auth` dependency: scopes, project allowlist, revocation, `last_used_at`
-- [ ] JSON-RPC transport at `/mcp`: `initialize`, `tools/list`, empty `tools/call`
-- [ ] `yaaf mcp-token mint|list|revoke` in the CLI
-- [ ] `test_mcp_auth.py`, `test_mcp_scopes.py` — forged tokens, revoked tokens,
-      admin token rejected, cross-project id reaching 404
+### M0 — Skeleton and the principal ✅
+- [x] `mcp_clients` table + migration `0018` + `mcpc`/`ymt_` ids
+- [x] `mcp_auth` dependency: scopes, project allowlist, revocation, `last_used_at`
+- [x] JSON-RPC transport at `/mcp`: `initialize`, `ping`, `tools/list`, `tools/call`
+- [x] Tool registry with the scope gate at dispatch, not at the call site
+- [x] `whoami` and `projects`
+- [x] `yaaf mcp-token mint|list|revoke` in the CLI
+- [x] `test_mcp_auth.py`, `test_mcp_scopes.py` — admin token rejected, run token
+      rejected, forged and revoked tokens, out-of-scope tools absent rather than
+      refused, foreign project refused by slug and by id in the same words a
+      nonexistent one gets
 
-**Done when:** a client connects, lists zero tools, and every wrong credential
-is refused over HTTP.
+**Two read tools came forward from M1**, against the original plan: a principal
+no tool exercises is a principal nothing can attack, and the allowlist is only
+real once something is addressed by project. `projects` is that something.
+
+**Done when:** ~~a client connects, lists zero tools~~ — a client connects, sees
+only the tools its scopes hold, and every wrong credential is refused over HTTP.
 
 ### M1 — Read the company
-- [ ] The eleven read tools
+- [ ] The nine remaining read tools (`desk`, `project`, `plan`, `spend`, `work`,
+      `proof`, `org`, `channels`, `files`, `record`)
 - [ ] `envelope.py`: untrusted wrapping, summarize/`full`, pagination, truncation
 - [ ] Resources: desk, briefing, plan, constitution, goal, goal-grammar
 - [ ] `test_mcp_untrusted.py` — an agent-authored message containing an

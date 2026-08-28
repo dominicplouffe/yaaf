@@ -1475,6 +1475,44 @@ class Secret(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 
+class McpClient(Base):
+    """A model client that speaks MCP on the chairman's behalf.
+
+    A third principal, and the reason it exists rather than reusing the admin
+    token: the admin bearer is unscoped, unattributable and unrevokable
+    individually, so handing it to a language model would give that model
+    every verb the platform spends its architecture denying to models — and
+    would record the chairman as the one who used them.
+
+    This row is the narrowing. `scopes` decides which verbs the client can
+    reach at all, `project_ids` decides which companies it can see, and every
+    write made through it is attributed as machine-mediated for good. Like a
+    run token, only the hash is stored: the plaintext is shown once at
+    creation and lives thereafter in the client's own config.
+    """
+
+    __tablename__ = "mcp_clients"
+    __table_args__ = (Index("ix_mcp_clients_hash", "token_hash", unique=True),)
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    #: What it is, for the audit trail: "dom-laptop", "claude-desktop".
+    name: Mapped[str] = mapped_column(String(80))
+    #: The chairman this client acts for. Writes are attributed here, beside
+    #: the client name — never to the client alone, and never to the user alone.
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    token_hash: Mapped[str] = mapped_column(String(64))
+    #: Subset of read / steer / create / configure. `read` is implied by all.
+    scopes: Mapped[list] = mapped_column(JSONVariant, default=list)
+    #: Project allowlist. Empty means every project this user chairs — which
+    #: is a real narrowing already, because a chairman is per project.
+    project_ids: Mapped[list] = mapped_column(JSONVariant, default=list)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    last_used_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    #: Revocation is a timestamp rather than a delete: the audit trail names
+    #: this client forever, so the row it names has to survive.
+    revoked_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+
+
 class AuditLog(Base):
     __tablename__ = "audit_log"
     __table_args__ = (Index("ix_audit_project_at", "project_id", "at"),)

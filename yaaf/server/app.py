@@ -58,6 +58,7 @@ def _web_dist() -> Path | None:
 
 
 def create_app() -> FastAPI:
+    from yaaf.server import mcp
     from yaaf.server.api import admin, agent, founder, oauth, observe, webhooks, ws
 
     app = FastAPI(title="yaaf", version="0.1.0")
@@ -78,6 +79,9 @@ def create_app() -> FastAPI:
     # Live-update sockets: a latency hint over the SPA's polling, never a
     # replacement for it (mirrors LISTEN/NOTIFY over the dispatcher's floor).
     app.include_router(ws.router, tags=["ws"])
+    # yaaf as an MCP server: the chairman's surface for a model client. Its own
+    # principal, never the admin bearer — see yaaf/server/mcp/auth.py.
+    app.include_router(mcp.router, prefix="/mcp", tags=["mcp"])
 
     @app.exception_handler(Refusal)
     def refusal_handler(request: Request, exc: Refusal) -> JSONResponse:

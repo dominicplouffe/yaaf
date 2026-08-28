@@ -49,6 +49,7 @@ SUGGESTION = "sugg"
 ACCOUNT = "acct"
 PLATFORM_SETTING = "pset"
 FOUNDING_THREAD = "fnd"
+MCP_CLIENT = "mcpc"  # a model client holding the chairman's eyes
 
 
 def new_id(prefix: str) -> str:

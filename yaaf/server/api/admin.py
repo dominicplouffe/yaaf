@@ -50,6 +50,7 @@ from yaaf.core.models import (
     Evidence,
     Hypothesis,
     HypothesisStatus,
+    McpClient,
     Message,
     Notice,
     NoticeKind,
@@ -78,6 +79,7 @@ from yaaf.core.models import (
 from yaaf.server import briefing, policy
 from yaaf.server.api.agent import WAKE_CHANNEL
 from yaaf.server.deps import admin_auth, db
+from yaaf.server.mcp.auth import SCOPES as MCP_SCOPES
 
 log = logging.getLogger("yaaf.admin")
 
@@ -3734,3 +3736,102 @@ def put_secret(body: SecretIn, session: Session = Depends(db)) -> dict:
     _audit(session, body.project_id, "secret.create", "secret", row.id,
            {"role_scopes": body.role_scopes, "kind": kind})
     return {"id": row.id, "rotated": False, "role_scopes": row.role_scopes, "kind": kind}
+
+
+# ── MCP clients ─────────────────────────────────────────────────────────────────
+
+
+class McpClientIn(BaseModel):
+    name: str = Field(min_length=2, max_length=80)
+    chairman_email: str
+    # At least one, because a token with no scope is a credential that exists
+    # to be widened later — and widening is the failure mode this table exists
+    # to make deliberate.
+    scopes: list[str] = Field(min_length=1)
+    #: Project ids or slugs. Empty means every project this chairman chairs.
+    projects: list[str] = Field(default_factory=list)
+
+
+@router.post("/mcp_clients")
+def create_mcp_client(body: McpClientIn, session: Session = Depends(db)) -> dict:
+    """Mint a token for a model client. The plaintext is shown once, here.
+
+    This is the only place the chairman's authority is ever narrowed rather
+    than copied: the admin bearer stays where it is, and what leaves is a
+    scoped, revocable, attributable credential that names the person it acts
+    for. See docs/MCP_SERVER.md.
+    """
+    from yaaf.core.tokens import mint_mcp
+
+    unknown = sorted(set(body.scopes) - set(MCP_SCOPES))
+    if unknown:
+        raise HTTPException(
+            status_code=422,
+            detail=f"unknown scope(s) {', '.join(unknown)}; valid: {', '.join(MCP_SCOPES)}",
+        )
+    chairman = session.execute(
+        select(User).where(User.email == body.chairman_email)
+    ).scalar_one_or_none()
+    if chairman is None:
+        raise HTTPException(status_code=422, detail="no such user")
+
+    project_ids: list[str] = []
+    for ref in body.projects:
+        project = session.execute(
+            select(Project).where((Project.id == ref) | (Project.slug == ref))
+        ).scalar_one_or_none()
+        if project is None:
+            raise HTTPException(status_code=422, detail=f"no project {ref!r}")
+        # Refused rather than silently dropped at read time: a token whose
+        # allowlist names a project its user does not chair would read as a
+        # grant and behave as nothing.
+        if project.chairman_user_id != chairman.id:
+            raise HTTPException(
+                status_code=422,
+                detail=f"{body.chairman_email} does not chair '{project.slug}'",
+            )
+        project_ids.append(project.id)
+
+    plaintext, token_hash = mint_mcp()
+    row = McpClient(
+        id=ids.new_id(ids.MCP_CLIENT),
+        name=body.name,
+        user_id=chairman.id,
+        token_hash=token_hash,
+        scopes=sorted(set(body.scopes)),
+        project_ids=project_ids,
+    )
+    session.add(row)
+    _audit(session, None, "mcp_client.create", "mcp_client", row.id,
+           {"name": row.name, "scopes": row.scopes, "projects": project_ids})
+    return {
+        "id": row.id,
+        "name": row.name,
+        "scopes": row.scopes,
+        "projects": project_ids,
+        "token": plaintext,
+        "note": "Store this now — only its hash is kept, and it is never shown again.",
+    }
+
+
+@router.get("/mcp_clients")
+def list_mcp_clients(session: Session = Depends(db)) -> list[dict]:
+    return [
+        {"id": c.id, "name": c.name, "user_id": c.user_id, "scopes": c.scopes,
+         "projects": c.project_ids, "created_at": c.created_at,
+         "last_used_at": c.last_used_at, "revoked_at": c.revoked_at}
+        for c in session.execute(select(McpClient).order_by(McpClient.created_at)).scalars()
+    ]
+
+
+@router.delete("/mcp_clients/{client_id}")
+def revoke_mcp_client(client_id: str, session: Session = Depends(db)) -> dict:
+    """Revoke, never delete: the audit trail names this client forever, so the
+    row it names has to survive to be readable."""
+    row = session.get(McpClient, client_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="unknown MCP client")
+    if row.revoked_at is None:
+        row.revoked_at = utcnow()
+        _audit(session, None, "mcp_client.revoke", "mcp_client", row.id, {"name": row.name})
+    return {"id": row.id, "name": row.name, "revoked_at": row.revoked_at}
