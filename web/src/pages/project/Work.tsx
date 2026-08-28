@@ -19,6 +19,10 @@ interface SpotAudit {
     success_test: { type: string; command?: string; target?: string };
     evidence: string | null; check_output: string | null;
     audit_status: string | null; audit_note: string | null }[];
+  /** How many of each nobody has judged, and how many exist. The lists above
+      are capped, so the page has to be able to say what it is not showing. */
+  unjudged: { evidence: number; tasks: number };
+  totals: { evidence: number; tasks: number };
 }
 
 /** A labelled block of agent prose, clamped to three lines until asked.
@@ -240,8 +244,11 @@ export default function Work({ ctx }: { ctx: ProjectCtx }) {
     await post(`/admin/tasks/${id}/audit`, { ok, note });
     if (audit) runSpotAudit();
   }
+  // No `n`: everything, unjudged first. Five at random was the old behaviour
+  // and it read as a slot machine — a different five on every verdict, no way
+  // to tell a finished backlog from a lucky draw.
   async function runSpotAudit() {
-    setAudit(await get<SpotAudit>(`/observe/projects/${projectId}/spot_audit?n=5`));
+    setAudit(await get<SpotAudit>(`/observe/projects/${projectId}/spot_audit`));
   }
 
   useEffect(() => {
@@ -416,14 +423,14 @@ export default function Work({ ctx }: { ctx: ProjectCtx }) {
                 }`}
           </div>
           <div className="sb">
-            Agents mark their own work finished and write their own evidence for it. This
-            picks {completed.length > 0 ? "5" : "a few"} at random and shows you what each task
-            had to prove next to what the agent claimed — you say whether you believe it. Two
-            minutes. Nothing breaks if you skip it.
+            Agents mark their own work finished and write their own evidence for it. This puts
+            every finished task next to what it had to prove — you say whether you believe it.
+            Nothing breaks if you skip it, and nothing is lost if you stop half way: each
+            verdict is recorded as you give it.
           </div>
         </div>
         <button className="primary" onClick={runSpotAudit} disabled={completed.length === 0 && rows.length === 0}>
-          Show me 5 to check
+          {audit ? "Reload the list" : "Show me everything to check"}
         </button>
       </div>
       {audit && (
@@ -440,7 +447,11 @@ export default function Work({ ctx }: { ctx: ProjectCtx }) {
       {audit && audit.evidence.length > 0 && (
         <>
         <div className="audit-h">
-          Evidence — {audit.evidence.length}: does the claim hold up?
+          Evidence — {audit.unjudged.evidence} unchecked of {audit.totals.evidence}: does the
+          claim hold up?
+          {audit.evidence.length < audit.totals.evidence && (
+            <span className="dim"> · showing the first {audit.evidence.length}</span>
+          )}
         </div>
         <div className="audit-grid">
           {audit.evidence.map((row) => (
@@ -478,7 +489,11 @@ export default function Work({ ctx }: { ctx: ProjectCtx }) {
       {audit && audit.completed_tasks.length > 0 && (
         <>
         <div className="audit-h">
-          Finished tasks — {audit.completed_tasks.length}: does the claim prove the test?
+          Finished tasks — {audit.unjudged.tasks} unchecked of {audit.totals.tasks}: does the
+          claim prove the test?
+          {audit.completed_tasks.length < audit.totals.tasks && (
+            <span className="dim"> · showing the first {audit.completed_tasks.length}</span>
+          )}
         </div>
         <div className="audit-grid">
           {audit.completed_tasks.map((task) => (

@@ -1514,30 +1514,65 @@ def audit_samples(project_id: str, session: Session = Depends(db)) -> dict:
     }
 
 
+# The whole queue is the default, but it is still a page a browser has to
+# draw. Above this, the honest offer is the export — and the cut is always
+# stated, never silent.
+AUDIT_PAGE = 200
+
+
 @router.get("/projects/{project_id}/spot_audit")
-def spot_audit(project_id: str, n: int = 5, session: Session = Depends(db)) -> dict:
-    """A random sample of recent evidence and completed tasks for human audit.
-    LLM reviewers approve nearly everything put in front of them; the chairman
-    is the layer that does not."""
+def spot_audit(project_id: str, n: int | None = None,
+               session: Session = Depends(db)) -> dict:
+    """Everything a human has not judged yet — or, with `n`, a random sample of
+    that size. LLM reviewers approve nearly everything put in front of them;
+    the chairman is the layer that does not.
+
+    The sample used to be the only mode, and it turned the page into a lottery.
+    Five at random, redealt on every verdict, drawn from the most recent fifty:
+    a chairman working through a backlog could not tell what he had already
+    seen, could not finish, and could not reach anything older than the last
+    fifty rows — while the counter above the button faithfully told him he had
+    checked 0 of 14. Unjudged rows come first so the queue drains from the top;
+    `n` remains for a genuine spot check.
+    """
     project = _project(session, project_id)
-    recent_evidence = list(
+    evidence = list(
         session.execute(
             select(Evidence)
             .where(Evidence.project_id == project.id)
             .order_by(Evidence.created_at.desc())
-            .limit(50)
         ).scalars()
     )
-    recent_done = list(
+    done = list(
         session.execute(
             select(Task)
             .where(Task.project_id == project.id, Task.status == TaskStatus.DONE)
             .order_by(Task.updated_at.desc())
-            .limit(50)
         ).scalars()
     )
-    sample_evidence = random.sample(recent_evidence, min(n, len(recent_evidence)))
-    sample_tasks = random.sample(recent_done, min(n, len(recent_done)))
+    # A verdict on evidence writes verification; on a task it writes
+    # audit_status. Either way, "nobody has judged this" is what sorts first.
+    unjudged_evidence = [e for e in evidence
+                         if e.verification == VerificationStatus.PENDING]
+    unjudged_done = [t for t in done if not t.audit_status]
+
+    if n is None:
+        # sorted() is stable, so this lifts the unjudged rows to the top and
+        # leaves both groups in the newest-first order they arrived in.
+        sample_evidence = sorted(
+            evidence, key=lambda e: e.verification != VerificationStatus.PENDING
+        )[:AUDIT_PAGE]
+        sample_tasks = sorted(done, key=lambda t: bool(t.audit_status))[:AUDIT_PAGE]
+    else:
+        # A spot check draws from what has not been judged; handing back a row
+        # the chairman already ruled on spends his two minutes on his own
+        # answer. Only when there is nothing left unjudged does it re-draw from
+        # everything, so pressing the button never returns an empty page.
+        pool_e = unjudged_evidence or evidence
+        pool_t = unjudged_done or done
+        sample_evidence = random.sample(pool_e, min(n, len(pool_e)))
+        sample_tasks = random.sample(pool_t, min(n, len(pool_t)))
+
     return {
         "evidence": [
             {"id": e.id, "kind": e.kind, "provenance": e.provenance,
@@ -1551,6 +1586,9 @@ def spot_audit(project_id: str, n: int = 5, session: Session = Depends(db)) -> d
              "audit_status": t.audit_status, "audit_note": t.audit_note}
             for t in sample_tasks
         ],
+        "sampled": n is not None,
+        "unjudged": {"evidence": len(unjudged_evidence), "tasks": len(unjudged_done)},
+        "totals": {"evidence": len(evidence), "tasks": len(done)},
         "note": "POST /admin/evidence/{id}/audit or /admin/tasks/{id}/audit "
                 "with ok=false to fail a bad sample.",
     }
