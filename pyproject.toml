@@ -48,6 +48,11 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["yaaf*"]
 
+# The goal grammar is read at runtime by the Founder's prompt and by the
+# goal grader, so it has to be in the wheel — not just in the checkout.
+[tool.setuptools.package-data]
+"yaaf.founder" = ["*.md"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"

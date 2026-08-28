@@ -251,8 +251,8 @@ def read_source(url: str) -> dict:
 
 
 def grade_goal(session: Session, goal: str) -> dict:
-    from evals.judge import grade_goal as _grade
     from yaaf.core import platform
+    from yaaf.founder.grade import grade_goal as _grade
 
     client = platform.anthropic_client(session)
     return _grade(goal, client=client, model=platform.founder_model(session)).to_dict()

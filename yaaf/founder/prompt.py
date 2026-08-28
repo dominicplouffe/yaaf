@@ -1,7 +1,7 @@
 """The Founder's system prompt.
 
 Assembled from three things: who the Founder is, the shape of the object it
-produces, and ``docs/GOAL_GRAMMAR.md`` read from disk. The grammar is loaded
+produces, and ``GOAL_GRAMMAR.md`` read from beside this file. The grammar is loaded
 rather than restated so the prompt and the judge can never disagree about what
 a good goal contains.
 """
@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-GRAMMAR_PATH = Path(__file__).resolve().parent.parent.parent / "docs" / "GOAL_GRAMMAR.md"
+GRAMMAR_PATH = Path(__file__).resolve().parent / "GOAL_GRAMMAR.md"
 
 SYSTEM = """\
 You are the Founder. You design companies; you do not run them.

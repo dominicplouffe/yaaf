@@ -256,3 +256,52 @@ def test_the_platform_credential_never_becomes_a_project_secret(client, founder)
         assert rows[0].role_scopes == []
         assert rows[0].ciphertext != "sk-ant-test-key"
         assert platform.credential(session) == "sk-ant-test-key"
+
+
+def test_the_founder_ships_in_the_image():
+    """Nothing the Founder needs at runtime may live outside the wheel.
+
+    `pyproject.toml` ships `yaaf*` and nothing else, so a runtime import of
+    `evals` or a read of `docs/` works in a checkout and raises in production.
+    The rehearsal endpoint documents the same trap about `roles/`; this is the
+    test that stops the Founder rediscovering it.
+    """
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    from yaaf.founder.grade import GRAMMAR_PATH
+    from yaaf.founder.prompt import GRAMMAR_PATH as PROMPT_GRAMMAR
+
+    package = Path(__import__("yaaf").__file__).resolve().parent
+    # Both readers point at the same shipped copy — one rubric, inside yaaf/.
+    assert GRAMMAR_PATH == PROMPT_GRAMMAR
+    assert GRAMMAR_PATH.exists()
+    assert package in GRAMMAR_PATH.parents
+
+    # Import the Founder with the checkout root off sys.path, the way the
+    # deployed image runs it. A stray `import evals` fails loudly here.
+    probe = (
+        "import sys;"
+        f"sys.path[:] = [p for p in sys.path if p not in {{'', {str(package.parent)!r}}}];"
+        "import yaaf.founder.agent, yaaf.founder.tools, yaaf.founder.grade;"
+        "from yaaf.founder.prompt import system_prompt;"
+        "assert len(system_prompt()) > 5000;"
+        "print('ok')"
+    )
+    done = subprocess.run([sys.executable, "-c", probe], capture_output=True,
+                          text=True, cwd="/")
+    assert done.stdout.strip().endswith("ok"), done.stderr
+
+
+def test_the_grader_asks_for_every_element_by_name():
+    """The element names are a contract: the UI groups by them, the eval
+    asserts on them, and the grammar names them. A rename that touched only
+    one of the three would be silent."""
+    from yaaf.founder.grade import GOAL_ELEMENTS, GRAMMAR_PATH, LOAD_BEARING
+
+    grammar = GRAMMAR_PATH.read_text()
+    assert set(LOAD_BEARING) <= set(GOAL_ELEMENTS)
+    # Every element the grader can return is described in the rubric it cites.
+    for element in GOAL_ELEMENTS:
+        assert f"`{element}`" in grammar, element

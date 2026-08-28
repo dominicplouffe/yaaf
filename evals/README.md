@@ -97,7 +97,7 @@ depend on one.
 
 `python -m evals.founder` is not part of the golden suite and never runs in
 CI: it calls a real model. It grades two real artifacts against
-`docs/GOAL_GRAMMAR.md` — the chairman's brief as he actually typed it
+`yaaf/founder/GOAL_GRAMMAR.md` — the chairman's brief as he actually typed it
 (`fixtures/founder_brief.md`) and the goal it eventually produced
 (`docs/projects/idea-to-customer.json`) — and asserts three things:
 
