@@ -242,8 +242,8 @@ export default function NewProject() {
     generic: { url: string; secret: string };
   } | null>(null);
   // What Slack rooms the platform made on the way in, when an app-wide
-  // workspace is configured. The whole point of app-wide Slack settings is
-  // that this screen can answer "and where do I talk to it?" without sending
+  // Slack connection is configured. The whole point of app-wide Slack settings
+  // is that this screen can answer "and where do I talk to it?" without sending
   // anybody to Slack to click New Channel five times.
   const [slack, setSlack] = useState<SlackProvision | null>(null);
 
@@ -881,7 +881,8 @@ export default function NewProject() {
         {slack && (
           <div className="card" style={{ maxWidth: 760 }}>
             <p style={{ marginTop: 0 }}>
-              <b>Your Slack rooms.</b> This project inherited the app-wide workspace, so
+              <b>Your Slack rooms.</b> This project inherited the app-wide Slack
+              connection, so
               the platform made its channels for you and invited you to each. They mirror
               the bus within seconds, and the boardroom is a place you can talk to the CEO
               from.

@@ -7,7 +7,7 @@ rotate or remove it. The rule it carries is the load-bearing part and is
 asserted here directly: *the platform key never reaches a project's agents*, no
 inheritance and no fallback, however a project is configured.
 
-The **Slack workspace** is shared on purpose — one workspace, every project,
+The **Slack connection** is shared on purpose — one workspace, every project,
 different channels — so the tests below are mostly about the seam that makes
 that safe: inheritance is per field, a project may override one token and keep
 the rest, and a project may switch Slack off entirely without unwiring the
@@ -225,7 +225,7 @@ def test_the_platform_key_never_becomes_a_projects_billing_credential(client):
     assert platform.PLATFORM_BILLING_SECRET not in [s["name"] for s in listed.json()]
 
 
-# ── the shared Slack workspace ──────────────────────────────────────────────────
+# ── the shared Slack connection ─────────────────────────────────────────────────
 
 
 def test_a_project_with_only_a_channel_map_inherits_the_whole_workspace(client, monkeypatch):

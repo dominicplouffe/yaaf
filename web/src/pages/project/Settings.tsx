@@ -69,7 +69,7 @@ function hoursUntil(iso: string): number {
 
 interface SlackConfig {
   /** Every field optional now: an absent one is inherited from the app-wide
-      workspace, and `enabled: false` switches Slack off for this project
+      Slack connection, and `enabled: false` switches Slack off for this project
       however the platform is wired. */
   enabled?: boolean;
   bot_token_secret?: string;
@@ -84,7 +84,7 @@ interface SlackConfig {
 /** What the server says this project's Slack wiring actually resolves to, and
     where each field came from. The sources are the point: an empty "bot token"
     box means nothing on its own — "not configured" and "inherited from the
-    workspace you set up once" are opposite situations and look identical. */
+    connection you set up once" are opposite situations and look identical. */
 interface SlackView {
   enabled: boolean;
   global_configured: boolean;
@@ -208,7 +208,7 @@ function SlackBridge({
       {off ? (
         <p className="help">
           <span className="badge warn">off for this project</span> nothing mirrors and
-          nothing arrives, however the app-wide workspace is configured. Every message is
+          nothing arrives, however the app-wide Slack connection is configured. Every message
           still on the bus.
         </p>
       ) : view?.can_mirror ? (
@@ -216,21 +216,21 @@ function SlackBridge({
           <span className="badge good">connected</span> mirroring {mapped.length} channel(s)
           {" "}using{" "}
           {overriding.length === 0
-            ? "the app-wide workspace"
+            ? "the app-wide Slack connection"
             : `this project's own ${overriding.length === 1 ? "token" : "tokens"}`}
           {view.can_receive ? "; inbound enabled for " : "; outbound only"}
           {view.can_receive ? <code>{view.chairman_slack_user}</code> : null}.
         </p>
       ) : view?.global_configured ? (
         <p className="help">
-          <span className="badge good">workspace ready</span> this project inherits the
-          app-wide Slack workspace and needs only its channels. Create them below and yaaf
-          will tell you their names.
+          <span className="badge good">ready</span> this project inherits the app-wide
+          Slack connection and needs only its channels. Create them below and yaaf will
+          tell you their names.
         </p>
       ) : (
         <p className="help">
-          <span className="badge warn">no workspace</span> connect Slack once in{" "}
-          <a href="#/settings">Settings → Slack workspace</a> and every project inherits it.
+          <span className="badge warn">not connected</span> connect Slack once in{" "}
+          <a href="#/settings">Settings → Slack connection</a> and every project inherits it.
           You can also give this project its own tokens below.
         </p>
       )}
@@ -304,7 +304,7 @@ function SlackBridge({
           project is "inherit everything and just map channels". */}
       <div className="actions">
         <button className="small" onClick={() => setShowOverrides(!showOverrides)}>
-          {showOverrides ? "Hide" : "Override the workspace for this project"}
+          {showOverrides ? "Hide" : "Override the Slack connection for this project"}
           {overriding.length > 0 && !showOverrides ? ` (${overriding.length} set)` : ""}
         </button>
       </div>
@@ -432,8 +432,8 @@ function SlackBridge({
             disabled={busy}
             onClick={() => {
               if (!confirm("Turn Slack off for this project? It stops mirroring and stops "
-                           + "accepting inbound messages, whatever the app-wide workspace "
-                           + "says. The bus keeps everything."))
+                           + "accepting inbound messages, whatever the app-wide Slack "
+                           + "connection says. The bus keeps everything."))
                 return;
               act(
                 () => patch(`/admin/projects/${projectId}`,
@@ -465,7 +465,7 @@ function SlackBridge({
             disabled={busy}
             onClick={() => {
               if (!confirm("Drop this project's own Slack tokens and inherit the app-wide "
-                           + "workspace again? The channel map is kept."))
+                           + "Slack connection again? The channel map is kept."))
                 return;
               act(async () => {
                 await patch(`/admin/projects/${projectId}`, {
@@ -478,17 +478,17 @@ function SlackBridge({
                 setChairmanUser("");
                 setPrefix("");
                 loadView();
-              }, "Back to the app-wide workspace.");
+              }, "Back to the app-wide Slack connection.");
             }}
           >
-            Reset to the workspace
+            Reset to the app-wide connection
           </button>
         )}
       </div>
 
       <p className="help">
         To chat from Slack, Socket Mode is set up once in{" "}
-        <a href="#/settings">Settings → Slack workspace</a> and inherited here. The Event
+        <a href="#/settings">Settings → Slack connection</a> and inherited here. The Event
         Subscriptions request URL <code>{eventsUrl}</code> remains the alternative for
         boxes that are publicly reachable.
       </p>

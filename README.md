@@ -199,7 +199,7 @@ full reference in **[docs/FEATURES.md](docs/FEATURES.md)**:
 | **Chat** | A resident CEO session: Boardroom and Slack answer in seconds, without consuming the work queue's caps. |
 | **Before you pay** | A fire drill: your spec run as a whole project on scripted agents, at $0 — does it get off the ground, how often will it stop and wait for you, what paces it. |
 | **Three tenses** | A briefing composed from the record — what happened while you were away, at zero tokens, so it still lands the morning the budget ran out — and a calendar of what the project is scheduled to do next. |
-| **Integrations** | Slack — one workspace configured once, channels created per project and named back to you (Socket Mode, no public URL) — GitHub repo-per-project, MCP data sources, signed webhooks, S3 artifacts, email alerts. → [INTEGRATIONS](docs/INTEGRATIONS.md) |
+| **Integrations** | Slack — connected once, channels created per project and named back to you (Socket Mode, no public URL) — GitHub repo-per-project, MCP data sources, signed webhooks, S3 artifacts, email alerts. → [INTEGRATIONS](docs/INTEGRATIONS.md) |
 | **Proof it works** | 626 offline tests, chaos tests, golden-transcript evals that gate prompt edits, a $0 scripted CI run of a whole project — and `yaaf rehearse`, which points that same run at your own spec. |
 
 ## What you give up

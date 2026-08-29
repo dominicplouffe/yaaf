@@ -251,7 +251,7 @@ def set_secret(
 
 @app.command()
 def settings() -> None:
-    """Show the app-wide settings — the model credential and the Slack workspace.
+    """Show the app-wide settings — the model credential and the Slack connection.
 
     Values are never printed, only whether one is installed. Change them here
     or in the dashboard's Settings screen; both write the same rows.
@@ -286,7 +286,7 @@ def set_slack(
     auto_create: bool = typer.Option(None, "--auto-create/--no-auto-create",
                                      help="Provision a new project's rooms on creation"),
 ) -> None:
-    """Configure the app-wide Slack workspace every project inherits.
+    """Configure the app-wide Slack connection every project inherits.
 
     One workspace, every project, different channels: store the tokens once
     and a project needs nothing but its channel map — which `slack-channels`

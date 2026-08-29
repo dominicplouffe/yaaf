@@ -5,7 +5,7 @@
 // moment it was set, so there was no way to see what was installed, test it,
 // rotate it or take it away. That is the gap here.
 //
-// The Slack workspace is the other half, and it exists because of how these
+// The Slack connection is the other half, and it exists because of how these
 // installs are actually used: one workspace, every project, different
 // channels. Store the tokens once and a project needs nothing but its channel
 // map — which yaaf then creates for you.
@@ -342,12 +342,12 @@ function SlackCard({
               setBotToken("");
               setSigningSecret("");
               setAppToken("");
-              return "Workspace saved. Every project that has not overridden it inherits "
-                + "these now.";
+              return "Slack connection saved. Every project that has not overridden "
+                + "it inherits these now.";
             })
           }
         >
-          {connected ? "Update workspace" : "Connect workspace"}
+          {connected ? "Update connection" : "Connect Slack"}
         </button>
         {connected && (
           <>
@@ -367,13 +367,14 @@ function SlackCard({
             <button
               disabled={busy}
               onClick={() => {
-                if (!confirm("Forget the app-wide workspace? Projects that inherit it stop "
-                             + "mirroring. Nothing is deleted in Slack and no message is "
-                             + "lost — the bus is canonical."))
+                if (!confirm("Forget the app-wide Slack connection? Projects that inherit it "
+                             + "stop mirroring. Nothing is deleted in Slack and no "
+                             + "message is lost — the bus is canonical."))
                   return;
                 run(async () => {
                   await del("/admin/settings/slack");
-                  return "Workspace forgotten. Projects with their own tokens are unaffected.";
+                  return "Connection forgotten. Projects with their own tokens are "
+                    + "unaffected.";
                 });
               }}
             >
@@ -419,7 +420,7 @@ export default function Settings() {
         <>
           <h2>Model credential</h2>
           <ModelCard settings={settings.anthropic} reload={reload} />
-          <h2>Slack workspace</h2>
+          <h2>Slack connection</h2>
           <SlackCard settings={settings.slack} reload={reload} />
         </>
       )}

@@ -70,7 +70,7 @@ def create_app() -> FastAPI:
     # like the rest of the chairman surface; mounted under /admin so it shares
     # that auth rather than growing a second one.
     app.include_router(founder.router, prefix="/admin/founder", tags=["founder"])
-    # App-wide settings: the model credential and the Slack workspace every
+    # App-wide settings: the model credential and the Slack connection every
     # project inherits. Mounted under /admin for the same reason the Founder is
     # — one chairman auth, not a second one.
     app.include_router(app_settings.router, prefix="/admin/settings", tags=["settings"])

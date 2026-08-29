@@ -8,7 +8,7 @@ keeps ``slack_ts`` NULL and waits for the next tick, and one misconfigured
 project never stops another from mirroring.
 
 Where a project's tokens come from is :mod:`yaaf.server.slack.settings`: by
-default the app-wide workspace configured once in Settings, overridden field by
+default the app-wide Slack connection configured once in Settings, overridden field by
 field by ``project.integrations["slack"]``:
 
     {
@@ -24,7 +24,7 @@ field by ``project.integrations["slack"]``:
     }
 
 Every token is an ordinary envelope-encrypted Secret row — at platform scope
-(``project_id IS NULL``) for the shared workspace, or at project scope when a
+(``project_id IS NULL``) for the shared connection, or at project scope when a
 project overrides one — named there and decrypted server-side only. Their
 ``role_scopes`` stay empty, so no agent sandbox ever holds the bot token: an
 agent cannot speak to Slack except by writing to the bus and letting the mirror

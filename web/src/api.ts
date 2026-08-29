@@ -352,7 +352,7 @@ export interface ProjectHealth {
 }
 
 /** What the platform made in Slack for a project, room by room. Returned by
-    project creation (when an app-wide workspace is configured and auto-create
+    project creation (when an app-wide Slack connection is configured and auto-create
     is on) and by the "create missing channels" button. */
 export interface SlackProvision {
   ok: boolean;

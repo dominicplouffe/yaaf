@@ -25,9 +25,9 @@ Every command that takes a project accepts **either a slug or an id**.
 | `yaaf create-user EMAIL NAME` | Create a user. Idempotent by email. |
 | `yaaf create-project SPEC_FILE` | Create a project from a JSON spec (shape below). |
 | `yaaf set-secret NAME [--project P] [--scopes a,b] [--kind service\|billing]` | Store an encrypted secret. **The value is prompted** — never echoed, logged, or left in shell history. Omit `--project` for a platform-level secret. |
-| `yaaf settings` | Show the app-wide settings — whether a model credential is installed and how the Slack workspace is configured. Values are never printed. |
+| `yaaf settings` | Show the app-wide settings — whether a model credential is installed and how the Slack connection is configured. Values are never printed. |
 | `yaaf set-platform-key [--mode api_key\|subscription]` | Install or rotate the **Founder's** model credential (value prompted). It is never injected into a sandbox and never reaches a project's agents — there is no fallback. |
-| `yaaf set-slack [--bot-token] [--signing-secret] [--app-token] [--chairman U…] [--prefix P] [--visibility private\|public] [--auto-create/--no-auto-create]` | Configure the app-wide Slack workspace every project inherits. Token flags prompt for the value. |
+| `yaaf set-slack [--bot-token] [--signing-secret] [--app-token] [--chairman U…] [--prefix P] [--visibility private\|public] [--auto-create/--no-auto-create]` | Configure the app-wide Slack connection every project inherits. Token flags prompt for the value. |
 | `yaaf slack-channels PROJECT` | Create the Slack rooms this project is missing and print their names. Idempotent — a mapped room is left alone, a name Slack already holds is adopted. |
 | `yaaf configure PROJECT [--runtime …] [--billing-secret-id …] [--billing-mode …]` | Update outward wiring only. **Never the constitution** — cadence, concurrency and every other limit is an amendment. |
 | `yaaf amend PROJECT --reason "…" --set rule=value` | Change a constitution rule. Repeatable `--set`; values are parsed as JSON where possible, so `--set runs_per_project_per_day=80` gives a number and `--set ceo_daily_at='"09:00"'` gives a string. An invalid overlay is refused whole. |

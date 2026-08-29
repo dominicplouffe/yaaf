@@ -96,7 +96,7 @@ def mapped_rooms(project: Project) -> dict[str, str]:
     Free, in memory, and the reason it is worth having: the fast mirror ticks
     every two seconds over every project, and :func:`resolve` costs a handful
     of secret and setting lookups. A project with nothing mapped mirrors
-    nothing whatever the workspace says, so it never needs resolving at all.
+    nothing whatever the connection says, so it never needs resolving at all.
     """
     if is_disabled(project):
         return {}

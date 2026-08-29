@@ -10,7 +10,7 @@ closes; the rule it enforces is unchanged and deliberately restated in the
 response — **the platform key never reaches a project's agents.** No
 inheritance, no fallback. A project pays its own way or does not run.
 
-**The Slack workspace** is new, and exists because of an observation about how
+**The Slack connection** is new, and exists because of an observation about how
 these installs are actually used: one workspace, every project, different
 channels. Storing the tokens once and letting a project inherit them turns
 "connect Slack" from a per-project chore into a per-project *channel map* —
@@ -129,7 +129,7 @@ def put_anthropic_model(body: ModelIn, session: Session = Depends(db)) -> dict:
     return {"model": body.model.strip()}
 
 
-# ── the app-wide Slack workspace ────────────────────────────────────────────────
+# ── the app-wide Slack connection ───────────────────────────────────────────────
 
 
 class SlackIn(BaseModel):
@@ -150,7 +150,7 @@ class SlackIn(BaseModel):
 
 @router.put("/slack")
 def put_slack(body: SlackIn, session: Session = Depends(db)) -> dict:
-    """Install or update the workspace every project inherits.
+    """Install or update the Slack connection every project inherits.
 
     The bot token is shape-checked here for the same reason the model key is:
     ``xoxb-`` is a bot token and ``xapp-`` is an app-level one, they are not
@@ -194,7 +194,7 @@ def put_slack(body: SlackIn, session: Session = Depends(db)) -> dict:
 @router.post("/slack/test")
 def test_slack(session: Session = Depends(db)) -> dict:
     """Ask Slack who this token is. Free, unscoped, and the only check that
-    can be right about whether the workspace is actually connected."""
+    can be right about whether the connection actually works."""
     token = platform.secret_value(session, platform.SLACK_BOT_SECRET)
     if token is None:
         raise HTTPException(status_code=422, detail="no app-wide Slack bot token is configured")
@@ -203,7 +203,7 @@ def test_slack(session: Session = Depends(db)) -> dict:
 
 @router.delete("/slack")
 def delete_slack(session: Session = Depends(db)) -> dict:
-    """Forget the workspace. Projects that named their own tokens are
+    """Forget the Slack connection. Projects that named their own tokens are
     untouched; projects that were inheriting stop mirroring and keep every
     message — the bus was always the canonical copy."""
     removed = [

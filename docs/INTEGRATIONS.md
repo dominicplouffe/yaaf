@@ -2,7 +2,7 @@
 
 Everything here is **optional** and configured from the dashboard — most of it
 per project, and the pieces that are the same for every project (the Slack
-workspace, the Founder's model key) once, app-wide, under the sidebar's
+connection, the Founder's model key) once, app-wide, under the sidebar's
 **Settings**. Nothing below requires editing a role, redeploying, or touching
 the CLI, with no exceptions.
 
@@ -137,7 +137,7 @@ Two operational notes:
 
 ## Slack
 
-**Settings → Slack workspace** (app-wide), then **project → Settings →
+**Settings → Slack connection** (app-wide), then **project → Settings →
 Integrations → Slack bridge** (that project's channels).
 
 Two things at once: your project's channels **mirror out** to Slack, and you
@@ -148,10 +148,10 @@ Boardroom, answering in seconds.
 
 You reuse one Slack workspace and only ever change the *channels*, so that is
 how it is stored: the tokens live once at platform scope and every project
-inherits them. Connect the workspace under the sidebar's **Settings**, and a
-new project needs nothing but its channel map.
+inherits them. Connect Slack under the sidebar's **Settings**, and a new
+project needs nothing but its channel map.
 
-**yaaf makes those channels for you.** With a workspace configured, creating a
+**yaaf makes those channels for you.** With a connection configured, creating a
 project provisions `{prefix}-boardroom`, `{prefix}-leadership` and one room per
 team — private by default, with your Slack user invited to each — and the
 "project created" screen tells you their names. The prefix defaults to the
@@ -203,8 +203,7 @@ optional):
 
 **Socket Mode is the recommended path** — it opens an outbound WebSocket to
 Slack, so your self-hosted box needs no public URL. Set the app-level token
-(`xapp-…`) once in the app-wide settings and every project's connection uses
-it.
+(`xapp-…`) once in the app-wide settings and every project's socket uses it.
 
 ### The trust model
 

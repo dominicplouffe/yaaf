@@ -378,8 +378,8 @@ evidence at all about your *project*.
 - **The same session answers from Slack** via Socket Mode (no public URL
   needed). The Postgres bus stays canonical; Slack is a viewport plus exactly
   one inbound path — you, in the mapped boardroom channel.
-- **One workspace, every project.** Slack tokens are stored once, app-wide, and
-  every project inherits them — per field, so a project in a different
+- **One connection, every project.** Slack tokens are stored once, app-wide,
+  and every project inherits them — per field, so a project in a different
   workspace can override just the token it needs. Creating a project makes its
   channels for you (`{slug}-boardroom`, `{slug}-leadership`, one per team,
   private, with you invited) and tells you their names. The bot token still

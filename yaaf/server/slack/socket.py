@@ -13,7 +13,7 @@ Slack, bus canonical throughout.
 Enabled by an app token (the xapp- token, an ordinary envelope-encrypted
 Secret) resolving for the project — app-wide in Settings, or named as
 ``app_token_secret`` in ``project.integrations["slack"]`` to override it. A
-shared workspace shares its app token too: one Socket Mode connection per
+shared connection shares its app token too: one Socket Mode connection per
 project, all speaking to the same Slack app. No agent ever holds either token.
 """
 
@@ -44,7 +44,7 @@ def socket_configs() -> dict[str, dict]:
 
     Three things have to resolve — an app token, a mapped boardroom and a
     chairman — and any of the three may be inherited from the app-wide
-    workspace. A project whose only per-project setting is its channel map is
+    Slack connection. A project whose only per-project setting is its channel map is
     the normal case, and it gets a connection like any other.
     """
     out: dict[str, dict] = {}

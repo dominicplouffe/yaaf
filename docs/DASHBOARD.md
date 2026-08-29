@@ -15,7 +15,7 @@ the intended way to run a project.
 | **Desk** | The landing page. Everything needing you, across every project. |
 | **Projects** | Your portfolio — one comparable row per project. |
 | **Roles** | The role library, and each role's blast radius. |
-| **Settings** | App-wide: the model credential and the Slack workspace every project inherits. |
+| **Settings** | App-wide: the model credential and the Slack connection every project inherits. |
 | **New project** | The creation wizard. |
 
 ---
@@ -29,8 +29,9 @@ Two things, and neither belongs to a project.
   product-wide conversations and **never reaches a project's agents**: no
   inheritance, no fallback. Every project pays its own way with its own billing
   credential, set under that project's Settings → Money.
-- **Slack workspace** — the bot/signing/app tokens, your Slack member ID, and
-  the channel naming convention, stored once. Every project inherits them, so
+- **Slack connection** — the bot/signing/app tokens for your Slack workspace,
+  your member ID, and the channel naming convention, stored once. Every project
+  inherits them, so
   connecting Slack for a new project is nothing but its channels — and yaaf
   makes those for you (`{prefix}-boardroom`, `{prefix}-leadership`, one per
   team; private by default, with you invited to each) and names them back on
@@ -378,7 +379,7 @@ Data; everything after is occasional.
 **Connections**
 
 - **Integrations** — the Slack bridge and the GitHub workspace. Slack starts
-  out **inherited** from the app-wide workspace, so the only thing this card
+  out **inherited** from the app-wide connection, so the only thing this card
   usually needs is a channel map — and **Create missing channels** fills that
   in for you, naming the rooms as it makes them. Every field can be overridden
   for a project that lives in a *different* workspace, and **Turn off for this

@@ -9,7 +9,7 @@ Two stores, on purpose:
 
 - **`platform_settings`** holds plain configuration (which model the Founder
   runs, what billing mode the platform credential uses, the app-wide Slack
-  workspace's chairman user and channel-naming convention).
+  connection's chairman user and channel-naming convention).
 - **Platform-level `Secret` rows** (``project_id IS NULL``) hold the
   credentials themselves — the Founder's model key, the app-wide Slack tokens,
   the GitHub provisioning token — reusing the same envelope encryption every

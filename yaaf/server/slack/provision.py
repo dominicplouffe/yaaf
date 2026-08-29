@@ -1,7 +1,7 @@
 """Make a project's Slack rooms, and say what they are called.
 
 The point of app-wide Slack settings is that creating a project should not be
-followed by twenty minutes of clicking in Slack. With a workspace configured
+followed by twenty minutes of clicking in Slack. With a Slack connection configured
 once, the platform creates ``{prefix}-boardroom``, ``{prefix}-leadership`` and
 one room per team, invites the chairman so private channels are actually
 visible to him, writes the ids into the project's channel map, and hands back
@@ -284,7 +284,7 @@ def provision_quietly(session: Session, project: Project) -> dict | None:
 
     A chairman who has configured Slack wants his rooms; a chairman whose Slack
     is having a bad afternoon wants his project anyway. Returns None when there
-    was nothing to do — no workspace configured, or auto-create turned off.
+    was nothing to do — no Slack connection configured, or auto-create turned off.
     """
     try:
         if not slack_settings.is_configured(session):
