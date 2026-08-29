@@ -8,19 +8,29 @@ itself to the same standard: every rule ships with a test that attacks it.
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"   # Python 3.12+
-.venv/bin/python -m pytest tests/        # whole suite, offline, $0 in tokens
+.venv/bin/python -m pytest tests/ -n auto  # whole suite, offline, $0 in tokens
 .venv/bin/ruff check .                   # lint
 cd web && npm install && npm run build   # type-checks the SPA
 ```
 
-The suite runs on SQLite by default. To run it against real Postgres (CI does
-both):
+`-n auto` matters: the tests are HTTP round-trips against a real app, so they
+parallelise almost linearly — about four minutes serial, about a minute and a
+half on four cores. Drop it when you want a readable failure from one test.
+
+The suite runs on SQLite by default, which is the fastest loop and the right
+one for almost every change. **CI runs Postgres**, because SQLite cannot
+exercise `FOR UPDATE SKIP LOCKED`, JSONB, `LISTEN/NOTIFY`, `TIMESTAMPTZ`, or
+the `ALTER TABLE` half of the migration chain — a suite green on SQLite alone
+is green about a database nobody deploys. Run Postgres locally before pushing
+anything that touches leasing, JSON columns, timestamps or migrations:
 
 ```bash
 docker run -d --rm -p 55432:5432 -e POSTGRES_PASSWORD=postgres postgres:16
 YAAF_TEST_DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:55432/postgres \
-  .venv/bin/python -m pytest tests/
+  .venv/bin/python -m pytest tests/ -n auto
 ```
+
+Each xdist worker builds a database of its own, so the two flags compose.
 
 ## The house rules (they're the product)
 
