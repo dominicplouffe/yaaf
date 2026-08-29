@@ -2,16 +2,18 @@ import { Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom"
 import { DeskView, get, getToken } from "./api";
 import { usePoll } from "./hooks";
 import Login from "./pages/Login";
-import Desk, { buildItems } from "./pages/Desk";
+import Desk, { buildItems, needsYou } from "./pages/Desk";
 import Projects from "./pages/Projects";
 import Founding from "./pages/Founding";
 import NewProject from "./pages/NewProject";
 import ProjectPage from "./pages/Project";
 import Roles from "./pages/Roles";
 
-/** The count beside Desk in the sidebar. Only tier 1 and 2 — things with a
-    consequence if ignored — because a badge that counts optional work teaches
-    the chairman to ignore the badge.
+/** The count beside Desk in the sidebar. Only the rows a decision is actually
+    waiting on (Desk's `needsYou`, not its tier) — because a badge that counts
+    work the chairman cannot do teaches the chairman to ignore the badge. A
+    drought used to sit in here: nothing to approve, no verb the chairman holds,
+    and a 1 beside "Desk" every time it climbed.
 
     It counts the Desk's own items rather than re-deriving them from the same
     fields: a second copy of "what counts as needing you" would drift from the
@@ -24,7 +26,7 @@ import Roles from "./pages/Roles";
 function DeskCount() {
   const { data } = usePoll(() => get<DeskView>("/observe/desk?live=true"), 30000);
   if (!data) return null;
-  const n = buildItems(data.projects, () => {}).filter((i) => i.tier <= 2).length;
+  const n = buildItems(data.projects, () => {}).filter(needsYou).length;
   return n > 0 ? <span className="n">{n}</span> : null;
 }
 
