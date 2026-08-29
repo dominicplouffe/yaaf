@@ -25,12 +25,28 @@ import {
       2  on a clock   it resolves without him, at a time we can name
       3  drifting     nothing breaks; the claim just gets weaker
 
-    Only tiers 1 and 2 are counted anywhere, because the count is a promise: a
-    number above zero means something has a consequence attached. Tier 3 is
-    real work — it is the difference between "done means verified" being true
-    and being a slogan — but nothing expires and no agent is blocked, so
-    padding the count with it would spend the one number a chairman has to be
-    able to trust.
+    Tier is time-to-consequence, and it orders the list. It does not decide the
+    count: `yours` does, and the two are orthogonal on purpose. A row is `yours`
+    when the chairman holds the only lever — an approval that auto-denies, a bet
+    only the chairman extends, a thread only the chairman unfreezes, scope only
+    the chairman accepts, a date only the chairman signs, a verdict nobody on
+    the project may pass. The count and the sidebar badge are exactly those
+    rows, because the number is a promise: above zero means a decision is
+    waiting.
+
+    Everything else on a clock still gets a row and still sorts by when it lands
+    — a drought, a kill date, a budget on pace — but it is not counted, and it
+    does not say "if you do nothing", because there is nothing to do: the CEO
+    resolves all three. Counting them cost what padding a count always costs. A
+    chairman read "1 thing needs you" over a drought row at 8h of 12, went
+    looking for the approval it implied, found none, and had to ask the CEO what
+    had been missed — and the honest answer was nothing. Project → Overview has
+    drawn this line since it shipped ("Needs you" holds decisions; "Watch" holds
+    drought, kill dates and budget); this page now draws it in the same place.
+
+    Tier 3 is real work — it is the difference between "done means verified"
+    being true and being a slogan — but nothing expires and no agent is blocked,
+    so it is never `yours` either.
 
     Only a project that is *running* appears here at all. The server drops the
     terminal ones (`?live=true`) because a stopped or completed project cannot
@@ -70,6 +86,11 @@ export interface Item {
       resolves itself in X" — the headline names a deadline, so it has to come
       from something that has one. */
   clocked?: boolean;
+  /** Whether the chairman holds the only lever on this row. The count, the
+      badge and the "if you do nothing" label are all exactly this and never the
+      tier — see the header. A row that is not `yours` is on the page so nothing
+      happens silently, not because anything is being asked. */
+  yours?: boolean;
   project: DeskProject;
   kind: string;
   what: React.ReactNode;
@@ -87,6 +108,12 @@ const SPEND_FLOOR_USD = 1;
     used by the sidebar badge too — a second copy of this test would drift, and
     a badge counting rows the page does not show is worse than no badge. */
 export const isLive = (p: DeskProject) => p.status === "running";
+
+/** The one definition of "a decision is waiting on the chairman". Exported
+    because the sidebar badge has to count the same rows this page counts: a
+    badge that disagrees with the list under it is worse than no badge, and the
+    drought taught us that a badge nobody can act on is worse than both. */
+export const needsYou = (i: Item) => i.yours === true;
 
 const latestRun = (ps: DeskProject[]): string | null =>
   ps.map((p) => p.last_run_at).filter((v): v is string => v !== null).sort().at(-1) ?? null;
@@ -114,7 +141,7 @@ export function buildItems(projects: DeskProject[], reload: () => void): Item[] 
     // ── tier 1: stopped, and only the chairman restarts it ──────────────
     for (const bet of p.expired_bets) {
       items.push({
-        key: bet.id, tier: 1, at: 0, project: p, kind: "bet expired",
+        key: bet.id, tier: 1, at: 0, yours: true, project: p, kind: "bet expired",
         what: (
           <>
             “{clip(bet.statement, 120)}” hit its kill date {fmtWhenShort(bet.kill_date)}
@@ -131,7 +158,8 @@ export function buildItems(projects: DeskProject[], reload: () => void): Item[] 
     }
     if (p.frozen_threads > 0) {
       items.push({
-        key: `${p.id}-frozen`, tier: 1, at: 0, project: p, kind: "thread frozen",
+        key: `${p.id}-frozen`, tier: 1, at: 0, yours: true, project: p,
+        kind: "thread frozen",
         what: (
           <>
             The pair breaker froze <b>{p.frozen_threads} thread(s)</b> — two agents were
@@ -148,7 +176,8 @@ export function buildItems(projects: DeskProject[], reload: () => void): Item[] 
     const w = p.awaiting_you;
     for (const v of w.verdicts) {
       items.push({
-        key: `${p.id}-verdict-${v.key}`, tier: 1, at: 0, project: p, kind: "your verdict",
+        key: `${p.id}-verdict-${v.key}`, tier: 1, at: 0, yours: true, project: p,
+        kind: "your verdict",
         what: (
           <>
             <b>{v.key}</b> has no work left open and its acceptance test is an observable
@@ -165,7 +194,7 @@ export function buildItems(projects: DeskProject[], reload: () => void): Item[] 
     }
     if (w.plan > 0) {
       items.push({
-        key: `${p.id}-plan`, tier: 1, at: 0, project: p, kind: "accept scope",
+        key: `${p.id}-plan`, tier: 1, at: 0, yours: true, project: p, kind: "accept scope",
         what: (
           <>
             The CEO proposed <b>{w.plan} requirement{w.plan === 1 ? "" : "s"}</b> and is
@@ -182,7 +211,7 @@ export function buildItems(projects: DeskProject[], reload: () => void): Item[] 
     }
     if (w.commitment) {
       items.push({
-        key: `${p.id}-commitment`, tier: 2, at: NEVER - 1, project: p,
+        key: `${p.id}-commitment`, tier: 2, at: NEVER - 1, yours: true, project: p,
         kind: "sign the date",
         what: (
           <>
@@ -204,7 +233,7 @@ export function buildItems(projects: DeskProject[], reload: () => void): Item[] 
     for (const a of p.pending_approvals) {
       items.push({
         key: a.id, tier: 2, at: new Date(a.expires_at).getTime(), clocked: true,
-        project: p, kind: a.kind.replaceAll("_", " "),
+        yours: true, project: p, kind: a.kind.replaceAll("_", " "),
         what: (
           <>
             {a.title}
@@ -389,7 +418,10 @@ export default function Desk() {
   const live = all.filter(isLive);
   const idle = all.length - live.length;
   const items = buildItems(live, reload);
-  const needing = items.filter((i) => i.tier <= 2);
+  // Waiting on the chairman, and on a clock the CEO runs out itself. Both are
+  // shown and both sort by consequence; only the first is ever counted.
+  const mine = items.filter(needsYou);
+  const watching = items.filter((i) => i.tier <= 2 && !needsYou(i));
   const soonest = items.find((i) => i.tier === 2 && i.clocked);
   const running = live.length;
   const lastRun = latestRun(live);
@@ -406,17 +438,29 @@ export default function Desk() {
           })}
         </span>
       </div>
-      {needing.length > 0 && (
+      {mine.length > 0 ? (
         <p className="subtitle">
           <b>
-            {needing.length} thing{needing.length === 1 ? "" : "s"} need
-            {needing.length === 1 ? "s" : ""} you.
+            {mine.length} thing{mine.length === 1 ? "" : "s"} need
+            {mine.length === 1 ? "s" : ""} you.
           </b>
           {soonest && (
             <> The soonest resolves itself{" "}
               <span className="tick">{fmtSoon(new Date(soonest.at).toISOString())}</span>.
             </>
           )}
+        </p>
+      ) : watching.length > 0 && (
+        /* Rows, but none of them a decision. Said out loud, because the rows
+           below are the same shape as the ones that are — and silence here
+           reads as "work it out from the list", which is what sent a chairman
+           looking for an approval behind a drought counter. */
+        <p className="subtitle">
+          <b>Nothing needs a decision from you.</b>{" "}
+          {watching.length === 1 ? "One thing is" : `${watching.length} things are`} on a
+          clock below; the CEO resolves {watching.length === 1 ? "it" : "them"}, and
+          {watching.length === 1 ? " it is" : " they are"} listed so nothing happens
+          silently.
         </p>
       )}
 
@@ -444,7 +488,13 @@ export default function Desk() {
                 </div>
                 <div className="what">{it.what}</div>
                 <div className="cons">
-                  <span className="lbl">If you do nothing</span>
+                  {/* "If you do nothing" is a question only worth asking where
+                      doing something is an option. On every other row it is the
+                      whole misreading: it casts a status line as an ultimatum
+                      and the reader goes hunting for the button. */}
+                  <span className="lbl">
+                    {needsYou(it) ? "If you do nothing" : "What happens next"}
+                  </span>
                   {it.consequence}
                 </div>
                 {it.actions && <div className="acts">{it.actions}</div>}
@@ -454,12 +504,22 @@ export default function Desk() {
         </div>
       )}
 
-      {running > 0 && needing.length === 0 && (
+      {running > 0 && mine.length === 0 && (
         <div className="quiet ok">
           <div className="mark">Nothing needs you.</div>
           <div className="sub">
-            No decision is blocked, no clock is running out, and nothing has stopped. The
-            proof it is actually working:
+            {watching.length > 0 ? (
+              <>
+                No decision is blocked and nothing has stopped. What is on a clock above
+                runs out without you — there is nothing there to approve or acknowledge.
+                The proof it is actually working:
+              </>
+            ) : (
+              <>
+                No decision is blocked, no clock is running out, and nothing has stopped.
+                The proof it is actually working:
+              </>
+            )}
           </div>
           <div className="proof">
             <div className="pf">
@@ -510,7 +570,7 @@ export default function Desk() {
         <ProjectStrip
           live={live}
           elsewhere={idle + data.finished}
-          needing={new Set(needing.map((i) => i.project.id))}
+          needing={new Set(mine.map((i) => i.project.id))}
         />
       )}
     </>
