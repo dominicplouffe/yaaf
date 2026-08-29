@@ -351,6 +351,25 @@ export interface ProjectHealth {
   checks: HealthCheck[];
 }
 
+/** What the platform made in Slack for a project, room by room. Returned by
+    project creation (when an app-wide workspace is configured and auto-create
+    is on) and by the "create missing channels" button. */
+export interface SlackProvision {
+  ok: boolean;
+  visibility?: string;
+  detail: string;
+  channels: {
+    key: string;
+    label: string;
+    name: string;
+    channel_id: string | null;
+    created: boolean;
+    already_mapped: boolean;
+    invited: boolean;
+    error?: string;
+  }[];
+}
+
 /** A project data source (MCP server) as stored in dash.integrations["mcp_servers"]. */
 export interface McpServerEntry {
   name: string;

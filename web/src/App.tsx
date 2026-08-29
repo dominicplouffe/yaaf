@@ -8,6 +8,7 @@ import Founding from "./pages/Founding";
 import NewProject from "./pages/NewProject";
 import ProjectPage from "./pages/Project";
 import Roles from "./pages/Roles";
+import Settings from "./pages/Settings";
 
 /** The count beside Desk in the sidebar. Only the rows a decision is actually
     waiting on (Desk's `needsYou`, not its tier) — because a badge that counts
@@ -46,6 +47,9 @@ function Shell({ children }: { children: React.ReactNode }) {
         </NavLink>
         <NavLink to="/roles" className={({ isActive }) => "navlink" + (isActive ? " active" : "")}>
           Role library
+        </NavLink>
+        <NavLink to="/settings" className={({ isActive }) => "navlink" + (isActive ? " active" : "")}>
+          Settings
         </NavLink>
         <NavLink to="/projects/found" className={({ isActive }) => "navlink" + (isActive ? " active" : "")}>
           + Design a project
@@ -126,6 +130,14 @@ export default function App() {
         element={
           <Shell>
             <Roles />
+          </Shell>
+        }
+      />
+      <Route
+        path="/settings"
+        element={
+          <Shell>
+            <Settings />
           </Shell>
         }
       />

@@ -12,6 +12,7 @@ import {
   patch,
   post,
   ProjectBundle,
+  SlackProvision,
 } from "../../api";
 import {
   BLANK_DATA_SOURCE,
@@ -67,11 +68,43 @@ function hoursUntil(iso: string): number {
 }
 
 interface SlackConfig {
-  bot_token_secret: string;
-  signing_secret: string;
+  /** Every field optional now: an absent one is inherited from the app-wide
+      workspace, and `enabled: false` switches Slack off for this project
+      however the platform is wired. */
+  enabled?: boolean;
+  bot_token_secret?: string;
+  signing_secret?: string;
   app_token_secret?: string;
-  chairman_slack_user: string;
+  chairman_slack_user?: string;
+  channel_prefix?: string;
+  channel_visibility?: string;
   channel_map: Record<string, string>;
+}
+
+/** What the server says this project's Slack wiring actually resolves to, and
+    where each field came from. The sources are the point: an empty "bot token"
+    box means nothing on its own — "not configured" and "inherited from the
+    workspace you set up once" are opposite situations and look identical. */
+interface SlackView {
+  enabled: boolean;
+  global_configured: boolean;
+  can_mirror: boolean;
+  can_receive: boolean;
+  sources: Record<string, string>;
+  chairman_slack_user: string;
+  channel_prefix: string;
+  channel_visibility: string;
+  overrides: Record<string, string | null>;
+  rooms: { key: string; label: string; expected_name: string; channel_id: string | null }[];
+  events_url: string;
+}
+
+/** "inherited" / "this project's" — said once, in one place, so every row of
+    the form says it the same way. */
+function Origin({ source }: { source: string | undefined }) {
+  if (source === "project") return <span className="badge">this project</span>;
+  if (source === "global") return <span className="badge good">inherited</span>;
+  return null;
 }
 
 function SlackBridge({
@@ -84,41 +117,83 @@ function SlackBridge({
   projectId: string;
   dash: Dashboard;
   secrets: SecretRow[];
-  act: (fn: () => Promise<unknown>, ok: string) => Promise<void>;
+  act: Act;
   busy: boolean;
 }) {
   const existing = (dash.integrations["slack"] as SlackConfig | null | undefined) ?? null;
+  const [view, setView] = useState<SlackView | null>(null);
   const [org, setOrg] = useState<OrgView | null>(null);
   const [botToken, setBotToken] = useState("");
   const [signingSecret, setSigningSecret] = useState("");
   const [appToken, setAppToken] = useState("");
   const [chairmanUser, setChairmanUser] = useState(existing?.chairman_slack_user ?? "");
+  const [prefix, setPrefix] = useState(existing?.channel_prefix ?? "");
   const [channels, setChannels] = useState<Record<string, string>>(existing?.channel_map ?? {});
+  const [provisioned, setProvisioned] = useState<SlackProvision | null>(null);
+  const [showOverrides, setShowOverrides] = useState(false);
+
+  const loadView = useCallback(() => {
+    get<SlackView>(`/admin/projects/${projectId}/slack`).then(setView).catch(() => {});
+  }, [projectId]);
 
   useEffect(() => {
     get<OrgView>(`/observe/projects/${projectId}/org`).then(setOrg).catch(() => {});
-  }, [projectId]);
+    loadView();
+  }, [projectId, loadView]);
+
+  // The dash reloads after every save; the channel map may have been rewritten
+  // by a provisioning run, so the inputs follow it rather than the other way.
+  useEffect(() => {
+    setChannels(existing?.channel_map ?? {});
+  }, [existing?.channel_map]);
 
   function setChannel(key: string, value: string) {
     setChannels((prev) => ({ ...prev, [key]: value }));
   }
 
+  const off = existing?.enabled === false;
   const mapped = Object.entries(channels).filter(([, v]) => v.trim());
-  const canSave = mapped.length > 0 && (existing !== null || botToken.trim().length > 0);
   const eventsUrl = `${location.origin}/webhooks/slack/${projectId}`;
+  const anyToken = view?.sources.bot_token !== undefined;
+  const overriding = ["bot_token", "signing_secret", "app_token", "chairman_slack_user",
+                      "channel_prefix"].filter((f) => view?.sources[f] === "project");
 
-  function channelInput(key: string, label: string) {
+  /** The whole slack block, rebuilt from state. PATCH merges at the level of
+      `integrations`, so a partial block would silently drop the fields it
+      omits — this is the one place that decides what the block contains. */
+  function slackBlock(overrides: Partial<SlackConfig> = {}): SlackConfig {
+    const block: SlackConfig = {
+      channel_map: Object.fromEntries(mapped.map(([k, v]) => [k, v.trim()])),
+    };
+    if (botToken.trim() || existing?.bot_token_secret) block.bot_token_secret = "slack-bot";
+    if (signingSecret.trim() || existing?.signing_secret) block.signing_secret = "slack-signing";
+    if (appToken.trim() || existing?.app_token_secret) block.app_token_secret = "slack-app";
+    if (chairmanUser.trim()) block.chairman_slack_user = chairmanUser.trim();
+    if (prefix.trim()) block.channel_prefix = prefix.trim();
+    if (existing?.channel_visibility) block.channel_visibility = existing.channel_visibility;
+    if (existing?.enabled === false) block.enabled = false;
+    return { ...block, ...overrides };
+  }
+
+  function channelInput(key: string, label: string, expected?: string) {
     return (
       <div key={key}>
         <label className="field">{label}</label>
         <input
           value={channels[key] ?? ""}
           onChange={(e) => setChannel(key, e.target.value)}
-          placeholder="C… (blank = not mirrored)"
+          placeholder={expected ? `C… (blank = not mirrored; #${expected} when created)`
+                               : "C… (blank = not mirrored)"}
         />
       </div>
     );
   }
+
+  const teamRooms = (org?.teams ?? []).map((team) => ({
+    key: `team:${team.id}`, label: `Team room: ${team.name}`,
+  }));
+  const expectedByKey = Object.fromEntries(
+    (view?.rooms ?? []).map((room) => [room.key, room.expected_name]));
 
   return (
     <>
@@ -127,148 +202,295 @@ function SlackBridge({
         for you alone. Mapped channels mirror outward within ~15s. A Slack outage never blocks
         the project — messages queue and retry.
       </p>
-      {existing ? (
+
+      {/* Where this project's wiring comes from. Everything below is read
+          against this sentence, so it goes first. */}
+      {off ? (
         <p className="help">
-          <span className="badge good">connected</span> mirroring{" "}
-          {Object.keys(existing.channel_map).length} channel(s)
-          {existing.chairman_slack_user ? "; inbound enabled for your Slack user" : ""}.
+          <span className="badge warn">off for this project</span> nothing mirrors and
+          nothing arrives, however the app-wide workspace is configured. Every message is
+          still on the bus.
+        </p>
+      ) : view?.can_mirror ? (
+        <p className="help">
+          <span className="badge good">connected</span> mirroring {mapped.length} channel(s)
+          {" "}using{" "}
+          {overriding.length === 0
+            ? "the app-wide workspace"
+            : `this project's own ${overriding.length === 1 ? "token" : "tokens"}`}
+          {view.can_receive ? "; inbound enabled for " : "; outbound only"}
+          {view.can_receive ? <code>{view.chairman_slack_user}</code> : null}.
+        </p>
+      ) : view?.global_configured ? (
+        <p className="help">
+          <span className="badge good">workspace ready</span> this project inherits the
+          app-wide Slack workspace and needs only its channels. Create them below and yaaf
+          will tell you their names.
         </p>
       ) : (
-        <p className="help">Not connected. You need a Slack app with the `chat:write` bot
-          scope, installed to your workspace, and the bot invited to each channel you map.</p>
+        <p className="help">
+          <span className="badge warn">no workspace</span> connect Slack once in{" "}
+          <a href="#/settings">Settings → Slack workspace</a> and every project inherits it.
+          You can also give this project its own tokens below.
+        </p>
       )}
 
-      {existing && (
+      {/* The rooms. This is the part that is genuinely per-project, so it is
+          the part the screen leads with. */}
+      <label className="field">Channels — Slack channel IDs, bot invited to each</label>
+      <div className="row">
+        {channelInput("boardroom", "Boardroom (chairman ↔ CEO)", expectedByKey["boardroom"])}
+        {channelInput("leadership", "Leadership (CEO + leads)", expectedByKey["leadership"])}
+      </div>
+      <div className="row">
+        {teamRooms.map((room) => channelInput(room.key, room.label, expectedByKey[room.key]))}
+      </div>
+
+      {!off && (view?.global_configured || anyToken) && (
         <>
-          <label className="field">What is stored now</label>
-          <table>
-            <tbody>
-              {([
-                ["Bot token", existing.bot_token_secret],
-                ["Signing secret", existing.signing_secret],
-                ["App token", existing.app_token_secret],
-              ] as [string, string | undefined][]).map(([label, name]) => {
-                const secret = secretByName(secrets, name);
-                if (!secret) return null;
-                return (
-                  <tr key={label}>
-                    <td style={{ width: "30%" }}>{label}</td>
+          <div className="actions">
+            <button
+              disabled={busy}
+              onClick={() =>
+                act(async () => {
+                  const result = await post<SlackProvision>(
+                    `/admin/projects/${projectId}/slack/channels`);
+                  setProvisioned(result);
+                  loadView();
+                  return result;
+                }, (result) => (result as SlackProvision).detail)
+              }
+            >
+              Create missing channels
+            </button>
+            <span className="help" style={{ margin: 0 }}>
+              Makes the {view?.channel_visibility ?? "private"} rooms this project is
+              missing, named{" "}
+              <code>{`${view?.channel_prefix ?? dash.slug}-boardroom`}</code> and so on,
+              invites you to each, and fills the boxes above. Safe to run twice — an
+              existing name is adopted, never duplicated.
+            </span>
+          </div>
+          {provisioned && (
+            <table>
+              <tbody>
+                {provisioned.channels.map((row) => (
+                  <tr key={row.key}>
+                    <td style={{ width: "30%" }}>{row.label}</td>
                     <td>
-                      <StoredSecret
-                        secretId={secret.id}
-                        onRotate={async (value) => {
-                          await post("/admin/secrets", {
-                            project_id: projectId, name: secret.name, value, role_scopes: [],
-                          });
-                        }}
-                        note="These never enter a sandbox — the bridge decrypts them server-side."
-                      />
+                      {row.error ? (
+                        <span className="error">{row.error}</span>
+                      ) : (
+                        <>
+                          <code>#{row.name}</code>{" "}
+                          <span className="help">
+                            {row.already_mapped ? "already mapped"
+                              : row.created ? (row.invited ? "created, you are in it"
+                                                           : "created")
+                              : "adopted"}
+                          </span>
+                        </>
+                      )}
                     </td>
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                ))}
+              </tbody>
+            </table>
+          )}
         </>
       )}
 
-      <div className="row">
-        <div>
-          <label className="field">Bot token (xoxb-…){existing ? " — blank keeps current" : ""}</label>
-          <SecretInput value={botToken} placeholder="xoxb-…" onChange={setBotToken} />
-        </div>
-        <div>
-          <label className="field">Signing secret{existing ? " — blank keeps current" : ""}</label>
-          <SecretInput value={signingSecret} placeholder="from Basic Information"
-                       onChange={setSigningSecret} />
-        </div>
-        <div>
-          <label className="field">
-            App token (xapp-…) — chat from Slack, no public URL needed
-            {existing?.app_token_secret ? " — blank keeps current" : ""}
-          </label>
-          <SecretInput value={appToken} placeholder="xapp-… (enables Socket Mode)"
-                       onChange={setAppToken} />
-        </div>
+      {/* Overrides. Folded away by default because the answer for almost every
+          project is "inherit everything and just map channels". */}
+      <div className="actions">
+        <button className="small" onClick={() => setShowOverrides(!showOverrides)}>
+          {showOverrides ? "Hide" : "Override the workspace for this project"}
+          {overriding.length > 0 && !showOverrides ? ` (${overriding.length} set)` : ""}
+        </button>
       </div>
-      <div className="row">
-        <div>
-          <label className="field">
-            Your Slack member ID (U…) — only this user's boardroom-channel messages reach the CEO
-          </label>
-          <input value={chairmanUser} placeholder="U… (blank = outbound mirror only)"
-                 onChange={(e) => setChairmanUser(e.target.value)} />
-        </div>
-      </div>
-      <label className="field">Channel map — Slack channel IDs, bot invited to each</label>
-      <div className="row">
-        {channelInput("boardroom", "Boardroom (chairman ↔ CEO)")}
-        {channelInput("leadership", "Leadership (CEO + leads)")}
-      </div>
-      <div className="row">
-        {(org?.teams ?? []).map((team) => channelInput(`team:${team.id}`, `Team room: ${team.name}`))}
-      </div>
+
+      {showOverrides && (
+        <>
+          <p className="help">
+            Each field is inherited until you fill it in. Use this for a project that lives
+            in a <em>different</em> Slack workspace than the rest — it needs its own tokens
+            and nothing else special.
+          </p>
+
+          {existing && (
+            <>
+              <label className="field">This project&apos;s own stored tokens</label>
+              <table>
+                <tbody>
+                  {([
+                    ["Bot token", existing.bot_token_secret],
+                    ["Signing secret", existing.signing_secret],
+                    ["App token", existing.app_token_secret],
+                  ] as [string, string | undefined][]).map(([label, name]) => {
+                    const secret = secretByName(secrets, name);
+                    if (!secret) return null;
+                    return (
+                      <tr key={label}>
+                        <td style={{ width: "30%" }}>{label}</td>
+                        <td>
+                          <StoredSecret
+                            secretId={secret.id}
+                            onRotate={async (value) => {
+                              await post("/admin/secrets", {
+                                project_id: projectId, name: secret.name, value,
+                                role_scopes: [],
+                              });
+                            }}
+                            note="These never enter a sandbox — the bridge decrypts them
+                                  server-side."
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </>
+          )}
+
+          <div className="row">
+            <div>
+              <label className="field">
+                Bot token (xoxb-…) <Origin source={view?.sources.bot_token} />
+              </label>
+              <SecretInput value={botToken} placeholder="xoxb-… (blank = inherit)"
+                           onChange={setBotToken} />
+            </div>
+            <div>
+              <label className="field">
+                Signing secret <Origin source={view?.sources.signing_secret} />
+              </label>
+              <SecretInput value={signingSecret} placeholder="blank = inherit"
+                           onChange={setSigningSecret} />
+            </div>
+            <div>
+              <label className="field">
+                App token (xapp-…) <Origin source={view?.sources.app_token} />
+              </label>
+              <SecretInput value={appToken} placeholder="xapp-… (blank = inherit)"
+                           onChange={setAppToken} />
+            </div>
+          </div>
+          <div className="row">
+            <div>
+              <label className="field">
+                Your Slack member ID (U…){" "}
+                <Origin source={view?.sources.chairman_slack_user} />
+              </label>
+              <input value={chairmanUser}
+                     placeholder={view?.chairman_slack_user
+                       ? `blank = inherit ${view.chairman_slack_user}` : "U…"}
+                     onChange={(e) => setChairmanUser(e.target.value)} />
+            </div>
+            <div>
+              <label className="field">
+                Channel name prefix <Origin source={view?.sources.channel_prefix} />
+              </label>
+              <input value={prefix}
+                     placeholder={`blank = ${view?.channel_prefix ?? dash.slug}`}
+                     onChange={(e) => setPrefix(e.target.value)} />
+            </div>
+          </div>
+        </>
+      )}
+
       <div className="actions">
         <button
           className="primary"
-          disabled={busy || !canSave}
+          disabled={busy}
           onClick={() =>
             act(async () => {
               // Credentials are stored as ungranted service secrets: the bridge
               // decrypts them server-side; no agent sandbox ever receives them.
-              if (botToken.trim()) {
-                await post("/admin/secrets", { project_id: projectId, name: "slack-bot",
-                  value: botToken.trim(), role_scopes: [], kind: "service" });
+              for (const [name, value] of [
+                ["slack-bot", botToken], ["slack-signing", signingSecret],
+                ["slack-app", appToken],
+              ] as [string, string][]) {
+                if (value.trim()) {
+                  await post("/admin/secrets", { project_id: projectId, name,
+                    value: value.trim(), role_scopes: [], kind: "service" });
+                }
               }
-              if (signingSecret.trim()) {
-                await post("/admin/secrets", { project_id: projectId, name: "slack-signing",
-                  value: signingSecret.trim(), role_scopes: [], kind: "service" });
-              }
-              if (appToken.trim()) {
-                await post("/admin/secrets", { project_id: projectId, name: "slack-app",
-                  value: appToken.trim(), role_scopes: [], kind: "service" });
-              }
-              const socketMode = appToken.trim() !== "" || !!existing?.app_token_secret;
-              await patch(`/admin/projects/${projectId}`, {
-                integrations: { slack: {
-                  bot_token_secret: "slack-bot",
-                  signing_secret: "slack-signing",
-                  ...(socketMode ? { app_token_secret: "slack-app" } : {}),
-                  chairman_slack_user: chairmanUser.trim(),
-                  channel_map: Object.fromEntries(mapped.map(([k, v]) => [k, v.trim()])),
-                }},
-              });
+              await patch(`/admin/projects/${projectId}`,
+                          { integrations: { slack: slackBlock() } });
               setBotToken("");
               setSigningSecret("");
               setAppToken("");
-            }, "Slack connected. Mirroring starts within seconds.")
+              loadView();
+            }, "Saved. Mirroring follows within seconds.")
           }
         >
-          {existing ? "Update bridge" : "Connect Slack"}
+          Save Slack settings
         </button>
-        {existing && (
+        {!off ? (
           <button
             disabled={busy}
             onClick={() => {
-              if (!confirm("Disconnect Slack? The bus keeps everything; mirroring just stops."))
+              if (!confirm("Turn Slack off for this project? It stops mirroring and stops "
+                           + "accepting inbound messages, whatever the app-wide workspace "
+                           + "says. The bus keeps everything."))
                 return;
               act(
-                () => patch(`/admin/projects/${projectId}`, { integrations: { slack: null } }),
-                "Slack disconnected. The bus is unaffected.",
+                () => patch(`/admin/projects/${projectId}`,
+                            { integrations: { slack: slackBlock({ enabled: false }) } })
+                  .then(loadView),
+                "Slack is off for this project. The bus is unaffected.",
               );
             }}
           >
-            Disconnect
+            Turn off for this project
+          </button>
+        ) : (
+          <button
+            disabled={busy}
+            onClick={() =>
+              act(
+                () => patch(`/admin/projects/${projectId}`,
+                            { integrations: { slack: slackBlock({ enabled: true }) } })
+                  .then(loadView),
+                "Slack is on again for this project.",
+              )
+            }
+          >
+            Turn back on
+          </button>
+        )}
+        {overriding.length > 0 && (
+          <button
+            disabled={busy}
+            onClick={() => {
+              if (!confirm("Drop this project's own Slack tokens and inherit the app-wide "
+                           + "workspace again? The channel map is kept."))
+                return;
+              act(async () => {
+                await patch(`/admin/projects/${projectId}`, {
+                  integrations: {
+                    slack: {
+                      channel_map: Object.fromEntries(mapped.map(([k, v]) => [k, v.trim()])),
+                    },
+                  },
+                });
+                setChairmanUser("");
+                setPrefix("");
+                loadView();
+              }, "Back to the app-wide workspace.");
+            }}
+          >
+            Reset to the workspace
           </button>
         )}
       </div>
+
       <p className="help">
-        To chat from Slack: in the Slack app, enable <b>Socket Mode</b> (Settings → Socket
-        Mode), create an app-level token with the `connections:write` scope, paste it above,
-        and subscribe the bot to the `message.channels` event. Your messages in the mapped
-        boardroom channel reach the CEO instantly and its replies mirror back — no public
-        URL, no tunnel. The Event Subscriptions request URL <code>{eventsUrl}</code> remains
-        the alternative for boxes that are publicly reachable.
+        To chat from Slack, Socket Mode is set up once in{" "}
+        <a href="#/settings">Settings → Slack workspace</a> and inherited here. The Event
+        Subscriptions request URL <code>{eventsUrl}</code> remains the alternative for
+        boxes that are publicly reachable.
       </p>
     </>
   );

@@ -60,6 +60,7 @@ def _web_dist() -> Path | None:
 def create_app() -> FastAPI:
     from yaaf.server import mcp
     from yaaf.server.api import admin, agent, founder, oauth, observe, webhooks, ws
+    from yaaf.server.api import settings as app_settings
     from yaaf.server.mcp import oauth_server
 
     app = FastAPI(title="yaaf", version="0.1.0")
@@ -69,6 +70,10 @@ def create_app() -> FastAPI:
     # like the rest of the chairman surface; mounted under /admin so it shares
     # that auth rather than growing a second one.
     app.include_router(founder.router, prefix="/admin/founder", tags=["founder"])
+    # App-wide settings: the model credential and the Slack workspace every
+    # project inherits. Mounted under /admin for the same reason the Founder is
+    # — one chairman auth, not a second one.
+    app.include_router(app_settings.router, prefix="/admin/settings", tags=["settings"])
     app.include_router(observe.router, prefix="/observe", tags=["observe"])
     # Unauthenticated by bearer-token design: senders sign each body with a
     # chairman-provisioned secret instead. See yaaf.server.api.webhooks.

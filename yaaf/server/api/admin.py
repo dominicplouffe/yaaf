@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from yaaf.core import ids
+from yaaf.core import ids, platform
 from yaaf.core.constitution import (
     GROUP_THEMES,
     THEME_ORDER,
@@ -657,9 +657,26 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
         team_out.append({"id": team.id, "name": team.name,
                          "agents": [{"id": a.id, "name": a.name} for a in agents]})
 
+    # Rooms on day one, when the chairman has already told us the workspace.
+    # The whole ask behind app-wide Slack settings is "I made a project — tell
+    # me its channels", and a chairman who has to go and click Provision has
+    # not been saved the trip. Best-effort by construction: a Slack outage
+    # costs the channel map, never the project. Runs after the flush above so
+    # every team room exists to be mirrored.
+    session.flush()
+    from yaaf.server.slack import provision as slack_provision
+
+    slack = slack_provision.provision_quietly(session, project)
+    if slack is not None:
+        _audit(session, project.id, "slack.provision_channels", "project", project.id,
+               {"auto": True, "channels": [{"key": row["key"], "name": row["name"],
+                                            "created": row["created"]}
+                                           for row in slack["channels"]]})
+
     _audit(session, project.id, "project.create", "project", project.id)
     return {"id": project.id, "ceo_agent_id": ceo.id, "teams": team_out,
             "constitution": doc.model_dump(), "status": project.status,
+            "slack": slack,
             "webhooks": {
                 "github": {"url": f"/webhooks/github/{project.id}",
                            "secret": integrations["github_webhook_secret"]},
@@ -3671,6 +3688,80 @@ def attach_github(project_id: str, body: GithubAttach, session: Session = Depend
     _audit(session, project.id, "project.github_attach", "project", project.id,
            {"github_repo": full_name})
     return {"github_repo": full_name}
+
+
+# ── slack: what this project inherits, and its rooms ────────────────────────────
+
+
+@router.get("/projects/{project_id}/slack")
+def project_slack(project_id: str, session: Session = Depends(db)) -> dict:
+    """This project's effective Slack wiring and where each field came from.
+
+    The settings screen needs the *sources*, not just the values: a chairman
+    looking at an empty "bot token" box has no way to tell "not configured"
+    from "inherited from the workspace you set up once" — and those are
+    opposite situations. Token values never appear; only their provenance.
+    """
+    from yaaf.server.slack import settings as slack_settings
+
+    project = _get_project(session, project_id)
+    own = slack_settings.project_config(project) or {}
+    effective = slack_settings.resolve(session, project)
+    team_names = {
+        team.id: team.name
+        for team in session.execute(select(Team).where(Team.project_id == project.id)).scalars()
+    }
+    rooms: list[dict] = []
+    if effective is not None:
+        keys = [str(ChannelKind.BOARDROOM), str(ChannelKind.LEADERSHIP)]
+        keys += [f"team:{team_id}" for team_id in team_names]
+        for key in keys:
+            rooms.append({
+                "key": key,
+                "label": slack_settings.room_label(key, team_names),
+                "expected_name": slack_settings.channel_name(
+                    effective.channel_prefix, key, team_names),
+                "channel_id": effective.channel_map.get(key),
+            })
+    return {
+        "enabled": effective is not None,
+        "global_configured": slack_settings.is_configured(session),
+        "can_mirror": bool(effective and effective.can_mirror),
+        "can_receive": bool(effective and effective.can_receive),
+        "sources": effective.sources if effective else {},
+        "chairman_slack_user": effective.chairman_slack_user if effective else "",
+        "channel_prefix": effective.channel_prefix if effective else project.slug,
+        "channel_visibility": (effective.channel_visibility if effective
+                               else platform.DEFAULT_SLACK_VISIBILITY),
+        # The secret NAMES this project overrides with, so the UI can offer to
+        # rotate them. Never the values.
+        "overrides": {
+            key: own.get(key)
+            for key in ("bot_token_secret", "signing_secret", "app_token_secret")
+        },
+        "rooms": rooms,
+        "events_url": f"/webhooks/slack/{project.id}",
+    }
+
+
+@router.post("/projects/{project_id}/slack/channels")
+def provision_slack_channels(project_id: str, session: Session = Depends(db)) -> dict:
+    """Create every Slack room this project is missing and say what they are.
+
+    Idempotent: rooms already mapped are left alone, and a name Slack says is
+    taken is adopted rather than duplicated. Run it after adding a team, or on
+    a project that predates the workspace being configured.
+    """
+    from yaaf.server.slack import provision as slack_provision
+
+    project = _get_project(session, project_id)
+    result = slack_provision.provision(session, project)
+    if not result["channels"] and not result["ok"]:
+        raise HTTPException(status_code=422, detail=result["detail"])
+    _audit(session, project.id, "slack.provision_channels", "project", project.id,
+           {"channels": [{"key": row["key"], "name": row["name"],
+                          "created": row["created"]} for row in result["channels"]]})
+    return result
 
 
 @router.post("/secrets")
