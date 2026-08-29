@@ -76,10 +76,21 @@ jobs:
   # — FOR UPDATE SKIP LOCKED, JSONB, LISTEN/NOTIFY, TIMESTAMPTZ, or the ALTER
   # TABLE half of the migration chain — so a suite green on SQLite alone would
   # be green about a database nobody deploys.
+  #
+  # Sharded, so that CI wall clock is a function of how many shards we run and
+  # not of how many tests exist. When the suite outgrows two minutes again, add
+  # shards here rather than waiting longer — that is the whole point of the
+  # shape. Each shard is a job of its own, so each gets its own Postgres rather
+  # than four xdist workers contending for one, which is where the remaining
+  # time on a single box goes.
   test:
     needs: changes
     if: needs.changes.outputs.python == 'true'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     services:
       postgres:
         image: postgres:16
@@ -87,7 +98,12 @@ jobs:
           POSTGRES_PASSWORD: postgres
         ports:
           - 5432:5432
+        # The data directory on tmpfs. A test database that does not survive
+        # the runner is not a problem — it does not survive the job either —
+        # and fsync against the runner's disk was costing about a third of the
+        # suite's wall clock.
         options: >-
+          --mount type=tmpfs,destination=/var/lib/postgresql/data
           --health-cmd "pg_isready -U postgres"
           --health-interval 5s
           --health-timeout 5s
@@ -101,9 +117,14 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install -e ".[dev]"
-      # -n auto: the suite is ~760 integration tests that share nothing but the
-      # schema, and each xdist worker builds its own database.
-      - run: python -m pytest tests/ -q -n auto
+      # -n auto parallelises within the shard; --splits/--group divides the
+      # suite across them. Without a stored durations file pytest-split falls
+      # back to an even split by test count, which is close enough here.
+      #
+      # --durations=10 is visibility, not a gate: a timing assertion would go
+      # flaky on a loaded runner, but a list of the slowest tests in the log is
+      # what tells us when something has started to cost real money.
+      - run: python -m pytest tests/ -q -n auto --durations=10 --splits 4 --group ${{ matrix.shard }}
 
   web:
     needs: changes
