@@ -12,9 +12,18 @@ Slack, bus canonical throughout.
 
 Enabled by an app token (the xapp- token, an ordinary envelope-encrypted
 Secret) resolving for the project — app-wide in Settings, or named as
-``app_token_secret`` in ``project.integrations["slack"]`` to override it. A
-shared connection shares its app token too: one Socket Mode connection per
-project, all speaking to the same Slack app. No agent ever holds either token.
+``app_token_secret`` in ``project.integrations["slack"]`` to override it. No
+agent ever holds either token.
+
+**One connection per app token, not per project.** Slack balances an app's
+events across whatever Socket Mode connections that app has open and delivers
+each event to exactly *one* of them — a second connection on the same token
+does not double the coverage, it halves it. Since the normal case is every
+project inheriting the one app-wide token, a per-project connection meant the
+chairman's boardroom message landed on some other project's socket, failed its
+channel check, and was acked and dropped with nothing logged: he was answered
+one time in N and the misses looked like the CEO ignoring him. So the token
+owns the connection and carries a route per project listening on it.
 """
 
 from __future__ import annotations
@@ -39,15 +48,19 @@ RECONNECT_DELAY_S = 5.0
 OPEN_TIMEOUT_S = 10.0
 
 
-def socket_configs() -> dict[str, dict]:
-    """project_id -> connection config, for every project that opted in.
+def socket_configs() -> dict[str, list[dict]]:
+    """app_token -> the routes that token carries, one per listening project.
 
     Three things have to resolve — an app token, a mapped boardroom and a
     chairman — and any of the three may be inherited from the app-wide
     Slack connection. A project whose only per-project setting is its channel map is
-    the normal case, and it gets a connection like any other.
+    the normal case, and it shares the app-wide token's connection.
+
+    Routes are sorted because row order out of the database is not a promise,
+    and two projects that both claim a channel should be woken in the same
+    order every time rather than in whatever order the rows arrived.
     """
-    out: dict[str, dict] = {}
+    out: dict[str, list[dict]] = {}
     with db_session() as session:
         for project in session.execute(select(Project)).scalars():
             if not mapped_rooms(project).get("boardroom"):
@@ -57,12 +70,13 @@ def socket_configs() -> dict[str, dict]:
                 continue
             if effective.app_token is None:
                 continue
-            out[project.id] = {
-                "app_token": effective.app_token,
+            out.setdefault(effective.app_token, []).append({
+                "project_id": project.id,
                 "channel": effective.channel_map["boardroom"],
                 "chairman": effective.chairman_slack_user,
-            }
-    return out
+            })
+    return {token: sorted(routes, key=lambda r: r["project_id"])
+            for token, routes in out.items()}
 
 
 def chairman_text(cfg: dict, envelope: dict) -> tuple[str, str] | None:
@@ -83,6 +97,28 @@ def chairman_text(cfg: dict, envelope: dict) -> tuple[str, str] | None:
     if not text:
         return None
     return text, str(event.get("ts", ""))
+
+
+def route_targets(routes: list[dict], envelope: dict) -> list[tuple[str, str, str]]:
+    """``(project_id, text, ts)`` for every project this envelope belongs to.
+
+    One shared connection carries every project on the token, so deciding whose
+    boardroom an event is happens here rather than by which socket it arrived
+    on. Each route applies its own trust check, so a project only ever sees its
+    own chairman in its own boardroom.
+
+    Two projects claiming one boardroom channel is a hand-edit rather than
+    anything the product does — cloning drops the channel map — but if it
+    happens both are woken. A duplicate is visible; a silent drop is the
+    failure this module exists to not have.
+    """
+    targets = []
+    for route in routes:
+        accepted = chairman_text(route, envelope)
+        if accepted is not None:
+            text, ts = accepted
+            targets.append((route["project_id"], text, ts))
+    return targets
 
 
 def _deliver(project_id: str, text: str, ts: str) -> None:
@@ -106,50 +142,68 @@ async def _open_socket_url(app_token: str) -> str:
     return str(payload["url"])
 
 
-async def _project_socket(project_id: str, cfg: dict) -> None:
-    """One project's connection, forever: connect, ack, deliver, reconnect."""
+async def _token_socket(app_token: str, route_table: dict[str, list[dict]]) -> None:
+    """One app token's connection, forever: connect, ack, route, reconnect.
+
+    Routes are read out of ``route_table`` per event rather than captured when
+    the task starts. That is the difference between a shared workspace working
+    and nearly working: projects are provisioned while others are mid-
+    conversation, and rebuilding the connection every time one appeared would
+    blink the inbound door shut for every project on the token. The connection
+    depends on the token; the routes are only data it reads.
+    """
     import websockets  # shipped by uvicorn[standard]; imported lazily for tests
 
     while True:
         try:
-            url = await _open_socket_url(cfg["app_token"])
+            url = await _open_socket_url(app_token)
             async with websockets.connect(url, max_size=2 ** 20) as ws:
-                log.info("socket mode connected for %s", project_id)
+                log.info("socket mode connected for %s",
+                         _listening(route_table, app_token))
                 async for raw in ws:
                     envelope = json.loads(raw)
                     if envelope.get("envelope_id"):
                         await ws.send(json.dumps({"envelope_id": envelope["envelope_id"]}))
                     if envelope.get("type") == "disconnect":
                         break  # Slack rotates connections; reconnect fresh
-                    accepted = chairman_text(cfg, envelope)
-                    if accepted is not None:
-                        text, ts = accepted
+                    routes = route_table.get(app_token, ())
+                    for project_id, text, ts in route_targets(routes, envelope):
                         await asyncio.to_thread(_deliver, project_id, text, ts)
         except asyncio.CancelledError:
             raise
         except Exception:
             log.warning("socket mode connection for %s dropped; reconnecting",
-                        project_id, exc_info=True)
+                        _listening(route_table, app_token), exc_info=True)
             await asyncio.sleep(RECONNECT_DELAY_S)
 
 
+def _listening(route_table: dict[str, list[dict]], app_token: str) -> str:
+    return ", ".join(r["project_id"] for r in route_table.get(app_token, ())) or "no projects"
+
+
 async def _manager() -> None:
-    """Start/stop per-project sockets as config changes. Config is re-read
-    every tick, so enabling socket mode in Settings needs no restart."""
+    """Start/stop a socket per app token as config changes. Config is re-read
+    every tick, so enabling socket mode in Settings needs no restart.
+
+    A token gaining or losing a project only rewrites the shared route table —
+    the connection is left alone. Only a token that disappears entirely (Slack
+    switched off for the last project using it, or the app token rotated) costs
+    a reconnect.
+    """
     tasks: dict[str, asyncio.Task] = {}
-    snapshots: dict[str, dict] = {}
+    route_table: dict[str, list[dict]] = {}
     while True:
         try:
             configs = await asyncio.to_thread(socket_configs)
-            for project_id in list(tasks):
-                if project_id not in configs or configs[project_id] != snapshots.get(project_id):
-                    tasks.pop(project_id).cancel()
-                    snapshots.pop(project_id, None)
-            for project_id, cfg in configs.items():
-                if project_id not in tasks:
-                    tasks[project_id] = asyncio.create_task(
-                        _project_socket(project_id, cfg))
-                    snapshots[project_id] = cfg
+            for token in list(tasks):
+                if token not in configs:
+                    tasks.pop(token).cancel()
+                    route_table.pop(token, None)
+            route_table.update(configs)  # live sockets read this on the next event
+            for token in configs:
+                if token not in tasks:
+                    tasks[token] = asyncio.create_task(
+                        _token_socket(token, route_table))
         except Exception:
             log.warning("socket-mode manager tick failed", exc_info=True)
         await asyncio.sleep(CONFIG_POLL_S)

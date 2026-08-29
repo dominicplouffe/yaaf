@@ -16,9 +16,11 @@ from tests.conftest import ADMIN, bearer, channel_of, live_token, make_project
 from yaaf.core.db import db_session
 from yaaf.core.models import AuditLog, Message, Project
 from yaaf.server.slack import bridge
+from yaaf.server.slack.socket import route_targets, socket_configs
 
 BOT_TOKEN = "xoxb-test-token"
 SIGNING = "test-signing-secret"
+APP_TOKEN = "xapp-1-test-token"
 
 
 class _Recorder:
@@ -238,3 +240,72 @@ def test_url_verification_echoes_challenge(client):
         "challenge": "3eZbrw1aBl2rZgRNFdxV2595E9CY3gmdALWMmHkvFXO"
     }
     assert _message_count(project["id"]) == 0
+
+
+def test_one_socket_connection_per_shared_app_token(client):
+    """Projects sharing the workspace's app token share its ONE connection.
+
+    Slack balances an app's events across its open Socket Mode connections and
+    delivers each event to exactly one of them. A connection per project meant
+    the chairman's boardroom message could land on a *different* project's
+    socket, fail that socket's channel check, and be acked and dropped with
+    nothing logged — he was heard one time in N and the misses were
+    indistinguishable from the CEO ignoring him.
+    """
+    expected = set()
+    for slug, room in (("desk-a", "C-BOARD-A"), ("desk-b", "C-BOARD-B")):
+        project = make_project(client, slug=slug)
+        stored = client.post(
+            "/admin/secrets",
+            json={"project_id": project["id"], "name": "slack-app",
+                  "value": APP_TOKEN},
+            headers=ADMIN,
+        )
+        assert stored.status_code == 200, stored.text
+        patched = client.patch(
+            f"/admin/projects/{project['id']}",
+            json={"integrations": {"slack": {
+                "app_token_secret": "slack-app",
+                "chairman_slack_user": "U-CHAIR",
+                "channel_map": {"boardroom": room},
+            }}},
+            headers=ADMIN,
+        )
+        assert patched.status_code == 200, patched.text
+        expected.add((project["id"], room))
+
+    configs = socket_configs()
+    # One token, so one connection — not one per project.
+    assert list(configs) == [APP_TOKEN]
+    routes = configs[APP_TOKEN]
+    assert {(r["project_id"], r["channel"]) for r in routes} == expected
+    assert all(r["chairman"] == "U-CHAIR" for r in routes)
+
+
+def test_a_shared_socket_routes_each_event_to_exactly_its_own_project():
+    """The routing decision the shared connection makes, on its own.
+
+    One socket now carries every project on the app token, so "whose boardroom
+    is this?" is a decision rather than a side effect of which pipe the event
+    came down. Each route re-applies its own trust check, so sharing a
+    connection never means sharing a chairman.
+    """
+    routes = [
+        {"project_id": "proj_a", "channel": "C-A", "chairman": "U-CHAIR"},
+        {"project_id": "proj_b", "channel": "C-B", "chairman": "U-OTHER"},
+    ]
+
+    def envelope(**event) -> dict:
+        return {"type": "events_api", "envelope_id": "e1",
+                "payload": {"event": {"type": "message", "channel": "C-A",
+                                      "user": "U-CHAIR", "text": "hi", "ts": "1.2",
+                                      **event}}}
+
+    assert route_targets(routes, envelope()) == [("proj_a", "hi", "1.2")]
+    assert route_targets(routes, envelope(channel="C-B", user="U-OTHER",
+                                          text="yo")) == [("proj_b", "yo", "1.2")]
+    # A channel no project claims is dropped — not given to whoever is first.
+    assert route_targets(routes, envelope(channel="C-NOBODYS")) == []
+    # proj_b's chairman is not proj_a's, even in proj_a's own boardroom.
+    assert route_targets(routes, envelope(user="U-OTHER")) == []
+    assert route_targets([], envelope()) == []
