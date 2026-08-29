@@ -30,17 +30,35 @@ force**, as an amendment with a written reason.
 
 | Preset | What it means | Right when |
 |---|---|---|
+| **Autonomous** (default) | The CEO accepts its own plan, adopts the platform's projected date, judges unverifiable closes itself, and re-scopes existing credentials across its team. Every decision is audited and sent to you; all of it is reversible; your buttons never close. | You want to chair the project rather than operate it. |
 | **Supervised** | You accept scope, sign the delivery date, judge unverifiable closes, and grant credentials. The CEO proposes — and executes any order you give it in the boardroom. | Your first project, or real money is on the line. |
-| **Autonomous** | The CEO accepts its own plan, adopts the platform's projected date, judges unverifiable closes itself, and re-scopes existing credentials across its team. Every decision is audited and sent to you; all of it is reversible; your buttons never close. | You want to chair the project rather than operate it. |
 
 Budgets and loop brakes bind identically under both. "Autonomous" is not
 "unlimited" — it is "does not need to ask".
+
+**Silence means autonomous.** A project created without an opinion about these
+five rules — a spec file, a draft the Founder wrote, a `create_project` call
+from a model client, the form left alone — is created autonomous. That is a
+deliberate reversal: the old default was supervised, so a chairman who
+described a project in a paragraph and pressed Create got one that stopped and
+waited for him on its first proposal, having never been asked. Every surface
+that creates a project says which dial it is about to use, and Supervised is
+one card in the form, one line in a spec, and one amendment afterwards.
+
+Naming *some* of the five is not silence — it is a dial set rule by rule, and
+it is left exactly as written. Only a spec that mentions none of them is filled
+in.
+
+The field defaults in the constitution schema stay `chairman`, because those
+answer a different question: what an *omitted* rule means for a document
+already stored. Flipping them would quietly re-chair every constitution written
+before the dial existed.
 
 ## The five switches
 
 Each lives in the constitution's **Autonomy** group.
 
-| Rule | `chairman` (default) | `ceo` |
+| Rule | `chairman` | `ceo` (what a new project gets) |
 |---|---|---|
 | `plan_authority` | Proposed requirements wait for your click. | The CEO accepts its own proposals. The plan gate still runs the same arithmetic; every acceptance lands in your Decisions record. |
 | `scope_authority` | Cut, reopen, restage, reestimate, reword and unsequence are yours alone. The CEO can still *execute your boardroom orders* as directives. | The CEO wields them itself, on the record, reversibly. |

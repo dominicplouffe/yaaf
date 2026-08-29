@@ -28,6 +28,7 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
+from yaaf.core.constitution import AUTONOMY_PRESETS, default_autonomy, preset_name
 from yaaf.core.models import Secret, User
 from yaaf.founder import tools as founder_tools
 from yaaf.server.api import admin
@@ -198,7 +199,12 @@ def rehearse(principal: Principal, session: Session, arguments: dict) -> dict:
     description=(
         "Create the project. Rehearse first — this is the call that starts spending "
         "money, and the preview shows the roster and the budget it will spend against. "
-        "You are always the chairman; the project is created under your own account."
+        "You are always the chairman; the project is created under your own account. "
+        "A spec that says nothing about the authority dial is created autonomous: the "
+        "CEO accepts its own plan, signs the platform's projected date and judges its "
+        "own unverifiable closes, all audited and all reversible. Set the five Autonomy "
+        "rules in `spec.constitution` to hold those verbs yourself — the preview names "
+        "which dial you are about to get."
     ),
     input_schema={
         "type": "object",
@@ -243,6 +249,12 @@ def create_project(principal: Principal, session: Session, arguments: dict) -> d
     preview = confirm.gate(session, principal, "create_project", arguments, {
         "about_to_create": founder_tools.summarise({"project": body}),
         "chairman": user.email,
+        # Who will hold the plan, scope, date, verdict and credential verbs —
+        # named before the fact, because it is the one thing about this spec
+        # the platform may have decided rather than the drafter, and a chairman
+        # finding out afterwards that his CEO signs its own dates is a bad way
+        # to learn what a default is.
+        "authority": _authority_line(body.get("constitution") or {}),
         "billing": billing.name if billing else None,
         "start_immediately": bool(arguments.get("start")),
         "warning": (
@@ -265,6 +277,7 @@ def create_project(principal: Principal, session: Session, arguments: dict) -> d
                    {k: v for k, v in arguments.items() if k != "spec"},
                    {"id": created["id"], "slug": body.get("slug"),
                     "started": bool(arguments.get("start")),
+                    "authority": preset_name(created["constitution"]) or "mixed",
                     "billing": billing.name if billing else None})
 
 
@@ -314,6 +327,25 @@ def clone_project(principal: Principal, session: Session, arguments: dict) -> di
                                              name=arguments.get("name") or slug.title()),
                    session=session)
     return _record(session, principal, cloned.get("id"), "clone_project", arguments, cloned)
+
+
+def _authority_line(constitution: dict) -> str:
+    """One sentence naming the dial this spec will actually be created with,
+    and whether the spec asked for it or the platform filled it in."""
+    stated = any(rule in constitution for rule in AUTONOMY_PRESETS["supervised"])
+    name = preset_name(default_autonomy(constitution)) or "mixed"
+    source = "as this spec asks" if stated else "the default — this spec did not say"
+    if name == "autonomous":
+        return (f"autonomous ({source}): the CEO accepts its own plan, adopts the "
+                "platform's projected date, judges unverifiable closes and re-scopes "
+                "credentials across its team. Every one is audited, disclosed and "
+                "reversible; budgets and brakes bind the same either way.")
+    if name == "supervised":
+        return (f"supervised ({source}): you accept scope, sign the date, judge "
+                "unverifiable closes and grant credentials.")
+    rules = ", ".join(f"{k}: {constitution[k]}"
+                      for k in AUTONOMY_PRESETS["supervised"] if k in constitution)
+    return f"set rule by rule ({source}): {rules}"
 
 
 def _billing_secret(session: Session, name: str | None) -> Secret | None:

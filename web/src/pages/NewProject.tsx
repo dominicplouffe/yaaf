@@ -56,22 +56,29 @@ const MODES = [
 // individually later in Settings → Rules in force, changed by amendment.
 // Every preset names all five explicitly so it overrides whatever a loaded
 // setup bundle carried — an empty preset would silently inherit instead.
+//
+// Autonomous is first and selected by default, and the server agrees: a spec
+// that says nothing about these five is created autonomous (see
+// `constitution.DEFAULT_AUTONOMY`). A project a chairman has not said anything
+// about is one he wants to run, not one he wants to operate by hand.
 const AUTONOMY_PRESETS = [
-  { value: "supervised", label: "Supervised",
-    blurb: "You approve scope, sign the date, and judge unverifiable closes. " +
-      "The CEO proposes — and executes any order you give it in the boardroom.",
-    example: "Today's behavior. Right for a first project, or real money on the line.",
-    constitution: { plan_authority: "chairman", scope_authority: "chairman",
-      commitment_authority: "chairman", verdict_policy: "chairman",
-      capability_authority: "chairman" } },
   { value: "autonomous", label: "Autonomous",
     blurb: "The CEO accepts its own plan, signs the platform's projected date, and " +
       "judges unverifiable closes itself. Every decision is audited and sent to " +
       "you; all of it is reversible; your buttons never close.",
-    example: "The CEO runs the project; you chair it. Budgets and brakes still bind.",
+    example: "The default. The CEO runs the project; you chair it. Budgets and " +
+      "brakes still bind.",
     constitution: { plan_authority: "ceo", scope_authority: "ceo",
       commitment_authority: "ceo", verdict_policy: "ceo_judgment",
       capability_authority: "ceo" } },
+  { value: "supervised", label: "Supervised",
+    blurb: "You approve scope, sign the date, and judge unverifiable closes. " +
+      "The CEO proposes — and executes any order you give it in the boardroom.",
+    example: "Right for a first project, or real money on the line. It waits for " +
+      "you, so nothing moves while you are away.",
+    constitution: { plan_authority: "chairman", scope_authority: "chairman",
+      commitment_authority: "chairman", verdict_policy: "chairman",
+      capability_authority: "chairman" } },
 ] as const;
 
 // How the project runs day to day: pace, money, proof. A preset is nothing
@@ -184,7 +191,9 @@ export default function NewProject() {
   // mode is frozen at creation and Explore hides the Plan tab by design.
   const [modeNotice, setModeNotice] = useState<string | null>(null);
   const [exploreDeadline, setExploreDeadline] = useState("");
-  const [autonomy, setAutonomy] = useState("supervised");
+  // Autonomous unless the chairman says otherwise — the same default the
+  // server applies to a spec that never mentions the dial.
+  const [autonomy, setAutonomy] = useState("autonomous");
   // Set when a setup file's Autonomy group is not either preset exactly — a
   // constitution hand-edited in Settings, which no button here can represent.
   const [autonomyNotice, setAutonomyNotice] = useState<string | null>(null);

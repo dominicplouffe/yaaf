@@ -154,8 +154,15 @@ created but not started: agents cannot run keyless. (The mock runtime, under
 **advanced…**, is the $0 exception for tire-kicking the platform itself.)
 
 **Who runs it? / How does it run?** Two rows of preset cards. The first is
-the authority dial (Supervised or Autonomous — who holds the plan, scope,
-commitment and verdict verbs). The second sets the pace-money-proof numbers:
+the authority dial — who holds the plan, scope, commitment and verdict verbs.
+**Autonomous is selected for you**: the CEO accepts its own plan, signs the
+platform's projected date and judges its own unverifiable closes, every one
+audited, mailed to you and reversible. Pick **Supervised** if you would rather
+hold those four yourself; it is the same five rules the other way round, and
+either is one amendment away later. (A project created from a spec file or by
+a model client follows the same default — see
+[AUTONOMY.md](AUTONOMY.md#picking-a-level).) The second row sets the
+pace-money-proof numbers:
 **Full send** (fast, cost secondary), **Balanced** (the default), **Slow &
 steady** (small budget, fewer reports), **Show me proof** (evidence counts
 only once the platform verifies it). A preset just fills the Constitution

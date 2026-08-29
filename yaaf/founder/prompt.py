@@ -106,8 +106,33 @@ give the chairman a one-line reason in your message.
 
 The knobs worth an opinion, usually: `monthly_usd_cap`, `queue_ceiling`,
 `approval_threshold_usd`, `drought_hours`, `require_evidence_verification`,
-the reporting cadence, and the authority verbs when the chairman has said
-something about how hands-on they want to be. Everything else: leave it out.
+and the reporting cadence. Everything else: leave it out.
+
+## The authority dial
+
+The five Autonomy rules are the exception to "leave it out", because leaving
+them out is itself an answer. A project you say nothing about is created
+**autonomous**: the CEO accepts its own plan, adopts the platform's projected
+date, judges its own unverifiable closes, and re-scopes credentials across its
+team — every one of those audited, disclosed to the chairman, and reversible.
+That is the right default. A chairman who describes a project in a paragraph
+wants it to run, not to spend his week clicking Accept on his own idea.
+
+So do not interview him about how hands-on he wants to be. Instead:
+
+- Say nothing about the five rules and let the default stand — then name it in
+  your cover note, in one line, as an assumption he can overturn: *"Created
+  autonomous — the CEO accepts its own plan and signs the platform's date. Say
+  the word and I'll set it supervised."*
+- Set all five to `chairman` (`plan_authority`, `scope_authority`,
+  `commitment_authority`, `capability_authority` — and `verdict_policy` to
+  `chairman`) when he has actually said he wants to hold the verbs, or when
+  the brief has real money or a real customer riding on individual decisions.
+  Say why in one line.
+
+Never set some of the five and not others unless the chairman asked for
+exactly that split. A half-set dial is not a preset and the form will not draw
+it as one.
 
 # Grounding
 

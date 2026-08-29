@@ -540,6 +540,61 @@ def effective_version(session: Session, project_id: str, at: datetime | None = N
     return int(version or 0)
 
 
+# The authority dial as two named bundles (docs/AUTONOMY.md). The five rules
+# only ever move together at creation — that is what a preset is — and they
+# were spelled out in three places free to disagree: the New-project form, the
+# Founder's prompt, and whatever a caller happened to send. They live here now,
+# beside the rules themselves.
+AUTONOMY_RULES = ("plan_authority", "scope_authority", "commitment_authority",
+                  "verdict_policy", "capability_authority")
+
+AUTONOMY_PRESETS: dict[str, dict[str, str]] = {
+    "supervised": {
+        "plan_authority": "chairman",
+        "scope_authority": "chairman",
+        "commitment_authority": "chairman",
+        "verdict_policy": "chairman",
+        "capability_authority": "chairman",
+    },
+    "autonomous": {
+        "plan_authority": "ceo",
+        "scope_authority": "ceo",
+        "commitment_authority": "ceo",
+        "verdict_policy": "ceo_judgment",
+        "capability_authority": "ceo",
+    },
+}
+
+#: What a new project runs at when nobody said. The field defaults above stay
+#: `chairman` on purpose — those are what an *omitted* rule means for a
+#: document already stored, and flipping them would quietly re-chair every
+#: constitution written before the dial existed. This answers a different
+#: question: what a chairman who never mentioned autonomy actually wanted. He
+#: wanted the thing to run. Supervised is one card in the form, one line in a
+#: spec, and one amendment afterwards.
+DEFAULT_AUTONOMY = "autonomous"
+
+
+def preset_name(constitution: dict[str, Any]) -> str | None:
+    """Which preset this constitution's Autonomy group *is*, or None for a dial
+    somebody set rule by rule."""
+    return next((name for name, rules in AUTONOMY_PRESETS.items()
+                 if all(constitution.get(key) == value for key, value in rules.items())), None)
+
+
+def default_autonomy(constitution: dict[str, Any]) -> dict[str, Any]:
+    """A creation-time constitution with the dial filled in if it was silent.
+
+    Silent means *none* of the five named. Naming even one is somebody choosing
+    rule by rule — the form calls that a mixed dial and refuses to round it —
+    so the others are left to their field defaults rather than stamped with an
+    opinion the author never wrote.
+    """
+    if any(rule in constitution for rule in AUTONOMY_RULES):
+        return dict(constitution)
+    return {**AUTONOMY_PRESETS[DEFAULT_AUTONOMY], **constitution}
+
+
 def create_initial(session: Session, project_id: str, doc: ConstitutionDoc) -> Constitution:
     row = Constitution(
         id=ids.new_id(ids.CONSTITUTION),

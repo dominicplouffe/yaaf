@@ -94,7 +94,14 @@ Also enforced here, and not tunable because they're structural:
 | `capability_authority` | `"chairman"` | Who scopes credentials to roles. `"ceo"`: the CEO re-scopes existing service credentials across its team itself, on the record, disclosed to you. Creating a credential is always yours — you hold the values. |
 
 The five authority switches are the dial (docs/AUTONOMY.md): they decide *who
-holds a verb*, never whether the record is honest. Every self-exercise runs
+holds a verb*, never whether the record is honest.
+
+**A new project gets `"ceo"` on all five unless it says otherwise.** The
+`"chairman"` defaults in the table are what an *omitted* rule means for a
+constitution already stored; at creation, a spec (or a form, or a model client)
+that mentions none of the five is stamped with the Autonomous preset instead.
+Say the rules you want and they are used verbatim — including a dial you set
+one rule at a time, which is never rounded to a preset. Every self-exercise runs
 through the same machinery as your own buttons, lands in the audit log, is sent
 to you out-of-band, and is listed under **Records → Decisions → what the CEO
 decided**. The dial itself is chairman-only — a directive touching it is refused

@@ -107,6 +107,32 @@ def _default_drill():
     return rehearsal.rehearse(spec())
 
 
+#: The dial the drill's default spec no longer carries. A spec that says
+#: nothing about the five authority rules is created autonomous now, so the
+#: shared drill above rehearses an autonomous project — which is what a
+#: chairman actually gets. The two tests below that are ABOUT the parking need
+#: the other end of the dial, and pay for their own drill to get it.
+SUPERVISED = {"plan_authority": "chairman", "scope_authority": "chairman",
+              "commitment_authority": "chairman", "verdict_policy": "chairman",
+              "capability_authority": "chairman"}
+
+
+@pytest.fixture(scope="session")
+def _supervised_drill():
+    """One more drill, for the two tests about what parks on a human.
+
+    Deliberately slow — a second whole project lifecycle, ~3 seconds — and
+    shared for the same reason as `_default_drill`: the alternative is two
+    drills of the identical supervised spec producing the identical report.
+    """
+    return rehearsal.rehearse(spec(slug="drill-super", constitution=SUPERVISED))
+
+
+@pytest.fixture()
+def supervised_report(_supervised_drill):
+    return copy.deepcopy(_supervised_drill)
+
+
 @pytest.fixture()
 def report(_default_drill):
     """A private copy of the shared report.
@@ -128,29 +154,31 @@ def test_a_sound_spec_walks_all_the_way_to_a_requirement_settling_true(report):
         assert steps[key]["ok"], f"{key} not reached: {report['verdict']}"
 
 
-def test_it_counts_every_time_the_project_stopped_and_waited_for_a_human(report):
+def test_it_counts_every_time_the_project_stopped_and_waited_for_a_human(supervised_report):
     """The autonomy dial in numbers. Nothing else in the product could produce
     this before the money was spent, because the dial decides which verbs park
     and only the work decides how often they come up."""
-    kinds = {row["kind"] for row in report["interventions"]}
+    kinds = {row["kind"] for row in supervised_report["interventions"]}
     assert "accept scope" in kinds
-    assert sum(row["count"] for row in report["interventions"]) >= 3
+    assert sum(row["count"] for row in supervised_report["interventions"]) >= 3
 
 
-def test_an_autonomous_dial_waits_for_nobody():
-    """The same spec, one switch moved: where the CEO holds the verb there is
+def test_an_autonomous_dial_waits_for_nobody(report, supervised_report):
+    """The same spec, one dial moved: where the CEO holds the verb there is
     nothing to park, so the drill has nothing to do as chairman. That contrast
-    is the whole argument for the dial, and it is now measurable."""
-    supervised = rehearsal.rehearse(spec())
-    autonomous = rehearsal.rehearse(spec(
-        slug="drill-auto",
-        constitution={"plan_authority": "ceo", "commitment_authority": "ceo",
-                      "verdict_policy": "ceo_judgment"}))
-    waits = {r["kind"] for r in autonomous["interventions"]}
+    is the whole argument for the dial, and it is now measurable.
+
+    The autonomous side is the *default* drill, because a spec that says
+    nothing about the dial is created autonomous — so this also holds the line
+    that the drill rehearses the project the chairman will really get, right
+    down to the CEO accepting its own scope and judging its own observables.
+    """
+    waits = {r["kind"] for r in report["interventions"]}
     assert "accept scope" not in waits
     assert "judge an observable" not in waits
-    assert (sum(r["count"] for r in autonomous["interventions"])
-            < sum(r["count"] for r in supervised["interventions"]))
+    assert report["ok"], report["verdict"]
+    assert (sum(r["count"] for r in report["interventions"])
+            < sum(r["count"] for r in supervised_report["interventions"]))
 
 
 def test_an_explore_project_is_not_marked_down_for_having_no_plan():

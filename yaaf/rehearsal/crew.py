@@ -99,9 +99,18 @@ def _holding(pack: dict) -> dict | None:
 # ── the CEO ─────────────────────────────────────────────────────────────────────
 
 
-def ceo(api: AgentApi, job: RunJob, scope_project: bool | None = None) -> str:
+def ceo(api: AgentApi, job: RunJob, scope_project: bool | None = None,
+        holds: frozenset[str] = frozenset()) -> str:
     pack = job.context_pack
     did: list[str] = []
+
+    # Which verbs the dial handed this CEO, told to the crew by the drill for
+    # the same reason `scope_project` is: the drill read them off the created
+    # project, and a crew that discovered its own authority by trying would
+    # spend a refusal cap of five learning what one constant already says. A
+    # real agent is told the same thing in its system prompt.
+    holds_plan = "plan_authority" in holds
+    holds_verdict = "verdict_policy" in holds
 
     # `plan` is R-00 — the gate — and it is present exactly while the project
     # owes a plan. `requirements` is the scope under it, and the pack omits the
@@ -126,6 +135,7 @@ def ceo(api: AgentApi, job: RunJob, scope_project: bool | None = None) -> str:
     # plan; a crew that topped its scope up every beat would spend the drill
     # discovering the commitment freeze it caused itself, which tells the
     # chairman about his CEO's manners rather than about his configuration.
+    proposed_now: list[str] = []
     if gate is not None and len(requirements) < REQUIREMENTS_TO_PROPOSE:
         for n in range(len(requirements), REQUIREMENTS_TO_PROPOSE):
             response = api.post("/agent/requirements", json={
@@ -139,6 +149,23 @@ def ceo(api: AgentApi, job: RunJob, scope_project: bool | None = None) -> str:
             if response.status_code != 200:
                 break
             did.append("proposed scope")
+            proposed_now.append(response.json().get("key"))
+
+    # 1b. …and accept it, where the dial says the acceptance is the CEO's own.
+    #     Nothing else closes the gate on an autonomous project: the desk shows
+    #     the chairman nothing to click, correctly, because he gave the verb
+    #     away. A CEO that proposed and then waited would leave the board shut
+    #     for the life of the project, which is what the drill would report as
+    #     a wall in the chairman's configuration rather than in this crew.
+    if holds_plan:
+        waiting = [r["key"] for r in requirements if r["status"] == "proposed"]
+        for key in [k for k in [*waiting, *proposed_now] if k]:
+            if api.post("/agent/scope", json={
+                    "action": {"kind": "accept", "requirement_key": key},
+                    "reason": ("The plan is mine to accept under the constitution's "
+                               "authority dial; this stage is estimated and sequenced."),
+            }).status_code == 200:
+                did.append("accepted its own scope")
 
     # 2. A bet. Explore's root object, and harmless elsewhere — a project with
     #    no falsifiable claim on the table is one that cannot be wrong.
@@ -211,6 +238,28 @@ def ceo(api: AgentApi, job: RunJob, scope_project: bool | None = None) -> str:
             and api.post("/agent/commitments",
                          json={"note": "the plan as accepted"}).status_code == 200):
         did.append("proposed a delivery date")
+
+    # 5. The verdict, where the dial says an unverifiable close is the CEO's to
+    #    judge. A requirement in CHECKING whose acceptance test is an
+    #    observable is one the platform has done everything it can with: under
+    #    `chairman` it parks on the desk and the drill signs it, under
+    #    `ceo_judgment` nobody is coming. The drill's crew judges every close
+    #    true, which is what a *competent* crew looks like — the report counts
+    #    self-judgments so the chairman can see how many closes his dial put
+    #    beyond his sight.
+    if holds_verdict:
+        for requirement in requirements:
+            if requirement["status"] != "checking":
+                continue
+            if (requirement.get("acceptance_test") or {}).get("type") != "observable":
+                continue
+            if api.post("/agent/scope", json={
+                    "action": {"kind": "verdict", "requirement_key": requirement["key"],
+                               "ok": True},
+                    "reason": ("No script can check this one; I looked at the result "
+                               "myself and it holds. Disclosed to the chairman."),
+            }).status_code == 200:
+                did.append("judged its own observable")
 
     return "ceo: " + (", ".join(did) if did else "nothing legal to do")
 
@@ -319,13 +368,14 @@ def _close(api: AgentApi, task_id: str) -> str:
     return "held a task it could neither close nor block"
 
 
-def dispatch(api: AgentApi, job: RunJob, scope_project: bool | None = None) -> str:
+def dispatch(api: AgentApi, job: RunJob, scope_project: bool | None = None,
+             holds: frozenset[str] = frozenset()) -> str:
     """One entry point for every agent, because the drill hires a crew it has
     never met. Role is read off the pack, exactly as an agent reads it."""
     pack = job.context_pack
     if pack["you"]["kind"] == "ceo":
         # Solo mode puts the CEO in the only team, where it is also the hands.
-        summary = ceo(api, job, scope_project=scope_project)
+        summary = ceo(api, job, scope_project=scope_project, holds=holds)
         if pack.get("you", {}).get("team_id"):
             summary += " · " + lead(api, job)
         return summary

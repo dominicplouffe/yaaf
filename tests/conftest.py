@@ -25,6 +25,7 @@ from sqlalchemy.engine import Engine, make_url
 
 from yaaf.core import ids
 from yaaf.core.config import settings
+from yaaf.core.constitution import AUTONOMY_PRESETS
 from yaaf.core.db import db_session, engine, reset_for_tests
 from yaaf.core.models import Agent, Base, Project, Run, RunStatus, utcnow
 from yaaf.core.tokens import mint
@@ -172,7 +173,16 @@ def make_project(
     start: bool = True,
     **project_overrides,
 ) -> dict:
-    """Create chairman + roles + a project with one two-employee team by default."""
+    """Create chairman + roles + a project with one two-employee team by default.
+
+    **Supervised unless the test says otherwise.** A project created with no
+    constitution is autonomous in the product (`constitution.DEFAULT_AUTONOMY`),
+    but most of this suite exists to assert what the chairman-held verbs do —
+    scope waiting on a click, a verdict parking on the desk — and rounding all
+    of that to the new default would change what several hundred tests mean
+    rather than what they check. Tests about the dial itself pass the rules
+    they want; `test_authority_dial.py` covers both ends and the default.
+    """
     client.post("/admin/users",
                 json={"email": "chair@example.com", "display_name": "Chair"},
                 headers=ADMIN)
@@ -185,7 +195,7 @@ def make_project(
         "chairman_email": "chair@example.com",
         "ceo_role_slug": "ceo",
         "ceo_name": "CEO",
-        "constitution": constitution or {},
+        "constitution": {**AUTONOMY_PRESETS["supervised"], **(constitution or {})},
         "teams": teams
         if teams is not None
         else [{"role_slug": "worker", "name": "Alpha", "employees": ["Lead", "Emp2"],

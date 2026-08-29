@@ -28,6 +28,7 @@ from yaaf.core.constitution import (
     THEME_ORDER,
     ConstitutionDoc,
     create_initial,
+    default_autonomy,
     effective,
     effective_version,
     propose_amendment,
@@ -487,7 +488,10 @@ class ProjectCreate(BaseModel):
     # The repo evidence webhooks attest against. Part of the design, so a
     # setup file carries it and a restore does not come back half-wired.
     github_repo: str | None = None
-    constitution: dict = Field(default_factory=dict)  # overrides onto defaults
+    # Overrides onto the field defaults — except the Autonomy group, which a
+    # spec that names none of its five rules gets filled in with the default
+    # preset (`constitution.DEFAULT_AUTONOMY`) rather than left supervised.
+    constitution: dict = Field(default_factory=dict)
     integrations: dict = Field(default_factory=dict)
     ceo_role_slug: str = "ceo"
     ceo_name: str = "CEO"
@@ -590,8 +594,12 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
     session.flush()
     session.add(ProjectMember(project_id=project.id, user_id=chairman.id, role="chairman"))
 
-    # The constitution freezes at creation. Overrides are validated against the schema.
-    doc = ConstitutionDoc.model_validate({**ConstitutionDoc().model_dump(), **body.constitution})
+    # The constitution freezes at creation. Overrides are validated against the
+    # schema; a spec with no opinion about the authority dial is given one
+    # here, so the form, the Founder, the MCP surface, a spec file and the fire
+    # drill all create the same project from the same silence.
+    doc = ConstitutionDoc.model_validate(
+        {**ConstitutionDoc().model_dump(), **default_autonomy(body.constitution)})
     create_initial(session, project.id, doc)
 
     # Webhook secrets exist from birth. The platform_attested path was never

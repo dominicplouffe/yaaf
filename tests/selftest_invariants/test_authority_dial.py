@@ -2,16 +2,20 @@
 
 Authority is configuration; integrity is structure. Four constitution switches
 decide WHO holds each verb — plan_authority, scope_authority,
-commitment_authority, verdict_policy — and the default reproduces today's
-behavior exactly. What never moves, at any dial setting: every exercise runs
-through the same apply helpers as the chairman's own buttons, every one is
-audited and disclosed to the chairman, the chairman's routes stay open, and
-the CEO still cannot touch the dial itself (directives are scoped, amendments
-are his).
+commitment_authority, verdict_policy. What never moves, at any dial setting:
+every exercise runs through the same apply helpers as the chairman's own
+buttons, every one is audited and disclosed to the chairman, the chairman's
+routes stay open, and the CEO still cannot touch the dial itself (directives
+are scoped, amendments are his).
+
+"Supervised" below means the five rules set to `chairman`, which is what the
+`make_project` fixture stamps and what a chairman gets by clicking that card.
+It is not what silence gets: a spec that names none of the five is created
+autonomous, and the last section here holds that line.
 
 The lines these tests hold:
 
-  * under the default dial, every self-exercise is a 403 naming the paths
+  * under the supervised dial, every self-exercise is a 403 naming the paths
   * under `ceo`, self-acceptance opens the plan gate without a chairman click
   * a self-judged verdict closes the requirement AND is disclosed, every time
   * commitment_authority: ceo adopts the platform's date — still never writes one
@@ -20,7 +24,8 @@ The lines these tests hold:
 
 from __future__ import annotations
 
-from tests.conftest import ADMIN, bearer, live_token, make_project
+from tests.conftest import ADMIN, bearer, live_token, make_project, seed_role
+from yaaf.core.constitution import AUTONOMY_PRESETS, preset_name
 from yaaf.core.db import db_session
 from yaaf.core.models import (
     AuditLog,
@@ -79,10 +84,10 @@ def tick(project: dict) -> None:
         janitor.check_plan(session, row, effective(session, row.id))
 
 
-# ── the default dial is today's behavior ────────────────────────────────────────
+# ── the supervised dial: every verb stays the chairman's ────────────────
 
 
-def test_under_the_default_dial_every_self_exercise_is_refused(client):
+def test_under_the_supervised_dial_every_self_exercise_is_refused(client):
     project = project_with(client, dial={})
     proposed = propose(client, project)
     for action in ({"kind": "accept", "requirement_key": proposed["key"]},
@@ -215,7 +220,7 @@ def test_the_ceo_judges_an_unverifiable_close_and_it_is_never_quiet(client):
         assert any(a.detail["kind"] == "verdict" for a in disclosed)
 
 
-def test_under_the_default_dial_verdicts_stay_the_chairmans(client):
+def test_under_the_supervised_dial_verdicts_stay_the_chairmans(client):
     project = project_with(client, dial={})
     proposed = propose(client, project)
     client.post(f"/admin/requirements/{proposed['requirement_id']}/accept",
@@ -247,7 +252,7 @@ def test_commitment_authority_ceo_adopts_the_platforms_date(client):
     assert smuggled.status_code in (400, 422)
 
 
-def test_under_the_default_dial_a_proposal_still_waits_for_the_chairman(client):
+def test_under_the_supervised_dial_a_proposal_still_waits_for_the_chairman(client):
     project = project_with(client, dial={}, slug="dial2")
     proposed = propose(client, project)
     client.post(f"/admin/requirements/{proposed['requirement_id']}/accept",
@@ -416,7 +421,7 @@ def test_the_reset_is_refused_while_the_promise_still_holds(client):
     assert "still holds" in refused.json()["error"]
 
 
-def test_under_the_default_dial_the_reset_is_the_chairmans(client):
+def test_under_the_supervised_dial_the_reset_is_the_chairmans(client):
     project, tok, cid = slipped(client, "reset-denied", {})
     refused = client.post(
         "/agent/commitments/reset",
@@ -490,7 +495,7 @@ def test_the_undelegable_kinds_still_reach_the_chairman_under_full_autonomy(clie
         assert response.status_code == 200, f"{kind}: {response.text}"
 
 
-def test_under_the_default_dial_an_owner_decision_is_exactly_as_before(client):
+def test_under_the_supervised_dial_an_owner_decision_is_exactly_as_before(client):
     project = project_with(client, dial={}, slug="appr-super")
     response = client.post(
         "/agent/approvals",
@@ -549,3 +554,100 @@ def test_the_quiet_board_names_the_right_party(client):
     brief = dispatcher._activity_brief(_synthetic("awaiting_ceo"))
     assert "waiting on you" in brief["detail"], "it must say so in as many words"
     assert brief["banner"] is False, "a decision that is not yours is not a banner"
+
+
+# ── what silence gets you ───────────────────────────────────────────────────
+
+
+def _bare_project(client, slug: str, constitution: dict | None = None) -> dict:
+    """A project created the way a spec file, the MCP surface and the Founder's
+    draft create one: through the endpoint, without the fixture's supervised
+    stamp."""
+    client.post("/admin/users",
+                json={"email": "chair@example.com", "display_name": "Chair"},
+                headers=ADMIN)
+    seed_role(client, "ceo", is_ceo=True)
+    seed_role(client, "worker")
+    body = {"slug": slug, "name": slug.title(),
+            "goal": "Prove the framework works end to end.",
+            "chairman_email": "chair@example.com", "ceo_role_slug": "ceo",
+            "teams": [{"role_slug": "worker", "name": "Alpha", "employees": ["Lead"]}]}
+    if constitution is not None:
+        body["constitution"] = constitution
+    response = client.post("/admin/projects", json=body, headers=ADMIN)
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_a_spec_with_no_opinion_about_the_dial_is_created_autonomous(client):
+    """The chairman who describes a project in a paragraph wants it to run, not
+    to spend the week clicking Accept on his own idea. Silence used to mean
+    supervised, which is the one reading nobody ever asked for."""
+    created = _bare_project(client, "silent")
+    assert created["constitution"]["plan_authority"] == "ceo"
+    assert created["constitution"]["scope_authority"] == "ceo"
+    assert created["constitution"]["commitment_authority"] == "ceo"
+    assert created["constitution"]["verdict_policy"] == "ceo_judgment"
+    assert created["constitution"]["capability_authority"] == "ceo"
+    assert preset_name(created["constitution"]) == "autonomous"
+
+
+def test_a_spec_that_asks_for_supervised_gets_supervised(client):
+    """The override is a line in the spec, not an argument with the platform."""
+    created = _bare_project(client, "asked", AUTONOMY_PRESETS["supervised"])
+    assert preset_name(created["constitution"]) == "supervised"
+
+
+def test_a_dial_set_rule_by_rule_is_left_exactly_as_written(client):
+    """Naming even one of the five is somebody choosing deliberately. Stamping
+    the other four with a default would be the silent overwrite the New-project
+    form already refuses to make."""
+    created = _bare_project(client, "mixed", {"verdict_policy": "ceo_judgment"})
+    assert created["constitution"]["verdict_policy"] == "ceo_judgment"
+    assert created["constitution"]["plan_authority"] == "chairman"
+    assert created["constitution"]["scope_authority"] == "chairman"
+    assert preset_name(created["constitution"]) is None
+
+
+def test_the_default_never_reaches_a_constitution_already_stored(client):
+    """The field defaults stay `chairman` on purpose: they are what an omitted
+    rule means for a document read back from the database. A project stored
+    before the dial existed must not become autonomous by being loaded."""
+    from yaaf.core.constitution import ConstitutionDoc
+
+    doc = ConstitutionDoc.model_validate({"queue_ceiling": 4})
+    assert doc.plan_authority == "chairman"
+    assert doc.verdict_policy == "chairman"
+
+
+def test_the_pack_tells_the_ceo_who_actually_accepts_scope(client):
+    """The scope note said "the chairman accepts them" at every setting. On an
+    autonomous project that is false, and it is now the default — a CEO reading
+    it would wait for a click nobody is coming to make."""
+    from yaaf.core.models import Agent, Project, Run, RunStatus
+    from yaaf.server.contextpack import build_context_pack
+
+    def note(project: dict) -> str:
+        propose(client, project)
+        with db_session() as session:
+            run = Run(id="run_" + project["id"][-8:], project_id=project["id"],
+                      agent_id=project["ceo_agent_id"], status=RunStatus.RUNNING,
+                      trigger={"reasons": []})
+            session.add(run)
+            session.flush()
+            pack = build_context_pack(
+                session, run,
+                session.get(Agent, project["ceo_agent_id"]),
+                session.get(Project, project["id"]))
+        return pack["scope"]["note"]
+
+    assert "the chairman accepts them" in note(project_with(client, slug="note-super"))
+    assert "you accept them yourself" in note(
+        project_with(client, dial=AUTONOMOUS, slug="note-auto"))
+
+
+def test_the_other_knobs_a_spec_sets_survive_the_stamp(client):
+    """The dial is filled in beside a spec's own rules, never instead of them."""
+    created = _bare_project(client, "knobs", {"queue_ceiling": 3})
+    assert created["constitution"]["queue_ceiling"] == 3
+    assert created["constitution"]["plan_authority"] == "ceo"

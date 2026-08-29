@@ -16,6 +16,7 @@ import json
 
 from tests.conftest import ADMIN, make_project, seed_role
 from tests.selftest_invariants.test_mcp_auth import mint, rpc
+from yaaf.core.constitution import AUTONOMY_PRESETS
 
 SLUG = "acme"
 
@@ -125,6 +126,46 @@ def test_creating_is_two_phase_and_the_preview_says_what_it_will_cost(client):
     # Nothing exists yet.
     assert "ppc-audit" not in {p["slug"] for p in
                                client.get("/observe/projects", headers=ADMIN).json()}
+
+
+def test_the_preview_names_the_dial_the_project_will_actually_get(client):
+    """The one thing about a spec the platform may have decided rather than the
+    drafter. A chairman finding out afterwards that his CEO signs its own dates
+    is a bad way to learn what a default is."""
+    make_project(client, slug=SLUG)
+    token = founder(client)["token"]
+
+    failed, preview = call(client, token, "create_project", {"spec": GOOD_SPEC})
+    assert failed is False
+    authority = preview["about_to"]["authority"]
+    assert authority.startswith("autonomous")
+    assert "this spec did not say" in authority
+
+    supervised = {**GOOD_SPEC, "slug": "hands-on",
+                  "constitution": dict(AUTONOMY_PRESETS["supervised"])}
+    failed, preview = call(client, token, "create_project", {"spec": supervised})
+    assert failed is False
+    authority = preview["about_to"]["authority"]
+    assert authority.startswith("supervised")
+    assert "as this spec asks" in authority
+
+
+def test_a_spec_that_says_nothing_creates_an_autonomous_project(client):
+    """Same default as the form and the endpoint, and the receipt says which."""
+    make_project(client, slug=SLUG)
+    token = founder(client)["token"]
+
+    failed, created = confirmed(client, token, "create_project", {"spec": GOOD_SPEC})
+    assert failed is False, created
+    assert created["authority"] == "autonomous"
+
+    from yaaf.core.constitution import effective, preset_name
+    from yaaf.core.db import db_session
+    from yaaf.core.models import Project
+
+    with db_session() as session:
+        made = session.query(Project).filter(Project.slug == "ppc-audit").one()
+        assert preset_name(effective(session, made.id).model_dump()) == "autonomous"
 
 
 def test_a_credential_is_named_never_carried(client):

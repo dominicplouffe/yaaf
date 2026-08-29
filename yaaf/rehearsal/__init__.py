@@ -608,10 +608,25 @@ def _run(client, project_spec, spec_roles, roles_dir, days, usd_per_run,
     # see the note in `crew.ceo`.
     scope_project = project_spec.get("mode", "explore") in ("deliver", "operate")
 
+    # And which verbs the dial actually handed the CEO, read off the project
+    # the platform just created rather than off the spec — a spec that says
+    # nothing about the dial gets the default, and the drill has to rehearse
+    # the project the chairman will really get. Without this the crew proposed
+    # scope on an autonomous project and then waited for a chairman who, by
+    # his own constitution, had nothing to click.
+    from yaaf.core.constitution import ConstitutionDoc
+    from yaaf.server import policy as policy_module
+
+    dial = ConstitutionDoc.model_validate(project["constitution"])
+    holds = frozenset(switch for switch in ("plan_authority", "scope_authority",
+                                            "commitment_authority", "verdict_policy",
+                                            "capability_authority")
+                      if policy_module.ceo_holds(dial, switch))
+
     def collect(api, job) -> str:
         before = len(api.refusals)
         try:
-            return crew.dispatch(api, job, scope_project=scope_project)
+            return crew.dispatch(api, job, scope_project=scope_project, holds=holds)
         finally:
             for hit in api.refusals[before:]:
                 refusals.append({**hit, "agent": job.context_pack["you"]["name"]})

@@ -883,6 +883,15 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
             record = standing_record(session, project.id)
             if record:
                 pack["standing"] = record
+            # Who accepts is the dial's answer, not a constant. This note said
+            # "the chairman accepts them" at every setting, which is false on a
+            # project whose chairman handed the verb over — and now that a spec
+            # with no opinion is created autonomous, false by default. Same
+            # defect as the three surfaces in docs/AUTONOMY.md: read the
+            # constitution before naming a party.
+            accepts = ("you accept them yourself (scope_act), on the record"
+                       if policy.ceo_holds(cons, "plan_authority")
+                       else "the chairman accepts them")
             pack["scope"] = {
                 "met": int(met),
                 "open": len([r for r in requirements
@@ -890,10 +899,10 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
                 "awaiting_your_chairman": len(
                     [r for r in requirements if r.status == RequirementStatus.PROPOSED]
                 ),
-                "note": ("A task must name the requirement it serves. You propose "
-                         "requirements; the chairman accepts them. Nothing here — "
-                         "including you — can mark one met: the platform runs the "
-                         "acceptance test itself."),
+                "note": (f"A task must name the requirement it serves. You propose "
+                         f"requirements; {accepts}. Nothing here — including you — "
+                         "can mark one met: the platform runs the acceptance test "
+                         "itself."),
             }
         pack["hypotheses"] = [
             {"id": h.id, "statement": h.statement, "kill_date": h.kill_date.isoformat(),
