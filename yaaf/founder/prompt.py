@@ -130,6 +130,14 @@ whether the work would be any good.
 
 Run it before you tell the chairman a draft is ready, and act on what it finds
 — a wall the drill hits is a wall this bundle built.
+
+The report also says what this install ALREADY has wired, in its `install`
+block and in the lines under "not exercised". Read those before you tell the
+chairman to go and attach anything. A Slack workspace connected app-wide is
+inherited by the project you are designing — its channels are even provisioned
+as the project is created — so "not exercised by the drill" is not "missing".
+Naming a dependency he already attached is a confident wrong instruction, and
+he has no way to tell it apart from a real finding.
 """
 
 

@@ -2162,6 +2162,14 @@ def rehearse(body: RehearseIn, session: Session = Depends(db)) -> dict:
 
     The spec travels on a temp file rather than argv: it can be tens of
     kilobytes, and a process list is not a place to put a chairman's goal.
+
+    So does one more thing the child could not otherwise know: what this
+    install already has wired. The drill has no live database on purpose, so
+    left to itself it reports "Slack not exercised" identically whether a
+    workspace is connected or not — and a chairman who had connected one was
+    being told to go and attach it. This is the one place that holds both a
+    live session and the drill, so it reads the facts here and hands them over
+    as data. See :mod:`yaaf.rehearsal.install`.
     """
     import json as jsonlib
     import subprocess
@@ -2169,11 +2177,23 @@ def rehearse(body: RehearseIn, session: Session = Depends(db)) -> dict:
     import tempfile
     from pathlib import Path
 
+    from yaaf.rehearsal import install as install_facts
+
     with tempfile.TemporaryDirectory(prefix="yaaf-rehearse-") as tmp:
         spec_path = Path(tmp) / "spec.json"
         spec_path.write_text(jsonlib.dumps(_carry_library_roles(session, body.spec)))
         argv = [sys.executable, "-m", "yaaf.rehearsal", str(spec_path),
                 "--json", "--days", str(body.days)]
+        try:
+            install_path = Path(tmp) / "install.json"
+            install_path.write_text(jsonlib.dumps(install_facts.collect(session)))
+            argv += ["--install", str(install_path)]
+        except Exception:  # pragma: no cover - the verdict is not worth a footnote
+            # The wiring note is a courtesy; the drill's verdict is the product.
+            # Without it the report says nothing either way about Slack, which
+            # is what it said before this existed.
+            log.warning("rehearsal: could not read this install's wiring",
+                        exc_info=True)
         if body.usd_per_run:
             argv += ["--usd-per-run", str(body.usd_per_run)]
         # The child never reads this, because the drill points itself at the

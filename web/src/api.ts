@@ -643,6 +643,15 @@ export interface RehearsalReport {
   health?: HealthCheck[];
   relaxed: { rule: string; why: string }[];
   not_exercised: string[];
+  /** What the install already has wired that the drill cannot exercise — read
+      from a live session by the route that ran the drill, because the drill's
+      own database is a throwaway one. Null when nobody could look (the CLI on
+      a checkout). */
+  install?: {
+    slack: { bot_token: boolean; signing_secret: boolean; app_token: boolean;
+             chairman_user: boolean; auto_create_channels: boolean };
+    notifications: { email: boolean; webhook: boolean };
+  } | null;
   caveat: string;
 }
 

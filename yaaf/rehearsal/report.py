@@ -369,10 +369,24 @@ def _verdict(steps: list[dict], refusals: list[dict]) -> tuple[bool, str]:
 # ── assembly ────────────────────────────────────────────────────────────────────
 
 
+def _slack_off_in_spec(spec: dict) -> bool:
+    """Whether this spec turns Slack off for the project it describes.
+
+    A project inherits the install's workspace unless it says otherwise, so
+    "already wired" is the wrong thing to tell a chairman about a spec carrying
+    `integrations.slack.enabled: false` — that project mirrors nothing, and the
+    drill stripping Slack before it ran is not why.
+    """
+    slack = ((spec.get("integrations") or {}).get("slack") or {})
+    return isinstance(slack, dict) and slack.get("enabled") is False
+
+
 def build(client, project_id: str | None, spec: dict, steps: list[dict],
           interventions: list[dict], days: int, usd_per_run: float | None,
-          roles: dict, ticks: int, refusals: list[dict] | None = None) -> dict:
+          roles: dict, ticks: int, refusals: list[dict] | None = None,
+          install: dict | None = None) -> dict:
     from yaaf.rehearsal import RELAXED
+    from yaaf.rehearsal import install as install_facts
 
     refusals = refusals or []
     ok, verdict = _verdict(steps, refusals)
@@ -406,19 +420,28 @@ def build(client, project_id: str | None, spec: dict, steps: list[dict],
                     + [{"rule": "notice and message batching",
                         "why": "the dispatcher holds a wake for minutes until it is worth "
                                "a run; a drill has no minutes"}]),
+        # Two of these depend on what the chairman has ALREADY wired, which
+        # the drill cannot see from inside its throwaway database — see
+        # `yaaf.rehearsal.install`. Stated unconditionally they told a chairman
+        # with Slack connected app-wide that he had a dependency to go and
+        # attach, which is the one kind of finding a preflight must not invent.
         "not_exercised": [
             "command success tests — the drill writes observables only, so no "
             "command out of a spec file is ever executed",
             "evidence verification — evidence carries no URL, so the verifier "
             "never reaches the network",
-            "credentials, Slack and data sources — a drill reads no secret and "
-            "opens no socket",
-            "chairman notifications — the mail and webhook channels are unset "
-            "for the duration, so the notices this pretend project raised were "
-            "logged and never delivered to anyone",
+            "credentials and data sources — a drill reads no secret and opens "
+            "no socket",
+            install_facts.slack_line(
+                install, disabled_by_spec=_slack_off_in_spec(spec)),
+            install_facts.notification_line(install),
             "the workspace — the drill works in a directory it deletes, and a "
             "github_repo in the spec is not cloned into it",
         ],
+        # The same facts as data, so a screen or the Founder can act on them
+        # without parsing the prose above. None when the caller had no live
+        # install to read — `yaaf rehearse` on a checkout.
+        "install": install,
         "caveat": (
             "The crew that ran this is competent and dull by construction. A "
             "clean drill is evidence about your CONFIGURATION and no evidence "

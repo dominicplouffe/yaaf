@@ -488,8 +488,16 @@ def _tick(client: httpx.Client) -> int:
 
 
 def rehearse(spec: dict, *, days: int = 30, usd_per_run: float | None = None,
-             max_ticks: int = MAX_TICKS, roles_dir: Path | None = None) -> dict:
-    """Run `spec` as a project for nothing, and report what happened."""
+             max_ticks: int = MAX_TICKS, roles_dir: Path | None = None,
+             install: dict | None = None) -> dict:
+    """Run `spec` as a project for nothing, and report what happened.
+
+    `install` is what the CALLER can see and the drill cannot: whether this
+    deployment already has a Slack workspace and notice channels wired, read
+    from a live session by whoever invoked the drill and passed in as data.
+    See :mod:`yaaf.rehearsal.install` — without it the report can only say it
+    exercised none of that, which reads as "you have none of that".
+    """
     from yaaf.rehearsal import crew, report
     from yaaf.runner.backends import mock as mock_backend
 
@@ -510,7 +518,8 @@ def rehearse(spec: dict, *, days: int = 30, usd_per_run: float | None = None,
         client = _client()
         try:
             return _run(client, project_spec, spec_roles, roles_dir, days,
-                        usd_per_run, max_ticks, crew, report, mock_backend)
+                        usd_per_run, max_ticks, crew, report, mock_backend,
+                        install)
         finally:
             mock_backend.clear_registry()
             client.close()
@@ -526,7 +535,7 @@ def rehearse(spec: dict, *, days: int = 30, usd_per_run: float | None = None,
 
 
 def _run(client, project_spec, spec_roles, roles_dir, days, usd_per_run,
-         max_ticks, crew, report, mock_backend) -> dict:
+         max_ticks, crew, report, mock_backend, install=None) -> dict:
     steps: list[dict] = []
     interventions: list[dict] = []
 
@@ -539,7 +548,7 @@ def _run(client, project_spec, spec_roles, roles_dir, days, usd_per_run,
              f"no definition for {', '.join(roles['unresolved'])} — the spec does "
              "not carry it and it is not in this checkout's roles/ library")
         return report.build(client, None, project_spec, steps, interventions,
-                            days, usd_per_run, roles, 0)
+                            days, usd_per_run, roles, 0, install=install)
     step("roles", True, f"{len(roles['loaded'])} role(s) resolved")
 
     email = project_spec.get("chairman_email") or "rehearsal@localhost"
@@ -561,7 +570,7 @@ def _run(client, project_spec, spec_roles, roles_dir, days, usd_per_run,
         detail = created.json().get("detail", created.text)
         step("created", False, f"the platform refused this spec: {detail}")
         return report.build(client, None, project_spec, steps, interventions,
-                            days, usd_per_run, roles, 0)
+                            days, usd_per_run, roles, 0, install=install)
     project = created.json()
     project_id = project["id"]
     agents = 1 + sum(len(t["agents"]) for t in project["teams"])
@@ -585,7 +594,7 @@ def _run(client, project_spec, spec_roles, roles_dir, days, usd_per_run,
         detail = started.json().get("detail", started.text)
         step("started", False, f"it would not start: {detail}")
         return report.build(client, project_id, project_spec, steps, interventions,
-                            days, usd_per_run, roles, 0)
+                            days, usd_per_run, roles, 0, install=install)
     step("started", True, "the project is running")
 
     # Every refusal the crew collects, kept rather than discarded. `AgentApi`
@@ -623,7 +632,7 @@ def _run(client, project_spec, spec_roles, roles_dir, days, usd_per_run,
             break
 
     return report.build(client, project_id, project_spec, steps, interventions,
-                        days, usd_per_run, roles, ticks, refusals)
+                        days, usd_per_run, roles, ticks, refusals, install)
 
 
 def load_spec(path: str | Path) -> dict:
@@ -652,14 +661,29 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(prog="yaaf.rehearsal")
     parser.add_argument("spec")
+    # What the caller could see and this process cannot: it has no live
+    # database by design, so the wiring facts travel on a file the way the
+    # spec does. Absent is a valid answer — the report then says nothing
+    # either way about Slack rather than guessing.
+    parser.add_argument("--install", default=None)
     parser.add_argument("--days", type=int, default=30)
     parser.add_argument("--usd-per-run", type=float, default=None)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
+    install = None
+    if args.install:
+        # A courtesy, never the verdict. A drill that refused to run because
+        # the note about the caller's wiring would not parse would have traded
+        # the whole preflight for a footnote.
+        try:
+            install = load_spec(args.install)
+        except (RehearsalError, OSError):
+            log.warning("rehearsal: could not read %s", args.install)
+
     try:
         result = rehearse(load_spec(args.spec), days=args.days,
-                          usd_per_run=args.usd_per_run)
+                          usd_per_run=args.usd_per_run, install=install)
     except RehearsalError as exc:
         print(json.dumps({"ok": False, "error": str(exc), "at": _stamp()})
               if args.json else f"rehearsal: {exc}")
