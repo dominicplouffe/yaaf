@@ -77,9 +77,7 @@ def test_no_agent_route_serves_a_secret_value(client):
     two roster routes named below — a new credential-flavored route must be
     added here deliberately, with a value-free proof beside it — and the
     roster route is proven value-free by calling it."""
-    from yaaf.server.app import create_app
-
-    paths = create_app().openapi()["paths"]
+    paths = client.app.openapi()["paths"]
     assert "/admin/secrets/{secret_id}/value" in paths, "sanity: reveal is mounted"
 
     # The only agent routes allowed to say 'credential' — both value-free.

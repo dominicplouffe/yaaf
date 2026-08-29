@@ -13,9 +13,33 @@ python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"   # Python 3.12+
 cd web && npm install && npm run build   # type-checks the SPA
 ```
 
-`-n auto` matters: the tests are HTTP round-trips against a real app, so they
-parallelise almost linearly — about four minutes serial, about a minute and a
-half on four cores. Drop it when you want a readable failure from one test.
+`-n auto` matters: the tests are HTTP round-trips against a real app and the
+work is the app's own Python, so they parallelise almost linearly — about four
+minutes serial, about a minute on four cores. Drop it when you want a readable
+failure from one test.
+
+### Run the smallest tier that answers your question
+
+The full suite costs about a minute. That is cheap once and expensive after
+every edit, so match the tier to the question:
+
+```bash
+.venv/bin/python -m pytest --testmon -q        # after each edit — only what you changed
+.venv/bin/python -m pytest tests/…/test_x.py   # does this area still work
+.venv/bin/python -m pytest -q -n auto          # once, before you commit
+```
+
+`--testmon` reruns only the tests whose covered code moved; it needs one full
+run first to build its map. It is a development accelerator and never a gate —
+CI always runs everything. `CLAUDE.md` states the same tiers for agents working
+in this repo.
+
+Four patterns keep the suite fast, three of them enforced by
+`tests/selftest_invariants/test_suite_hygiene.py` rather than by this paragraph:
+never build an app in a test (use `client`), never build a schema in a test (the
+fixture gives you an empty one), and never run a fire drill for a report you only
+read (use the `report` fixture). Adding a deliberately slow test is fine; adding
+one by accident is what those catch.
 
 The suite runs on SQLite by default, which is the fastest loop and the right
 one for almost every change. **CI runs Postgres**, because SQLite cannot
@@ -31,6 +55,13 @@ YAAF_TEST_DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:55432/po
 ```
 
 Each xdist worker builds a database of its own, so the two flags compose.
+
+CI runs the same suite split across four sharded jobs, balanced by
+`.test_durations`. That file is committed so the shards stay even; regenerate it
+when the balance drifts (`pytest -q --store-durations --clean-durations`).
+Unknown tests are assigned the average, so a stale file degrades gracefully and
+never blocks anyone. **If CI outgrows two minutes again, add shards** — that is
+the knob, and it is why CI time tracks shard count rather than test count.
 
 ## The house rules (they're the product)
 
