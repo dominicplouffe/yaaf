@@ -60,6 +60,33 @@ well_known = APIRouter()
 router = APIRouter()
 
 
+def unroutable_base_url() -> str | None:
+    """The advertised origin, when it is one no outside client can reach.
+
+    Every endpoint in both discovery documents is built from `base_url()`, and
+    with `YAAF_PUBLIC_BASE_URL` unset that falls back to `YAAF_API_BASE_URL` —
+    which in a container deployment is an internal name like `http://api:8080`.
+    Nothing fails here when it does: the documents serve 200, and the connector
+    that reads them fails somewhere we never see, on the first endpoint it
+    tries. That is registration, so the only symptom the chairman is given is a
+    client reporting it could not register, pointing at the one file that is
+    fine.
+
+    So say it at startup instead. Returns the offending origin, or None when
+    the origin is at least plausibly public.
+    """
+    if settings().public_base_url:
+        return None
+    origin = base_url()
+    host = (urlparse(origin).hostname or "").lower()
+    # A bare label ("api", "web") is a container alias; loopback is a dev
+    # default. Anything dotted is a hostname the outside world could resolve,
+    # and this is a warning, not a gate — we do not guess further than that.
+    if "." in host and host not in ("127.0.0.1", "0.0.0.0"):
+        return None
+    return origin
+
+
 def challenge_ok(verifier: str, challenge: str) -> bool:
     digest = hashlib.sha256(verifier.encode()).digest()
     return pysecrets.compare_digest(

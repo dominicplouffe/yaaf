@@ -53,11 +53,20 @@ services:
       YAAF_ADMIN_TOKEN: ${YAAF_ADMIN_TOKEN:-dev-admin-token}
       YAAF_MASTER_KEY: ${YAAF_MASTER_KEY:-}
       YAAF_API_BASE_URL: http://api:8080
-      # Browser-facing origin (https://yaaf.example.com) for OAuth-protected
-      # MCP data sources — their sign-in redirects back to it. Unset, the
-      # redirect URI is derived per request, which breaks behind a
-      # TLS-terminating proxy.
-      # YAAF_PUBLIC_BASE_URL: ${YAAF_PUBLIC_BASE_URL:-}
+      # Browser-facing origin (https://yaaf.example.com). Two surfaces need
+      # it, and the second one fails silently without it: OAuth-protected MCP
+      # data sources redirect their sign-in back to it, and yaaf's OWN
+      # authorization server publishes it in both `.well-known` documents as
+      # the issuer, registration, authorize and token endpoints. Unset, those
+      # documents advertise YAAF_API_BASE_URL — `http://api:8080` below, a
+      # name that resolves only inside this compose network. A connector such
+      # as claude.ai reads the discovery document, cannot reach the endpoints
+      # it names, and reports only that it could not register.
+      #
+      # Listed unconditionally rather than commented out: compose reads
+      # deploy/.env for ${} substitution only, so a variable no service names
+      # never reaches the container. Empty is the same as unset.
+      YAAF_PUBLIC_BASE_URL: ${YAAF_PUBLIC_BASE_URL:-}
       # Host path == container path, here as well as on the runner: the two
       # services share these directories and store absolute paths in the
       # database, so they have to agree on what a path means.
