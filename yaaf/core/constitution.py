@@ -561,6 +561,35 @@ CADENCE_FIELDS = frozenset({"chairman_report_interval_hours",
                             "timezone"})
 
 
+def unknown_rules(changes: dict[str, Any]) -> list[str]:
+    """Rule names this platform does not have, with the near miss named.
+
+    `ConstitutionDoc` ignores extra keys, so an invented rule validates, stores,
+    and is then ignored for the life of the project — the chairman reads
+    `reporting_cadence: 4` in the amendment log and believes he set something. A
+    real Founder run invented exactly that key, which is why this exists; it is
+    checked on every write path, so the browser and the MCP surface refuse it in
+    the same words.
+
+    Near misses are named because the author can almost always fix it in the
+    same breath once told what the field is really called. Prefixes, not whole
+    words: the invented key was `reporting_cadence` and the real one is
+    `chairman_report_interval_hours` — "reporting" does not appear in it, but
+    "repor" does.
+    """
+    known = set(ConstitutionDoc.model_fields)
+    problems = []
+    for key in changes:
+        if key in known:
+            continue
+        stem = [part[:5] for part in key.split("_") if len(part) > 3]
+        near = sorted(name for name in known if any(part in name for part in stem))[:3]
+        problems.append(
+            f"{key}: this platform has no such rule"
+            + (f" — did you mean {', '.join(near)}?" if near else ""))
+    return problems[:10]
+
+
 def propose_amendment(
     session: Session,
     project_id: str,
@@ -579,6 +608,12 @@ def propose_amendment(
     makes it accountable — not a waiting period he was always able to wait out
     or work around.
     """
+    invented = unknown_rules(changes)
+    if invented:
+        # Before the overlay, because the overlay would quietly accept these:
+        # the document ignores extra keys, so an invented rule is stored in the
+        # amendment row, shown back to the chairman, and never in force.
+        raise ValueError("; ".join(invented))
     effective(session, project_id).overlay(changes)  # raises if the result is invalid
     if not changes:
         return []

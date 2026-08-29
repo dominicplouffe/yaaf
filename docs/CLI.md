@@ -130,6 +130,29 @@ moving a delivery date, pulling a review lever — are dashboard actions
 (**Plan** and **Review** tabs) or direct API calls; there is no CLI shorthand,
 because each needs a reason you would want read back at the next review.
 
+## MCP client tokens
+
+The chairman's MCP server ([MCP_SERVER.md](MCP_SERVER.md)) has its own
+principal — never the admin token, which is unscoped, unattributable and
+cannot be revoked one client at a time.
+
+| Command | What it does |
+|---|---|
+| `yaaf mcp-token mint NAME --chairman EMAIL [--scopes read] [--project SLUG]…` | Mint a client token. Printed once; only its hash is stored. |
+| `yaaf mcp-token list` | Every client, what it holds, when it was last used. |
+| `yaaf mcp-token revoke CLIENT_ID` | Revoke it. The row survives — the audit trail names it. |
+
+```bash
+yaaf mcp-token mint dom-laptop --chairman you@example.com --scopes read --project ppc-audit
+# → {"token": "ymt_…", "scopes": ["read"], "projects": ["proj_…"]}
+```
+
+Scopes are `read`, `steer`, `create`, `configure`, and `read` is implied by all
+of them. Start with `read` alone: it is most of the value and none of the risk
+— a client holding it sees every project and signs for nothing. Omitting
+`--project` means every project that chairman chairs, which is a narrowing
+already; naming one narrows it further.
+
 ## Spend analysis
 
 ```bash

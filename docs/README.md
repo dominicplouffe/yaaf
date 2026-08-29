@@ -26,6 +26,7 @@ Start here if you're new; skim the table if you're not.
 |---|---|
 | [CLI.md](CLI.md) | Every `yaaf` command, the project spec shape, and a full provisioning script. |
 | [AGENT_API.md](AGENT_API.md) | The API your agents act through, and how to write a role that uses it well. |
+| [MCP_SERVER.md](MCP_SERVER.md) | **Proposed, not built.** yaaf as an MCP server: chairing your projects and founding new ones from a model client, and the security model that makes writes safe. |
 
 ## Background
 

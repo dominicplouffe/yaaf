@@ -34,6 +34,13 @@ class Settings(BaseSettings):
     # providers generally refuse non-https redirect URIs anyway.
     public_base_url: str = ""
 
+    # Hosts an MCP client may be redirected back to after consent. Dynamic
+    # client registration is an unauthenticated write endpoint by design, so
+    # this is the wall around it: anyone may register, nobody may name a
+    # redirect target outside this list. Localhost is here for the MCP
+    # inspector, which is how you debug a connector that will not connect.
+    mcp_redirect_hosts: str = "claude.ai,claude.com,localhost,127.0.0.1"
+
     api_host: str = "0.0.0.0"
     api_port: int = 8080
 

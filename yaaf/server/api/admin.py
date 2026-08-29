@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import os
 import secrets as pysecrets
+from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import Literal
 
@@ -50,6 +51,8 @@ from yaaf.core.models import (
     Evidence,
     Hypothesis,
     HypothesisStatus,
+    McpClient,
+    McpToken,
     Message,
     Notice,
     NoticeKind,
@@ -78,10 +81,20 @@ from yaaf.core.models import (
 from yaaf.server import briefing, policy
 from yaaf.server.api.agent import WAKE_CHANNEL
 from yaaf.server.deps import admin_auth, db
+from yaaf.server.mcp.auth import SCOPES as MCP_SCOPES
 
 log = logging.getLogger("yaaf.admin")
 
 router = APIRouter(dependencies=[Depends(admin_auth)])
+
+
+#: Who the audit trail should name for writes on this surface.
+#:
+#: "user:admin" is true when the chairman is holding the bearer themselves. It
+#: is a lie when a model client is driving through MCP, and the difference has
+#: to survive into a review six weeks later — so the MCP layer sets this for
+#: the duration of a call rather than every handler growing an actor argument.
+ACTOR: ContextVar[str] = ContextVar("yaaf_audit_actor", default="user:admin")
 
 
 def _audit(session: Session, project_id: str | None, action: str, entity: str,
@@ -90,7 +103,7 @@ def _audit(session: Session, project_id: str | None, action: str, entity: str,
         AuditLog(
             id=ids.new_id(ids.AUDIT),
             project_id=project_id,
-            actor="user:admin",
+            actor=ACTOR.get(),
             action=action,
             entity=entity,
             entity_id=entity_id,
@@ -3734,3 +3747,139 @@ def put_secret(body: SecretIn, session: Session = Depends(db)) -> dict:
     _audit(session, body.project_id, "secret.create", "secret", row.id,
            {"role_scopes": body.role_scopes, "kind": kind})
     return {"id": row.id, "rotated": False, "role_scopes": row.role_scopes, "kind": kind}
+
+
+# ── MCP clients ─────────────────────────────────────────────────────────────────
+
+
+class McpClientIn(BaseModel):
+    name: str = Field(min_length=2, max_length=80)
+    chairman_email: str
+    # At least one, because a token with no scope is a credential that exists
+    # to be widened later — and widening is the failure mode this table exists
+    # to make deliberate.
+    scopes: list[str] = Field(min_length=1)
+    #: Project ids or slugs. Empty means every project this chairman chairs.
+    projects: list[str] = Field(default_factory=list)
+
+
+@router.post("/mcp_clients")
+def create_mcp_client(body: McpClientIn, session: Session = Depends(db)) -> dict:
+    """Mint a token for a model client. The plaintext is shown once, here.
+
+    This is the only place the chairman's authority is ever narrowed rather
+    than copied: the admin bearer stays where it is, and what leaves is a
+    scoped, revocable, attributable credential that names the person it acts
+    for. See docs/MCP_SERVER.md.
+    """
+    from yaaf.core.tokens import mint_mcp
+
+    unknown = sorted(set(body.scopes) - set(MCP_SCOPES))
+    if unknown:
+        raise HTTPException(
+            status_code=422,
+            detail=f"unknown scope(s) {', '.join(unknown)}; valid: {', '.join(MCP_SCOPES)}",
+        )
+    chairman = session.execute(
+        select(User).where(User.email == body.chairman_email)
+    ).scalar_one_or_none()
+    if chairman is None:
+        raise HTTPException(status_code=422, detail="no such user")
+
+    project_ids: list[str] = []
+    for ref in body.projects:
+        project = session.execute(
+            select(Project).where((Project.id == ref) | (Project.slug == ref))
+        ).scalar_one_or_none()
+        if project is None:
+            raise HTTPException(status_code=422, detail=f"no project {ref!r}")
+        # Refused rather than silently dropped at read time: a token whose
+        # allowlist names a project its user does not chair would read as a
+        # grant and behave as nothing.
+        if project.chairman_user_id != chairman.id:
+            raise HTTPException(
+                status_code=422,
+                detail=f"{body.chairman_email} does not chair '{project.slug}'",
+            )
+        project_ids.append(project.id)
+
+    plaintext, token_hash = mint_mcp()
+    row = McpClient(
+        id=ids.new_id(ids.MCP_CLIENT),
+        name=body.name,
+        user_id=chairman.id,
+        scopes=sorted(set(body.scopes)),
+        project_ids=project_ids,
+    )
+    session.add(row)
+    session.flush()
+    # A CLI token is one row in the same table an OAuth access token lands in,
+    # with no expiry and no audience. One validation path serves both, so a
+    # rule proven for the browser holds for the terminal.
+    session.add(McpToken(
+        id=ids.new_id(ids.MCP_TOKEN), client_id=row.id, kind="static",
+        token_hash=token_hash,
+    ))
+    _audit(session, None, "mcp_client.create", "mcp_client", row.id,
+           {"name": row.name, "scopes": row.scopes, "projects": project_ids})
+    return {
+        "id": row.id,
+        "name": row.name,
+        "scopes": row.scopes,
+        "projects": project_ids,
+        "token": plaintext,
+        "note": "Store this now — only its hash is kept, and it is never shown again.",
+    }
+
+
+@router.get("/mcp_clients")
+def list_mcp_clients(session: Session = Depends(db)) -> list[dict]:
+    return [
+        {"id": c.id, "name": c.name, "user_id": c.user_id, "scopes": c.scopes,
+         "projects": c.project_ids, "created_at": c.created_at,
+         "last_used_at": c.last_used_at, "revoked_at": c.revoked_at}
+        for c in session.execute(select(McpClient).order_by(McpClient.created_at)).scalars()
+    ]
+
+
+@router.delete("/mcp_clients/{client_id}")
+def revoke_mcp_client(client_id: str, session: Session = Depends(db)) -> dict:
+    """Revoke, never delete: the audit trail names this client forever, so the
+    row it names has to survive to be readable."""
+    row = session.get(McpClient, client_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="unknown MCP client")
+    if row.revoked_at is None:
+        row.revoked_at = utcnow()
+        # And every token issued under it. Revoking the grant while its access
+        # token still validates would be a button that looks like it worked.
+        for token_row in session.execute(
+                select(McpToken).where(McpToken.client_id == row.id)).scalars():
+            token_row.revoked_at = token_row.revoked_at or utcnow()
+        _audit(session, None, "mcp_client.revoke", "mcp_client", row.id, {"name": row.name})
+    return {"id": row.id, "name": row.name, "revoked_at": row.revoked_at}
+
+
+class PasswordIn(BaseModel):
+    email: str
+    password: str = Field(min_length=12)
+
+
+@router.post("/users/password")
+def set_user_password(body: PasswordIn, session: Session = Depends(db)) -> dict:
+    """Give a chairman a password, so a browser can authenticate them.
+
+    The admin token authenticates a *client*; OAuth's consent screen has to
+    know which person is at the keyboard. This is the seam between the two, and
+    the only thing on the admin surface that writes `users.password_hash`.
+    """
+    from yaaf.server import login as login_module
+
+    try:
+        user = login_module.set_password(session, body.email.strip().lower(), body.password)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from None
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    _audit(session, None, "user.set_password", "user", user.id, {"email": user.email})
+    return {"id": user.id, "email": user.email}

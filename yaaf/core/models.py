@@ -1475,6 +1475,148 @@ class Secret(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 
+class McpClient(Base):
+    """A model client that speaks MCP on the chairman's behalf.
+
+    A third principal, and the reason it exists rather than reusing the admin
+    token: the admin bearer is unscoped, unattributable and unrevokable
+    individually, so handing it to a language model would give that model
+    every verb the platform spends its architecture denying to models — and
+    would record the chairman as the one who used them.
+
+    This row is the narrowing. `scopes` decides which verbs the client can
+    reach at all, `project_ids` decides which projects it can see, and every
+    write made through it is attributed as machine-mediated for good. Like a
+    run token, only the hash is stored: the plaintext is shown once at
+    creation and lives thereafter in the client's own config.
+    """
+
+    __tablename__ = "mcp_clients"
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    #: What it is, for the audit trail: "dom-laptop", "claude-desktop".
+    name: Mapped[str] = mapped_column(String(80))
+    #: The chairman this client acts for. Writes are attributed here, beside
+    #: the client name — never to the client alone, and never to the user alone.
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    #: Subset of read / steer / create / configure. `read` is implied by all.
+    scopes: Mapped[list] = mapped_column(JSONVariant, default=list)
+    #: Project allowlist. Empty means every project this user chairs — which
+    #: is a real narrowing already, because a chairman is per project.
+    project_ids: Mapped[list] = mapped_column(JSONVariant, default=list)
+    #: Set when the grant came from a consent screen rather than the CLI, so
+    #: the record can tell "the chairman typed a command" from "the chairman
+    #: clicked approve in a browser".
+    oauth_client_id: Mapped[str | None] = mapped_column(String(40))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    last_used_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    #: Revocation is a timestamp rather than a delete: the audit trail names
+    #: this client forever, so the row it names has to survive.
+    revoked_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+
+
+class McpToken(Base):
+    """One credential under a grant. Tokens rotate; the grant does not.
+
+    OAuth needs refresh, and refresh means the string a client holds changes
+    every hour or so. Attribution cannot ride on that: the audit trail names a
+    client for good, so the name lives on :class:`McpClient` and only the
+    secret lives here. A CLI-minted bearer is the same shape with no expiry —
+    one code path validates both, so a rule proven for one holds for the other.
+    """
+
+    __tablename__ = "mcp_tokens"
+    __table_args__ = (Index("ix_mcp_tokens_hash", "token_hash", unique=True),)
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    client_id: Mapped[str] = mapped_column(ForeignKey("mcp_clients.id"))
+    #: static (CLI-minted, no expiry) | access | refresh
+    kind: Mapped[str] = mapped_column(String(16), default="static")
+    token_hash: Mapped[str] = mapped_column(String(64))
+    #: The RFC 8707 audience this token was minted for. A token presented at a
+    #: resource it was not minted for is refused even though it is otherwise
+    #: valid — the rule that stops one stolen from another service being
+    #: replayed here. Empty means a CLI token, which names no audience.
+    resource: Mapped[str] = mapped_column(String(500), default="")
+    expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    #: Refresh rotation: the id of the token that replaced this one. Presenting
+    #: a rotated refresh token is how a stolen one announces itself.
+    rotated_to: Mapped[str | None] = mapped_column(String(40))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    revoked_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+
+
+class OAuthClient(Base):
+    """A registered MCP client — from RFC 7591 dynamic registration, or typed
+    in by a chairman whose provider does not do DCR.
+
+    Registering grants nothing. It says only "this software exists and these
+    are the URLs it may be sent back to"; the consent screen is where any
+    authority is handed over.
+    """
+
+    __tablename__ = "oauth_clients"
+    __table_args__ = (Index("ix_oauth_clients_client_id", "client_id", unique=True),)
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    client_id: Mapped[str] = mapped_column(String(64))
+    #: Public clients (PKCE, no secret) are the norm; a secret is stored hashed
+    #: for the few that ask for one.
+    client_secret_hash: Mapped[str | None] = mapped_column(String(64))
+    name: Mapped[str] = mapped_column(String(120))
+    redirect_uris: Mapped[list] = mapped_column(JSONVariant, default=list)
+    #: dcr | manual
+    source: Mapped[str] = mapped_column(String(16), default="dcr")
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class OAuthCode(Base):
+    """One authorization code in flight: what consent granted, waiting to be
+    exchanged. Single-use and short-lived — a code that outlives the redirect
+    it was issued for is a credential nobody is watching."""
+
+    __tablename__ = "oauth_codes"
+    __table_args__ = (Index("ix_oauth_codes_hash", "code_hash", unique=True),)
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    code_hash: Mapped[str] = mapped_column(String(64))
+    oauth_client_id: Mapped[str] = mapped_column(String(40))
+    user_id: Mapped[str] = mapped_column(String(40))
+    scopes: Mapped[list] = mapped_column(JSONVariant, default=list)
+    project_ids: Mapped[list] = mapped_column(JSONVariant, default=list)
+    #: PKCE, S256 only. A code with no challenge is never issued.
+    code_challenge: Mapped[str] = mapped_column(String(128))
+    redirect_uri: Mapped[str] = mapped_column(String(500))
+    resource: Mapped[str] = mapped_column(String(500), default="")
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    used_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+
+
+class McpConfirmation(Base):
+    """A write this client previewed and may now perform, once.
+
+    Rule 4 of docs/MCP_SERVER.md: an irreversible write cannot happen in one
+    call. The preview issues this row; the write spends it. Server-side rather
+    than left to the host client's permission prompt, because a prompt is a
+    suggestion and this platform's whole argument is that rules are not.
+
+    The fingerprint is a hash of the tool and its exact arguments, so the
+    second call cannot be a different write wearing the first one's approval.
+    """
+
+    __tablename__ = "mcp_confirmations"
+    __table_args__ = (Index("ix_mcp_confirmations_token", "token_hash", unique=True),)
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    client_id: Mapped[str] = mapped_column(String(40))
+    token_hash: Mapped[str] = mapped_column(String(64))
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    tool: Mapped[str] = mapped_column(String(40))
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    used_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
 class AuditLog(Base):
     __tablename__ = "audit_log"
     __table_args__ = (Index("ix_audit_project_at", "project_id", "at"),)

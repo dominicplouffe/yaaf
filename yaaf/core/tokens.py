@@ -18,5 +18,22 @@ def mint() -> tuple[str, str]:
     return plaintext, hash_token(plaintext)
 
 
+def mint_prefixed(prefix: str) -> tuple[str, str]:
+    """Return (plaintext, sha256hex) for any credential in this family."""
+    plaintext = f"{prefix}_{secrets.token_urlsafe(32)}"
+    return plaintext, hash_token(plaintext)
+
+
+def mint_mcp() -> tuple[str, str]:
+    """Return (plaintext, sha256hex) for an MCP client token.
+
+    A different prefix from a run token because it is a different principal
+    with a different lifetime: this one is long-lived and sits in a desktop
+    client's config file, so a token found in a log has to be identifiable at
+    a glance as the thing to revoke. Storage is the same — hash only.
+    """
+    return mint_prefixed("ymt")
+
+
 def hash_token(plaintext: str) -> str:
     return hashlib.sha256(plaintext.encode()).hexdigest()
