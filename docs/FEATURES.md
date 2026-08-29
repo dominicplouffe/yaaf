@@ -442,7 +442,8 @@ form — and the form asks one person, alone, to hand-author a goal of several
 thousand words, an org chart, and a constitution of fifty-odd rules. That is
 not a form problem. It is an authoring problem wearing a form.
 
-**+ Design a project** puts an agent there instead. You write a paragraph; the
+**+ New project** now opens a fork rather than a form, and its recommended
+side — **Describe it, and yaaf drafts it** — puts an agent there instead. You write a paragraph; the
 **Founder** replies with a whole project — goal prose, shape, roster, and the
 few constitution rules it can defend — and then says what it assumed, what it
 added that you never asked for, and what it still needs to know. You argue. It

@@ -6,7 +6,7 @@
 // draft to the New Project screen through the same path a setup file takes.
 
 import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { ApiError, del, get, post, ProjectBundle, put } from "../api";
 import Markdown from "../Markdown";
 import { SecretInput } from "../ui";
@@ -153,10 +153,10 @@ function CredentialGate({ onSaved }: { onSaved: () => void }) {
         {busy ? "Saving…" : "Save and start"}
       </button>
       <p className="muted">
-        You can also skip this and fill the form yourself — the fire drill on
-        the New Project screen runs for nothing either way. Once it is set, it
-        lives in <a href="#/settings">Settings</a>, where you can test, rotate
-        or remove it.
+        You can also <a href="#/projects/new/form">fill the form yourself</a>{" "}
+        instead — the fire drill runs for nothing either way. Once the key is
+        set, it lives in <a href="#/settings">Settings</a>, where you can test,
+        rotate or remove it.
       </p>
     </div>
   );
@@ -348,7 +348,7 @@ export default function Founding() {
 
   function review() {
     if (!thread?.draft_bundle) return;
-    navigate("/projects/new", {
+    navigate("/projects/new/form", {
       state: { foundingDraft: thread.draft_bundle, foundingThreadId: thread.id },
     });
   }
@@ -356,7 +356,8 @@ export default function Founding() {
   if (status && !status.credential_configured) {
     return (
       <>
-        <h1>Design a project</h1>
+        <Link className="crumb" to="/projects/new">&larr; Both ways to start</Link>
+        <h1>Describe it, and yaaf drafts it</h1>
         <p className="subtitle">One key, once, before the first conversation.</p>
         <CredentialGate onSaved={loadStatus} />
       </>
@@ -369,18 +370,28 @@ export default function Founding() {
     <div className="founding">
       <header className="founding-head">
         <div>
-          <h1>Design a project</h1>
+          <Link className="crumb" to="/projects/new">&larr; Both ways to start</Link>
+          <h1>Describe it, and yaaf drafts it</h1>
           <p className="subtitle">
             Describe what you want. The Founder drafts the whole thing — goal,
             shape, roster, rules — and then you argue with it. Nothing here is
             created until you say so on the next screen.
           </p>
         </div>
-        {thread && (
-          <button onClick={startOver} disabled={busy}>
-            Start over
-          </button>
-        )}
+        <div className="founding-head-acts">
+          {thread && (
+            <button onClick={startOver} disabled={busy}>
+              Start over
+            </button>
+          )}
+          {/* Changing your mind is a two-way door, and it is only a door if it
+              is on the screen you would change it on. A conversation that is
+              not going anywhere should cost one click to leave, not a hunt
+              through the nav for the other name for the same job. */}
+          <Link className="crumb" to="/projects/new/form">
+            I&apos;ll fill in the form myself &rarr;
+          </Link>
+        </div>
       </header>
 
       <div className="founding-body">

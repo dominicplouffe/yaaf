@@ -44,13 +44,28 @@ unit of work, and go back to sleep. Everything is recorded.
    a server name — the whole address. (The form will refuse anything else,
    on purpose.)
 
-## Step 0 — Or let the Founder draft it
+## Step 0 — Which way in
+
+There is one way to start a project: **+ New project**, at the top of the
+sidebar and on the Projects page. It opens a fork, not a form, and asks the one
+question that decides everything after it:
+
+- **Describe it, and yaaf drafts it** — you write a paragraph, the Founder
+  writes the project. Choose this for a first project, or whenever you know the
+  outcome you want but not the org that gets you there.
+- **Fill it in myself** — the four-step form below. Choose this when you have
+  done it before, or you already know the goal and the roster.
+
+Neither is a commitment. Both end on the same review screen, nothing is created
+until you sign it there, and each screen carries a link across to the other —
+including one under the goal box, which is where people usually discover they
+wanted the Founder after all. A setup file exported from another project is the
+third way in, offered on the same screen; it prefills the form.
 
 Everything below describes filling the form yourself, and it still works. But
 the two hardest decisions on that form — the goal, and who to hire — are the
-two the product can now argue with you about.
-
-**+ Design a project** opens a conversation instead of a form. Write what you
+two the product can now argue with you about. **Describe it, and yaaf drafts
+it** opens a conversation instead of a form. Write what you
 want in a paragraph; the Founder answers with a whole project — goal, shape,
 roster, and the handful of constitution rules it can justify — and then tells
 you what it assumed, what it added that you did not ask for, and what it still
@@ -76,7 +91,7 @@ Two things worth knowing:
 
 ## Step 1 — Create the project
 
-Click **+ New project**. It runs in four steps — the job, the org, the
+Choose **Fill it in myself**. It runs in four steps — the job, the org, the
 money and the rules, then review — because those are the four decisions that
 need you; everything else is derived, set by a preset, or something you can do
 later in Settings. Nothing is hidden behind a step: **All on one page** shows

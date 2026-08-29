@@ -1,4 +1,4 @@
-import { Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom";
+import { Link, Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom";
 import { DeskView, get, getToken } from "./api";
 import { usePoll } from "./hooks";
 import Login from "./pages/Login";
@@ -6,6 +6,7 @@ import Desk, { buildItems, needsYou } from "./pages/Desk";
 import Projects from "./pages/Projects";
 import Founding from "./pages/Founding";
 import NewProject from "./pages/NewProject";
+import StartProject from "./pages/StartProject";
 import ProjectPage from "./pages/Project";
 import Roles from "./pages/Roles";
 import Settings from "./pages/Settings";
@@ -38,6 +39,12 @@ function Shell({ children }: { children: React.ReactNode }) {
         <div className="brand">
           y<span>aa</span>f
         </div>
+        {/* The one create affordance, and the only verb in a list of places.
+            It used to be two of them — a conversation and a form, named after
+            our two implementations — sitting among the four destinations and
+            pushing them down. Which of the two you want is a question with a
+            screen of its own now; this is the door to it. */}
+        <Link to="/projects/new" className="navnew">+ New project</Link>
         <NavLink to="/desk" className={({ isActive }) => "navlink" + (isActive ? " active" : "")}>
           Desk
           <DeskCount />
@@ -50,12 +57,6 @@ function Shell({ children }: { children: React.ReactNode }) {
         </NavLink>
         <NavLink to="/settings" className={({ isActive }) => "navlink" + (isActive ? " active" : "")}>
           Settings
-        </NavLink>
-        <NavLink to="/projects/found" className={({ isActive }) => "navlink" + (isActive ? " active" : "")}>
-          + Design a project
-        </NavLink>
-        <NavLink to="/projects/new" className={({ isActive }) => "navlink" + (isActive ? " active" : "")} end>
-          Fill the form myself
         </NavLink>
         <div className="foot">
           ui build {__BUILD_TIME__}
@@ -101,8 +102,20 @@ export default function App() {
           </Shell>
         }
       />
+      {/* One door, then the fork. Every "create a project" affordance in the
+          app points at /projects/new, which is now the question rather than
+          one of its two answers; the answers are the two routes under it, and
+          each is linkable on its own for anyone who already knows. */}
       <Route
-        path="/projects/found"
+        path="/projects/new"
+        element={
+          <Shell>
+            <StartProject />
+          </Shell>
+        }
+      />
+      <Route
+        path="/projects/new/describe"
         element={
           <Shell>
             <Founding />
@@ -110,13 +123,16 @@ export default function App() {
         }
       />
       <Route
-        path="/projects/new"
+        path="/projects/new/form"
         element={
           <Shell>
             <NewProject />
           </Shell>
         }
       />
+      {/* The conversation's old address, kept working for bookmarks and for
+          the docs that name it. */}
+      <Route path="/projects/found" element={<Navigate to="/projects/new/describe" replace />} />
       <Route
         path="/projects/:projectId/*"
         element={

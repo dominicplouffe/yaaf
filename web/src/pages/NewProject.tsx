@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { CrewSummary, get, McpServerEntry, patch, post, ProjectBundle,
   RehearsalReport, RoleSummary, SlackProvision } from "../api";
 import Drill from "../drill";
@@ -143,6 +143,12 @@ const ONE_PAGE_KEY = "yaaf.newproject.onepage";
 
 export default function NewProject() {
   const navigate = useNavigate();
+  // "Load a setup file" is offered on the start screen as a third way in, but
+  // it is a card on this form rather than a screen of its own — a file is a
+  // prefill, not a different decision. The deep link brings the reader to it
+  // instead of asking them to spot it.
+  const [search] = useSearchParams();
+  const fileCard = useRef<HTMLDivElement | null>(null);
   // A draft handed over by the Founder. It arrives as the same ProjectBundle a
   // setup file carries, so it lands through the same applyBundle path; the
   // thread id rides along so the founding conversation can be handed to the
@@ -482,6 +488,10 @@ export default function NewProject() {
   // and stops there — the chairman still presses Create.
   useEffect(() => {
     if (handover.foundingDraft) applyBundle(handover.foundingDraft);
+    if (search.get("start") === "file") {
+      fileCard.current?.scrollIntoView({ block: "center" });
+      fileCard.current?.querySelector("input")?.focus();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -971,7 +981,8 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
     <>
       <div style={{ display: "flex", alignItems: "flex-start", gap: 14, flexWrap: "wrap" }}>
         <div style={{ flex: 1, minWidth: 260 }}>
-          <h1>New project</h1>
+          <Link className="crumb" to="/projects/new">&larr; Both ways to start</Link>
+          <h1>Fill it in myself</h1>
           <p className="subtitle" style={{ marginBottom: 0 }}>
             A small project that works while you're away. You can change everything
             afterwards except its shape.
@@ -1007,7 +1018,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
         </nav>
       <form onSubmit={submit} className="stepbody">
         {on(1) && <>
-        <div className="card" style={{ marginBottom: 10 }}>
+        <div className="card" style={{ marginBottom: 10 }} ref={fileCard}>
           <label className="field">Start from a setup file (optional)</label>
           <p className="help" style={{ marginTop: 0 }}>
             Downloaded from a project's Settings → Setup file. Everything below prefills — review
@@ -1106,6 +1117,18 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
               <p className="help" style={{ marginTop: 8 }}>
                 Advisory only — you can create with none of these ticked. A weak
                 goal ("analyze the PPC data") gets you a project that putters.
+              </p>
+              {/* The other way in, offered at the one moment it is actually
+                  wanted. A chairman who cannot get four ticks on his own brief
+                  is exactly who the Founder was built for, and the checklist
+                  above is where he finds that out — not the sidebar he read
+                  ten minutes ago. */}
+              <p className="help" style={{ marginTop: 8 }}>
+                Stuck on the wording?{" "}
+                <Link to="/projects/new/describe">
+                  Describe it and let yaaf draft the whole project
+                </Link>{" "}
+                — it comes back here, filled in.
               </p>
             </div>
           </div>

@@ -258,7 +258,12 @@ export default function Projects() {
         <Skeleton rows={4} />
       ) : projects.length === 0 ? (
         <div className="card">
-          No projects yet. <Link to="/projects/new">Create the first one.</Link>
+          <p style={{ margin: "0 0 10px" }}>
+            No projects yet. You can describe what you want and have yaaf draft
+            the whole thing, or fill the form in yourself — the next screen
+            lays out both.
+          </p>
+          <Link to="/projects/new"><button className="primary">+ New project</button></Link>
         </div>
       ) : (
         <>
