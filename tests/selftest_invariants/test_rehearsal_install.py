@@ -11,14 +11,21 @@ nothing: he cannot tell it apart from a real finding.
 
 So the wiring facts are read by the caller that holds a live session and handed
 to the drill as data. These tests hold the `client` its sibling module
-deliberately avoids; all but the last run no drill.
+deliberately avoids, and none of them runs a drill: what is under test is the
+prose and the two hops the facts take to reach it, and a drill answers none of
+that.
 """
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+from types import SimpleNamespace
+
 import pytest
 
 from tests.conftest import ADMIN, seed_role
+from yaaf import rehearsal
 from yaaf.core.db import db_session
 from yaaf.rehearsal import install
 from yaaf.rehearsal import report as rehearsal_report
@@ -177,32 +184,74 @@ def test_the_spec_gets_the_last_word_on_whether_slack_is_on():
     assert "switches it off" in lines
 
 
-# ── through the route the dashboard and the Founder both take ───────────────────
+# ── across the two process boundaries, without paying for a drill ───────────────
+#
+# The seam is worth testing and a drill is not what tests it: the facts are put
+# on a file by the route and taken off it by the entry point, and both halves
+# are observable without running a project. Running one here would buy the same
+# assertion for three seconds — see CLAUDE.md on which tier answers which
+# question.
 
 
-def test_the_endpoint_hands_the_drill_what_this_install_has_wired(client):
-    """Deliberately slow: it runs a whole drill in a subprocess, because the
-    thing under test is precisely that the facts survive the process boundary
-    the drill's isolation puts between them and the live database."""
+def test_the_route_hands_the_drill_what_this_install_has_wired(client, monkeypatch):
+    """The route the dashboard and the Founder both reach the drill through."""
+    import subprocess
+
     seed_role(client, "ceo", is_ceo=True)
-    seed_role(client, "worker")
-    client.post("/admin/users", headers=ADMIN,
-                json={"email": "chair@example.com", "display_name": "Chair"})
     client.put("/admin/settings/slack", headers=ADMIN, json={
         "bot_token": "xoxb-global-workspace", "signing_secret": "global-signing",
         "app_token": "xapp-global-socket", "chairman_slack_user": "U-CHAIR"})
+    seen: dict = {}
 
-    response = client.post("/admin/rehearse", headers=ADMIN, json={"spec": {"project": {
-        "slug": "drill", "name": "Drill", "chairman_email": "chair@example.com",
-        "goal": "Ship one briefing note for the committee, sourced and dated, this month.",
-        "mode": "deliver", "ceo_role_slug": "ceo",
-        "teams": [{"role_slug": "worker", "name": "Desk",
-                   "employees": ["Ada", "Grace"], "lead": "Ada"}],
-    }}, "days": 30})
+    def fake_run(argv, **kwargs):
+        # Read it here: the temp directory is gone by the time the route
+        # returns, which is the whole reason the child is given a path at all.
+        flag = argv.index("--install")
+        seen["argv"] = argv
+        seen["install"] = json.loads(Path(argv[flag + 1]).read_text())
+        return SimpleNamespace(stdout='{"ok": true}', stderr="", returncode=0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    response = client.post("/admin/rehearse", headers=ADMIN, json={
+        "spec": {"project": {"slug": "drill", "goal": "Ship it.",
+                             "ceo_role_slug": "ceo"}}})
 
     assert response.status_code == 200, response.text
-    report = response.json()
-    assert report["install"]["slack"]["bot_token"] is True
-    lines = " ".join(report["not_exercised"])
-    assert "Nothing to attach" in lines
-    assert "until one is attached" not in lines
+    assert seen["install"]["slack"]["bot_token"] is True
+    assert seen["install"]["slack"]["chairman_user"] is True
+    # And the spec still travels the way it did — the note is an addition to
+    # that call, not a change to it.
+    assert seen["argv"][3].endswith("spec.json")
+
+
+def test_the_entry_point_takes_them_off_the_file_and_into_the_report(tmp_path, monkeypatch):
+    """The far side of the same seam: `python -m yaaf.rehearsal --install`."""
+    spec = tmp_path / "spec.json"
+    spec.write_text(json.dumps({"slug": "drill", "goal": "Ship it."}))
+    note = tmp_path / "install.json"
+    note.write_text(json.dumps(CONNECTED))
+    seen: dict = {}
+
+    def fake_rehearse(spec_body, **kwargs):
+        seen.update(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setattr(rehearsal, "rehearse", fake_rehearse)
+    assert rehearsal.main([str(spec), "--json", "--install", str(note)]) == 0
+    assert seen["install"] == CONNECTED
+
+
+def test_a_note_it_cannot_read_costs_a_footnote_and_not_the_drill(tmp_path, monkeypatch):
+    """The wiring note is a courtesy; the verdict is the product. A drill that
+    refused to run because this file would not parse would have traded the
+    whole preflight for the sentence at the bottom of it."""
+    spec = tmp_path / "spec.json"
+    spec.write_text(json.dumps({"slug": "drill", "goal": "Ship it."}))
+    note = tmp_path / "install.json"
+    note.write_text("{ this is not json")
+    seen: dict = {}
+
+    monkeypatch.setattr(rehearsal, "rehearse",
+                        lambda spec_body, **kwargs: seen.update(kwargs) or {"ok": True})
+    assert rehearsal.main([str(spec), "--json", "--install", str(note)]) == 0
+    assert seen["install"] is None
