@@ -1,0 +1,43 @@
+# The public listener — the only thing the internet is allowed to see.
+#
+# The allowlist is the whole point. Publishing the box publishes /admin, which
+# is the unscoped bearer surface the entire MCP design exists to avoid handing
+# out, and /app, which is the chairman's dashboard. Four paths answer here:
+# the MCP endpoint, the two discovery documents (each in both the bare and the
+# path-inserted form), and the consent flow. Everything else 404s and stays on
+# the private listener.
+#
+# TLS terminates upstream — Tailscale Funnel holds the certificate for this
+# node and forwards plain HTTP here. So this speaks HTTP on a port published
+# to loopback only: nothing routable reaches it directly, and the tunnel is
+# the sole way in.
+{
+	admin off
+	# No hostname is named below, so Caddy would not reach for a certificate
+	# anyway. Saying it out loud keeps a future edit from quietly turning on
+	# an ACME client that cannot work here — this box has no inbound 80 or 443.
+	auto_https off
+}
+
+:8081 {
+	@public path /mcp /.well-known/oauth-* /oauth/*
+
+	handle @public {
+		reverse_proxy api:8080 {
+			# yaaf derives its OAuth audience from YAAF_PUBLIC_BASE_URL, not
+			# from this header, so nothing load-bearing rides on it. Set it
+			# anyway: a proxy that misreports the scheme is a debugging trap
+			# laid for whoever comes next.
+			header_up X-Forwarded-Proto https
+		}
+	}
+
+	handle {
+		respond 404
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

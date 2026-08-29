@@ -150,6 +150,28 @@ services:
       db:
         condition: service_healthy
 
+  # The public listener. Off by default — plain `docker compose up` is
+  # unchanged; opt in with `COMPOSE_PROFILES=public` in deploy/.env, which
+  # every compose call in this directory reads, so the deploy and update
+  # scripts bring it up too rather than leaving it behind on the next rebuild.
+  #
+  # Needed only to chair from claude.ai. Claude Code and Claude Desktop reach
+  # the private listener with a minted token and need none of this.
+  #
+  # It publishes to loopback, not to the LAN: whatever terminates TLS in front
+  # (a tunnel, or a reverse proxy on this host) is what decides who can reach
+  # it. The path allowlist lives in public/Caddyfile and is the reason this
+  # service exists at all — see docs/DEPLOYMENT.md.
+  public:
+    profiles: ["public"]
+    restart: unless-stopped
+    image: caddy:2-alpine
+    volumes:
+      - ./public/Caddyfile:/etc/caddy/Caddyfile:ro
+    ports:
+      - "127.0.0.1:8081:8081"
+    depends_on: [api]
+
   # Optional S3-compatible artifact store. Off by default — plain
   # `docker compose up` is unchanged; opt in with `docker compose --profile s3 up`
   # and uncomment the YAAF_ARTIFACT_S3_* lines on api and runner. The bucket is
