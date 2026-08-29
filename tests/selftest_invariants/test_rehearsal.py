@@ -69,15 +69,22 @@ def caller_db(tmp_path):
     pointed at; without this a later test inherits a database that is gone.
     That hazard is real and the drill's own guard cannot cover it — the guard
     protects the drill's caller, not its successor.
+
+    Restoring by URL is not good enough, which is what this used to do:
+    `str(engine().url)` masks the password as `***`, so a Postgres run came
+    back with a literal `***` where its credentials were and every later test
+    in the worker died on `password authentication failed`. `swap_engine`
+    exists for exactly this — it hands back the previous engine OBJECT.
     """
-    from yaaf.core.db import engine, reset_for_tests
+    from yaaf.core.db import engine, swap_engine
     from yaaf.core.models import Base
 
-    before = str(engine().url)
-    reset_for_tests(f"sqlite:///{tmp_path}/caller.db")
+    restore = swap_engine(f"sqlite:///{tmp_path}/caller.db")
     Base.metadata.create_all(engine())
-    yield
-    reset_for_tests(before)
+    try:
+        yield
+    finally:
+        restore()
 
 
 # ── it works ────────────────────────────────────────────────────────────────────
