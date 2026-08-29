@@ -379,6 +379,15 @@ breaks every token with a message about the wrong resource:
 YAAF_PUBLIC_BASE_URL=https://yaaf.example.com
 ```
 
+Leaving it unset is worse than getting it wrong, because it reports as neither.
+Both `.well-known` documents build every endpoint they publish from this value,
+and unset it falls back to `YAAF_API_BASE_URL` — `http://api:8080` under
+compose, a name that resolves only inside that network. The documents still
+answer 200. The connector reads them, cannot reach the registration endpoint
+they name, and says only that it could not register with your sign-in service,
+which sends you to look at OAuth. The server logs a warning at startup naming
+the advertised origin; if a connector cannot register, read that line first.
+
 **Publish four paths and nothing else.** Publishing the box publishes `/admin`,
 which is your unscoped bearer surface — the one the whole MCP design exists to
 avoid handing out. The public listener serves discovery, the consent flow and

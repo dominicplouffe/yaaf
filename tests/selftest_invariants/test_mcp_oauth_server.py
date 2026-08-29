@@ -24,7 +24,9 @@ from tests.oauth_flow import (
     exchange,
     register,
 )
+from yaaf.core.config import settings
 from yaaf.server import mcp_oauth
+from yaaf.server.mcp import oauth_server
 
 
 def test_our_own_oauth_client_can_discover_this_server(client, public):
@@ -146,3 +148,35 @@ def test_a_cli_token_still_works_after_the_token_table_split(client, public):
     assert client.post("/mcp", headers=bearer(minted["token"]),
                        json={"jsonrpc": "2.0", "id": 1, "method": "initialize"}
                        ).status_code == 200
+
+
+def test_an_install_with_no_public_origin_is_named_at_startup(monkeypatch):
+    """The failure every other test in this file is immune to by construction.
+
+    The `public` fixture sets a browser-facing origin, as a real deployment
+    must — so the whole suite walks a ladder whose rungs are reachable, and
+    the one deployment that cannot be reached is the one nobody exercises.
+    Without the origin, discovery still answers 200 and still publishes every
+    endpoint; they just name `YAAF_API_BASE_URL`, which under compose is a
+    container alias. The connector reads that document, cannot resolve what it
+    names, and reports back only that it could not register.
+
+    Nothing here can be checked at request time — the documents are correct
+    for what they were told. So the check is at startup, and this is it.
+    """
+    monkeypatch.delenv("YAAF_PUBLIC_BASE_URL", raising=False)
+    monkeypatch.setenv("YAAF_API_BASE_URL", "http://api:8080")
+    settings.cache_clear()
+    try:
+        assert oauth_server.unroutable_base_url() == "http://api:8080"
+        # The document is served, and it is served wrong — which is the point.
+        assert oauth_server.authorization_server()["registration_endpoint"] == (
+            "http://api:8080/oauth/register")
+
+        monkeypatch.setenv("YAAF_PUBLIC_BASE_URL", "https://yaaf.example.com")
+        settings.cache_clear()
+        assert oauth_server.unroutable_base_url() is None
+        assert oauth_server.authorization_server()["registration_endpoint"] == (
+            "https://yaaf.example.com/oauth/register")
+    finally:
+        settings.cache_clear()

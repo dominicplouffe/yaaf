@@ -93,6 +93,16 @@ def create_app() -> FastAPI:
     # flow beside the data-source callback that already lives under /oauth.
     app.include_router(oauth_server.well_known, tags=["mcp"])
     app.include_router(oauth_server.router, prefix="/oauth", tags=["mcp"])
+    # Both documents above are built from the advertised origin, so an origin
+    # only this network can resolve is published as fact and breaks the
+    # connector somewhere we get no report from. See unroutable_base_url.
+    stranded = oauth_server.unroutable_base_url()
+    if stranded:
+        log.warning(
+            "YAAF_PUBLIC_BASE_URL is unset, so OAuth discovery advertises %s — "
+            "an origin an inbound client (claude.ai) cannot resolve, which it "
+            "reports only as a failure to register. Set it to this install's "
+            "browser-facing origin.", stranded)
 
     @app.exception_handler(Refusal)
     def refusal_handler(request: Request, exc: Refusal) -> JSONResponse:
