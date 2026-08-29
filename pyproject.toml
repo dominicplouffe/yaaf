@@ -27,6 +27,10 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.2",
+    # The suite is integration tests over HTTP, so it is wall-clock bound
+    # rather than CPU bound and parallelises almost linearly. `-n auto` is how
+    # CI runs it and how you should run it locally.
+    "pytest-xdist>=3.6",
     "ruff>=0.5",
 ]
 # S3-compatible artifact store backend (MinIO, R2, AWS). The base install

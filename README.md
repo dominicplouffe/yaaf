@@ -306,7 +306,7 @@ roles/          starter role library across six hiring aisles
 examples/       eleven importable projects (.md + .json)
 evals/          golden-transcript evals — regression-gate for prompt edits
 tests/          invariant suite over HTTP, chaos tests, eval checks; CI runs
-                it on SQLite + Postgres
+                it on Postgres, the way it is deployed
 ```
 
 ## Project status

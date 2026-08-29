@@ -20,6 +20,8 @@ os.environ.setdefault("YAAF_ARTIFACTS_ROOT", tempfile.mkdtemp(prefix="yaaf-test-
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import text
+from sqlalchemy.engine import make_url
 
 from yaaf.core import ids
 from yaaf.core.config import settings
@@ -38,17 +40,71 @@ ROLE_MIN = {
 }
 
 
-@pytest.fixture()
-def client(tmp_path):
-    # SQLite by default; set YAAF_TEST_DATABASE_URL to run the same suite
-    # against real Postgres (exercises SKIP LOCKED, JSONB, NOTIFY).
+@pytest.fixture(scope="session")
+def _database() -> str:
+    """Build the schema ONCE per worker, not once per test.
+
+    The suite is 760-odd integration tests and each one used to drop and
+    rebuild 47 tables before it ran — a third of the wall clock on Postgres
+    spent on DDL that never varies. The schema is a session cost; only the
+    *rows* are per-test, and `client` empties those instead.
+
+    SQLite by default; set YAAF_TEST_DATABASE_URL to run the same suite
+    against real Postgres (exercises SKIP LOCKED, JSONB, NOTIFY). Under
+    pytest-xdist each worker gets a database of its own — the workers share a
+    server but must never share rows.
+    """
     override = os.environ.get("YAAF_TEST_DATABASE_URL")
+    worker = os.environ.get("PYTEST_XDIST_WORKER", "")
     if override:
-        reset_for_tests(override)
+        url = _worker_database(override, worker) if worker else override
+        reset_for_tests(url)
         Base.metadata.drop_all(engine())
     else:
-        reset_for_tests(f"sqlite:///{tmp_path}/yaaf-test.db")
+        directory = tempfile.mkdtemp(prefix=f"yaaf-test-db-{worker or 'main'}-")
+        url = f"sqlite:///{directory}/yaaf-test.db"
+        reset_for_tests(url)
     Base.metadata.create_all(engine())
+    return url
+
+
+def _worker_database(base_url: str, worker: str) -> str:
+    """Give an xdist worker its own database on the shared Postgres server."""
+    import psycopg
+
+    parsed = make_url(base_url)
+    name = f"{parsed.database}_{worker}"
+    # psycopg directly rather than an AUTOCOMMIT engine: CREATE DATABASE cannot
+    # run inside a transaction, and the `SET TIME ZONE` connect listener in
+    # yaaf.core.db opens one before SQLAlchemy can turn autocommit on.
+    dsn = parsed.render_as_string(hide_password=False).replace("postgresql+psycopg://",
+                                                              "postgresql://")
+    with psycopg.connect(dsn, autocommit=True) as connection:
+        connection.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+        connection.execute(f'CREATE DATABASE "{name}"')
+    return parsed.set(database=name).render_as_string(hide_password=False)
+
+
+def _empty_every_table() -> None:
+    """Return the database to the state a test expects to find it in.
+
+    Deleting rows is what a test actually needs, and it is an order of
+    magnitude cheaper than rebuilding the schema. FKs are off on SQLite and
+    CASCADE handles them on Postgres, so neither needs a topological order.
+    """
+    tables = list(Base.metadata.sorted_tables)
+    with db_session() as session:
+        if session.get_bind().dialect.name == "postgresql":
+            names = ", ".join(f'"{table.name}"' for table in tables)
+            session.execute(text(f"TRUNCATE TABLE {names} RESTART IDENTITY CASCADE"))
+        else:
+            for table in reversed(tables):
+                session.execute(table.delete())
+
+
+@pytest.fixture()
+def client(_database):
+    _empty_every_table()
     from yaaf.server.app import create_app
 
     with TestClient(create_app()) as test_client:
