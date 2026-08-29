@@ -378,6 +378,12 @@ evidence at all about your *project*.
 - **The same session answers from Slack** via Socket Mode (no public URL
   needed). The Postgres bus stays canonical; Slack is a viewport plus exactly
   one inbound path — you, in the mapped boardroom channel.
+- **One connection, every project.** Slack tokens are stored once, app-wide,
+  and every project inherits them — per field, so a project in a different
+  workspace can override just the token it needs. Creating a project makes its
+  channels for you (`{slug}-boardroom`, `{slug}-leadership`, one per team,
+  private, with you invited) and tells you their names. The bot token still
+  never enters a sandbox, shared or not.
 - **Directives.** A rule you state in chat becomes a rule the platform holds:
   the CEO files it as a directive citing your actual message, and the platform
   enforces it from the next call. Scope is limited to your reporting

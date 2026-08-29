@@ -1,8 +1,10 @@
 # Integrations — connecting your project to the world
 
-Everything here is **optional** and configured per project from the dashboard.
-Nothing below requires editing a role, redeploying, or touching the CLI, with
-no exceptions.
+Everything here is **optional** and configured from the dashboard — most of it
+per project, and the pieces that are the same for every project (the Slack
+connection, the Founder's model key) once, app-wide, under the sidebar's
+**Settings**. Nothing below requires editing a role, redeploying, or touching
+the CLI, with no exceptions.
 
 The rule that governs all of it: **agents get capabilities, never credentials
 they could exfiltrate.** Secrets are envelope-encrypted, scoped to roles, and
@@ -30,6 +32,13 @@ checklist re-checks it, and there's a live billing check button.
 > **Terms note:** Anthropic's consumer terms don't permit running fleets on a
 > personal Claude subscription. Subscription mode exists for single-user
 > tinkering; use an API key for anything real.
+
+**Not to be confused with the platform key.** The sidebar's **Settings → Model
+credential** holds a *separate* key that pays for product-wide conversations
+(the Founder, which drafts a project before one exists). It is decrypted
+server-side only and **never reaches a project's agents** — there is no
+inheritance and no fallback. A project with no billing credential of its own
+cannot run, and that is the intended answer.
 
 ## Credentials and variables
 
@@ -128,25 +137,62 @@ Two operational notes:
 
 ## Slack
 
-**Settings → Integrations → Slack bridge.**
+**Settings → Slack connection** (app-wide), then **project → Settings →
+Integrations → Slack bridge** (that project's channels).
 
 Two things at once: your project's channels **mirror out** to Slack, and you
 can **talk to your CEO from Slack** — the same resident chat session as the
 Boardroom, answering in seconds.
 
-**Socket Mode is the recommended path** — it opens an outbound WebSocket to
-Slack, so your self-hosted box needs no public URL. Provide an app-level token
-(`xapp-…`) as a secret and name it in the config.
+### One workspace, every project
 
-The config shape (`project.config["slack"]`, set from the dashboard or
-`PATCH /admin/projects/{id}`):
+You reuse one Slack workspace and only ever change the *channels*, so that is
+how it is stored: the tokens live once at platform scope and every project
+inherits them. Connect Slack under the sidebar's **Settings**, and a new
+project needs nothing but its channel map.
+
+**yaaf makes those channels for you.** With a connection configured, creating a
+project provisions `{prefix}-boardroom`, `{prefix}-leadership` and one room per
+team — private by default, with your Slack user invited to each — and the
+"project created" screen tells you their names. The prefix defaults to the
+project's slug (the one name guaranteed not to collide between two projects)
+and is configurable app-wide or per project. Turn auto-creation off and every
+project gets a **Create missing channels** button instead; either way it is
+idempotent — a room already mapped is left alone, and a name Slack already
+holds is *adopted*, not duplicated. Run it again after hiring a team to get
+that team's room.
+
+The bot needs `chat:write` plus `channels:manage` (public) or `groups:write`
+(private) to create and invite.
+
+### Overriding it for one project
+
+Inheritance is **per field**. A project that names its own `bot_token_secret`
+overrides only the bot token and still inherits the signing secret, the app
+token, your Slack member ID and the naming convention — which is what a project
+living in a *different* workspace actually needs. The channel map is always the
+project's own, because that is the part that genuinely differs.
+
+Three states, and the difference between the last two matters:
+
+| `project.integrations["slack"]` | Meaning |
+|---|---|
+| absent or `null` | Inherit everything. The default a project is born in — harmless, because the channel map is empty until rooms exist. |
+| `{ … }` | Inherit, with the named fields winning. |
+| `{"enabled": false}` | Off for this project, however the platform is wired. |
+
+The shape (set from the dashboard or `PATCH /admin/projects/{id}`; every field
+optional):
 
 ```json
 {
+  "enabled": true,
   "bot_token_secret":   "<secret name holding the xoxb- bot token>",
   "app_token_secret":   "<secret name holding the xapp- app token, for Socket Mode>",
   "signing_secret":     "<secret name holding the Slack signing secret, for the HTTP path>",
   "chairman_slack_user": "U…",
+  "channel_prefix":     "acme",
+  "channel_visibility": "private",
   "channel_map": {
     "boardroom":  "C…",
     "leadership": "C…",
@@ -155,17 +201,26 @@ The config shape (`project.config["slack"]`, set from the dashboard or
 }
 ```
 
-**The trust model:** the Postgres bus is always canonical; Slack is a viewport
-onto it plus exactly **one** inbound path — a plain message from the configured
-chairman user in the mapped boardroom channel, which becomes an ordinary
-chairman boardroom message. Slack can never write anything you couldn't. Both
-Slack tokens keep empty `role_scopes`, so **no agent sandbox ever holds the bot
-token**: an agent can't speak to Slack except by writing to the bus and letting
-the mirror carry it — comms policy enforced by key custody.
+**Socket Mode is the recommended path** — it opens an outbound WebSocket to
+Slack, so your self-hosted box needs no public URL. Set the app-level token
+(`xapp-…`) once in the app-wide settings and every project's socket uses it.
+
+### The trust model
+
+The Postgres bus is always canonical; Slack is a viewport onto it plus exactly
+**one** inbound path — a plain message from the configured chairman user in the
+mapped boardroom channel, which becomes an ordinary chairman boardroom message.
+Slack can never write anything you couldn't. Every Slack token keeps empty
+`role_scopes` whether it is stored app-wide or per project, so **no agent
+sandbox ever holds the bot token**: an agent can't speak to Slack except by
+writing to the bus and letting the mirror carry it — comms policy enforced by
+key custody. Sharing one workspace across projects does not widen that by an
+inch; the mirror decrypts server-side, exactly as it did before.
 
 Mirroring is individually best-effort. A failed mirror leaves the message
 un-mirrored and retries next tick; one misconfigured project never stops
-another.
+another. Channel provisioning is best-effort the same way: a Slack outage
+during project creation costs you the channel map, never the project.
 
 ## GitHub
 

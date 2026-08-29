@@ -250,6 +250,83 @@ def set_secret(
 
 
 @app.command()
+def settings() -> None:
+    """Show the app-wide settings — the model credential and the Slack connection.
+
+    Values are never printed, only whether one is installed. Change them here
+    or in the dashboard's Settings screen; both write the same rows.
+    """
+    with _client() as client:
+        _show(client.get("/admin/settings"))
+
+
+@app.command()
+def set_platform_key(
+    mode: str = typer.Option("api_key", "--mode", help="api_key | subscription"),
+) -> None:
+    """Install or rotate the platform model credential (value prompted).
+
+    This is the Founder's key. It is never injected into a sandbox and never
+    reaches a project's agents — a project pays its own way with its own
+    billing credential, and there is no fallback.
+    """
+    value = typer.prompt("Credential value", hide_input=True)
+    with _client() as client:
+        _show(client.put("/admin/settings/anthropic", json={"value": value, "mode": mode}))
+
+
+@app.command()
+def set_slack(
+    bot_token: bool = typer.Option(False, "--bot-token", help="Prompt for the xoxb- token"),
+    signing_secret: bool = typer.Option(False, "--signing-secret", help="Prompt for it"),
+    app_token: bool = typer.Option(False, "--app-token", help="Prompt for the xapp- token"),
+    chairman: str = typer.Option(None, "--chairman", help="Your Slack member ID (U…)"),
+    prefix: str = typer.Option(None, "--prefix", help="Channel name prefix; '' = project slug"),
+    visibility: str = typer.Option(None, "--visibility", help="private | public"),
+    auto_create: bool = typer.Option(None, "--auto-create/--no-auto-create",
+                                     help="Provision a new project's rooms on creation"),
+) -> None:
+    """Configure the app-wide Slack connection every project inherits.
+
+    One workspace, every project, different channels: store the tokens once
+    and a project needs nothing but its channel map — which `slack-channels`
+    (or project creation) fills in for it.
+    """
+    payload: dict = {}
+    for flag, key, label in ((bot_token, "bot_token", "Bot token (xoxb-…)"),
+                             (signing_secret, "signing_secret", "Signing secret"),
+                             (app_token, "app_token", "App token (xapp-…)")):
+        if flag:
+            payload[key] = typer.prompt(label, hide_input=True)
+    if chairman is not None:
+        payload["chairman_slack_user"] = chairman
+    if prefix is not None:
+        payload["channel_prefix"] = prefix
+    if visibility is not None:
+        payload["channel_visibility"] = visibility
+    if auto_create is not None:
+        payload["auto_create_channels"] = auto_create
+    if not payload:
+        typer.echo("nothing to change")
+        raise typer.Exit(1)
+    with _client() as client:
+        _show(client.put("/admin/settings/slack", json=payload))
+
+
+@app.command()
+def slack_channels(project: str) -> None:
+    """Create the Slack rooms this project is missing, and print their names.
+
+    Idempotent: a room already mapped is left alone and a name Slack already
+    holds is adopted, so running it after adding a team creates only the new
+    team's room.
+    """
+    with _client() as client:
+        _show(client.post(
+            f"/admin/projects/{_resolve_project(client, project)}/slack/channels"))
+
+
+@app.command()
 def configure(
     project: str,
     runtime: str = typer.Option(None, "--runtime", help="mock | agent_sdk"),

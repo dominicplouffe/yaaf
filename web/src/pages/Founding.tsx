@@ -154,7 +154,9 @@ function CredentialGate({ onSaved }: { onSaved: () => void }) {
       </button>
       <p className="muted">
         You can also skip this and fill the form yourself — the fire drill on
-        the New Project screen runs for nothing either way.
+        the New Project screen runs for nothing either way. Once it is set, it
+        lives in <a href="#/settings">Settings</a>, where you can test, rotate
+        or remove it.
       </p>
     </div>
   );

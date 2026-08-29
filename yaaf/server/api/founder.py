@@ -33,7 +33,7 @@ from yaaf.core.models import (
 from yaaf.founder import agent as founder_agent
 from yaaf.founder import progress
 from yaaf.founder import runner as founder_runner
-from yaaf.founder.session import FounderModelError
+from yaaf.server.api import settings as app_settings
 from yaaf.server.deps import admin_auth, db
 
 router = APIRouter(dependencies=[Depends(admin_auth)])
@@ -131,13 +131,11 @@ def put_credential(body: CredentialIn, session: Session = Depends(db)) -> dict:
     per-project form uses, because a chairman pasting a subscription token into
     an API-key field should not get a different answer depending on which form
     he was looking at.
+
+    The same credential is managed app-wide at ``PUT /admin/settings/anthropic``;
+    both doors share one implementation so they cannot drift.
     """
-    value = body.value.strip()
-    problem = platform.shape_error(body.mode, value)
-    if problem:
-        raise HTTPException(status_code=422, detail=problem)
-    platform.set_credential(session, value, mode=body.mode)
-    return {"ok": True, "billing_mode": body.mode}
+    return app_settings.install_credential(session, body.value, body.mode)
 
 
 @router.post("/credential/test")
@@ -148,15 +146,7 @@ def test_credential(session: Session = Depends(db)) -> dict:
     and the only check that cannot be wrong about it is running one. It is a
     two-word answer, so it is the cheapest turn the product can take.
     """
-    if not platform.has_credential(session):
-        raise HTTPException(status_code=422, detail="no platform credential is configured")
-    try:
-        founder_agent.check_credential(session)
-    except platform.NoPlatformCredential as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except FounderModelError as exc:
-        return {"ok": False, "kind": exc.kind, "detail": str(exc)}
-    return {"ok": True, "detail": "the credential reached a model."}
+    return app_settings.check_credential(session)
 
 
 @router.delete("/credential")

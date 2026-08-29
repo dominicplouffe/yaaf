@@ -7,25 +7,28 @@ every Slack call is individually best-effort, an unmirrored message simply
 keeps ``slack_ts`` NULL and waits for the next tick, and one misconfigured
 project never stops another from mirroring.
 
-Enabled per project through the ordinary config merge
-(``PATCH /admin/projects/{id}``); the shape of ``project.integrations["slack"]``:
+Where a project's tokens come from is :mod:`yaaf.server.slack.settings`: by
+default the app-wide Slack connection configured once in Settings, overridden field by
+field by ``project.integrations["slack"]``:
 
     {
-      "bot_token_secret": "<Secret name: the xoxb- bot token>",
-      "signing_secret": "<Secret name: the Slack app signing secret>",
+      "enabled": true,               # false switches Slack off for this project
+      "bot_token_secret": "<Secret name: the xoxb- bot token>",   # optional
+      "signing_secret": "<Secret name: the Slack app signing secret>",  # optional
       "chairman_slack_user": "U…",   # the only Slack user the inbound path trusts
-      "channel_map": {
+      "channel_map": {               # always the project's own
         "boardroom": "C…",
         "leadership": "C…",
         "team:<team_id>": "C…"
       }
     }
 
-Both secrets are ordinary envelope-encrypted Secret rows (``POST
-/admin/secrets``) at PROJECT scope, named here and decrypted server-side only.
-Their ``role_scopes`` stay empty, so no agent sandbox ever holds the bot token:
-an agent cannot speak to Slack except by writing to the bus and letting the
-mirror carry it — which is exactly the comms policy, enforced by key custody.
+Every token is an ordinary envelope-encrypted Secret row — at platform scope
+(``project_id IS NULL``) for the shared connection, or at project scope when a
+project overrides one — named there and decrypted server-side only. Their
+``role_scopes`` stay empty, so no agent sandbox ever holds the bot token: an
+agent cannot speak to Slack except by writing to the bus and letting the mirror
+carry it — which is exactly the comms policy, enforced by key custody.
 """
 
 from __future__ import annotations
@@ -34,6 +37,7 @@ import hashlib
 import hmac
 import logging
 import time
+from typing import TYPE_CHECKING
 
 import httpx
 from sqlalchemy import select
@@ -52,6 +56,9 @@ from yaaf.core.models import (
     Secret,
 )
 from yaaf.server.api.agent import WAKE_CHANNEL
+
+if TYPE_CHECKING:  # the resolver imports this module for project_secret
+    from yaaf.server.slack.settings import SlackSettings
 
 log = logging.getLogger("yaaf.slack")
 
@@ -129,27 +136,34 @@ def mirror_once(session: Session) -> int:
     """Post every not-yet-mirrored bus message in a mapped channel to Slack and
     stamp its slack_ts. Returns how many were posted. Failure anywhere leaves
     slack_ts NULL for the next tick — the bus never waits on Slack."""
+    from yaaf.server.slack.settings import mapped_rooms, resolve
+
     posted = 0
     for project in session.execute(select(Project)).scalars():
-        slack_cfg = (project.integrations or {}).get("slack") or {}
-        if not slack_cfg.get("channel_map"):
+        # Cheap first: a project with nothing mapped mirrors nothing, and this
+        # loop ticks every two seconds over every project there is.
+        if not mapped_rooms(project):
+            continue
+        effective = resolve(session, project)
+        if effective is None or not effective.can_mirror:
             continue
         # One bad project (revoked token, deleted secret) never blocks another.
         try:
-            posted += _mirror_project(session, project, slack_cfg)
+            posted += _mirror_project(session, project, effective)
         except Exception:
             log.warning("slack mirror failed for project %s; the bus is canonical "
                         "and untouched — retrying next tick", project.slug, exc_info=True)
     return posted
 
 
-def _mirror_project(session: Session, project: Project, slack_cfg: dict) -> int:
-    token = project_secret(session, project.id, slack_cfg.get("bot_token_secret"))
+def _mirror_project(session: Session, project: Project,
+                    effective: SlackSettings) -> int:
+    token = effective.bot_token
     if token is None:
         log.warning("project %s has a slack channel_map but no usable bot token; "
                     "mirroring nothing", project.slug)
         return 0
-    channel_map: dict = slack_cfg.get("channel_map") or {}
+    channel_map: dict = effective.channel_map
     targets = {
         channel.id: channel_map[_channel_key(channel)]
         for channel in session.execute(

@@ -42,9 +42,9 @@ from yaaf.core.models import (
 )
 from yaaf.server import policy
 from yaaf.server.deps import db
+from yaaf.server.slack import settings as slack_settings
 from yaaf.server.slack.bridge import (
     post_boardroom_from_chairman,
-    project_secret,
     verify_slack_signature,
 )
 
@@ -230,14 +230,20 @@ async def slack_webhook(
     through the admin API. Every other event is dropped. The bus stays
     canonical: Slack never writes anything the chairman could not."""
     project = _get_project(session, project_id)
-    slack_cfg = (project.integrations or {}).get("slack") or {}
+    effective = slack_settings.resolve(session, project)
+    if effective is None:
+        raise HTTPException(
+            status_code=403,
+            detail="Slack is switched off for this project; nothing arriving here "
+                   "speaks for anyone.",
+        )
     raw = await request.body()
-    signing_secret = project_secret(session, project.id, slack_cfg.get("signing_secret"))
+    signing_secret = effective.signing_secret
     if signing_secret is None:
         raise HTTPException(
             status_code=403,
-            detail="This project has no Slack signing secret configured; store one via "
-                   "POST /admin/secrets and name it in project.integrations['slack'] first.",
+            detail="No Slack signing secret resolves for this project. Set one app-wide "
+                   "in Settings → Slack, or give this project its own.",
         )
     if not verify_slack_signature(
         signing_secret,
@@ -270,13 +276,13 @@ async def slack_webhook(
         # mirrored message would double the log and say nothing.
         return {"ignored": "bot or non-user message"}
 
-    channel_map = slack_cfg.get("channel_map") or {}
+    channel_map = effective.channel_map
     if event.get("channel") != channel_map.get("boardroom"):
         # Slack may deliver from any channel the bot sits in; only the
         # boardroom is an inbound door, and only for the chairman — everyone
         # else already has their channel: the bus.
         return _slack_ignored(session, project, "not the mapped boardroom channel", event)
-    if not event.get("user") or event.get("user") != slack_cfg.get("chairman_slack_user"):
+    if not event.get("user") or event.get("user") != effective.chairman_slack_user:
         return _slack_ignored(session, project, "not the chairman's Slack user", event)
     text = (event.get("text") or "").strip()
     if not text:

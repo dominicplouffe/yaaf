@@ -8,15 +8,21 @@ conversation in which a project gets designed.
 Two stores, on purpose:
 
 - **`platform_settings`** holds plain configuration (which model the Founder
-  runs, what billing mode the platform credential uses).
-- **A platform-level `Secret`** (``project_id IS NULL``) holds the credential
-  itself, reusing the same envelope encryption every other secret gets. This
-  follows the precedent set by the platform "github" token in
-  ``yaaf.server.github`` rather than inventing a second way to store a key.
+  runs, what billing mode the platform credential uses, the app-wide Slack
+  connection's chairman user and channel-naming convention).
+- **Platform-level `Secret` rows** (``project_id IS NULL``) hold the
+  credentials themselves — the Founder's model key, the app-wide Slack tokens,
+  the GitHub provisioning token — reusing the same envelope encryption every
+  other secret gets, rather than inventing a second way to store a key.
 
-The platform credential is decrypted server-side only. It is never injected
-into a sandbox and never reaches a project's agents: a project still pays its
-own way with its own attached billing secret.
+The platform credential is decrypted server-side only. **It is never injected
+into a sandbox and never reaches a project's agents, under any circumstances:
+there is no inheritance and no fallback.** A project that has not attached its
+own billing secret cannot run, and that is the intended answer — the Founder's
+key pays for product-wide conversations and nothing else. Slack tokens are
+different in kind: they are the *platform's* outward wiring, decrypted
+server-side by the mirror and never handed to an agent either, so one workspace
+can serve every project.
 """
 
 from __future__ import annotations
@@ -30,12 +36,25 @@ from yaaf.core.models import PlatformSetting, Secret, utcnow
 #: Name of the platform-level Secret holding the Founder's model credential.
 PLATFORM_BILLING_SECRET = "platform-billing"
 
+#: Names of the platform-level Secrets holding the app-wide Slack tokens. A
+#: project that names its own secrets overrides these field by field; one that
+#: names none inherits all three, which is the whole point — the same workspace
+#: serves every project and only the channels differ.
+SLACK_BOT_SECRET = "platform-slack-bot"
+SLACK_SIGNING_SECRET = "platform-slack-signing"
+SLACK_APP_SECRET = "platform-slack-app"
+
 #: Setting keys. Kept as constants so a typo is an ImportError, not a silent
 #: read of a setting nobody ever wrote.
 BILLING_MODE = "platform.billing_mode"  # "api_key" | "subscription"
 FOUNDER_MODEL = "founder.model"
+SLACK_CHAIRMAN_USER = "slack.chairman_user"
+SLACK_CHANNEL_PREFIX = "slack.channel_prefix"  # "" => the project slug
+SLACK_CHANNEL_VISIBILITY = "slack.channel_visibility"  # "private" | "public"
+SLACK_AUTO_CREATE = "slack.auto_create_channels"  # "true" | "false"
 
 DEFAULT_FOUNDER_MODEL = "claude-opus-5"
+DEFAULT_SLACK_VISIBILITY = "private"
 
 
 class NoPlatformCredential(RuntimeError):
@@ -181,3 +200,69 @@ def shape_error(mode: str, plaintext: str) -> str | None:
                 "(sk-ant-api…). Paste a key from the Anthropic console — or switch "
                 "to subscription mode.")
     return None
+
+
+# ── platform-level secrets ──────────────────────────────────────────────────────
+#
+# The Founder's key above is one of these with a dedicated door, because its
+# billing mode travels with it. The rest — the Slack tokens, the GitHub
+# provisioning token — are ordinary named secrets at platform scope, and every
+# one of them keeps empty `role_scopes`: no agent sandbox ever holds one. That
+# is not a convention, it is the reason a single workspace can serve every
+# project without widening what an agent can reach.
+
+
+def secret_row(session: Session, name: str) -> Secret | None:
+    return session.execute(
+        select(Secret).where(Secret.project_id.is_(None), Secret.name == name)
+    ).scalar_one_or_none()
+
+
+def secret_value(session: Session, name: str) -> str | None:
+    """The decrypted platform secret, or None when it was never installed or
+    will not decrypt. Callers pick their own failure mode — the admin API turns
+    None into a 422, the Slack mirror degrades to mirroring nothing."""
+    import logging
+
+    from yaaf.core.crypto import decrypt
+
+    row = secret_row(session, name)
+    if row is None:
+        return None
+    try:
+        return decrypt(row.ciphertext)
+    except Exception:
+        logging.getLogger("yaaf.platform").warning(
+            "platform secret %r failed to decrypt", name)
+        return None
+
+
+def set_secret(session: Session, name: str, plaintext: str) -> Secret:
+    """Install or rotate a platform secret. Always ungranted: `role_scopes` is
+    empty and stays empty, so the value is reachable only server-side."""
+    from yaaf.core.crypto import encrypt
+
+    row = secret_row(session, name)
+    if row is None:
+        row = Secret(
+            id=ids.new_id(ids.SECRET),
+            project_id=None,
+            name=name,
+            ciphertext=encrypt(plaintext),
+            role_scopes=[],
+            kind="service",
+        )
+        session.add(row)
+        return row
+    row.ciphertext = encrypt(plaintext)
+    row.role_scopes = []
+    return row
+
+
+def clear_secret(session: Session, name: str) -> bool:
+    """Remove a platform secret. Returns whether one was there."""
+    row = secret_row(session, name)
+    if row is None:
+        return False
+    session.delete(row)
+    return True

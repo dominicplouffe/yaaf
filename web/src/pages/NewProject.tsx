@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { CrewSummary, get, McpServerEntry, patch, post, ProjectBundle,
-  RehearsalReport, RoleSummary } from "../api";
+  RehearsalReport, RoleSummary, SlackProvision } from "../api";
 import Drill from "../drill";
 import {
   BLANK_DATA_SOURCE,
@@ -241,6 +241,11 @@ export default function NewProject() {
     github: { url: string; secret: string };
     generic: { url: string; secret: string };
   } | null>(null);
+  // What Slack rooms the platform made on the way in, when an app-wide
+  // Slack connection is configured. The whole point of app-wide Slack settings
+  // is that this screen can answer "and where do I talk to it?" without sending
+  // anybody to Slack to click New Channel five times.
+  const [slack, setSlack] = useState<SlackProvision | null>(null);
 
   useEffect(() => {
     // A library with no crews is normal before `yaaf seed-crews` has run, and
@@ -760,10 +765,12 @@ export default function NewProject() {
       const body = projectBody(chosenCeo);
       const created = await post<{
         id: string;
+        slack?: SlackProvision | null;
         webhooks?: { github: { url: string; secret: string };
                      generic: { url: string; secret: string } };
       }>("/admin/projects", body);
       if (created.webhooks) setWebhooks({ projectId: created.id, ...created.webhooks });
+      if (created.slack) setSlack(created.slack);
       // The model key, stored and attached in one motion — without it the
       // project exists but cannot start (its first run would die keyless).
       if (billingKey.trim()) {
@@ -862,13 +869,49 @@ export default function NewProject() {
     }
   }
 
-  // The project exists; the one thing this screen still owes the chairman is
-  // the webhook secrets, shown exactly once with the endpoint beside each.
+  // The project exists; what this screen still owes the chairman is the
+  // webhook secrets, shown exactly once with the endpoint beside each — and
+  // the names of the Slack rooms it just made, which are no use to anyone
+  // sitting in a log file.
   if (done && webhooks) {
     const origin = window.location.origin;
     return (
       <>
         <h1>Project created</h1>
+        {slack && (
+          <div className="card" style={{ maxWidth: 760 }}>
+            <p style={{ marginTop: 0 }}>
+              <b>Your Slack rooms.</b> This project inherited the app-wide Slack
+              connection, so
+              the platform made its channels for you and invited you to each. They mirror
+              the bus within seconds, and the boardroom is a place you can talk to the CEO
+              from.
+            </p>
+            <table>
+              <tbody>
+                {slack.channels.map((room) => (
+                  <tr key={room.key}>
+                    <td style={{ width: "30%" }}>{room.label}</td>
+                    <td>
+                      {room.error
+                        ? <span className="error">{room.error}</span>
+                        : <><code>#{room.name}</code>{" "}
+                            <span className="help">
+                              {room.created ? "created" : "already existed — adopted"}
+                            </span></>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="help">
+              {slack.ok
+                ? "Change or remap any of these in Settings → Integrations → Slack."
+                : "Some rooms did not get made. Settings → Integrations → Slack has a "
+                  + "button that retries only the missing ones."}
+            </p>
+          </div>
+        )}
         <div className="card" style={{ maxWidth: 760 }}>
           <p style={{ marginTop: 0 }}>
             <b>Inbound evidence endpoints — optional, skippable.</b> Use these when an

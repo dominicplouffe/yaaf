@@ -11,10 +11,9 @@ from __future__ import annotations
 
 import httpx
 from fastapi import HTTPException
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from yaaf.core.models import Project, Secret
+from yaaf.core.models import Project
 
 API_BASE = "https://api.github.com"
 
@@ -23,14 +22,9 @@ def platform_token(session: Session) -> str | None:
     """The decrypted platform-level "github" token, or None when the secret
     was never installed. Callers pick their own failure mode: the admin API
     turns None into a 422, the runner degrades to a plain local dir."""
-    from yaaf.core.crypto import decrypt
+    from yaaf.core import platform
 
-    secret = session.execute(
-        select(Secret).where(Secret.project_id.is_(None), Secret.name == "github")
-    ).scalar_one_or_none()
-    if secret is None:
-        return None
-    return decrypt(secret.ciphertext)
+    return platform.secret_value(session, "github")
 
 
 def _request(method: str, path: str, token: str, json: dict | None = None) -> httpx.Response:

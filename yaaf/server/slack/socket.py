@@ -10,9 +10,11 @@ bus (stamped with its slack_ts so the mirror never echoes it back). The chat
 lane answers it in seconds and the mirror carries the reply out — chat in
 Slack, bus canonical throughout.
 
-Enabled by naming an ``app_token_secret`` (the xapp- token, an ordinary
-envelope-encrypted Secret) in ``project.integrations["slack"]`` next to the existing
-bridge fields. No agent ever holds either Slack token.
+Enabled by an app token (the xapp- token, an ordinary envelope-encrypted
+Secret) resolving for the project — app-wide in Settings, or named as
+``app_token_secret`` in ``project.integrations["slack"]`` to override it. A
+shared connection shares its app token too: one Socket Mode connection per
+project, all speaking to the same Slack app. No agent ever holds either token.
 """
 
 from __future__ import annotations
@@ -27,7 +29,8 @@ from sqlalchemy import select
 
 from yaaf.core.db import db_session
 from yaaf.core.models import Project
-from yaaf.server.slack.bridge import post_boardroom_from_chairman, project_secret
+from yaaf.server.slack.bridge import post_boardroom_from_chairman
+from yaaf.server.slack.settings import mapped_rooms, resolve
 
 log = logging.getLogger("yaaf.slack.socket")
 
@@ -37,24 +40,27 @@ OPEN_TIMEOUT_S = 10.0
 
 
 def socket_configs() -> dict[str, dict]:
-    """project_id -> connection config, for every project that opted in."""
+    """project_id -> connection config, for every project that opted in.
+
+    Three things have to resolve — an app token, a mapped boardroom and a
+    chairman — and any of the three may be inherited from the app-wide
+    Slack connection. A project whose only per-project setting is its channel map is
+    the normal case, and it gets a connection like any other.
+    """
     out: dict[str, dict] = {}
     with db_session() as session:
         for project in session.execute(select(Project)).scalars():
-            cfg = (project.integrations or {}).get("slack") or {}
-            boardroom = (cfg.get("channel_map") or {}).get("boardroom")
-            if not (cfg.get("app_token_secret") and boardroom
-                    and cfg.get("chairman_slack_user")):
+            if not mapped_rooms(project).get("boardroom"):
+                continue  # no room to listen in; nothing to resolve
+            effective = resolve(session, project)
+            if effective is None or not effective.can_receive:
                 continue
-            token = project_secret(session, project.id, cfg["app_token_secret"])
-            if token is None:
-                log.warning("project %s names app_token_secret %r but it is unusable",
-                            project.slug, cfg["app_token_secret"])
+            if effective.app_token is None:
                 continue
             out[project.id] = {
-                "app_token": token,
-                "channel": boardroom,
-                "chairman": cfg["chairman_slack_user"],
+                "app_token": effective.app_token,
+                "channel": effective.channel_map["boardroom"],
+                "chairman": effective.chairman_slack_user,
             }
     return out
 

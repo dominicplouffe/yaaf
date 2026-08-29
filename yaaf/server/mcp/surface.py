@@ -139,6 +139,27 @@ WITHHELD = {
     "POST /admin/founder/credential/test": "reaches the platform credential.",
     "DELETE /admin/founder/credential": "product-wide, and destructive to every future draft.",
     "PUT /admin/founder/model": "product-wide configuration, not a project's.",
+    # App-wide settings, withheld as a block. Every client token is scoped to
+    # projects; these routes are *above* every project, so there is no scoping
+    # answer that would make one of them safe to hand over. Two of them also
+    # carry credential values inbound, and one unwires every project at once.
+    "GET /admin/settings":
+        "the app-wide configuration screen, above every project a client is scoped to.",
+    "PUT /admin/settings/anthropic": "a platform credential value, inbound.",
+    "POST /admin/settings/anthropic/test": "reaches the platform credential.",
+    "DELETE /admin/settings/anthropic":
+        "product-wide, and destructive to every future draft.",
+    "PUT /admin/settings/anthropic/model": "product-wide configuration, not a project's.",
+    "PUT /admin/settings/slack": "Slack token values, inbound, for every project at once.",
+    "POST /admin/settings/slack/test": "reaches the app-wide Slack credential.",
+    "DELETE /admin/settings/slack":
+        "unwires Slack for every project that inherits it, in one call.",
+    "GET /admin/projects/{project_id}/slack":
+        "which Slack rooms a project mirrors to is wiring the chairman reads in "
+        "Settings; no tool has needed it.",
+    "POST /admin/projects/{project_id}/slack/channels":
+        "creates channels in a real Slack workspace — an outward side effect, and the "
+        "chairman's to trigger.",
 }
 
 
