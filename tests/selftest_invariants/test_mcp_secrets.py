@@ -31,10 +31,10 @@ def configurer(client, name="setup", projects=()):
     return mint(client, name=name, scopes=("configure",), projects=projects)
 
 
-def live_admin_routes() -> set[str]:
-    from yaaf.server.app import create_app
-
-    spec = create_app().openapi()
+def live_admin_routes(client) -> set[str]:
+    # The shared app's route table, not a second app built to read the same
+    # thing off. Routes are registered at import time, so it is the same table.
+    spec = client.app.openapi()
     return {f"{method.upper()} {path}"
             for path, operations in spec["paths"].items() if path.startswith("/admin")
             for method in operations}
@@ -42,7 +42,7 @@ def live_admin_routes() -> set[str]:
 
 def test_every_admin_route_has_been_decided_about(client):
     """The one that fails when somebody adds a route and forgets this surface."""
-    live = live_admin_routes()
+    live = live_admin_routes(client)
     missing = surface.unclassified(live)
     assert not missing, (
         "these admin routes are neither reached by an MCP tool nor withheld with a "

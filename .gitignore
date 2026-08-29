@@ -37,3 +37,6 @@ backups/
 # Project goals and setup files for private work — customer names, MCP hosts.
 # Kept out of docs/ while squash-to-public is undecided.
 local/
+
+# pytest-testmon's coverage map for change-scoped local runs
+.testmondata

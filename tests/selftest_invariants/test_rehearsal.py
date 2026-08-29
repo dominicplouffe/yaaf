@@ -17,6 +17,7 @@ business doing. Both halves are attacked here.
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 
@@ -87,11 +88,39 @@ def caller_db(tmp_path):
         restore()
 
 
+@pytest.fixture(scope="session")
+def _default_drill():
+    """One drill for every test that only wants to read its report.
+
+    A drill is a whole project lifecycle — roughly three seconds — and this
+    file ran the identical default spec seven times to produce seven identical
+    dictionaries. That made this the slowest file in the suite by a wide
+    margin, and under xdist the worker holding it set the floor for the whole
+    run.
+
+    Only for tests that read the report. A test asserting on a SIDE EFFECT —
+    what the drill wrote, what it left behind, what it restored, what it
+    refused to touch — must run its own, because the effect it is looking for
+    happens once and this fixture would hand it a report from a drill that
+    already finished.
+    """
+    return rehearsal.rehearse(spec())
+
+
+@pytest.fixture()
+def report(_default_drill):
+    """A private copy of the shared report.
+
+    Handed out per test so that one test mutating the dict it was given cannot
+    reach into another's, which is the only way sharing could couple them.
+    """
+    return copy.deepcopy(_default_drill)
+
+
 # ── it works ────────────────────────────────────────────────────────────────────
 
 
-def test_a_sound_spec_walks_all_the_way_to_a_requirement_settling_true():
-    report = rehearsal.rehearse(spec())
+def test_a_sound_spec_walks_all_the_way_to_a_requirement_settling_true(report):
     assert report["ok"], report["verdict"]
     steps = walk(report)
     for key in ("created", "started", "plan_proposed", "scope_accepted", "plan_gate",
@@ -99,11 +128,10 @@ def test_a_sound_spec_walks_all_the_way_to_a_requirement_settling_true():
         assert steps[key]["ok"], f"{key} not reached: {report['verdict']}"
 
 
-def test_it_counts_every_time_the_project_stopped_and_waited_for_a_human():
+def test_it_counts_every_time_the_project_stopped_and_waited_for_a_human(report):
     """The autonomy dial in numbers. Nothing else in the product could produce
     this before the money was spent, because the dial decides which verbs park
     and only the work decides how often they come up."""
-    report = rehearsal.rehearse(spec())
     kinds = {row["kind"] for row in report["interventions"]}
     assert "accept scope" in kinds
     assert sum(row["count"] for row in report["interventions"]) >= 3
@@ -180,10 +208,9 @@ def test_a_spec_with_no_goal_is_refused_before_anything_is_built():
 # ── what it is honest about ─────────────────────────────────────────────────────
 
 
-def test_it_relaxes_only_rules_that_measure_clock_time_and_says_which():
+def test_it_relaxes_only_rules_that_measure_clock_time_and_says_which(report):
     """The one thing the drill changes about the chairman's rules, declared in
     the report rather than buried in the code that does it."""
-    report = rehearsal.rehearse(spec())
     relaxed = {row["rule"] for row in report["relaxed"]}
     assert relaxed == set(rehearsal.RELAXED) | {"notice and message batching"}
     for row in report["relaxed"]:
@@ -207,11 +234,10 @@ def test_the_arithmetic_uses_the_chairman_s_numbers_not_the_relaxed_ones():
     assert report["capacity"]["available"] < 100
 
 
-def test_the_plan_is_reported_as_proposed_not_as_it_stands_at_the_end():
+def test_the_plan_is_reported_as_proposed_not_as_it_stands_at_the_end(report):
     """A project that finished everything has no live scope, and `plan_arithmetic`
     counts live scope. Reporting that would say "it planned nothing" about the
     one drill that went perfectly."""
-    report = rehearsal.rehearse(spec())
     assert report["plan"]["requirements"] >= 1
     assert report["plan"]["estimated_runs"] >= 1
 
@@ -236,8 +262,7 @@ def test_a_price_the_chairman_supplies_is_used_and_labelled_as_his():
     assert money["total"] == pytest.approx(2.5 * report["plan"]["adjusted_runs"])
 
 
-def test_it_says_what_it_did_not_exercise():
-    report = rehearsal.rehearse(spec())
+def test_it_says_what_it_did_not_exercise(report):
     joined = " ".join(report["not_exercised"])
     assert "command" in joined
     assert "verifier" in joined or "verification" in joined
@@ -354,8 +379,10 @@ def test_a_state_root_it_cannot_write_never_stops_it(tmp_path, monkeypatch):
     monkeypatch.setenv("YAAF_WORKSPACES_ROOT", str(blocked / "workspaces"))
     monkeypatch.setenv("YAAF_ARTIFACTS_ROOT", str(blocked / "artifacts"))
 
+    # Its own drill, not the shared one: the effect under test is what this
+    # drill does with an unwritable root, which only happens while the
+    # monkeypatch above is in force.
     report = rehearsal.rehearse(spec())
-
     assert report["ok"], report["verdict"]
     assert walk(report)["work_claimed"]["ok"], walk(report)["work_claimed"]["detail"]
 
@@ -416,8 +443,9 @@ def test_a_drill_never_delivers_a_notice_to_the_chairman_it_invented(monkeypatch
 
     monkeypatch.setattr(janitor_module, "chairman_notify", spy)
 
+    # Its own drill, not the shared one: the spy above only sees notices raised
+    # while it is installed.
     report = rehearsal.rehearse(spec())
-
     assert report["ok"], report["verdict"]
     assert raised, "the drill raised no notice at all; this test proves nothing"
     assert delivered == []
@@ -509,8 +537,7 @@ def test_it_refuses_a_workspace_root_that_is_not_the_one_it_created(tmp_path,
 # ── the rendering ───────────────────────────────────────────────────────────────
 
 
-def test_the_text_report_carries_the_verdict_the_walk_and_the_caveat():
-    report = rehearsal.rehearse(spec())
+def test_the_text_report_carries_the_verdict_the_walk_and_the_caveat(report):
     text = rehearsal_report.render_text(report)
     assert report["verdict"] in text
     for step in report["walk"]:
@@ -519,8 +546,7 @@ def test_the_text_report_carries_the_verdict_the_walk_and_the_caveat():
     assert "Rules the drill lifted" in text
 
 
-def test_a_report_survives_json_because_the_api_route_ships_it_that_way():
-    report = rehearsal.rehearse(spec())
+def test_a_report_survives_json_because_the_api_route_ships_it_that_way(report):
     assert json.loads(json.dumps(report, default=str))["ok"] is True
 
 

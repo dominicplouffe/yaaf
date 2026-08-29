@@ -20,8 +20,8 @@ os.environ.setdefault("YAAF_ARTIFACTS_ROOT", tempfile.mkdtemp(prefix="yaaf-test-
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import text
-from sqlalchemy.engine import make_url
+from sqlalchemy import event, text
+from sqlalchemy.engine import Engine, make_url
 
 from yaaf.core import ids
 from yaaf.core.config import settings
@@ -61,11 +61,43 @@ def _database() -> str:
         reset_for_tests(url)
         Base.metadata.drop_all(engine())
     else:
-        directory = tempfile.mkdtemp(prefix=f"yaaf-test-db-{worker or 'main'}-")
+        directory = tempfile.mkdtemp(prefix=f"yaaf-test-db-{worker or 'main'}-",
+                                     dir=_fastest_scratch_dir())
         url = f"sqlite:///{directory}/yaaf-test.db"
         reset_for_tests(url)
     Base.metadata.create_all(engine())
     return url
+
+
+def _fastest_scratch_dir() -> str | None:
+    """RAM if the kernel is offering some, otherwise wherever tempfile goes.
+
+    Returning None means "let tempfile decide", which is the correct answer
+    everywhere /dev/shm is missing or unwritable — a container with no shm
+    mount, a mac, a CI image that shrank it to nothing.
+    """
+    shm = "/dev/shm"
+    return shm if os.path.isdir(shm) and os.access(shm, os.W_OK) else None
+
+
+@event.listens_for(Engine, "connect")
+def _unsafe_but_fast_sqlite(dbapi_connection, connection_record):  # noqa: ANN001
+    """Trade SQLite's durability for speed — in the test harness only.
+
+    Every test writes dozens of rows and SQLite fsyncs on each commit by
+    default. A test database that does not survive a power cut is not a
+    problem: it does not survive the end of the test either.
+
+    This lives in the test harness and never in `yaaf.core.db`, so a
+    deployment cannot inherit it. It is keyed on the dialect rather than on
+    the URL because the fire drill swaps in throwaway SQLite files of its own,
+    and those deserve the same treatment.
+    """
+    if type(dbapi_connection).__module__.startswith("sqlite3"):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=MEMORY")
+        cursor.execute("PRAGMA synchronous=OFF")
+        cursor.close()
 
 
 def _worker_database(base_url: str, worker: str) -> str:
@@ -102,12 +134,27 @@ def _empty_every_table() -> None:
                 session.execute(table.delete())
 
 
-@pytest.fixture()
-def client(_database):
-    _empty_every_table()
+@pytest.fixture(scope="session")
+def _app(_database):
+    """Build the app ONCE per worker. Measured at 27.7ms a time, which across
+    the suite is twenty-odd seconds spent registering the same routes onto a
+    fresh FastAPI object over and over.
+
+    Sharing it is only sound because the app holds no request state: every
+    handler reads `settings()` and opens its session when the request arrives,
+    so the `public` fixture's monkeypatch still lands on a long-lived app. The
+    one thing read at build time is the log line about an unroutable
+    YAAF_PUBLIC_BASE_URL, which decides nothing.
+    """
     from yaaf.server.app import create_app
 
-    with TestClient(create_app()) as test_client:
+    return create_app()
+
+
+@pytest.fixture()
+def client(_app):
+    _empty_every_table()
+    with TestClient(_app) as test_client:
         yield test_client
 
 
