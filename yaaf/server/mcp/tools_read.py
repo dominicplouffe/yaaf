@@ -2,7 +2,7 @@
 
 Two of them land with the transport, because a principal that no tool exercises
 is a principal nothing can attack: `projects` is the first project-addressed
-call, and so the first place the allowlist either holds or does not.
+call, and so the first place the chairmanship gate either holds or does not.
 """
 
 from __future__ import annotations
@@ -96,7 +96,7 @@ def _preview(text: str | None) -> str:
 # Every tool below is a projection of `yaaf.server.api.observe`, called as a
 # function rather than reimplemented: one query, one definition, and a fix to
 # the page fixes the tool. What this layer adds is the three things a browser
-# does not need — a project allowlist that holds for ids reached indirectly, a
+# does not need — a project gate that holds for ids reached indirectly, a
 # context-window budget, and an envelope around everything an agent wrote.
 
 
@@ -119,7 +119,7 @@ def _text_of(response) -> str:
 
 
 def _owned(session: Session, project, model, row_id: str, what: str):
-    """Resolve an id that belongs to a project, or refuse in the allowlist's words.
+    """Resolve an id that belongs to a project, or refuse in the gate's words.
 
     The quiet hole this closes: `work` takes a run id, and a run id read off
     another project's page would otherwise sail past the project gate, because
@@ -171,10 +171,10 @@ def _schema(**properties) -> dict:
 def desk(principal: Principal, session: Session, arguments: dict) -> dict:
     reachable = {p.id for p in chaired_projects(session, principal)}
     payload = _observe(observe.desk, live=bool(arguments.get("live")), session=session)
-    # The desk is the one cross-project page, so it is the one place the
-    # allowlist has to be applied to somebody else's rollup rather than to a
-    # query we wrote. Anything keyed by project id is filtered; aggregates
-    # computed over every project are dropped rather than shown wrong.
+    # The desk is the one cross-project page, so it is the one place the gate
+    # has to be applied to somebody else's rollup rather than to a query we
+    # wrote. Anything keyed by project id is filtered; aggregates computed
+    # over every project are dropped rather than shown wrong.
     filtered = {k: v for k, v in payload.items() if k not in ("totals", "aggregate")}
     for key, value in list(filtered.items()):
         if isinstance(value, list):

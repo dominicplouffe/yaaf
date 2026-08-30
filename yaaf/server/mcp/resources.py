@@ -51,7 +51,7 @@ def listing(session: Session, principal: Principal) -> list[dict]:
 
 
 def read(session: Session, principal: Principal, uri: str) -> dict:
-    """One resource's contents, or a refusal in the allowlist's own words."""
+    """One resource's contents, or a refusal in the project gate's own words."""
     if uri == "yaaf://desk":
         return _json(uri, envelope.fit(observe.desk(live=True, session=session)))
     if uri == "yaaf://docs/goal-grammar":
