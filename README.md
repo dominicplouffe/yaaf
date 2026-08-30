@@ -1,147 +1,193 @@
 # yaaf — Yet Another Agent Framework
 
-**Run a small AI project on your own hardware — with rules the agents can't
-talk their way out of, and a delivery date they can't quietly break.**
+**Describe a job to Claude. It hires a small company to do it, on your own
+hardware, and then runs for weeks without you.**
 
-A **CEO** agent plans and prioritizes, teams of **role-based agents** do the
-work, and **you are the chairman** — the one human, with a few real powers.
-Agents wake on a schedule or when something needs them, do one unit of work,
-and sleep. Docker Compose on your own box; a web dashboard to steer from.
+A **CEO** agent plans and prioritizes, small **teams** of specialists do the
+work, and **you are the chairman** — the one human. Agents wake on a schedule,
+do one piece of work, and sleep. The budget stops by itself. Nothing marks its
+own homework.
 
 <img src="docs/screenshots/cockpit-overview.png" alt="The chairman's cockpit: is it working, the deliverable, the plan, spend against the cap broken down by team, the setup health line, and the org roster">
 
-## The problem
+---
 
-Leave an agent running for an afternoon and you meet the failure modes. It
-marks its own work "done". It invents busywork and calls it progress. It loops
-with another agent at full API price, spends your budget while you sleep,
-leaves a record you can't reconstruct — and can't tell you **when it will be
-finished**.
+## Claude is the front door
 
-The usual fix is better prompts. But a prompt is a *suggestion*, and a
-sufficiently clever model talks itself around one.
+yaaf is an **MCP server**. Connect it once — Claude Code, Claude Desktop or
+claude.ai — and you found and run whole projects from a conversation, with your
+own files, repos and email open in the same window.
 
-**yaaf's core idea: the rules live in the server, not the prompt.** Agents act
-only through an authenticated API on short-lived per-run tokens, and every rule
-is a refusal or an automatic state change. An agent can't be talked out of
-rules it never held. Break one and it doesn't get a stern reminder — it gets a
-403.
+You say something like:
 
-## Isn't this just a Claude Skill?
+> *Here's last quarter's ad export. I want a desk that watches this account and
+> tells me what to change every Monday — and it must never touch anything.*
 
-**yaaf runs your skills** — a role's `tool_permissions.skills` is an allowlist
-handed to the Agent SDK. A skill is a *capability*. yaaf is what
-decides which capability to point at what, checks it got done, pays for it from
-a capped budget, and keeps the receipt.
+Claude then, in one sitting:
 
-**Don't use yaaf when a skill will do**: you're watching, it finishes in one
-sitting, nothing irreversible happens, nobody asks in six weeks how you know.
-**Reach for yaaf when** it must run unattended for weeks, "done" can't be
+1. **Drafts the company.** Goal, teams, who's on each, budget, deadline — hiring
+   from a library of 32 job descriptions and 14 pre-built crews rather than
+   inventing people.
+2. **Gets argued with.** The platform grades the draft against the eight things
+   a goal has to contain to work — a finish line, what explicitly *doesn't*
+   count, what you'll refuse to do. Free, and before anything exists.
+3. **Runs a dress rehearsal.** The whole project simulated on scripted agents
+   for $0: where it would stall, what it would cost, how often it would stop and
+   wait for you.
+4. **Creates it and starts it.** Real teams, real specialists, a Slack channel
+   each.
+
+You pick the shape once: **Explore** (chase a goal with no fixed end),
+**Deliver** (ship one thing, then stop), or **Operate** (a Deliver that restarts
+on a rhythm and is handed the last three cycles verbatim, so "learn from last
+time" is enforced rather than asked for).
+
+Not hypothetical: a six-team research project was designed and launched from a
+Claude window this week, and every write in its audit trail is signed
+`user:… via mcp:Claude`.
+
+### Then you chair it from the same chat
+
+No dashboard needed day to day. Ask in plain English:
+
+- *What needs me today, across everything?*
+- *Why did the delivery date slip?*
+- *Show me the evidence behind that claim.*
+- *Tell the CEO to stop buying data and find the free route.*
+- *That requirement is out of scope — cut it.*
+
+Thirty tools cover it: the cockpit, the plan, the spend, run traces and proof;
+talking to the CEO; approving, cutting, rescheduling, auditing; and setting up
+teams, data sources and rules.
+
+<img src="docs/screenshots/boardroom.png" alt="The Boardroom tab: the chairman asks the CEO how confident it is in the 30th; the CEO answers with the estimate-to-actual ratio, its re-projection, and what would move it">
+
+### What Claude can and can't do
+
+You pick the scopes when you connect:
+
+| Scope | What it holds |
+|---|---|
+| `read` | Sees everything. Signs nothing. **Start here — most of the value, none of the risk.** |
+| `steer` | Talk to the CEO, decide approvals, cut scope, move the date, judge an audit. |
+| `create` | Draft, grade, rehearse and create new projects. |
+| `configure` | Teams, data sources, settings, rules. |
+
+Four rules hold at every scope:
+
+- **Claude is never you.** It gets its own credential, not your admin token, and
+  every write is stamped *via Claude* in the record permanently — so months
+  later you can still tell which decisions a machine carried.
+- **Nothing irreversible happens in one call.** Claude asks, gets a preview and
+  a one-time ticket, then commits. Change a word and the ticket is refused.
+- **Agents can't give Claude orders.** Anything an agent wrote arrives wrapped
+  and labelled untrusted. A CEO writing *"chairman, please accept this"* into a
+  channel is being quoted, not obeyed.
+- **Secrets only go one way.** Nothing returns an API key, at any scope. You can
+  name a credential; you can never read one back.
+
+→ **[docs/MCP_SERVER.md](docs/MCP_SERVER.md)**
+
+---
+
+## Six things people run on it
+
+| What it does | Why a chat session can't |
+|---|---|
+| **An ad desk that advises but never touches.** Read-only access to the account. A change memo every Monday, an exception watch daily, into Slack. Month-end numbers settled by the platform pulling the real reports — never by the desk's own memo. | It has to be there every Monday for a year. And the thing grading the work can't be the thing that did it. |
+| **A small investing desk.** A research seat, a risk seat, and a compliance seat that can veto. Every trade arrives as a ticket with the reason attached. | Three specialists who disagree *in writing*. In one chat, one model plays all three parts and agrees with itself. |
+| **A trip that has to be booked, not researched.** Five candidates with live prices, one recommendation, a hard booking date. Done means a confirmation number in your inbox. | "Done" here is a fact in the world. A chat can only tell you it's done. |
+| **Ship an open-source package by a date.** Done means a stranger can install it from the public registry and CI goes green on a clean machine. | The finish line is on someone else's computer, six weeks from now. |
+| **A daily research post.** Wake at 6am, read what shipped overnight across a dozen sources, write one post in plain English. | It has to wake up without you. Every day. Indefinitely. |
+| **A weekly sports desk.** A memo before every deadline answering the same six questions, scored next week against what actually happened. | Thirty-seven deadlines. You'd have to remember every one. |
+
+Eleven more, importable and ready to run, in **[examples/](examples/)**.
+
+---
+
+## Isn't this just a skill?
+
+**yaaf runs your skills** — a role's skill list is an allowlist handed straight
+to the Agent SDK. A skill is a *capability*. yaaf decides which capability to
+point at what, checks it got done, pays for it from a capped budget, and keeps
+the receipt.
+
+**Use a skill when** you're watching, it finishes in one sitting, nothing
+irreversible happens, and nobody asks in six weeks how you know.
+
+**Reach for yaaf when** it has to run unattended for weeks, "done" can't be
 self-graded, money has to stop by itself, you'll have to reconstruct it later
 for a client or an auditor — or you want agents to disagree, because one agent
 checking its own work has the same blind spots in both seats.
 
-| | Skill / Code session | Cron'd prompt | Agent library | **yaaf** |
-|---|---|---|---|---|
-| **What it is** | A capability you invoke | The same, on a timer | A toolkit for your app | A platform you deploy and chair |
-| **What's next** | You decide | You decided, in advance | Your code decides | A CEO agent, from a plan you accepted |
-| **"Complete"** | The model says so | The model says so | The model says so | The **platform** runs the test, or you spot-audit |
-| **Budget** | You watch the meter | You watch the meter | You watch the meter | Metered per run; warns, then **pauses the project** |
-| **Lifespan** | One session | One run | While your script runs | Weeks — wakes, cycles, webhooks |
-| **Memory** | Your own files | What you pass in | Yours to build | Scoped, capped, curated |
-| **Crash mid-action** | You notice, redo it | You notice, redo it | Yours to build | Lease reaped; ledger stops the double-fire |
-| **The record** | Your scrollback | Your logs | Your logs | Every message, run, dollar, decision, refusal |
-| **Many agents** | — | — | Yes, as you code it | Teams with charters that conflict on purpose |
+A good model with a good skill out-writes yaaf's agents on any single task.
+**The difference isn't capability. It's governance and duration.**
 
-None of that is capability — a good model with a good skill out-writes yaaf's
-agents on any single task. **The difference is governance and duration.** Note
-the "yours to build" cells: a library gets you there, but the work is a queue,
-a policy layer, a verifier, a ledger, an audit trail and a UI. Worth building
-if it's your product; yaaf is it already built when it isn't.
+## Why a CEO, teams and a budget change things
 
-## Work that has a terminus
+**The CEO takes you out of the queue.** In a chat session you *are* the loop:
+nothing happens until you type the next thing. With a CEO, the next piece of
+work is chosen, priced, assigned and finished while you sleep, and you read the
+result in the morning.
 
-A task list is a pipeline with no end. So outside open-ended mode the root
-object is the **requirement**: a thing that must be *true* at the end, carrying
-a test the platform runs itself.
+**Teams make disagreement real.** A risk seat that can veto a research seat is
+two agents with different charters, different context and different
+instructions — not one model asked to "also consider the risks." Roles are hired
+rather than described: edit *Risk Manager* once and every future project gets
+it, while nothing running changes until you say so.
 
-- **The CEO proposes; you accept.** The forecast's denominator stays out of the
-  hands of the party it grades.
-- **Nothing but the platform writes "met".** The strongest form of "never
-  self-graded" is that the agent-side verb doesn't exist.
-- **A task serving no requirement is refused.** Work that makes nothing true is
-  how a project stays busy without finishing.
-- **Estimates are scored, not trusted.** Estimate is weighed against actual
-  cost; the next plan is read at that ratio. Small numbers buy one round.
+**The budget makes it safe to walk away.** You're not trusting an agent to be
+sensible about money. Every run is metered, killed ones included. At 80% the CEO
+is warned; at 100% the project pauses itself and emails you. Real-world spending
+has its own separate envelope, and purchases over your threshold need your
+signature.
+
+That combination is why you can start something on Sunday and read its work on
+Friday.
+
+## The one idea underneath
+
+Leave an agent running for an afternoon and you meet the failure modes. It marks
+its own work done. It invents busywork and calls it progress. It loops with
+another agent at full price. It can't tell you when it'll be finished.
+
+The usual fix is a better prompt. But a prompt is a *suggestion*, and a clever
+model talks itself around one.
+
+**So in yaaf the rules live in the server, not the prompt.** Agents act only
+through an authenticated API on short-lived tokens, and every rule is a refusal
+or an automatic state change. An agent can't be talked out of rules it never
+held. Break one and it doesn't get a stern reminder — it gets a 403.
+
+- **"Done" means verified.** Tests run in a sandbox, by the *platform*, not by
+  the agent that wants them to pass. Real-world claims count once the platform
+  fetches and checks them, or once they arrive by signed webhook, which agents
+  can't forge. Nothing but the platform can write "met."
+- **Work that makes nothing true is refused.** Every task has to serve a
+  requirement — something that must be *true* at the end, carrying its own test.
+- **The date can't quietly slip.** The CEO proposes a date; the platform stamps
+  it from measured pace and re-projects every tick. When the projection lands
+  past the promise, new scope freezes and two honest exits remain: cut
+  something, or reset the date with a reason.
+- **Everything is on the record.** Every message, run, dollar, decision and
+  refusal — plus random samples of "completed" work dealt to you to spot-check,
+  because AI reviewers approve nearly everything and you don't.
+
+Each of those is a test, not a paragraph. 913 of them drive the real app over
+HTTP the way an agent would — forged tokens, wrong roles, rephrased requests —
+alongside chaos tests and golden evals that gate every prompt edit.
 
 <img src="docs/screenshots/plan-and-promise.png" alt="The Plan tab: the commitment at risk with its two levers, pace and waste, the burn-up against the committed and projected dates, and requirements in stages with dependencies">
 
-## A delivery date the project can't quietly break
-
-The CEO proposes a date; it never **writes** one. The platform stamps it from
-its own projection of measured pace, and re-projects every tick. When the
-projection lands past the promise, the commitment moves itself to *at risk*,
-**new scope freezes**, and two honest ways out remain: cut something, or reset
-the date — with a reason, and only to what the arithmetic now says. Who pulls
-those levers is the autonomy setting; that they're the only two is not.
-
-The guarantee isn't that the date holds. It's that when it stops holding, the
-project can't quietly add work and hope.
-
-## What that looks like in practice
-
-- **Money can't run away.** Every run is metered, killed ones included. 80%
-  warns the CEO; 100% pauses the project and emails you. Real-world spend has
-  its own envelope. Circuit breakers kill message loops and refusal storms.
-- **"Done" means verified.** `command` tests run in a sandbox, by the
-  *platform*, not the agent that wants them to pass. Real-world claims count
-  once the platform fetches, checks and snapshots them — or once they arrive by
-  signed webhook, which agents can't forge.
-- **Agents are contained, not trusted.** Fresh container per run, with the open
-  internet: capability shouldn't be a firewall ticket. Secrets are encrypted,
-  role-scoped, injected per run, never shown in chat. Captchas go to a human.
-- **Everything is on the record.** Every message, transition, run, dollar and
-  enforcement, in Postgres and on screen — plus random samples of "completed"
-  work dealt to you to spot-check, because AI reviewers approve nearly
-  everything and you don't.
-- **The rules are yours.** Each project runs under a rulebook agents can't edit
-  or argue with. Change it whenever: it binds from the next agent call, keeps
-  the reason you gave, and is disclosed to the CEO.
-
 <img src="docs/screenshots/work-and-proof.png" alt="The Work tab: the platform's sampled close waiting on the chairman, the read-only board, and every piece of evidence with its verification status including a failed check">
 
-## How much you do is a setting
+**How much you decide is a setting.** *Supervised*: you accept scope, sign the
+date, judge the closes a script can't check. *Autonomous*: the CEO does all
+three and tells you after. Everything else is identical at either end — the
+platform still verifies what it can and caps every dollar.
+→ **[AUTONOMY](docs/AUTONOMY.md)**
 
-Two presets, each nothing but five constitution switches. **Supervised**: you
-accept scope, sign the date, judge unverifiable closes. **Autonomous**: the CEO
-does all three and tells you after. Unchanged at either end — the platform
-still verifies what it can, refuses to quietly trust what it can't, caps every
-dollar, and hands security challenges to you. → **[AUTONOMY](docs/AUTONOMY.md)**
-
-## Three shapes of project
-
-Chosen once at creation, because the rules differ by shape.
-
-| | What it is | Example goal |
-|---|---|---|
-| **Explore** | Chase a goal with no fixed end. Bets, proof, and your call on when it earned its keep. | "Find one defensible idea in 30 days." |
-| **Deliver** | Ship one thing, then stop. You accept what done means; the platform proves it. | "An initiation pack on five names." |
-| **Operate** | A Deliver that restarts on a rhythm, and gets better each cycle. | "A brief before the open, every trading day." |
-
-An Operate cycle roll carries unfinished scope forward, reopens the plan gate,
-and hands the CEO the last three cycles' narratives verbatim — "learn from last
-time" enforced by the platform, not asked for in a prompt.
-
-## The standing meeting
-
-Weekly by default, the janitor opens a **review** — zero tokens, whatever the
-budget, even on an empty board, because that's the review you most need. It
-carries the platform's frozen numbers; the CEO files its variance narrative.
-Then you pull levers: cut scope, add scope, reword, move the date, raise the
-budget, accept the slip. Each is recorded with your reason and shown at the
-*next* review beside what it bought.
-
-<img src="docs/screenshots/review.png" alt="The Review tab: pace, requirements met, commitment state, budget, audit coverage and the worst offender, with the CEO's variance narrative and the chairman's six levers">
+---
 
 ## Try it before you pay for it
 
@@ -150,83 +196,13 @@ yaaf rehearse examples/01-your-first-hour.json
 ```
 
 No deployment, no API key, no dollars. It runs your spec as a real project on
-the real platform — dispatcher, janitor, policy engine, every refusal — with
-scripted agents in place of models, and tells you where it stopped: a role your
-library cannot resolve, a schedule attached to nobody, a project with no team
-in it, a plan that will not fit the cap. It also counts every point the project
-would have stopped and waited for **you**, which is the autonomy dial in
-numbers rather than in prose.
+the real platform — every rule, every refusal — with scripted agents standing in
+for models, then tells you where it stopped: a role that doesn't exist, a
+schedule attached to nobody, a plan that won't fit the cap. It also counts every
+point the project would have stopped and waited for **you**. Claude can run the
+same drill through the connector, before it creates anything.
 
-It runs no command out of the file, opens no socket, reads no credential and
-touches no database but the throwaway one it creates. And it says what it
-cannot tell you: the crew is competent and dull by construction, so a clean
-drill is evidence about your configuration and none at all about whether a real
-model does the job well.
-
-## What happened, and what happens next
-
-Every screen here used to be in the present tense, and the only mail you ever
-got was an alarm. Two more now exist, and neither costs a model call.
-
-**The briefing** is what happened since you last looked — scope settled, work
-closed, proof verified or refused, money spent, what decided itself while you
-were out, and what that leaves waiting on you. Composed from the record rather
-than written by an agent, which is why it grades nothing and why it still
-arrives on the morning the platform paused the project for an exhausted budget.
-Set a time and it lands in your inbox daily; the same panel opens the Desk,
-with a window that starts where you last read to.
-
-**The agenda** is the fortnight ahead: the wall-clock wakes, the standing
-review, the cycle roll, the kill dates, the clocks that decide themselves, and
-the promised date with the platform's projection beside it — drawn from the
-same heartbeats the dispatcher reads, so a wake it shows is a wake that runs.
-A project that runs while you sleep and will not show you its calendar is a
-haunted one.
-
-## The rest of the map
-
-Money, verification, containment and the audit trail are above. The rest —
-full reference in **[docs/FEATURES.md](docs/FEATURES.md)**:
-
-| Area | What you get |
-|---|---|
-| **The org** | Versioned role library, teams with leads, CEO-only planning, solo mode. A role edit never silently changes a running project — you repin. |
-| **The plan** | Ordered stages, a dependency graph with a critical path, a plan gate that checks the arithmetic. |
-| **Loop brakes** | Wake and run ceilings, a circuit breaker for ping-pong threads, refusal caps, suppressed idle wakes, an idempotency ledger. |
-| **Memory** | Project and team scopes with a curator; caps refuse rather than silently evict. |
-| **Money** | USD or token budgets, a separate real-world spend envelope, idempotent purchases, revenue only by signed webhook. |
-| **Sandbox & proof** | Chromium in the box, an assist protocol for human-only steps, a CEO-judgment metric on close quality. |
-| **Chat** | A resident CEO session: Boardroom and Slack answer in seconds, without consuming the work queue's caps. |
-| **Before you pay** | A fire drill: your spec run as a whole project on scripted agents, at $0 — does it get off the ground, how often will it stop and wait for you, what paces it. |
-| **Three tenses** | A briefing composed from the record — what happened while you were away, at zero tokens, so it still lands the morning the budget ran out — and a calendar of what the project is scheduled to do next. |
-| **Integrations** | Slack — connected once, channels created per project and named back to you (Socket Mode, no public URL) — GitHub repo-per-project, MCP data sources, signed webhooks, S3 artifacts, email alerts. → [INTEGRATIONS](docs/INTEGRATIONS.md) |
-| **Proof it works** | 626 offline tests, chaos tests, golden-transcript evals that gate prompt edits, a $0 scripted CI run of a whole project — and `yaaf rehearse`, which points that same run at your own spec. |
-
-## What you give up
-
-- **You deploy and run a thing.** Postgres, two containers, a box. A skill is a file.
-- **Setup is minutes, not seconds.** A goal worth planning from takes longer to
-  write than a prompt, on purpose.
-- **You accept a plan.** On the default dial, scope waits for you — the whole
-  mechanism for keeping the forecast honest. (One switch hands it over.)
-- **The floor is higher than the ceiling is high.** Planning, review and
-  verification cost tokens. On a one-sitting task that buys you nothing.
-- **It is pre-1.0.** APIs move.
-
-If you read that and thought "none of this is my problem", believe yourself.
-Use a skill.
-
-## The honest part
-
-Nobody has shown a CEO + team beats one good agent on the same budget and
-rules, and yaaf doesn't claim to have. It gives you a fair way to find out:
-**solo mode** runs a single agent under byte-identical governance, so the same
-goal can go to a hierarchy and to one brain and the bills compared. If the org
-layer isn't worth it, the governance layer underneath stands on its own.
-
-## Quickstart
-
-One script takes a bare box to a running project with real, sandboxed agents:
+## Install
 
 ```bash
 curl -fsSL https://get.docker.com | sh          # if docker isn't there yet
@@ -236,85 +212,67 @@ git clone <your-yaaf-remote> yaaf && cd yaaf
 ./deploy_single_server.sh
 ```
 
-Secrets, images, Postgres + API + runner, migrations, the role library, and
-your login token printed at the end. Safe to re-run. The dashboard binds to
-`127.0.0.1`, so reach it over SSH:
+Secrets, images, Postgres, migrations, the role library, and your login token
+printed at the end. Safe to re-run. The dashboard binds to `127.0.0.1`, so reach
+it over SSH (`ssh -N -L 8080:localhost:8080 you@your-server`, then
+`localhost:8080/app`). Then connect Claude:
 
 ```bash
-ssh -N -L 8080:localhost:8080 you@your-server   # then open localhost:8080/app
+yaaf mcp-token mint my-laptop --chairman you@example.com --scopes read
+# → ymt_…
+
+claude mcp add --transport http yaaf http://localhost:8080/mcp \
+  --header "Authorization: Bearer ymt_…"
 ```
 
-`--bind` publishes it somewhere else instead — `--bind 0.0.0.0` on every
-interface, or repeat the flag to name the ones you want:
-`--bind 127.0.0.1 --bind 192.168.0.5` keeps the tunnel working and adds the LAN
-address. Either way the admin token is a static bearer, so put TLS in front of
-it before an untrusted network sees it. A later bare re-run keeps whatever you
-published on. Afterwards:
+Claude Desktop and Cursor take the same URL and header. **claude.ai** needs a
+public hostname and connects through a consent screen instead of a pasted token
+— publish only the MCP and sign-in paths and close everything else:
+**[DEPLOYMENT](docs/DEPLOYMENT.md#exposing-the-mcp-server-to-claudeai)**.
 
-```bash
-./update_single_server.sh    # pull new code, back up, rebuild, migrate, verify
-./kill_single_server.sh      # stop everything, keep the data (--wipe destroys it)
-```
+Afterwards: `./update_single_server.sh` to upgrade, `./kill_single_server.sh` to
+stop and keep the data.
 
-Migrations apply at container start, and the update script verifies the schema
-reached head rather than assuming. Full detail — plus the no-Docker checkout
-path for working *on* yaaf — in **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**.
+> **Billing:** agents pay with an API key you attach per project. Anthropic's
+> consumer terms don't permit running fleets on a personal Claude subscription —
+> subscription mode is for single-user tinkering only.
 
-## Your first project
+## What you give up
 
-Log in with the admin token and create one;
-**[CREATING_A_PROJECT.md](docs/CREATING_A_PROJECT.md)** walks through it in
-plain English. Or import one of the eleven in **[examples/](examples/)**: two
-you could do in a Claude session, so you learn the loop on something checkable
-in five minutes, and nine that each name the specific thing which breaks
-without a platform. They need nothing but your API key. Start with **[01 — Your
-first hour](examples/01-your-first-hour.md)**.
+- **You deploy and run a thing.** Postgres, two containers, a box. A skill is a file.
+- **Setup is minutes, not seconds.** A goal worth planning from takes longer to
+  write than a prompt, on purpose.
+- **You accept a plan.** On the default setting, scope waits for you — that's the
+  whole mechanism for keeping the forecast honest. (One switch hands it over.)
+- **The floor is higher than the ceiling is high.** Planning, review and
+  verification cost tokens. On a one-sitting task that buys you nothing.
+- **It is pre-1.0.** APIs move, and there are sharp edges.
 
-> **Billing note:** agents pay with an API key you attach per project.
-> Anthropic's consumer terms don't permit running fleets on a personal Claude
-> subscription — subscription mode exists for single-user tinkering only.
+If you read that and thought "none of this is my problem", believe yourself. Use
+a skill.
+
+**And the honest part:** nobody has shown a CEO plus a team beats one good agent
+on the same budget and rules, and yaaf doesn't claim to have. **Solo mode** runs
+a single agent under byte-identical governance, so you can send the same goal to
+a hierarchy and to one brain and compare the bills. If the org layer isn't worth
+it, the governance layer underneath stands on its own.
 
 ## Documentation
 
 | | |
 |---|---|
+| [MCP server](docs/MCP_SERVER.md) | Chairing from Claude — every tool, every scope |
 | [Creating a project](docs/CREATING_A_PROJECT.md) | Your first project, in plain English |
 | [Examples](examples/) | Eleven projects to import |
 | [Features](docs/FEATURES.md) | The complete feature reference |
 | [Dashboard](docs/DASHBOARD.md) | Every screen, and what you do there |
-| [Governance](docs/GOVERNANCE.md) | All 52 rules and their defaults |
+| [Governance](docs/GOVERNANCE.md) | Every rule and its default |
 | [Autonomy](docs/AUTONOMY.md) | How much the CEO decides without you |
-| [Integrations](docs/INTEGRATIONS.md) | Slack, GitHub, MCP, webhooks, billing, storage |
+| [Integrations](docs/INTEGRATIONS.md) | Slack, GitHub, data sources, webhooks, billing, storage |
 | [Deployment](docs/DEPLOYMENT.md) | Install, configure, back up, upgrade |
 | [CLI](docs/CLI.md) | Every `yaaf` command |
 | [Agent API](docs/AGENT_API.md) | What agents can do; writing a role |
 | [Plan](docs/PLAN.md) | Where this is going, and what would kill it |
 
-Index: **[docs/](docs/)**.
-
-## What's in the box
-
-```
-yaaf/server     API, policy engine (the refusals), dispatcher, janitor,
-                evidence verifier, briefing and agenda composers, Slack bridge
-yaaf/runner     leases runs, launches sandbox containers, meters everything
-yaaf/rehearsal  the fire drill — your spec run as a project for $0
-yaaf/cli        `yaaf` — admin/observe CLI and spend reporting
-web/            the chairman's dashboard (React, served at /app)
-crews/          pre-staffed teams — a named job with a team already on it
-roles/          starter role library across six hiring aisles
-examples/       eleven importable projects (.md + .json)
-evals/          golden-transcript evals — regression-gate for prompt edits
-tests/          invariant suite over HTTP, chaos tests, eval checks; CI runs
-                it on Postgres, the way it is deployed
-```
-
-## Project status
-
-Actively developed, pre-1.0, APIs still moving. Built and tested; expect sharp
-edges. [docs/PLAN.md](docs/PLAN.md) has where this is going and what would kill
-it.
-
-## License
-
-[Apache-2.0](LICENSE).
+Actively developed, pre-1.0. Apache-2.0 ([LICENSE](LICENSE)). Contributions:
+[CONTRIBUTING.md](CONTRIBUTING.md).

@@ -422,8 +422,9 @@ yaaf set-password you@example.com     # prompted, argon2id, never echoed
 
 Then in claude.ai: **Settings → Connectors → Add custom connector**, URL
 `https://yaaf.example.com/mcp`. It registers itself (RFC 7591), sends you to
-your own consent screen, and you tick the scopes and the projects it may see.
-Start with `read` alone.
+your own consent screen, and you tick the scopes it may hold. Start with `read`
+alone — a client reaches every project its chairman chairs, so scopes are the
+whole narrowing.
 
 If a client's redirect host is not `claude.ai`, registration refuses it — widen
 `YAAF_MCP_REDIRECT_HOSTS` deliberately, never by default.
