@@ -1,12 +1,13 @@
-# yaaf — Yet Another Agent Framework
+# yaaf — stop prompting, start delegating
 
-**Describe a job to Claude. It hires a small company to do it, on your own
-hardware, and then runs for weeks without you.**
+**Describe a job to Claude in one paragraph and get back a company that does
+it.** A CEO who plans the work. Teams of specialists who argue with each other.
+A budget that stops itself and a delivery date nobody can quietly move. On your
+own hardware, for weeks, without you.
 
-A **CEO** agent plans and prioritizes, small **teams** of specialists do the
-work, and **you are the chairman** — the one human. Agents wake on a schedule,
-do one piece of work, and sleep. The budget stops by itself. Nothing marks its
-own homework.
+Yet Another Agent Framework? No. This is the org chart, the boardroom and the
+accounting department wrapped around the agents you already have — and you are
+the chairman, the one human in the building.
 
 <img src="docs/screenshots/cockpit-overview.png" alt="The chairman's cockpit: is it working, the deliverable, the plan, spend against the cap broken down by team, the setup health line, and the org roster">
 
@@ -90,16 +91,20 @@ Four rules hold at every scope:
 
 ---
 
-## Six things people run on it
+## What people actually hand it
 
-| What it does | Why a chat session can't |
+| The ask | Who gets hired |
 |---|---|
-| **An ad desk that advises but never touches.** Read-only access to the account. A change memo every Monday, an exception watch daily, into Slack. Month-end numbers settled by the platform pulling the real reports — never by the desk's own memo. | It has to be there every Monday for a year. And the thing grading the work can't be the thing that did it. |
-| **A small investing desk.** A research seat, a risk seat, and a compliance seat that can veto. Every trade arrives as a ticket with the reason attached. | Three specialists who disagree *in writing*. In one chat, one model plays all three parts and agrees with itself. |
-| **A trip that has to be booked, not researched.** Five candidates with live prices, one recommendation, a hard booking date. Done means a confirmation number in your inbox. | "Done" here is a fact in the world. A chat can only tell you it's done. |
-| **Ship an open-source package by a date.** Done means a stranger can install it from the public registry and CI goes green on a clean machine. | The finish line is on someone else's computer, six weeks from now. |
-| **A daily research post.** Wake at 6am, read what shipped overnight across a dozen sources, write one post in plain English. | It has to wake up without you. Every day. Indefinitely. |
-| **A weekly sports desk.** A memo before every deadline answering the same six questions, scored next week against what actually happened. | Thirty-seven deadlines. You'd have to remember every one. |
+| ***"Run our Amazon ad account end to end. I want a standup every morning and a Monday memo I can forward to the client without editing it."*** | Four desks: PPC strategy, account analytics, attribution review, and an executability check whose entire job is to kill clever recommendations nobody can actually implement. At month close the platform pulls Amazon's own reports and grades the desk against them — because a desk that scores its own quarter is not a desk. |
+| ***"Take over my fantasy football team for the season. I want to win."*** | Seven analysts — fixtures, team news, data, value and ownership, chips and captaincy, performance, and an optimizer that must defend every transfer against the expected points of simply not making it. A memo before every deadline. Thirty-seven of them. Last week's call is scored against what actually happened before this week's is allowed out. |
+| ***"Here is my brokerage account. Run it like a real desk, and stop asking me what I think."*** | Research, macro, signals and a book — plus a risk seat and a compliance seat that can veto a trade the research seat is in love with. Every position arrives as a ticket with the argument attached and the rule it cleared. You get told what to do, not consulted on what the desk might think. |
+| ***"Can we afford to retire early? Don't tell me yes. Prove it."*** | Six teams: pension and tax rules research, modelling, macro assumptions, compliance, a report writer — and a verification seat paid to recompute the modeller's own numbers and disagree with them. Nothing reaches you uncited. This one was stood up from a single conversation and was running before it ended. |
+| ***"Book our February trip. I don't want a spreadsheet, I want a confirmation number."*** | A research team pricing five real itineraries live, and a booking desk that stands behind exactly one of them. The finish line cannot be faked: an airline record locator and a hotel confirmation in your inbox, and the charge on your card. Nobody marks this one done except the resort. |
+| ***"Build this, open-source it, and have it installable by November 6th."*** | Concept, build, surface — and a red team paid to break what the build team just shipped. Done means a stranger with a laptop installs it from the public registry and watches CI go green on a clean checkout. Not a demo. Not a badge you drew yourself. |
+| ***"Be my research department. Wake up before I do."*** | A researcher that reads overnight across GitHub, Hacker News, Reddit and the papers, and a communicator that turns the night's haul into one post in plain English. 6am, every morning, whether or not you remember it exists. |
+
+None of these is a prompt you re-run. Every one has to survive weeks, wake up
+without you, and be graded by something that isn't itself.
 
 Eleven more, importable and ready to run, in **[examples/](examples/)**.
 
@@ -123,7 +128,7 @@ checking its own work has the same blind spots in both seats.
 A good model with a good skill out-writes yaaf's agents on any single task.
 **The difference isn't capability. It's governance and duration.**
 
-## Why a CEO, teams and a budget change things
+## Why an org chart beats a better prompt
 
 **The CEO takes you out of the queue.** In a chat session you *are* the loop:
 nothing happens until you type the next thing. With a CEO, the next piece of
