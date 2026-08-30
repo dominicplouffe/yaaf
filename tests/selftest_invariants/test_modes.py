@@ -23,7 +23,7 @@ from datetime import timedelta
 import pytest
 from pydantic import ValidationError
 
-from tests.conftest import ADMIN, bearer, live_token, make_project
+from tests.conftest import ADMIN, bearer, live_token, make_project, seed_role
 from tests.selftest_invariants.test_requirements import (
     accept,
     ceo_token,
@@ -81,20 +81,97 @@ def backdate_cycle(project_id: str, days: float) -> None:
 # ── explore: a window, not a scope ──────────────────────────────────────────────
 
 
-def test_a_deadline_is_explore_shaped_only(client):
+def test_a_bare_deadline_is_explore_shaped_and_a_dated_deliver_cites_its_source(client):
+    """Deliver may hold a target date; it may not hold an anonymous one.
+
+    This used to refuse a Deliver deadline outright, on the reasoning that
+    "Deliver promises through a commitment". The refusal did not remove the
+    date — the founder still had one in mind and wrote it into the goal PROSE,
+    where nothing validates it, nothing re-projects it, and nothing compares it
+    to the platform's own arithmetic. It then paced the work anyway. Every
+    commitment on the install that produced this change was met the day it was
+    made, against promises of up to 127 days.
+
+    So the rule is now provenance rather than prohibition, and it is the rule
+    `set_cycle_goal` has always applied to a cycle's due-by: say where the date
+    came from. Explore's bare window is untouched.
+    """
     deadline = (utcnow() + timedelta(days=60)).isoformat()
     explore = make_project(client, slug="windowed", deadline=deadline, start=False)
     with db_session() as session:
         assert session.get(Project, explore["id"]).deadline is not None
 
+    def _deliver(slug: str, **extra):
+        return client.post("/admin/projects", json={
+            "slug": slug, "name": "X", "goal": "Ship a thing, datedly",
+            "chairman_email": "chair@example.com", "ceo_role_slug": "ceo",
+            "mode": "deliver", "deadline": deadline,
+            "teams": [{"role_slug": "worker", "name": "A", "employees": ["E1"]}],
+            **extra,
+        }, headers=ADMIN)
+
+    anonymous = _deliver("dated-deliver")
+    assert anonymous.status_code == 422
+    assert "provenance" in anonymous.json()["detail"]
+
+    # A fact the world imposes, with a citation: accepted, and recorded as one.
+    sourced = _deliver("booked-deliver", deadline_source={
+        "kind": "external", "note": "the client's board meeting",
+        "url": "https://example.com/agenda"})
+    assert sourced.status_code == 200, sourced.text
+    with db_session() as session:
+        row = session.get(Project, sourced.json()["id"])
+        assert row.deadline is not None
+        assert row.deadline_source["kind"] == "external"
+        assert row.deadline_source["url"] == "https://example.com/agenda"
+
+    # A date the chairman simply wants: also fine, and NOT recorded as a fact.
+    wished = _deliver("wished-deliver", deadline_source={
+        "kind": "chairman", "note": "I want it before the holidays"})
+    assert wished.status_code == 200, wished.text
+    with db_session() as session:
+        assert session.get(Project, wished.json()["id"]).deadline_source["kind"] == "chairman"
+
+
+def _seed_chairman(client) -> None:
+    """The users and roles `make_project` would have created. Needed by the
+    tests below, which post to /admin/projects directly to assert on the
+    refusal rather than the project."""
+    client.post("/admin/users",
+                json={"email": "chair@example.com", "display_name": "Chair"},
+                headers=ADMIN)
+    seed_role(client, "ceo", is_ceo=True)
+    seed_role(client, "worker")
+
+
+def test_an_external_deadline_must_actually_cite_something(client):
+    """"external" without a citation is a wish wearing a fact's clothes, which
+    is the exact confusion the field exists to end."""
+    _seed_chairman(client)
     refused = client.post("/admin/projects", json={
-        "slug": "dated-deliver", "name": "X", "goal": "Ship a thing, datedly",
+        "slug": "uncited", "name": "X", "goal": "Ship a thing",
         "chairman_email": "chair@example.com", "ceo_role_slug": "ceo",
-        "mode": "deliver", "deadline": deadline,
+        "mode": "deliver", "deadline": (utcnow() + timedelta(days=30)).isoformat(),
+        "deadline_source": {"kind": "external"},
         "teams": [{"role_slug": "worker", "name": "A", "employees": ["E1"]}],
     }, headers=ADMIN)
     assert refused.status_code == 422
-    assert "commitment" in refused.json()["detail"]
+    assert "cites its source" in refused.json()["detail"]
+
+
+def test_operate_still_refuses_a_project_date_because_its_cycles_hold_one(client):
+    """The one mode where a second date really would be ambiguity: a cycle
+    already carries a due-by and its provenance."""
+    _seed_chairman(client)
+    refused = client.post("/admin/projects", json={
+        "slug": "dated-operate", "name": "X", "goal": "Run a desk",
+        "chairman_email": "chair@example.com", "ceo_role_slug": "ceo",
+        "mode": "operate", "deadline": (utcnow() + timedelta(days=30)).isoformat(),
+        "deadline_source": {"kind": "chairman", "note": "why not"},
+        "teams": [{"role_slug": "worker", "name": "A", "employees": ["E1"]}],
+    }, headers=ADMIN)
+    assert refused.status_code == 422
+    assert "cycle" in refused.json()["detail"].lower()
 
 
 def test_the_window_closing_tells_both_parties_once_and_pauses_nothing(client):

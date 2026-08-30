@@ -262,8 +262,12 @@ def build_server(session: Session, state: dict, env: dict[str, str],
           "screen shows. It creates nothing and spends nothing. Send the whole "
           "bundle every time, not a patch. `project` takes the shape POST "
           "/admin/projects accepts: slug, name, goal, mode, ceo_role_slug, ceo_name, "
-          "teams, controlled_domains, optional deadline, and constitution — only the "
-          "knobs you can justify.",
+          "teams, controlled_domains, constitution — only the knobs you can "
+          "justify — and a deadline ONLY when one of two things is true: the "
+          "world imposes it (deadline_source {'kind':'external'} with a "
+          "citation) or the chairman wants it (deadline_source "
+          "{'kind':'chairman'}). Otherwise write no date; scope is the honest "
+          "lever and the median project here finishes inside a day.",
           {"project": dict, "notes": str})
     async def _propose_bundle(args):
         progress.start_step(thread_id, progress.LABELS["propose_bundle"])
@@ -366,7 +370,38 @@ def validate(bundle: dict) -> list[str]:
     except ValidationError as exc:
         return [f"{'.'.join(str(p) for p in err['loc'])}: {err['msg']}"
                 for err in exc.errors()][:10]
-    return constitution_problems(project.get("constitution") or {})
+    return date_problems(project) + constitution_problems(project.get("constitution") or {})
+
+
+def date_problems(project: dict) -> list[str]:
+    """A date the create endpoint would refuse, caught while it is still a draft.
+
+    The route's own `_deadline_source` is the enforcement; this exists because
+    `ProjectCreate` cannot express "required, but only on Deliver", and a draft
+    the endpoint would reject is worse than no draft — the review screen would
+    show a project that cannot be created.
+    """
+    from yaaf.server.api.admin import DEADLINE_SOURCE_KINDS
+
+    if not project.get("deadline"):
+        return []
+    mode = project.get("mode") or "explore"
+    if mode == "operate":
+        return ["deadline: Operate runs on cycles; a cycle carries its own due-by "
+                "and its source. Do not put a second date on the project."]
+    source = project.get("deadline_source")
+    if mode == "deliver" and not source:
+        return ["deadline_source: a Deliver date needs its provenance — "
+                "{'kind': 'external', 'url'/'note': ...} for a date the world imposes, "
+                "or {'kind': 'chairman', 'note': why} for one he wants. If it is "
+                "neither, write no date and let the scope carry the plan."]
+    if source and source.get("kind") not in DEADLINE_SOURCE_KINDS:
+        return [f"deadline_source.kind: must be one of {', '.join(DEADLINE_SOURCE_KINDS)}"]
+    if source and source.get("kind") == "external" and not (
+            source.get("url") or source.get("note")):
+        return ["deadline_source: kind='external' must cite a url or a note — "
+                "a fact cites its source."]
+    return []
 
 
 def constitution_problems(constitution: dict) -> list[str]:

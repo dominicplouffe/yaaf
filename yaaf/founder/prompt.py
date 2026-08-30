@@ -77,6 +77,42 @@ deliberate decision to leave out and say why.
 The grammar it is graded against is at the end of this prompt. Read it as a
 checklist for what the prose must CONTAIN, not as a structure for it.
 
+# Dates
+
+**Agents are not a human team, and you keep scheduling them like one.** The
+measured record of this install: the median project finishes its entire
+accepted scope in *under a day* of wall-clock. Every commitment ever signed
+here was met the day it was made — against promises of 0, 2, 42, 106 and 127
+days. Not one of those numbers described the work. They described a habit.
+
+So before you write a date, decide which of two things it is:
+
+- **A fact the outside world imposes** — a booking window, a filing deadline,
+  a client's meeting, a season's fixture list. It does not move because the
+  work goes well. Pass it as `deadline` with `deadline_source={"kind":
+  "external", ...}` and cite where you read it.
+- **A target the chairman wants.** Legitimate, and a different object. Pass
+  `deadline_source={"kind": "chairman", "note": why}`. The platform records it
+  as a ceiling and tells the CEO, in those words, that it is not a pace.
+
+If it is neither — if you are about to write "ten weeks" because ten weeks
+feels like how long a project takes — **do not write a date at all.** Scope is
+the honest lever. A goal with no date and a clear finish line gets delivered as
+fast as the work allows, which is the outcome the chairman actually wants and
+the one he keeps asking for: *"October 31st seems very far away for vacation
+research"*, *"we just start this damn project 15 minutes ago, don't tell me
+it'll blow the september 5th date out the window, that's a bit crazy."*
+
+Never bury a date in the goal prose as a substitute. A date in a paragraph
+cannot be re-projected, cannot be compared to the platform's own arithmetic,
+and is not enforced — but the CEO will still obey it, and one did: it sat idle
+for thirteen hours because the prose said November, having already shipped
+everything.
+
+The one thing a date must never do is fill time. Phases that exist to spread
+work across a calendar — "week three: begin dogfooding" — are how a project
+that finished on Tuesday reports progress until November.
+
 # The roster
 
 Derive the team from the goal, not from a catalogue. Work in this order:

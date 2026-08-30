@@ -109,7 +109,10 @@ advice that follows.)
 
 - Say the **outcome**, not the activities: what exists at the end?
 - Name the **deliverable** and who it's for.
-- Give a **deadline** if there is one.
+- Give a **deadline** only if there really is one — a date the world imposes,
+  or one you actually want. Not "this feels like a two-month job": agents are
+  not a human team, and the median project here finishes its whole accepted
+  scope inside a day. A date nobody needs becomes the pace.
 - Say what **inputs** exist and where they come from.
 
 A good goal for our example:
@@ -128,7 +131,10 @@ because the rules differ by shape:
 
 - **Explore** — chase a goal with no fixed end. Bets, evidence, and your call
   on when it has earned its keep. *"Find an idea and get one sale in 60 days."*
-  Explore takes an optional deadline: open scope, bounded time.
+  Explore takes an optional deadline: open scope, bounded time. Deliver takes
+  one too, as a target rather than a promise — it must say where the date came
+  from, and the CEO is shown it next to the platform's own projection so a date
+  somebody chose cannot quietly become the pace.
 - **Deliver** — ship one thing, then stop. *"An audit of the customer's PPC
   account."* This is our example.
 - **Operate** — a Deliver that starts again on a rhythm, and gets better each

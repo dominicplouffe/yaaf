@@ -104,6 +104,28 @@ Where a bar exists, name its owner and hold everyone to it — and say that it
 constrains ambition rather than licensing gold-plating, or it becomes an excuse
 to never ship.
 
+### A note on dates, because they are the most common thing this grammar gets wrong
+
+**Do not put a date in the goal prose.** Ever. A date in a paragraph cannot be
+re-projected, cannot be compared to the platform's own arithmetic, and is not
+enforced by anything — but the CEO obeys it anyway, and treats it as a *pace*
+rather than a ceiling. One project shipped every finish-line condition it had
+on day one and then sat idle for thirteen hours, because a sentence said
+November and the CEO would not "pull that timeline forward artificially".
+
+The date belongs in the `deadline` field with a `deadline_source`, where it can
+be reconciled — or nowhere at all. And "nowhere at all" is usually right: the
+median project here finishes its whole accepted scope in under a day, and every
+commitment ever signed on this install was met the day it was made, against
+promises of up to 127 days.
+
+What a goal *should* carry instead of a schedule is a **finish line** — the
+condition under which the work is done — and, where the world really does
+impose a date, the fact that it does and why. Scope is the honest lever. Phases
+that exist only to spread work across a calendar ("week three: begin
+dogfooding") are how a project that finished on Tuesday reports progress until
+November.
+
 ### 6. The human's role, bounded — including what they will refuse to do  `human_role`
 
 The chairman is not a member of the project. Say what they will supply, through

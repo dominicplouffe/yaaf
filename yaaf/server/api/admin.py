@@ -502,9 +502,15 @@ class ProjectCreate(BaseModel):
     # — hence derived lead — of the only team, so one brain plans AND executes
     # under byte-identical policy. Requires exactly one team with no employees.
     solo: bool = False
-    # Explore only: a bounded window on open scope ("one sale in 60 days").
-    # Deliver has commitments and Operate has cycles, so it is refused there.
+    # Explore's bounded window on open scope ("one sale in 60 days"), or a
+    # Deliver TARGET. Deliver's promise is still the commitment, which only the
+    # platform dates; this is the date somebody wants, held where it can be
+    # compared to the arithmetic instead of hidden in the goal prose.
     deadline: datetime | None = None
+    # Where that date came from. Required on Deliver, defaulted on Explore.
+    # {"kind": "external", "url"/"note": ...} for a fact the world imposes;
+    # {"kind": "chairman", "note": why} for a target he wants.
+    deadline_source: dict | None = None
 
 
 def _latest_role_version(session: Session, slug: str) -> RoleVersion:
@@ -555,13 +561,16 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
                 detail=f"team '{spec.name}' schedule '{bad_time}' is not HH:MM",
             )
     deadline = body.deadline
+    deadline_source = None
     if deadline is not None:
-        if body.mode != "explore":
+        if body.mode == "operate":
             raise HTTPException(
                 status_code=422,
-                detail="a bare deadline is Explore's shape — open scope, bounded time. "
-                       "Deliver promises through a commitment; Operate runs on cycles.",
+                detail="Operate runs on cycles, and a cycle carries its own due-by "
+                       "with the source it came from — set that with cycle_goal "
+                       "rather than a second date on the project.",
             )
+        deadline_source = _deadline_source(body.mode, body.deadline_source)
         if deadline.tzinfo is None:
             from datetime import UTC
             deadline = deadline.replace(tzinfo=UTC)
@@ -588,6 +597,7 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
         github_repo=body.github_repo,
         integrations=body.integrations,
         deadline=deadline,
+        deadline_source=deadline_source,
         topology=topology,
     )
     session.add(project)
@@ -951,6 +961,7 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
         # creation, so getting it wrong here cannot be corrected later.
         topology=source.topology,
         deadline=None if deadline_expired else source.deadline,
+        deadline_source=None if deadline_expired else source.deadline_source,
         billing_mode=source.billing_mode,
         controlled_domains=list(source.controlled_domains or []),
         github_repo=source.github_repo,
@@ -1713,9 +1724,76 @@ class ProjectPatch(BaseModel):
     # Merged into the existing integrations (outward wiring only — every
     # limit lives in the constitution and changes only through amendments).
     integrations: dict | None = None
-    # Explore only. Set a new window, or clear it with clear_deadline.
+    # Set a new window/target, or clear it with clear_deadline. A new date
+    # needs its provenance on Deliver, exactly as at creation.
     deadline: datetime | None = None
+    deadline_source: dict | None = None
     clear_deadline: bool = False
+
+
+#: What a date can be. `external` is a fact the world imposes — a booking
+#: window, a filing date, a client's meeting — and cites where it was read.
+#: `chairman` is a target he wants, which is legitimate and is simply not the
+#: same kind of object; it is recorded as a wish so nothing downstream can
+#: quote it back as physics.
+DEADLINE_SOURCE_KINDS = ("external", "chairman")
+
+
+def _deadline_source(mode: str, source: dict | None) -> dict:
+    """Validate a date's provenance, and refuse a Deliver date that has none.
+
+    Deliver used to refuse a deadline outright — which relocated the date
+    rather than removing it. The founder still had one in mind and wrote it
+    into the goal prose, where nothing validates it, nothing re-projects it,
+    and nothing compares it to the platform's own arithmetic. It paced the
+    work anyway, and the measured result across this install is that every
+    commitment was met the day it was made against promises of up to 127 days.
+
+    So Deliver may carry a target, on the terms `set_cycle_goal` already sets
+    for a cycle's due-by: say where it came from. Explore's bare window keeps
+    working untouched — it has always been "open scope, bounded time", the
+    chairman's own judgement call, and nothing here makes it stricter.
+    """
+    from datetime import UTC as _UTC
+    from datetime import datetime as _dt
+
+    if source is None:
+        if mode == "explore":
+            return {"kind": "chairman", "note": "Explore's window",
+                    "recorded_at": _dt.now(_UTC).isoformat()}
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "A delivery date needs its provenance. A deadline the outside world "
+                "imposes is a FACT — a booking window, a filing date, a client's "
+                "meeting — so pass deadline_source={'kind': 'external', 'url': ..., "
+                "'note': ...} and cite it. A date you simply want is also fine and is "
+                "not the same object: pass {'kind': 'chairman', 'note': why}. The "
+                "difference is load-bearing — the platform will not let a wish be "
+                "quoted back to you as arithmetic, and the CEO is told which it is "
+                "rather than pacing ten weeks of work to a number in a paragraph."
+            ),
+        )
+    kind = (source.get("kind") or "").strip()
+    if kind not in DEADLINE_SOURCE_KINDS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"deadline_source.kind must be one of {', '.join(DEADLINE_SOURCE_KINDS)}.",
+        )
+    if kind == "external" and not (source.get("url") or source.get("note")):
+        raise HTTPException(
+            status_code=422,
+            detail=("kind='external' means the world imposed this date. Name the url "
+                    "you read it from, or a note saying who or what imposed it — a "
+                    "fact cites its source, and the next re-plan needs to know "
+                    "whether it moved."),
+        )
+    return {
+        "kind": kind,
+        "url": source.get("url"),
+        "note": source.get("note"),
+        "recorded_at": _dt.now(_UTC).isoformat(),
+    }
 
 
 def _billing_shape_error(mode: str, plaintext: str) -> str | None:
@@ -1798,17 +1876,26 @@ def patch_project(project_id: str, body: ProjectPatch, session: Session = Depend
         project.integrations = {**(project.integrations or {}), **body.integrations}
         changed["integrations"] = body.integrations
     if body.deadline is not None or body.clear_deadline:
-        if project.mode != ProjectMode.EXPLORE:
+        # Operate keeps the refusal: its dates belong to cycles, which already
+        # carry their own due-by AND its provenance, and a second competing
+        # date on the project would be exactly the ambiguity this all exists to
+        # remove. Deliver is now allowed one, with a source (see
+        # `_deadline_source`); Explore's bare window is unchanged.
+        if project.mode == ProjectMode.OPERATE:
             raise HTTPException(
                 status_code=422,
-                detail="a bare deadline is Explore's shape. Deliver promises through a "
-                       "commitment; Operate runs on cycles.",
+                detail="Operate runs on cycles, and a cycle carries its own due-by "
+                       "with the source it came from — set that with cycle_goal "
+                       "rather than a second date on the project.",
             )
         if body.clear_deadline:
             project.deadline = None
+            project.deadline_source = None
             changed["deadline"] = None
         else:
             deadline = body.deadline
+            project.deadline_source = _deadline_source(
+                project.mode, body.deadline_source)
             if deadline.tzinfo is None:
                 from datetime import UTC
                 deadline = deadline.replace(tzinfo=UTC)

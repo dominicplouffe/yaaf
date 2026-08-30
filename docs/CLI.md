@@ -64,7 +64,13 @@ Every command that takes a project accepts **either a slug or an id**.
 - `mode` is `explore` (default), `deliver`, or `operate`, and is **frozen at
   creation** — the rules differ by shape. Outside Explore the project starts
   owing a plan and a task serving no requirement is refused.
-- `deadline` (ISO datetime) is Explore's shape only: open scope, bounded time.
+- `deadline` (ISO datetime) is Explore's window — open scope, bounded time —
+  and, on Deliver, a **target** the CEO is told is a ceiling rather than a
+  pace. On Deliver it needs `deadline_source`: `{"kind": "external", "url" or
+  "note": ...}` for a date the world imposes, or `{"kind": "chairman", "note":
+  why}` for one you want. If it is neither, write no date — scope is the
+  honest lever, and the median project here finishes inside a day. Operate
+  refuses a project date: its cycles carry their own due-by and its source.
   Deliver promises through a commitment and Operate runs on cycles, so a bare
   date is refused there.
 - `constitution` holds **overrides** onto the defaults; omit it for stock rules.
