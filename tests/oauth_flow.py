@@ -73,14 +73,13 @@ def consent(client, registered: dict, scope="read steer", verifier=VERIFIER,
         **params, "action": "login", "email": "chair@example.com", "password": PASSWORD})
     assert signed_in.status_code == 200, signed_in.text
     assert "Approve" in signed_in.text
-    # The consent screen is the grant: it names the client, the scopes, and one
-    # checkbox per project. That is the allowlist becoming a decision.
+    # The consent screen is the grant: it names the client, the redirect host
+    # and one checkbox per scope. Projects are not on it — a grant reaches
+    # every project its chairman chairs, then and later.
     assert "claude.ai" in signed_in.text
-    assert "acme" in signed_in.text
 
     approved = client.post("/oauth/authorize", data={
-        **params, "action": "approve",
-        "scope_grant": ["read", "steer"], "project_grant": []},
+        **params, "action": "approve", "scope_grant": ["read", "steer"]},
         follow_redirects=False)
     assert approved.status_code == 302, approved.text
     location = approved.headers["location"]

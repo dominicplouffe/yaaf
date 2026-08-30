@@ -3965,8 +3965,6 @@ class McpClientIn(BaseModel):
     # to be widened later — and widening is the failure mode this table exists
     # to make deliberate.
     scopes: list[str] = Field(min_length=1)
-    #: Project ids or slugs. Empty means every project this chairman chairs.
-    projects: list[str] = Field(default_factory=list)
 
 
 @router.post("/mcp_clients")
@@ -3992,30 +3990,12 @@ def create_mcp_client(body: McpClientIn, session: Session = Depends(db)) -> dict
     if chairman is None:
         raise HTTPException(status_code=422, detail="no such user")
 
-    project_ids: list[str] = []
-    for ref in body.projects:
-        project = session.execute(
-            select(Project).where((Project.id == ref) | (Project.slug == ref))
-        ).scalar_one_or_none()
-        if project is None:
-            raise HTTPException(status_code=422, detail=f"no project {ref!r}")
-        # Refused rather than silently dropped at read time: a token whose
-        # allowlist names a project its user does not chair would read as a
-        # grant and behave as nothing.
-        if project.chairman_user_id != chairman.id:
-            raise HTTPException(
-                status_code=422,
-                detail=f"{body.chairman_email} does not chair '{project.slug}'",
-            )
-        project_ids.append(project.id)
-
     plaintext, token_hash = mint_mcp()
     row = McpClient(
         id=ids.new_id(ids.MCP_CLIENT),
         name=body.name,
         user_id=chairman.id,
         scopes=sorted(set(body.scopes)),
-        project_ids=project_ids,
     )
     session.add(row)
     session.flush()
@@ -4027,12 +4007,11 @@ def create_mcp_client(body: McpClientIn, session: Session = Depends(db)) -> dict
         token_hash=token_hash,
     ))
     _audit(session, None, "mcp_client.create", "mcp_client", row.id,
-           {"name": row.name, "scopes": row.scopes, "projects": project_ids})
+           {"name": row.name, "scopes": row.scopes})
     return {
         "id": row.id,
         "name": row.name,
         "scopes": row.scopes,
-        "projects": project_ids,
         "token": plaintext,
         "note": "Store this now — only its hash is kept, and it is never shown again.",
     }
@@ -4042,8 +4021,8 @@ def create_mcp_client(body: McpClientIn, session: Session = Depends(db)) -> dict
 def list_mcp_clients(session: Session = Depends(db)) -> list[dict]:
     return [
         {"id": c.id, "name": c.name, "user_id": c.user_id, "scopes": c.scopes,
-         "projects": c.project_ids, "created_at": c.created_at,
-         "last_used_at": c.last_used_at, "revoked_at": c.revoked_at}
+         "created_at": c.created_at, "last_used_at": c.last_used_at,
+         "revoked_at": c.revoked_at}
         for c in session.execute(select(McpClient).order_by(McpClient.created_at)).scalars()
     ]
 

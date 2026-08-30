@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 
 from tests.conftest import ADMIN, bearer, channel_of, live_token, make_project
-from tests.selftest_invariants.test_mcp_auth import mint, rpc
+from tests.selftest_invariants.test_mcp_auth import foreign_project, mint, rpc
 
 SLUG = "acme"
 
@@ -132,14 +132,14 @@ def test_an_oversize_payload_is_reported_not_pretended(client):
 
 
 def test_the_desk_shows_only_the_projects_the_client_may_see(client):
-    """The budget work must not have loosened the allowlist on the way through.
+    """The budget work must not have loosened the filter on the way through.
 
     The desk is somebody else's cross-project rollup, so it is the one payload
     where filtering is applied to a page we did not write.
     """
     make_project(client, slug=SLUG)
-    make_project(client, slug="beta")
-    scoped = mint(client, projects=[SLUG])
+    foreign_project(client, slug="beta")
+    scoped = mint(client)
 
     desk = text_of(client, scoped["token"], "desk")
     assert SLUG in desk
@@ -169,10 +169,10 @@ def test_resources_are_a_convenience_not_the_only_path(client):
     assert SLUG in text_of(client, reader["token"], "projects")
 
 
-def test_a_resource_outside_the_allowlist_is_refused(client):
+def test_a_resource_for_another_chairmans_project_is_refused(client):
     make_project(client, slug=SLUG)
-    make_project(client, slug="beta")
-    scoped = mint(client, projects=[SLUG])
+    foreign_project(client, slug="beta")
+    scoped = mint(client)
 
     answer = rpc(client, scoped["token"], "resources/read",
                  {"uri": "yaaf://project/beta/plan"}).json()

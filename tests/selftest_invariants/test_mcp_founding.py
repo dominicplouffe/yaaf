@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 
 from tests.conftest import ADMIN, make_project, seed_role
-from tests.selftest_invariants.test_mcp_auth import mint, rpc
+from tests.selftest_invariants.test_mcp_auth import foreign_project, mint, rpc
 from yaaf.core.constitution import AUTONOMY_PRESETS
 
 SLUG = "acme"
@@ -32,8 +32,8 @@ GOOD_SPEC = {
 }
 
 
-def founder(client, name="drafting", projects=()):
-    return mint(client, name=name, scopes=("create",), projects=projects)
+def founder(client, name="drafting"):
+    return mint(client, name=name, scopes=("create",))
 
 
 def call(client, token, tool, arguments=None):
@@ -280,8 +280,8 @@ def test_the_design_prompt_tells_a_client_to_stop_before_spending(client):
 
 def test_a_project_prompt_resolves_the_slug_before_the_model_sees_it(client):
     make_project(client, slug=SLUG)
-    make_project(client, slug="beta")
-    scoped = mint(client, name="one", scopes=("read",), projects=[SLUG])["token"]
+    foreign_project(client, slug="beta")
+    scoped = mint(client, name="one", scopes=("read",))["token"]
 
     got = rpc(client, scoped, "prompts/get",
               {"name": "why-at-risk", "arguments": {"project": SLUG}}).json()

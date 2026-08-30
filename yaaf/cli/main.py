@@ -670,21 +670,19 @@ def mcp_token_mint(
     chairman: str = typer.Option(..., "--chairman", help="Email of the chairman it acts for"),
     scopes: str = typer.Option("read", "--scopes",
                                help="Comma-separated: read, steer, create, configure"),
-    project: list[str] = typer.Option(None, "--project",
-                                      help="Slug or id, repeatable; omit for all this "
-                                           "chairman's projects"),
 ) -> None:
     """Mint a scoped MCP client token. The value is printed once and never again.
 
-    Start with `read`. It is most of the value and none of the risk: a client
-    with it can see every project and sign for nothing.
+    Scopes are the whole narrowing: the client reaches every project this
+    chairman chairs, whenever it asks, and nothing anyone else chairs. Start
+    with `read`. It is most of the value and none of the risk — a client with
+    it can see every project and sign for nothing.
     """
     with _client() as client:
         _show(client.post("/admin/mcp_clients", json={
             "name": name,
             "chairman_email": chairman,
             "scopes": [s.strip() for s in scopes.split(",") if s.strip()],
-            "projects": list(project or []),
         }))
 
 

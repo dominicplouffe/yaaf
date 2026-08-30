@@ -13,13 +13,24 @@ import json
 from tests.conftest import ADMIN, bearer, make_project
 
 
-def mint(client, name="laptop", scopes=("read",), projects=(), chairman="chair@example.com"):
+def mint(client, name="laptop", scopes=("read",), chairman="chair@example.com"):
     response = client.post("/admin/mcp_clients", json={
-        "name": name, "chairman_email": chairman,
-        "scopes": list(scopes), "projects": list(projects),
+        "name": name, "chairman_email": chairman, "scopes": list(scopes),
     }, headers=ADMIN)
     assert response.status_code == 200, response.text
     return response.json()
+
+
+def foreign_project(client, slug="beta", email="other@example.com"):
+    """A project this suite's chairman does not chair.
+
+    Reach follows chairmanship and nothing else, so this is now the only way to
+    build a project an MCP grant cannot see — and the shape every "refused in
+    the same words a nonexistent one gets" attack needs.
+    """
+    client.post("/admin/users", json={"email": email, "display_name": "Other"},
+                headers=ADMIN)
+    return make_project(client, slug=slug, chairman_email=email)
 
 
 def rpc(client, token, method, params=None, message_id=1):
@@ -108,29 +119,19 @@ def test_no_sse_stream_and_no_anonymous_probe(client):
     assert client.get("/mcp").status_code == 401
 
 
-def test_minting_refuses_unknown_scopes_and_unchaired_projects(client):
+def test_minting_refuses_an_unknown_scope(client):
     """A grant that cannot be honoured is refused while the chairman is looking.
 
-    Both halves matter: an unknown scope would silently hold nothing, and a
-    project this user does not chair would read as a grant and behave as one
-    for exactly as long as it took someone to rely on it.
+    An unknown scope would hold nothing and say nothing, for exactly as long as
+    it took someone to rely on it.
     """
     make_project(client, slug="acme")
     bad_scope = client.post("/admin/mcp_clients", json={
         "name": "laptop", "chairman_email": "chair@example.com",
-        "scopes": ["read", "admin"], "projects": [],
+        "scopes": ["read", "admin"],
     }, headers=ADMIN)
     assert bad_scope.status_code == 422
     assert "admin" in bad_scope.json()["detail"]
-
-    client.post("/admin/users", json={"email": "other@example.com", "display_name": "Other"},
-                headers=ADMIN)
-    not_chaired = client.post("/admin/mcp_clients", json={
-        "name": "laptop", "chairman_email": "other@example.com",
-        "scopes": ["read"], "projects": ["acme"],
-    }, headers=ADMIN)
-    assert not_chaired.status_code == 422
-    assert "does not chair" in not_chaired.json()["detail"]
 
 
 def test_the_handshake_answers_in_the_version_the_client_asked_for(client):

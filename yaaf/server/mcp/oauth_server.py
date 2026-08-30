@@ -41,7 +41,6 @@ from yaaf.core.models import (
     McpToken,
     OAuthClient,
     OAuthCode,
-    Project,
     User,
     utcnow,
 )
@@ -236,7 +235,7 @@ async def authorize_submit(
     email = str(form.get("email") or "")
     password = str(form.get("password") or "")
     params = {k: v for k, v in form.items()
-              if k not in ("action", "email", "password", "scope_grant", "project_grant")}
+              if k not in ("action", "email", "password", "scope_grant")}
     problem = _validate_authorize(session, params)
     if problem:
         return _page("Cannot continue", f"<p>{html.escape(problem)}</p>", status=400)
@@ -263,8 +262,6 @@ async def authorize_submit(
     if not granted:
         return _page("Nothing to approve",
                      "<p>No scope was ticked, so there is nothing to grant.</p>", status=400)
-    projects = [p for p in form.getlist("project_grant")
-                if p in {row.id for row in _chaired(session, user)}]
 
     code, code_hash = mint_prefixed("yac")
     session.add(OAuthCode(
@@ -273,7 +270,6 @@ async def authorize_submit(
         oauth_client_id=params["client_id"],
         user_id=user.id,
         scopes=sorted(set(granted)),
-        project_ids=projects,
         code_challenge=params["code_challenge"],
         redirect_uri=params["redirect_uri"],
         resource=params.get("resource") or canonical_resource(),
@@ -301,12 +297,6 @@ def _validate_authorize(session: Session, params: dict) -> str | None:
     if resource and resource.rstrip("/") != canonical_resource().rstrip("/"):
         return f"this server only issues tokens for {canonical_resource()}."
     return None
-
-
-def _chaired(session: Session, user: User) -> list[Project]:
-    return list(session.execute(
-        select(Project).where(Project.chairman_user_id == user.id)
-        .order_by(Project.created_at)).scalars())
 
 
 def _hidden(params: dict) -> str:
@@ -341,11 +331,6 @@ def _consent_form(session: Session, user: User, params: dict) -> str:
         f'<label class="row"><input type="checkbox" name="scope_grant" value="{s}"'
         f'{" checked" if s in asked else ""}> <b>{s}</b> — {html.escape(_describe(s))}</label>'
         for s in SCOPES)
-    project_rows = "".join(
-        f'<label class="row"><input type="checkbox" name="project_grant" '
-        f'value="{p.id}" checked> {html.escape(p.name)} '
-        f'<span class="muted">({html.escape(p.slug)})</span></label>'
-        for p in _chaired(session, user))
 
     return f"""
     <p><b>{html.escape(client.name)}</b> is asking to act for
@@ -354,11 +339,11 @@ def _consent_form(session: Session, user: User, params: dict) -> str:
     <form method="post" action="/oauth/authorize">
       {_hidden(params)}
       <h3>What it may do</h3>{scope_rows}
-      <h3>Which projects it may see</h3>
-      {project_rows or '<p class="muted">You chair no projects yet.</p>'}
-      <p class="muted">Untick anything it does not need. Every write this client
-      makes is recorded as machine-mediated, and you can revoke it at any time
-      with <code>yaaf mcp-token revoke</code>.</p>
+      <p class="muted">On every project you chair, including ones you found
+      later — there is no project list to keep in step here. Untick anything
+      this client does not need. Every write it makes is recorded as
+      machine-mediated, and you can revoke it at any time with
+      <code>yaaf mcp-token revoke</code>.</p>
       <button type="submit" name="action" value="approve">Approve</button>
       <button type="submit" name="action" value="deny" class="plain">Deny</button>
     </form>
@@ -441,7 +426,6 @@ def _exchange_code(session: Session, client: OAuthClient, code: str, redirect_ur
         # endpoint is the classic escalation, so nothing here reads a scope
         # parameter — the code carries the answer.
         scopes=list(row.scopes),
-        project_ids=list(row.project_ids),
         oauth_client_id=client.id,
     )
     session.add(grant)
@@ -450,8 +434,7 @@ def _exchange_code(session: Session, client: OAuthClient, code: str, redirect_ur
         id=ids.new_id(ids.AUDIT), project_id=None,
         actor=f"user:{row.user_id} via mcp:{grant.name}",
         action="mcp_client.consent", entity="mcp_client", entity_id=grant.id,
-        detail={"scopes": grant.scopes, "projects": grant.project_ids,
-                "oauth_client": client.client_id},
+        detail={"scopes": grant.scopes, "oauth_client": client.client_id},
     ))
     return _issue_pair(session, grant, row.resource)
 

@@ -238,30 +238,40 @@ def test_consent_requires_the_chairmans_password_not_the_admin_token(client, pub
     assert "did not match" in wrong.text
 
 
-def test_a_grant_only_reaches_projects_the_chairman_ticked(client, public):
-    """The consent screen is where the allowlist is decided, so it is where the
-    attack lands: approve one project, reach only that one."""
+def test_a_consented_grant_follows_chairmanship_and_stops_there(client, public):
+    """The consent screen decides scopes, never projects — so what a grant
+    reaches has to be read fresh, and has to stop at the chairman it names.
+
+    Both halves are attacked here: a project founded *after* approval is
+    reachable without a second consent, and one another chairman runs is not —
+    not even when the client posts a `project_grant` field naming it, which is
+    what a client written against the old screen would do.
+    """
     chairman_with_password(client)
-    make_project(client, slug="beta")
+    client.post("/admin/users", json={"email": "other@example.com", "display_name": "Other"},
+                headers=ADMIN)
+    gamma = make_project(client, slug="gamma", chairman_email="other@example.com")
     registered = register(client)
 
     params = authorize_params(registered)
     client.post("/oauth/authorize", data={
         **params, "action": "login", "email": "chair@example.com", "password": PASSWORD})
-    projects = client.get("/observe/projects", headers=ADMIN).json()
-    acme = next(p["id"] for p in projects if p["slug"] == "acme")
-
     approved = client.post("/oauth/authorize", data={
-        **params, "action": "approve", "scope_grant": ["read"], "project_grant": [acme]},
+        **params, "action": "approve", "scope_grant": ["read"],
+        "project_grant": [gamma["id"]]},
         follow_redirects=False)
     import re
 
     code = re.search(r"code=([^&]+)", approved.headers["location"]).group(1)
     issued = exchange(client, registered, code).json()
 
+    # Founded after the code was issued, and after the token was minted.
+    make_project(client, slug="beta")
+
     listed = client.post("/mcp", headers=bearer(issued["access_token"]), json={
         "jsonrpc": "2.0", "id": 1, "method": "tools/call",
         "params": {"name": "projects", "arguments": {}}}).json()
     text = listed["result"]["content"][0]["text"]
     assert "acme" in text
-    assert "beta" not in text
+    assert "beta" in text
+    assert "gamma" not in text

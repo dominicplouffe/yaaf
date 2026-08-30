@@ -27,8 +27,8 @@ SLUG = "acme"
 VALUE = "sk-ant-not-a-real-key-000000"
 
 
-def configurer(client, name="setup", projects=()):
-    return mint(client, name=name, scopes=("configure",), projects=projects)
+def configurer(client, name="setup"):
+    return mint(client, name=name, scopes=("configure",))
 
 
 def live_admin_routes(client) -> set[str]:

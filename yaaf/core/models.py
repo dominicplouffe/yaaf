@@ -1507,10 +1507,12 @@ class McpClient(Base):
     would record the chairman as the one who used them.
 
     This row is the narrowing. `scopes` decides which verbs the client can
-    reach at all, `project_ids` decides which projects it can see, and every
-    write made through it is attributed as machine-mediated for good. Like a
-    run token, only the hash is stored: the plaintext is shown once at
-    creation and lives thereafter in the client's own config.
+    reach at all, and every write made through it is attributed as
+    machine-mediated for good. What it can *see* is not stored here: it is
+    every project its chairman chairs, read at call time, so founding a
+    project needs no second trip through a consent screen. Like a run token,
+    only the hash is stored: the plaintext is shown once at creation and
+    lives thereafter in the client's own config.
     """
 
     __tablename__ = "mcp_clients"
@@ -1523,9 +1525,6 @@ class McpClient(Base):
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
     #: Subset of read / steer / create / configure. `read` is implied by all.
     scopes: Mapped[list] = mapped_column(JSONVariant, default=list)
-    #: Project allowlist. Empty means every project this user chairs — which
-    #: is a real narrowing already, because a chairman is per project.
-    project_ids: Mapped[list] = mapped_column(JSONVariant, default=list)
     #: Set when the grant came from a consent screen rather than the CLI, so
     #: the record can tell "the chairman typed a command" from "the chairman
     #: clicked approve in a browser".
@@ -1605,7 +1604,6 @@ class OAuthCode(Base):
     oauth_client_id: Mapped[str] = mapped_column(String(40))
     user_id: Mapped[str] = mapped_column(String(40))
     scopes: Mapped[list] = mapped_column(JSONVariant, default=list)
-    project_ids: Mapped[list] = mapped_column(JSONVariant, default=list)
     #: PKCE, S256 only. A code with no challenge is never issued.
     code_challenge: Mapped[str] = mapped_column(String(128))
     redirect_uri: Mapped[str] = mapped_column(String(500))

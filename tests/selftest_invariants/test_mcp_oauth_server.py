@@ -144,7 +144,7 @@ def test_a_cli_token_still_works_after_the_token_table_split(client, public):
     chairman_with_password(client)
     minted = client.post("/admin/mcp_clients", json={
         "name": "dom-laptop", "chairman_email": "chair@example.com",
-        "scopes": ["read"], "projects": []}, headers=ADMIN).json()
+        "scopes": ["read"]}, headers=ADMIN).json()
     assert client.post("/mcp", headers=bearer(minted["token"]),
                        json={"jsonrpc": "2.0", "id": 1, "method": "initialize"}
                        ).status_code == 200

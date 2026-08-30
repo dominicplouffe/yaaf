@@ -73,7 +73,7 @@ house rule 1, and the invariant test that attacks it, per house rule 2.
 | # | Rule | Enforced by | Attacked in |
 |---|---|---|---|
 | 1 | An MCP client is never the admin principal. | A third principal (`mcp_auth`) with its own token table; `settings().admin_token` is not accepted on `/mcp` at all. | `test_mcp_auth.py` |
-| 2 | A token holds only the scopes and projects it was issued for. | The scope is checked at dispatch against the tool's declaration, never at the call site; every project-addressed tool resolves its reference through `resolve_project`, which refuses a project outside the allowlist in the same words as one that does not exist. | `test_mcp_scopes.py` |
+| 2 | A token holds only the scopes it was issued for, and reaches only what its chairman chairs. | The scope is checked at dispatch against the tool's declaration, never at the call site; every project-addressed tool resolves its reference through `resolve_project`, which reads chairmanship on every call and refuses another chairman's project in the same words as one that does not exist. | `test_mcp_scopes.py` |
 | 3 | Every write is attributed as machine-mediated, permanently. | `AuditLog.actor` is written as `user:<id> via mcp:<client>`; the field is never the bare `user:<id>` form on this path. | `test_mcp_attribution.py` |
 | 4 | Irreversible writes cannot happen in one call. | Server-issued `confirm_token`: bound to a hash of the exact arguments, single-use, 5-minute TTL. A second call with different arguments is refused. | `test_mcp_confirm.py` |
 | 5 | Agent-authored text is data, never instruction. | Every tool result carrying agent-written content wraps it in an `<untrusted_agent_content>` envelope naming the agent, and no tool result is ever executed as a directive. | `test_mcp_untrusted.py` |
@@ -104,7 +104,6 @@ only a hash (`yaaf/core/tokens.py`):
 | *(the secret)* | Moved to `mcp_tokens` in M2, so refresh can rotate it without changing what the audit trail names. Hashes only, either way. |
 | `user_id` | The chairman this client acts for. Writes are attributed here. |
 | `scopes` | Subset of `read`, `steer`, `create`, `configure` |
-| `project_ids` | Allowlist, or empty for "every project this user chairs" |
 | `revoked_at`, `last_used_at`, `created_at` | Rotation and forensics |
 
 **The scopes**, smallest to largest:
@@ -134,8 +133,8 @@ clients can connect at all:
   flow instead of a paste. Required by claude.ai, which offers no field for a
   header. That is M2, and the next section is what it takes.
 
-Both land on the same `mcp_clients` grant, so scopes, the project allowlist and
-the attribution rules are written once and hold however the client got in.
+Both land on the same `mcp_clients` grant, so scopes and the attribution rules
+are written once and hold however the client got in.
 
 **Opinion on the implementation:** hand-roll the JSON-RPC surface in FastAPI
 rather than taking the `mcp` SDK dependency. It is seven methods (`initialize`,
@@ -208,11 +207,41 @@ argon2id hash, a signed session cookie scoped to `/oauth/*` and nothing else.
 Not a conversion of the SPA to cookie auth; that stays the UI milestone's job.
 
 **The consent screen is where this design gets better than a pasted token.**
-It shows the client's name and redirect host, the scopes it asked for, and a
-checkbox per project — so the allowlist becomes a decision the chairman makes
-at grant time, the way a GitHub app install does, instead of a CLI flag they
-have to remember. A client asking for `configure` on every project has to say
-so on a screen, in words, before anything is issued.
+It shows the client's name and redirect host and the scopes it asked for, the
+way a GitHub app install does, instead of a CLI flag the chairman has to
+remember. A client asking for `configure` has to say so on a screen, in words,
+before anything is issued.
+
+It shipped with a checkbox per project too, and that half was wrong — see
+*The allowlist that had to go* below.
+
+### The allowlist that had to go
+
+M0 gave every grant a `project_ids` allowlist and M2 put it on the consent
+screen as a checkbox per project. Both were removed in `0023`, and the reason is
+worth keeping, because the mistake is easy to make again.
+
+The allowlist asked, at grant time, a question only the chairman's project list
+can answer. A chairman who founds a project on Tuesday found it unreachable on
+Wednesday from a client approved on Monday — refused, correctly and uselessly,
+in the same words a project that does not exist gets. The only way back in was a
+second trip through the consent screen, which does not widen the existing grant:
+it mints a **second** one beside it, so the audit trail grows a name per
+approval and the chairman accumulates live grants they have to remember to
+revoke. A narrowing whose upkeep is a re-authorization is a narrowing nobody
+maintains, and one that quietly manufactures the credential sprawl it was
+supposed to prevent.
+
+Chairmanship was always the gate behind it, it is read on every call, and it is
+already per project — so what a client sees now follows what its chairman owns,
+in both directions. Found a project, the client sees it that second; hand one to
+another chairman, and it stops being reachable with nothing to revoke. Scopes
+stay on the consent screen, because *what a client may do* is a real decision
+that no other record answers.
+
+The narrowing that remains is the one that matters: `configure` on a project
+nobody else chairs is still a smaller thing than the admin bearer, which is
+every verb on every project with no name attached.
 
 ### 4. Tokens rotate; grants and attribution do not
 
@@ -422,7 +451,7 @@ and re-fetchable by the client when it needs to refresh:
 ```
 yaaf/server/mcp/__init__.py     # create_router()
 yaaf/server/mcp/protocol.py     # JSON-RPC envelope, initialize, capabilities
-yaaf/server/mcp/auth.py         # mcp_auth principal, scopes, project allowlist
+yaaf/server/mcp/auth.py         # mcp_auth principal, scopes, chairmanship
 yaaf/server/mcp/tools_read.py   # read scope
 yaaf/server/mcp/tools_steer.py  # steer scope
 yaaf/server/mcp/tools_create.py # create + configure scopes
@@ -509,7 +538,8 @@ milestone** — if only M0+M1 ever land, the thing was worth building.
       the `users.password_hash` column that already existed, a signed session
       cookie scoped to `/oauth`
 - [x] Consent screen: client name and redirect host, requested scopes, a
-      checkbox per project — the allowlist becomes a grant-time decision
+      checkbox per project — the allowlist becomes a grant-time decision.
+      **The project half was removed in `0023`;** see below
 - [x] `test_mcp_oauth_server.py` — yaaf's own `mcp_oauth` client walks the
       ladder against yaaf's own server, in-process and offline
 - [x] `test_mcp_oauth_attacks.py` — PKCE stripped or downgraded to `plain`, code
@@ -628,7 +658,7 @@ the HTTP surface got it first, and the tool inherited it.
    softens it for every client that can do OAuth instead.
 3. **One server or one per project?** One, with a `project` argument. Per-project
    servers would let the client's own permission UI scope things naturally, at
-   the cost of N connections. Reconsider if the allowlist proves awkward.
+   the cost of N connections. Reconsider if one connection proves awkward.
 4. **Should `read` see channel contents by default?** It is the richest context
    and the largest injection surface. Currently yes, wrapped. A `read_basic`
    scope that excludes agent prose is the fallback if that proves wrong.

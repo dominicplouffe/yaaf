@@ -1,15 +1,16 @@
-"""Scopes and the project allowlist, attacked over HTTP.
+"""Scopes and reach, attacked over HTTP.
 
-Rule 2 of docs/MCP_SERVER.md: a token holds only the scopes and the projects it
-was issued for. The interesting attacks are not "call a tool you were not
-given" — they are the quieter ones: name another project by slug, name it by
-id, or ask the list tool and count what comes back.
+Rule 2 of docs/MCP_SERVER.md: a token holds only the scopes it was issued for,
+and reaches only what its chairman chairs. The interesting attacks are not
+"call a tool you were not given" — they are the quieter ones: name someone
+else's project by slug, name it by id, or ask the list tool and count what
+comes back.
 """
 
 from __future__ import annotations
 
 from tests.conftest import ADMIN, make_project
-from tests.selftest_invariants.test_mcp_auth import mint, rpc
+from tests.selftest_invariants.test_mcp_auth import foreign_project, mint, rpc
 
 #: Every tool the `read` scope holds. Spelled out rather than derived from the
 #: registry: a test that asks the code what it registered cannot notice a write
@@ -70,22 +71,31 @@ def test_out_of_scope_tools_are_absent_not_merely_refused(client):
         registry.TOOLS.pop("pretend_steer", None)
 
 
-def test_the_allowlist_filters_the_list_not_just_the_lookup(client):
-    """The cheapest way to learn what a chairman runs is to ask for the list."""
+def test_a_project_founded_after_the_grant_needs_no_new_grant(client):
+    """The reason the allowlist went: reach is read now, not frozen at consent.
+
+    A chairman who founds a project on Tuesday should not have to walk a
+    consent screen again on Wednesday to see it, and the grant that already
+    names him should not have to be reissued to learn it exists.
+    """
     make_project(client, slug="acme")
+    scoped = mint(client)
+    assert _slugs(client, scoped["token"]) == {"acme"}
+
     make_project(client, slug="beta")
-    scoped = mint(client, projects=["acme"])
+    assert _slugs(client, scoped["token"]) == {"acme", "beta"}
+    assert _json(call(client, scoped["token"], "whoami")["result"])["projects"] == [
+        "acme", "beta"]
+    # And addressable, not merely listed.
+    one = _json(call(client, scoped["token"], "projects", {"project": "beta"})["result"])
+    assert [p["slug"] for p in one["projects"]] == ["beta"]
 
-    payload = call(client, scoped["token"], "projects")["result"]
-    slugs = {p["slug"] for p in _json(payload)["projects"]}
-    assert slugs == {"acme"}
-    assert _json(call(client, scoped["token"], "whoami")["result"])["projects"] == ["acme"]
 
-
-def test_a_project_outside_the_allowlist_is_refused_by_slug_and_by_id(client):
+def test_another_chairmans_project_is_refused_by_slug_and_by_id(client):
+    """Chairmanship is the only gate left, so it carries the oracle attack."""
     make_project(client, slug="acme")
-    beta = make_project(client, slug="beta")
-    scoped = mint(client, projects=["acme"])
+    beta = foreign_project(client, slug="beta")
+    scoped = mint(client)
 
     def refusal(ref: str) -> str:
         result = call(client, scoped["token"], "projects", {"project": ref})["result"]
@@ -97,20 +107,20 @@ def test_a_project_outside_the_allowlist_is_refused_by_slug_and_by_id(client):
     for ref in ("beta", beta["id"]):
         # Word for word what a project that does not exist gets, with only the
         # reference swapped — so the surface never becomes an oracle for what
-        # else this chairman runs.
+        # other people run.
         assert refusal(ref) == absent.replace("no-such-thing", ref)
 
 
-def test_an_empty_allowlist_still_stops_at_chairmanship(client):
+def test_reach_stops_at_chairmanship(client):
     """'Every project' means every project this user chairs — not every project.
 
-    A token with no allowlist is the convenient default, so it is the one worth
-    checking: the second gate has to hold on its own.
+    Every grant is now the convenient default, so the one gate under it has to
+    hold on its own.
     """
     make_project(client, slug="acme")
     client.post("/admin/users", json={"email": "other@example.com", "display_name": "Other"},
                 headers=ADMIN)
-    other = mint(client, name="others-laptop", chairman="other@example.com", projects=())
+    other = mint(client, name="others-laptop", chairman="other@example.com")
 
     payload = _json(call(client, other["token"], "projects")["result"])
     assert payload["projects"] == []
@@ -123,6 +133,10 @@ def test_scope_grants_do_not_leak_between_clients(client):
     reader = mint(client, name="reader", scopes=("read",))
     mint(client, name="operator", scopes=("read", "steer", "create"))
     assert tools_of(client, reader["token"]) == READ_TOOLS
+
+
+def _slugs(client, token) -> set[str]:
+    return {p["slug"] for p in _json(call(client, token, "projects")["result"])["projects"]}
 
 
 def _json(result: dict) -> dict:

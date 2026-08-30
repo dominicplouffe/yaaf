@@ -148,20 +148,20 @@ cannot be revoked one client at a time.
 
 | Command | What it does |
 |---|---|
-| `yaaf mcp-token mint NAME --chairman EMAIL [--scopes read] [--project SLUG]…` | Mint a client token. Printed once; only its hash is stored. |
+| `yaaf mcp-token mint NAME --chairman EMAIL [--scopes read]` | Mint a client token. Printed once; only its hash is stored. |
 | `yaaf mcp-token list` | Every client, what it holds, when it was last used. |
 | `yaaf mcp-token revoke CLIENT_ID` | Revoke it. The row survives — the audit trail names it. |
 
 ```bash
-yaaf mcp-token mint dom-laptop --chairman you@example.com --scopes read --project ppc-audit
-# → {"token": "ymt_…", "scopes": ["read"], "projects": ["proj_…"]}
+yaaf mcp-token mint dom-laptop --chairman you@example.com --scopes read
+# → {"token": "ymt_…", "scopes": ["read"]}
 ```
 
 Scopes are `read`, `steer`, `create`, `configure`, and `read` is implied by all
 of them. Start with `read` alone: it is most of the value and none of the risk
-— a client holding it sees every project and signs for nothing. Omitting
-`--project` means every project that chairman chairs, which is a narrowing
-already; naming one narrows it further.
+— a client holding it sees every project and signs for nothing. Scopes are the
+whole narrowing: a client reaches every project its chairman chairs, read fresh
+on every call, so a project founded tomorrow needs no new token.
 
 ## Spend analysis
 

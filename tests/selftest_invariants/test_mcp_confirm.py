@@ -16,13 +16,13 @@ from __future__ import annotations
 import json
 
 from tests.conftest import ADMIN, make_project
-from tests.selftest_invariants.test_mcp_auth import mint, rpc
+from tests.selftest_invariants.test_mcp_auth import foreign_project, mint, rpc
 
 SLUG = "acme"
 
 
-def steerer(client, name="desk", projects=()):
-    return mint(client, name=name, scopes=("steer",), projects=projects)
+def steerer(client, name="desk"):
+    return mint(client, name=name, scopes=("steer",))
 
 
 def call(client, token, name, arguments):
@@ -179,11 +179,11 @@ def test_a_read_token_cannot_reach_any_of_this(client):
         assert answer["error"]["code"] == -32601, tool
 
 
-def test_a_steer_token_still_stops_at_the_project_allowlist(client):
-    """Scope says which verbs; the allowlist says which projects. Both, always."""
+def test_a_steer_token_still_stops_at_chairmanship(client):
+    """Scope says which verbs; chairmanship says which projects. Both, always."""
     make_project(client, slug=SLUG)
-    beta = make_project(client, slug="beta")
-    token = steerer(client, projects=[SLUG])["token"]
+    beta = foreign_project(client, slug="beta")
+    token = steerer(client)["token"]
 
     failed, message = call(client, token, "lifecycle",
                            {"project": "beta", "verb": "stop", "reason": "not mine"})

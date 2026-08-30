@@ -7,10 +7,11 @@ bearer is unscoped and unattributable, so a model holding it would hold every
 verb the platform exists to deny a model, and the audit trail would record the
 chairman as the one who used them.
 
-So an MCP client presents its own credential, which carries three narrowings
-the admin token cannot express — the scopes it may reach, the projects it may
-see, and the identity it acts for, which is written into every record it
-touches as machine-mediated.
+So an MCP client presents its own credential, which carries two narrowings the
+admin token cannot express — the scopes it may reach, and the identity it acts
+for, which is written into every record it touches as machine-mediated. What it
+may *see* is not a third narrowing: it is chairmanship, which the chairman
+already decides per project by chairing it.
 """
 
 from __future__ import annotations
@@ -83,9 +84,6 @@ class Principal:
     name: str
     user_id: str
     scopes: frozenset[str]
-    #: Empty means "every project this user chairs" — already a narrowing,
-    #: because chairmanship is per project.
-    project_ids: tuple[str, ...]
 
     def holds(self, scope: str) -> bool:
         if not self.scopes:
@@ -168,20 +166,22 @@ def mcp_auth(
         name=client.name,
         user_id=client.user_id,
         scopes=frozenset(client.scopes or ()),
-        project_ids=tuple(client.project_ids or ()),
     )
 
 
 def allowed_projects(session: Session, principal: Principal) -> list[Project]:
     """Every project this principal may see, in creation order.
 
-    Two gates, both applied: the token's allowlist, and the chairmanship of the
-    user it acts for. A client cannot be granted a project its user does not
-    chair, and one granted nothing sees what its user chairs and no more.
+    One gate: the chairmanship of the user it acts for. A per-client allowlist
+    used to sit in front of it and was removed, because it answered a question
+    at grant time that only the chairman's project list can answer — a project
+    founded after consent fell outside a list frozen weeks earlier, and the
+    only way back in was a second trip through the browser. Chairmanship is
+    evaluated on every call, so a project founded a minute ago is reachable
+    and one handed to another chairman stops being reachable, both without
+    reissuing anything.
     """
     query = select(Project).where(Project.chairman_user_id == principal.user_id)
-    if principal.project_ids:
-        query = query.where(Project.id.in_(principal.project_ids))
     return list(session.execute(query.order_by(Project.created_at)).scalars())
 
 
@@ -190,9 +190,9 @@ def resolve_project(session: Session, principal: Principal, ref: str) -> Project
 
     Every project-addressed tool goes through here, including ones that were
     handed an id indirectly — a run id, an approval id, a requirement key read
-    out of some other project's page. A project outside the allowlist is
+    out of some other project's page. A project another chairman runs is
     refused in the same words as one that does not exist, so the surface does
-    not become an oracle for which projects a chairman runs.
+    not become an oracle for which projects other people run.
     """
     reachable = allowed_projects(session, principal)
     for project in reachable:
