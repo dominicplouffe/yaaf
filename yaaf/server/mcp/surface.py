@@ -72,6 +72,22 @@ REACHED = {
 #: Routes no tool reaches, and the reason. A reason is required: "we did not
 #: get to it" is a fine answer, but it has to be written down as one.
 WITHHELD = {
+    "POST /admin/projects/{project_id}/spend-window":
+        "funding a measurement window is the chairman committing his own money to "
+        "a question. The whole object exists because a model produced three "
+        "budget numbers in two hours; handing a model the verb that opens one "
+        "would put the estimating back where it failed.",
+    "PATCH /admin/projects/{project_id}/spend-window":
+        "same reason as opening one — the allowance is his to move, and an "
+        "adjustment the CEO could make itself is not an adjustment, it is a cap "
+        "it set for itself.",
+    "POST /admin/projects/{project_id}/spend-window/stop":
+        "ending the measurement early is the chairman's call; a CEO that could "
+        "stop a window could stop one that was about to prove it expensive.",
+    "GET /admin/projects/{project_id}/spend-window":
+        "the CEO already carries the live window and its measured progress in "
+        "every context pack, so a second read path would be a second definition "
+        "of the same numbers.",
     "GET /admin/secrets/{secret_id}/value":
         "reading a credential back into a model's context is exfiltration, whatever "
         "the scope. The only direction values move on this surface is in.",

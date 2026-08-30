@@ -172,7 +172,16 @@ def _janitor_project(session: Session, project: Project) -> None:
     warn_drought(session, project, cons)
     warn_stall(session, project, cons)
     warn_memory_pressure(session, project, cons)
+    sweep_spend_window(session, project)
     evaluate_flags(session, project, cons)
+
+
+def sweep_spend_window(session: Session, project: Project) -> None:
+    """Close a measurement window that is due and write its findings; make the
+    CEO report at each checkpoint. See :mod:`yaaf.server.spendwindow`."""
+    from yaaf.server import spendwindow
+
+    spendwindow.sweep(session, project)
 
 
 def _notice_ceo(session: Session, project: Project, kind: str, body: str) -> None:

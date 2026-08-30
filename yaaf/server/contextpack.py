@@ -672,6 +672,35 @@ def _target(session: Session, project: Project, cons: ConstitutionDoc) -> dict |
     }
 
 
+def _spend_window(session: Session, project: Project) -> dict | None:
+    """The question the chairman is paying to have answered, and how far in.
+
+    Its presence changes what a good answer to "what will this cost" looks
+    like. Without one, a CEO asked that question reaches for a number, because
+    every money sentence the platform owns is an instruction to cut and none of
+    them has ever said that "I don't know" is available. With one open, the
+    honest answer is the measurement so far and what is still unknown — and the
+    platform, not the CEO, writes the number at the end.
+    """
+    from yaaf.server import spendwindow
+
+    window = spendwindow.open_window(session, project.id)
+    if window is None:
+        return None
+    detail = spendwindow.progress(session, window)
+    detail["note"] = (
+        "The chairman funded this to answer the question above. It is NOT a "
+        "larger cap and it is not permission to be frugal either: spend what "
+        "the work honestly needs, so that what gets measured is the real cost "
+        "of doing the job properly rather than the cost of being careful. "
+        "When he asks what things will cost, give him the measured days so far "
+        "and name what is still unknown — the platform writes the finding when "
+        "this closes, and a confident estimate you cannot support is exactly "
+        "what this window exists to replace."
+    )
+    return detail
+
+
 #: Enough of the shelf to know what is on it and whether it is current.
 DELIVERABLES_IN_PACK = 8
 
@@ -1093,6 +1122,9 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
                          "itself."),
             }
         pack["deliverables"] = _deliverables(session, project)
+        window = _spend_window(session, project)
+        if window is not None:
+            pack["spend_window"] = window
         target = _target(session, project, cons)
         if target is not None:
             pack["target"] = target
