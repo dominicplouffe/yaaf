@@ -758,6 +758,53 @@ def _headline(project: Project, lines: list[dict], money: dict, pulse: dict,
 # ── the composers ───────────────────────────────────────────────────────────────
 
 
+def _next_up(session: Session, project: Project, cons: ConstitutionDoc) -> dict | None:
+    """The next thing this project is scheduled to do, and when.
+
+    The briefing answered four of the five questions a chairman actually asks —
+    what shipped, what is running, what is waiting on me, what it cost — and
+    was silent on the fifth: *when does something happen next*. The arithmetic
+    existed the whole time in :mod:`yaaf.server.agenda`, drawn on one screen
+    nobody visits at the moment they want it.
+
+    That silence is what a quiet window sounds like from the outside. A
+    chairman looking at a board that finished everything it knew to queue has
+    no way to tell "resting between things" from "stopped", and the record of
+    that ambiguity is a run of messages — "why are we idle?", "are we on
+    track?", "nothing has been done on the project in 13 hours. What is going
+    on?" — every one of which cost a full model turn to answer from a screen
+    that could have said it for nothing.
+
+    Composed from rows like everything else here: no run, no tokens, and it
+    still arrives on a project the platform has paused.
+    """
+    from yaaf.server.agenda import project_agenda
+
+    agenda = project_agenda(session, project, cons, days=14)
+    events = agenda.get("events") or []
+    rhythms = [r for r in agenda.get("rhythms") or [] if r.get("next")]
+    soonest_rhythm = min(rhythms, key=lambda r: r["next"]) if rhythms else None
+
+    # A dated event beats a recurring wake when it lands first: "the delivery
+    # date is Friday" is a different sentence from "the CEO wakes hourly".
+    candidates: list[tuple[str, str, str]] = []
+    if events:
+        candidates.append((events[0]["at"], events[0]["label"], events[0]["kind"]))
+    if soonest_rhythm is not None:
+        candidates.append(
+            (soonest_rhythm["next"], soonest_rhythm["label"], soonest_rhythm["kind"]))
+    if not candidates:
+        return {
+            "at": None, "label": None, "kind": None,
+            "why": (agenda["notes"][0] if agenda.get("notes") else
+                    "Nothing is scheduled in the next fourteen days."),
+            "live": agenda["live"],
+        }
+    at, label, kind = min(candidates)
+    return {"at": at, "label": label, "kind": kind, "why": None,
+            "live": agenda["live"]}
+
+
 def project_briefing(session: Session, project: Project,
                      cons: ConstitutionDoc | None = None,
                      since: datetime | None = None,
@@ -787,6 +834,7 @@ def project_briefing(session: Session, project: Project,
     money = _money(session, project, cons, since, until)
     pulse = _pulse(session, project, since, until)
     waiting = _waiting(session, project, cons)
+    next_up = _next_up(session, project, cons)
     # The run tally is bookkeeping, not an event: a window whose only lines are
     # "12 runs, 0 died" did nothing, and saying so is the point.
     substantive = [line for line in lines if line["kind"] not in ("runs",)]
@@ -805,6 +853,7 @@ def project_briefing(session: Session, project: Project,
         "money": money,
         "pulse": pulse,
         "waiting": waiting,
+        "next_up": next_up,
     }
 
 
@@ -893,6 +942,16 @@ def render_text(brief: dict) -> str:
             body.append(f"  · {waiting['open_reviews']} review(s) open")
     else:
         body.append("Waiting on you: nothing.")
+    # The fifth question, and the one that used to go unanswered: a quiet
+    # window reads as a dead project unless something says when it moves next.
+    next_up = brief.get("next_up")
+    if next_up:
+        body.append("")
+        if next_up["at"]:
+            when = next_up["at"][:16].replace("T", " ") + " UTC"
+            body.append(f"Next: {next_up['label']} — {when}")
+        else:
+            body.append(f"Next: nothing scheduled. {next_up['why']}")
     body += [
         "",
         "This briefing was composed from the record — no agent wrote it and no run "

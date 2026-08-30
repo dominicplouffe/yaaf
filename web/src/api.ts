@@ -695,6 +695,20 @@ export interface Briefing {
     open_reviews: number;
     total: number;
   };
+  /** When something happens next — the fifth question, and the one this panel
+      used to leave unanswered. A board that finished everything it knew to
+      queue reads exactly like a stopped one without it, which is how "why are
+      we idle?" and "nothing has been done in 13 hours" ended up being asked of
+      a CEO at model prices. `at` null means nothing is scheduled, and `why`
+      says so in a sentence. Same composer as the email, so they cannot
+      disagree. */
+  next_up: {
+    at: string | null;
+    label: string | null;
+    kind: string | null;
+    why: string | null;
+    live: boolean;
+  } | null;
 }
 
 export interface DeskBriefing {

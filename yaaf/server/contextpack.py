@@ -12,7 +12,7 @@ stamps amendment disclosure — the CEO can never claim it wasn't told.
 
 from __future__ import annotations
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from yaaf.core.constitution import ConstitutionDoc, effective
@@ -22,6 +22,7 @@ from yaaf.core.models import (
     Amendment,
     Approval,
     ApprovalStatus,
+    Artifact,
     Channel,
     ChannelKind,
     ChannelRead,
@@ -34,6 +35,7 @@ from yaaf.core.models import (
     Project,
     ProjectMode,
     RequirementStatus,
+    Role,
     RoleVersion,
     Run,
     SideEffect,
@@ -356,7 +358,24 @@ def _chairman_state(session: Session, project: Project, agent: Agent, now) -> di
 def _unread_messages(session: Session, agent: Agent, include_recent: bool = False) -> list[dict]:
     """Unread per cursor — or, on retry attempts, the recent tail regardless of
     cursor: a failed prior attempt advanced the cursor without any model ever
-    reading the words, and a chairman's message must never be silently eaten."""
+    reading the words, and a chairman's message must never be silently eaten.
+
+    That promise used to hold only up to `UNREAD_PER_CHANNEL`. The query took
+    the NEWEST ten pending and then advanced the cursor to *now* regardless of
+    how many there were, so an eleventh message was marked read having never
+    been rendered into any pack — gone, with no count and no hint that
+    anything had been dropped. Boardroom bursts have exceeded ten four times
+    on this install (23, 14, 10 and 10 messages inside half an hour), and the
+    only reason it has not obviously bitten is that the resident chat session
+    usually drains the boardroom first; a paused or rate-capped project has no
+    chat session.
+
+    So the slice is now the OLDEST pending, and the cursor moves only as far
+    as the last message actually shown. A backlog drains in order across
+    successive wakes instead of being silently truncated, and `more_unread`
+    says how much is still queued — because an agent that cannot see a
+    backlog will answer the part it was shown as if it were the whole.
+    """
     out = []
     for channel_id in policy.agent_channel_ids(session, agent):
         channel = session.get(Channel, channel_id)
@@ -368,13 +387,19 @@ def _unread_messages(session: Session, agent: Agent, include_recent: bool = Fals
         stmt = select(Message).where(Message.channel_id == channel_id)
         if cursor is not None and not include_recent:
             stmt = stmt.where(Message.created_at > cursor.last_read_at)
-        rows = [
-            m
-            for m in session.execute(
-                stmt.order_by(Message.created_at.desc()).limit(UNREAD_PER_CHANNEL)
-            ).scalars()
-        ][::-1]
-        rows = [m for m in rows if m.sender_agent_id != agent.id]
+        # Oldest first, so what is cut is the tail we have not reached yet
+        # rather than the head we are about to mark read. One extra row tells
+        # us a backlog exists without a second COUNT query.
+        pending = list(session.execute(
+            stmt.order_by(Message.created_at).limit(UNREAD_PER_CHANNEL + 1)
+        ).scalars())
+        more = len(pending) > UNREAD_PER_CHANNEL
+        shown = pending[:UNREAD_PER_CHANNEL]
+        # The cursor may never pass a message no model was shown. On a pure
+        # retry (include_recent) the tail is re-rendered and the cursor must
+        # not rewind, so only ever move it forward.
+        watermark = shown[-1].created_at if shown else utcnow()
+        rows = [m for m in shown if m.sender_agent_id != agent.id]
         if rows:
             out.append(
                 {
@@ -392,13 +417,20 @@ def _unread_messages(session: Session, agent: Agent, include_recent: bool = Fals
                         }
                         for m in rows
                     ],
+                    **({"more_unread": True,
+                        "note": (
+                            f"Only the oldest {UNREAD_PER_CHANNEL} are shown. More are "
+                            "queued behind them and will arrive on your next wake — or "
+                            "read them now with messages_read. Do not answer as though "
+                            "this were the whole conversation."
+                        )} if more else {}),
                 }
             )
-        now = utcnow()
         if cursor is None:
-            session.add(ChannelRead(agent_id=agent.id, channel_id=channel_id, last_read_at=now))
-        else:
-            cursor.last_read_at = now
+            session.add(ChannelRead(agent_id=agent.id, channel_id=channel_id,
+                                    last_read_at=watermark))
+        elif watermark > cursor.last_read_at:
+            cursor.last_read_at = watermark
     return out
 
 
@@ -427,17 +459,42 @@ def _you(session: Session, agent: Agent) -> dict:
             **({"note": "you are the only member — nobody will read this"}
                if channel.kind == ChannelKind.TEAM and not others else {}),
         })
+    version = role_version_for(session, agent)
     return {
         "agent_id": agent.id,
         "name": agent.name,
         "kind": agent.kind,
         "team_id": agent.team_id,
+        # Your own slug, because a credential grant names roles and you are one
+        # of the answers. See `_roster` for why this is worth the tokens.
+        "role_slug": _role_slug(session, version.id if version else None),
         "channels": channels,
         "memory_scope": ("project" if agent.kind == AgentKind.CEO else "team"),
     }
 
 
+def _role_slug(session: Session, role_version_id: str | None) -> str | None:
+    """The library slug behind a pinned role version, or None."""
+    if not role_version_id:
+        return None
+    version = session.get(RoleVersion, role_version_id)
+    if version is None:
+        return None
+    role = session.get(Role, version.role_id)
+    return role.slug if role else None
+
+
 def _roster(session: Session, project: Project) -> list[dict]:
+    """The org chart, with the slug a credential grant actually names.
+
+    A team's name ("Build") and a person's name ("Mira Tanaka") are the two
+    things a CEO can see, and neither is what `credential_scope` accepts — it
+    takes role slugs. Asked which roles hold a key, one CEO offered the team
+    names, then the people's names, then raw agent ids, and was refused three
+    times over eleven minutes while the chairman relayed each error back by
+    hand. The slug was in the database the whole time; nothing put it in front
+    of the agent being asked for it.
+    """
     teams = []
     for team in session.execute(select(Team).where(Team.project_id == project.id)).scalars():
         lead = policy.effective_lead(session, team)
@@ -445,6 +502,9 @@ def _roster(session: Session, project: Project) -> list[dict]:
             {
                 "team_id": team.id,
                 "name": team.name,
+                # Employees inherit the team's pinned version, so the slug is
+                # the team's; only the CEO carries one of its own.
+                "role_slug": _role_slug(session, team.role_version_id),
                 "lead": lead.name if lead else None,
                 "members": [
                     {"agent_id": a.id, "name": a.name}
@@ -560,6 +620,110 @@ def _capacity(session: Session, project: Project, cons: ConstitutionDoc) -> dict
     return capacity_forecast(session, project, cons, target)
 
 
+def _target(session: Session, project: Project, cons: ConstitutionDoc) -> dict | None:
+    """The date somebody wants, next to the date the work actually projects to.
+
+    A CEO given a target and no arithmetic treats it as physics. One with
+    everything already shipped on day one wrote: "It's calendar-gated … Given
+    the 6 Nov commitment, I'm not pulling that timeline forward artificially;
+    it accrues honestly week by week" — and went quiet for thirteen hours,
+    until the chairman asked what was going on. Across this whole install every
+    commitment was met the day it was made, against promises of up to 127 days.
+
+    So both numbers are stated together, with the gap named and the provenance
+    attached, because the two kinds of date behave differently and the
+    difference is the whole point: a booking window really does bind, and a
+    date somebody liked the sound of is a ceiling, never a pace.
+    """
+    if project.deadline is None:
+        return None
+    from yaaf.server.velocity import commitment_projection
+
+    source = project.deadline_source or {}
+    external = source.get("kind") == "external"
+    projection = commitment_projection(session, project, cons)
+    projected = projection.get("projected_done_at") if projection.get("known") else None
+    slack_days = None
+    if projected is not None:
+        slack_days = round((project.deadline - projected).total_seconds() / 86400.0, 1)
+    return {
+        "target_at": project.deadline.isoformat(),
+        "source": source or None,
+        "is_external_fact": external,
+        "projected_done_at": projected.isoformat() if projected else None,
+        "projection_basis": projection.get("basis") or projection.get("why"),
+        "days_of_slack": slack_days,
+        "note": (
+            "This date is a FACT the outside world imposes — it does not move because "
+            "the work is going well or badly, and the arithmetic above says whether "
+            "the open scope fits before it."
+            if external else
+            "This date is a TARGET somebody chose, not a constraint the world imposes. "
+            "It is a CEILING, never a pace: finishing early is the good outcome, and "
+            "there is nothing to spread the work across. If the projection above is "
+            "far inside it, say so plainly and deliver — do not invent calendar gates "
+            "to fill the gap, and do not let a number in a paragraph decide when work "
+            "happens."
+        ) + (
+            f" The open scope projects to finish about {abs(slack_days):.0f} days "
+            f"{'INSIDE' if slack_days and slack_days > 0 else 'PAST'} it."
+            if slack_days is not None else ""
+        ),
+    }
+
+
+#: Enough of the shelf to know what is on it and whether it is current.
+DELIVERABLES_IN_PACK = 8
+
+
+def _deliverables(session: Session, project: Project) -> dict:
+    """What the chairman's Deliverables screen shows him right now.
+
+    Posting a memo to the boardroom and saving it to /workspace feels like
+    shipping and is not: the shelf is a separate act (`artifact_put`), and a
+    CEO doing the first two has no way to observe that it skipped the third.
+    One desk wrote a gameweek memo, posted it, filed it, and left the screen
+    reading "none yet" for two days — found only because the chairman went
+    looking and pasted the empty state back into chat. Another finished an
+    entire project with nothing on the shelf at all.
+
+    So the pack says what is there, and — the load-bearing half — says plainly
+    when there is nothing.
+    """
+    rows = session.execute(
+        select(Artifact)
+        .where(Artifact.project_id == project.id)
+        .order_by(Artifact.published_at.desc())
+        .limit(DELIVERABLES_IN_PACK)
+    ).scalars().all()
+    total = session.execute(
+        select(func.count(Artifact.id)).where(Artifact.project_id == project.id)
+    ).scalar_one()
+    return {
+        "published": total,
+        "recent": [
+            {
+                "name": a.name,
+                "version": a.version,
+                "size_bytes": a.size_bytes,
+                "satisfies": a.requirement_ids or [],
+                "published_at": a.published_at.isoformat(),
+            }
+            for a in rows
+        ],
+        "note": (
+            "The chairman's Deliverables screen reads \"none yet\". Nothing you "
+            "have written to /workspace or posted to the boardroom appears there — "
+            "publishing is its own act (artifact_put), and work he cannot find is "
+            "work he has no reason to believe happened."
+            if total == 0 else
+            f"{total} on the shelf. This is the screen he checks when he asks "
+            "where something is; if a deliverable he expects is missing from the "
+            "list above, it was never published, whatever else was done with it."
+        ),
+    }
+
+
 def _flags(session: Session, project: Project) -> list[dict]:
     from yaaf.server import flags as flag_lib
 
@@ -585,11 +749,13 @@ def _situation(session: Session, project: Project, cons: ConstitutionDoc) -> dic
     per-agent wake slots and the concurrency cap were all invisible to it.
     """
     from yaaf.server.dispatcher import activity_state
-    from yaaf.server.janitor import month_to_date
+    from yaaf.server.janitor import burn_rate, month_to_date
 
     state = activity_state(session, project, cons)
     usd, tokens = month_to_date(session, project.id)
     usd_mode = project.billing_mode == "api_key"
+    spent = usd if usd_mode else tokens
+    cap = cons.monthly_usd_cap if usd_mode else cons.monthly_token_cap
     return {
         "blocked_by": state["blocked_by"],
         # The sentence the chairman is reading on his own screen right now. Say
@@ -642,7 +808,21 @@ def _situation(session: Session, project: Project, cons: ConstitutionDoc) -> dic
         "budget": {
             "unit": "usd" if usd_mode else "tokens",
             "spent": round(usd, 2) if usd_mode else tokens,
-            "cap": cons.monthly_usd_cap if usd_mode else cons.monthly_token_cap,
+            "cap": cap,
+            # The slope, not just the level. A CEO that can only see a total
+            # answers "is that a problem?" with the total, in good faith, and
+            # is overtaken by its own burn before the next status.
+            "rate": burn_rate(session, project.id, cap, spent),
+            # Subscription billing prices no run, so `affordable_runs` cannot
+            # answer and the plan-affordability refusal never fires. Silence
+            # there reads as "the plan fits". Say which it is.
+            "priced": usd_mode,
+            **({} if usd_mode else {"note": (
+                "This project bills against a subscription, so no run carries a "
+                "dollar price and the platform CANNOT check whether a plan is "
+                "affordable — that refusal is off here, and a plan passing the "
+                "gate means only that nothing checked. Tokens are the real wall."
+            )}),
         },
         "waiting": state["waiting"],
         "unreachable_work": {k: v for k, v in state["board"].items()
@@ -904,6 +1084,10 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
                          "can mark one met: the platform runs the acceptance test "
                          "itself."),
             }
+        pack["deliverables"] = _deliverables(session, project)
+        target = _target(session, project, cons)
+        if target is not None:
+            pack["target"] = target
         pack["hypotheses"] = [
             {"id": h.id, "statement": h.statement, "kill_date": h.kill_date.isoformat(),
              "status": h.status}

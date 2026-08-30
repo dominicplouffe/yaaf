@@ -1698,6 +1698,49 @@ def month_to_date(session: Session, project_id: str) -> tuple[float, int]:
     return float(usd), int(tokens)
 
 
+def burn_rate(session: Session, project_id: str, cap: float, spent: float) -> dict:
+    """Month-to-date spend as a RATE, and the day it lands on the cap.
+
+    A total answers "how much have we spent"; nobody has ever been surprised
+    by a total. What surprises people is the derivative. One desk reported
+    "9.9m of 200m" at midnight in good faith and was at 93.8m ten hours later
+    — 47% of the month in two days — and the chairman found it first, because
+    every surface the CEO could read showed a total against a cap and none of
+    them showed a slope.
+
+    Deliberately the same arithmetic as `paceDate` in `web/src/ui.tsx`, which
+    has drawn this for the dashboard all along: spend ÷ elapsed days, then the
+    remainder at that rate. The web computes it client-side from the desk
+    payload and cannot lend it to an agent, so this is the second home of one
+    formula rather than a second formula — keep them in step.
+
+    `lands_on` is null in the calm case (nothing spent, no cap, or the cap
+    arrives after the month resets), because a date that never comes is noise
+    on a status the CEO reads on every wake.
+    """
+    now = utcnow()
+    per_day = spent / now.day if now.day else 0.0
+    lands_on = None
+    if spent > 0 and cap > 0 and spent < cap and per_day > 0:
+        landing = now + timedelta(days=(cap - spent) / per_day)
+        # The cap refills on the 1st, so a landing past month-end never happens.
+        next_month = (now.replace(day=1) + timedelta(days=32)).replace(day=1)
+        if landing < next_month:
+            lands_on = landing
+    return {
+        "per_day": round(per_day, 2),
+        "days_elapsed": now.day,
+        "lands_on_cap_at": lands_on.isoformat() if lands_on else None,
+        "note": (
+            f"At {round(per_day, 2):,} a day this hits the cap on "
+            f"{lands_on:%-d %B}, before the month resets. Say so now, with the "
+            "number, rather than after the platform pauses the project."
+            if lands_on else
+            "The current rate does not reach the cap before the month resets."
+        ),
+    }
+
+
 def enforce_budget(session: Session, project: Project, cons: ConstitutionDoc) -> None:
     usd, tokens = month_to_date(session, project.id)
     if project.billing_mode == "api_key":

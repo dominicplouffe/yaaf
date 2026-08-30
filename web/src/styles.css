@@ -124,6 +124,29 @@ tr:hover td { background: rgba(255, 255, 255, 0.02); }
 td.num { font-variant-numeric: tabular-nums; text-align: right; }
 th.num { text-align: right; }
 
+/* A header that reorders its column. The button takes the cell's padding so
+   the whole header is the target, not just the word; the arrow holds its
+   width when the column is unsorted so clicking around never shifts the
+   columns sideways. */
+th.sortable { padding: 0; }
+th.sortable button.sort {
+  font: inherit; font-size: 11px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.8px; color: var(--muted);
+  width: 100%; padding: 8px 10px; border: 0; border-radius: 0; background: none;
+  display: flex; align-items: center; gap: 5px;
+}
+th.sortable.num button.sort { justify-content: flex-end; }
+th.sortable button.sort:hover { color: var(--ink); background: rgba(255, 255, 255, 0.03); }
+th.sortable .arrow { font-size: 8px; color: var(--accent); }
+th.sortable .arrow.off { visibility: hidden; }
+
+/* Which slice you are looking at, and the two ways out of it. */
+.pager {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px; border-top: 1px solid var(--grid);
+  font-size: 12px; color: var(--muted);
+}
+
 /* ── forms ── */
 label.field { display: block; margin: 12px 0 4px; font-size: 12px; color: var(--ink-2); }
 input, textarea, select {
@@ -1132,6 +1155,17 @@ button.rolepick { width: 100%; text-align: left; background: var(--surface-2); }
   color: var(--muted); margin-right: 8px;
 }
 .bwait .tick { font-family: var(--mono); color: var(--warning); font-weight: 600; }
+/* The future tense. Deliberately quieter than .bwait: what needs you now
+   outranks what happens later, and a schedule painted in warning colour would
+   read as a problem. */
+.bnext {
+  margin-top: 6px; font-size: 12.5px; color: var(--ink-2);
+}
+.bnext .lbl {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.7px;
+  color: var(--muted); margin-right: 8px;
+}
+.bnext .tick { font-family: var(--mono); color: var(--muted); }
 .bhushed { margin-top: 8px; display: flex; flex-direction: column; gap: 5px; }
 .bhrow { display: flex; gap: 10px; align-items: baseline; font-size: 12.5px;
   flex-wrap: wrap; }
@@ -1372,3 +1406,17 @@ button.rolepick { width: 100%; text-align: left; background: var(--surface-2); }
 
 .startalt { margin: 16px 0 0; color: var(--muted); font-size: 13px; }
 .startnote { max-width: 68ch; margin-top: 10px; }
+
+
+/* The desk's three headings. The first is the only one that is an ask; the
+   other two are deliberately quieter, because a status row painted like a
+   request is exactly the misreading these headings exist to end. */
+.list .listhead {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px;
+  color: var(--ink-2); font-weight: 700; margin: 18px 0 8px;
+}
+.list .listhead.calm { color: var(--muted); font-weight: 600; }
+.list .listhead .sub {
+  text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--muted);
+  margin-left: 6px;
+}

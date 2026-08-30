@@ -93,6 +93,29 @@ function Waiting({ brief }: { brief: Briefing }) {
   );
 }
 
+/** When this project moves next.
+
+    Sits below the waiting line on purpose: what needs you now outranks what
+    happens later. But a quiet window with nothing here at all is the exact
+    state that produced "why are we idle?" — so the absence gets a sentence
+    rather than a blank. */
+function NextUp({ brief }: { brief: Briefing }) {
+  const n = brief.next_up;
+  if (!n) return null;
+  return (
+    <div className="bnext">
+      <span className="lbl">Next</span>
+      {n.at ? (
+        <>
+          {n.label} <span className="tick">{fmtSoon(n.at)}</span>
+        </>
+      ) : (
+        <span className="tick">{n.why}</span>
+      )}
+    </div>
+  );
+}
+
 /** One project's briefing. `onSeen` is absent on a read-only rendering. */
 export function BriefingBlock({
   brief,
@@ -151,6 +174,7 @@ export function BriefingBlock({
       )}
       <Money brief={brief} />
       <Waiting brief={brief} />
+      <NextUp brief={brief} />
     </div>
   );
 }

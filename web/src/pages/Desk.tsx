@@ -115,6 +115,37 @@ export const isLive = (p: DeskProject) => p.status === "running";
     drought taught us that a badge nobody can act on is worse than both. */
 export const needsYou = (i: Item) => i.yours === true;
 
+/** One desk row. Extracted so the three lists below cannot drift apart in how
+    they draw the same thing — the label that distinguishes an ask from a
+    notice lives here, once. */
+function DeskRow({ it }: { it: Item }) {
+  return (
+    <div className={`item t${it.tier}`}>
+      <div className="stripe" />
+      <div className="ib">
+        <div className="irow1">
+          <Link className="co" to={`/projects/${it.project.id}`}>
+            {it.project.name}
+          </Link>
+          <span className={`kind k${it.tier}`}>{it.kind}</span>
+        </div>
+        <div className="what">{it.what}</div>
+        <div className="cons">
+          {/* "If you do nothing" is a question only worth asking where doing
+              something is an option. On every other row it is the whole
+              misreading: it casts a status line as an ultimatum and the reader
+              goes hunting for the button. */}
+          <span className="lbl">
+            {needsYou(it) ? "If you do nothing" : "What happens next"}
+          </span>
+          {it.consequence}
+        </div>
+        {it.actions && <div className="acts">{it.actions}</div>}
+      </div>
+    </div>
+  );
+}
+
 const latestRun = (ps: DeskProject[]): string | null =>
   ps.map((p) => p.last_run_at).filter((v): v is string => v !== null).sort().at(-1) ?? null;
 
@@ -422,6 +453,9 @@ export default function Desk() {
   // shown and both sort by consequence; only the first is ever counted.
   const mine = items.filter(needsYou);
   const watching = items.filter((i) => i.tier <= 2 && !needsYou(i));
+  // Tier 3 is neither: nothing is on a clock and nothing is asking. It gets
+  // its own heading rather than trailing the clocked rows unlabelled.
+  const drifting = items.filter((i) => i.tier === 3 && !needsYou(i));
   const soonest = items.find((i) => i.tier === 2 && i.clocked);
   const running = live.length;
   const lastRun = latestRun(live);
@@ -474,32 +508,53 @@ export default function Desk() {
         <EmptyDesk finished={data.finished} />
       )}
 
-      {items.length > 0 && (
+      {/* Two lists, not one sorted list.
+
+          Both halves were already computed and the row already switched its
+          own label between "If you do nothing" and "What happens next" — but
+          they were then interleaved by tier, so an evidence-drought notice sat
+          between two real approvals and read as a third. It cost this
+          exchange, twice in one morning:
+
+            CHAIRMAN: have I been ask to approve or acknowledge something?
+                      I'm wondering what?
+            CEO:      No — everything I've filed has already been approved.
+            CHAIRMAN: why do I see this then? [the drought banner]
+            CHAIRMAN: but it's showing up as if I have to approve it in my Desk
+
+          A label the reader has to notice is not a distinction; a heading they
+          cannot skip past is. */}
+      {mine.length > 0 && (
         <div className="list">
-          {items.map((it) => (
-            <div className={`item t${it.tier}`} key={it.key}>
-              <div className="stripe" />
-              <div className="ib">
-                <div className="irow1">
-                  <Link className="co" to={`/projects/${it.project.id}`}>
-                    {it.project.name}
-                  </Link>
-                  <span className={`kind k${it.tier}`}>{it.kind}</span>
-                </div>
-                <div className="what">{it.what}</div>
-                <div className="cons">
-                  {/* "If you do nothing" is a question only worth asking where
-                      doing something is an option. On every other row it is the
-                      whole misreading: it casts a status line as an ultimatum
-                      and the reader goes hunting for the button. */}
-                  <span className="lbl">
-                    {needsYou(it) ? "If you do nothing" : "What happens next"}
-                  </span>
-                  {it.consequence}
-                </div>
-                {it.actions && <div className="acts">{it.actions}</div>}
-              </div>
-            </div>
+          <h2 className="listhead">Needs you</h2>
+          {mine.map((it) => (
+            <DeskRow it={it} key={it.key} />
+          ))}
+        </div>
+      )}
+
+      {watching.length > 0 && (
+        <div className="list">
+          <h2 className="listhead calm">
+            Running its own clock
+            <span className="sub">
+              — nothing here is yours to approve; it resolves without you
+            </span>
+          </h2>
+          {watching.map((it) => (
+            <DeskRow it={it} key={it.key} />
+          ))}
+        </div>
+      )}
+
+      {drifting.length > 0 && (
+        <div className="list">
+          <h2 className="listhead calm">
+            Drifting
+            <span className="sub">— nothing breaks; the claim just gets weaker</span>
+          </h2>
+          {drifting.map((it) => (
+            <DeskRow it={it} key={it.key} />
           ))}
         </div>
       )}

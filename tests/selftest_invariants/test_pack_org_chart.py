@@ -76,3 +76,47 @@ def test_channels_named_in_the_pack_are_the_ones_that_accept_a_post(client):
     with db_session() as session:
         allowed = set(policy.agent_channel_ids(session, session.get(Agent, ceo)))
     assert {c["channel_id"] for c in you["channels"]} == allowed
+
+
+def test_the_roster_carries_the_slug_a_credential_grant_names(client):
+    """Team names and people's names are both refused by `credential_scope`.
+
+    Asked which roles should hold a GitHub token, a CEO answered with its team
+    names, then its employees' names, then raw agent ids — three refusals over
+    eleven minutes, each relayed back by the chairman by hand. The slug that
+    would have worked was in the database throughout. This asserts the pack
+    now carries it, and that what it carries is the string the grant accepts.
+    """
+    from yaaf.server import policy
+
+    project = make_project(client)
+    pack = _pack(project, project["ceo_agent_id"])
+
+    slugs = {team["role_slug"] for team in pack["roster"]}
+    assert slugs and None not in slugs, "every team names the role it pins"
+    assert pack["you"]["role_slug"], "the CEO's own slug is one of the answers"
+
+    with db_session() as session:
+        employed = policy.roles_on_project(session, project["id"])
+    named = slugs | {pack["you"]["role_slug"]}
+    assert named <= employed, (
+        "the pack must not name a slug the grant would refuse — "
+        f"{named - employed} is exactly the wrong guess this block exists to stop"
+    )
+
+
+def test_a_grant_to_every_slug_the_pack_names_is_accepted(client):
+    """The pack and the refusal have to agree, or this trades one wrong guess
+    for another — the same standard the channel list is held to above."""
+    from yaaf.server import policy
+
+    project = make_project(client)
+    pack = _pack(project, project["ceo_agent_id"])
+    named = sorted(
+        {t["role_slug"] for t in pack["roster"] if t["role_slug"]}
+        | {pack["you"]["role_slug"]}
+    )
+
+    with db_session() as session:
+        # Raises Refusal if any named slug is not employed here.
+        policy.check_roles_on_project(session, project["id"], named)
