@@ -453,11 +453,25 @@ class Project(Base):
     # ConstitutionDoc in the rebuild: a limit kept here generated no settings
     # UI, recorded no amendment, and was never disclosed to the CEO it bound.
     integrations: Mapped[dict] = mapped_column(JSONVariant, default=dict)
-    # Explore only: the chairman's own example was "one sale in the next 60
+    # Explore's window: the chairman's own example was "one sale in the next 60
     # days" — open scope, bounded time. When it passes, he is told and the
-    # judgment is his; nothing pauses by itself. Deliver has commitments and
-    # Operate has cycles, so a bare date is refused there.
+    # judgment is his; nothing pauses by itself.
+    #
+    # Deliver may hold one too, as a TARGET rather than a promise — the promise
+    # is still the commitment, which only the platform dates. Deliver used to
+    # refuse a bare deadline outright, which did not remove the date so much as
+    # relocate it: the founder wrote it into the goal prose, where nothing
+    # validates it, nothing re-projects it, and nothing compares it to the
+    # platform's own arithmetic. It then paced the work regardless, which is
+    # how a project that had shipped everything sat idle for thirteen hours
+    # because a number in a paragraph said November.
     deadline: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # Where that date came from, in the shape `cycles.due_source` established:
+    # {"kind": "external"|"chairman", "url", "note", "recorded_at"}. A deadline
+    # the world imposes is a fact and cites its source; anything else is a wish
+    # and is recorded as one, so the Plan screen and the CEO's pack can say
+    # which it is instead of treating both as physics.
+    deadline_source: Mapped[dict | None] = mapped_column(JSONVariant)
     # The org shape, computed at creation from the team specs: solo (one brain
     # plans and executes), ceo_team (flat — the CEO talks to individuals), or
     # ceo_leads_workers (the full hierarchy). Stored so the org shape stays a
@@ -1022,6 +1036,7 @@ class Artifact(Base):
     __table_args__ = (
         UniqueConstraint("project_id", "name", "version"),
         Index("ix_artifacts_project_published", "project_id", "published_at"),
+        Index("ix_artifacts_undelivered", "project_id", "slack_ts"),
     )
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
@@ -1040,6 +1055,13 @@ class Artifact(Base):
     # the project at publish; a claim, not a verdict — met is still only ever
     # written by the platform.
     requirement_ids: Mapped[list] = mapped_column(JSONVariant, default=list)
+    # Delivered to Slack, and when — the same marker `Message.slack_ts` has
+    # carried since the baseline, for the same reason: a delivery that fails
+    # leaves this NULL and is retried next tick rather than lost or doubled.
+    # The shelf is a screen the chairman has to go to, and the record of what
+    # that costs is "where are my deliverables?", "where is the report??" and
+    # "can you push to me every morning instead of me going to look for a file".
+    slack_ts: Mapped[str | None] = mapped_column(String(40))
     published_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 
