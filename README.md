@@ -1,9 +1,10 @@
 # yaaf — stop prompting, start delegating
 
-**Describe a job to Claude in one paragraph and get back a whole crew that does
-it.** A CEO who plans the work. Teams of specialists who argue with each other.
-A budget that stops itself and a delivery date nobody can quietly move. On your
-own hardware, for weeks, without you.
+**Tell Claude what you want done, in one paragraph. Get back a crew that plans
+it, works it for weeks, and proves it's finished.** A CEO who sets the
+priorities. Teams of specialists who argue with each other. A budget that stops
+itself and a delivery date nobody can quietly move. On your own hardware,
+without you.
 
 Yet Another Agent Framework? No. This is the org chart, the boardroom and the
 accounting department wrapped around the agents you already have — and you are
