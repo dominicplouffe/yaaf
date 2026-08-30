@@ -1,6 +1,6 @@
 # yaaf — stop prompting, start delegating
 
-**Describe a job to Claude in one paragraph and get back a company that does
+**Describe a job to Claude in one paragraph and get back a whole crew that does
 it.** A CEO who plans the work. Teams of specialists who argue with each other.
 A budget that stops itself and a delivery date nobody can quietly move. On your
 own hardware, for weeks, without you.
@@ -26,7 +26,7 @@ You say something like:
 
 Claude then, in one sitting:
 
-1. **Drafts the company.** Goal, teams, who's on each, budget, deadline — hiring
+1. **Drafts the crew.** Goal, teams, who's on each, budget, deadline — hiring
    from a library of 32 job descriptions and 14 pre-built crews rather than
    inventing people.
 2. **Gets argued with.** The platform grades the draft against the eight things
