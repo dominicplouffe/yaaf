@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
-from yaaf.server.mcp.auth import Principal, ToolRefusal, allowed_projects
+from yaaf.server.mcp.auth import Principal, ToolRefusal, chaired_projects
 
 PROJECT_ARG = {"name": "project", "description": "Project slug", "required": True}
 
@@ -119,7 +119,7 @@ def get(session: Session, principal: Principal, name: str, arguments: dict) -> d
 
 
 def _only_project(session: Session, principal: Principal) -> str:
-    projects = allowed_projects(session, principal)
+    projects = chaired_projects(session, principal)
     if len(projects) == 1:
         return projects[0].slug
     raise ToolRefusal(

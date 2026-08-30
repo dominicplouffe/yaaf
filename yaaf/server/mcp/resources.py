@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from yaaf.core.constitution import effective, effective_version
 from yaaf.server.api import observe
 from yaaf.server.mcp import envelope
-from yaaf.server.mcp.auth import Principal, ToolRefusal, allowed_projects, resolve_project
+from yaaf.server.mcp.auth import Principal, ToolRefusal, chaired_projects, resolve_project
 
 #: The goal grammar the Founder grades against, served so a drafting client can
 #: read the rubric before it writes. Same file the grader loads.
@@ -39,7 +39,7 @@ def listing(session: Session, principal: Principal) -> list[dict]:
          "description": "The eight things a goal has to contain",
          "mimeType": "text/markdown"},
     ]
-    for project in allowed_projects(session, principal):
+    for project in chaired_projects(session, principal):
         for slug, description in PER_PROJECT.items():
             rows.append({
                 "uri": f"yaaf://project/{project.slug}/{slug}",

@@ -169,17 +169,14 @@ def mcp_auth(
     )
 
 
-def allowed_projects(session: Session, principal: Principal) -> list[Project]:
+def chaired_projects(session: Session, principal: Principal) -> list[Project]:
     """Every project this principal may see, in creation order.
 
-    One gate: the chairmanship of the user it acts for. A per-client allowlist
-    used to sit in front of it and was removed, because it answered a question
-    at grant time that only the chairman's project list can answer — a project
-    founded after consent fell outside a list frozen weeks earlier, and the
-    only way back in was a second trip through the browser. Chairmanship is
-    evaluated on every call, so a project founded a minute ago is reachable
-    and one handed to another chairman stops being reachable, both without
-    reissuing anything.
+    One function rather than the query written at each call site, because the
+    gate has to hold on payloads nobody wrote for this surface — the desk is a
+    cross-project rollup, and the day it stops passing through here is the day
+    it lists a project the client cannot open. Read on every call, so reach
+    tracks chairmanship in both directions with nothing to reissue.
     """
     query = select(Project).where(Project.chairman_user_id == principal.user_id)
     return list(session.execute(query.order_by(Project.created_at)).scalars())
@@ -194,7 +191,7 @@ def resolve_project(session: Session, principal: Principal, ref: str) -> Project
     refused in the same words as one that does not exist, so the surface does
     not become an oracle for which projects other people run.
     """
-    reachable = allowed_projects(session, principal)
+    reachable = chaired_projects(session, principal)
     for project in reachable:
         if ref in (project.id, project.slug):
             return project
