@@ -11,8 +11,8 @@ dropping the column widens nothing a chairman had not already decided by
 chairing the project. Grants issued against a narrower list widen to it here,
 which is the point: nobody re-authorizes to see what they already own.
 
-Revision ID: 0023
-Revises: 0022
+Revision ID: 0024
+Revises: 0023
 """
 
 from __future__ import annotations
@@ -22,8 +22,8 @@ from alembic import op
 
 from yaaf.core.migration_ops import add_column_if_missing, has_column, has_table
 
-revision = "0023"
-down_revision = "0022"
+revision = "0024"
+down_revision = "0023"
 branch_labels = None
 depends_on = None
 

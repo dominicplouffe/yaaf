@@ -218,7 +218,7 @@ It shipped with a checkbox per project too, and that half was wrong — see
 ### The allowlist that had to go
 
 M0 gave every grant a `project_ids` allowlist and M2 put it on the consent
-screen as a checkbox per project. Both were removed in `0023`, and the reason is
+screen as a checkbox per project. Both were removed in `0024`, and the reason is
 worth keeping, because the mistake is easy to make again.
 
 The allowlist asked, at grant time, a question only the chairman's project list
@@ -539,7 +539,7 @@ milestone** — if only M0+M1 ever land, the thing was worth building.
       cookie scoped to `/oauth`
 - [x] Consent screen: client name and redirect host, requested scopes, a
       checkbox per project — the allowlist becomes a grant-time decision.
-      **The project half was removed in `0023`;** see below
+      **The project half was removed in `0024`;** see below
 - [x] `test_mcp_oauth_server.py` — yaaf's own `mcp_oauth` client walks the
       ladder against yaaf's own server, in-process and offline
 - [x] `test_mcp_oauth_attacks.py` — PKCE stripped or downgraded to `plain`, code
