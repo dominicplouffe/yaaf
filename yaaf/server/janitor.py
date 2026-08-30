@@ -1698,47 +1698,173 @@ def month_to_date(session: Session, project_id: str) -> tuple[float, int]:
     return float(usd), int(tokens)
 
 
+#: How far back the rate looks. Long enough that a single build day cannot be
+#: the whole sample, short enough that a project which changed shape last week
+#: is not judged on what it used to be.
+BURN_WINDOW_DAYS = 14
+
+#: Below this many spending days there is no rate, only a couple of numbers.
+#: Saying so is the honest output; inventing a slope from two points is how a
+#: desk told its chairman 3M/day, then 5M, then 35M, inside two hours.
+MIN_DAYS_FOR_RATE = 3
+
+#: A build day and a quiet day are different animals. When the busiest day in
+#: the window is this many times the median, the days are not alike and no
+#: single number describes them — the mean in particular is a fiction.
+SPREAD_IS_LUMPY = 3.0
+
+
+def daily_spend(session: Session, project_id: str, days: int = BURN_WINDOW_DAYS
+                ) -> list[tuple[str, float, int]]:
+    """Spend per calendar day over the trailing window, in the project's own
+    unit. One row per day that actually spent — a project does not get a rate
+    for days before it existed."""
+    since = utcnow() - timedelta(days=days)
+    usd_mode = _is_usd(session, project_id)
+    amount = (func.sum(LedgerEntry.usd) if usd_mode else
+              func.sum(LedgerEntry.tokens_in + LedgerEntry.tokens_out
+                       + LedgerEntry.cache_creation_tokens
+                       + LedgerEntry.cache_read_tokens))
+    day = func.date(LedgerEntry.at)
+    rows = session.execute(
+        select(day, amount, func.count(LedgerEntry.id))
+        .where(LedgerEntry.project_id == project_id,
+               LedgerEntry.at >= since,
+               LedgerEntry.kind != LedgerKind.REVENUE)
+        .group_by(day).order_by(day)
+    ).all()
+    return [(str(d), float(total or 0), int(n)) for d, total, n in rows if total]
+
+
+def _is_usd(session: Session, project_id: str) -> bool:
+    project = session.get(Project, project_id)
+    return bool(project and project.billing_mode == "api_key")
+
+
 def burn_rate(session: Session, project_id: str, cap: float, spent: float) -> dict:
-    """Month-to-date spend as a RATE, and the day it lands on the cap.
+    """What this project actually burns per day — measured, not divided.
 
-    A total answers "how much have we spent"; nobody has ever been surprised
-    by a total. What surprises people is the derivative. One desk reported
-    "9.9m of 200m" at midnight in good faith and was at 93.8m ten hours later
-    — 47% of the month in two days — and the chairman found it first, because
-    every surface the CEO could read showed a total against a cap and none of
-    them showed a slope.
+    The first version of this divided month-to-date by the day of the month,
+    which is what the dashboard has always done and is wrong in two directions
+    at once. A project that started on the 27th had its four days of spend
+    divided by thirty, reporting 4.7M/day against a real 18M. And a CEO doing
+    the same sum the other way — 140M over four days — got 35M/day, when one
+    of those four days was the 90M build day and the two most recent were 21M
+    and 16M and falling. Both numbers were means over a window that did not
+    match the question, and the chairman was handed each of them in turn.
 
-    Deliberately the same arithmetic as `paceDate` in `web/src/ui.tsx`, which
-    has drawn this for the dashboard all along: spend ÷ elapsed days, then the
-    remainder at that rate. The web computes it client-side from the desk
-    payload and cannot lend it to an agent, so this is the second home of one
-    formula rather than a second formula — keep them in step.
+    So: a series, a median, and an explicit refusal to project when the days
+    are not alike. The median is the headline because a build day is real
+    spend that says nothing about tomorrow, and the mean lets one of them
+    speak for the whole window.
 
-    `lands_on` is null in the calm case (nothing spent, no cap, or the cap
-    arrives after the month resets), because a date that never comes is noise
-    on a status the CEO reads on every wake.
+    When there is not enough to project, `projectable` is false and the note
+    says so in the words the CEO should use. "I do not know yet, and here is
+    what I need to find out" is a better answer than a confident number, and
+    the platform has never once told an agent that.
     """
-    now = utcnow()
-    per_day = spent / now.day if now.day else 0.0
+    series = daily_spend(session, project_id)
+    days_observed = len(series)
+    amounts = sorted(total for _, total, _ in series)
+    median = amounts[len(amounts) // 2] if amounts else 0.0
+    mean = (sum(amounts) / len(amounts)) if amounts else 0.0
+    busiest = amounts[-1] if amounts else 0.0
+    lumpy = bool(median and busiest / median >= SPREAD_IS_LUMPY)
+    projectable = days_observed >= MIN_DAYS_FOR_RATE and not lumpy
+
     lands_on = None
-    if spent > 0 and cap > 0 and spent < cap and per_day > 0:
-        landing = now + timedelta(days=(cap - spent) / per_day)
-        # The cap refills on the 1st, so a landing past month-end never happens.
-        next_month = (now.replace(day=1) + timedelta(days=32)).replace(day=1)
+    if projectable and median > 0 and 0 < spent < cap:
+        landing = utcnow() + timedelta(days=(cap - spent) / median)
+        next_month = (utcnow().replace(day=1) + timedelta(days=32)).replace(day=1)
         if landing < next_month:
             lands_on = landing
-    return {
-        "per_day": round(per_day, 2),
-        "days_elapsed": now.day,
-        "lands_on_cap_at": lands_on.isoformat() if lands_on else None,
-        "note": (
-            f"At {round(per_day, 2):,} a day this hits the cap on "
+
+    if days_observed == 0:
+        note = "Nothing has been spent yet, so there is no rate to report."
+    elif days_observed < MIN_DAYS_FOR_RATE:
+        note = (
+            f"Only {days_observed} day(s) of spend exist. That is not a rate and you "
+            "must not present it as one. If the chairman asks what this will cost, "
+            "say plainly that you do not know yet, show him the days you have, and "
+            "propose a measurement window with an allowance to fund it — then bring "
+            "him the measured number. A confident estimate you cannot support costs "
+            "more than an honest 'not yet'."
+        )
+    elif lumpy:
+        note = (
+            f"These days are not alike: the busiest was {busiest:,.0f} against a "
+            f"median of {median:,.0f}. One build day in the sample means no single "
+            "number describes this project yet — do NOT average them and quote the "
+            "result. Say which days were exceptional and why, give the median as the "
+            "ordinary day, and say plainly that the steady state is still unproven."
+        )
+    elif lands_on is not None:
+        note = (
+            f"At the median day of {median:,.0f} this reaches the cap on "
             f"{lands_on:%-d %B}, before the month resets. Say so now, with the "
             "number, rather than after the platform pauses the project."
-            if lands_on else
-            "The current rate does not reach the cap before the month resets."
+        )
+    else:
+        note = (
+            f"The median day is {median:,.0f} and does not reach the cap before the "
+            "month resets."
+        )
+    return {
+        "unit_per_day_median": round(median, 2),
+        "unit_per_day_mean": round(mean, 2),
+        "busiest_day": round(busiest, 2),
+        "days_observed": days_observed,
+        "window_days": BURN_WINDOW_DAYS,
+        "days_are_alike": not lumpy,
+        "projectable": projectable,
+        "series": [{"day": d, "spent": round(total, 2), "runs": n}
+                   for d, total, n in series],
+        "lands_on_cap_at": lands_on.isoformat() if lands_on else None,
+        "note": note,
+    }
+
+
+def run_cost_profile(session: Session, project_id: str,
+                     days: int = BURN_WINDOW_DAYS) -> dict:
+    """What each KIND of run actually costs here, measured.
+
+    Without this the CEO has one blended average and reasons from it, which is
+    how one of them told its chairman that a message-reading wake "costs nearly
+    the same as a run that produces something" and priced forty of them at 22M.
+    They cost a third of a work run and came to 8.9M. The blended figure is
+    real and is the wrong number to multiply by, because the kinds differ by
+    4x and the mix changes every day.
+
+    A CEO asked what a stripped day would cost can now build the answer out of
+    parts it has measured, instead of out of one average and an intention.
+    """
+    since = utcnow() - timedelta(days=days)
+    total = (Run.tokens_in + Run.tokens_out
+             + Run.cache_creation_tokens + Run.cache_read_tokens)
+    rows = session.execute(
+        select(Run.kind, func.count(Run.id), func.avg(total), func.sum(total))
+        .where(Run.project_id == project_id, Run.created_at >= since)
+        .group_by(Run.kind).order_by(func.sum(total).desc())
+    ).all()
+    kinds = [
+        {"kind": kind, "runs": int(n),
+         "avg_tokens": int(avg or 0), "total_tokens": int(summed or 0)}
+        for kind, n, avg, summed in rows
+    ]
+    return {
+        "window_days": days,
+        "by_kind": kinds,
+        "note": (
+            "Measured over this project's own runs. Build a forecast from these "
+            "parts — runs of each kind times its own cost — never from one blended "
+            "average across kinds that differ several-fold. If a kind has few runs "
+            "here, say the estimate is thin rather than smoothing over it."
+            if kinds else
+            "No runs in the window, so there is nothing measured to build an "
+            "estimate from. Say that rather than reaching for a number."
         ),
     }
+
 
 
 def enforce_budget(session: Session, project: Project, cons: ConstitutionDoc) -> None:

@@ -749,7 +749,7 @@ def _situation(session: Session, project: Project, cons: ConstitutionDoc) -> dic
     per-agent wake slots and the concurrency cap were all invisible to it.
     """
     from yaaf.server.dispatcher import activity_state
-    from yaaf.server.janitor import burn_rate, month_to_date
+    from yaaf.server.janitor import burn_rate, month_to_date, run_cost_profile
 
     state = activity_state(session, project, cons)
     usd, tokens = month_to_date(session, project.id)
@@ -811,8 +811,16 @@ def _situation(session: Session, project: Project, cons: ConstitutionDoc) -> dic
             "cap": cap,
             # The slope, not just the level. A CEO that can only see a total
             # answers "is that a problem?" with the total, in good faith, and
-            # is overtaken by its own burn before the next status.
+            # is overtaken by its own burn before the next status. Measured as
+            # a series with a median, because the first version of this divided
+            # by the day of the month and reported 4.7M/day on a project really
+            # burning 18M — and the CEO doing the same sum its own way got 35M
+            # from a window whose largest day was two thirds of the total.
             "rate": burn_rate(session, project.id, cap, spent),
+            # What each KIND of run costs here. Without it the CEO has one
+            # blended average and reasons from it — which is how forty inbox
+            # wakes got priced at 22M when they cost 8.9M.
+            "cost_per_run": run_cost_profile(session, project.id),
             # Subscription billing prices no run, so `affordable_runs` cannot
             # answer and the plan-affordability refusal never fires. Silence
             # there reads as "the plan fits". Say which it is.
