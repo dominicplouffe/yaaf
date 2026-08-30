@@ -46,24 +46,35 @@ leak it into a screenshot.
 
 ## Desk — "what needs me?"
 
-One ranked list, sorted by **time to consequence** — how long until a thing
-resolves itself without you. The soonest deadline is the top row whoever owns
-it; the page never sorts by which project was created first.
+**Every row here is something only you can do.** That is the page's one rule.
+If the CEO can resolve it, it is not a row — it is a log entry, and it lives on
+the project it belongs to.
 
-1. **Stopped** — it has stopped and only you restart it: a paused project, a
-   bet past its kill date with tasks blocked behind it, a thread the pair
-   breaker froze.
-2. **On a clock** — it resolves without you at a time the platform can name:
-   an approval that auto-denies, a kill date, a budget whose burn lands on the
-   cap, an evidence drought.
-3. **Drifting** — nothing breaks, the claim just gets weaker: finished tasks
-   nobody spot-checked, a day that spent money and verified nothing.
+So the desk holds exactly six things: a bet past its kill date, a thread the
+pair breaker froze, an approval running down to auto-deny, scope waiting to be
+accepted, a delivery date waiting to be signed, and an observable close only you
+can judge. Nothing else. A drought, a kill date still in the future, a budget on
+pace, unaudited work — those resolve without you, so drawing them here as cards
+only ever taught people to stop trusting the cards.
+
+Rows are ranked by **time to consequence** — how long until the thing decides
+itself. The soonest is the top row whoever owns it; the page never sorts by
+which project was created first.
 
 Every row says the same three things in the same order: what happened, **what
 happens if you do nothing**, and the action.
 
-Only tiers 1 and 2 are counted in the sidebar badge — a number above zero is a
-promise that something has a consequence attached.
+The sidebar badge counts exactly these rows, and always has. The page now shows
+exactly what the badge counts — before, it drew seven other kinds of row the
+badge deliberately ignored, and a chairman reading "nothing needs you" over a
+screenful of cards reasonably concluded one of the two was lying.
+
+**What happened to everything else.** It is not gone and it is not silent. Each
+project's **Overview → Watch** holds its own droughts, kill dates, budget pace,
+memory pressure, unaudited work, unraised flags, and days that spent money and
+verified nothing. The desk closes with a single line naming how many such things
+are running and in which projects, so you can see they exist without being asked
+to do anything about them.
 
 **Only live projects appear.** Stopped and completed ones are the Projects
 page's business; they get one line at the foot of the roster.
@@ -238,10 +249,17 @@ true now, what happens next.
 
   Everything on it is computed from the same heartbeats and rules the
   dispatcher and the janitor read, so a wake drawn here is a wake that will
-  actually run. What is deliberately absent is the date your burn rate lands
-  on the cap — that arithmetic lives on the Desk, and a second copy of it here
-  would be a second definition to drift.
+  actually run.
 - **Your deliverable** — the most recent published artifact, drafts included.
+- **Watch** — everything on this project that is running down a clock the CEO
+  resolves, and that therefore never becomes a Desk row: an evidence drought
+  (active, or halfway to one), a kill date still ahead, the date your burn rate
+  lands on the cap, memory nearing its ceiling, finished work nobody has
+  spot-checked, a flag your CEO has not yet raised in the boardroom, and a day
+  that spent money while nothing outside the project verified anything. Nothing
+  here is waiting on a click from you. It is the answer to "is this going
+  well?", which is a different question from "what needs me?" — and the Desk
+  now asks only the second.
 - **The plan** — live bets, the open board against the queue ceiling, verified
   proof in the drought window, and the **CEO-judgment metric**: how much of
   what the CEO called progress survived verification.

@@ -16,37 +16,51 @@ import {
 /** The chairman's desk: one question, asked once — what breaks if I close this
     tab?
 
-    Everything here is ranked by *time to consequence*, which the platform
-    already knows: approvals auto-deny, bets auto-block their tasks, budgets
-    auto-pause. Three tiers, and the soonest deadline is the top row whoever
-    owns it — the page never sorts by which project was created first.
+    **Only rows the chairman holds a lever on are drawn here.** That is the
+    whole rule, and it is the one this page spent three revisions learning.
+
+    A row is `yours` when the chairman holds the only lever — an approval that
+    auto-denies, a bet only he extends, a thread only he unfreezes, scope only
+    he accepts, a date only he signs, a verdict nobody on the project may pass.
+    Everything else — a drought, a kill date, a budget on pace, unaudited work
+    — is the CEO's to resolve, and belongs to the project it happened in, under
+    Overview → Watch. It reaches this page only as the one-line tally at the
+    foot, which is a signpost and not a row.
+
+    This page used to draw those too, under their own calm heading, on the
+    argument that nothing should happen silently. That argument is right and
+    the remedy was wrong: a notice shaped exactly like an approval *is* a
+    request, whatever the heading over it says. It cost this exchange, twice in
+    one morning, over an evidence-drought counter at 8h of 12:
+
+      CHAIRMAN: have I been asked to approve or acknowledge something?
+                I'm wondering what?
+      CEO:      No — everything I've filed has already been approved.
+      CHAIRMAN: why do I see this then?
+      CHAIRMAN: but it's showing up as if I have to approve it in my Desk
+
+    Then, months later, unprompted: "unless it's important or it needs your
+    attention then it's just a log entry." Three separate pieces of copy on
+    this page existed only to apologise for rows being on it — a heading that
+    said "nothing here is yours to approve", a paragraph explaining the rows
+    were listed "so nothing happens silently", and a label that flipped between
+    "If you do nothing" and "What happens next". Copy that apologises for a row
+    is the row telling you it is on the wrong page. All three are gone, along
+    with what they were apologising for.
+
+    So: tier still orders what is drawn (time to consequence — approvals
+    auto-deny, bets auto-block their tasks, budgets auto-pause), but it no
+    longer decides what is drawn. `yours` does, it is required on every row,
+    and the compiler is what enforces that a new row type answers the question
+    at all.
 
       1  stopped      it has stopped, and only the chairman restarts it
-      2  on a clock   it resolves without him, at a time we can name
+      2  on a clock   it resolves at a time we can name
       3  drifting     nothing breaks; the claim just gets weaker
 
-    Tier is time-to-consequence, and it orders the list. It does not decide the
-    count: `yours` does, and the two are orthogonal on purpose. A row is `yours`
-    when the chairman holds the only lever — an approval that auto-denies, a bet
-    only the chairman extends, a thread only the chairman unfreezes, scope only
-    the chairman accepts, a date only the chairman signs, a verdict nobody on
-    the project may pass. The count and the sidebar badge are exactly those
-    rows, because the number is a promise: above zero means a decision is
-    waiting.
-
-    Everything else on a clock still gets a row and still sorts by when it lands
-    — a drought, a kill date, a budget on pace — but it is not counted, and it
-    does not say "if you do nothing", because there is nothing to do: the CEO
-    resolves all three. Counting them cost what padding a count always costs. A
-    chairman read "1 thing needs you" over a drought row at 8h of 12, went
-    looking for the approval it implied, found none, and had to ask the CEO what
-    had been missed — and the honest answer was nothing. Project → Overview has
-    drawn this line since it shipped ("Needs you" holds decisions; "Watch" holds
-    drought, kill dates and budget); this page now draws it in the same place.
-
-    Tier 3 is real work — it is the difference between "done means verified"
-    being true and being a slogan — but nothing expires and no agent is blocked,
-    so it is never `yours` either.
+    The count, the sidebar badge and the page are now the same set, because the
+    number is a promise: above zero means a decision is waiting, and the page
+    under it shows exactly those decisions.
 
     Only a project that is *running* appears here at all. The server drops the
     terminal ones (`?live=true`) because a stopped or completed project cannot
@@ -86,11 +100,13 @@ export interface Item {
       resolves itself in X" — the headline names a deadline, so it has to come
       from something that has one. */
   clocked?: boolean;
-  /** Whether the chairman holds the only lever on this row. The count, the
-      badge and the "if you do nothing" label are all exactly this and never the
-      tier — see the header. A row that is not `yours` is on the page so nothing
-      happens silently, not because anything is being asked. */
-  yours?: boolean;
+  /** Whether the chairman holds the only lever on this row — and therefore
+      whether it is drawn at all. Required, not optional: a new row type must
+      answer this question before it compiles, because the one failure mode
+      this page has is a notice that slipped onto it wearing an ask's clothes.
+      A `false` row is still built (the foot of the page counts it and points
+      at the project that owns it) and never rendered as a card. */
+  yours: boolean;
   project: DeskProject;
   kind: string;
   what: React.ReactNode;
@@ -115,9 +131,50 @@ export const isLive = (p: DeskProject) => p.status === "running";
     drought taught us that a badge nobody can act on is worse than both. */
 export const needsYou = (i: Item) => i.yours === true;
 
-/** One desk row. Extracted so the three lists below cannot drift apart in how
-    they draw the same thing — the label that distinguishes an ask from a
-    notice lives here, once. */
+/** The foot of the desk: everything the CEO is resolving, as a count and a
+    pointer, never as a row.
+
+    This is the whole of what replaced two lists of cards. The reasoning behind
+    those cards was sound — the chairman should not have to discover a drought
+    by accident — but a card is a request, and thirteen of them made a page
+    that asked for nothing look like a page that asked for everything. A count
+    with the project's name on it is the honest shape: it says the thing exists,
+    says whose it is, and does not pretend to want a click.
+
+    It names the kinds rather than just totalling them, because "3 things" is
+    a number the reader has to go and decode, and this page's whole failure
+    mode was making the reader guess. "Agentic Todo (drought)" is already the
+    answer to the question the number would have raised. */
+function ElsewhereLine({ items }: { items: Item[] }) {
+  if (items.length === 0) return null;
+  // Grouped by project, because that is where the reader has to go to act on
+  // any of it: each project's Overview holds these under "Watch".
+  const byProject = new Map<string, { name: string; kinds: string[] }>();
+  for (const it of items) {
+    const row = byProject.get(it.project.id)
+      ?? { name: it.project.name, kinds: [] };
+    if (!row.kinds.includes(it.kind)) row.kinds.push(it.kind);
+    byProject.set(it.project.id, row);
+  }
+  const projects = [...byProject.entries()];
+  return (
+    <p className="help" style={{ marginTop: 20 }}>
+      {items.length === 1 ? "One other thing is" : `${items.length} other things are`}{" "}
+      running without you — the CEO resolves {items.length === 1 ? "it" : "them"}, and{" "}
+      {items.length === 1 ? "it needs" : "they need"} no decision from you:{" "}
+      {projects.map(([id, row], i) => (
+        <span key={id}>
+          {i > 0 && ", "}
+          <Link to={`/projects/${id}`}>{row.name}</Link> ({row.kinds.join(", ")})
+        </span>
+      ))}
+      . Each project's Overview keeps the detail under <b>Watch</b>.
+    </p>
+  );
+}
+
+/** One desk row. Extracted so the count, the badge and the page cannot drift
+    apart in how they draw the same thing. */
 function DeskRow({ it }: { it: Item }) {
   return (
     <div className={`item t${it.tier}`}>
@@ -131,13 +188,11 @@ function DeskRow({ it }: { it: Item }) {
         </div>
         <div className="what">{it.what}</div>
         <div className="cons">
-          {/* "If you do nothing" is a question only worth asking where doing
-              something is an option. On every other row it is the whole
-              misreading: it casts a status line as an ultimatum and the reader
-              goes hunting for the button. */}
-          <span className="lbl">
-            {needsYou(it) ? "If you do nothing" : "What happens next"}
-          </span>
+          {/* One label, because there is now only one kind of row. The label
+              used to flip to "What happens next" for rows nobody could act on
+              — which was the page admitting it was drawing two different
+              things and hoping the reader would notice the difference. */}
+          <span className="lbl">If you do nothing</span>
           {it.consequence}
         </div>
         {it.actions && <div className="acts">{it.actions}</div>}
@@ -290,7 +345,7 @@ export function buildItems(projects: DeskProject[], reload: () => void): Item[] 
     for (const bet of p.kill_dates_soon) {
       items.push({
         key: bet.id, tier: 2, at: new Date(bet.kill_date).getTime(), clocked: true,
-        project: p, kind: "kill date",
+        yours: false, project: p, kind: "kill date",
         what: <>“{clip(bet.statement, 120)}”</>,
         consequence: (
           <>
@@ -310,7 +365,8 @@ export function buildItems(projects: DeskProject[], reload: () => void): Item[] 
       && hoursSince(d.last_countable_at) >= d.window_hours * 0.5);
     if (d.active) {
       items.push({
-        key: `${p.id}-drought`, tier: 2, at: now, project: p, kind: "drought",
+        key: `${p.id}-drought`, tier: 2, at: now, yours: false, project: p,
+        kind: "drought",
         what: (
           <>
             No verified external evidence in <b>{d.window_hours}h</b>.
@@ -326,8 +382,8 @@ export function buildItems(projects: DeskProject[], reload: () => void): Item[] 
     } else if (droughtShown && d.last_countable_at) {
       const startsAt = new Date(d.last_countable_at).getTime() + d.window_hours * 3_600_000;
       items.push({
-        key: `${p.id}-drought`, tier: 2, at: startsAt, clocked: true, project: p,
-        kind: "drought",
+        key: `${p.id}-drought`, tier: 2, at: startsAt, clocked: true, yours: false,
+        project: p, kind: "drought",
         what: (
           <>
             <b>{Math.floor(hoursSince(d.last_countable_at))}h</b> without verified external
@@ -355,8 +411,8 @@ export function buildItems(projects: DeskProject[], reload: () => void): Item[] 
     const pace = paceDate(b.spent, b.cap);
     if (frac < 1 && pace) {
       items.push({
-        key: `${p.id}-budget`, tier: 2, at: pace.getTime(), clocked: true, project: p,
-        kind: "budget",
+        key: `${p.id}-budget`, tier: 2, at: pace.getTime(), clocked: true, yours: false,
+        project: p, kind: "budget",
         what: (
           <>
             {fmtUnit(b.spent, b.unit)} of {fmtUnit(b.cap, b.unit)} spent — at this pace the cap
@@ -370,7 +426,7 @@ export function buildItems(projects: DeskProject[], reload: () => void): Item[] 
       });
     } else if (frac < 1 && frac >= b.warn_ratio) {
       items.push({
-        key: `${p.id}-budget`, tier: 3, at: NEVER, project: p, kind: "budget",
+        key: `${p.id}-budget`, tier: 3, at: NEVER, yours: false, project: p, kind: "budget",
         what: (
           <>
             {Math.round(frac * 100)}% of the monthly cap used — {fmtUnit(b.spent, b.unit)} of{" "}
@@ -389,7 +445,8 @@ export function buildItems(projects: DeskProject[], reload: () => void): Item[] 
     // ── tier 3: nothing breaks; the claim gets weaker ───────────────────
     if (p.audit.unaudited >= 3) {
       items.push({
-        key: `${p.id}-audit`, tier: 3, at: NEVER, project: p, kind: "spot-check",
+        key: `${p.id}-audit`, tier: 3, at: NEVER, yours: false, project: p,
+        kind: "spot-check",
         what: (
           <>
             <b>{p.audit.unaudited} finished tasks</b> nobody has checked. The agents marked
@@ -414,7 +471,8 @@ export function buildItems(projects: DeskProject[], reload: () => void): Item[] 
     if (b.unit === "usd" && !droughtShown && p.spend_24h >= SPEND_FLOOR_USD
         && p.evidence_24h === 0 && p.status === "running") {
       items.push({
-        key: `${p.id}-spend-noproof`, tier: 3, at: NEVER, project: p, kind: "no proof",
+        key: `${p.id}-spend-noproof`, tier: 3, at: NEVER, yours: false, project: p,
+        kind: "no proof",
         what: (
           <>
             <b>${p.spend_24h.toLocaleString(undefined, { maximumFractionDigits: 2 })}</b> spent
@@ -449,14 +507,26 @@ export default function Desk() {
   const live = all.filter(isLive);
   const idle = all.length - live.length;
   const items = buildItems(live, reload);
-  // Waiting on the chairman, and on a clock the CEO runs out itself. Both are
-  // shown and both sort by consequence; only the first is ever counted.
+  // The page is `mine`. `elsewhere` is everything the CEO resolves: not drawn
+  // as rows, only tallied at the foot with a pointer to the project that owns
+  // it. Splitting them here rather than at the heading is the point — a
+  // heading is a thing the reader can skip past, and they did.
   const mine = items.filter(needsYou);
-  const watching = items.filter((i) => i.tier <= 2 && !needsYou(i));
-  // Tier 3 is neither: nothing is on a clock and nothing is asking. It gets
-  // its own heading rather than trailing the clocked rows unlabelled.
-  const drifting = items.filter((i) => i.tier === 3 && !needsYou(i));
-  const soonest = items.find((i) => i.tier === 2 && i.clocked);
+  const onItsOwn = items.filter((i) => !needsYou(i));
+  // Two different questions, two different clocks, and conflating them is how
+  // the drought got onto this page in the first place.
+  //
+  // `soonest` finishes the headline "N things need you" — so it may only come
+  // from a row that needs him. A drought counter answers a question nobody
+  // asked there.
+  //
+  // `nextClock` is the liveness tile at the bottom, whose job is to show the
+  // platform is awake and counting. Any clock proves that, including the ones
+  // the CEO runs out itself — and scoping it to `mine` made it read "next
+  // clock: none" on a project with a kill date three days out, which is the
+  // page lying in the other direction.
+  const soonest = mine.find((i) => i.tier === 2 && i.clocked);
+  const nextClock = items.find((i) => i.tier === 2 && i.clocked);
   const running = live.length;
   const lastRun = latestRun(live);
 
@@ -472,7 +542,7 @@ export default function Desk() {
           })}
         </span>
       </div>
-      {mine.length > 0 ? (
+      {mine.length > 0 && (
         <p className="subtitle">
           <b>
             {mine.length} thing{mine.length === 1 ? "" : "s"} need
@@ -483,18 +553,6 @@ export default function Desk() {
               <span className="tick">{fmtSoon(new Date(soonest.at).toISOString())}</span>.
             </>
           )}
-        </p>
-      ) : watching.length > 0 && (
-        /* Rows, but none of them a decision. Said out loud, because the rows
-           below are the same shape as the ones that are — and silence here
-           reads as "work it out from the list", which is what sent a chairman
-           looking for an approval behind a drought counter. */
-        <p className="subtitle">
-          <b>Nothing needs a decision from you.</b>{" "}
-          {watching.length === 1 ? "One thing is" : `${watching.length} things are`} on a
-          clock below; the CEO resolves {watching.length === 1 ? "it" : "them"}, and
-          {watching.length === 1 ? " it is" : " they are"} listed so nothing happens
-          silently.
         </p>
       )}
 
@@ -508,22 +566,8 @@ export default function Desk() {
         <EmptyDesk finished={data.finished} />
       )}
 
-      {/* Two lists, not one sorted list.
-
-          Both halves were already computed and the row already switched its
-          own label between "If you do nothing" and "What happens next" — but
-          they were then interleaved by tier, so an evidence-drought notice sat
-          between two real approvals and read as a third. It cost this
-          exchange, twice in one morning:
-
-            CHAIRMAN: have I been ask to approve or acknowledge something?
-                      I'm wondering what?
-            CEO:      No — everything I've filed has already been approved.
-            CHAIRMAN: why do I see this then? [the drought banner]
-            CHAIRMAN: but it's showing up as if I have to approve it in my Desk
-
-          A label the reader has to notice is not a distinction; a heading they
-          cannot skip past is. */}
+      {/* One list, and it is the only one. Everything the chairman cannot act
+          on is counted by ElsewhereLine at the foot instead of drawn here. */}
       {mine.length > 0 && (
         <div className="list">
           <h2 className="listhead">Needs you</h2>
@@ -533,48 +577,12 @@ export default function Desk() {
         </div>
       )}
 
-      {watching.length > 0 && (
-        <div className="list">
-          <h2 className="listhead calm">
-            Running its own clock
-            <span className="sub">
-              — nothing here is yours to approve; it resolves without you
-            </span>
-          </h2>
-          {watching.map((it) => (
-            <DeskRow it={it} key={it.key} />
-          ))}
-        </div>
-      )}
-
-      {drifting.length > 0 && (
-        <div className="list">
-          <h2 className="listhead calm">
-            Drifting
-            <span className="sub">— nothing breaks; the claim just gets weaker</span>
-          </h2>
-          {drifting.map((it) => (
-            <DeskRow it={it} key={it.key} />
-          ))}
-        </div>
-      )}
-
       {running > 0 && mine.length === 0 && (
         <div className="quiet ok">
           <div className="mark">Nothing needs you.</div>
           <div className="sub">
-            {watching.length > 0 ? (
-              <>
-                No decision is blocked and nothing has stopped. What is on a clock above
-                runs out without you — there is nothing there to approve or acknowledge.
-                The proof it is actually working:
-              </>
-            ) : (
-              <>
-                No decision is blocked, no clock is running out, and nothing has stopped.
-                The proof it is actually working:
-              </>
-            )}
+            No decision is blocked, nothing has stopped, and nothing is waiting on a
+            click from you. The proof it is actually working:
           </div>
           <div className="proof">
             <div className="pf">
@@ -586,7 +594,7 @@ export default function Desk() {
               <div className="pl">last run</div>
             </div>
             <div className="pf">
-              <div className="pv">{soonest ? fmtSoon(new Date(soonest.at).toISOString()) : "none"}</div>
+              <div className="pv">{nextClock ? fmtSoon(new Date(nextClock.at).toISOString()) : "none"}</div>
               <div className="pl">next clock</div>
             </div>
           </div>
@@ -620,6 +628,8 @@ export default function Desk() {
           </div>
         </div>
       )}
+
+      <ElsewhereLine items={onItsOwn} />
 
       {running > 0 && (
         <ProjectStrip

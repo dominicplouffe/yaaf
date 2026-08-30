@@ -327,3 +327,59 @@ def test_a_supervised_verdict_is_still_chased(client):
     assert len(_notices(project["id"], "requirement.verdict_nag")) == 1
     assert [v["key"] for v in
             _desk(client, live=True)["projects"][0]["awaiting_you"]["verdicts"]] == ["R-10"]
+
+
+def test_a_project_dashboard_carries_yesterday_as_a_pair(client):
+    """The desk stopped drawing "spent money, verified nothing" as a card,
+    because it is not a decision the chairman makes — it moved to the project's
+    own Watch list. The dashboard therefore has to be able to answer it without
+    the desk rollup, and it has to answer both halves: spend on its own is a
+    vanity number and evidence on its own hides what it cost.
+
+    They travel as a pair or the row cannot be drawn at all, which is why this
+    asserts on both keys rather than on either value.
+    """
+    project = make_project(client, slug="yesterday-pair")
+
+    dashboard = client.get(f"/observe/projects/{project['id']}", headers=ADMIN)
+    assert dashboard.status_code == 200, dashboard.text
+    body = dashboard.json()
+
+    assert "spend_24h" in body, "the project's Watch list cannot draw spend without this"
+    assert "evidence_24h" in body, "spend without its evidence is the number that flatters"
+    # A project that has done nothing yet has spent nothing and proved nothing.
+    # Both are zero, and neither is null: the row's own suppression rule reads
+    # these directly, and a null would draw it on a project that never ran.
+    assert body["spend_24h"] == 0
+    assert body["evidence_24h"] == 0
+
+
+def test_the_desk_only_carries_what_the_chairman_can_act_on(client):
+    """The desk's one rule, asserted at the seam the page reads.
+
+    Nothing here needs a chairman: a fresh project has no expired bet, no
+    frozen thread, no approval, no proposed scope, no unsigned date and no
+    verdict to pass. Every field the page turns into a row must therefore come
+    back empty — and the fields that feed the *foot* of the page (drought,
+    audit, the 24h pair) must still come back, because "not a row" is not the
+    same as "not reported".
+    """
+    make_project(client, slug="quiet-desk")
+    desk = _desk(client, live=True)
+    project = desk["projects"][0]
+
+    # The six things that become rows. All empty on a project doing nothing.
+    assert project["expired_bets"] == []
+    assert project["pending_approvals"] == []
+    assert project["frozen_threads"] == 0
+    assert project["awaiting_you"]["plan"] == 0
+    assert project["awaiting_you"]["commitment"] is None
+    assert project["awaiting_you"]["verdicts"] == []
+
+    # The things that never become rows, and are reported anyway. A drought
+    # that stopped being a card must not quietly stop being *knowable* — the
+    # project's Watch list and the desk's closing tally both read these.
+    assert "drought" in project
+    assert project["drought"]["active"] is False, "a young project is inside its grace period"
+    assert "audit" in project
+    assert "spend_24h" in project and "evidence_24h" in project

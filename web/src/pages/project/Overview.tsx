@@ -492,7 +492,12 @@ export default function Overview({
     }
     const windowH = Number(dash.constitution["drought_hours"] ?? 24);
     const applies = hoursSince(dash.created_at) >= windowH;
+    // Tracked rather than inferred, because the row below suppresses itself
+    // when a drought is already speaking for this project — and "did the
+    // drought draw?" is two branches, not one boolean on the dashboard.
+    let droughtShown = false;
     if (dash.drought_active) {
+      droughtShown = true;
       watch.push(
         <div className="wrow" key="drought">
           <span className="badge serious">drought</span>
@@ -506,6 +511,7 @@ export default function Overview({
     } else if (applies && dash.last_countable_evidence_at) {
       const elapsed = hoursSince(dash.last_countable_evidence_at);
       if (elapsed >= windowH * 0.5) {
+        droughtShown = true;
         watch.push(
           <div className="wrow" key="drought">
             <span className="badge warn">drought {Math.floor(elapsed)}h / {windowH}h</span>
@@ -517,6 +523,27 @@ export default function Overview({
           </div>,
         );
       }
+    }
+    // Money moved and nothing outside the project confirmed anything. Distinct
+    // from the drought, which counts hours rather than dollars, so it is
+    // suppressed while a drought row is already saying the same thing louder.
+    // USD only: a zero here in token billing means "not priced in dollars",
+    // not "spent nothing".
+    if (usdMode && !droughtShown && dash.spend_24h >= 1 && dash.evidence_24h === 0) {
+      watch.push(
+        <div className="wrow" key="spend-noproof">
+          <span className="badge">no proof</span>
+          <div className="grow">
+            <b>
+              ${dash.spend_24h.toLocaleString(undefined, { maximumFractionDigits: 2 })} spent in
+              the last 24h
+            </b>{" "}
+            and nothing verified by anyone outside the project. The work may be real — but
+            only the agents say so.
+          </div>
+          <Link to={`/projects/${projectId}/work`}>see what it bought →</Link>
+        </div>,
+      );
     }
     for (const h of killSoon) {
       watch.push(

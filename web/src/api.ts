@@ -244,6 +244,11 @@ export interface Dashboard {
   open_tasks: number;
   queue_ceiling: number;
   external_evidence_in_window: number;
+  /** Yesterday, as a pair: what the project spent and what the outside world
+      verifiably did about it. They travel together or not at all — either one
+      alone is a number that flatters. */
+  spend_24h: number;
+  evidence_24h: number;
   drought_active: boolean;
   runs: { running: number; queued: number };
   activity: Activity;

@@ -447,6 +447,19 @@ def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
     open_tasks = policy.open_top_level_tasks(session, project.id)
     window = utcnow() - timedelta(hours=cons.drought_hours)
     evidence_count = policy.countable_external_evidence(session, project.id, window)
+    # Yesterday, paired — the same pair the desk carries, for the same reason:
+    # spend on its own is a vanity number and evidence on its own hides what it
+    # cost. The project's own Watch list is where this now lands, so the
+    # dashboard has to be able to answer it without the desk rollup.
+    day_ago = utcnow() - timedelta(hours=24)
+    spend_24h = round(float(session.execute(
+        select(func.coalesce(func.sum(LedgerEntry.usd), 0.0)).where(
+            LedgerEntry.project_id == project.id,
+            LedgerEntry.at >= day_ago,
+            LedgerEntry.kind != LedgerKind.REVENUE,
+        )
+    ).scalar_one()), 4)
+    evidence_24h = policy.countable_external_evidence(session, project.id, day_ago)
     # The resident chat session is presence, not work — counting it here would
     # pin "working" indicators on forever. It surfaces as chat_live instead.
     running = session.execute(
@@ -489,6 +502,8 @@ def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
         "open_tasks": len(open_tasks),
         "queue_ceiling": cons.queue_ceiling,
         "external_evidence_in_window": evidence_count,
+        "spend_24h": spend_24h,
+        "evidence_24h": evidence_24h,
         "drought_active": policy.drought_active(session, project.id, cons),
         "memory": _memory_usage(session, project, cons),
         "runs": {"running": running, "queued": queued},
