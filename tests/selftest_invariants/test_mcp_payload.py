@@ -17,6 +17,10 @@ from tests.selftest_invariants.test_mcp_auth import foreign_project, mint, rpc
 
 SLUG = "acme"
 
+OPEN_TAG = "<untrusted_agent_content"
+CLOSE_TAG = "</untrusted_agent_content>"
+TRUNCATION_MARK = "… [truncated]"
+
 #: The wire ceiling for a default call, in characters of JSON. Not a guess: the
 #: fattest read tool on a seeded project is the cockpit view, and this is the
 #: room it needs plus headroom. Tighten it if a tool starts sprawling — that is
@@ -185,3 +189,109 @@ def test_admin_token_still_opens_nothing_here(client):
     """The read tools are new surface; the principal rule is not weakened by them."""
     make_project(client, slug=SLUG)
     assert rpc(client, ADMIN["Authorization"].split()[1], "resources/list").status_code == 401
+
+
+def _long_file(client, chars: int = 46_000, name: str = "recommendation.md") -> str:
+    """A deliverable the size the chairman actually hit: 46KB, cut at 20K."""
+    from pathlib import Path
+
+    from yaaf.core.config import settings
+
+    make_project(client, slug=SLUG)
+    root = Path(settings().workspaces_root) / SLUG
+    root.mkdir(parents=True, exist_ok=True)
+    # Numbered so a window landing anywhere can be located exactly.
+    body = "".join(f"line {n:05d} of the recommendation, verbatim.\n" for n in range(1200))
+    body = (body * 2)[:chars]
+    (root / name).write_text(body)
+    return body
+
+
+def test_a_long_file_can_be_walked_to_its_end(client):
+    """The tail of a long file used to be unreachable, not merely slow to reach.
+
+    `fit` cut a string at the budget, appended "… [truncated]", and offered no
+    second call that started where the first stopped — so a 46KB document was
+    permanently three-fifths readable and a client that said so was right.
+    """
+    body = _long_file(client)
+    reader = mint(client)
+
+    seen, offset, calls = "", 0, 0
+    while True:
+        page = json.loads(text_of(client, reader["token"], "files",
+                                  {"project": SLUG, "path": "recommendation.md",
+                                   "detail": "full", "offset": offset}))
+        assert page["chars"] == len(body), "the true length travels with every window"
+        seen += page["content"].split(">\n", 1)[1].rsplit("\n<", 1)[0]
+        calls += 1
+        assert calls < 10, "a 46KB file should not take ten calls"
+        if "next_offset" not in page:
+            break
+        offset = page["next_offset"]
+
+    assert seen == body, "walking the offsets returns the file, whole and in order"
+    assert calls == 3
+
+
+def test_every_window_closes_its_own_envelope(client):
+    """The cut used to land inside the wrapper it was cutting.
+
+    `fit` trimmed the *wrapped* string, so a truncated file lost its closing
+    tag — the one guarantee the untrusted envelope exists to make, broken by
+    our own budget rather than by an agent.
+    """
+    _long_file(client)
+    reader = mint(client)
+
+    for offset in (0, 20_000, 40_000):
+        page = json.loads(text_of(client, reader["token"], "files",
+                                  {"project": SLUG, "path": "recommendation.md",
+                                   "detail": "full", "offset": offset}))
+        assert page["content"].startswith(OPEN_TAG)
+        assert page["content"].endswith(CLOSE_TAG)
+        assert TRUNCATION_MARK not in page["content"]
+
+
+def test_an_offset_past_the_end_is_empty_rather_than_a_wrap_around(client):
+    """The boundary a walker hits when it miscounts: empty and final, never the
+    head of the file served a second time as though it were the tail."""
+    body = _long_file(client)
+    reader = mint(client)
+
+    page = json.loads(text_of(client, reader["token"], "files",
+                              {"project": SLUG, "path": "recommendation.md",
+                               "detail": "full", "offset": len(body) + 5_000}))
+    assert page["offset"] == len(body)
+    assert "next_offset" not in page
+    assert page["content"] == f'{OPEN_TAG} author="workspace" kind="file">\n\n{CLOSE_TAG}'
+
+
+def test_an_offset_is_not_a_second_way_into_another_project(client):
+    """A new argument on a project-addressed tool is a new chance to skip the
+    gate. It resolves the project first, exactly as it did before."""
+    _long_file(client)
+    beta = foreign_project(client, slug="beta")
+    reader = mint(client)
+
+    for ref in ("beta", beta["id"]):
+        answer = rpc(client, reader["token"], "tools/call",
+                     {"name": "files", "arguments": {"project": ref, "path": "x.md",
+                                                     "offset": 0}}).json()
+        assert answer["result"]["isError"] is True
+        assert "is reachable by this client" in answer["result"]["content"][0]["text"]
+
+
+def test_a_nonsense_offset_is_refused_rather_than_read_as_zero(client):
+    """Silently coercing to zero would re-serve the first window for ever —
+    the exact confusion the argument exists to end."""
+    _long_file(client)
+    reader = mint(client)
+
+    for bad in ("soon", -1, {"n": 1}):
+        answer = rpc(client, reader["token"], "tools/call",
+                     {"name": "files", "arguments": {"project": SLUG,
+                                                     "path": "recommendation.md",
+                                                     "offset": bad}}).json()
+        assert answer["result"]["isError"] is True, bad
+        assert "offset" in answer["result"]["content"][0]["text"]

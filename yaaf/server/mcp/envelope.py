@@ -123,3 +123,27 @@ def page(rows: list, limit: int | None, default: int = 20, ceiling: int = 200) -
     """The one place a listing decides how much of itself to hand over."""
     size = default if limit is None else max(1, min(int(limit), ceiling))
     return rows[:size]
+
+
+def window(text: str, start: int, detail: str | None) -> tuple[str, dict]:
+    """One slice of a long text, and the facts needed to ask for the next.
+
+    `fit` gave a long string the one thing it never gave a long list: a cut
+    with no way back. A list that overruns says "… N more, not shown" and the
+    caller raises `limit`; a string got "… [truncated]" and there was no second
+    call that began where the first stopped. So the tail of a long file was not
+    slow to reach through this surface — it was unreachable, and a client that
+    said so was right and had nowhere to go. A caller that wants the whole
+    thing now walks it from `next_offset`.
+
+    Characters, not bytes, because that is what the slice indexes: reporting
+    bytes and accepting characters is an off-by-encoding waiting for the first
+    file with an accent in it.
+    """
+    size = budget(detail)["max_chars"]
+    start = min(max(0, start), len(text))
+    chunk = text[start:start + size]
+    facts = {"chars": len(text), "offset": start}
+    if start + len(chunk) < len(text):
+        facts["next_offset"] = start + len(chunk)
+    return chunk, facts

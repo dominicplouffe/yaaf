@@ -15,7 +15,7 @@ from yaaf.core.models import Agent, Channel, Evidence, Run, User
 from yaaf.server.api import observe
 from yaaf.server.mcp import envelope
 from yaaf.server.mcp.auth import Principal, ToolRefusal, chaired_projects, resolve_project
-from yaaf.server.mcp.registry import register, required
+from yaaf.server.mcp.registry import register, required, whole
 
 #: Goals are written to brief a CEO, not to fit in a list. Full text is one
 #: `project` call away (M1); this is the line that tells them apart.
@@ -116,6 +116,27 @@ def _text_of(response) -> str:
     """observe hands raw artifacts back as responses; MCP wants their text."""
     body = getattr(response, "body", response)
     return body.decode("utf-8", "replace") if isinstance(body, bytes) else str(body)
+
+
+OFFSET_ARG = {"type": "integer",
+              "description": "Resume a long text at this character; see next_offset"}
+
+
+def _walk(facts: dict, text: str, *, author: str | None, kind: str, arguments: dict) -> dict:
+    """One window of a long text, wrapped, with the way to ask for the rest.
+
+    Two orderings matter here and both are the point. The slice happens
+    *before* the wrap, because `fit` trimming an already-wrapped string cuts
+    the closing tag off the envelope that exists to close — the one guarantee
+    this file's neighbour spends its docstring on. And the content is attached
+    *after* `fit`, because it is exactly one window wide by construction and
+    trimming it again would cut it at a boundary no second call could resume
+    from. What is left for `fit` is a handful of small facts.
+    """
+    chunk, edges = envelope.window(text, whole(arguments, "offset"), arguments.get("detail"))
+    payload = envelope.fit({**facts, **edges}, arguments.get("detail"))
+    payload["content"] = envelope.untrusted(chunk, author=author, kind=kind)
+    return payload
 
 
 def _owned(session: Session, project, model, row_id: str, what: str):
@@ -271,6 +292,7 @@ def spend(principal: Principal, session: Session, arguments: dict) -> dict:
         view={"type": "string", "enum": ["list", "trace", "context"]},
         run={"type": "string", "description": "Run id, required for trace and context"},
         limit={"type": "integer", "description": "list only: rows, default 20"},
+        offset=OFFSET_ARG,
     ),
 )
 def work(principal: Principal, session: Session, arguments: dict) -> dict:
@@ -285,10 +307,8 @@ def work(principal: Principal, session: Session, arguments: dict) -> dict:
     fetch = observe.run_trace if view == "trace" else observe.run_context
     text = _text_of(_observe(fetch, run_id=run.id, session=session))
     author = _agent_names(session, row.id).get(run.agent_id)
-    return envelope.fit({
-        "project": row.slug, "run": run.id, "agent": author, "view": view,
-        "content": envelope.untrusted(text, author=author, kind=f"run_{view}"),
-    }, arguments.get("detail"))
+    return _walk({"project": row.slug, "run": run.id, "agent": author, "view": view},
+                 text, author=author, kind=f"run_{view}", arguments=arguments)
 
 
 @register(
@@ -398,11 +418,15 @@ def channels(principal: Principal, session: Session, arguments: dict) -> dict:
     description=(
         "What the agents wrote: the shared workspace, the artifact store, and the "
         "published deliverables with their hashes. Pass `path` or `artifact` for one "
-        "file's text, which comes back wrapped as untrusted data."
+        "file's text, which comes back wrapped as untrusted data. A long file arrives "
+        "one window at a time: `chars` is its true length, and when `next_offset` is "
+        "present there is more — pass it back as `offset` to continue, with "
+        "detail: \"full\" for the widest window."
     ),
     input_schema=_schema(
         path={"type": "string", "description": "Workspace-relative path, for one file"},
         artifact={"type": "string", "description": "Artifact storage key, for one artifact"},
+        offset=OFFSET_ARG,
     ),
     carries_agent_text=True,
 )
@@ -415,11 +439,8 @@ def files(principal: Principal, session: Session, arguments: dict) -> dict:
 
     response = _observe(observe.project_file_content, project_id=row.id,
                         path=path or "", artifact=artifact or "", session=session)
-    text = _text_of(response)
-    return envelope.fit({
-        "project": row.slug, "file": path or artifact,
-        "content": envelope.untrusted(text, author="workspace", kind="file"),
-    }, arguments.get("detail"))
+    return _walk({"project": row.slug, "file": path or artifact},
+                 _text_of(response), author="workspace", kind="file", arguments=arguments)
 
 
 @register(

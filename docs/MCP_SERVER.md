@@ -215,6 +215,36 @@ before anything is issued.
 It shipped with a checkbox per project too, and that half was wrong — see
 *The allowlist that had to go* below.
 
+### A budget is not a wall
+
+Every tool summarizes by default and says so when it cut something, because a
+silent truncation is a lie the model cannot detect. That holds. What did not
+hold was the way out.
+
+A list that overruns says `… N more, not shown`, and the caller raises `limit`.
+A long *string* got `… [truncated]` and nothing else — no offset, no cursor, no
+second call that began where the first stopped. So a 46KB deliverable read
+through `files` was not slow to reach past character 20,000: it was
+unreachable, permanently, and a client that reported the cut was both correct
+and stuck. A budget that cannot be walked past is a wall wearing a budget's
+label.
+
+Worse, the cut landed *inside the wrapper it was cutting*. `fit` trimmed the
+already-wrapped string, so a truncated file lost the closing tag of the
+untrusted-content envelope — the one guarantee that envelope exists to make,
+broken by our own budget rather than by any agent.
+
+So `files` and `work` take an `offset`, and both order their work the other way
+round: slice the raw text first, wrap second, attach after `fit`. Every window
+closes its own envelope, `chars` carries the true length, and `next_offset`
+says whether there is more. Three calls at `detail: "full"` read that 46KB
+document end to end.
+
+`resources/read` keeps the old behaviour on purpose. Its protocol carries a
+URI and nothing else, so there is no argument channel to walk with, and
+resources are a convenience rather than a dependency: every one of them is
+answerable by a tool, and the tools walk.
+
 ### The allowlist that had to go
 
 M0 gave every grant a `project_ids` allowlist and M2 put it on the consent
@@ -329,11 +359,11 @@ Status column tracks implementation. `M1`…`M4` are the milestones below.
 | `project` | One project's cockpit. `view`: `overview` \| `health` \| `flags` \| `agenda` \| `briefing`. | `GET /observe/projects/{id}` + `/health` `/flags` `/agenda` `/briefing` | **done** (M1) |
 | `plan` | Requirements by stage, dependencies, burn-up, the commitment and its risk. | `GET /observe/projects/{id}/plan`, `GET /admin/projects/{id}/requirements` | **done** (M1) |
 | `spend` | Against the cap, by team; ledger lines. | `GET /observe/projects/{id}/spend` `/ledger` | **done** (M1) |
-| `work` | Runs, one run's trace, the context pack it ran on. | `GET /observe/projects/{id}/runs`, `/runs/{id}/trace` `/context` | **done** (M1) |
+| `work` | Runs, one run's trace, the context pack it ran on. Long text walks by `offset`. | `GET /observe/projects/{id}/runs`, `/runs/{id}/trace` `/context` | **done** (M1) |
 | `proof` | Evidence, provenance, snapshots, audit samples. | `GET /observe/projects/{id}/evidence` `/audit_samples` `/spot_audit`, `/observe/evidence/{id}/snapshot` | **done** (M1) |
 | `org` | Teams, agents, schedules, one agent's detail, the board. | `GET /observe/projects/{id}/org` `/board`, `/observe/agents/{id}` | **done** (M1) |
 | `channels` | Channel list and messages. **Wraps agent text.** | `GET /observe/projects/{id}/channels`, `/observe/channels/{id}/messages` | **done** (M1) |
-| `files` | Workspace listing and file content. **Wraps agent text.** | `GET /observe/projects/{id}/files` `/files/content` | **done** (M1) |
+| `files` | Workspace listing and file content. **Wraps agent text.** Long files walk by `offset`. | `GET /observe/projects/{id}/files` `/files/content` | **done** (M1) |
 | `record` | The judgement record. `view`: `decisions` \| `reviews` \| `cycles` \| `hypotheses` \| `suggestions` \| `memories` \| `approvals`. | `GET /observe/projects/{id}/ceo_decisions` and siblings | **done** (M1) |
 
 ### Steer — `steer` scope

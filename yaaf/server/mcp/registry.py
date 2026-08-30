@@ -82,3 +82,24 @@ def required(arguments: dict, key: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ToolRefusal(f"{key!r} is required")
     return value.strip()
+
+
+def whole(arguments: dict, key: str, default: int = 0) -> int:
+    """A non-negative whole number, or a refusal that says what was wrong.
+
+    Nothing validates arguments against the declared schema at dispatch, so a
+    bad offset would coerce quietly to zero and re-serve the first window for
+    ever — which is exactly the confusion the argument exists to end.
+    """
+    value = arguments.get(key)
+    if value is None:
+        return default
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        raise ToolRefusal(f"{key!r} must be a whole number of characters")
+    try:
+        number = int(value)
+    except ValueError:
+        raise ToolRefusal(f"{key!r} must be a whole number of characters") from None
+    if number < 0:
+        raise ToolRefusal(f"{key!r} cannot be negative")
+    return number
