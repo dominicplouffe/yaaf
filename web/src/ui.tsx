@@ -3,6 +3,7 @@
 // approve/deny pair, and CSV export. Kept deliberately small — these are the
 // primitives the redesign repeats everywhere so the pattern is learned once.
 
+import type React from "react";
 import { useEffect, useState } from "react";
 import { Activity, Dashboard, get, post, RunRow } from "./api";
 
@@ -315,6 +316,40 @@ export function clip(s: string, max = 150): string {
   if (s.length <= max) return s;
   return s.slice(0, max).replace(/\s+\S*$/, "") + "…";
 }
+
+// ── composers: Enter sends, Shift+Enter is a newline ────────────────────────────
+
+/** The keydown handler every message composer in this app shares.
+
+    It used to be Ctrl/Cmd+Enter to send, which is the wrong default for a
+    chat: every other chat a person uses all day sends on Enter, so the muscle
+    memory they arrive with produces a blank line instead of a message, and the
+    hint text under the box is the only thing that tells them otherwise.
+
+    Shift+Enter inserts a newline, because a chairman writing a paragraph needs
+    one. Ctrl/Cmd+Enter still sends too — it costs nothing to keep, and anyone
+    who learned the old way keeps working.
+
+    `isComposing` is the load-bearing detail: an IME (Japanese, Chinese, Korean)
+    uses Enter to accept a candidate word, so sending on it would fire mid-word
+    and post half a sentence. The guard is why this lives in one place rather
+    than being retyped at each textarea. */
+export function sendOnEnter(
+  send: () => void,
+  opts: { disabled?: boolean } = {},
+): (e: React.KeyboardEvent<HTMLTextAreaElement>) => void {
+  return (e) => {
+    if (e.key !== "Enter") return;
+    if (e.nativeEvent.isComposing) return;
+    if (e.shiftKey) return; // a newline, deliberately
+    e.preventDefault();
+    if (opts.disabled) return;
+    send();
+  };
+}
+
+/** The one sentence under a composer, so the two never disagree. */
+export const SEND_HINT = "Enter to send · Shift+Enter for a new line";
 
 // ── secrets: masked to the eye, never withheld from the chairman ────────────────
 //

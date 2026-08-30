@@ -9,7 +9,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { ApiError, del, get, post, ProjectBundle, put } from "../api";
 import Markdown from "../Markdown";
-import { SecretInput } from "../ui";
+import { SecretInput, SEND_HINT, sendOnEnter } from "../ui";
 
 interface Turn {
   role: "chairman" | "founder";
@@ -431,12 +431,12 @@ export default function Founding() {
               placeholder={turns.length ? "Push back, or answer its questions…" : PLACEHOLDER}
               disabled={busy}
               onChange={(e) => setMessage(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void send();
-              }}
+              onKeyDown={sendOnEnter(() => void send(), {
+                disabled: busy || !message.trim(),
+              })}
             />
             <div className="founding-actions">
-              <span className="muted">⌘↵ to send</span>
+              <span className="muted">{SEND_HINT}</span>
               <button className="primary" disabled={busy || !message.trim()} onClick={send}>
                 {busy ? "Working (minutes)…" : turns.length ? "Send" : "Draft the project"}
               </button>

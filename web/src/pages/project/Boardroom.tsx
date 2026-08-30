@@ -12,7 +12,16 @@ import {
 } from "../../api";
 import { fmtWhen, usePoll } from "../../hooks";
 import Markdown from "../../Markdown";
-import { clip, DecideButtons, clockClass, fmtLeft, fmtUnit, killChip } from "../../ui";
+import {
+  clip,
+  clockClass,
+  DecideButtons,
+  fmtLeft,
+  fmtUnit,
+  killChip,
+  SEND_HINT,
+  sendOnEnter,
+} from "../../ui";
 
 /** The chat stays sacred — the only speaking channel. The rail beside it is
     read-only context: what the CEO is doing, what needs a decision, and the
@@ -170,15 +179,13 @@ export default function Boardroom({ projectId, dash }: { projectId: string; dash
               value={draft}
               placeholder="Speak as chairman…"
               onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) send();
-              }}
+              onKeyDown={sendOnEnter(send, { disabled: busy || !draft.trim() })}
             />
             <button className="primary" onClick={send} disabled={busy || !draft.trim()}>
               Send
             </button>
           </div>
-          <p className="help">Ctrl/⌘+Enter to send.</p>
+          <p className="help">{SEND_HINT}</p>
         </div>
 
         <div className="rail">
