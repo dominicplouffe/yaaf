@@ -189,12 +189,20 @@ def test_ending_a_project_never_approves_what_it_was_asking_for(client):
         assert session.get(Approval, approval["id"]).status == "expired"
 
 
-def test_budget_cap_auto_pauses_and_revokes(client):
-    project = make_project(client, constitution={"monthly_usd_cap": 100})
+def test_the_hard_stop_auto_pauses_and_revokes(client):
+    """The runaway protection, which survived the budget becoming a plan.
+
+    $150 against a $100 budget no longer pauses anything — that is now an
+    overrun to account for, which is the whole point of the change. The wall
+    sits at budget x hard_stop_multiple, and reaching it still kills every
+    live token, because a project that has run away has to be stoppable.
+    """
+    project = make_project(client, constitution={"monthly_usd_cap": 100,
+                                                 "hard_stop_multiple": 2.0})
     run_id, ceo_token = live_token(project["id"], project["ceo_agent_id"])
     with db_session() as session:
         session.add(LedgerEntry(id=ids.new_id(ids.LEDGER), project_id=project["id"],
-                                kind="external_spend", usd=150.0, note="over the cap"))
+                                kind="external_spend", usd=250.0, note="past the wall"))
     with db_session() as session:
         janitor_once(session)
 

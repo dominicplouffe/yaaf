@@ -221,17 +221,48 @@ class ConstitutionDoc(BaseModel):
              "CEO re-scopes existing credentials across its own team itself, on the "
              "record. Creating a credential is always yours — you hold the values.")
 
-    # Budgets — native unit of the project's billing mode
+    # Budgets — native unit of the project's billing mode.
+    #
+    # Two numbers, deliberately, because they do two different jobs. The budget
+    # is the educated guess you make before the work starts; the hard stop is
+    # the wall that exists so a runaway cannot drain the account. They used to
+    # be the same number, and that is why every CEO on this platform lowballed:
+    # crossing the plan killed the project, so the plan became a thing to stay
+    # well back from. An agent that is paused for going over does not give you
+    # an honest estimate, it gives you a safe one — and a safe number and an
+    # honest number are indistinguishable from outside, which is how the
+    # chairman lost confidence in every figure the desk produced.
     monthly_usd_cap: float = _rule(
         1000.0, ge=0, group="Budgets", label="Monthly budget (USD)",
-        help="Hard stop: the project pauses itself at 100%. The unit under API-key billing.")
+        help="Your educated guess at the month, in USD, under API-key billing. This is "
+             "a PLAN, not a wall: crossing it does not stop the project, it obliges the "
+             "CEO to report the overrun with what the money bought. The wall is the "
+             "hard stop below.")
     monthly_token_cap: int = _rule(
-        200_000_000, ge=0, group="Budgets", label="Monthly token cap",
-        help="The budget unit under subscription billing. Same hard stop at 100%.")
+        200_000_000, ge=0, group="Budgets", label="Monthly token budget",
+        help="The same plan, in tokens, under subscription billing. Crossing it obliges "
+             "a report, never a pause.")
+    hard_stop_multiple: float = _rule(
+        3.0, ge=1.0, group="Budgets", label="Hard stop, as a multiple of the budget",
+        help="The wall. At budget × this, the project pauses itself, live runs are "
+             "revoked and the queue is purged — the runaway protection the budget used "
+             "to provide by being a cliff. Set it to the most you would tolerate losing "
+             "on a bad month, not to what you expect to spend. 1.0 restores the old "
+             "behaviour, where the plan and the wall are the same number.")
     budget_warn_ratio: float = _rule(
         0.8, gt=0, lt=1, group="Budgets", label="Warn at this share of the budget",
-        help="The CEO is told to cut burn at this point — before the platform pauses the "
-             "project for it.")
+        help="Where the CEO is told it is approaching the plan — early enough to say "
+             "something about it while there is still a choice to make.")
+    stakes: str = _rule(
+        "normal", choices=["low", "normal", "high"], group="Budgets",
+        label="How much this project matters",
+        help="How aggressively to spend when the budget turns out to be wrong, which it "
+             "will. HIGH: running out is worse than overspending — the CEO is told to "
+             "spend what the work needs and report, and it gets real headroom before "
+             "anyone worries. LOW: the work is not worth much; going over means stop and "
+             "ask. This is the difference between a project posting to LinkedIn and one "
+             "trading a real account, and until it existed both ran under identical "
+             "caution because the platform had no way to be told which was which.")
     # The spend envelope (CEO Charter, stage C — docs/AUTONOMY.md). Real-world
     # purchases, as distinct from model spend. There is no spend_authority
     # switch on purpose: the money dial IS these numbers, and a switch would

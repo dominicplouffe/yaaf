@@ -30,6 +30,7 @@ REQUIREMENT_EDGE = "rqed"
 REQUIREMENT_RESULT = "rqcr"  # one standing requirement, judged for one cycle
 FLAG = "flag"  # an obligation to speak, opened by the platform
 SPEND_WINDOW = "spwn"  # a funded period for measuring what work costs
+OVERRUN = "ovrn"  # a month that went past its plan, and the account of why
 COMMITMENT = "cmit"
 ARTIFACT = "arti"
 AUDIT_SAMPLE = "asmp"

@@ -1343,6 +1343,77 @@ def raise_flag(
     }
 
 
+class OverrunAccountIn(BaseModel):
+    overrun_id: str
+    # What the extra bought, and whether you would spend it again. Long minimum
+    # on purpose: "we went over" is not an account, and a month past its plan is
+    # exactly where a short answer is worth nothing.
+    account: str = Field(min_length=80, max_length=8000)
+    # What the budget should be, in the project's own unit — or null for "leave
+    # it". Asking for a number here rather than accepting a shrug is the point:
+    # the budget only ever converges on reality if somebody proposes the
+    # correction from the side that watched the money go.
+    recommend_budget: float | None = Field(default=None, ge=0)
+
+
+@router.post("/overrun_account")
+def overrun_account(
+    body: OverrunAccountIn, ctx: RunContext = Depends(run_auth),
+    session: Session = Depends(db)
+) -> dict:
+    """Say what the extra spend bought. The move that did not exist before.
+
+    A project used to have two options when the money ran short: stay under
+    the number, or be paused by it. Neither of those is what a person does. A
+    person goes over when the work needs it and reports — and then the two of
+    them decide whether the number was wrong or the work was.
+
+    Note what this verb deliberately cannot touch. The breakdown is the
+    platform's, computed from the ledger; you explain it, you do not restate
+    it. And the recommendation is a recommendation: raising the budget is the
+    chairman's, because a CEO that could raise its own budget has no budget.
+    """
+    from yaaf.core.models import BudgetOverrun
+
+    if ctx.agent.kind != AgentKind.CEO:
+        raise Refusal(
+            "The month's spend is the CEO's to account for. If you have something "
+            "the CEO should know about what the work cost, send a suggestion.",
+            status_code=403,
+        )
+    overrun = session.get(BudgetOverrun, body.overrun_id)
+    if overrun is None or overrun.project_id != ctx.project.id:
+        raise Refusal("No such overrun on this project.", status_code=404)
+    if overrun.ceo_account is not None:
+        raise Refusal(
+            "That overrun already has your account on it. If the picture has "
+            "changed materially, say so in the boardroom — rewriting the record "
+            "after the fact is how an account stops being one.",
+            status_code=409,
+        )
+    overrun.ceo_account = body.account.strip()
+    overrun.accounted_at = utcnow()
+    session.add(AuditLog(
+        id=ids.new_id(ids.AUDIT), project_id=ctx.project.id,
+        actor=f"agent:{ctx.agent.id}", action="overrun.accounted",
+        entity="budget_overrun", entity_id=overrun.id,
+        detail={"recommend_budget": body.recommend_budget,
+                "account": overrun.ceo_account[:500]},
+    ))
+    if body.recommend_budget is not None:
+        overrun.breakdown = {**(overrun.breakdown or {}),
+                             "ceo_recommended_budget": body.recommend_budget}
+    return {
+        "overrun_id": overrun.id,
+        "note": (
+            "Filed. It is on his desk with the platform's own breakdown beside it, "
+            "and he decides whether the number was wrong or the work was — both are "
+            "ordinary answers. Raise the flag as well, so he reads it where he "
+            "reads everything else."
+        ),
+    }
+
+
 class CycleGoalIn(BaseModel):
     goal: str = Field(min_length=10, max_length=4000)
     # A deadline the world imposes. Optional: many rhythms are just a rhythm.

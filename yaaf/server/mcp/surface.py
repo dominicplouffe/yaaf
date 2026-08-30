@@ -72,6 +72,19 @@ REACHED = {
 #: Routes no tool reaches, and the reason. A reason is required: "we did not
 #: get to it" is a fine answer, but it has to be written down as one.
 WITHHELD = {
+    "POST /admin/overruns/{overrun_id}/decide":
+        "ruling on a month that went over is the chairman's half of the budget "
+        "conversation, and it can move the budget in the same motion. A model "
+        "holding this verb could approve its own overspend and raise its own "
+        "budget, which is not a budget.",
+    "GET /admin/projects/{project_id}/overruns":
+        "the CEO already carries the overrun it owes an account for in every "
+        "context pack; a second read path would be a second definition of the "
+        "same conversation.",
+    "GET /admin/projects/{project_id}/budget-advice":
+        "advice about what the budget should be is for the person who sets it. "
+        "The CEO recommends a number through overrun_account, where the "
+        "recommendation is recorded as one.",
     "POST /admin/projects/{project_id}/spend-window":
         "funding a measurement window is the chairman committing his own money to "
         "a question. The whole object exists because a model produced three "

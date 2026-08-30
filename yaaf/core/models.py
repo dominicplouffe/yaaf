@@ -149,6 +149,10 @@ class FlagKind(enum.StrEnum):
     # A measurement window reached a checkpoint, or is on course to spend its
     # allowance before it ends. Both are arithmetic against the ledger.
     SPEND_WINDOW = "spend_window"
+    # The month went past its budget. Not a failure and not a stop — an
+    # obligation to say what the money bought, which is the whole difference
+    # between a budget and a wall.
+    BUDGET_OVERRUN = "budget_overrun"
 
 
 class FlagStatus(enum.StrEnum):
@@ -1141,6 +1145,71 @@ class RequirementCycleResult(Base):
     met_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     met_by_run_id: Mapped[str | None] = mapped_column(String(40))
     check_output: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class OverrunOutcome(enum.StrEnum):
+    """What the chairman decided about a month that went over."""
+
+    PENDING = "pending"      # the CEO has not accounted for it yet, or he has not ruled
+    CONTINUE = "continue"    # fine — carry on at this level, and raise the budget to match
+    HOLD = "hold"            # justified once; the budget stays where it is
+    REVISE = "revise"        # the work has to change, not the number
+
+
+class BudgetOverrun(Base):
+    """A month that went past its plan, and the conversation that follows.
+
+    Before this the only two moves a project had were stay under the number or
+    be paused by it, so the CEO's dominant strategy was to promise little and
+    spend less. That is not caution, it is the rational play when crossing the
+    plan is fatal — and it made every figure the desk produced a safe one
+    rather than an honest one.
+
+    A human team does not work that way. It budgets from an educated guess,
+    goes over when the work turns out to need it, and *reports*: here is what I
+    spent, here is what it bought, here is what I would do next time. Then the
+    two of you decide together whether the number was wrong or the work was.
+
+    So this row is that conversation, with the three parts kept apart. The
+    PLATFORM writes the numbers — how far over, over what period, where the
+    money actually went — at zero tokens and from the ledger, so nobody
+    negotiates the facts. The CEO writes the account: why, and what it bought.
+    The CHAIRMAN writes the decision. Same division that makes commitments
+    work, applied to money.
+    """
+
+    __tablename__ = "budget_overruns"
+    __table_args__ = (
+        # One per project per month. A budget crossed on the 3rd and still
+        # crossed on the 4th is one overrun, not thirty.
+        UniqueConstraint("project_id", "period"),
+        Index("ix_overruns_project_outcome", "project_id", "outcome"),
+    )
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    # The first day of the month this overran, so the unique constraint holds.
+    period: Mapped[datetime] = mapped_column(UTCDateTime)
+    unit: Mapped[str] = mapped_column(String(8))
+    budget: Mapped[float] = mapped_column(Float)
+    # Spend at the moment the platform noticed. `final_spent` is stamped when
+    # the month closes, because the interesting number is where it ended up.
+    spent_at_crossing: Mapped[float] = mapped_column(Float)
+    final_spent: Mapped[float | None] = mapped_column(Float)
+    crossed_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    # Platform-computed and never from input: where the money went, by run kind
+    # and by requirement, plus the daily series. The facts are not negotiable.
+    breakdown: Mapped[dict | None] = mapped_column(JSONVariant)
+    # The CEO's side: why it went over and what that bought. Written through
+    # the flag it cannot close by staying quiet.
+    ceo_account: Mapped[str | None] = mapped_column(Text)
+    accounted_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # The chairman's side.
+    outcome: Mapped[str] = mapped_column(String(16), default=OverrunOutcome.PENDING)
+    chairman_note: Mapped[str | None] = mapped_column(Text)
+    decided_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    decided_by_user_id: Mapped[str | None] = mapped_column(String(40))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 

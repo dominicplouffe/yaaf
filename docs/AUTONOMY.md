@@ -167,7 +167,9 @@ Model spend and real-world spend are two different budgets.
 
 | Rule | Default | What it does |
 |---|---|---|
-| `monthly_usd_cap` / `monthly_token_cap` | 1000 USD / 200M | Model spend. Warn at `budget_warn_ratio`; the project pauses itself at 100%. |
+| `monthly_usd_cap` / `monthly_token_cap` | 1000 USD / 200M | The month's **plan** — an educated guess, not a wall. Warn at `budget_warn_ratio`; crossing it records an overrun the CEO must account for, and stops nothing. |
+| `hard_stop_multiple` | 3.0 | The wall, as a multiple of the plan. The project pauses itself here, and only here. Set it to the most you would tolerate losing on a bad month. |
+| `stakes` | normal | `low` / `normal` / `high`. How aggressively to spend when the plan turns out to be wrong. High: running out is worse than going over — spend and report. Low: going over means stop and ask. |
 | `external_monthly_usd_cap` | 500 USD | Purchases, subscriptions, services. A hard wall in **every** billing mode; a purchase that would cross it is refused with the arithmetic shown. |
 | `max_usd_per_purchase` | 100 USD | Above this, one purchase needs an approval regardless of the threshold. |
 

@@ -2574,6 +2574,124 @@ def constitution_schema() -> list[dict]:
     return fields
 
 
+# ── overruns: the conversation after a budget turns out to be wrong ─────────────
+
+
+class OverrunDecision(BaseModel):
+    """Carry on, hold the line, or change the work.
+
+    `new_budget` lets the decision and the correction be one motion, because
+    "fine, carry on at that level" and "and here is the budget that reflects
+    it" are the same thought, and splitting them across two screens is how a
+    budget stays wrong for another month.
+    """
+
+    outcome: str = Field(pattern="^(continue|hold|revise)$")
+    note: str = Field(min_length=1, max_length=4000)
+    new_budget: float | None = Field(default=None, ge=0)
+
+
+@router.get("/projects/{project_id}/overruns")
+def list_overruns(project_id: str, session: Session = Depends(db)) -> dict:
+    """Every month that went past its plan, newest first, with the platform's
+    breakdown, the CEO's account and your decision — the whole conversation in
+    one place, which is what makes the budget converge rather than drift."""
+    from yaaf.core.models import BudgetOverrun
+
+    project = _get_project(session, project_id)
+    rows = session.execute(
+        select(BudgetOverrun).where(BudgetOverrun.project_id == project.id)
+        .order_by(BudgetOverrun.period.desc())
+    ).scalars().all()
+    return {"overruns": [{
+        "id": o.id,
+        "period": o.period.date().isoformat(),
+        "unit": o.unit,
+        "budget": o.budget,
+        "spent": o.final_spent if o.final_spent is not None else o.spent_at_crossing,
+        "over_by": round((o.final_spent or o.spent_at_crossing) - o.budget, 2),
+        "crossed_at": o.crossed_at.isoformat(),
+        "breakdown": o.breakdown,
+        "ceo_account": o.ceo_account,
+        "accounted_at": o.accounted_at.isoformat() if o.accounted_at else None,
+        "outcome": o.outcome,
+        "chairman_note": o.chairman_note,
+        "decided_at": o.decided_at.isoformat() if o.decided_at else None,
+    } for o in rows]}
+
+
+@router.post("/overruns/{overrun_id}/decide")
+def decide_overrun(
+    overrun_id: str, body: OverrunDecision, session: Session = Depends(db)
+) -> dict:
+    """Rule on a month that went over, and correct the budget while you are here."""
+    from yaaf.core.models import BudgetOverrun, OverrunOutcome
+
+    overrun = session.get(BudgetOverrun, overrun_id)
+    if overrun is None:
+        raise HTTPException(status_code=404, detail="no such overrun")
+    if overrun.outcome != OverrunOutcome.PENDING:
+        raise HTTPException(
+            status_code=409,
+            detail=f"that overrun is already decided ({overrun.outcome}).")
+    project = _get_project(session, overrun.project_id)
+    overrun.outcome = body.outcome
+    overrun.chairman_note = body.note.strip()
+    overrun.decided_at = utcnow()
+    overrun.decided_by_user_id = project.chairman_user_id
+
+    raised = None
+    if body.new_budget is not None:
+        # Through the ordinary amendment path, so it is audited, versioned and
+        # disclosed to the CEO like every other rule change. A budget moved by
+        # a side door is a budget the CEO cannot see move.
+        key = ("monthly_usd_cap" if project.billing_mode == "api_key"
+               else "monthly_token_cap")
+        amendment = AmendmentIn(
+            reason=f"After the {overrun.period:%B} overrun: {body.note.strip()[:300]}",
+            changes={key: body.new_budget},
+        )
+        raised = amend_constitution(project.id, amendment, session)
+
+    session.add(AuditLog(
+        id=ids.new_id(ids.AUDIT), project_id=project.id, actor="chairman",
+        action="overrun.decided", entity="budget_overrun", entity_id=overrun.id,
+        detail={"outcome": body.outcome, "new_budget": body.new_budget,
+                "note": overrun.chairman_note[:500]},
+    ))
+    _notice_ceo(
+        session, project.id, NoticeKind.BUDGET_WARNING,
+        f"The chairman ruled on the {overrun.period:%B} overrun: "
+        f"{body.outcome.upper()}.\n\n{overrun.chairman_note}\n\n"
+        + ("The budget moved with it — plan against the new number."
+           if body.new_budget is not None else
+           "The budget is unchanged. Plan against it as it stands."),
+    )
+    return {"id": overrun.id, "outcome": overrun.outcome,
+            "budget_amended": raised is not None}
+
+
+@router.get("/projects/{project_id}/budget-advice")
+def budget_advice(project_id: str, session: Session = Depends(db)) -> dict:
+    """What the settled months say the budget should be.
+
+    The learning half: "over time we learn what the actual cost is and we
+    adjust the budgets accordingly". Sized to the worst normal month rather
+    than the average one, and widened by stakes — a budget exists to cover the
+    month you would not want to be caught short in.
+    """
+    from yaaf.server import budget as budget_lib
+
+    project = _get_project(session, project_id)
+    cons = effective(session, project.id)
+    advice = budget_lib.proposed_budget(session, project, cons)
+    if advice is None:
+        return {"known": False,
+                "why": "no settled month has finished yet, so there is nothing "
+                       "measured to size a budget from."}
+    return {"known": True, **advice}
+
+
 # ── measurement windows: funding a question instead of arguing about it ─────────
 
 

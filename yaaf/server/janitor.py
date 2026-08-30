@@ -1877,16 +1877,37 @@ def run_cost_profile(session: Session, project_id: str,
 
 
 def enforce_budget(session: Session, project: Project, cons: ConstitutionDoc) -> None:
+    """Three thresholds, and only the last one stops anything.
+
+    This used to be one number that both planned the month and killed the
+    project, so the plan was never a plan — it was a cliff, and every CEO on
+    this platform stood well back from it. Three of them refused money their
+    chairman offered. That reads as timidity and is really arithmetic: when
+    crossing your own budget is fatal, promising less is always the winning
+    move, and the chairman ends up unable to tell a safe number from an honest
+    one. He said so: "the confidence in the entire harness of yaaf is lost."
+
+    So: WARN approaching the plan, RECORD AN OVERRUN on crossing it — an
+    obligation to say what the money bought, not a stop — and PAUSE only at
+    the hard stop, which exists so a runaway cannot drain the account and is
+    set to a multiple of the plan rather than equal to it.
+    """
+    from yaaf.server import budget as budget_lib
+    from yaaf.server import flags as flag_lib
+
     usd, tokens = month_to_date(session, project.id)
-    if project.billing_mode == "api_key":
-        spent, cap, unit = usd, cons.monthly_usd_cap, "USD"
-    else:
-        spent, cap, unit = float(tokens), float(cons.monthly_token_cap), "tokens"
-    if cap <= 0:
+    budget, unit = budget_lib.budget_of(project, cons)
+    spent = usd if project.billing_mode == "api_key" else float(tokens)
+    if budget <= 0:
         return
-    if spent >= cap:
+    hard_stop = budget_lib.hard_stop_of(project, cons)
+
+    if spent >= hard_stop:
         project.status = ProjectStatus.PAUSED
-        project.status_reason = f"budget exhausted: {spent:,.0f}/{cap:,.0f} {unit} this month"
+        project.status_reason = (
+            f"hard stop: {spent:,.0f} {unit} this month against a budget of "
+            f"{budget:,.0f} and a wall at {hard_stop:,.0f}"
+        )
         for run in session.execute(
             select(Run).where(Run.project_id == project.id, Run.status == RunStatus.RUNNING)
         ).scalars():
@@ -1897,32 +1918,103 @@ def enforce_budget(session: Session, project: Project, cons: ConstitutionDoc) ->
             session.delete(queued)
         _notice_ceo(
             session, project, NoticeKind.BUDGET_EXHAUSTED,
-            f"The monthly budget is exhausted ({spent:,.0f}/{cap:,.0f} {unit}); the platform "
-            "paused the project and the chairman was informed. When resumed, cut burn first.",
+            f"The HARD STOP tripped: {spent:,.0f} of a {budget:,.0f} {unit} budget, "
+            f"against a wall at {hard_stop:,.0f}. This is not the budget — going over "
+            "the budget is allowed and you report it. This is the runaway wall, and "
+            "reaching it means something went wrong that no amount of reporting "
+            "covers. The project is paused and the chairman was told. When he "
+            "resumes it, lead with what happened, not with an apology.",
         )
         chairman_notify(
-            session, project, "project auto-paused: budget exhausted",
-            f"{spent:,.0f}/{cap:,.0f} {unit} spent this month. Live runs were revoked and "
-            "the queue purged. Resume from the project page when you have decided what to cut.",
+            session, project, "project auto-paused: hard stop reached",
+            f"{spent:,.0f} {unit} this month, against a budget of {budget:,.0f} and a "
+            f"hard stop at {hard_stop:,.0f}. Live runs were revoked and the queue "
+            "purged. This is the runaway wall rather than the plan — the CEO is "
+            "allowed to go over the plan and report, so reaching this means "
+            "something else is wrong. Resume from the project page.",
         )
-        log.warning("project %s auto-paused: budget exhausted", project.slug)
-    elif spent >= cap * cons.budget_warn_ratio:
-        month_start = utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        log.warning("project %s auto-paused: hard stop at %.0f", project.slug, hard_stop)
+
+    elif spent >= budget:
+        # Over the plan. This is a legitimate place for a project to be, and
+        # the platform's job here is to make it visible and answerable rather
+        # than to stop the work.
+        overrun = budget_lib.record_overrun(session, project, cons, spent)
+        if overrun is not None:
+            over_by = spent - budget
+            flag_lib.open_flag(
+                session, project, "budget_overrun",
+                summary=(
+                    f"The month is {over_by:,.0f} {unit} past its {budget:,.0f} "
+                    f"budget ({spent:,.0f} spent). Nothing has stopped and nothing "
+                    "will until the hard stop at "
+                    f"{hard_stop:,.0f}. What is owed is an account: what the extra "
+                    "bought, whether you would spend it again, and what the budget "
+                    "should be. The platform has already written where the money "
+                    "went — do not restate it, explain it."
+                ),
+                arithmetic={"budget": budget, "spent": spent, "over_by": over_by,
+                            "unit": unit, "hard_stop": hard_stop,
+                            "breakdown": overrun.breakdown},
+                subject_id=overrun.id,
+            )
+            _notice_ceo(
+                session, project, NoticeKind.BUDGET_WARNING,
+                f"The month has gone past its budget: {spent:,.0f} of {budget:,.0f} "
+                f"{unit}. THE WORK CONTINUES — a budget on this platform is an "
+                "educated guess, not a wall, and the wall is at "
+                f"{hard_stop:,.0f}. What you owe is an account of what the extra "
+                "bought, filed with overrun_account. The chairman then decides "
+                "whether the number was wrong or the work was; both are ordinary "
+                "answers. Do not cut work you believe in to get back under a guess.",
+            )
+
+    elif spent >= budget * cons.budget_warn_ratio:
+        month_edge = utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         already = session.execute(
             select(func.count(Notice.id)).where(
                 Notice.project_id == project.id,
                 Notice.kind == NoticeKind.BUDGET_WARNING,
-                Notice.created_at >= month_start,
+                Notice.created_at >= month_edge,
             )
         ).scalar_one()
         if not already:
             _notice_ceo(
                 session, project, NoticeKind.BUDGET_WARNING,
                 f"{cons.budget_warn_ratio:.0%} of the monthly budget is spent "
-                f"({spent:,.0f}/{cap:,.0f} {unit}). Decide what you are cutting and tell "
-                "the chairman the number — before the platform pauses the project for you.",
+                f"({spent:,.0f}/{budget:,.0f} {unit}). "
+                + _stakes_advice(cons, hard_stop, unit),
             )
     _warn_external_envelope(session, project, cons)
+
+
+def _stakes_advice(cons: ConstitutionDoc, hard_stop: float, unit: str) -> str:
+    """What approaching the plan means HERE, which depends entirely on what is
+    riding on the project.
+
+    A LinkedIn post and a real trading account ran under identical caution
+    because the platform had no way to be told which was which. Now it does,
+    and the difference shows up at exactly the moment it matters.
+    """
+    if cons.stakes == "high":
+        return (
+            "This is a high-stakes project: running out of room is worse than going "
+            "over, so do NOT thin the work to fit. If the job needs more, spend it "
+            f"and account for it — nothing stops before the hard stop at "
+            f"{hard_stop:,.0f} {unit}. Tell the chairman now what you expect the "
+            "month to come to and why, so he is deciding rather than discovering."
+        )
+    if cons.stakes == "low":
+        return (
+            "This is a low-stakes project, so the budget is close to the real limit: "
+            "going over is not worth it here. Say what is left that you believe in, "
+            "and ask the chairman before spending past the plan."
+        )
+    return (
+        "Say where the month is heading and what you would change, if anything. "
+        "Going over is allowed and is reported, not refused — but say it before it "
+        "happens rather than after, so he is deciding rather than discovering."
+    )
 
 
 def _warn_external_envelope(session: Session, project: Project,

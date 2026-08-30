@@ -371,7 +371,12 @@ want the receipts.
   the CEO is told its team's work is suspect. You are the one reviewer that
   doesn't approve everything put in front of it.
 - **Watch the money if you want to** — the Overview budget meter warns at
-  80% and the project pauses itself at 100% regardless.
+  80%. Crossing 100% does **not** stop the project — it is a plan, and going
+  over obliges the CEO to account for what the extra bought. The wall is
+  `hard_stop_multiple` times the plan (3x by default), and that is the only
+  thing that pauses anything. Set `stakes` to say how brave to be about the
+  difference: a project trading real money should not hesitate the way one
+  posting to LinkedIn should.
 
 What you *can't* do — create tasks, message worker teams, edit memory — is
 deliberate. The discipline is the product.

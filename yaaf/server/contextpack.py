@@ -81,7 +81,7 @@ def constitution_prose(cons: ConstitutionDoc, project: Project) -> str:
         "fulfills it in one motion. Unanswered it expires to no, so plan the work that "
         "does not depend on it. Anyone else: tell the CEO what you are missing — a "
         "suggestion survives.\n"
-        f"- Budget: {budget}. At 100% the project auto-pauses.\n"
+        f"- Budget: {budget}. {_budget_clause(cons, project)}\n"
         # The wake-loop brakes were the one enforced group never stated here,
         # so a project that had spent its daily runs by 01:22 had a CEO with no
         # way to know why it went quiet — and a chairman who asked got an
@@ -115,6 +115,52 @@ def constitution_prose(cons: ConstitutionDoc, project: Project) -> str:
         "that, move a stage, change an estimate — EXECUTE it with directive_file citing "
         "his message, rather than asking him to press the button himself. His word is the "
         "authority; the citation proves it; the echo lets him correct you."
+    )
+
+
+def _budget_clause(cons: ConstitutionDoc, project: Project) -> str:
+    """What the budget MEANS here — which is the sentence that was missing.
+
+    For as long as this said "at 100% the project auto-pauses", the budget was
+    a cliff and the CEO's dominant strategy was to stay well back from it. It
+    lowballed, refused money it was offered, and reported comfortable numbers,
+    and its chairman could not tell a safe figure from an honest one.
+
+    The budget is now a plan and the wall is somewhere else, so this says both
+    — and says what the stakes make of the difference, because a project
+    posting to LinkedIn and one trading a real account should not be equally
+    brave about going over.
+    """
+    unit = "USD" if project.billing_mode == "api_key" else "tokens"
+    cap = (cons.monthly_usd_cap if project.billing_mode == "api_key"
+           else float(cons.monthly_token_cap))
+    wall = cap * max(1.0, cons.hard_stop_multiple)
+    base = (
+        "That is a PLAN — an educated guess made before the work started — and not "
+        f"a wall. Crossing it does not stop anything; it obliges you to file an "
+        "account of what the extra bought (overrun_account) and let the chairman "
+        f"decide whether the number was wrong or the work was. The wall is at "
+        f"{wall:,.0f} {unit}, where the project really does pause. "
+    )
+    if cons.stakes == "high":
+        return base + (
+            "STAKES: HIGH. Real money or real consequence rides on this, so running "
+            "out of room is worse than going over. Do not thin the work, cut corners "
+            "or slow down to stay under the plan — spend what the job honestly needs "
+            "and account for it. If you find yourself choosing the cheaper option to "
+            "protect a number, you have the trade backwards."
+        )
+    if cons.stakes == "low":
+        return base + (
+            "STAKES: LOW. This is not worth much, so the plan is close to the real "
+            "limit. Going over is not free here: say what is left that you believe in "
+            "and ask him before spending past it."
+        )
+    return base + (
+        "STAKES: NORMAL. Spend what the work needs, say where the month is heading "
+        "before it gets there, and do not manufacture frugality to look careful — a "
+        "number you undershot by being timid tells him nothing about what the work "
+        "costs."
     )
 
 
@@ -672,6 +718,40 @@ def _target(session: Session, project: Project, cons: ConstitutionDoc) -> dict |
     }
 
 
+def _overrun_owed(session: Session, project: Project) -> dict | None:
+    """A month past its plan that the CEO has not yet accounted for.
+
+    Carried on every wake until it is filed, because this is the half of the
+    budget conversation that never existed: the project used to have exactly
+    two moves, stay under the number or be paused by it, and neither of them is
+    what a person does when a job turns out to cost more than they guessed.
+    """
+    from yaaf.server import budget as budget_lib
+
+    overrun = budget_lib.unaccounted(session, project.id)
+    if overrun is None:
+        return None
+    spent = overrun.final_spent if overrun.final_spent is not None else overrun.spent_at_crossing
+    return {
+        "overrun_id": overrun.id,
+        "period": overrun.period.date().isoformat(),
+        "unit": overrun.unit,
+        "budget": overrun.budget,
+        "spent": round(spent, 2),
+        "over_by": round(spent - overrun.budget, 2),
+        "where_it_went": overrun.breakdown,
+        "note": (
+            "This month went past its plan and nothing stopped, which is how it is "
+            "supposed to work. What is owed is an account: what the extra bought, "
+            "whether you would spend it again, and what you think the budget should "
+            "be — filed with overrun_account, and said in the boardroom. The "
+            "breakdown above is the platform's own, from the ledger; explain it "
+            "rather than restating it. Going over is not a failure to apologise "
+            "for. Failing to say what it bought is."
+        ),
+    }
+
+
 def _spend_window(session: Session, project: Project) -> dict | None:
     """The question the chairman is paying to have answered, and how far in.
 
@@ -1122,6 +1202,9 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
                          "itself."),
             }
         pack["deliverables"] = _deliverables(session, project)
+        owed = _overrun_owed(session, project)
+        if owed is not None:
+            pack["overrun"] = owed
         window = _spend_window(session, project)
         if window is not None:
             pack["spend_window"] = window
