@@ -1,31 +1,14 @@
 # yaaf — stop prompting, start delegating
 
 **Tell Claude what you want done, in one paragraph. Get back a crew that plans
-it, works it for weeks, and proves it's finished.** A CEO who sets the
-priorities. Teams of specialists who argue with each other. A budget that stops
-itself and a delivery date nobody can quietly move. On your own hardware,
-without you.
+it, works it for weeks, and proves it's finished.**
 
-Yet Another Agent Framework? No. This is the org chart, the boardroom and the
-accounting department wrapped around the agents you already have — and you are
-the chairman, the one human in the building.
-
-<img src="docs/screenshots/cockpit-overview.png" alt="The chairman's cockpit: is it working, the deliverable, the plan, spend against the cap broken down by team, the setup health line, and the org roster">
-
----
-
-## Claude is the front door
-
-yaaf is an **MCP server**. Connect it once — Claude Code, Claude Desktop or
-claude.ai — and you found and run whole projects from a conversation, with your
-own files, repos and email open in the same window.
-
-You say something like:
+Say this in the Claude window you already have open:
 
 > *Here's last quarter's ad export. I want a desk that watches this account and
 > tells me what to change every Monday — and it must never touch anything.*
 
-Claude then, in one sitting:
+In one sitting, Claude:
 
 1. **Drafts the crew.** Goal, teams, who's on each, budget, deadline — hiring
    from a library of 32 job descriptions and 14 pre-built crews rather than
@@ -36,35 +19,38 @@ Claude then, in one sitting:
 3. **Runs a dress rehearsal.** The whole project simulated on scripted agents
    for $0: where it would stall, what it would cost, how often it would stop and
    wait for you.
-4. **Creates it and starts it.** Real teams, real specialists, a Slack channel
-   each.
+4. **Hires it for real.** A CEO, four desks, a budget, a delivery date and a
+   Slack channel each.
 
-You pick the shape once: **Explore** (chase a goal with no fixed end),
-**Deliver** (ship one thing, then stop), or **Operate** (a Deliver that restarts
-on a rhythm and is handed the last three cycles verbatim, so "learn from last
-time" is enforced rather than asked for).
+Next month it is still working. It emails you what happened while you were out.
+And you steer it from the same chat you started in — *why did the date slip*,
+*show me the evidence behind that claim*, *tell the CEO to stop buying data and
+find the free route*.
 
-Not hypothetical: a six-team research project was designed and launched from a
-Claude window this week, and every write in its audit trail is signed
+That is not a mockup. A six-team research project was designed and launched
+from a Claude window this week, and every write in its audit trail is signed
 `user:… via mcp:Claude`.
 
-### Then you chair it from the same chat
+<img src="docs/screenshots/cockpit-overview.png" alt="The chairman's cockpit: is it working, the deliverable, the plan, spend against the cap broken down by team, the setup health line, and the org roster">
 
-No dashboard needed day to day. Ask in plain English:
+A CEO sets the priorities. Teams of specialists argue with each other. A budget
+stops itself and a delivery date nobody can quietly move. **You are the
+chairman** — the one human in the building. Yet Another Agent Framework? No:
+this is the org chart, the boardroom and the accounting department around the
+agents you already have.
 
-- *What needs me today, across everything?*
-- *Why did the delivery date slip?*
-- *Show me the evidence behind that claim.*
-- *Tell the CEO to stop buying data and find the free route.*
-- *That requirement is out of scope — cut it.*
+---
 
-Thirty tools cover it: the cockpit, the plan, the spend, run traces and proof;
-talking to the CEO; approving, cutting, rescheduling, auditing; and setting up
-teams, data sources and rules.
+## How Claude gets in
+
+yaaf is an **MCP server**, so the client you already use is the front end —
+Claude Code, Claude Desktop or claude.ai, connected once, with your own files,
+repos and email open beside it. Thirty tools cover the whole job: the cockpit,
+the plan, the spend, run traces and proof; talking to the CEO; approving,
+cutting, rescheduling, auditing; and setting up teams, data sources and rules.
+No dashboard needed day to day.
 
 <img src="docs/screenshots/boardroom.png" alt="The Boardroom tab: the chairman asks the CEO how confident it is in the 30th; the CEO answers with the estimate-to-actual ratio, its re-projection, and what would move it">
-
-### What Claude can and can't do
 
 You pick the scopes when you connect:
 
@@ -93,6 +79,11 @@ Four rules hold at every scope:
 ---
 
 ## What people actually hand it
+
+Every project picks a shape once: **Explore** (chase a goal with no fixed end),
+**Deliver** (ship one thing, then stop), or **Operate** (a Deliver that restarts
+on a rhythm and is handed the last three cycles verbatim, so "learn from last
+time" is enforced rather than asked for).
 
 | The ask | Who gets hired |
 |---|---|
