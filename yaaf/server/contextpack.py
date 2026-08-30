@@ -672,6 +672,35 @@ def _target(session: Session, project: Project, cons: ConstitutionDoc) -> dict |
     }
 
 
+def _spend_window(session: Session, project: Project) -> dict | None:
+    """The question the chairman is paying to have answered, and how far in.
+
+    Its presence changes what a good answer to "what will this cost" looks
+    like. Without one, a CEO asked that question reaches for a number, because
+    every money sentence the platform owns is an instruction to cut and none of
+    them has ever said that "I don't know" is available. With one open, the
+    honest answer is the measurement so far and what is still unknown — and the
+    platform, not the CEO, writes the number at the end.
+    """
+    from yaaf.server import spendwindow
+
+    window = spendwindow.open_window(session, project.id)
+    if window is None:
+        return None
+    detail = spendwindow.progress(session, window)
+    detail["note"] = (
+        "The chairman funded this to answer the question above. It is NOT a "
+        "larger cap and it is not permission to be frugal either: spend what "
+        "the work honestly needs, so that what gets measured is the real cost "
+        "of doing the job properly rather than the cost of being careful. "
+        "When he asks what things will cost, give him the measured days so far "
+        "and name what is still unknown — the platform writes the finding when "
+        "this closes, and a confident estimate you cannot support is exactly "
+        "what this window exists to replace."
+    )
+    return detail
+
+
 #: Enough of the shelf to know what is on it and whether it is current.
 DELIVERABLES_IN_PACK = 8
 
@@ -749,7 +778,7 @@ def _situation(session: Session, project: Project, cons: ConstitutionDoc) -> dic
     per-agent wake slots and the concurrency cap were all invisible to it.
     """
     from yaaf.server.dispatcher import activity_state
-    from yaaf.server.janitor import burn_rate, month_to_date
+    from yaaf.server.janitor import burn_rate, month_to_date, run_cost_profile
 
     state = activity_state(session, project, cons)
     usd, tokens = month_to_date(session, project.id)
@@ -811,8 +840,16 @@ def _situation(session: Session, project: Project, cons: ConstitutionDoc) -> dic
             "cap": cap,
             # The slope, not just the level. A CEO that can only see a total
             # answers "is that a problem?" with the total, in good faith, and
-            # is overtaken by its own burn before the next status.
+            # is overtaken by its own burn before the next status. Measured as
+            # a series with a median, because the first version of this divided
+            # by the day of the month and reported 4.7M/day on a project really
+            # burning 18M — and the CEO doing the same sum its own way got 35M
+            # from a window whose largest day was two thirds of the total.
             "rate": burn_rate(session, project.id, cap, spent),
+            # What each KIND of run costs here. Without it the CEO has one
+            # blended average and reasons from it — which is how forty inbox
+            # wakes got priced at 22M when they cost 8.9M.
+            "cost_per_run": run_cost_profile(session, project.id),
             # Subscription billing prices no run, so `affordable_runs` cannot
             # answer and the plan-affordability refusal never fires. Silence
             # there reads as "the plan fits". Say which it is.
@@ -1085,6 +1122,9 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
                          "itself."),
             }
         pack["deliverables"] = _deliverables(session, project)
+        window = _spend_window(session, project)
+        if window is not None:
+            pack["spend_window"] = window
         target = _target(session, project, cons)
         if target is not None:
             pack["target"] = target

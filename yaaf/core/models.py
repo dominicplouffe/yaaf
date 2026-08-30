@@ -146,6 +146,9 @@ class FlagKind(enum.StrEnum):
     DEADLINE_AT_RISK = "deadline_at_risk"  # capacity slack went negative
     CYCLE_MISSED = "cycle_missed"          # a cycle rolled with scope unmet
     WORK_STARVED = "work_starved"          # a cap stopped work with tasks ready
+    # A measurement window reached a checkpoint, or is on course to spend its
+    # allowance before it ends. Both are arithmetic against the ledger.
+    SPEND_WINDOW = "spend_window"
 
 
 class FlagStatus(enum.StrEnum):
@@ -1138,6 +1141,73 @@ class RequirementCycleResult(Base):
     met_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     met_by_run_id: Mapped[str | None] = mapped_column(String(40))
     check_output: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class SpendWindowStatus(enum.StrEnum):
+    OPEN = "open"
+    CLOSED = "closed"      # ran to its end date; the platform wrote the findings
+    STOPPED = "stopped"    # the chairman ended it early
+
+
+class SpendWindow(Base):
+    """A funded period for finding out what something actually costs.
+
+    Every budget conversation on this platform was an argument between two
+    guesses. A CEO with no cost model and no lever offered its chairman 3M a
+    day, then 5M, then 35M, inside two hours — each one a mean over a window
+    that did not fit the question — and the chairman's reply was the design
+    for this object:
+
+        "It's okay to say I don't know, so let's add 1 billion tokens for the
+        next 30 days and let's evaluate what we are doing right, what we are
+        doing wrong, and adjust as time goes on. Then we refine the budget
+        together, the CEO and chairman."
+
+    So: an allowance, an end date, a question in writing, and — the part that
+    makes it more than a bigger cap — **the platform writes the findings**. The
+    measured median, the daily series and the cost of each kind of run are
+    computed from the ledger at close, at zero tokens, and no agent verb can
+    touch them. It is the commitment doctrine applied to money: the CEO may
+    ask the question, and only the arithmetic answers it.
+
+    `checkpoint_hours` is the chairman's "adjust along the way". At each one
+    the platform opens a SPEND_WINDOW flag, which the CEO cannot close by
+    staying quiet — it closes by being raised in the boardroom with the numbers
+    so far and a proposal. A window that is going to overspend its allowance
+    before its end date raises the same flag early, for the same reason.
+    """
+
+    __tablename__ = "spend_windows"
+    __table_args__ = (
+        Index("ix_spend_windows_project_status", "project_id", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    # What we are trying to find out. Required, because a window without a
+    # question is just a larger cap with extra steps.
+    question: Mapped[str] = mapped_column(Text)
+    # In the project's own billing unit — dollars under api_key, tokens under
+    # a subscription. Stored as float so one column serves both.
+    allowance: Mapped[float] = mapped_column(Float)
+    unit: Mapped[str] = mapped_column(String(8))
+    started_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    ends_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    # How often the platform makes the CEO report the measured number so far.
+    checkpoint_hours: Mapped[float] = mapped_column(Float, default=168.0)
+    last_checkpoint_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    status: Mapped[str] = mapped_column(String(16), default=SpendWindowStatus.OPEN)
+    opened_by_user_id: Mapped[str] = mapped_column(String(40))
+    # Platform-computed at close and never from input: the measured series, the
+    # median day, the per-run-kind profile, the total. This is the whole point
+    # of the object — a number at the end that nobody argued into existence.
+    findings: Mapped[dict | None] = mapped_column(JSONVariant)
+    closed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    close_reason: Mapped[str | None] = mapped_column(Text)
+    # Every adjustment the chairman made while it ran, appended. "Adjust along
+    # the way" is only trustworthy if the adjustments are on the record.
+    adjustments: Mapped[list] = mapped_column(JSONVariant, default=list)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 

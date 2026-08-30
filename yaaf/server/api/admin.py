@@ -14,7 +14,7 @@ import logging
 import os
 import secrets as pysecrets
 from contextvars import ContextVar
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -2572,6 +2572,180 @@ def constitution_schema() -> list[dict]:
             "default": spec.get("default"),
         })
     return fields
+
+
+# ── measurement windows: funding a question instead of arguing about it ─────────
+
+
+class SpendWindowIn(BaseModel):
+    """What the chairman funds. The question is required, because a window
+    without one is a larger cap with extra steps."""
+
+    question: str = Field(min_length=10, max_length=2000)
+    allowance: float = Field(gt=0)
+    days: float = Field(gt=0, le=365)
+    checkpoint_hours: float = Field(default=168.0, gt=0)
+
+
+class SpendWindowPatch(BaseModel):
+    """Adjusting along the way — the chairman's own condition for agreeing to
+    this. Every field optional; every change appended to `adjustments`."""
+
+    allowance: float | None = Field(default=None, gt=0)
+    extend_days: float | None = Field(default=None)
+    checkpoint_hours: float | None = Field(default=None, gt=0)
+    reason: str = Field(min_length=1, max_length=2000)
+
+
+@router.post("/projects/{project_id}/spend-window")
+def open_spend_window(
+    project_id: str, body: SpendWindowIn, session: Session = Depends(db)
+) -> dict:
+    """Fund a period to find out what something costs.
+
+    The chairman's, not the CEO's — it is his money and his appetite, and the
+    absence of any way to express that appetite is what produced three
+    contradictory estimates in two hours. The CEO can ask for one in the
+    boardroom; only this route opens it.
+    """
+    from yaaf.core.models import SpendWindow, SpendWindowStatus
+    from yaaf.server import spendwindow
+
+    project = _get_project(session, project_id)
+    if spendwindow.open_window(session, project.id) is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="A measurement window is already open on this project. Two "
+                   "overlapping answers to 'what does this cost' is the state this "
+                   "replaces — adjust the open one or stop it first.",
+        )
+    now = utcnow()
+    window = SpendWindow(
+        id=ids.new_id(ids.SPEND_WINDOW),
+        project_id=project.id,
+        question=body.question.strip(),
+        allowance=body.allowance,
+        unit="usd" if project.billing_mode == "api_key" else "tokens",
+        started_at=now,
+        ends_at=now + timedelta(days=body.days),
+        checkpoint_hours=body.checkpoint_hours,
+        status=SpendWindowStatus.OPEN,
+        opened_by_user_id=project.chairman_user_id,
+        adjustments=[],
+    )
+    session.add(window)
+    session.add(AuditLog(
+        id=ids.new_id(ids.AUDIT), project_id=project.id, actor="chairman",
+        action="spend_window.opened", entity="spend_window", entity_id=window.id,
+        detail={"allowance": body.allowance, "days": body.days,
+                "question": window.question[:500]},
+    ))
+    _notice_ceo(
+        session, project.id, NoticeKind.BUDGET_WARNING,
+        f"The chairman funded a measurement window: {window.allowance:,.0f} "
+        f"{window.unit} over {body.days:g} days, to answer — {window.question}\n\n"
+        "This is not a bigger cap. It is a question he is paying to have "
+        "ANSWERED, and the platform writes the answer from the ledger when it "
+        "closes; you do not. Until then: do the work the mandate asks for at the "
+        "pace it deserves rather than the pace that feels safe, and when he asks "
+        "what it will cost, show him the measured days so far and say plainly "
+        "what is still unknown. A confident estimate you cannot support is the "
+        "thing this window exists to stop.",
+    )
+    session.flush()
+    return {"id": window.id, "ends_at": window.ends_at.isoformat(),
+            "allowance": window.allowance, "unit": window.unit}
+
+
+@router.patch("/projects/{project_id}/spend-window")
+def adjust_spend_window(
+    project_id: str, body: SpendWindowPatch, session: Session = Depends(db)
+) -> dict:
+    """Change the allowance, the end date or the checkpoint, mid-flight.
+
+    "As long as we can adjust along the way based on our findings" was the
+    condition attached to funding one of these at all, so the adjustment is a
+    first-class verb rather than a delete-and-recreate — and every one lands on
+    the record, because an adjustable number nobody can audit is not a budget.
+    """
+    from yaaf.server import spendwindow
+
+    project = _get_project(session, project_id)
+    window = spendwindow.open_window(session, project.id)
+    if window is None:
+        raise HTTPException(status_code=404, detail="no measurement window is open")
+    before = {"allowance": window.allowance, "ends_at": window.ends_at.isoformat(),
+              "checkpoint_hours": window.checkpoint_hours}
+    if body.allowance is not None:
+        window.allowance = body.allowance
+    if body.extend_days is not None:
+        window.ends_at = window.ends_at + timedelta(days=body.extend_days)
+    if body.checkpoint_hours is not None:
+        window.checkpoint_hours = body.checkpoint_hours
+    entry = {
+        "at": utcnow().isoformat(), "reason": body.reason.strip(),
+        "from": before,
+        "to": {"allowance": window.allowance, "ends_at": window.ends_at.isoformat(),
+               "checkpoint_hours": window.checkpoint_hours},
+    }
+    window.adjustments = [*(window.adjustments or []), entry]
+    session.add(AuditLog(
+        id=ids.new_id(ids.AUDIT), project_id=project.id, actor="chairman",
+        action="spend_window.adjusted", entity="spend_window", entity_id=window.id,
+        detail=entry,
+    ))
+    _notice_ceo(
+        session, project.id, NoticeKind.BUDGET_WARNING,
+        f"The chairman adjusted the measurement window. Reason: {entry['reason']}\n\n"
+        f"It now allows {window.allowance:,.0f} {window.unit} and ends "
+        f"{window.ends_at:%Y-%m-%d}. The question it is answering has not changed.",
+    )
+    return {"id": window.id, "adjustments": len(window.adjustments), **entry["to"]}
+
+
+@router.post("/projects/{project_id}/spend-window/stop")
+def stop_spend_window(project_id: str, session: Session = Depends(db)) -> dict:
+    """End it early. The findings are still written — a window stopped on day
+    four measured four days, and four measured days beat any estimate."""
+    from yaaf.core.models import SpendWindowStatus
+    from yaaf.server import spendwindow
+
+    project = _get_project(session, project_id)
+    window = spendwindow.open_window(session, project.id)
+    if window is None:
+        raise HTTPException(status_code=404, detail="no measurement window is open")
+    spendwindow.close(session, window, "the chairman ended it early",
+                      status=SpendWindowStatus.STOPPED)
+    session.add(AuditLog(
+        id=ids.new_id(ids.AUDIT), project_id=project.id, actor="chairman",
+        action="spend_window.stopped", entity="spend_window", entity_id=window.id,
+        detail=window.findings or {},
+    ))
+    return {"id": window.id, "findings": window.findings}
+
+
+@router.get("/projects/{project_id}/spend-window")
+def read_spend_window(project_id: str, session: Session = Depends(db)) -> dict:
+    """The live window and where it stands, or the last one that closed."""
+    from yaaf.core.models import SpendWindow
+    from yaaf.server import spendwindow
+
+    project = _get_project(session, project_id)
+    window = spendwindow.open_window(session, project.id)
+    if window is not None:
+        return {"open": True, **spendwindow.progress(session, window),
+                "adjustments": window.adjustments or []}
+    last = session.execute(
+        select(SpendWindow).where(SpendWindow.project_id == project.id)
+        .order_by(SpendWindow.created_at.desc()).limit(1)
+    ).scalars().first()
+    if last is None:
+        return {"open": False, "window": None}
+    return {"open": False, "window": {
+        "id": last.id, "question": last.question, "status": last.status,
+        "closed_at": last.closed_at.isoformat() if last.closed_at else None,
+        "close_reason": last.close_reason, "findings": last.findings,
+        "adjustments": last.adjustments or []}}
 
 
 @router.post("/projects/{project_id}/amendments")
