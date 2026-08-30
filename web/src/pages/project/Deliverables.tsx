@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import { get, getToken } from "../../api";
 import Markdown from "../../Markdown";
 import { fmtWhen, usePoll } from "../../hooks";
@@ -265,6 +265,18 @@ function PreviewBody(
   return <CsvTable text={text} name={name} />;
 }
 
+// The scratch pad runs to hundreds of files on a busy project, and a list that
+// long is the same as no list: you scroll past what you came for. Twenty-five
+// at a time, ordered by whichever column answers the question you have.
+const WORK_PAGE = 25;
+
+type SortKey = "path" | "size" | "modified";
+
+/** Which direction a column should open in. A name is read alphabetically; a
+    size or a time is clicked because you want the biggest or the newest, and
+    starting those at the smallest and oldest costs a second click every time. */
+const FIRST_DESC: Record<SortKey, boolean> = { path: false, size: true, modified: true };
+
 /** What the agents published, reframed around what it is rather than where it
     was stored. A deck a chairman cannot look at is not a deliverable, so HTML
     renders as itself; the source is a toggle, not the only option. */
@@ -279,6 +291,8 @@ export default function Deliverables({ projectId }: { projectId: string }) {
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [showWorking, setShowWorking] = useState(false);
+  const [sort, setSort] = useState<{ by: SortKey; desc: boolean }>({ by: "path", desc: false });
+  const [page, setPage] = useState(0);
 
   // The preview opens below a list that can be a screenful long. Without this,
   // pressing Open looks like pressing nothing.
@@ -322,6 +336,47 @@ export default function Deliverables({ projectId }: { projectId: string }) {
 
   const workspace = data?.workspace ?? [];
   const artifacts = data?.artifacts ?? [];
+
+  // Ties keep the order the server sent, which is by path — so two files of the
+  // same size still land next to their siblings instead of shuffling on every
+  // poll. Array.sort is stable, so this costs nothing but the sentence.
+  const sortedWork = useMemo(() => {
+    const dir = sort.desc ? -1 : 1;
+    return [...workspace].sort((a, b) => dir * (
+      sort.by === "size" ? a.size - b.size
+      : sort.by === "modified" ? a.modified.localeCompare(b.modified)
+      : a.path.localeCompare(b.path)
+    ));
+  }, [workspace, sort]);
+
+  // Files come and go under a chairman who is sitting on page 6, so the page is
+  // clamped at render rather than trusted. Nobody lands on an empty table.
+  const pages = Math.max(1, Math.ceil(sortedWork.length / WORK_PAGE));
+  const onPage = Math.min(page, pages - 1);
+  const shownWork = sortedWork.slice(onPage * WORK_PAGE, (onPage + 1) * WORK_PAGE);
+
+  function sortWork(by: SortKey) {
+    setSort((s) => (s.by === by ? { by, desc: !s.desc } : { by, desc: FIRST_DESC[by] }));
+    setPage(0);
+  }
+
+  /** A header that is also the control that reorders it. The arrow keeps its
+      width when the column is not the sorted one, so clicking around does not
+      shove the columns sideways. */
+  const sortTh = (by: SortKey, label: string, className = "", style: CSSProperties = {}) => (
+    <th
+      className={`sortable ${className}`.trim()}
+      style={style}
+      aria-sort={sort.by === by ? (sort.desc ? "descending" : "ascending") : "none"}
+    >
+      <button className="sort" onClick={() => sortWork(by)}>
+        {label}
+        <span className={sort.by === by ? "arrow" : "arrow off"} aria-hidden="true">
+          {sort.desc ? "\u25bc" : "\u25b2"}
+        </span>
+      </button>
+    </th>
+  );
   const receiptByKey = new Map((data?.published ?? []).map((p) => [p.key, p]));
 
   // The same name republished by a later run is a new version of one thing.
@@ -475,14 +530,14 @@ export default function Deliverables({ projectId }: { projectId: string }) {
           <table>
             <thead>
               <tr>
-                <th style={{ width: "50%" }}>File</th>
-                <th className="num">Size</th>
-                <th>Changed</th>
+                {sortTh("path", "File", "", { width: "50%" })}
+                {sortTh("size", "Size", "num")}
+                {sortTh("modified", "Changed")}
                 <th></th>
               </tr>
             </thead>
             <tbody>
-              {workspace.map((file) => (
+              {shownWork.map((file) => (
                 <tr key={file.path}>
                   <td className="mono">{file.path}</td>
                   <td className="num">{fmtSize(file.size)}</td>
@@ -505,6 +560,28 @@ export default function Deliverables({ projectId }: { projectId: string }) {
               ))}
             </tbody>
           </table>
+          {pages > 1 && (
+            <div className="pager">
+              <span>
+                {onPage * WORK_PAGE + 1}–{onPage * WORK_PAGE + shownWork.length} of{" "}
+                {sortedWork.length}
+              </span>
+              <div className="spacer" />
+              <button className="small" disabled={onPage === 0} onClick={() => setPage(onPage - 1)}>
+                prev
+              </button>
+              <span>
+                page {onPage + 1} of {pages}
+              </span>
+              <button
+                className="small"
+                disabled={onPage >= pages - 1}
+                onClick={() => setPage(onPage + 1)}
+              >
+                next
+              </button>
+            </div>
+          )}
         </div>
       )}
 
