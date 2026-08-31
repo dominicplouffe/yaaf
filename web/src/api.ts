@@ -501,6 +501,8 @@ export interface SpendBucket {
 export interface SpendReport {
   group_by: string;
   days: number;
+  window: "days" | "month";
+  since: string;
   rows: SpendBucket[];
 }
 

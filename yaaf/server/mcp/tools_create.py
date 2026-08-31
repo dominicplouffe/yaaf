@@ -7,7 +7,7 @@ client email, and a deadline in their head. A model client can read all three
 while drafting.
 
 So these are **primitives, not a wizard**. The calling model drafts; the
-platform argues back — `grade_goal` against the eight elements of the goal
+platform argues back — `grade_goal` against the ten elements of the goal
 grammar, `validate` against the endpoint's own Pydantic model, `rehearse` as a
 fire drill that creates nothing. Only then does `create_project` exist.
 
@@ -109,7 +109,7 @@ def read_source(principal: Principal, session: Session, arguments: dict) -> dict
     "grade_goal",
     scope="create",
     description=(
-        "Grade a draft goal against GOAL_GRAMMAR.md — the eight things a goal has to "
+        "Grade a draft goal against GOAL_GRAMMAR.md — the ten things a goal has to "
         "contain. Read yaaf://docs/goal-grammar first if you want the rubric. This is "
         "the platform arguing with your draft before anything exists."
     ),
@@ -142,12 +142,12 @@ def grade_goal(principal: Principal, session: Session, arguments: dict) -> dict:
         return envelope.fit({
             "graded": False,
             "why": str(exc),
-            # The rubric is pointed at rather than inlined: it is eight
+            # The rubric is pointed at rather than inlined: it is ten
             # kilobytes, the budget would trim it, and half a rubric is worse
             # than none. The resource serves it whole.
             "elements": list(GOAL_ELEMENTS),
             "rubric": "yaaf://docs/goal-grammar",
-            "note": ("Read that resource and grade the goal against all eight elements "
+            "note": ("Read that resource and grade the goal against all ten elements "
                      "yourself, or set a platform credential in Settings and ask again."),
         }, arguments.get("detail"))
 

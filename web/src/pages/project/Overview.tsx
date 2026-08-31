@@ -6,6 +6,7 @@ import {
   OrgView,
   post,
   RunRow,
+  SpendBucket,
   SpendReport,
   TaskRow,
 } from "../../api";
@@ -25,6 +26,7 @@ import {
   paceDate,
   runHealth,
   Skeleton,
+  spentOf,
 } from "../../ui";
 import Agenda from "../../agenda";
 import { ProjectBriefing } from "../../briefing";
@@ -181,37 +183,44 @@ function BudgetMeter({ ctx }: { ctx: ProjectCtx }) {
 }
 
 /** Who is spending it. One series, named rows, sorted — the question is
-    "which team costs me money", and a 14-day time series cannot answer it. */
+    "which team costs me money", and a 14-day time series cannot answer it.
+
+    These rows are the meter above them, broken out: same ledger, same
+    month-to-date window, same unit, so they add up to it. They are worth
+    nothing otherwise — a reader who catches a card contradicting itself is
+    right to stop believing the rest of the page. */
 function SpendByTeam({ projectId, usdMode }: { projectId: string; usdMode: boolean }) {
   const { data } = usePoll(
-    () => get<SpendReport>(`/observe/projects/${projectId}/spend?group_by=team&days=30`),
+    () => get<SpendReport>(`/observe/projects/${projectId}/spend?group_by=team&window=month`),
     30000,
   );
-  const rows = [...(data?.rows ?? [])].sort((a, b) => b.usd - a.usd);
+  const unit = usdMode ? ("usd" as const) : ("tokens" as const);
+  const spent = (r: SpendBucket) => spentOf(r, usdMode);
+  const rows = [...(data?.rows ?? [])].sort((a, b) => spent(b) - spent(a));
   if (rows.length === 0) return null;
-  const max = Math.max(...rows.map((r) => r.usd), 1e-9);
-  const total = rows.reduce((sum, r) => sum + r.usd, 0);
+  const max = Math.max(...rows.map(spent), 1e-9);
+  const total = rows.reduce((sum, r) => sum + spent(r), 0);
   const top = rows[0];
-  const rest = total - top.usd;
+  const rest = total - spent(top);
 
   return (
     <div style={{ marginTop: 22 }}>
-      <div className="fs-h">Who is spending it — last 30 days</div>
+      <div className="fs-h">Who is spending it — this month</div>
       <div className="hbars">
         {rows.map((row, i) => (
           <div className="hbar" key={row.key}>
             <span>{row.label}</span>
             <span className="track">
-              <i className={i === 0 ? "hi" : ""} style={{ width: `${Math.max((row.usd / max) * 100, 0.8)}%` }} />
+              <i className={i === 0 ? "hi" : ""} style={{ width: `${Math.max((spent(row) / max) * 100, 0.8)}%` }} />
             </span>
             <span className="v">
-              {usdMode ? `$${row.usd.toFixed(2)}` : fmtUnit(row.tokens_out, "tokens")} · {row.runs} run
+              {fmtUnit(spent(row), unit)} · {row.runs} run
               {row.runs === 1 ? "" : "s"}
             </span>
           </div>
         ))}
       </div>
-      {usdMode && rows.length > 1 && top.usd > rest && (
+      {rows.length > 1 && spent(top) > rest && (
         <p className="help" style={{ margin: "10px 0 0" }}>
           {top.label} costs more than everyone else combined — worth knowing before you raise the cap.
         </p>

@@ -5,7 +5,7 @@
 
 import type React from "react";
 import { useEffect, useState } from "react";
-import { Activity, Dashboard, get, post, RunRow } from "./api";
+import { Activity, Dashboard, get, post, RunRow, SpendBucket } from "./api";
 
 // ── time ────────────────────────────────────────────────────────────────────────
 
@@ -296,6 +296,17 @@ export function budgetOf(dash: Dashboard) {
   const warnRatio = Number(dash.constitution["budget_warn_ratio"] ?? 0.8);
   const frac = cap > 0 ? spent / cap : 0;
   return { usdMode, unit, spent, cap, warnRatio, frac };
+}
+
+/** What one spend row cost, in the same unit and by the same arithmetic the
+    meter uses. Every breakdown row goes through this: a card whose rows do not
+    add up to the total printed above them is a card that teaches the reader to
+    distrust both numbers. Token mode sums all four fields because that is what
+    the cap counts — output alone is about 1% of the bill. */
+export function spentOf(row: SpendBucket, usdMode: boolean): number {
+  return usdMode
+    ? row.usd
+    : row.tokens_in + row.tokens_out + row.cache_creation + row.cache_read;
 }
 
 export function fmtUnit(n: number, unit: "usd" | "tokens"): string {

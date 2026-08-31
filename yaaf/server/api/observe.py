@@ -1112,19 +1112,53 @@ def ledger(project_id: str, limit: int = 100, session: Session = Depends(db)) ->
 
 @router.get("/projects/{project_id}/spend")
 def spend(project_id: str, group_by: str = "model", days: int = 30,
-          session: Session = Depends(db)) -> dict:
-    """Spend rollup over recent runs. Dollars sum non-null cost_usd, so a
-    subscription project contributes tokens only — clients switch display on
-    billing_mode exactly as the budget meter does."""
+          window: str = "days", session: Session = Depends(db)) -> dict:
+    """Spend rollup, summed from the ledger.
+
+    The ledger is where spend is counted. The budget meter reads it, the
+    monthly wall reads it, and now so does this — same rows, same exclusion,
+    same window when the caller asks for one. So the breakdown adds up to the
+    number printed above it.
+
+    It used to sum the run table, which is a different set of numbers: it
+    misses spend the runs row never recorded, and it counts a run's tokens
+    once where the ledger books a row per turn. Two numbers in one card that
+    could not both be true.
+
+    Runs supply the attribution and the ledger supplies the amounts — a run
+    that no longer exists still spent its money, so it lands under
+    `unattributed` rather than vanishing. Dollars sum non-null usd, so a
+    subscription project contributes tokens only; clients switch display on
+    billing_mode exactly as the budget meter does. `window=month` matches the
+    meter's month-to-date; the default rolling window is for cards that stand
+    on their own.
+    """
     if group_by not in ("model", "team", "agent", "kind"):
         raise HTTPException(status_code=400, detail="group_by must be model|team|agent|kind")
-    since = utcnow() - timedelta(days=max(1, min(days, 365)))
-    rows = list(
+    if window not in ("days", "month"):
+        raise HTTPException(status_code=400, detail="window must be days|month")
+    since = (
+        utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        if window == "month"
+        else utcnow() - timedelta(days=max(1, min(days, 365)))
+    )
+    entries = list(
         session.execute(
-            select(Run).where(Run.project_id == project_id, Run.created_at >= since)
+            select(LedgerEntry).where(
+                LedgerEntry.project_id == project_id,
+                LedgerEntry.at >= since,
+                # Revenue is money coming IN — the same exclusion the meter and
+                # janitor.month_to_date apply, for the same reason.
+                LedgerEntry.kind != LedgerKind.REVENUE,
+            )
         ).scalars()
     )
-    agent_ids = {r.agent_id for r in rows if r.agent_id}
+    run_ids = {e.run_id for e in entries if e.run_id}
+    runs = {
+        r.id: r
+        for r in session.execute(select(Run).where(Run.id.in_(run_ids))).scalars()
+    } if run_ids else {}
+    agent_ids = {r.agent_id for r in runs.values() if r.agent_id}
     agents = {
         a.id: a
         for a in session.execute(select(Agent).where(Agent.id.in_(agent_ids))).scalars()
@@ -1135,13 +1169,15 @@ def spend(project_id: str, group_by: str = "model", days: int = 30,
         for t in session.execute(select(Team).where(Team.id.in_(team_ids))).scalars()
     } if team_ids else {}
 
-    def key_label(r: Run) -> tuple[str, str]:
+    def key_label(run: Run | None) -> tuple[str, str]:
+        if run is None:
+            return "unattributed", "unattributed"
         if group_by == "model":
-            name = r.model or "unknown"
+            name = run.model or "unknown"
             return name, name
         if group_by == "kind":
-            return r.kind, r.kind
-        agent = agents.get(r.agent_id) if r.agent_id else None
+            return run.kind, run.kind
+        agent = agents.get(run.agent_id) if run.agent_id else None
         if agent is None:
             return "unknown", "unknown"
         if group_by == "agent":
@@ -1152,23 +1188,30 @@ def spend(project_id: str, group_by: str = "model", days: int = 30,
         return agent.team_id, team_names.get(agent.team_id, "unknown")
 
     buckets: dict[str, dict] = {}
-    for r in rows:
-        key, label = key_label(r)
+    # One run can book several ledger rows (a chat session books a row per
+    # turn), so runs are counted distinctly — the column says runs, not rows.
+    counted: dict[str, set[str]] = {}
+    for e in entries:
+        run = runs.get(e.run_id) if e.run_id else None
+        key, label = key_label(run)
         b = buckets.setdefault(key, {"key": key, "label": label, "runs": 0,
                                      "tokens_in": 0, "tokens_out": 0,
                                      "cache_creation": 0, "cache_read": 0, "usd": 0.0})
-        b["runs"] += 1
-        b["tokens_in"] += r.tokens_in
-        b["tokens_out"] += r.tokens_out
-        b["cache_creation"] += r.cache_creation_tokens
-        b["cache_read"] += r.cache_read_tokens
-        b["usd"] += r.cost_usd or 0.0
+        b["tokens_in"] += e.tokens_in
+        b["tokens_out"] += e.tokens_out
+        b["cache_creation"] += e.cache_creation_tokens
+        b["cache_read"] += e.cache_read_tokens
+        b["usd"] += e.usd or 0.0
+        if e.run_id and e.run_id not in counted.setdefault(key, set()):
+            counted[key].add(e.run_id)
+            b["runs"] += 1
     out = sorted(
         buckets.values(),
         key=lambda b: (-b["usd"], -(b["tokens_in"] + b["tokens_out"]
                                     + b["cache_creation"] + b["cache_read"])),
     )
-    return {"group_by": group_by, "days": days, "rows": out}
+    return {"group_by": group_by, "days": days, "window": window,
+            "since": since.isoformat(), "rows": out}
 
 
 @router.get("/projects/{project_id}/evidence")

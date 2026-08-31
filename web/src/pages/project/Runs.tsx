@@ -2,7 +2,7 @@ import { CSSProperties, Fragment, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Dashboard, get, getText, RunRow, SpendReport } from "../../api";
 import { fmtUsd, fmtWhen, usePoll } from "../../hooks";
-import { AsOf, downloadCsv, ExportCsv, fmtAgo, fmtUnit, runHealth } from "../../ui";
+import { AsOf, downloadCsv, ExportCsv, fmtAgo, fmtUnit, runHealth, spentOf } from "../../ui";
 
 interface LedgerRow {
   id: string;
@@ -186,9 +186,7 @@ function SpendBreakdown({ projectId, usdMode }: { projectId: string; usdMode: bo
               <td className="num">{tok(row.cache_read)}</td>
               <td className="num">{tok(row.tokens_out)}</td>
               <td className="num">
-                {usdMode
-                  ? fmtUsd(row.usd)
-                  : tok(row.tokens_in + row.tokens_out + row.cache_creation + row.cache_read)}
+                {usdMode ? fmtUsd(row.usd) : tok(spentOf(row, usdMode))}
               </td>
             </tr>
           ))}
