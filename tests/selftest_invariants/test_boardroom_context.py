@@ -18,7 +18,7 @@ from __future__ import annotations
 import re
 from datetime import timedelta
 
-from tests.conftest import ADMIN, bearer, live_token, make_project
+from tests.conftest import ADMIN, agent_by_name, bearer, live_token, make_project
 from yaaf.core import ids
 from yaaf.core.db import db_session
 from yaaf.core.models import (
@@ -178,6 +178,33 @@ def test_a_chat_session_is_told_the_truth_about_its_own_disk(client):
         "the claim that produced the false answer must not reach the chat lane")
     assert "means nothing about the project" in chat_prompt, (
         "an empty scratch must be named as meaningless, not left to be interpreted")
+
+
+def test_every_agent_is_told_to_write_in_plain_short_english(client):
+    """The chairman's complaint: "always reading a book." Short plain prose was
+    guidance only the leadership roles carried, and only about the boardroom —
+    so the deliverables he actually had to read came back as essays. The rule is
+    generic now: every agent, every lane, messages and deliverables alike, with
+    one escape hatch for a format somebody asked for."""
+    from yaaf.core.models import Agent as AgentRow
+    from yaaf.server.contextpack import build_system_prompt
+
+    project = make_project(client)
+    with db_session() as session:
+        row = session.get(Project, project["id"])
+        ceo = session.get(AgentRow, project["ceo_agent_id"])
+        employee = session.get(AgentRow, agent_by_name(project, "Emp2"))
+        prompts = {
+            "ceo run": build_system_prompt(session, ceo, row),
+            "ceo chat": build_system_prompt(session, ceo, row, lane="chat"),
+            "employee": build_system_prompt(session, employee, row),
+        }
+
+    for who, prompt in prompts.items():
+        assert "plain English, short sentences" in prompt, who
+        assert "deliverables" in prompt, f"{who}: deliverables are prose too"
+        assert "UNLESS OTHERWISE SPECIFIED" in prompt, (
+            f"{who}: a format the chairman asked for must still win")
 
 
 def test_notices_finally_reach_the_agent_the_chairman_talks_to(client):

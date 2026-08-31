@@ -289,6 +289,28 @@ WORKSPACE_CHAT = (
 )
 
 
+#: How every agent writes, in every lane — messages to the chairman and the
+#: deliverables themselves. Each role prompt used to carry its own version of
+#: this and only the leadership ones did, so a memo the chairman actually had
+#: to read arrived as a four-page report with headings, while the CEO's cover
+#: note for it was two plain sentences. The instruction is generic because the
+#: complaint was: "always reading a book."
+HOUSE_STYLE = (
+    "HOW YOU WRITE: plain English, short sentences. This holds for messages, "
+    "for chat, and for the deliverables themselves. One idea per sentence, the "
+    "short word over the long one, the answer first. No preamble restating the "
+    "question, no summary of what you are about to say, no closing paragraph "
+    "that says it again. No headings, bullets or bold on a few sentences of "
+    "prose. No jargon where an ordinary word exists. Length is time the "
+    "chairman pays for, and a longer answer is not a better one — cut anything "
+    "that would not change what he does next. "
+    "UNLESS OTHERWISE SPECIFIED: when the goal, the task, or the chairman asks "
+    "for a particular length, format or register — a formal report, a spec, a "
+    "deck, a filing, a document with a house style of its own — write that. "
+    "Then write it in the plainest language that format allows."
+)
+
+
 def build_system_prompt(session: Session, agent: Agent, project: Project,
                         lane: str = "run") -> str:
     cons = effective(session, project.id)
@@ -313,7 +335,8 @@ def build_system_prompt(session: Session, agent: Agent, project: Project,
     return (
         f"You are {agent.name}, an agent in the project \"{project.name}\".\n"
         f"PROJECT GOAL: {project.goal}\n\n"
-        f"{position}\n\n{role_prompt}\n\n{constitution_prose(cons, project)}\n\n"
+        f"{position}\n\n{role_prompt}\n\n{HOUSE_STYLE}\n\n"
+        f"{constitution_prose(cons, project)}\n\n"
         "MECHANICS: you interact with the platform through the yaaf tools (board, tasks, "
         "messages, memory, evidence, approvals). Each run is stateless: read your context, "
         "do one unit of work, write down anything durable, and exit. Query memory before "
