@@ -716,3 +716,63 @@ def test_a_turn_lost_to_a_restart_says_so_rather_than_looking_idle(client, found
     reloaded = client.get(f"/admin/founder/threads/{thread['id']}", headers=ADMIN).json()
     assert reloaded["running"] is False
     assert reloaded["interrupted"] is True
+
+
+# ── the two elements that let a project exceed its brief ────────────────────────
+
+
+def test_beneficiary_and_standard_are_gradeable_elements():
+    """The two elements added after the retirement and PPC desks both shipped
+    work that satisfied every requirement they were given and was the wrong
+    work. They fail silently, so the only thing that catches a goal missing
+    them is the grader — which means they have to be in the contract, not just
+    in the prose the Founder happens to read."""
+    from yaaf.founder.grade import GOAL_ELEMENTS, GRAMMAR_PATH
+
+    assert "beneficiary" in GOAL_ELEMENTS
+    assert "standard" in GOAL_ELEMENTS
+
+    # Prose is hard-wrapped, so the sentence this asserts on is split across
+    # lines in the file. Normalise before matching — an assertion that breaks
+    # on a reflow teaches the next author to reword rather than to reread.
+    grammar = " ".join(GRAMMAR_PATH.read_text().split())
+    # The subset sentence is the whole mechanism: without it `standard` is a
+    # second quality bar, and a quality bar has never widened a plan.
+    assert "the brief is a subset of the standard, not the whole of it" in grammar
+
+
+def test_the_founder_is_told_to_staff_the_plan_adversary():
+    """The roster instructions tell the Founder to cut aggressively — twice,
+    in strong terms. A role whose value never shows up in the deliverable
+    loses that argument every time unless it is named as the exception."""
+    from yaaf.founder.prompt import system_prompt
+
+    prompt = system_prompt()
+    assert "plan-adversary" in prompt
+    assert "beneficiary" in prompt and "standard" in prompt
+
+
+def test_the_plan_adversary_role_attacks_scope_not_output():
+    """`adversary` and `plan-adversary` are different jobs and the difference
+    is the point: by the time there is output to attack, the plan has already
+    decided what is allowed to be wrong with it. A plan-adversary that drifts
+    into reviewing deliverables leaves the gap it exists to close."""
+    import json
+    from pathlib import Path
+
+    role = json.loads(Path("roles/plan-adversary.json").read_text())
+    assert role["slug"] == "plan-adversary"
+    assert role["is_ceo_role"] is False
+    # It researches an external reference class; without the web it can only
+    # recall a standard, and a remembered standard is worse than none because
+    # it sounds authoritative.
+    assert role["tool_permissions"]["web"] is True
+
+    prompt = role["system_prompt"]
+    # The three questions, each of which caught a real failure on this install.
+    assert "COVERAGE AGAINST THE REFERENCE CLASS" in prompt
+    assert "THE INVERSE OF THE BRIEF" in prompt
+    assert "THE METRIC THE PLAN CANNOT MOVE" in prompt
+    # "Found nothing" has to be a complete deliverable or the role manufactures
+    # findings to look useful, which is how institutionalised dissent dies.
+    assert "COMPLETE deliverable" in prompt

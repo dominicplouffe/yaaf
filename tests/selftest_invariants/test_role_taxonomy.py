@@ -24,12 +24,12 @@ def test_every_shipped_role_seeds_with_its_category(client):
         assert r.status_code < 400, (path, r.text)
 
     rows = client.get("/admin/roles", headers=ADMIN).json()
-    assert len(rows) == 32
+    assert len(rows) == 33
     assert all(r["category"] for r in rows), \
         [r["slug"] for r in rows if not r["category"]]
 
     counts = collections.Counter(r["category"] for r in rows)
-    assert counts == {"research": 9, "content": 8, "challenge": 5,
+    assert counts == {"research": 9, "content": 8, "challenge": 6,
                       "growth": 4, "leadership": 3, "build": 3}, counts
 
     # The seed round-trip: GET detail -> POST it back must not drop the fields.

@@ -6,7 +6,7 @@ prose. What follows is what that prose has to *contain*, and why each element
 earns its place.
 
 Read it as a checklist for a critic, not as a template for an author. A goal
-that covers all eight elements in four paragraphs beats one that has eight
+that covers all ten elements in four paragraphs beats one that has ten
 labelled sections.
 
 ## Who this is for
@@ -23,7 +23,7 @@ failing goals the author was never told about.
 
 ---
 
-## The eight elements
+## The ten elements
 
 ### 1. A finish line, and the record that settles it  `finish_line`
 
@@ -42,7 +42,68 @@ its own status report is not a finish line.
 **Failing:** "Launch the product and get traction."
 **Passing:** the quote above.
 
-### 2. Anti-metrics — what explicitly does not count  `anti_metrics`
+### 2. Who the work is actually for  `beneficiary`
+
+Name the person the output has to be right for, and say plainly when that is
+not the chairman.
+
+> *"The reader is the seller whose account this is, not the chairman who
+> commissioned the audit. He is a business owner, not a marketer: a finding he
+> cannot act on inside his own Seller Central is not a finding."*
+
+Usually they are the same person and one clause says so. Where they are not,
+this element is the difference between a document that satisfies the brief and
+one that is any use — and the two are easy to confuse from the inside, because
+the chairman is the only reader an agent ever hears from.
+
+The failure is specific and it has happened here. A PPC desk spent two cycles
+producing immaculately verified advice about campaigns that had already stopped
+spending, because the chairman's brief asked for an exception watch. Its actual
+beneficiary — the seller — was losing $26,808 of ad sales a month on a campaign
+nobody was looking at. Every gate was green. Nothing in the goal said whose
+problem the work existed to solve.
+
+**Failing:** silence, which reads as "the chairman".
+**Passing:** the quote above, or one line saying they are the same person.
+
+### 3. The standard this is judged against  `standard`
+
+Name the body of practice this work will be measured by, and say the sentence
+that stops the brief from becoming the ceiling: **the brief is a subset of the
+standard, not the whole of it.**
+
+> *"This is judged against what a CFP-signed financial plan contains. The
+> twenty-two numbered requirements below are what the chairman knew to ask for;
+> they are not the scope. Where the profession covers something he did not
+> name, it is in scope, and the omission is his mistake to be corrected rather
+> than his instruction to be obeyed."*
+
+This is the element that gives a project permission to want more than it was
+told. Without it a competent, obedient CEO will decompose the brief, cite every
+claim, verify every number, and ship something with a hole in it that any
+practitioner would have spotted — and it will not know, because nothing asked.
+
+Two things make it work. It names a **reference class**, so coverage becomes
+checkable against something outside the project rather than against the brief
+that produced it. And it states the subset relation out loud, because "here is
+what I want" and "here is everything that matters" are different sentences and
+a brief always looks like the second one.
+
+The failure this exists for: a retirement plan built exactly to a
+twenty-two-point brief, every rule cited, every headline number re-derived by a
+second analyst — and the chairman had to find the missing bridge benefit, the
+children, the insurance, the wills, the currency risk and the crash-sequence
+testing himself, over four hours, one at a time. The CEO's own diagnosis was
+*"I let your brief become the boundary… the checklist was, and I used yours
+instead of the profession's."*
+
+Where no external standard exists, say so — that is a real answer and it tells
+the project to build its own coverage argument instead of assuming one.
+
+**Failing:** "produce a thorough report."
+**Passing:** the quote above.
+
+### 4. Anti-metrics — what explicitly does not count  `anti_metrics`
 
 Name the plausible substitutes for success and rule them out, because a project
 under pressure will find them.
@@ -54,7 +115,7 @@ Without this, a project that cannot reach the finish line will quietly
 re-aim at the nearest thing it *can* reach, and report that instead. This is
 the single cheapest element to add and the one that prevents the most drift.
 
-### 3. Method constraints — how the work must be done  `method_constraints`
+### 5. Method constraints — how the work must be done  `method_constraints`
 
 Where the *approach* matters and a competent agent might reasonably choose
 otherwise, say so, and say it as a rule with a shape.
@@ -71,7 +132,7 @@ Only constrain method where you actually care. A goal that scripts every step
 has stopped being a goal and become a task list, and it will be wrong by week
 three.
 
-### 4. A bias, marked as a bias  `stated_bias`
+### 6. A bias, marked as a bias  `stated_bias`
 
 State preferences as preferences, with standing permission to override them on
 evidence.
@@ -86,7 +147,7 @@ stated as a hard rule gets obeyed past the point of sense. Marking the tier
 explicitly is what lets an agent do the right thing when reality disagrees with
 you — and know that it is allowed to.
 
-### 5. A quality bar, stated as a standard  `quality_bar`
+### 7. A quality bar, stated as a standard  `quality_bar`
 
 If "done" and "good" are different things here, say what good is, and say who
 owns it.
@@ -126,7 +187,7 @@ that exist only to spread work across a calendar ("week three: begin
 dogfooding") are how a project that finished on Tuesday reports progress until
 November.
 
-### 6. The human's role, bounded — including what they will refuse to do  `human_role`
+### 8. The human's role, bounded — including what they will refuse to do  `human_role`
 
 The chairman is not a member of the project. Say what they will supply, through
 what channel, and — the part people forget — **what they will not do**.
@@ -143,7 +204,7 @@ Without the refusals, a project will plan around resources you never agreed to
 provide, and you will discover this at the worst moment. The negative space is
 more informative than the positive space.
 
-### 7. Resource posture — with its reason and its release condition  `resource_posture`
+### 9. Resource posture — with its reason and its release condition  `resource_posture`
 
 Say what the project gets, *why* it is set there, and what would change it.
 
@@ -156,7 +217,7 @@ A bare number reads as an arbitrary constraint to route around. A number with a
 reason and a release condition reads as a strategy, and an agent can act on a
 strategy — including by earning the raise.
 
-### 8. The failure deliverable  `failure_deliverable`
+### 10. The failure deliverable  `failure_deliverable`
 
 What is owed if the finish line is not reached. This is the subtlest element and
 almost nobody writes it unprompted.
@@ -199,6 +260,15 @@ a fixed artifact does not need a bias or a resource-release condition, and
 saying so is a valid grade. What is very rarely optional is `finish_line`,
 `anti_metrics` and `failure_deliverable` — those three are what stop a project
 from grading itself.
+
+`beneficiary` and `standard` are the newest two and they fail differently from
+the rest, so grade them harder than their verdict counts suggest. Every other
+element, missing, produces a project that drifts or overspends — visibly.
+Missing these two produces a project that hits every requirement it was given,
+passes every gate, and is quietly the wrong work. There is no symptom to notice
+from the inside. **A goal that names neither is one where the chairman is the
+only thing standing between the brief and the ceiling**, which is the exact
+arrangement autonomous mode was supposed to remove.
 
 ## What a grade is not
 

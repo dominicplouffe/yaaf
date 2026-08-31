@@ -230,10 +230,10 @@ def test_grading_says_so_when_it_cannot_grade(client):
     assert failed is False
     assert graded["graded"] is False
     assert "no platform credential" in graded["why"]
-    # The eight elements travel with the refusal, and the rubric itself is
+    # The ten elements travel with the refusal, and the rubric itself is
     # pointed at rather than inlined — eight kilobytes would only get trimmed.
     assert "finish_line" in graded["elements"]
-    assert len(graded["elements"]) == 8
+    assert len(graded["elements"]) == 10
     assert graded["rubric"] == "yaaf://docs/goal-grammar"
 
 

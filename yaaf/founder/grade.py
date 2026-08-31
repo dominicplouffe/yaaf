@@ -24,11 +24,13 @@ from pathlib import Path
 #: the author was never told about.
 GRAMMAR_PATH = Path(__file__).resolve().parent / "GOAL_GRAMMAR.md"
 
-#: The eight elements, in the order the grammar states them. The names are the
+#: The ten elements, in the order the grammar states them. The names are the
 #: contract: the UI groups by them and the eval asserts on them, so they may
 #: not be renamed without updating both.
 GOAL_ELEMENTS = (
     "finish_line",
+    "beneficiary",
+    "standard",
     "anti_metrics",
     "method_constraints",
     "stated_bias",
@@ -40,6 +42,12 @@ GOAL_ELEMENTS = (
 
 #: The three the grammar calls very rarely optional — the ones that stop a
 #: project grading itself. A goal missing any of these is not ready.
+#:
+#: `standard` belongs here on the argument and is deliberately not here yet:
+#: promoting it would fail the reference goal in `docs/projects/`, which was
+#: written before the element existed and names no reference class. Fix the
+#: reference first, then promote — a load-bearing element the worked example
+#: does not satisfy teaches the Founder that the bar is negotiable.
 LOAD_BEARING = ("finish_line", "anti_metrics", "failure_deliverable")
 
 
@@ -68,7 +76,7 @@ class GoalGrade:
         """Whether the load-bearing three are all present.
 
         Deliberately not "everything is present": the grammar says elements can
-        legitimately not apply, and a grader that demanded all eight would make
+        legitimately not apply, and a grader that demanded all ten would make
         a one-week Deliver project impossible to start.
         """
         by_name = {e.element: e.verdict for e in self.elements}
@@ -109,7 +117,7 @@ not an editor: you never rewrite the goal, and you never comment on its style, \
 length or structure. Long is fine. Short is fine. You report only what CONTENT \
 is missing.
 
-Grade every one of the eight elements exactly once. An element that genuinely \
+Grade every one of the ten elements exactly once. An element that genuinely \
 does not apply to this project is "present" with a note saying why it does not \
 apply — do not mark it missing to be thorough. A note on a missing or weak \
 element must name the specific thing to add, so the author can act on it \
@@ -149,7 +157,7 @@ def _parse(text: str) -> dict:
 
 async def grade_goal(goal: str, *, env: dict[str, str],
                      model: str = "claude-opus-5") -> GoalGrade:
-    """Grade goal prose against the eight elements of the goal grammar.
+    """Grade goal prose against the ten elements of the goal grammar.
 
     Runs on the credential the caller hands it, which is the same environment
     every agent in this product runs under — an API key or a subscription
