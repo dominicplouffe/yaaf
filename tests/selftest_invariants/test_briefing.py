@@ -837,3 +837,62 @@ def test_the_email_leads_with_the_same_exception_the_panel_does(client):
     positions = [text.index(e["text"]) for e in payload["exceptions"]]
     assert positions == sorted(positions)
     assert payload["exceptions"][0]["kind"] == "notice_stalled"
+
+
+def test_the_margin_on_a_promise_is_never_flattering(client):
+    """`timedelta.days` floors toward negative infinity, which got this wrong in
+    both directions and always in the project's favour: a projection two hours
+    before the date read "1 day inside it", and one twenty hours past the date
+    dropped the "days past" clause entirely. A delivery forecast may only ever
+    be wrong in the pessimistic direction on the page a chairman decides from.
+    """
+    from tests.selftest_invariants.test_commitments import (
+        chairman_accept,
+        committed_project,
+    )
+    from yaaf.core.models import Commitment
+
+    project, _token, _rids, proposed = committed_project(client, slug="margin")
+    deliver_by = utcnow() + timedelta(days=30)
+    chairman_accept(client, proposed["commitment_id"], deliver_by=deliver_by)
+
+    # Two hours from missing is not "a day inside it".
+    with db_session() as session:
+        session.get(Commitment, proposed["commitment_id"]).projected_done_at = \
+            deliver_by - timedelta(hours=2)
+    payload = brief(client, project)
+    assert payload["verdict"]["days_late"] == 0
+    assert "inside it" not in payload["verdict"]["reason"]
+
+    # And a day and a bit of margin rounds down to one, never up.
+    with db_session() as session:
+        session.get(Commitment, proposed["commitment_id"]).projected_done_at = \
+            deliver_by - timedelta(hours=30)
+    assert brief(client, project)["verdict"]["days_late"] == -1
+
+    # Twenty hours past the signed date is a day late, and says so.
+    with db_session() as session:
+        session.get(Commitment, proposed["commitment_id"]).projected_done_at = \
+            deliver_by + timedelta(hours=20)
+    assert brief(client, project)["verdict"]["days_late"] == 1
+
+
+def test_a_budget_warning_never_takes_a_chairman_s_exception_slot(client):
+    """Five things write a BUDGET_WARNING notice and the briefing renders all of
+    them as "the budget passed its warning line". Opening a measurement window
+    on a project at 5% of budget must not put that sentence in front of the
+    chairman, and must not spend one of his three slots on it."""
+    from yaaf.core.models import Notice, NoticeKind
+
+    project = deliver_project(client, slug="windowed")
+    with db_session() as session:
+        session.add(Notice(
+            id=new_id("ntc"), project_id=project["id"],
+            agent_id=project["ceo_agent_id"], kind=NoticeKind.BUDGET_WARNING,
+            body="a measurement window opened"))
+
+    payload = brief(client, project)
+    assert "notice_budget_warning" not in {e["kind"] for e in payload["exceptions"]}
+    assert "notice_budget_warning" in kinds(payload), \
+        "still on the record — it is only kept out of the summary"
+    assert "warning line" not in payload["headline"]

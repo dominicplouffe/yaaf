@@ -50,6 +50,7 @@ deliveries: a panel and an email that can never disagree about what happened.
 
 from __future__ import annotations
 
+import math
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, select
@@ -158,7 +159,6 @@ EXCEPTION_RANK: tuple[str, ...] = (
     "notice_commitment_breached",
     "notice_stalled",
     "notice_commitment_at_risk",
-    "notice_budget_warning",
     "plan_gate_reopened",
     "approvals_expired",
     "runs_dead",
@@ -171,6 +171,17 @@ EXCEPTION_RANK: tuple[str, ...] = (
     "notice_memory_full",
     "notice_explore_deadline",
 )
+
+#: `notice_budget_warning` is deliberately absent, and it is the one exclusion
+#: here that is a bug elsewhere rather than an editorial call. Five things now
+#: write a BUDGET_WARNING notice — `janitor.enforce_budget`, its overrun notice,
+#: `spendwindow.sweep`, and three admin routes — while `SELF_ACTING_NOTICES`
+#: still renders every one of them as "the budget passed its warning line and
+#: the CEO was told to cut burn". Opening a measurement window on a project at
+#: 5% of budget would put that sentence in front of the chairman and spend one
+#: of his three slots asserting something that did not happen. It stays in
+#: `lines`, where it is one bullet among many rather than a headline. Split the
+#: notice kind by producer and it belongs back in this table, around rank 4.
 
 #: Deliberately NOT merged with `dispatcher.URGENT_NOTICE_KINDS`, which answers
 #: a different question — does this deserve a paid wake for the CEO. A memory
@@ -988,7 +999,7 @@ def _verdict(session: Session, project: Project, movement: dict) -> dict:
     deliver_by = _aware(row.deliver_by)
     projected = _aware(row.projected_done_at)
     basis = (row.projection or {}).get("basis")
-    days = ((projected - deliver_by).days if projected and deliver_by else None)
+    days = _days_late(projected, deliver_by)
     dates = {"deliver_by": deliver_by.isoformat() if deliver_by else None,
              "projected_done_at": projected.isoformat() if projected else None,
              "days_late": days, "basis": basis}
@@ -1025,6 +1036,24 @@ def _verdict(session: Session, project: Project, movement: dict) -> dict:
 
 def _day(dt: datetime | None) -> str:
     return dt.strftime("%-d %b").lstrip() if dt else "an unstated date"
+
+
+def _days_late(projected: datetime | None, deliver_by: datetime | None) -> int | None:
+    """How late the projection is, rounded so the answer is never flattering.
+
+    `timedelta.days` floors toward negative infinity, which gets this wrong in
+    both directions and always in the project's favour: a projection two hours
+    BEFORE the date reads `-1` and printed "1 day inside it" for a promise two
+    hours from missing, while one twenty hours PAST the date reads `0` and
+    dropped the "days past the date you signed" clause altogether.
+
+    Ceiling instead. It rounds lateness up and margin down, so the number a
+    chairman is given is the pessimistic one — which is the only direction a
+    delivery forecast may ever be wrong in on the page he decides from.
+    """
+    if projected is None or deliver_by is None:
+        return None
+    return math.ceil((projected - deliver_by).total_seconds() / 86_400)
 
 
 def _exceptions(session: Session, project: Project, cons: ConstitutionDoc,
