@@ -674,6 +674,55 @@ export interface BriefingLine {
   where: string | null;
 }
 
+/** Will it deliver what it promised, by when — and the platform's own answer,
+    never the briefing's. `state` is read off `Commitment.status`, which the
+    janitor stamps and no agent verb can move, or off the project's own status.
+    `source: "none"` is the honest case: nothing was promised, so nothing is on
+    or off track, and the panel says so rather than inventing green. */
+export interface BriefingVerdict {
+  state:
+    | "stopped" | "paused" | "breached" | "at_risk"
+    | "unpromised" | "proposed" | "on_track" | "delivered";
+  label: string;
+  /** The app's existing clock vocabulary — the `.chip` classes — not a second
+      colour system for this panel alone. */
+  severity: "critical" | "serious" | "warn" | "ok" | "flat";
+  source: "project_status" | "commitment" | "none";
+  reason: string;
+  deliver_by: string | null;
+  projected_done_at: string | null;
+  days_late: number | null;
+  basis: string | null;
+}
+
+/** How far along, with the denominator attached — "12 requirements settled" is
+    a number nobody can judge until they know whether it is of thirteen or of
+    forty. `total` is null for the modes that have no finish line to be a
+    fraction of, and the text says what they measure instead. */
+export interface BriefingMovement {
+  unit: "requirements" | "cycles" | "evidence";
+  settled: number | null;
+  total: number | null;
+  open: number | null;
+  in_window: number;
+  per_week: number | null;
+  published: number;
+  latest: string | null;
+  text: string;
+}
+
+/** The two or three facts worth interrupting a chairman with. Already ranked
+    worst-first by the server and never re-sorted here: the desk, the mail and
+    the MCP view must lead with the same line. */
+export interface BriefingException {
+  kind: string;
+  rank: number;
+  text: string;
+  cause: string | null;
+  severity: "serious" | "warn";
+  where: string | null;
+}
+
 export interface Briefing {
   project_id: string;
   slug: string;
@@ -686,9 +735,26 @@ export interface Briefing {
   window_source: string;
   window_hours: number;
   quiet: boolean;
+  /** May this collapse to one line? A window can be quiet and the project still
+      be on fire — a stall that began before the window logs nothing inside it —
+      so `quiet` keeps meaning "nothing happened" and this answers the different
+      question the panel is actually asking. */
+  hushable: boolean;
   headline: string;
+  verdict: BriefingVerdict;
+  movement: BriefingMovement;
+  exceptions: BriefingException[];
+  /** The operating record: unranked, unabridged, and drawn by the project's own
+      page and the daily mail rather than by the desk. */
   lines: BriefingLine[];
-  money: { unit: "usd" | "tokens"; window: number; month_to_date: number; cap: number };
+  money: {
+    unit: "usd" | "tokens";
+    window: number;
+    month_to_date: number;
+    cap: number;
+    /** Composed server-side, in units a person can hold in their head. */
+    text: string;
+  };
   /** Proof of life for an empty window: nothing wrong and nothing happening
       are different, and a blank panel cannot tell them apart. */
   pulse: { last_run_at: string | null; running: number; open_tasks: number };

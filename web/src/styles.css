@@ -1094,11 +1094,18 @@ button.rolepick { width: 100%; text-align: left; background: var(--surface-2); }
   font-family: var(--mono); font-size: 10.5px; font-weight: 700;
 }
 
-/* ── the briefing: the past tense ─────────────────────────────────────────────
-   Quieter than the desk rows it sits above. Nothing here has a consequence
-   attached — it is what already happened — so it never borrows the warning or
-   critical colours that mean "a clock is running". Tone is carried by one
-   glyph and a muted accent on the left of a line, never by colour alone. */
+/* ── the briefing ─────────────────────────────────────────────────────────────
+   Quieter than the desk rows it sits above. The past-tense lines still never
+   borrow the warning or critical colours that mean "a clock is running":
+   what already happened has no clock on it, and their tone is carried by one
+   glyph and a muted accent on the left of a line, never by colour alone.
+
+   The verdict is the one exception, and deliberately. It is present tense, it
+   is a status the platform assigned rather than a mood this panel is in, and
+   there is a date behind it — an at-risk commitment freezes new scope, a
+   budget pause stops the project. So it is drawn as a chip in the same colour
+   vocabulary the rest of the app uses for clocks, never as coloured body text,
+   and never more than one coloured element per project block. */
 .bpanel {
   margin: 4px 0 20px; padding: 12px 14px;
   border: 1px solid var(--border); border-left: 3px solid var(--grid);
@@ -1131,6 +1138,15 @@ button.rolepick { width: 100%; text-align: left; background: var(--surface-2); }
    cannot trust: "3 tasks closed" means nothing until you know since when. */
 .bedge { font-size: 10.5px; }
 .bline { font-size: 14px; font-weight: 600; margin: 7px 0 2px; line-height: 1.45; }
+/* Chip and sentence on one baseline: the chip is the word a reader scans for
+   down a column of projects, the sentence is why. */
+.bverdict { display: flex; align-items: baseline; gap: 9px; margin: 8px 0 2px;
+  flex-wrap: wrap; }
+.bverdict .bvr { font-size: 13.5px; font-weight: 600; line-height: 1.45;
+  min-width: 0; }
+.bblock.bquiet .bverdict .bvr { font-weight: 500; color: var(--ink-2); }
+/* How far along, and it always carries its denominator — see _movement. */
+.bmoved { margin-top: 5px; font-size: 13px; line-height: 1.5; color: var(--ink-2); }
 .blines { list-style: none; margin: 6px 0 0; padding: 0;
   display: flex; flex-direction: column; gap: 3px; }
 .bl { display: flex; gap: 8px; align-items: baseline; font-size: 13px; line-height: 1.5; }

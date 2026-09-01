@@ -22,6 +22,22 @@ platform ran the test, evidence counts because the verifier fetched it. The
 briefing adds no judgement of its own — it is arithmetic over the record, so
 it cannot flatter the project the way a self-authored status can.
 
+That second promise is what makes the verdict legal. A panel that says "at
+risk" looks like it is grading, and would be, if it worked the answer out. It
+does not: `Commitment.status` is stamped by the janitor off its own
+re-projection, and the enum's docstring is explicit that no agent verb sits
+behind any of its transitions. `_verdict` **reports** that status and the
+janitor's own basis note; it never re-derives one. And where nothing has been
+promised it says so, because the one thing this panel must never learn to do
+is manufacture a green light nobody switched on.
+
+The summary and the detail answer different readers. `verdict`, `movement`,
+`money["text"]` and `exceptions` are the board's four questions — will it
+land, did it move, what did that cost, what is wrong — and are what the desk
+draws. `lines` is the operating record, unchanged and unranked, and is what
+the project's own page and the daily mail draw. Both come out of one pass over
+the rows, so no two screens can disagree about the same weekend.
+
 The window is the interesting part. "Since you were last here" is not 24
 hours: it is `project_members.last_briefed_at`, stamped when the chairman
 acknowledges the panel, so a weekend away reads as a weekend. NULL means never
@@ -49,6 +65,8 @@ from yaaf.core.models import (
     AuditSample,
     AuditSampleStatus,
     Channel,
+    Commitment,
+    CommitmentStatus,
     Evidence,
     EvidenceKind,
     Flag,
@@ -62,6 +80,7 @@ from yaaf.core.models import (
     NoticeKind,
     Project,
     ProjectMember,
+    ProjectMode,
     ProjectStatus,
     Recurrence,
     Requirement,
@@ -105,6 +124,89 @@ SELF_ACTING_NOTICES = {
     NoticeKind.MEMORY_FULL: "a memory scope hit its cap and is refusing writes",
     NoticeKind.REVENUE: "money came in, booked by a signed webhook",
 }
+
+
+#: The verdict vocabulary, worst first — so the same tuple that names the state
+#: also sorts the desk, and no caller has to re-derive which of two projects is
+#: in more trouble. `severity` is the app's existing clock vocabulary (the
+#: `.chip` classes), not a second colour system.
+VERDICT_LABELS: dict[str, tuple[str, str]] = {
+    "stopped":    ("stopped", "critical"),
+    "paused":     ("paused", "critical"),
+    "breached":   ("past due", "critical"),
+    "at_risk":    ("at risk", "serious"),
+    "unpromised": ("no date promised", "flat"),
+    "proposed":   ("a date is on your desk", "warn"),
+    "on_track":   ("on track", "ok"),
+    "delivered":  ("delivered", "ok"),
+}
+
+#: What a chairman is entitled to be interrupted by, worst first. Membership is
+#: the editorial decision — a `kind` absent here is operating detail, and still
+#: reaches the project's own page and the daily mail — and the order IS the
+#: severity, so nothing anywhere has to work out which of two facts is worse a
+#: second time. The server sorts with this and no renderer re-sorts: a panel and
+#: an email that disagreed about which line was the alarming one would be worse
+#: than either alone.
+#:
+#: The argument for the order, in one clause each: the project is off > a
+#: promise already broken > it is not working at all > a promise about to break
+#: > the money wall > decisions taken in your absence > waste with a cause >
+#: everything else.
+EXCEPTION_RANK: tuple[str, ...] = (
+    "notice_budget_exhausted",
+    "notice_commitment_breached",
+    "notice_stalled",
+    "notice_commitment_at_risk",
+    "notice_budget_warning",
+    "plan_gate_reopened",
+    "approvals_expired",
+    "runs_dead",
+    "evidence_failed",
+    "tasks_blocked",
+    "bets_expired",
+    "samples_expired",
+    "requirement_cut",
+    "threads_frozen",
+    "notice_memory_full",
+    "notice_explore_deadline",
+)
+
+#: Deliberately NOT merged with `dispatcher.URGENT_NOTICE_KINDS`, which answers
+#: a different question — does this deserve a paid wake for the CEO. A memory
+#: scope refusing writes is urgent for the agent and nearly irrelevant to a
+#: board; a requirement cut is the reverse.
+
+#: What the verdict sentence already says, so the exceptions do not say it
+#: again. A `stalled` bullet under a stalled verdict is one fact twice, and
+#: repetition is how a list of three stops being read.
+VERDICT_COVERS: dict[str, frozenset[str]] = {
+    "paused": frozenset({"notice_budget_exhausted", "notice_stalled"}),
+    "stopped": frozenset({"notice_budget_exhausted", "notice_stalled"}),
+    "breached": frozenset({"notice_commitment_breached", "notice_commitment_at_risk"}),
+    "at_risk": frozenset({"notice_commitment_at_risk"}),
+}
+
+#: At most this many exceptions reach the chairman. Three is the number a
+#: person reads; a fourth is where a list becomes a table and stops being one.
+MAX_EXCEPTIONS = 3
+
+#: Dead runs are metered like live ones, so a window can throw a third of itself
+#: away while its spend still looks reasonable. These two are the only bare
+#: thresholds in the briefing — everything else it reports is a row's existence
+#: or a constitution number. The floor exists because 1-in-3 of three runs is
+#: noise, and the share because 11 dead out of 900 is not news.
+DEAD_RUN_SHARE = 0.10
+DEAD_RUN_FLOOR = 3
+
+
+def exception_rank(kind: str) -> int:
+    """One definition of how bad a thing is. Unknown kinds sort last rather
+    than raising: a new line builder must not be able to break the desk."""
+    try:
+        return EXCEPTION_RANK.index(kind)
+    except ValueError:
+        return len(EXCEPTION_RANK)
 
 
 def _aware(dt: datetime | None) -> datetime | None:
@@ -703,56 +805,307 @@ def _pulse(session: Session, project: Project, since, until) -> dict:
     }
 
 
-def _headline(project: Project, lines: list[dict], money: dict, pulse: dict,
-              waiting: dict) -> str:
-    """One sentence, composed from the facts above rather than written about
-    them. Order is what a chairman asks in order: is it alive, did it finish
-    anything, what did that cost."""
+# ── the board's four questions ──────────────────────────────────────────────────
+#
+# What follows is the summary the desk shows: a verdict, what moved toward it,
+# what that cost, and the exceptions. The detail lines above are not deleted —
+# they are the project's own page and the daily mail — but a chairman arriving
+# after three days is not reading thirteen bullets, and a panel that gives a
+# healthy project and a stalling one the same thirteen has told him nothing
+# about which is which.
+
+
+#: Below this a grouped integer is still readable, so it is left alone. The
+#: same floor and the same one decimal place as `fmtUnit` in web/src/ui.tsx,
+#: which formats the very same numbers two inches away on the desk: a briefing
+#: saying 74M beside a row saying 73.7M is one number wearing two faces.
+COMPACT_FLOOR = 10_000
+
+
+def _human(amount: float, unit: str) -> str:
+    """A quantity a person can hold in their head. `73,738,051 tokens` is not
+    one: it is nine glyphs the eye slides off, and the desk printed it beside
+    every project. Dollars are already readable and are left alone."""
+    if unit == "usd":
+        return f"${amount:,.2f}"
+    amount = float(amount)
+    if abs(amount) < COMPACT_FLOOR:
+        return f"{amount:,.0f}"
+    for cut, suffix in ((1e9, "B"), (1e6, "M"), (1e3, "K")):
+        if abs(amount) >= cut:
+            return f"{amount / cut:,.1f}".removesuffix(".0") + suffix
+    return f"{amount:,.0f}"
+
+
+def _money_text(money: dict) -> str:
+    """The window's spend, in one clause, against the month it is capped on.
+
+    Spend on its own is a vanity number, so it never travels alone; but it is
+    printed on every window and not only the alarming ones, because a figure
+    that appears only when it is bad teaches the reader to fear the sight of it.
+    """
+    unit = money["unit"]
+    noun = "" if unit == "usd" else " tokens"
+    spent = (f"{_human(money['window'], unit)}{noun} this window"
+             if money["window"] else "Nothing spent this window")
+    if not money["cap"]:
+        return f"{spent}. No monthly cap is set."
+    share = money["month_to_date"] / money["cap"]
+    return (f"{spent} — {_human(money['month_to_date'], unit)} of the month's "
+            f"{_human(money['cap'], unit)} budget ({share:.0%}).")
+
+
+def _movement(session: Session, project: Project, lines: list[dict]) -> dict:
+    """How far along this is, with the denominator attached.
+
+    "12 requirements settled" is a number a chairman cannot judge, because
+    twelve of forty and twelve of thirteen are opposite weeks wearing the same
+    sentence. The denominator is the whole content.
+
+    Measured per mode, because the modes do not share a unit. A DELIVER project
+    has a finish line to count toward. An OPERATE project's obligations recur by
+    design, so a fraction of them is meaningless and its record — met in N of
+    the last M cycles — is the honest shape. An EXPLORE project has no scope to
+    divide at all, and inventing a ratio for it would be the exact failure this
+    function exists to fix.
+    """
+    from yaaf.server import velocity
+
+    in_window = next((line["count"] for line in lines
+                      if line["kind"] == "requirement_met"), 0) or 0
+    published = next((line for line in lines if line["kind"] == "published"), None)
+    latest = None
+    if published is not None:
+        latest = published["text"].split("(", 1)[-1].split(",")[0].rstrip(")…")
+    tail = ""
+    if published is not None:
+        n = published["count"]
+        tail = (f" {n} {_plural(n, 'deliverable')} published"
+                + (f", latest {latest}." if latest else "."))
+
+    if project.mode == ProjectMode.OPERATE:
+        record = velocity.standing_record(session, project.id)
+        worst = min(record, key=lambda r: (r["met"] - r["judged"], r["key"]),
+                    default=None) if record else None
+        if worst and worst["judged"]:
+            text = (f"The standing obligations are being honoured: {worst['key']} — "
+                    f"the weakest of them — was met in {worst['met']} of the last "
+                    f"{worst['judged']} {_plural(worst['judged'], 'cycle')}.")
+        else:
+            text = "No cycle has been judged yet, so there is no record to report."
+        return {"unit": "cycles", "settled": None, "total": None, "open": None,
+                "in_window": in_window, "per_week": None,
+                "published": published["count"] if published else 0,
+                "latest": latest, "text": text + tail}
+
+    if project.mode == ProjectMode.EXPLORE:
+        proved = next((line["count"] for line in lines
+                       if line["kind"] == "evidence_verified"), 0) or 0
+        text = (f"{proved} {_plural(proved, 'piece')} of external proof landed this "
+                "window. An Explore project has no scope to be a fraction of — "
+                "what it has is evidence."
+                if proved else
+                "No external proof landed this window. An Explore project has no "
+                "scope to be a fraction of — what it has is evidence.")
+        return {"unit": "evidence", "settled": None, "total": None, "open": None,
+                "in_window": proved, "per_week": None,
+                "published": published["count"] if published else 0,
+                "latest": latest, "text": text + tail}
+
+    position = velocity.scope_position(session, project.id)
+    pace = velocity.project_velocity(session, project.id)
+    total, settled = position["total"], position["settled"]
+    if total == 0:
+        text = "Nothing is in scope yet, so there is nothing to be a fraction of."
+    else:
+        moved = (f" {in_window} of them since you last looked."
+                 if in_window else " None of them moved this window.")
+        text = (f"{settled} of {total} {_plural(total, 'requirement')} settled "
+                f"true — {position['open']} still open.{moved}")
+    return {
+        "unit": "requirements", "settled": settled, "total": total,
+        "open": position["open"], "in_window": in_window,
+        "per_week": pace["per_week_3w"] or None,
+        "published": published["count"] if published else 0,
+        "latest": latest, "text": text + tail,
+    }
+
+
+def _verdict(session: Session, project: Project, movement: dict) -> dict:
+    """Will this deliver what it promised, by when? — and the platform's answer
+    to it, never the briefing's.
+
+    This is the one question a chairman asks first and the one thing the desk
+    never said. The answer already existed: `Commitment.status` is stamped by
+    the janitor off its own re-projection, and the enum's docstring is explicit
+    that no agent verb sits behind any of its transitions. So the verdict here
+    is a **lookup**, and the module's promise not to grade itself survives
+    intact.
+
+    It is a lookup in a stricter sense than it may look. It reads the stamped
+    `projected_done_at` and the janitor's own basis note rather than calling
+    `commitment_projection` afresh — a live projection can disagree with the
+    stamped status between two janitor ticks, and choosing which of them to
+    believe would be exactly the judgement this function must not make.
+
+    Where nothing has been promised there is no verdict to report, and the
+    briefing says so. It must never manufacture "on track" out of a project
+    nobody committed to: a green light nobody switched on is the worst thing
+    this panel could learn to do.
+    """
+    def out(state: str, reason: str, source: str, **extra) -> dict:
+        label, severity = VERDICT_LABELS[state]
+        return {"state": state, "label": label, "severity": severity,
+                "source": source, "reason": reason,
+                "deliver_by": None, "projected_done_at": None,
+                "days_late": None, "basis": None, **extra}
+
     if project.status in (ProjectStatus.PAUSED, ProjectStatus.STOPPED,
                           ProjectStatus.COMPLETED):
-        reason = project.status_reason or "no reason recorded"
-        return f"{project.name} is {project.status} — {reason}"
-    if not lines:
-        if pulse["running"]:
-            return (f"Nothing settled, but {pulse['running']} "
-                    f"{_plural(pulse['running'], 'run')} in flight right now.")
-        if pulse["open_tasks"] == 0:
-            return "Nothing happened, and there is nothing on the board to happen."
-        return (f"Nothing happened — {pulse['open_tasks']} "
-                f"{_plural(pulse['open_tasks'], 'task')} open and none of them moved.")
-    counts = {line["kind"]: (line["count"] or 0) for line in lines}
-    parts: list[str] = []
-    if counts.get("requirement_met"):
-        n = counts["requirement_met"]
-        parts.append(f"{n} {_plural(n, 'requirement')} settled true")
-    if counts.get("tasks_done"):
-        n = counts["tasks_done"]
-        parts.append(f"{n} {_plural(n, 'task')} closed")
-    if counts.get("standing_honoured"):
-        n = counts["standing_honoured"]
-        parts.append(f"{n} standing {_plural(n, 'obligation')} honoured")
-    if counts.get("evidence_verified"):
-        n = counts["evidence_verified"]
-        parts.append(f"{n} {_plural(n, 'proof')} verified")
-    if not parts and counts.get("plan_gate_closed"):
-        parts.append("the plan gate closed and the board opened")
-    if not parts:
-        # Nothing landed. Rather than a shrug, promote the loudest thing that
-        # DID happen — a stall, a frozen thread, an approval that timed out is
-        # the headline of that window, and burying it under "activity, but
-        # nothing settled" is how a bad week reads as a dull one.
-        setback = next((line for line in lines if line["tone"] == "bad"), None)
-        parts.append("Nothing settled" + (f" — {setback['text']}" if setback else ""))
-    sentence = ", ".join(parts)
-    if money["window"]:
-        unit = "$" if money["unit"] == "usd" else ""
-        suffix = "" if money["unit"] == "usd" else " tokens"
-        amount = (f"{money['window']:,.2f}" if money["unit"] == "usd"
-                  else f"{money['window']:,.0f}")
-        sentence += f" — {unit}{amount}{suffix} spent"
-    if waiting["total"]:
-        sentence += f". {waiting['total']} now waiting on you"
-    return sentence + "."
+        state = "delivered" if project.status == ProjectStatus.COMPLETED else (
+            "stopped" if project.status == ProjectStatus.STOPPED else "paused")
+        return out(state, project.status_reason or "no reason was recorded",
+                   "project_status")
+
+    row = policy.open_commitment(session, project.id) or session.execute(
+        select(Commitment).where(
+            Commitment.project_id == project.id,
+            Commitment.status == CommitmentStatus.MET,
+        ).order_by(Commitment.created_at.desc()).limit(1)
+    ).scalar_one_or_none()
+
+    if row is None:
+        settled = movement.get("settled")
+        total = movement.get("total")
+        where = (f" {settled} of {total} {_plural(total, 'requirement')} settled."
+                 if total else "")
+        return out(
+            "unpromised",
+            "Nothing has been promised here, so nothing can be on or off "
+            "track." + where,
+            "none")
+
+    deliver_by = _aware(row.deliver_by)
+    projected = _aware(row.projected_done_at)
+    basis = (row.projection or {}).get("basis")
+    days = ((projected - deliver_by).days if projected and deliver_by else None)
+    dates = {"deliver_by": deliver_by.isoformat() if deliver_by else None,
+             "projected_done_at": projected.isoformat() if projected else None,
+             "days_late": days, "basis": basis}
+
+    if row.status == CommitmentStatus.PROPOSED:
+        return out("proposed",
+                   f"The CEO has asked to commit to {_day(deliver_by)}. Until you "
+                   "sign it nothing here is on track or late.",
+                   "commitment", **dates)
+    if row.status == CommitmentStatus.MET:
+        return out("delivered",
+                   f"Every requirement in the promise settled true. Promised "
+                   f"{_day(deliver_by)}.", "commitment", **dates)
+    if row.status == CommitmentStatus.BREACHED:
+        return out("breached",
+                   row.status_reason or f"{_day(deliver_by)} passed with scope "
+                                        "still open.",
+                   "commitment", **dates)
+    if row.status == CommitmentStatus.AT_RISK:
+        gap = (f", {days} {_plural(days, 'day')} past the date you signed"
+               if days and days > 0 else "")
+        return out("at_risk",
+                   f"Promised {_day(deliver_by)}, projected {_day(projected)}{gap}. "
+                   "New scope is frozen until you cut something or move the date."
+                   + (f" ({basis}.)" if basis else ""),
+                   "commitment", **dates)
+    inside = (f" — {abs(days)} {_plural(abs(days), 'day')} inside it"
+              if days is not None and days < 0 else "")
+    return out("on_track",
+               f"Promised {_day(deliver_by)}, projected {_day(projected)}{inside}."
+               + (f" ({basis}.)" if basis else ""),
+               "commitment", **dates)
+
+
+def _day(dt: datetime | None) -> str:
+    return dt.strftime("%-d %b").lstrip() if dt else "an unstated date"
+
+
+def _exceptions(session: Session, project: Project, cons: ConstitutionDoc,
+                lines: list[dict], verdict: dict, since, until) -> list[dict]:
+    """The two or three facts worth interrupting a chairman with, worst first.
+
+    Exception reporting, which is the shape a board actually runs on: when
+    nothing is wrong this returns nothing, and the absence is the report. The
+    old panel gave a healthy project and a stalling one thirteen bullets each,
+    in the order the builders happened to be concatenated, which put "the
+    project had work and started nothing for hours" underneath a list of file
+    versions.
+
+    Two lines are rewritten on the way out rather than passed through, because
+    what serves the project's own page does not serve this one:
+
+    * a dead-run count without its denominator is unreadable, and its cause is
+      already known — one requirement usually ate them, and `worst_failure`
+      names it;
+    * the raw refusal text ("not_before is 8.6h out and the limit is 6h") is
+      the platform talking to itself, and belongs in Records rather than in
+      front of the board.
+    """
+    from yaaf.server import velocity
+
+    covered = VERDICT_COVERS.get(verdict["state"], frozenset())
+    out: list[dict] = []
+    for line in lines:
+        kind = line["kind"]
+        if kind not in EXCEPTION_RANK or kind in covered:
+            continue
+        text, cause = line["text"], None
+        if kind == "runs_dead":
+            total = next((x["count"] for x in lines if x["kind"] == "runs"), 0) or 0
+            dead = line["count"] or 0
+            if total and (dead < DEAD_RUN_FLOOR
+                          or dead / total < DEAD_RUN_SHARE):
+                continue
+            share = f" ({dead / total:.0%})" if total else ""
+            text = (f"{dead} of {total} {_plural(total, 'run')} died without "
+                    f"producing anything{share}")
+            worst = velocity.project_velocity(session, project.id)["worst_failure"]
+            if worst and worst["failure_load"] >= cons.commitment_failure_reforecast:
+                cause = (f"one requirement, {worst['key']}, has absorbed "
+                         f"{worst['failure_load']} of them")
+        elif kind == "notice_stalled":
+            text = ("it had work and started nothing for "
+                    f"{cons.stall_hours:g} hours")
+        out.append({"kind": kind, "rank": exception_rank(kind), "text": text,
+                    "cause": cause, "where": line["where"],
+                    "severity": "serious" if line["tone"] == "bad" else "warn"})
+    out.sort(key=lambda e: e["rank"])
+    return out[:MAX_EXCEPTIONS]
+
+
+def _headline(project: Project, verdict: dict, exceptions: list[dict]) -> str:
+    """The whole panel in one sentence: the verdict, and the worst thing under
+    it. This is also the subject line of the daily mail.
+
+    It used to be a concatenation of counts — "12 requirements settled true, 21
+    tasks closed, 12 proofs verified — 73,738,051 tokens spent." Every clause of
+    that was activity, none of it said whether the project would deliver, and
+    the two facts that mattered were thirteen lines further down.
+
+    The verdict leads because it is the question. The top exception follows it
+    because the verdict word is a promise status and a promise status is silent
+    about a project that has stopped working: "no date promised" alone would let
+    a fourteen-hour stall pass as calm. Naming both is how neither is invented
+    and neither is buried.
+    """
+    reason = verdict["reason"].rstrip()
+    # `status_reason` is the chairman's or the janitor's own words and does not
+    # reliably end in a stop, so one is added rather than assumed.
+    if reason and reason[-1] not in ".!?":
+        reason += "."
+    sentence = f"{project.name} — {verdict['label']}. {reason}"
+    if exceptions:
+        first = exceptions[0]
+        sentence += f" And {first['text']}"
+        sentence += f" ({first['cause']})." if first["cause"] else "."
+    return sentence
 
 
 # ── the composers ───────────────────────────────────────────────────────────────
@@ -832,9 +1185,13 @@ def project_briefing(session: Session, project: Project,
     lines += _run_lines(session, project, since, until)
 
     money = _money(session, project, cons, since, until)
+    money["text"] = _money_text(money)
     pulse = _pulse(session, project, since, until)
     waiting = _waiting(session, project, cons)
     next_up = _next_up(session, project, cons)
+    movement = _movement(session, project, lines)
+    verdict = _verdict(session, project, movement)
+    exceptions = _exceptions(session, project, cons, lines, verdict, since, until)
     # The run tally is bookkeeping, not an event: a window whose only lines are
     # "12 runs, 0 died" did nothing, and saying so is the point.
     substantive = [line for line in lines if line["kind"] not in ("runs",)]
@@ -848,7 +1205,16 @@ def project_briefing(session: Session, project: Project,
         "window_source": source,
         "window_hours": round((until - since).total_seconds() / 3600.0, 2),
         "quiet": not substantive,
-        "headline": _headline(project, substantive, money, pulse, waiting),
+        # A window can be quiet and the project still be on fire — a stall that
+        # started before the window logs nothing inside it. So `quiet` keeps its
+        # meaning (nothing happened) and `hushable` answers the different
+        # question the panel actually asks: may this be collapsed to one line?
+        "hushable": (not substantive and not exceptions
+                     and verdict["severity"] in ("ok", "flat")),
+        "headline": _headline(project, verdict, exceptions),
+        "verdict": verdict,
+        "movement": movement,
+        "exceptions": exceptions,
         "lines": lines,
         "money": money,
         "pulse": pulse,
@@ -876,6 +1242,13 @@ def desk_briefing(session: Session, since: datetime | None = None,
         .order_by(Project.created_at)
     ).scalars():
         out.append(project_briefing(session, project, since=forced, until=now))
+    # Worst first, and sorted HERE rather than in the panel: the desk, the mail
+    # and the MCP view must agree about which project is in the most trouble,
+    # and creation order — which is what this used to be — put a stalled project
+    # underneath three healthy ones for no reason but its age.
+    order = list(VERDICT_LABELS)
+    out.sort(key=lambda b: (order.index(b["verdict"]["state"]),
+                            b["exceptions"][0]["rank"] if b["exceptions"] else 99))
     return {
         "as_of": now.isoformat(),
         "forced_window": forced.isoformat() if forced else None,
@@ -889,35 +1262,34 @@ def desk_briefing(session: Session, since: datetime | None = None,
 
 def render_text(brief: dict) -> str:
     """The daily push. One composer, two deliveries — a panel and an email that
-    cannot disagree about what happened, because there is no second query."""
-    money = brief["money"]
-    spent = (f"${money['window']:,.2f}" if money["unit"] == "usd"
-             else f"{money['window']:,.0f} tokens")
-    mtd = (f"${money['month_to_date']:,.2f}" if money["unit"] == "usd"
-           else f"{money['month_to_date']:,.0f} tokens")
-    cap = (f"${money['cap']:,.0f}" if money["unit"] == "usd"
-           else f"{money['cap']:,.0f} tokens")
+    cannot disagree about what happened, because there is no second query.
+
+    The mail leads with the same summary the desk draws and then keeps the full
+    detail below it, which the desk does not. That asymmetry is deliberate: a
+    reader on the desk is one click from the project's own page, and a reader in
+    their inbox is not. Dropping the detail here would make the mail worse at
+    the only thing it is better at.
+    """
     body = [
         brief["headline"],
         "",
         f"Window: {brief['window_source']} — {brief['since'][:16].replace('T', ' ')} "
         f"to {brief['until'][:16].replace('T', ' ')} UTC ({brief['window_hours']}h)",
-        "",
     ]
-    if brief["lines"]:
-        body.append("What happened")
-        for line in brief["lines"]:
-            marker = {"good": "+", "bad": "!"}.get(line["tone"], "·")
-            body.append(f"  {marker} {line['text']}")
-    else:
-        pulse = brief["pulse"]
-        body.append("What happened")
-        body.append("  · nothing — no scope settled, no work closed, no proof landed")
-        body.append(f"  · {pulse['open_tasks']} task(s) open, {pulse['running']} run(s) "
-                    f"in flight, last run "
-                    + (pulse["last_run_at"][:16].replace("T", " ") + " UTC"
-                       if pulse["last_run_at"] else "never"))
-    body += ["", f"Money: {spent} this window; {mtd} of {cap} this month."]
+
+    # In the order the payload gave them, never re-sorted here: the whole point
+    # of ranking on the server is that every delivery leads with the same line.
+    if brief.get("exceptions"):
+        body += ["", "Needs attention"]
+        for exc in brief["exceptions"]:
+            body.append(f"  ! {exc['text']}"
+                        + (f" — {exc['cause']}" if exc["cause"] else ""))
+
+    movement = brief.get("movement")
+    if movement:
+        body += ["", "What moved", f"  {movement['text']}"]
+
+    body += ["", f"Money: {brief['money']['text']}"]
 
     waiting = brief["waiting"]
     body.append("")
@@ -952,9 +1324,25 @@ def render_text(brief: dict) -> str:
             body.append(f"Next: {next_up['label']} — {when}")
         else:
             body.append(f"Next: nothing scheduled. {next_up['why']}")
+
+    body.append("")
+    if brief["lines"]:
+        body.append("What happened, in full")
+        for line in brief["lines"]:
+            marker = {"good": "+", "bad": "!"}.get(line["tone"], "·")
+            body.append(f"  {marker} {line['text']}")
+    else:
+        pulse = brief["pulse"]
+        body.append("What happened, in full")
+        body.append("  · nothing — no scope settled, no work closed, no proof landed")
+        body.append(f"  · {pulse['open_tasks']} task(s) open, {pulse['running']} run(s) "
+                    f"in flight, last run "
+                    + (pulse["last_run_at"][:16].replace("T", " ") + " UTC"
+                       if pulse["last_run_at"] else "never"))
     body += [
         "",
         "This briefing was composed from the record — no agent wrote it and no run "
         "was spent on it.",
     ]
+
     return "\n".join(body)

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { Briefing, BriefingLine, DeskBriefing, get, post } from "./api";
 import { fmtWhen, usePoll } from "./hooks";
-import { fmtAgo, fmtSoon, fmtUnit } from "./ui";
+import { fmtAgo, fmtSoon } from "./ui";
 
 /** The past tense.
 
@@ -25,7 +25,15 @@ import { fmtAgo, fmtSoon, fmtUnit } from "./ui";
     project still ships its pulse.
 
     **Outrank the desk.** What is waiting NOW is the desk's question and it
-    answers it better. This panel carries the count and hands off. */
+    answers it better. This panel carries the count and hands off.
+
+    And one thing it must do, which it did not: **lead with a verdict.** The
+    panel used to open with a concatenation of counts and then print thirteen
+    bullets in the order the server's builders happened to run, so a healthy
+    project and a stalling one looked identical and the alarming line sat ninth.
+    The desk now draws the summary only — verdict, what moved, what it cost, the
+    two or three exceptions — and the operating detail lives on the project's own
+    page and in the daily mail, where the reader has asked for it. */
 
 const MARK: Record<BriefingLine["tone"], string> = {
   good: "+",
@@ -40,16 +48,55 @@ function windowLabel(brief: Briefing): string {
   return `${Math.round(hours / 24)} days`;
 }
 
+/** One clause, composed server-side. The share of the cap used to be arithmetic
+    done here, which meant the panel and the email could differ about the same
+    month; and `73,738,051` used to be printed in full, which is nine glyphs the
+    eye slides off. Both are now the server's problem, once. */
 function Money({ brief }: { brief: Briefing }) {
-  const { money } = brief;
-  const share = money.cap > 0 ? money.month_to_date / money.cap : 0;
+  return <div className="bmoney">{brief.money.text}</div>;
+}
+
+/** The question a chairman asks first, and the one this panel never answered.
+
+    The chip colour is the app's ordinary clock vocabulary, and it is the ONLY
+    coloured element in a briefing block — see the rule above `.bpanel` in
+    styles.css. Nothing here is a judgement the panel formed: `label` and
+    `reason` are the platform's own status, rendered. */
+function Verdict({ brief }: { brief: Briefing }) {
+  const { verdict } = brief;
+  const cls = verdict.severity === "flat" ? "" : ` ${verdict.severity}`;
   return (
-    <div className="bmoney">
-      <b>{fmtUnit(money.window, money.unit)}</b> this window ·{" "}
-      {fmtUnit(money.month_to_date, money.unit)} of {fmtUnit(money.cap, money.unit)} this
-      month
-      {money.cap > 0 && <span className="dim"> ({Math.round(share * 100)}%)</span>}
+    <div className="bverdict">
+      <span className={`chip${cls}`}>{verdict.label}</span>
+      <span className="bvr">{verdict.reason}</span>
     </div>
+  );
+}
+
+/** How far along, with its denominator. */
+function Moved({ brief }: { brief: Briefing }) {
+  return <div className="bmoved">{brief.movement.text}</div>;
+}
+
+/** The exceptions, in the order the server gave them and never re-sorted: the
+    desk, the mail and the MCP view must lead with the same line. */
+function Exceptions({ brief, to }: { brief: Briefing; to: string }) {
+  if (brief.exceptions.length === 0) return null;
+  return (
+    <ul className="blines">
+      {brief.exceptions.map((exc) => (
+        <li key={exc.kind} className="bl bad">
+          <span className="bm" aria-hidden="true">!</span>
+          <span className="bt">
+            {exc.text}
+            {exc.cause && <span className="dim"> — {exc.cause}</span>}
+          </span>
+          {exc.where && (
+            <Link className="bgo" to={`${to}/${exc.where}`}>look →</Link>
+          )}
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -116,15 +163,27 @@ function NextUp({ brief }: { brief: Briefing }) {
   );
 }
 
-/** One project's briefing. `onSeen` is absent on a read-only rendering. */
+/** One project's briefing. `onSeen` is absent on a read-only rendering.
+
+    Two flags rather than two components, deliberately. The head carries the
+    mark-read button, and that button stamps the edge the panel DREW rather than
+    the moment of the click — a subtle, load-bearing rule with a test on it.
+    Forking this into a summary component and a detail component is how that
+    rule gets copied once and then copied wrong. */
 export function BriefingBlock({
   brief,
   onSeen,
   showName = true,
+  summary = true,
+  detail = true,
 }: {
   brief: Briefing;
   onSeen?: (brief: Briefing) => void;
   showName?: boolean;
+  /** The board's four questions. What the desk draws. */
+  summary?: boolean;
+  /** The operating record. What the project's own page draws. */
+  detail?: boolean;
 }) {
   const to = `/projects/${brief.project_id}`;
   // `bquiet`, not `quiet`: the desk's empty-state card owns `.quiet`, and a
@@ -152,31 +211,55 @@ export function BriefingBlock({
           </button>
         )}
       </div>
-      <div className="bline">{brief.headline}</div>
-      {brief.lines.length > 0 ? (
-        <ul className="blines">
-          {brief.lines.map((line, i) => (
-            <li key={`${line.kind}-${i}`} className={`bl ${line.tone}`}>
-              <span className="bm" aria-hidden="true">
-                {MARK[line.tone]}
-              </span>
-              <span className="bt">{line.text}</span>
-              {line.where && (
-                <Link className="bgo" to={`${to}/${line.where}`}>
-                  look →
-                </Link>
-              )}
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <Pulse brief={brief} />
+      {summary && (
+        <>
+          <Verdict brief={brief} />
+          <Moved brief={brief} />
+          <Exceptions brief={brief} to={to} />
+        </>
+      )}
+      {detail && (
+        <>
+          {/* The headline restates the verdict, so it only earns its place on
+              the page that is NOT showing one. */}
+          {!summary && <div className="bline">{brief.headline}</div>}
+          {brief.lines.length > 0 ? (
+            <ul className="blines">
+              {brief.lines.map((line, i) => (
+                <li key={`${line.kind}-${i}`} className={`bl ${line.tone}`}>
+                  <span className="bm" aria-hidden="true">
+                    {MARK[line.tone]}
+                  </span>
+                  <span className="bt">{line.text}</span>
+                  {line.where && (
+                    <Link className="bgo" to={`${to}/${line.where}`}>
+                      look →
+                    </Link>
+                  )}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <Pulse brief={brief} />
+          )}
+        </>
       )}
       <Money brief={brief} />
       <Waiting brief={brief} />
       <NextUp brief={brief} />
     </div>
   );
+}
+
+/** The portfolio in one line. This used to read "5 projects moved", which is a
+    count of activity and tells a chairman nothing about whether any of them is
+    in trouble. Worst first, same order as the blocks below it. */
+function census(live: Briefing[]): string {
+  const counts = new Map<string, number>();
+  for (const b of live) {
+    counts.set(b.verdict.label, (counts.get(b.verdict.label) ?? 0) + 1);
+  }
+  return [...counts].map(([label, n]) => `${n} ${label}`).join(" · ");
 }
 
 /** The Desk's panel: every running project on its own mark.
@@ -218,8 +301,11 @@ export function DeskBriefingPanel() {
   if (!data) return null;
   const live = data.projects.filter((b) => b.status === "running");
   if (live.length === 0) return null;
-  const news = live.filter((b) => !b.quiet);
-  const silent = live.filter((b) => b.quiet);
+  // `hushable`, not `quiet`. A stall that began before the window logs nothing
+  // inside it, so a stalling project is `quiet === true` — and collapsing it to
+  // a one-liner is the exact failure this panel was rebuilt to stop.
+  const news = live.filter((b) => !b.hushable);
+  const silent = live.filter((b) => b.hushable);
 
   // Every project quiet is not nothing to say — it is the proof-of-life
   // sentence — but it does not deserve the top of the desk, so it collapses to
@@ -229,10 +315,7 @@ export function DeskBriefingPanel() {
       <div className="bpanel hushed">
         <div className="bpanel-head">
           <span className="bttl">Since you were last here</span>
-          <span className="dim">
-            nothing settled in any of your {live.length} running project
-            {live.length === 1 ? "" : "s"}
-          </span>
+          <span className="dim">{census(live)}</span>
           <div className="spacer" />
           <button className="linkish" onClick={() => setOpen(!open)}>
             {open ? "hide" : "show each"}
@@ -245,7 +328,7 @@ export function DeskBriefingPanel() {
                 <Link className="co" to={`/projects/${b.project_id}`}>
                   {b.name}
                 </Link>
-                <span className="dim">{b.headline}</span>
+                <span className="dim">{b.verdict.reason}</span>
               </div>
             ))}
           </div>
@@ -258,10 +341,7 @@ export function DeskBriefingPanel() {
     <div className="bpanel">
       <div className="bpanel-head">
         <span className="bttl">Since you were last here</span>
-        <span className="dim">
-          {news.length} project{news.length === 1 ? "" : "s"} moved
-          {silent.length > 0 && `, ${silent.length} quiet`}
-        </span>
+        <span className="dim">{census(live)}</span>
         <div className="spacer" />
         {/* What the panel drew, not what the endpoint sent: marking a paused
             project read would consume a window the chairman was never shown. */}
@@ -269,10 +349,13 @@ export function DeskBriefingPanel() {
           {busy ? "marking…" : "Mark all read"}
         </button>
       </div>
+      {/* Summary only, and in the order the server sent them — which is now
+          worst verdict first, rather than by the age of the project. */}
       {news.map((brief) => (
         <BriefingBlock
           key={brief.project_id}
           brief={brief}
+          detail={false}
           onSeen={(b) => markRead([b])}
         />
       ))}
@@ -283,7 +366,7 @@ export function DeskBriefingPanel() {
               <Link className="co" to={`/projects/${b.project_id}`}>
                 {b.name}
               </Link>
-              <span className="dim">{b.headline}</span>
+              <span className="dim">{b.verdict.reason}</span>
             </div>
           ))}
         </div>
@@ -303,6 +386,7 @@ export function ProjectBriefing({ projectId }: { projectId: string }) {
     <BriefingBlock
       brief={data}
       showName={false}
+      summary={false}
       onSeen={async (brief) => {
         await post(`/admin/projects/${projectId}/briefing/seen`, { until: brief.until });
         reload();

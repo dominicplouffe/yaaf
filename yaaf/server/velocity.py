@@ -47,8 +47,8 @@ DEAD_STATUSES = (RunStatus.FAILED, RunStatus.REAPED, RunStatus.KILLED,
                  RunStatus.TERMINATED_REFUSALS)
 
 
-def _met_count(session: Session, project_id: str, since) -> int:
-    """MET transitions in the window that represent scope actually landing.
+def _excluded_from_pace(session: Session, project_id: str) -> tuple[str | None, list[str]]:
+    """The plan requirement and the standing ones — what pace never counts.
 
     Two exclusions, both about not inflating the denominator of a promise.
 
@@ -64,6 +64,11 @@ def _met_count(session: Session, project_id: str, since) -> int:
     standing obligation is being honoured is a real question with a real
     answer — "met in 23 of the last 24 cycles" — and it lives in
     RequirementCycleResult, where it cannot be mistaken for progress.
+
+    Extracted so the numerator (`_met_count`) and the denominator
+    (`scope_position`) are drawn from one set. A briefing that printed "12 of
+    41 settled" with 12 counted one way and 41 another would be arithmetic
+    nobody could reproduce.
     """
     plan = policy.plan_requirement(session, project_id)
     standing = [
@@ -73,6 +78,13 @@ def _met_count(session: Session, project_id: str, since) -> int:
                 Requirement.recurrence == Recurrence.STANDING)
         ).scalars()
     ]
+    return (plan.id if plan is not None else None), standing
+
+
+def _met_count(session: Session, project_id: str, since) -> int:
+    """MET transitions in the window that represent scope actually landing.
+    See :func:`_excluded_from_pace` for what is left out and why."""
+    plan_id, standing = _excluded_from_pace(session, project_id)
     stmt = (
         select(func.count(RequirementEvent.id))
         .where(
@@ -81,11 +93,42 @@ def _met_count(session: Session, project_id: str, since) -> int:
             RequirementEvent.at >= since,
         )
     )
-    if plan is not None:
-        stmt = stmt.where(RequirementEvent.requirement_id != plan.id)
+    if plan_id is not None:
+        stmt = stmt.where(RequirementEvent.requirement_id != plan_id)
     if standing:
         stmt = stmt.where(RequirementEvent.requirement_id.not_in(standing))
     return session.execute(stmt).scalar_one()
+
+
+def scope_position(session: Session, project_id: str) -> dict:
+    """Where the scope stands: settled, open, cut, and the total of the three.
+
+    The denominator the briefing prints its progress against, drawn from the
+    same set as the pace it prints beside it (see `_excluded_from_pace`).
+
+    Deliberately not `policy.commitment_scope_keys`, which the commitment
+    freezes and the janitor diffs: that set *includes* standing obligations,
+    because a promise made over a rhythm covers the rhythm. It is the right
+    denominator for "did the scope move under the promise" and the wrong one
+    for "how far along is this", where three obligations met every week
+    forever would make an Operate project read as permanently 100% done and
+    permanently 0% done in the same breath.
+    """
+    plan_id, standing = _excluded_from_pace(session, project_id)
+    excluded = set(standing) | ({plan_id} if plan_id else set())
+    rows = [
+        r for r in policy.scope_requirements(session, project_id)
+        if r.id not in excluded
+        and r.status != RequirementStatus.PROPOSED
+    ]
+    settled = sum(1 for r in rows if r.status == RequirementStatus.MET)
+    cut = sum(1 for r in rows if r.status == RequirementStatus.CUT)
+    return {
+        "total": len(rows) - cut,
+        "settled": settled,
+        "open": sum(1 for r in rows if r.status in policy.OPEN_REQUIREMENT_STATUSES),
+        "cut": cut,
+    }
 
 
 def standing_record(session: Session, project_id: str, cycles: int = 12) -> list[dict]:
