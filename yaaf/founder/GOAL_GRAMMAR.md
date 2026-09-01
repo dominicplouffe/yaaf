@@ -9,6 +9,13 @@ Read it as a checklist for a critic, not as a template for an author. A goal
 that covers all ten elements in four paragraphs beats one that has ten
 labelled sections.
 
+**The examples below are illustrations of shape, never content.** Quote none of
+their facts, figures or anecdotes into a goal you are drafting. Where an
+example happens to come from the same domain as the project in front of you,
+that is the moment to be most careful: an author who imports the example's
+findings has handed the project answers it was supposed to go and earn, and
+nothing downstream can tell the difference between a finding and a quotation.
+
 ## Who this is for
 
 Three readers, one file:
@@ -56,12 +63,11 @@ this element is the difference between a document that satisfies the brief and
 one that is any use — and the two are easy to confuse from the inside, because
 the chairman is the only reader an agent ever hears from.
 
-The failure is specific and it has happened here. A PPC desk spent two cycles
-producing immaculately verified advice about campaigns that had already stopped
-spending, because the chairman's brief asked for an exception watch. Its actual
-beneficiary — the seller — was losing $26,808 of ad sales a month on a campaign
-nobody was looking at. Every gate was green. Nothing in the goal said whose
-problem the work existed to solve.
+The failure is specific and it has happened here. An advisory desk spent two
+cycles producing immaculately verified advice about the things its brief named,
+while the account it was advising bled money somewhere the brief had not
+thought to point. Every gate was green. Nothing in the goal said whose problem
+the work existed to solve.
 
 **Failing:** silence, which reads as "the chairman".
 **Passing:** the quote above, or one line saying they are the same person.
@@ -89,13 +95,12 @@ that produced it. And it states the subset relation out loud, because "here is
 what I want" and "here is everything that matters" are different sentences and
 a brief always looks like the second one.
 
-The failure this exists for: a retirement plan built exactly to a
-twenty-two-point brief, every rule cited, every headline number re-derived by a
-second analyst — and the chairman had to find the missing bridge benefit, the
-children, the insurance, the wills, the currency risk and the crash-sequence
-testing himself, over four hours, one at a time. The CEO's own diagnosis was
-*"I let your brief become the boundary… the checklist was, and I used yours
-instead of the profession's."*
+The failure this exists for: a plan built exactly to a twenty-two-point brief,
+every rule cited, every headline number re-derived by a second analyst — and
+the chairman still had to name half a dozen things the profession covers as a
+matter of course, himself, over four hours, one at a time. The CEO's own
+diagnosis was *"I let your brief become the boundary… the checklist was, and I
+used yours instead of the profession's."*
 
 Where no external standard exists, say so — that is a real answer and it tells
 the project to build its own coverage argument instead of assuming one.
