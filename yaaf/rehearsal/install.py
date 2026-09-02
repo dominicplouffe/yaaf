@@ -96,7 +96,7 @@ def slack_line(install: dict | None, *, disabled_by_spec: bool = False) -> str:
             f"wired: this install has {_join(have)} at platform scope, and a "
             "project created here inherits that")
     if slack.get("auto_create_channels"):
-        line += " and has its channels provisioned as it is created"
+        line += " and has its boardroom provisioned as it is created"
     if missing:
         # "Nothing to attach" would be a lie here, and the point of the whole
         # line is not to make one in the other direction either: what is

@@ -151,16 +151,19 @@ how it is stored: the tokens live once at platform scope and every project
 inherits them. Connect Slack under the sidebar's **Settings**, and a new
 project needs nothing but its channel map.
 
-**yaaf makes those channels for you.** With a connection configured, creating a
-project provisions `{prefix}-boardroom`, `{prefix}-leadership` and one room per
-team — private by default, with your Slack user invited to each — and the
-"project created" screen tells you their names. The prefix defaults to the
-project's slug (the one name guaranteed not to collide between two projects)
-and is configurable app-wide or per project. Turn auto-creation off and every
-project gets a **Create missing channels** button instead; either way it is
-idempotent — a room already mapped is left alone, and a name Slack already
-holds is *adopted*, not duplicated. Run it again after hiring a team to get
-that team's room.
+**yaaf makes those channels for you — the boardroom now, the rest on request.**
+With a connection configured, creating a project provisions `{prefix}-boardroom`
+— private by default, with your Slack user invited — and the "project created"
+screen tells you the name. That is the one room every project has and the room
+you talk to the CEO in; `{prefix}-leadership` and one room per team wait behind
+**Create missing channels** on the project's Slack screen, because a project
+that was created five minutes ago does not need six channels in your workspace
+yet. The prefix defaults to the project's slug (the one name guaranteed not to
+collide between two projects) and is configurable app-wide or per project. Turn
+auto-creation off and the boardroom waits behind the same button as everything
+else. Either way it is idempotent — a room already mapped is left alone, and a
+name Slack already holds is *adopted*, not duplicated. Run it again after hiring
+a team to get that team's room.
 
 The bot needs `chat:write` plus `channels:manage` (public) or `groups:write`
 (private) to create and invite.

@@ -900,11 +900,10 @@ export default function NewProject() {
         {slack && (
           <div className="card" style={{ maxWidth: 760 }}>
             <p style={{ marginTop: 0 }}>
-              <b>Your Slack rooms.</b> This project inherited the app-wide Slack
-              connection, so
-              the platform made its channels for you and invited you to each. They mirror
-              the bus within seconds, and the boardroom is a place you can talk to the CEO
-              from.
+              <b>Your Slack boardroom.</b> This project inherited the app-wide Slack
+              connection, so the platform made the room you talk to the CEO in and invited
+              you to it. It mirrors the bus within seconds. Leadership and the team rooms
+              are not made yet — one button in Settings makes them when you want them.
             </p>
             <table>
               <tbody>
@@ -923,6 +922,18 @@ export default function NewProject() {
                 ))}
               </tbody>
             </table>
+            {slack.deferred && slack.deferred.length > 0 && (
+              <p className="help">
+                Not made yet:{" "}
+                {slack.deferred.map((room, i) => (
+                  <span key={room.key}>
+                    {i > 0 ? ", " : ""}<code>#{room.name}</code>
+                  </span>
+                ))}
+                . <b>Create missing channels</b> in Settings → Integrations → Slack makes
+                them all, whenever this project is ready to be run from Slack.
+              </p>
+            )}
             <p className="help">
               {slack.ok
                 ? "Change or remap any of these in Settings → Integrations → Slack."

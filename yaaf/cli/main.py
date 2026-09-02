@@ -284,13 +284,14 @@ def set_slack(
     prefix: str = typer.Option(None, "--prefix", help="Channel name prefix; '' = project slug"),
     visibility: str = typer.Option(None, "--visibility", help="private | public"),
     auto_create: bool = typer.Option(None, "--auto-create/--no-auto-create",
-                                     help="Provision a new project's rooms on creation"),
+                                     help="Provision a new project's boardroom on creation"),
 ) -> None:
     """Configure the app-wide Slack connection every project inherits.
 
     One workspace, every project, different channels: store the tokens once
-    and a project needs nothing but its channel map — which `slack-channels`
-    (or project creation) fills in for it.
+    and a project needs nothing but its channel map. Creating a project fills
+    in the boardroom; `slack-channels` fills in the rest when the project is
+    ready to be run from Slack.
     """
     payload: dict = {}
     for flag, key, label in ((bot_token, "bot_token", "Bot token (xoxb-…)"),
