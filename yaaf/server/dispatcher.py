@@ -343,6 +343,10 @@ def _dispatch_project(session: Session, project: Project, cons: ConstitutionDoc)
     if work_blocked and inbox_blocked:
         return 0
 
+    # Asked once per tick, not once per agent: it is several queries and
+    # `_wake_reasons` runs for every agent, thirty times a minute.
+    delivered = policy.delivered_awaiting_confirmation(session, project)
+
     max_concurrent = _max_concurrent(cons)
     in_flight = _in_flight(session, project)
 
@@ -360,7 +364,7 @@ def _dispatch_project(session: Session, project: Project, cons: ConstitutionDoc)
             continue
         if _wakes_last_hour(session, agent) >= cons.wakes_per_agent_per_hour:
             continue
-        reasons = _wake_reasons(session, project, cons, agent)
+        reasons = _wake_reasons(session, project, cons, agent, delivered=delivered)
         if not reasons:
             continue
         # Which purse this wake spends, decided before it is queued so the two
@@ -738,6 +742,16 @@ def _activity_brief(state: dict) -> dict:
         return {"tone": tone, "chip": chip, "short": short, "headline": headline,
                 "detail": detail, "banner": banner, "sig": sig, "clears_at": clears_at}
 
+    if gate == "delivery_ready":
+        return brief(
+            "ok", "delivered",
+            "everything is true; waiting on your confirmation",
+            "Everything is true. This delivery is waiting on your confirmation.",
+            "Nothing will run until you complete it — the project has stopped waking "
+            "for its own agents' messages, so it is not spending while it waits. "
+            "Confirm it on the project page to write the receipt and close it, or "
+            "reopen scope if something is still missing.")
+
     if gate == "daily_runs":
         d = state["daily_runs"]
         return brief(
@@ -1046,10 +1060,22 @@ def activity_state(session: Session, project: Project, cons: ConstitutionDoc) ->
             "wake_cap": cons.wakes_per_agent_per_hour,
             "wake_slot_frees_at": frees_at.isoformat() if frees_at else None,
             "pending": pending,
+            # The parts, because the total is three different things added up
+            # and a reader cannot tell which. A CEO asked why its project was
+            # still running read "pending: 1", decided on its own that it meant
+            # a notice rather than a task, and told the chairman nothing was
+            # happening. It was an unread message, and it bought a run.
+            "pending_detail": {
+                "work": work,
+                "notices": notice_n,
+                "unread": unread_n,
+                "heartbeat": 1 if heartbeat_due else 0,
+            },
             "batching_until": held.isoformat() if held else None,
         })
 
     board = _board_reachability(session, project, cons, now)
+    delivered = policy.delivered_awaiting_confirmation(session, project)
 
     with_work = [r for r in rows if r["pending"]]
     free = [r for r in with_work
@@ -1060,6 +1086,12 @@ def activity_state(session: Session, project: Project, cons: ConstitutionDoc) ->
         blocked_by = "pacing"
     elif in_flight >= max_concurrent:
         blocked_by = "concurrency"
+    elif delivered:
+        # Above the rungs below because it outranks them: agents with unread
+        # chatter on a delivered project are not "about to start" and are not
+        # "coalescing" — they will never wake at all. Reading that as an
+        # ordinary quiet is how a CEO told its chairman nothing was running.
+        blocked_by = "delivery_ready"
     elif not with_work:
         # Nobody has anything to do. That is either correct, or there is work
         # on the board that nobody can reach — and those two used to render
@@ -1281,7 +1313,8 @@ def chat_session_live(session: Session, project: Project) -> bool:
 
 
 def _wake_reasons(
-    session: Session, project: Project, cons: ConstitutionDoc, agent: Agent
+    session: Session, project: Project, cons: ConstitutionDoc, agent: Agent,
+    *, delivered: bool = False
 ) -> list[dict]:
     reasons: list[dict] = []
     now = utcnow()
@@ -1357,6 +1390,16 @@ def _wake_reasons(
             message_reasons.append(
                 {"kind": "messages", "channel_id": channel_id,
                  "count": actionable, "urgent": channel_urgent})
+    if delivered:
+        # Everything in scope is true and only the chairman's confirmation is
+        # left. Agent-to-agent traffic about a finished project buys a run to
+        # discuss work nobody asked for, and the only thing that ever stopped it
+        # was the daily inbox ceiling — which re-arms at midnight, so the
+        # chairman gets a fresh burst of messages every morning about a project
+        # he was told was done. The chairman still gets through: his messages
+        # and anything in the boardroom are urgent, and urgent survives.
+        message_reasons = [r for r in message_reasons if r["urgent"]]
+        urgent = any(r["urgent"] for r in message_reasons)
     if message_reasons:
         ripe = oldest_at <= now - timedelta(minutes=MESSAGE_COALESCE_MINUTES)
         if urgent or ripe or total >= MESSAGE_COALESCE_COUNT:

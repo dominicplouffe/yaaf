@@ -400,6 +400,11 @@ class NoticeKind(enum.StrEnum):
     # queue. The platform names the earliest member and says so.
     LEAD_ELECTED = "lead_elected"
     AUDIT_FAILED = "audit_failed"  # chairman spot-audit failed an evidence row or completion
+    # Everything in scope is true and only the chairman's confirmation is left.
+    # Not urgent: it can wait out a batching window, because the one thing it
+    # must not do is buy a run on every tick of a project that has finished.
+    DELIVERY_READY = "delivery_ready"
+
     # Memory pressure warns the scope's curator early enough to curate on a wake
     # it was having anyway; MEMORY_FULL is urgent because the scope has stopped
     # accepting writes and only the curator can restart it.

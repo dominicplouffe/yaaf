@@ -79,7 +79,7 @@ from yaaf.core.models import (
     utcnow,
 )
 from yaaf.server import briefing, policy
-from yaaf.server.notify import chairman_notify
+from yaaf.server.notify import boardroom_line, chairman_notify
 from yaaf.server.verifier import verify_pending_evidence
 
 log = logging.getLogger("yaaf.janitor")
@@ -959,44 +959,62 @@ def check_explore_deadline(session: Session, project: Project) -> None:
 
 
 def delivery_outstanding(session: Session, project: Project) -> list[str]:
-    """What still stands between this Deliver project and COMPLETED. Empty
-    means ready — the same list the complete route refuses with, so the
-    email and the refusal can never disagree."""
-    outstanding: list[str] = []
-    plan = policy.plan_requirement(session, project.id)
-    if plan is None or plan.status != RequirementStatus.MET:
-        outstanding.append("the plan gate is open")
-    scope = [r for r in policy.scope_requirements(session, project.id)
-             if r.status != RequirementStatus.PROPOSED]
-    if not scope:
-        outstanding.append("no requirements were ever accepted")
-    open_scope = [r for r in scope if r.status not in policy.CLOSED_REQUIREMENT_STATUSES]
-    if open_scope:
-        outstanding.append(
-            "still open: " + ", ".join(f"{r.key} ({r.status})" for r in open_scope[:8]))
-    if scope and not any(r.status == RequirementStatus.MET for r in scope):
-        outstanding.append("nothing was made true — everything was cut")
-    open_tasks = policy.open_top_level_tasks(session, project.id)
-    if open_tasks:
-        outstanding.append(f"{len(open_tasks)} task(s) still open")
-    return outstanding
+    """What still stands between this Deliver project and COMPLETED. Kept here
+    as the name every caller already knows; the body moved to `policy` so the
+    dispatcher can gate on it without importing this module."""
+    return policy.delivery_outstanding(session, project)
+
+
+#: A delivery the chairman has not confirmed is chased on this rhythm, in the
+#: boardroom, where he actually is. The line is platform-authored, so repeating
+#: it costs no run and spends no reporting cadence — the only thing it can waste
+#: is his attention, and a finished project that keeps waking wastes his money.
+DELIVERY_NAG_HOURS = 12.0
+DELIVERY_BEAT = "delivery_ready"
 
 
 def check_delivery_ready(session: Session, project: Project) -> None:
-    """Tell the chairman ONCE that everything is true. Completion itself is
-    his gate — one of the three moments he chose to be asked at — so the
-    janitor detects and the button on the project page decides."""
+    """Tell the chairman everything is true, and keep telling him until he
+    decides. Completion itself is his gate — one of the three moments he chose
+    to be asked at — so the janitor detects and the button on the page decides.
+
+    It used to fire ONCE per project, ever, deduped on the audit row alone. That
+    is wrong in the exact case it matters: one project went ready, was announced,
+    then had its last requirement reopened forty minutes later for real defects.
+    It became genuinely ready again two hours after that and no notification ever
+    went out, because the single shot had been spent on a state that no longer
+    held. So the dedup is now per readiness EPISODE — any requirement moving
+    after the last announcement re-arms it.
+
+    Three audiences, because the failure was that only one was told:
+    the chairman by email, the chairman in the boardroom (where he was actually
+    sitting, asking why the project was still running), and the CEO — which had
+    no way at all to learn that its own project had finished.
+    """
     if project.mode != ProjectMode.DELIVER:
         return
     if delivery_outstanding(session, project):
         return
-    already = session.execute(
-        select(func.count(AuditLog.id)).where(
+
+    last = session.execute(
+        select(AuditLog.at).where(
             AuditLog.project_id == project.id,
             AuditLog.action == "project.completion_ready")
-    ).scalar_one()
-    if already:
-        return
+        .order_by(AuditLog.at.desc()).limit(1)
+    ).scalar_one_or_none()
+
+    if last is not None:
+        # Already announced. Re-announce only if the scope actually moved since
+        # — a reopen-and-re-meet is a new delivery, not the same one twice.
+        moved = session.execute(
+            select(func.count(RequirementEvent.id)).where(
+                RequirementEvent.project_id == project.id,
+                RequirementEvent.at > last)
+        ).scalar_one()
+        if not moved:
+            _nag_delivery_ready(session, project)
+            return
+
     met = [r for r in policy.scope_requirements(session, project.id)
            if r.status == RequirementStatus.MET]
     session.add(AuditLog(
@@ -1004,12 +1022,71 @@ def check_delivery_ready(session: Session, project: Project) -> None:
         action="project.completion_ready", entity="project", entity_id=project.id,
         detail={"met": [r.key for r in met]},
     ))
-    chairman_notify(
-        session, project, "ready to complete",
+    body = (
         f"Every requirement is settled and {len(met)} of them are true: "
         f"{', '.join(r.key for r in met)}. Confirm completion on the project page — "
         "it writes the delivery receipt and closes the project down cleanly. "
-        "Until you do, it keeps running (and spending).",
+        "Nothing will run until you do: a delivered project stops waking for its "
+        "own agents' traffic, so it is not spending while it waits."
+    )
+    chairman_notify(session, project, "ready to complete", body)
+    boardroom_line(session, project.id, body)
+    _notice_ceo(
+        session, project, NoticeKind.DELIVERY_READY,
+        f"Delivery is complete: {len(met)} requirement(s) in scope are true and "
+        "nothing is open. The chairman has been told and the project is now waiting "
+        "on his confirmation — it will not wake for agent-to-agent messages until "
+        "he decides, and new scope is refused. Do not invent work to fill the "
+        "quiet. If you believe something is genuinely missing, say so in the "
+        "boardroom; reopening the plan is his call, not yours.",
+    )
+    # The beat starts now, so the first chase lands a full window from the
+    # announcement rather than on the janitor's next tick.
+    _touch_delivery_beat(session, project)
+
+
+def _delivery_beat(session: Session, project: Project) -> Heartbeat | None:
+    ceo = policy.ceo_of(session, project.id)
+    if ceo is None:
+        return None
+    return session.execute(
+        select(Heartbeat).where(Heartbeat.agent_id == ceo.id,
+                                Heartbeat.name == DELIVERY_BEAT)
+    ).scalar_one_or_none()
+
+
+def _touch_delivery_beat(session: Session, project: Project) -> None:
+    ceo = policy.ceo_of(session, project.id)
+    if ceo is None:
+        return
+    beat = _delivery_beat(session, project)
+    if beat is None:
+        session.add(Heartbeat(agent_id=ceo.id, name=DELIVERY_BEAT, last_fired_at=utcnow()))
+    else:
+        beat.last_fired_at = utcnow()
+
+
+def _nag_delivery_ready(session: Session, project: Project) -> None:
+    """Chase an unconfirmed delivery in the boardroom, on DELIVERY_NAG_HOURS.
+
+    Boardroom only: the email was already sent and a second one changes nothing,
+    but the boardroom is mirrored to Slack and is where he asks the CEO what is
+    going on. It costs no run — the dispatcher never wakes an agent for a
+    sender-less line.
+    """
+    beat = _delivery_beat(session, project)
+    now = utcnow()
+    if beat is not None and beat.last_fired_at > now - timedelta(hours=DELIVERY_NAG_HOURS):
+        return
+    met = len([r for r in policy.scope_requirements(session, project.id)
+               if r.status == RequirementStatus.MET])
+    _touch_delivery_beat(session, project)
+    boardroom_line(
+        session, project.id,
+        f"Still waiting on you: all {met} requirement(s) are true and this delivery "
+        "has not been confirmed. Complete it on the project page to write the receipt "
+        "and close it, or reopen scope if something is missing. The project is not "
+        "spending while it waits.",
     )
 
 

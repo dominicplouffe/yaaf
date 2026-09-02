@@ -932,11 +932,23 @@ def _situation(session: Session, project: Project, cons: ConstitutionDoc) -> dic
         # turns "will the memo be written by Thursday" from a guess into a
         # lookup — the chain is only as fast as the agents that can wake.
         "agents": [
-            {k: r[k] for k in ("name", "kind", "busy", "pending",
+            {k: r[k] for k in ("name", "kind", "busy", "pending", "pending_detail",
                                "wakes_last_hour", "wake_cap",
                                "wake_slot_frees_at", "batching_until")}
             for r in state["agents"]
         ],
+        # Because the number alone got read as "nothing to do". Asked why a
+        # finished project was still sending messages, a CEO saw "pending: 1"
+        # beside two agents, decided it was a notice count rather than a task,
+        # and told the chairman nothing was running. Both were unread messages,
+        # and both bought a run within the hour.
+        "agents_note": (
+            "`pending` is how many wake reasons an agent has: work + notices + "
+            "unread messages, broken out in `pending_detail`. It is not a task "
+            "count. A non-zero `pending` means that agent WILL be woken and WILL "
+            "spend a run — a project where several agents show pending is a "
+            "project about to spend, whatever the board says."
+        ),
         "budget": {
             "unit": "usd" if usd_mode else "tokens",
             "spent": round(usd, 2) if usd_mode else tokens,
@@ -1223,6 +1235,34 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
                          f"requirements; {accepts}. Nothing here — including you — "
                          "can mark one met: the platform runs the acceptance test "
                          "itself."),
+            }
+        elif policy.delivered_awaiting_confirmation(session, project):
+            # The one moment the pack used to go silent. `requirements` above is
+            # proposed-or-open, so a project with everything met dropped `scope`,
+            # `velocity` and `standing` together — and the CEO lost the only
+            # evidence it had finished at exactly the moment it needed to say so.
+            # It read an empty board as an ordinary quiet day and went looking
+            # for work; the only move the platform did not refuse was opening a
+            # new requirement, so it opened one, 36 hours after reporting done.
+            settled = policy.scope_requirements(session, project.id)
+            pack["scope"] = {
+                "delivered": True,
+                "met": len([r for r in settled if r.status == RequirementStatus.MET]),
+                "cut": len([r for r in settled if r.status == RequirementStatus.CUT]),
+                "open": 0,
+                "awaiting_your_chairman": 0,
+                "note": (
+                    "THIS PROJECT IS FINISHED. Every requirement in scope is settled "
+                    "and the delivery is waiting on the chairman's confirmation — the "
+                    "one thing only he can do. He has been told, in the boardroom and "
+                    "by email, and is reminded until he acts. Until then the project "
+                    "does not wake for agent-to-agent messages and new scope is "
+                    "REFUSED. There is no work to find here. If you genuinely believe "
+                    "something must be true before this ships, say so in the boardroom "
+                    "and let him decide — do not propose it, and do not manufacture "
+                    "work to fill the quiet. An idle finished project is the correct "
+                    "state, not a problem to solve."
+                ),
             }
         pack["deliverables"] = _deliverables(session, project)
         owed = _overrun_owed(session, project)

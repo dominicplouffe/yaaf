@@ -1077,8 +1077,12 @@ def propose_requirement(
             status_code=422,
         )
     # The commitment's guarantee: while the promised date does not hold, new
-    # scope is refused before affordability is even asked.
+    # scope is refused before affordability is even asked. And its other half —
+    # a project that already delivered may not grow itself back open, which the
+    # commitment check misses because a promise that was KEPT is neither at risk
+    # nor breached.
     policy.check_scope_within_commitment(session, ctx.project, cons)
+    policy.check_scope_after_delivery(session, ctx.project)
     policy.check_plan_affordable(session, ctx.project, cons, body.est_runs or 0)
     if (body.recurrence == Recurrence.STANDING
             and ctx.project.mode != ProjectMode.OPERATE):
@@ -1920,20 +1924,11 @@ def book_spend(
 
 
 def _boardroom_system_line(session: Session, project_id: str, body: str) -> None:
-    """A platform-authored boardroom line: no sender, so it spends no cadence
-    and reads the same in the dashboard and in Slack (the bridge mirrors the
-    boardroom) — the one channel that reaches the chairman wherever he is."""
-    boardroom = session.execute(
-        select(Channel).where(Channel.project_id == project_id,
-                              Channel.kind == ChannelKind.BOARDROOM)
-    ).scalar_one_or_none()
-    if boardroom is not None:
-        session.add(Message(
-            id=ids.new_id(ids.MESSAGE),
-            project_id=project_id,
-            channel_id=boardroom.id,
-            body=body,
-        ))
+    """A platform-authored boardroom line. The body lives in `notify` now — the
+    janitor needs the same channel to say a delivery is waiting on the chairman."""
+    from yaaf.server.notify import boardroom_line
+
+    boardroom_line(session, project_id, body)
 
 
 class AccountIn(BaseModel):

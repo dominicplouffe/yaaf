@@ -18,12 +18,44 @@ import smtplib
 import urllib.request
 from email.message import EmailMessage
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from yaaf.core import ids
 from yaaf.core.config import settings
-from yaaf.core.models import Project, User
+from yaaf.core.models import (
+    Channel,
+    ChannelKind,
+    Message,
+    Project,
+    User,
+)
 
 log = logging.getLogger("yaaf.notify")
+
+
+def boardroom_line(session: Session, project_id: str, body: str) -> None:
+    """A platform-authored boardroom line: no sender, so it spends no reporting
+    cadence, mirrors to Slack through the bridge, and — because the dispatcher
+    skips sender-less lines — never wakes an agent. The one channel that reaches
+    the chairman wherever he is, for free.
+
+    Email is not that channel. A chairman who is mid-conversation in the
+    boardroom does not see an SMTP notice, and the one thing the platform had to
+    tell him about a finished project went only there.
+    """
+    boardroom = session.execute(
+        select(Channel).where(Channel.project_id == project_id,
+                              Channel.kind == ChannelKind.BOARDROOM)
+    ).scalar_one_or_none()
+    if boardroom is None:
+        return
+    session.add(Message(
+        id=ids.new_id(ids.MESSAGE),
+        project_id=project_id,
+        channel_id=boardroom.id,
+        body=body,
+    ))
 
 
 def chairman_notify(session: Session, project: Project, subject: str, body: str) -> None:

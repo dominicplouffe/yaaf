@@ -49,6 +49,12 @@ GATES = {
     "wake_ceiling", "coalescing", "scheduled", "no_lead", "paused_agents",
     "stalled_requirement", "rework_owed", "awaiting_chairman", "awaiting_ceo",
     "blocked_tasks", "checks_lost", "checking",
+    # Everything is true and only his click is left. NOT in FINE: the project
+    # is fine, but it is waiting on him and he is the only one who can end it,
+    # so this is the one quiet that earns a banner. Not in WAITS either — no
+    # clock clears it, and a dismissible banner with no clearing time is how a
+    # permanent state gets mistaken for a passing one.
+    "delivery_ready",
 }
 # Gates that mean the project is fine — working, or the platform verifying its
 # finished work. These never raise the banner.

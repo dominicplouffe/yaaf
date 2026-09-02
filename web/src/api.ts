@@ -218,6 +218,15 @@ export interface Activity {
     wake_cap: number;
     wake_slot_frees_at: string | null;
     pending: number;
+    /** What the total is made of. `pending` alone reads like a task count and
+        is not one — it is work + notices + unread, and a non-zero value means
+        this agent will be woken and will spend a run. */
+    pending_detail: {
+      work: number;
+      notices: number;
+      unread: number;
+      heartbeat: number;
+    };
     /** When this agent's batched wake lands, if one is being held. */
     batching_until: string | null;
   }[];

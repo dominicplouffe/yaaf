@@ -1118,6 +1118,51 @@ def scope_requirements(session: Session, project_id: str, *,
     return rows
 
 
+def delivery_outstanding(session: Session, project: Project) -> list[str]:
+    """What still stands between this Deliver project and COMPLETED. Empty
+    means ready — the same list the complete route refuses with, the dashboard
+    renders, and the dispatcher gates on, so the email, the refusal, the button
+    and the brake can never disagree.
+
+    It lives here rather than in the janitor because the dispatcher has to ask
+    it thirty times a minute and the janitor imports the dispatcher.
+    """
+    outstanding: list[str] = []
+    plan = plan_requirement(session, project.id)
+    if plan is None or plan.status != RequirementStatus.MET:
+        outstanding.append("the plan gate is open")
+    scope = [r for r in scope_requirements(session, project.id)
+             if r.status != RequirementStatus.PROPOSED]
+    if not scope:
+        outstanding.append("no requirements were ever accepted")
+    open_scope = [r for r in scope if r.status not in CLOSED_REQUIREMENT_STATUSES]
+    if open_scope:
+        outstanding.append(
+            "still open: " + ", ".join(f"{r.key} ({r.status})" for r in open_scope[:8]))
+    if scope and not any(r.status == RequirementStatus.MET for r in scope):
+        outstanding.append("nothing was made true — everything was cut")
+    open_tasks = open_top_level_tasks(session, project.id)
+    if open_tasks:
+        outstanding.append(f"{len(open_tasks)} task(s) still open")
+    return outstanding
+
+
+def delivered_awaiting_confirmation(session: Session, project: Project) -> bool:
+    """Everything is true and the chairman has not pressed Complete yet. The
+    project is finished; only its status has not caught up.
+
+    This state used to be indistinguishable from an ordinary quiet day, and it
+    is not one: a delivered project that keeps waking is a project paying to
+    discuss work nobody asked for. One project spent 79 runs and 35.8M tokens
+    in the 33 hours after its CEO told the chairman it was done — five agents
+    reviewing each other's citation indexes, because the only thing that ever
+    stopped it was the daily inbox ceiling, and that re-arms at midnight.
+    """
+    return (project.mode == ProjectMode.DELIVER
+            and project.status == ProjectStatus.RUNNING
+            and not delivery_outstanding(session, project))
+
+
 def create_plan_requirement(session: Session, project: Project) -> Requirement:
     """The obligation a Deliver or Operate project starts with.
 
@@ -1719,6 +1764,30 @@ def check_scope_within_commitment(
         f"({projection['basis']}). Adding work moves that the wrong way. Finish "
         "something, or propose cuts to the chairman; if the scope truly must grow, "
         "that is his decision to make with the slip in front of him, not yours.",
+        status_code=409,
+    )
+
+
+def check_scope_after_delivery(session: Session, project: Project) -> None:
+    """The other half of the commitment guarantee. `check_scope_within_commitment`
+    freezes scope while the date does NOT hold — so a project that delivered on
+    time had strictly fewer guards than one running late, and could grow itself
+    back open after telling the chairman it was finished.
+
+    One did: 36 hours after reporting 13 of 13 true, a CEO woken by its own
+    agents' chatter opened R-14 and accepted it on its own authority. It was not
+    misbehaving. Every task it could have created was refused — against a met
+    requirement ("it is already true") or with no requirement at all — and a new
+    requirement was the only move left that the platform did not refuse.
+    """
+    if not delivered_awaiting_confirmation(session, project):
+        return
+    raise Refusal(
+        "No new scope: every requirement is true and this delivery is waiting on "
+        "the chairman's confirmation. He has been told it is finished, and adding "
+        "work now would reopen a project he believes is done. If something really "
+        "must be true before it ships, say so in the boardroom and let him decide "
+        "— reopening is his, and he can do it in one click on the project page.",
         status_code=409,
     )
 

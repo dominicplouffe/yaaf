@@ -149,8 +149,15 @@ def _situation_block() -> str:
                 f"({result['status']}). Read the board with your tools before making "
                 "any claim about what is or is not happening.]\n\n")
     pack = result["body"]
+    # `unread` and `suggestions` are on this list because building the pack
+    # CONSUMES them — the cursor advances and the suggestion is marked read
+    # whether or not the caller shows them. Leaving them off meant every
+    # chairman message silently ate the CEO's leadership mail, and the CEO
+    # answered "nothing is running" holding a `pending` count it could no
+    # longer explain. Consume exactly what you will show.
     keep = {k: pack[k] for k in
-            ("situation", "board", "plan", "chairman", "notices", "roster", "cycles",
+            ("situation", "board", "plan", "chairman", "notices", "unread",
+             "suggestions", "constitution_amendments", "roster", "cycles",
              "review", "commitment", "velocity", "scope")
             if pack.get(k)}
     return (

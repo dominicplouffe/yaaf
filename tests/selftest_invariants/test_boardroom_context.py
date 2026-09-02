@@ -115,8 +115,16 @@ def test_the_ceo_can_see_every_limit_that_gates_a_run(client):
     assert agents, "the CEO must be able to see its own roster's wake state"
     assert any(a["kind"] == "ceo" for a in agents)
     for row in agents:
-        assert set(row) == {"name", "kind", "busy", "pending", "wakes_last_hour",
-                            "wake_cap", "wake_slot_frees_at", "batching_until"}
+        # `pending_detail` is on this row because the total alone got misread
+        # out loud: asked why a finished project was still sending messages, a
+        # CEO saw "pending: 1", called it a notice count rather than a task, and
+        # told the chairman nothing was running. It was an unread message, and
+        # it bought a run within the hour.
+        assert set(row) == {"name", "kind", "busy", "pending", "pending_detail",
+                            "wakes_last_hour", "wake_cap", "wake_slot_frees_at",
+                            "batching_until"}
+        assert set(row["pending_detail"]) == {"work", "notices", "unread", "heartbeat"}
+        assert row["pending"] == sum(row["pending_detail"].values())
 
     # The reset and thaw times ride along, so a forecast can name when capacity
     # returns rather than guessing at midnight.
