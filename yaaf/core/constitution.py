@@ -255,7 +255,13 @@ class ConstitutionDoc(BaseModel):
              "something about it while there is still a choice to make.")
     stakes: str = _rule(
         "normal", choices=["low", "normal", "high"], group="Budgets",
-        label="How much this project matters",
+        label="How much this project matters (stakes)",
+        # The word is in the label because this rule is the one a chairman goes
+        # LOOKING for, and could not find. The CEO calls it "STAKES: NORMAL" in
+        # its own reports and the docs and CLI call it `stakes`, but the screen
+        # called it nothing of the kind and there is no search here — so the one
+        # dial written for "this desk trades a real account" was invisible to
+        # the person holding it.
         help="How aggressively to spend when the budget turns out to be wrong, which it "
              "will. HIGH: running out is worse than overspending — the CEO is told to "
              "spend what the work needs and report, and it gets real headroom before "
