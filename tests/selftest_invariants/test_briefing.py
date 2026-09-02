@@ -662,6 +662,31 @@ def test_the_desk_gives_a_full_block_only_to_what_needs_you(client):
     assert row["needs_you"] == 0, "and none of it was his"
 
 
+def test_the_headline_never_contradicts_the_list_beneath_it(client):
+    """Found by running it, not by reading it. The headline's progress ladder
+    counts four kinds — requirements settled, deliverables, tasks, proof — and
+    an autonomy dial that delegates the last three left a window whose only
+    visible progress was a publish. It printed "Nothing settled" two inches
+    above "2 deliverables published". A headline may be brief; it may not
+    disagree with the panel."""
+    project = autonomous_project(client, "shipped")
+    token = ceo_token(project)
+    rid = propose(client, token)["requirement_id"]
+    accept(client, rid, project)
+    close_a_task(client, project, token, rid)
+    response = client.post(
+        "/agent/artifacts",
+        json={"filename": "pack.md", "content_base64": b64encode(b"final").decode()},
+        headers=bearer(token))
+    assert response.status_code == 200, response.text
+
+    payload = brief(client, project)
+    moved = [line for line in payload["lines"] if line["group"] == "moved"]
+    assert moved, "the publish is his at every dial"
+    assert "Nothing settled" not in payload["headline"]
+    assert "deliverable published" in payload["headline"]
+
+
 # ── the text rendering ──────────────────────────────────────────────────────────
 
 
