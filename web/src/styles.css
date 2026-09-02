@@ -1138,8 +1138,10 @@ button.rolepick { width: 100%; text-align: left; background: var(--surface-2); }
 .bgroup { margin-top: 9px; padding-left: 9px; border-left: 2px solid var(--grid); }
 .bgroup.bg-attention { border-left-color: var(--serious); }
 .bgroup.bg-moved { border-left-color: var(--grid); }
-/* Bookkeeping, folded. True, kept, and never why anybody opened this. */
-.bgroup.bg-record { opacity: 0.72; }
+/* The CEO's own business under the dial the chairman set, folded. Five rules,
+   each reading `chairman` or `ceo`; a line governed by one that reads `ceo` is
+   an authority he handed over on purpose. */
+.bgroup.bg-delegated { opacity: 0.72; }
 .bghead { display: flex; align-items: baseline; gap: 8px; }
 .bglbl {
   font-size: 10px; text-transform: uppercase; letter-spacing: 0.7px;

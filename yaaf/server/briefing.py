@@ -39,7 +39,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from yaaf.core.constitution import ConstitutionDoc, effective
+from yaaf.core.constitution import ConstitutionDoc, effective, preset_name
 from yaaf.core.models import (
     Amendment,
     Approval,
@@ -120,14 +120,14 @@ SELF_ACTING_NOTICES = {
 #: Every line belongs to exactly one, and the panel prints them under these
 #: headings rather than as one undifferentiated list — which is what made a
 #: stall read like a tally of runs.
-GROUPS = ("attention", "moved", "record")
+GROUPS = ("attention", "moved", "delegated")
 
 #: What each group is called where the reader sees it. One table, so the panel
 #: and the email cannot end up naming the same three groups differently.
 GROUP_HEADINGS = {
     "attention": "Worth your eye",
     "moved": "What moved",
-    "record": "On the record",
+    "delegated": "The CEO handled this itself",
 }
 
 #: Lines that need the chairman even though nothing about them is *bad*: he is
@@ -135,10 +135,73 @@ GROUP_HEADINGS = {
 #: to do the next thing.
 ASKS = {"requirement_proposed"}
 
-#: Bookkeeping: true, worth keeping, and never the reason you opened the panel
-#: — so it goes last and the panel folds it away until asked. A line here that
-#: carries a `bad` tone is not bookkeeping and is routed to attention instead.
-RECORD = {"runs", "ceo_authority", "you_decided", "rules_changed", "review_opened"}
+#: A line that is the chairman's at every setting of the autonomy dial, because
+#: no authority he could hand over makes it go away: money in or out, a promise
+#: to the outside world breaking, the project stopping, what he actually gets,
+#: and a signature only he can give.
+MATERIAL = "material"
+
+#: A line that was never his at any setting. How the work got done.
+OPS = "ops"
+
+#: Whose problem each kind of line is.
+#:
+#: The briefing used to print the same thirteen lines whether the chairman had
+#: kept every authority or handed over all five — which makes the autonomy dial
+#: a lie on the one screen where it should be loudest. A chairman who set the
+#: dial to autonomous said *deal with it, I have given it to you*; answering him
+#: with a management report is arguing with the setting.
+#:
+#: So each line names either MATERIAL, OPS, or the constitution rule that
+#: governs it. A rule still reading `chairman` means he kept that authority and
+#: therefore still wants the news; a rule reading anything else means he handed
+#: it over, and the line folds into the CEO's own business.
+#:
+#: The split inside scope is the one worth stating outright: **an outcome is
+#: material, its management is delegated.** A requirement settling true is what
+#: he gets. A requirement entering scope, the plan gate opening, the CEO
+#: exercising authority the dial gave it — that is how he gets it, and he said
+#: he did not want to watch.
+LINE_OWNER: dict[str, str] = {
+    # Money, liveness, and what he actually ends up with.
+    "notice_budget_exhausted": MATERIAL,
+    "notice_budget_warning": MATERIAL,
+    "notice_revenue": MATERIAL,
+    "notice_stalled": MATERIAL,
+    "notice_memory_full": MATERIAL,
+    "notice_explore_deadline": MATERIAL,
+    "notice_commitment_breached": MATERIAL,
+    "notice_commitment_met": MATERIAL,
+    "requirement_met": MATERIAL,
+    "requirement_cut": MATERIAL,
+    "published": MATERIAL,
+    # Only he can sign these, so only he can be at fault for them.
+    "approvals_expired": MATERIAL,
+    "rules_changed": MATERIAL,
+    # Governed by the dial.
+    "plan_gate_closed": "plan_authority",
+    "plan_gate_reopened": "plan_authority",
+    "tasks_done": "plan_authority",
+    "tasks_blocked": "plan_authority",
+    "requirement_accepted": "scope_authority",
+    "requirement_proposed": "scope_authority",
+    "standing_honoured": "scope_authority",
+    "ceo_authority": "scope_authority",
+    "bets_expired": "scope_authority",
+    "notice_commitment_at_risk": "commitment_authority",
+    "notice_commitment_recovered": "commitment_authority",
+    "evidence_verified": "verdict_policy",
+    "evidence_failed": "verdict_policy",
+    "evidence_pending": "verdict_policy",
+    "samples_expired": "verdict_policy",
+    # How the work got done. His at no setting.
+    "runs": OPS,
+    "runs_dead": OPS,
+    "threads_frozen": OPS,
+    "review_opened": OPS,
+    "you_decided": OPS,
+    "notice_cycle_rolled": OPS,
+}
 
 #: Which setback earns the headline when several compete. A paused project
 #: outranks a cut requirement; anything unlisted sorts last.
@@ -221,19 +284,12 @@ def _line(kind: str, text: str, *, tone: str = "flat", count: int | None = None,
     the explanation only when a line surprises him.
 
     `tone` is what it means, never how loud to be about it: `good` landed,
-    `bad` cost something, `flat` merely happened. `group` follows from tone
-    and kind, and is what the panel actually sorts on.
+    `bad` cost something, `flat` merely happened. `group` and `yours` are not
+    settled here — they depend on the autonomy dial, which this function has no
+    business reading. :func:`_triage` fills them in.
     """
-    if tone == "bad" or kind in ASKS:
-        # Tested before RECORD on purpose: the record group folds away, and a
-        # setback the reader has to unfold to find is one he will not find.
-        group = "attention"
-    elif kind in RECORD:
-        group = "record"
-    else:
-        group = "moved"
     return {"kind": kind, "text": text, "tone": tone, "count": count,
-            "where": where, "note": note, "group": group}
+            "where": where, "note": note, "group": None, "yours": None}
 
 
 def _plural(n: int, one: str, many: str | None = None) -> str:
@@ -367,8 +423,12 @@ def _scope_lines(session: Session, project: Project, since, until) -> list[dict]
         lines.append(_line(
             "requirement_proposed",
             f"the CEO proposed {len(proposed)} new "
-            f"{_plural(len(proposed), 'requirement')} for you to accept",
+            f"{_plural(len(proposed), 'requirement')} ({_keys(proposed)})",
             count=len(proposed), where="plan",
+            # Not welded into the fact: under a dial that gave scope to the CEO
+            # it accepts these itself, and "for you to accept" would be the
+            # panel telling him to do a job he handed over.
+            note="proposed scope is not scope until it is accepted",
         ))
     return lines
 
@@ -798,6 +858,42 @@ def _pulse(session: Session, project: Project, since, until) -> dict:
     }
 
 
+def _yours(kind: str, cons: ConstitutionDoc) -> bool:
+    """Whether this line is still the chairman's news, per the dial he set.
+
+    An unknown kind is his. A line nobody has classified should arrive loudly
+    and get classified, never disappear into a fold because a table was not
+    updated — the failure mode of a filter is silence, and silence is the one
+    thing this panel exists to prevent.
+    """
+    owner = LINE_OWNER.get(kind, MATERIAL)
+    if owner == MATERIAL:
+        return True
+    if owner == OPS:
+        return False
+    return getattr(cons, owner, "chairman") == "chairman"
+
+
+def _triage(lines: list[dict], cons: ConstitutionDoc) -> list[dict]:
+    """File every line by whose problem it is, then by what it means.
+
+    Two passes that used to be neither. Ownership first, because a chairman who
+    handed the CEO all five authorities does not want a line about scope
+    entering the plan under any heading — the dial *is* his instruction about
+    what to stop telling him. Then, among the lines that are still his, tone:
+    a setback he owns can never be folded away.
+    """
+    for line in lines:
+        line["yours"] = _yours(line["kind"], cons)
+        if not line["yours"]:
+            line["group"] = "delegated"
+        elif line["tone"] == "bad" or line["kind"] in ASKS:
+            line["group"] = "attention"
+        else:
+            line["group"] = "moved"
+    return _ordered(lines)
+
+
 def _worst(lines: list[dict]) -> dict | None:
     """The setback that earns the headline. Ranked, because a window can hold
     six of them and "the platform paused the project" is not interchangeable
@@ -814,8 +910,8 @@ def _worst(lines: list[dict]) -> dict | None:
     return min(setbacks, key=rank)
 
 
-def _headline(project: Project, lines: list[dict], pulse: dict,
-              waiting: dict) -> str:
+def _headline(project: Project, lines: list[dict], pulse: dict, waiting: dict,
+              delegated: int = 0) -> str:
     """One sentence: what landed, and the worst thing that did not.
 
     It used to be three throughput counts and a token total — "15 requirements
@@ -828,6 +924,11 @@ def _headline(project: Project, lines: list[dict], pulse: dict,
     So: progress, then the worst setback, then what that leaves waiting. Money
     is not here at all — the money row prints it directly underneath, and a
     number the reader is about to see twice is a number that stops being read.
+
+    And it is composed only from the lines that are still the chairman's. A
+    headline that names something he cannot find on the panel is a headline
+    that sent him looking, which on an autonomous project means sending him
+    into work he explicitly delegated.
     """
     if project.status in (ProjectStatus.PAUSED, ProjectStatus.STOPPED,
                           ProjectStatus.COMPLETED):
@@ -841,6 +942,22 @@ def _headline(project: Project, lines: list[dict], pulse: dict,
             return "Nothing happened, and there is nothing on the board to happen."
         return (f"Nothing happened — {pulse['open_tasks']} "
                 f"{_plural(pulse['open_tasks'], 'task')} open and none of them moved.")
+    lines = [line for line in lines if line["group"] != "delegated"]
+    if not lines:
+        # He handed over everything this window touched. Saying so in one
+        # sentence is the whole promise of the dial — the alternative is a
+        # management report he asked not to receive, and a blank panel that
+        # cannot be told apart from a dead project.
+        sentence = "Nothing needed you"
+        if delegated:
+            sentence += (f" — the CEO handled {delegated} "
+                         f"{_plural(delegated, 'thing')} itself")
+        elif pulse["running"]:
+            sentence += f", and {pulse['running']} {_plural(pulse['running'], 'run')} " \
+                        "are in flight right now"
+        if waiting["total"]:
+            sentence += f". {waiting['total']} now waiting on you"
+        return sentence + "."
     counts = {line["kind"]: (line["count"] or 0) for line in lines}
     parts: list[str] = []
     if counts.get("requirement_met"):
@@ -978,7 +1095,7 @@ def project_briefing(session: Session, project: Project,
     lines += _meeting_lines(session, project, since, until)
     lines += _run_lines(session, project, since, until)
 
-    lines = _ordered(lines)
+    lines = _triage(lines, cons)
     money = _money(session, project, cons, since, until)
     pulse = _pulse(session, project, since, until)
     waiting = _waiting(session, project, cons)
@@ -996,10 +1113,21 @@ def project_briefing(session: Session, project: Project,
         "window_source": source,
         "window_hours": round((until - since).total_seconds() / 3600.0, 2),
         "quiet": not substantive,
-        "headline": _headline(project, substantive, pulse, waiting),
+        "headline": _headline(
+            project, substantive, pulse, waiting,
+            # Counted off `lines`, not `substantive`: the sentence names a
+            # number the reader is about to see on the fold beside it.
+            delegated=sum(1 for line in lines if line["group"] == "delegated")),
         "lines": lines,
         "groups": {group: sum(1 for line in lines if line["group"] == group)
                    for group in GROUPS},
+        # How many of this window's lines the chairman still owns. Zero is the
+        # answer an autonomous project should usually give, and the Desk uses
+        # it rather than `quiet` to decide who gets a full block: "nothing
+        # happened" and "nothing happened that is yours" are different
+        # sentences, and only the second one scales with the dial.
+        "needs_you": sum(1 for line in lines if line["yours"]),
+        "autonomy": preset_name(cons.model_dump()),
         "money": money,
         "pulse": pulse,
         "waiting": waiting,

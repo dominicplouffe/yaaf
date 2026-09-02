@@ -681,9 +681,13 @@ export interface BriefingLine {
   /** What it means, never how loud to be about it. */
   tone: "good" | "bad" | "flat";
   /** Which of the three questions this answers. `attention` is a setback or an
-      ask, `moved` is what the window actually did, `record` is bookkeeping
-      that is true and was never why you opened the panel. */
-  group: "attention" | "moved" | "record";
+      ask he still owns, `moved` is what he got, `delegated` is the CEO's own
+      business under the autonomy dial he set — folded away, because a chairman
+      who handed over all five authorities said *deal with it*. */
+  group: "attention" | "moved" | "delegated";
+  /** Whether this line is still his under that dial. `delegated` is the same
+      fact from the panel's side; this is it from the constitution's. */
+  yours: boolean;
   count: number | null;
   /** A tab under the project, so a fact can be followed to its evidence. */
   where: string | null;
@@ -705,7 +709,15 @@ export interface Briefing {
   /** Already in reading order: attention first and worst-first within it, then
       what moved, then the record. */
   lines: BriefingLine[];
-  groups: { attention: number; moved: number; record: number };
+  groups: { attention: number; moved: number; delegated: number };
+  /** How many of this window's lines the chairman still owns. The Desk splits
+      on this rather than on `quiet`: "nothing happened" and "nothing happened
+      that is yours" are different sentences, and only the second one scales
+      with the dial. */
+  needs_you: number;
+  /** Which preset the autonomy dial *is*, or null for a dial set rule by rule.
+      Used to explain the fold, never to compute it. */
+  autonomy: string | null;
   money: { unit: "usd" | "tokens"; window: number; month_to_date: number; cap: number };
   /** Proof of life for an empty window: nothing wrong and nothing happening
       are different, and a blank panel cannot tell them apart. */

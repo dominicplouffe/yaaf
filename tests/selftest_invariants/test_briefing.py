@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from base64 import b64encode
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from tests.conftest import ADMIN, agent_by_name, bearer, live_token, make_project
 from tests.selftest_invariants.test_requirements import (
@@ -25,6 +26,7 @@ from tests.selftest_invariants.test_requirements import (
     make_task,
     propose,
 )
+from yaaf.core.constitution import AUTONOMY_PRESETS, ConstitutionDoc
 from yaaf.core.db import db_session
 from yaaf.core.models import (
     Heartbeat,
@@ -434,11 +436,11 @@ def test_every_line_is_filed_under_one_of_three_questions(client):
     payload = brief(client, project)
     assert payload["lines"], "this window did things"
     for line in payload["lines"]:
-        assert line["group"] in ("attention", "moved", "record"), line
+        assert line["group"] in ("attention", "moved", "delegated"), line
     by_kind = {line["kind"]: line for line in payload["lines"]}
     assert by_kind["requirement_cut"]["group"] == "attention"
-    assert by_kind["tasks_done"]["group"] == "moved"
-    assert by_kind["runs"]["group"] == "record"
+    assert by_kind["tasks_done"]["group"] == "moved", "supervised: the plan is his"
+    assert by_kind["runs"]["group"] == "delegated", "a run tally is his at no dial"
     assert payload["groups"]["attention"] >= 1
     assert sum(payload["groups"].values()) == len(payload["lines"])
 
@@ -455,15 +457,27 @@ def test_the_lines_arrive_worst_first_not_in_query_order(client):
     cut(client, propose(client, token)["requirement_id"])
 
     groups = [line["group"] for line in brief(client, project)["lines"]]
-    assert groups == sorted(groups, key=["attention", "moved", "record"].index)
+    assert groups == sorted(groups, key=list(briefing.GROUPS).index)
 
 
-def test_nothing_bad_is_filed_as_bookkeeping(client):
-    """The record group folds away on the panel. A setback the reader has to
-    unfold to find is one he will not find, so tone outranks kind."""
-    for kind in briefing.RECORD:
-        assert briefing._line(kind, "x", tone="bad")["group"] == "attention"
-        assert briefing._line(kind, "x")["group"] == "record"
+def test_a_setback_he_still_owns_is_never_folded(client):
+    """The delegated group folds away on the panel. A setback he still holds
+    the authority over must not be inside it, so among his own lines tone
+    decides — and a line he handed over is folded whatever its tone, which is
+    the entire request the autonomy dial makes."""
+    supervised = ConstitutionDoc.model_validate(AUTONOMY_PRESETS["supervised"])
+    autonomous = ConstitutionDoc.model_validate(AUTONOMY_PRESETS["autonomous"])
+    his_setback = briefing._triage(
+        [briefing._line("evidence_failed", "x", tone="bad")], supervised)[0]
+    assert his_setback["group"] == "attention"
+    handed_over = briefing._triage(
+        [briefing._line("evidence_failed", "x", tone="bad")], autonomous)[0]
+    assert handed_over["group"] == "delegated"
+    # Money and liveness are nobody's to delegate, at either end of the dial.
+    for dial in (supervised, autonomous):
+        stall = briefing._triage(
+            [briefing._line("notice_stalled", "x", tone="bad")], dial)[0]
+        assert stall["group"] == "attention"
 
 
 def test_a_setback_reaches_the_headline_even_in_a_week_that_shipped(client):
@@ -537,6 +551,115 @@ def test_a_document_revised_four_times_is_one_deliverable(client):
     assert "ticket.md v3" in line["text"], "the latest version, not the first"
     assert "ticket.md v2" not in line["text"]
     assert line["note"] == "2 of the 3 versions in the window were revisions of these"
+
+
+# ── the autonomy dial: whose problem is it ──────────────────────────────────────
+
+
+def autonomous_project(client, slug: str) -> dict:
+    return deliver_project(client, slug=slug,
+                           constitution=dict(AUTONOMY_PRESETS["autonomous"]))
+
+
+def test_the_same_window_reads_differently_at_each_end_of_the_dial(client):
+    """The briefing printed the same lines whether the chairman had kept every
+    authority or handed over all five, which makes the dial a lie on the one
+    screen where it should be loudest. A chairman who set it to autonomous said
+    *deal with it, I have given it to you*."""
+    for slug, dial in (("kept", "supervised"), ("gave", "autonomous")):
+        project = deliver_project(client, slug=slug,
+                                  constitution=dict(AUTONOMY_PRESETS[dial]))
+        token = ceo_token(project)
+        rid = propose(client, token)["requirement_id"]
+        accept(client, rid, project)
+        close_a_task(client, project, token, rid)
+        payload = brief(client, project)
+        assert payload["autonomy"] == dial
+        by_kind = {line["kind"]: line for line in payload["lines"]}
+        if dial == "supervised":
+            assert by_kind["tasks_done"]["yours"] is True
+            assert by_kind["requirement_accepted"]["yours"] is True
+            kept = payload
+        else:
+            assert by_kind["tasks_done"]["yours"] is False
+            assert by_kind["requirement_accepted"]["yours"] is False
+            assert payload["needs_you"] < kept["needs_you"], \
+                "handing over authority must buy a shorter briefing"
+
+
+def test_an_outcome_is_material_even_where_its_management_is_delegated(client):
+    """The split worth stating outright. A requirement settling true is what he
+    gets; a requirement entering scope is how he gets it, and he said he did
+    not want to watch that part."""
+    autonomous = ConstitutionDoc.model_validate(AUTONOMY_PRESETS["autonomous"])
+    yours = {kind: briefing._yours(kind, autonomous) for kind in (
+        "requirement_met", "requirement_cut", "published", "notice_revenue",
+        "notice_budget_exhausted", "notice_stalled", "notice_commitment_breached",
+        "approvals_expired", "rules_changed",
+        "requirement_accepted", "tasks_done", "evidence_verified", "ceo_authority",
+        "plan_gate_closed", "runs", "runs_dead",
+    )}
+    assert all(yours[kind] for kind in (
+        "requirement_met", "requirement_cut", "published", "notice_revenue",
+        "notice_budget_exhausted", "notice_stalled", "notice_commitment_breached",
+        "approvals_expired", "rules_changed")), yours
+    assert not any(yours[kind] for kind in (
+        "requirement_accepted", "tasks_done", "evidence_verified", "ceo_authority",
+        "plan_gate_closed", "runs", "runs_dead")), yours
+
+
+def test_a_line_nobody_classified_arrives_rather_than_vanishing(client):
+    """The failure mode of a filter is silence, and silence is the one thing
+    this panel exists to prevent. A kind missing from the table is his."""
+    autonomous = ConstitutionDoc.model_validate(AUTONOMY_PRESETS["autonomous"])
+    assert briefing._yours("some_future_line_kind", autonomous) is True
+
+
+def test_every_kind_the_composer_emits_has_been_classified(client):
+    """Not a style rule: an unclassified kind is loud forever, so the table has
+    to keep up with the composer rather than the other way around."""
+    import re
+    source = (Path(briefing.__file__)).read_text()
+    emitted = set(re.findall(r'_line\(\s*\n?\s*"([a-z_]+)"', source))
+    emitted |= {f"notice_{kind}" for kind in briefing.SELF_ACTING_NOTICES}
+    unclassified = emitted - set(briefing.LINE_OWNER) - {"x"}
+    assert not unclassified, f"classify these in LINE_OWNER: {sorted(unclassified)}"
+
+
+def test_a_project_running_itself_says_so_rather_than_reporting_in(client):
+    """Zero lines of his is the answer an autonomous project should usually
+    give. A blank panel cannot be told from a dead project, and a management
+    report is the thing he asked not to receive — so it is one sentence."""
+    project = autonomous_project(client, "handsoff")
+    token = ceo_token(project)
+    rid = propose(client, token)["requirement_id"]
+    accept(client, rid, project)
+    close_a_task(client, project, token, rid)
+
+    payload = brief(client, project)
+    assert payload["needs_you"] == 0
+    assert payload["quiet"] is False, "the window was not empty — it was not HIS"
+    assert payload["lines"], "the CEO did do things"
+    assert all(line["group"] == "delegated" for line in payload["lines"])
+    assert payload["headline"] == (
+        f"Nothing needed you — the CEO handled {len(payload['lines'])} things itself.")
+    assert payload["groups"]["delegated"] == len(payload["lines"]), \
+        "the sentence names the number the fold beside it shows"
+
+
+def test_the_desk_gives_a_full_block_only_to_what_needs_you(client):
+    """Splitting on `quiet` gave a busy autonomous project a full block anyway,
+    so the reward for delegating well was a longer desk."""
+    project = autonomous_project(client, "busy")
+    token = ceo_token(project)
+    rid = propose(client, token)["requirement_id"]
+    accept(client, rid, project)
+    close_a_task(client, project, token, rid)
+
+    row = next(p for p in client.get("/observe/briefing", headers=ADMIN).json()["projects"]
+               if p["slug"] == "busy")
+    assert row["quiet"] is False, "the window was not empty"
+    assert row["needs_you"] == 0, "and none of it was his"
 
 
 # ── the text rendering ──────────────────────────────────────────────────────────

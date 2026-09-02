@@ -231,14 +231,42 @@ true now, what happens next.
   panel as the Desk's, minus the project name, with *Mark read* beside it. Its
   lines come filed under three headings rather than as one list: **Worth your
   eye** (setbacks worst-first, and anything asking for a decision), **What
-  moved** (scope settled, work closed, proof landed, documents published), and
-  **On the record** (bookkeeping — run tallies, decisions the CEO took on its
-  own authority, decisions you took), which is folded away until you open it.
-  The headline names what landed *and* the worst thing that did not; the money
-  is one row below it rather than repeated inside it. Each line is a fact, with
-  the standing explanation of what that kind of fact means printed quieter
-  underneath — it is the same sentence in every briefing, so it should never be
-  the reason a fact is hard to find.
+  moved** (what you got), and **The CEO handled this itself**, folded away
+  until you open it.
+
+  **The autonomy dial decides which of the three a line lands in.** Every line
+  names the constitution rule that governs it. A rule still reading `chairman`
+  means you kept that authority and still want the news; a rule reading `ceo`
+  means you handed it over, and the line folds. So the same window that gives a
+  Supervised project ten lines gives an Autonomous one three — handing over
+  authority buys a shorter briefing, which is the only honest thing the dial
+  can mean on this screen.
+
+  Two kinds of line ignore the dial. **Material** ones are yours at every
+  setting, because no authority you could delegate makes them go away: money in
+  or out, the budget, the project stopping, a promise to the outside world
+  breaking, scope being cut, what actually got published, a requirement
+  settling true, and anything only your signature can resolve. **Operations** —
+  run tallies, frozen threads, reviews opening — are yours at no setting. The
+  split inside scope is worth stating outright: an *outcome* is material, its
+  *management* is delegated. A requirement settling true is what you get; a
+  requirement entering scope is how you get it. A line kind nobody has
+  classified is treated as material, because the failure mode of a filter is
+  silence and silence is what this panel exists to prevent.
+
+  When nothing in the window was yours, the headline says so in one sentence —
+  *Nothing needed you — the CEO handled 11 things itself* — and the Desk gives
+  that project a single collapsed row instead of a full block. The Desk splits
+  on what needed you, not on whether the project was busy: an autonomous
+  project can close twenty-six tasks and publish five documents without one
+  line being yours, and under the dial you set that is a success rather than a
+  headline.
+
+  Otherwise the headline names what landed *and* the worst thing that did not;
+  the money is one row below it rather than repeated inside it. Each line is a
+  fact, with the standing explanation of what that kind of fact means printed
+  quieter underneath — it is the same sentence in every briefing, so it should
+  never be the reason a fact is hard to find.
 - **Is it working?** — working now, runs today against the daily ceiling, runs
   that ended early, and spend today.
 - **What happens next** — the calendar. Fourteen days by default (7 or 30 on
