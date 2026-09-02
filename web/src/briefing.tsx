@@ -33,6 +33,73 @@ const MARK: Record<BriefingLine["tone"], string> = {
   flat: "·",
 };
 
+/** The three questions, in the order a chairman asks them. The names come from
+    the composer; these are what he reads. */
+const HEADINGS: Record<BriefingLine["group"], string> = {
+  attention: "Worth your eye",
+  moved: "What moved",
+  delegated: "The CEO handled this itself",
+};
+
+/** One group of lines under its heading.
+
+    The panel used to print every line at one weight in the order the composer
+    queried them, so a stall sat between "20 deliverables published" and "the
+    CEO exercised 26 decisions" and read like a third tally. Thirteen equal
+    sentences is not a briefing, it is a paragraph — the reader ends up doing
+    the triage the panel exists to do.
+
+    The delegated group folds away, because the autonomy dial already says the
+    chairman does not want it. Five rules, each reading `chairman` or `ceo`;
+    every line names the rule that governs it, and one still reading `ceo` is
+    an authority he handed over on purpose. Printing it back at him is arguing
+    with the setting. */
+function Group({
+  group,
+  lines,
+  to,
+}: {
+  group: BriefingLine["group"];
+  lines: BriefingLine[];
+  to: string;
+}) {
+  const foldable = group === "delegated";
+  const [open, setOpen] = useState(!foldable);
+  if (lines.length === 0) return null;
+  return (
+    <div className={`bgroup bg-${group}`}>
+      <div className="bghead">
+        <span className="bglbl">{HEADINGS[group]}</span>
+        {foldable && (
+          <button className="linkish bgfold" onClick={() => setOpen(!open)}>
+            {open ? "hide" : `${lines.length} thing${lines.length === 1 ? "" : "s"}`}
+          </button>
+        )}
+      </div>
+      {open && (
+        <ul className="blines">
+          {lines.map((line, i) => (
+            <li key={`${line.kind}-${i}`} className={`bl ${line.tone}`}>
+              <span className="bm" aria-hidden="true">
+                {MARK[line.tone]}
+              </span>
+              <span className="bt">
+                {line.text}
+                {line.note && <span className="bnote">{line.note}</span>}
+              </span>
+              {line.where && (
+                <Link className="bgo" to={`${to}/${line.where}`}>
+                  look →
+                </Link>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function windowLabel(brief: Briefing): string {
   const hours = brief.window_hours;
   if (hours < 1) return "the last few minutes";
@@ -154,21 +221,14 @@ export function BriefingBlock({
       </div>
       <div className="bline">{brief.headline}</div>
       {brief.lines.length > 0 ? (
-        <ul className="blines">
-          {brief.lines.map((line, i) => (
-            <li key={`${line.kind}-${i}`} className={`bl ${line.tone}`}>
-              <span className="bm" aria-hidden="true">
-                {MARK[line.tone]}
-              </span>
-              <span className="bt">{line.text}</span>
-              {line.where && (
-                <Link className="bgo" to={`${to}/${line.where}`}>
-                  look →
-                </Link>
-              )}
-            </li>
-          ))}
-        </ul>
+        (["attention", "moved", "delegated"] as const).map((group) => (
+          <Group
+            key={group}
+            group={group}
+            to={to}
+            lines={brief.lines.filter((line) => line.group === group)}
+          />
+        ))
       ) : (
         <Pulse brief={brief} />
       )}
@@ -218,10 +278,16 @@ export function DeskBriefingPanel() {
   if (!data) return null;
   const live = data.projects.filter((b) => b.status === "running");
   if (live.length === 0) return null;
-  const news = live.filter((b) => !b.quiet);
-  const silent = live.filter((b) => b.quiet);
+  // Split on what needed HIM, not on whether the project was busy. An
+  // autonomous project can close twenty-six tasks, publish five documents and
+  // burn a hundred million tokens without a single thing on the panel being
+  // his to do — and under the dial he set, that is a success, not a headline.
+  // Splitting on `quiet` gave it a full block anyway, so the reward for
+  // delegating well was a longer desk.
+  const news = live.filter((b) => b.needs_you > 0);
+  const silent = live.filter((b) => b.needs_you === 0);
 
-  // Every project quiet is not nothing to say — it is the proof-of-life
+  // Nothing needing him is not nothing to say — it is the proof-of-life
   // sentence — but it does not deserve the top of the desk, so it collapses to
   // one line above the rows that do have consequences attached.
   if (news.length === 0) {
@@ -230,7 +296,7 @@ export function DeskBriefingPanel() {
         <div className="bpanel-head">
           <span className="bttl">Since you were last here</span>
           <span className="dim">
-            nothing settled in any of your {live.length} running project
+            nothing needs you across your {live.length} running project
             {live.length === 1 ? "" : "s"}
           </span>
           <div className="spacer" />
@@ -259,8 +325,9 @@ export function DeskBriefingPanel() {
       <div className="bpanel-head">
         <span className="bttl">Since you were last here</span>
         <span className="dim">
-          {news.length} project{news.length === 1 ? "" : "s"} moved
-          {silent.length > 0 && `, ${silent.length} quiet`}
+          {news.length} project{news.length === 1 ? "" : "s"} need
+          {news.length === 1 ? "s" : ""} you
+          {silent.length > 0 && `, ${silent.length} the CEO is running itself`}
         </span>
         <div className="spacer" />
         {/* What the panel drew, not what the endpoint sent: marking a paused

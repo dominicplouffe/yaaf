@@ -39,7 +39,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from yaaf.core.constitution import ConstitutionDoc, effective
+from yaaf.core.constitution import ConstitutionDoc, effective, preset_name
 from yaaf.core.models import (
     Amendment,
     Approval,
@@ -92,19 +92,138 @@ DEAD_STATUSES = (RunStatus.FAILED, RunStatus.REAPED, RunStatus.KILLED,
 #: something. These are the "decided itself" lines: each one is a wall that
 #: moved without anybody's say-so, and the chairman is entitled to hear about
 #: it in the same breath as the work.
+#: Each entry is (what happened, why it matters). The second half is the same
+#: sentence every time it appears, which is exactly why it is not part of the
+#: first: a fact the reader is scanning for should not be buried behind a
+#: clause he has already read forty times.
 SELF_ACTING_NOTICES = {
-    NoticeKind.BUDGET_EXHAUSTED: "the platform paused the project — the monthly budget ran out",
-    NoticeKind.BUDGET_WARNING: "the budget passed its warning line and the CEO was told to cut burn",
-    NoticeKind.COMMITMENT_AT_RISK: "the delivery date moved to AT RISK — new scope is frozen",
-    NoticeKind.COMMITMENT_BREACHED: "the delivery date passed with scope still open",
-    NoticeKind.COMMITMENT_RECOVERED: "the delivery date came back into reach",
-    NoticeKind.COMMITMENT_MET: "every requirement in the commitment settled true",
-    NoticeKind.CYCLE_ROLLED: "the cycle rolled — unfinished scope carried forward",
-    NoticeKind.EXPLORE_DEADLINE: "the deadline you set has passed",
-    NoticeKind.STALLED: "the project had work and started nothing for hours",
-    NoticeKind.MEMORY_FULL: "a memory scope hit its cap and is refusing writes",
-    NoticeKind.REVENUE: "money came in, booked by a signed webhook",
+    NoticeKind.BUDGET_EXHAUSTED: ("the platform paused the project",
+                                  "the monthly budget ran out"),
+    NoticeKind.BUDGET_WARNING: ("the budget passed its warning line",
+                                "the CEO was told to cut burn"),
+    NoticeKind.COMMITMENT_AT_RISK: ("the delivery date moved to AT RISK",
+                                    "new scope is frozen"),
+    NoticeKind.COMMITMENT_BREACHED: ("the delivery date passed with scope still open",
+                                     None),
+    NoticeKind.COMMITMENT_RECOVERED: ("the delivery date came back into reach", None),
+    NoticeKind.COMMITMENT_MET: ("every requirement in the commitment settled true",
+                                None),
+    NoticeKind.CYCLE_ROLLED: ("the cycle rolled",
+                              "unfinished scope carried forward"),
+    NoticeKind.EXPLORE_DEADLINE: ("the deadline you set has passed", None),
+    NoticeKind.STALLED: ("the project had work and started nothing for hours", None),
+    NoticeKind.MEMORY_FULL: ("a memory scope hit its cap and is refusing writes", None),
+    NoticeKind.REVENUE: ("money came in", "booked by a signed webhook"),
 }
+
+#: The three questions a briefing answers, in the order a chairman asks them.
+#: Every line belongs to exactly one, and the panel prints them under these
+#: headings rather than as one undifferentiated list — which is what made a
+#: stall read like a tally of runs.
+GROUPS = ("attention", "moved", "delegated")
+
+#: What each group is called where the reader sees it. One table, so the panel
+#: and the email cannot end up naming the same three groups differently.
+GROUP_HEADINGS = {
+    "attention": "Worth your eye",
+    "moved": "What moved",
+    "delegated": "The CEO handled this itself",
+}
+
+#: Lines that need the chairman even though nothing about them is *bad*: he is
+#: being asked for something. Tone stays honest; the grouping is about who has
+#: to do the next thing.
+ASKS = {"requirement_proposed"}
+
+#: A line that is the chairman's at every setting of the autonomy dial, because
+#: no authority he could hand over makes it go away: money in or out, a promise
+#: to the outside world breaking, the project stopping, what he actually gets,
+#: and a signature only he can give.
+MATERIAL = "material"
+
+#: A line that was never his at any setting. How the work got done.
+OPS = "ops"
+
+#: Whose problem each kind of line is.
+#:
+#: The briefing used to print the same thirteen lines whether the chairman had
+#: kept every authority or handed over all five — which makes the autonomy dial
+#: a lie on the one screen where it should be loudest. A chairman who set the
+#: dial to autonomous said *deal with it, I have given it to you*; answering him
+#: with a management report is arguing with the setting.
+#:
+#: So each line names either MATERIAL, OPS, or the constitution rule that
+#: governs it. A rule still reading `chairman` means he kept that authority and
+#: therefore still wants the news; a rule reading anything else means he handed
+#: it over, and the line folds into the CEO's own business.
+#:
+#: The split inside scope is the one worth stating outright: **an outcome is
+#: material, its management is delegated.** A requirement settling true is what
+#: he gets. A requirement entering scope, the plan gate opening, the CEO
+#: exercising authority the dial gave it — that is how he gets it, and he said
+#: he did not want to watch.
+LINE_OWNER: dict[str, str] = {
+    # Money, liveness, and what he actually ends up with.
+    "notice_budget_exhausted": MATERIAL,
+    "notice_budget_warning": MATERIAL,
+    "notice_revenue": MATERIAL,
+    "notice_stalled": MATERIAL,
+    "notice_memory_full": MATERIAL,
+    "notice_explore_deadline": MATERIAL,
+    "notice_commitment_breached": MATERIAL,
+    "notice_commitment_met": MATERIAL,
+    "requirement_met": MATERIAL,
+    "requirement_cut": MATERIAL,
+    "published": MATERIAL,
+    # Only he can sign these, so only he can be at fault for them.
+    "approvals_expired": MATERIAL,
+    "rules_changed": MATERIAL,
+    # Governed by the dial.
+    "plan_gate_closed": "plan_authority",
+    "plan_gate_reopened": "plan_authority",
+    "tasks_done": "plan_authority",
+    "tasks_blocked": "plan_authority",
+    "requirement_accepted": "scope_authority",
+    "requirement_proposed": "scope_authority",
+    "standing_honoured": "scope_authority",
+    "ceo_authority": "scope_authority",
+    "bets_expired": "scope_authority",
+    "notice_commitment_at_risk": "commitment_authority",
+    "notice_commitment_recovered": "commitment_authority",
+    "evidence_verified": "verdict_policy",
+    "evidence_failed": "verdict_policy",
+    "evidence_pending": "verdict_policy",
+    "samples_expired": "verdict_policy",
+    # How the work got done. His at no setting.
+    "runs": OPS,
+    "runs_dead": OPS,
+    "threads_frozen": OPS,
+    "review_opened": OPS,
+    "you_decided": OPS,
+    "notice_cycle_rolled": OPS,
+}
+
+#: Which setback earns the headline when several compete. A paused project
+#: outranks a cut requirement; anything unlisted sorts last.
+SEVERITY = (
+    "notice_budget_exhausted",
+    "notice_commitment_breached",
+    "notice_stalled",
+    "plan_gate_reopened",
+    "notice_commitment_at_risk",
+    "approvals_expired",
+    "evidence_failed",
+    "bets_expired",
+    "notice_memory_full",
+    "samples_expired",
+    "tasks_blocked",
+    "threads_frozen",
+    "notice_budget_warning",
+    "requirement_cut",
+    "notice_cycle_rolled",
+    "notice_explore_deadline",
+    "runs_dead",
+)
 
 
 def _aware(dt: datetime | None) -> datetime | None:
@@ -152,14 +271,38 @@ def mark_read(session: Session, project: Project, at: datetime | None = None) ->
 
 
 def _line(kind: str, text: str, *, tone: str = "flat", count: int | None = None,
-          where: str | None = None) -> dict:
-    """One fact. `tone` is what it means, never how loud to be about it:
-    `good` landed, `bad` cost something, `flat` merely happened."""
-    return {"kind": kind, "text": text, "tone": tone, "count": count, "where": where}
+          where: str | None = None, note: str | None = None) -> dict:
+    """One fact, and separately the standing explanation of what that kind of
+    fact means.
+
+    `text` is the news — the part that is different this window. `note` is the
+    part that is identical in every briefing this project will ever get: *the
+    platform ran the acceptance test itself*, *an agent said it could not
+    finish rather than closing it anyway*. Both are worth having; welding them
+    into one sentence with an em-dash is what turned thirteen facts into a
+    paragraph nobody finishes. Kept apart, the reader scans the news and reads
+    the explanation only when a line surprises him.
+
+    `tone` is what it means, never how loud to be about it: `good` landed,
+    `bad` cost something, `flat` merely happened. `group` and `yours` are not
+    settled here — they depend on the autonomy dial, which this function has no
+    business reading. :func:`_triage` fills them in.
+    """
+    return {"kind": kind, "text": text, "tone": tone, "count": count,
+            "where": where, "note": note, "group": None, "yours": None}
 
 
 def _plural(n: int, one: str, many: str | None = None) -> str:
     return one if n == 1 else (many or f"{one}s")
+
+
+def _keys(keys: list[str], show: int = 4) -> str:
+    """A list of requirement keys the reader can hold in his head, and an
+    honest count of the ones he cannot. `R-30, R-33, R-34, R-35, R-36, R-38…`
+    was six opaque ids and an ellipsis that hid how many more there were."""
+    if len(keys) <= show:
+        return ", ".join(keys)
+    return f"{', '.join(keys[:show])} and {len(keys) - show} more"
 
 
 # ── the window's facts ──────────────────────────────────────────────────────────
@@ -227,18 +370,18 @@ def _scope_lines(session: Session, project: Project, since, until) -> list[dict]
         lines.append(_line(
             "requirement_met",
             f"{len(met)} {_plural(len(met), 'requirement')} settled true "
-            f"({', '.join(met[:6])}{'…' if len(met) > 6 else ''}) — "
-            "the platform ran the acceptance test itself",
+            f"({_keys(met)})",
             tone="good", count=len(met), where="plan",
+            note="the platform ran the acceptance test itself",
         ))
     honoured = named(RequirementStatus.MET, lambda rid: rid in standing)
     if honoured:
         lines.append(_line(
             "standing_honoured",
             f"{len(honoured)} standing {_plural(len(honoured), 'obligation')} honoured "
-            f"({', '.join(honoured[:6])}{'…' if len(honoured) > 6 else ''}) — "
-            "recurring work, not scope landing",
+            f"({_keys(honoured)})",
             tone="good", count=len(honoured), where="plan",
+            note="recurring work, not scope landing",
         ))
     if plan_id is not None:
         gate = [e for e in events if e.requirement_id == plan_id]
@@ -248,23 +391,23 @@ def _scope_lines(session: Session, project: Project, since, until) -> list[dict]
         if closed:
             lines.append(_line(
                 "plan_gate_closed",
-                "the plan gate closed — the plan is staged, estimated and fits the "
-                "money, so work may be created",
+                "the plan gate closed — work may now be created",
                 tone="good", count=len(closed), where="plan",
+                note="the plan is staged, estimated and fits the money",
             ))
         if reopened:
             lines.append(_line(
                 "plan_gate_reopened",
-                "the plan gate reopened — the plan stopped adding up and no new work "
-                "may be created until it does",
+                "the plan gate reopened — no new work may be created",
                 tone="bad", count=len(reopened), where="plan",
+                note="the plan stopped adding up, and nothing starts until it does",
             ))
     accepted = named(RequirementStatus.PENDING, is_scope)
     if accepted:
         lines.append(_line(
             "requirement_accepted",
             f"{len(accepted)} {_plural(len(accepted), 'requirement')} entered scope "
-            f"({', '.join(accepted[:6])}{'…' if len(accepted) > 6 else ''})",
+            f"({_keys(accepted)})",
             count=len(accepted), where="plan",
         ))
     cut = named(RequirementStatus.CUT, is_scope)
@@ -272,7 +415,7 @@ def _scope_lines(session: Session, project: Project, since, until) -> list[dict]
         lines.append(_line(
             "requirement_cut",
             f"{len(cut)} {_plural(len(cut), 'requirement')} cut from scope "
-            f"({', '.join(cut[:6])}{'…' if len(cut) > 6 else ''})",
+            f"({_keys(cut)})",
             tone="bad", count=len(cut), where="plan",
         ))
     proposed = named(RequirementStatus.PROPOSED, is_scope)
@@ -280,8 +423,12 @@ def _scope_lines(session: Session, project: Project, since, until) -> list[dict]
         lines.append(_line(
             "requirement_proposed",
             f"the CEO proposed {len(proposed)} new "
-            f"{_plural(len(proposed), 'requirement')} for you to accept",
+            f"{_plural(len(proposed), 'requirement')} ({_keys(proposed)})",
             count=len(proposed), where="plan",
+            # Not welded into the fact: under a dial that gave scope to the CEO
+            # it accepts these itself, and "for you to accept" would be the
+            # panel telling him to do a job he handed over.
+            note="proposed scope is not scope until it is accepted",
         ))
     return lines
 
@@ -311,9 +458,9 @@ def _work_lines(session: Session, project: Project, since, until) -> list[dict]:
     if blocked:
         lines.append(_line(
             "tasks_blocked",
-            f"{blocked} {_plural(blocked, 'task')} blocked — an agent said it could not "
-            "finish rather than closing it anyway",
+            f"{blocked} {_plural(blocked, 'task')} blocked",
             tone="bad", count=blocked, where="work",
+            note="an agent said it could not finish rather than closing it anyway",
         ))
     return lines
 
@@ -340,16 +487,16 @@ def _proof_lines(session: Session, project: Project, since, until) -> list[dict]
     if verified:
         lines.append(_line(
             "evidence_verified",
-            f"{verified} {_plural(verified, 'piece')} of external proof verified — "
-            "the platform fetched and snapshotted the source itself",
+            f"{verified} {_plural(verified, 'piece')} of external proof verified",
             tone="good", count=verified, where="work",
+            note="the platform fetched and snapshotted the source itself",
         ))
     if failed:
         lines.append(_line(
             "evidence_failed",
-            f"{failed} evidence {_plural(failed, 'claim')} failed its check and counts "
-            "toward nothing",
+            f"{failed} evidence {_plural(failed, 'claim')} failed its check",
             tone="bad", count=failed, where="work",
+            note="a failed claim counts toward nothing",
         ))
     if pending:
         lines.append(_line(
@@ -370,16 +517,23 @@ def _deliverable_lines(session: Session, project: Project, since, until) -> list
     ).scalars())
     if not artifacts:
         return []
-    names = []
+    # By document, not by row. A ticket revised four times is one deliverable
+    # that moved, and printing "ticket.md v4, ticket.md v3, ticket.md v2" as
+    # three of twenty published things overstated the week and buried the four
+    # documents that were actually new. Rows are ordered newest first, so the
+    # first sighting of a name is its latest version.
+    latest: dict[str, str] = {}
     for artifact in artifacts:
-        label = f"{artifact.name} v{artifact.version}"
-        if label not in names:
-            names.append(label)
+        latest.setdefault(artifact.name, f"{artifact.name} v{artifact.version}")
+    names = list(latest.values())
+    revisions = len(artifacts) - len(names)
     return [_line(
         "published",
-        f"{len(artifacts)} {_plural(len(artifacts), 'deliverable')} published "
-        f"({', '.join(names[:4])}{'…' if len(names) > 4 else ''})",
-        tone="good", count=len(artifacts), where="deliverables",
+        f"{len(names)} {_plural(len(names), 'deliverable')} published "
+        f"({_keys(names, show=3)})",
+        tone="good", count=len(names), where="deliverables",
+        note=(f"{revisions} of the {len(artifacts)} versions in the window were "
+              "revisions of these" if revisions else None),
     )]
 
 
@@ -438,12 +592,14 @@ def _run_lines(session: Session, project: Project, since, until) -> list[dict]:
     )]
     if dead:
         refusals = [r.last_refusal for r in rows if r.last_refusal]
-        detail = f" — the last wall hit was “{refusals[-1][:90]}”" if refusals else ""
+        note = "failed, reaped, killed or cut off for refusals"
+        if refusals:
+            note += f"; the last wall hit was “{refusals[-1][:90]}”"
         lines.append(_line(
-            "runs_dead",
-            f"{len(dead)} of them died (failed, reaped, killed or cut off for "
-            f"refusals){detail}",
-            tone="bad", count=len(dead), where="records/runs",
+            # "of {len(rows)}", not "of them": this line is read under a
+            # different heading from the tally, so it carries its denominator.
+            "runs_dead", f"{len(dead)} of {len(rows)} runs died and bought nothing",
+            tone="bad", count=len(dead), where="records/runs", note=note,
         ))
     return lines
 
@@ -486,10 +642,10 @@ def _self_acting_lines(session: Session, project: Project, since, until) -> list
         lines.append(_line(
             "bets_expired",
             f"{len(expired_bets)} {_plural(len(expired_bets), 'bet')} hit "
-            f"{_plural(len(expired_bets), 'its', 'their')} kill date — work behind "
-            f"{_plural(len(expired_bets), 'it', 'them')} is blocked until you extend or "
-            "the CEO pivots",
+            f"{_plural(len(expired_bets), 'its', 'their')} kill date",
             tone="bad", count=len(expired_bets), where="work",
+            note=f"work behind {_plural(len(expired_bets), 'it', 'them')} is blocked "
+                 "until you extend or the CEO pivots",
         ))
 
     unreviewed = int(session.execute(
@@ -503,9 +659,9 @@ def _self_acting_lines(session: Session, project: Project, since, until) -> list
     if unreviewed:
         lines.append(_line(
             "samples_expired",
-            f"{unreviewed} spot-{_plural(unreviewed, 'check')} expired unreviewed — "
-            "those closes stand unaudited",
+            f"{unreviewed} spot-{_plural(unreviewed, 'check')} expired unreviewed",
             tone="bad", count=unreviewed, where="work",
+            note="those closes stand unaudited",
         ))
 
     frozen = int(session.execute(
@@ -520,9 +676,9 @@ def _self_acting_lines(session: Session, project: Project, since, until) -> list
     if frozen:
         lines.append(_line(
             "threads_frozen",
-            f"the pair breaker froze {frozen} {_plural(frozen, 'thread')} — two agents "
-            "were talking without moving any task",
+            f"the pair breaker froze {frozen} {_plural(frozen, 'thread')}",
             tone="bad", count=frozen, where="records/messages",
+            note="two agents were talking without moving any task",
         ))
 
     for notice in session.execute(
@@ -537,9 +693,8 @@ def _self_acting_lines(session: Session, project: Project, since, until) -> list
             NoticeKind.COMMITMENT_RECOVERED, NoticeKind.COMMITMENT_MET,
             NoticeKind.REVENUE,
         ) else "bad"
-        lines.append(_line(
-            f"notice_{notice.kind}", SELF_ACTING_NOTICES[notice.kind], tone=tone,
-        ))
+        text, note = SELF_ACTING_NOTICES[notice.kind]
+        lines.append(_line(f"notice_{notice.kind}", text, tone=tone, note=note))
     return lines
 
 
@@ -703,11 +858,78 @@ def _pulse(session: Session, project: Project, since, until) -> dict:
     }
 
 
-def _headline(project: Project, lines: list[dict], money: dict, pulse: dict,
-              waiting: dict) -> str:
-    """One sentence, composed from the facts above rather than written about
-    them. Order is what a chairman asks in order: is it alive, did it finish
-    anything, what did that cost."""
+def _yours(kind: str, cons: ConstitutionDoc) -> bool:
+    """Whether this line is still the chairman's news, per the dial he set.
+
+    An unknown kind is his. A line nobody has classified should arrive loudly
+    and get classified, never disappear into a fold because a table was not
+    updated — the failure mode of a filter is silence, and silence is the one
+    thing this panel exists to prevent.
+    """
+    owner = LINE_OWNER.get(kind, MATERIAL)
+    if owner == MATERIAL:
+        return True
+    if owner == OPS:
+        return False
+    return getattr(cons, owner, "chairman") == "chairman"
+
+
+def _triage(lines: list[dict], cons: ConstitutionDoc) -> list[dict]:
+    """File every line by whose problem it is, then by what it means.
+
+    Two passes that used to be neither. Ownership first, because a chairman who
+    handed the CEO all five authorities does not want a line about scope
+    entering the plan under any heading — the dial *is* his instruction about
+    what to stop telling him. Then, among the lines that are still his, tone:
+    a setback he owns can never be folded away.
+    """
+    for line in lines:
+        line["yours"] = _yours(line["kind"], cons)
+        if not line["yours"]:
+            line["group"] = "delegated"
+        elif line["tone"] == "bad" or line["kind"] in ASKS:
+            line["group"] = "attention"
+        else:
+            line["group"] = "moved"
+    return _ordered(lines)
+
+
+def _worst(lines: list[dict]) -> dict | None:
+    """The setback that earns the headline. Ranked, because a window can hold
+    six of them and "the platform paused the project" is not interchangeable
+    with "one requirement was cut"."""
+    setbacks = [line for line in lines if line["group"] == "attention"
+                and line["tone"] == "bad"]
+    if not setbacks:
+        return None
+    def rank(line: dict) -> int:
+        try:
+            return SEVERITY.index(line["kind"])
+        except ValueError:
+            return len(SEVERITY)
+    return min(setbacks, key=rank)
+
+
+def _headline(project: Project, lines: list[dict], pulse: dict, waiting: dict,
+              delegated: int = 0) -> str:
+    """One sentence: what landed, and the worst thing that did not.
+
+    It used to be three throughput counts and a token total — "15 requirements
+    settled true, 26 tasks closed, 13 proofs verified — 101,638,431 tokens
+    spent" — which is the least decision-relevant content on the panel, sitting
+    in the one position everybody reads. Worse, it promoted a setback only when
+    *nothing* landed, so a week that shipped fifteen requirements AND stalled
+    for hours announced the fifteen and left the stall as grey line ten.
+
+    So: progress, then the worst setback, then what that leaves waiting. Money
+    is not here at all — the money row prints it directly underneath, and a
+    number the reader is about to see twice is a number that stops being read.
+
+    And it is composed only from the lines that are still the chairman's. A
+    headline that names something he cannot find on the panel is a headline
+    that sent him looking, which on an autonomous project means sending him
+    into work he explicitly delegated.
+    """
     if project.status in (ProjectStatus.PAUSED, ProjectStatus.STOPPED,
                           ProjectStatus.COMPLETED):
         reason = project.status_reason or "no reason recorded"
@@ -720,6 +942,22 @@ def _headline(project: Project, lines: list[dict], money: dict, pulse: dict,
             return "Nothing happened, and there is nothing on the board to happen."
         return (f"Nothing happened — {pulse['open_tasks']} "
                 f"{_plural(pulse['open_tasks'], 'task')} open and none of them moved.")
+    lines = [line for line in lines if line["group"] != "delegated"]
+    if not lines:
+        # He handed over everything this window touched. Saying so in one
+        # sentence is the whole promise of the dial — the alternative is a
+        # management report he asked not to receive, and a blank panel that
+        # cannot be told apart from a dead project.
+        sentence = "Nothing needed you"
+        if delegated:
+            sentence += (f" — the CEO handled {delegated} "
+                         f"{_plural(delegated, 'thing')} itself")
+        elif pulse["running"]:
+            sentence += f", and {pulse['running']} {_plural(pulse['running'], 'run')} " \
+                        "are in flight right now"
+        if waiting["total"]:
+            sentence += f". {waiting['total']} now waiting on you"
+        return sentence + "."
     counts = {line["kind"]: (line["count"] or 0) for line in lines}
     parts: list[str] = []
     if counts.get("requirement_met"):
@@ -736,20 +974,22 @@ def _headline(project: Project, lines: list[dict], money: dict, pulse: dict,
         parts.append(f"{n} {_plural(n, 'proof')} verified")
     if not parts and counts.get("plan_gate_closed"):
         parts.append("the plan gate closed and the board opened")
-    if not parts:
-        # Nothing landed. Rather than a shrug, promote the loudest thing that
-        # DID happen — a stall, a frozen thread, an approval that timed out is
-        # the headline of that window, and burying it under "activity, but
-        # nothing settled" is how a bad week reads as a dull one.
-        setback = next((line for line in lines if line["tone"] == "bad"), None)
-        parts.append("Nothing settled" + (f" — {setback['text']}" if setback else ""))
-    sentence = ", ".join(parts)
-    if money["window"]:
-        unit = "$" if money["unit"] == "usd" else ""
-        suffix = "" if money["unit"] == "usd" else " tokens"
-        amount = (f"{money['window']:,.2f}" if money["unit"] == "usd"
-                  else f"{money['window']:,.0f}")
-        sentence += f" — {unit}{amount}{suffix} spent"
+    setback = _worst(lines)
+    if parts:
+        # Two, not four. "15 requirements settled true, 26 tasks closed, 13
+        # proofs verified" spends the one line everybody reads on throughput;
+        # the rest of the tally is four inches below under "What moved".
+        sentence = ", ".join(parts[:2])
+        # The "but" is the whole change: a good week with a stall in it is a
+        # different week from a good week, and the reader learns that in the
+        # first line rather than on line ten.
+        if setback:
+            sentence += f" — but {setback['text']}"
+    else:
+        # Nothing landed. Rather than a shrug, lead with the loudest thing that
+        # DID happen: burying a stall under "activity, but nothing settled" is
+        # how a bad week reads as a dull one.
+        sentence = "Nothing settled" + (f" — {setback['text']}" if setback else "")
     if waiting["total"]:
         sentence += f". {waiting['total']} now waiting on you"
     return sentence + "."
@@ -805,6 +1045,30 @@ def _next_up(session: Session, project: Project, cons: ConstitutionDoc) -> dict 
             "live": agenda["live"]}
 
 
+def _ordered(lines: list[dict]) -> list[dict]:
+    """Lines in the order they should be read, not the order they were queried.
+
+    The composer runs scope, then work, then proof, then deliverables, then
+    self-acting, then decisions, then runs — which is a sensible order to write
+    the code in and a useless one to read. It put a stall between "20
+    deliverables published" and "the CEO exercised 26 decisions", at the same
+    weight as both.
+
+    Within a group the composer's order is kept, because it is already
+    meaningful (scope before work before proof). Attention is the exception:
+    there the worst thing goes first, since that group exists to be triaged.
+    """
+    def rank(line: dict) -> tuple[int, int]:
+        group = GROUPS.index(line["group"])
+        if line["group"] != "attention":
+            return (group, 0)
+        try:
+            return (group, SEVERITY.index(line["kind"]))
+        except ValueError:
+            return (group, len(SEVERITY))
+    return sorted(lines, key=rank)
+
+
 def project_briefing(session: Session, project: Project,
                      cons: ConstitutionDoc | None = None,
                      since: datetime | None = None,
@@ -831,6 +1095,7 @@ def project_briefing(session: Session, project: Project,
     lines += _meeting_lines(session, project, since, until)
     lines += _run_lines(session, project, since, until)
 
+    lines = _triage(lines, cons)
     money = _money(session, project, cons, since, until)
     pulse = _pulse(session, project, since, until)
     waiting = _waiting(session, project, cons)
@@ -848,8 +1113,21 @@ def project_briefing(session: Session, project: Project,
         "window_source": source,
         "window_hours": round((until - since).total_seconds() / 3600.0, 2),
         "quiet": not substantive,
-        "headline": _headline(project, substantive, money, pulse, waiting),
+        "headline": _headline(
+            project, substantive, pulse, waiting,
+            # Counted off `lines`, not `substantive`: the sentence names a
+            # number the reader is about to see on the fold beside it.
+            delegated=sum(1 for line in lines if line["group"] == "delegated")),
         "lines": lines,
+        "groups": {group: sum(1 for line in lines if line["group"] == group)
+                   for group in GROUPS},
+        # How many of this window's lines the chairman still owns. Zero is the
+        # answer an autonomous project should usually give, and the Desk uses
+        # it rather than `quiet` to decide who gets a full block: "nothing
+        # happened" and "nothing happened that is yours" are different
+        # sentences, and only the second one scales with the dial.
+        "needs_you": sum(1 for line in lines if line["yours"]),
+        "autonomy": preset_name(cons.model_dump()),
         "money": money,
         "pulse": pulse,
         "waiting": waiting,
@@ -905,10 +1183,21 @@ def render_text(brief: dict) -> str:
         "",
     ]
     if brief["lines"]:
-        body.append("What happened")
-        for line in brief["lines"]:
-            marker = {"good": "+", "bad": "!"}.get(line["tone"], "·")
-            body.append(f"  {marker} {line['text']}")
+        # Under the same three headings the panel uses, and in the same order:
+        # an email that groups differently from the screen is a second story
+        # about the same window.
+        for group, heading in GROUP_HEADINGS.items():
+            rows = [line for line in brief["lines"] if line["group"] == group]
+            if not rows:
+                continue
+            body.append(heading)
+            for line in rows:
+                marker = {"good": "+", "bad": "!"}.get(line["tone"], "·")
+                body.append(f"  {marker} {line['text']}")
+                if line.get("note"):
+                    body.append(f"      {line['note']}")
+            body.append("")
+        body.pop()
     else:
         pulse = brief["pulse"]
         body.append("What happened")

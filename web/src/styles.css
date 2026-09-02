@@ -1131,8 +1131,31 @@ button.rolepick { width: 100%; text-align: left; background: var(--surface-2); }
    cannot trust: "3 tasks closed" means nothing until you know since when. */
 .bedge { font-size: 10.5px; }
 .bline { font-size: 14px; font-weight: 600; margin: 7px 0 2px; line-height: 1.45; }
-.blines { list-style: none; margin: 6px 0 0; padding: 0;
+/* Three groups, three weights. Thirteen facts printed at one weight in query
+   order is a paragraph, not a briefing — so the heading does the sorting the
+   reader was doing by hand, and the left rule tells you which group you are in
+   without reading it. */
+.bgroup { margin-top: 9px; padding-left: 9px; border-left: 2px solid var(--grid); }
+.bgroup.bg-attention { border-left-color: var(--serious); }
+.bgroup.bg-moved { border-left-color: var(--grid); }
+/* The CEO's own business under the dial the chairman set, folded. Five rules,
+   each reading `chairman` or `ceo`; a line governed by one that reads `ceo` is
+   an authority he handed over on purpose. */
+.bgroup.bg-delegated { opacity: 0.72; }
+.bghead { display: flex; align-items: baseline; gap: 8px; }
+.bglbl {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.7px;
+  color: var(--muted); font-weight: 600;
+}
+.bg-attention .bglbl { color: var(--serious); }
+.bgfold { font-size: 11px; }
+.blines { list-style: none; margin: 4px 0 0; padding: 0;
   display: flex; flex-direction: column; gap: 3px; }
+/* The standing explanation of a line's kind — identical in every briefing this
+   project will ever get. Kept, because a line that surprises you needs it; kept
+   quiet and on its own line, because welding it onto the fact with an em-dash
+   is what made thirteen facts unreadable. */
+.bnote { display: block; font-size: 11.5px; color: var(--muted); line-height: 1.45; }
 .bl { display: flex; gap: 8px; align-items: baseline; font-size: 13px; line-height: 1.5; }
 .bl .bm { font-family: var(--mono); font-weight: 700; width: 9px; flex: none;
   color: var(--muted); }
