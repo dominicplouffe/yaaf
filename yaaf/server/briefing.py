@@ -963,6 +963,9 @@ def _headline(project: Project, lines: list[dict], pulse: dict, waiting: dict,
     if counts.get("requirement_met"):
         n = counts["requirement_met"]
         parts.append(f"{n} {_plural(n, 'requirement')} settled true")
+    if counts.get("published"):
+        n = counts["published"]
+        parts.append(f"{n} {_plural(n, 'deliverable')} published")
     if counts.get("tasks_done"):
         n = counts["tasks_done"]
         parts.append(f"{n} {_plural(n, 'task')} closed")
@@ -989,7 +992,17 @@ def _headline(project: Project, lines: list[dict], pulse: dict, waiting: dict,
         # Nothing landed. Rather than a shrug, lead with the loudest thing that
         # DID happen: burying a stall under "activity, but nothing settled" is
         # how a bad week reads as a dull one.
-        sentence = "Nothing settled" + (f" — {setback['text']}" if setback else "")
+        #
+        # But only say it when it is true. The ladder above counts four kinds
+        # of progress, and a dial that delegates all four still leaves lines
+        # under "What moved" on the panel — so "Nothing settled" was printed
+        # over a window that had visibly settled something, two inches below.
+        # A headline may be brief; it may not contradict the list beneath it.
+        landed = next((line for line in lines if line["group"] == "moved"), None)
+        opener = landed["text"][0].upper() + landed["text"][1:] if landed \
+            else "Nothing settled"
+        sentence = opener + (f" — but {setback['text']}" if setback and landed
+                             else f" — {setback['text']}" if setback else "")
     if waiting["total"]:
         sentence += f". {waiting['total']} now waiting on you"
     return sentence + "."
