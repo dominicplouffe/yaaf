@@ -675,12 +675,14 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
         team_out.append({"id": team.id, "name": team.name,
                          "agents": [{"id": a.id, "name": a.name} for a in agents]})
 
-    # Rooms on day one, when the chairman has already told us the workspace.
-    # The whole ask behind app-wide Slack settings is "I made a project — tell
-    # me its channels", and a chairman who has to go and click Provision has
-    # not been saved the trip. Best-effort by construction: a Slack outage
-    # costs the channel map, never the project. Runs after the flush above so
-    # every team room exists to be mirrored.
+    # The boardroom on day one, when the chairman has already told us the
+    # workspace. The ask behind app-wide Slack settings is "I made a project —
+    # tell me where to talk to it", and that is one room: the boardroom. The
+    # other rooms are half a dozen channels a workspace does not want until the
+    # project is actually being run from Slack, so they stay behind the button
+    # on the project's own Slack screen. Best-effort by construction: a Slack
+    # outage costs the channel map, never the project. Runs after the flush
+    # above so the deferred rooms can be named accurately.
     session.flush()
     from yaaf.server.slack import provision as slack_provision
 
@@ -689,7 +691,8 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
         _audit(session, project.id, "slack.provision_channels", "project", project.id,
                {"auto": True, "channels": [{"key": row["key"], "name": row["name"],
                                             "created": row["created"]}
-                                           for row in slack["channels"]]})
+                                           for row in slack["channels"]],
+                "deferred": [row["key"] for row in slack.get("deferred", [])]})
 
     _audit(session, project.id, "project.create", "project", project.id)
     return {"id": project.id, "ceo_agent_id": ceo.id, "teams": team_out,
@@ -4155,9 +4158,11 @@ def project_slack(project_id: str, session: Session = Depends(db)) -> dict:
 def provision_slack_channels(project_id: str, session: Session = Depends(db)) -> dict:
     """Create every Slack room this project is missing and say what they are.
 
-    Idempotent: rooms already mapped are left alone, and a name Slack says is
-    taken is adopted rather than duplicated. Run it after adding a team, or on
-    a project that predates the workspace being configured.
+    This is the "and now the rest" half of provisioning: creating a project
+    makes only its boardroom, and this makes leadership and every team room
+    besides. Idempotent: rooms already mapped are left alone, and a name Slack
+    says is taken is adopted rather than duplicated. Run it after adding a
+    team, or on a project that predates the workspace being configured.
     """
     from yaaf.server.slack import provision as slack_provision
 

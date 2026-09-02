@@ -460,17 +460,60 @@ def test_one_failed_room_does_not_undo_the_others(client, monkeypatch):
     assert {room["key"]: room["channel_id"] for room in view["rooms"]}["boardroom"]
 
 
-def test_creating_a_project_provisions_its_rooms_and_says_what_they_are(client, monkeypatch):
-    """The ask, end to end: make a project, be told its channels."""
-    _FakeSlack().install(monkeypatch)
+def test_creating_a_project_provisions_the_boardroom_and_nothing_else(client, monkeypatch):
+    """The ask, end to end: make a project, be told where to talk to it.
+
+    One room, not six. The boardroom is the room a chairman uses on day one and
+    the only one every project has; leadership and the team rooms are channels
+    a workspace does not want until the project is actually being run from
+    Slack, so they wait behind the button.
+    """
+    slack = _FakeSlack().install(monkeypatch)
     set_global_slack(client)
     project = make_project(client, slug="widget")
 
     assert project["slack"]["ok"] is True
     names = sorted(row["name"] for row in project["slack"]["channels"])
-    assert names == ["widget-alpha", "widget-boardroom", "widget-leadership"]
+    assert names == ["widget-boardroom"]
+    assert sorted(slack.channels) == ["widget-boardroom"]
+
+    # The rooms it did not make are named, not silently dropped.
+    deferred = sorted(row["name"] for row in project["slack"]["deferred"])
+    assert deferred == ["widget-alpha", "widget-leadership"]
+    assert "not created" in project["slack"]["detail"]
+
     view = client.get(f"/admin/projects/{project['id']}/slack", headers=ADMIN).json()
     assert view["can_mirror"] is True
+    rooms = {room["key"]: room["channel_id"] for room in view["rooms"]}
+    assert rooms["boardroom"]
+    assert rooms["leadership"] is None
+
+
+def test_the_button_makes_the_rooms_creation_left_alone(client, monkeypatch):
+    """The other half of the ask: one click, and the project has every room.
+
+    Runs against a project whose boardroom already exists, because that is the
+    only state this button is ever reached in — it must adopt the mapped room
+    rather than making a second one.
+    """
+    slack = _FakeSlack().install(monkeypatch)
+    set_global_slack(client)
+    project = make_project(client, slug="widget")
+    boardroom = slack.channels["widget-boardroom"]
+
+    body = client.post(f"/admin/projects/{project['id']}/slack/channels",
+                       headers=ADMIN).json()
+    assert body["ok"] is True
+    assert sorted(slack.channels) == ["widget-alpha", "widget-boardroom",
+                                      "widget-leadership"]
+    assert slack.channels["widget-boardroom"] == boardroom
+    rows = {row["key"]: row for row in body["channels"]}
+    assert rows["boardroom"]["already_mapped"] is True
+    assert rows["leadership"]["created"] is True
+    assert body["deferred"] == []
+
+    view = client.get(f"/admin/projects/{project['id']}/slack", headers=ADMIN).json()
+    assert all(room["channel_id"] for room in view["rooms"])
 
 
 def test_auto_provisioning_is_skipped_when_it_is_turned_off(client, monkeypatch):
@@ -499,9 +542,13 @@ def test_channel_names_survive_a_team_called_r_and_d(client, monkeypatch):
     told your team has an ampersand in it."""
     slack = _FakeSlack().install(monkeypatch)
     set_global_slack(client)
-    make_project(client, slug="widget",
-                 teams=[{"role_slug": "worker", "name": "R&D Squad",
-                         "employees": ["Lead"], "lead": "Lead"}])
+    project = make_project(client, slug="widget",
+                           teams=[{"role_slug": "worker", "name": "R&D Squad",
+                                   "employees": ["Lead"], "lead": "Lead"}])
+    # Named before it is made, too: the creation path defers the team rooms and
+    # has to say what they will be called.
+    assert "widget-r-d-squad" in {row["name"] for row in project["slack"]["deferred"]}
+    client.post(f"/admin/projects/{project['id']}/slack/channels", headers=ADMIN)
     assert "widget-r-d-squad" in slack.channels
 
 

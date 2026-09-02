@@ -264,11 +264,13 @@ function SlackBridge({
               Create missing channels
             </button>
             <span className="help" style={{ margin: 0 }}>
-              Makes the {view?.channel_visibility ?? "private"} rooms this project is
-              missing, named{" "}
-              <code>{`${view?.channel_prefix ?? dash.slug}-boardroom`}</code> and so on,
-              invites you to each, and fills the boxes above. Safe to run twice — an
-              existing name is adopted, never duplicated.
+              Makes every {view?.channel_visibility ?? "private"} room this project is
+              missing — leadership and one per team, named{" "}
+              <code>{`${view?.channel_prefix ?? dash.slug}-leadership`}</code> and so on —
+              invites you to each, and fills the boxes above. Creating a project only makes
+              its boardroom; this is the button for the rest, and for the rooms a team
+              hired later still needs. Safe to run twice — an existing name is adopted,
+              never duplicated.
             </span>
           </div>
           {provisioned && (

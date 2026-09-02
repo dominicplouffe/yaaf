@@ -33,10 +33,12 @@ Two things, and neither belongs to a project.
   your member ID, and the channel naming convention, stored once. Every project
   inherits them, so
   connecting Slack for a new project is nothing but its channels — and yaaf
-  makes those for you (`{prefix}-boardroom`, `{prefix}-leadership`, one per
-  team; private by default, with you invited to each) and names them back on
-  the "project created" screen. A project can override any field, or switch
-  Slack off for itself, from its own Settings → Integrations.
+  makes the boardroom for you (`{prefix}-boardroom`; private by default, with
+  you invited) and names it back on the "project created" screen. Leadership and
+  the team rooms are one button away in the project's own Settings, so a new
+  project does not fill your workspace with rooms nobody has spoken in. A
+  project can override any field, or switch Slack off for itself, from its own
+  Settings → Integrations.
 
 Neither value is ever shown back — the screen says only whether one is
 installed, because a settings page that can display a bot token is one that can
@@ -398,8 +400,9 @@ Data; everything after is occasional.
 
 - **Integrations** — the Slack bridge and the GitHub workspace. Slack starts
   out **inherited** from the app-wide connection, so the only thing this card
-  usually needs is a channel map — and **Create missing channels** fills that
-  in for you, naming the rooms as it makes them. Every field can be overridden
+  usually needs is a channel map — the boardroom is filled in at creation, and
+  **Create missing channels** makes leadership and the team rooms whenever you
+  want them, naming the rooms as it makes them. Every field can be overridden
   for a project that lives in a *different* workspace, and **Turn off for this
   project** silences one project without unwiring the install.
 

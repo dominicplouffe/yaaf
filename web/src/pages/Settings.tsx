@@ -315,13 +315,16 @@ function SlackCard({
         <input type="checkbox" checked={autoCreate} disabled={busy}
                style={{ width: "auto", flex: "none" }}
                onChange={(e) => setAutoCreate(e.target.checked)} />
-        Create a new project&apos;s channels automatically
+        Create a new project&apos;s boardroom automatically
       </label>
       <p className="help">
-        On, creating a project provisions its rooms on the spot and tells you their names.
-        Off, every project gets a &ldquo;Create channels&rdquo; button in its own Settings
-        instead. Either way nothing is ever created twice: a name Slack already holds is
-        adopted, not duplicated.
+        On, creating a project makes its <b>boardroom</b> on the spot and tells you the
+        name — the one room every project has, and the one you talk to the CEO in. Off, it
+        makes nothing. Either way leadership and the team rooms wait behind
+        &ldquo;Create missing channels&rdquo; in the project&apos;s own Settings →
+        Integrations → Slack, so a new project never costs your workspace half a dozen
+        channels nobody has spoken in yet. Nothing is ever created twice: a name Slack
+        already holds is adopted, not duplicated.
       </p>
 
       <div className="actions">

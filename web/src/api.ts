@@ -358,7 +358,12 @@ export interface ProjectHealth {
 
 /** What the platform made in Slack for a project, room by room. Returned by
     project creation (when an app-wide Slack connection is configured and auto-create
-    is on) and by the "create missing channels" button. */
+    is on — the boardroom only) and by the "create missing channels" button, which
+    makes the rest.
+
+    `deferred` is the rooms this run deliberately left alone: on the creation path
+    that is leadership and every team room, so the screen can say they are a click
+    away rather than leaving a chairman to wonder where they went. */
 export interface SlackProvision {
   ok: boolean;
   visibility?: string;
@@ -373,6 +378,7 @@ export interface SlackProvision {
     invited: boolean;
     error?: string;
   }[];
+  deferred?: { key: string; label: string; name: string }[];
 }
 
 /** A project data source (MCP server) as stored in dash.integrations["mcp_servers"]. */

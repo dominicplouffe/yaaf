@@ -1,11 +1,19 @@
 """Make a project's Slack rooms, and say what they are called.
 
 The point of app-wide Slack settings is that creating a project should not be
-followed by twenty minutes of clicking in Slack. With a Slack connection configured
-once, the platform creates ``{prefix}-boardroom``, ``{prefix}-leadership`` and
-one room per team, invites the chairman so private channels are actually
-visible to him, writes the ids into the project's channel map, and hands back
-the list of names.
+followed by twenty minutes of clicking in Slack. With a Slack connection
+configured once, the platform creates ``{prefix}-boardroom``, invites the
+chairman so a private channel is actually visible to him, writes the id into
+the project's channel map, and hands back the name.
+
+**One room on the way in, the rest on request.** Creating a project provisions
+the boardroom only — that is the room a chairman uses on day one, and it is the
+one room every project has. Leadership and the team rooms are half a dozen
+channels a workspace does not need until the project is actually running in
+them, so they wait behind **Create missing channels** on the project's Slack
+screen (``only=None`` here, which is every room this project has a bus channel
+for). Nothing about that is a second mechanism: it is the same idempotent
+call with a different room list.
 
 Three properties this has to have, because provisioning is the kind of thing a
 chairman runs twice:
@@ -29,6 +37,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+from collections.abc import Iterable
 
 import httpx
 from sqlalchemy import select
@@ -175,8 +184,15 @@ def _wanted_rooms(session: Session, project: Project) -> tuple[list[str], dict[s
     return keys, team_names
 
 
-def provision(session: Session, project: Project) -> dict:
-    """Create every missing room for this project and record the ids.
+def provision(session: Session, project: Project,
+              *, only: Iterable[str] | None = None) -> dict:
+    """Create the missing rooms for this project and record the ids.
+
+    ``only`` narrows the work to the named room keys — ``["boardroom"]`` on the
+    project-creation path. The default is every room this project has a bus
+    channel for, which is what the button does. Rooms left out are reported in
+    ``deferred`` rather than silently dropped: a chairman who was given one
+    channel needs to be told the others are a click away.
 
     Returns a report the chairman reads verbatim: one row per room with the
     channel name he should now look for in Slack, whether it was created or
@@ -184,14 +200,19 @@ def provision(session: Session, project: Project) -> dict:
     """
     effective = slack_settings.resolve(session, project)
     if effective is None:
-        return {"ok": False, "channels": [],
+        return {"ok": False, "channels": [], "deferred": [],
                 "detail": "Slack is switched off for this project."}
     if not effective.bot_token:
-        return {"ok": False, "channels": [],
+        return {"ok": False, "channels": [], "deferred": [],
                 "detail": "no Slack bot token is configured — set one app-wide in Settings, "
                           "or give this project its own."}
 
     keys, team_names = _wanted_rooms(session, project)
+    deferred_keys: list[str] = []
+    if only is not None:
+        wanted = set(only)
+        deferred_keys = [key for key in keys if key not in wanted]
+        keys = [key for key in keys if key in wanted]
     private = effective.channel_visibility == "private"
     channel_map = dict(effective.channel_map)
     rows: list[dict] = []
@@ -228,18 +249,25 @@ def provision(session: Session, project: Project) -> dict:
     _write_channel_map(project, channel_map)
     made = [r for r in rows if r["created"]]
     errors = [r for r in rows if r.get("error")]
+    deferred = [{"key": key,
+                 "label": slack_settings.room_label(key, team_names),
+                 "name": slack_settings.channel_name(
+                     effective.channel_prefix, key, team_names)}
+                for key in deferred_keys
+                if not channel_map.get(key)]
     return {
         "ok": not errors,
         "visibility": effective.channel_visibility,
         "prefix": effective.channel_prefix,
         "channels": rows,
-        "detail": _detail(made, rows, errors, effective),
+        "deferred": deferred,
+        "detail": _detail(made, rows, errors, deferred, effective),
     }
 
 
 def _detail(made: list[dict], rows: list[dict], errors: list[dict],
-            effective: slack_settings.SlackSettings) -> str:
-    if not rows:
+            deferred: list[dict], effective: slack_settings.SlackSettings) -> str:
+    if not rows and not deferred:
         return "this project has no channels to mirror yet."
     parts: list[str] = []
     if made:
@@ -261,6 +289,11 @@ def _detail(made: list[dict], rows: list[dict], errors: list[dict],
                      "are visible to you")
     elif made and not all(r["invited"] for r in made):
         parts.append("some invites did not land; check the bot has `groups:write`")
+    if deferred:
+        parts.append(
+            f"{len(deferred)} more room{'' if len(deferred) == 1 else 's'} "
+            f"({', '.join('#' + row['name'] for row in deferred)}) "
+            "not created — use Create missing channels when you want them")
     return ". ".join(parts) + "."
 
 
@@ -280,9 +313,14 @@ def _write_channel_map(project: Project, channel_map: dict[str, str]) -> None:
 
 
 def provision_quietly(session: Session, project: Project) -> dict | None:
-    """Provisioning for the project-creation path: never raises, ever.
+    """The boardroom, on the project-creation path: never raises, ever.
 
-    A chairman who has configured Slack wants his rooms; a chairman whose Slack
+    Only the boardroom, because that is the room a chairman talks to his CEO in
+    on day one and the only one every project has. The rest are a button on the
+    project's Slack screen — a new project should not cost a workspace six
+    channels nobody has spoken in yet.
+
+    A chairman who has configured Slack wants that room; a chairman whose Slack
     is having a bad afternoon wants his project anyway. Returns None when there
     was nothing to do — no Slack connection configured, or auto-create turned off.
     """
@@ -291,11 +329,11 @@ def provision_quietly(session: Session, project: Project) -> dict | None:
             return None
         if not slack_settings.auto_create(session):
             return None
-        return provision(session, project)
+        return provision(session, project, only=[str(ChannelKind.BOARDROOM)])
     except Exception:
         log.warning("slack auto-provisioning failed for project %s; the project is "
                     "created and unaffected — use Settings → Slack to retry",
                     project.slug, exc_info=True)
-        return {"ok": False, "channels": [],
+        return {"ok": False, "channels": [], "deferred": [],
                 "detail": "Slack channel provisioning failed; the project is fine. "
                           "Retry from Settings → Slack."}

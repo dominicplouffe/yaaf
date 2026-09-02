@@ -381,9 +381,11 @@ evidence at all about your *project*.
 - **One connection, every project.** Slack tokens are stored once, app-wide,
   and every project inherits them — per field, so a project in a different
   workspace can override just the token it needs. Creating a project makes its
-  channels for you (`{slug}-boardroom`, `{slug}-leadership`, one per team,
-  private, with you invited) and tells you their names. The bot token still
-  never enters a sandbox, shared or not.
+  boardroom for you (`{slug}-boardroom`, private, with you invited) and tells
+  you the name; **Create missing channels** on the project's Slack screen makes
+  the rest (`{slug}-leadership`, one room per team) when you want them, so a new
+  project does not cost your workspace six channels nobody has spoken in. The
+  bot token still never enters a sandbox, shared or not.
 - **Directives.** A rule you state in chat becomes a rule the platform holds:
   the CEO files it as a directive citing your actual message, and the platform
   enforces it from the next call. Scope is limited to your reporting
