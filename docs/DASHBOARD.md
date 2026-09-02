@@ -228,7 +228,17 @@ true now, what happens next.
 - **Needs you** — the decisions the Desk surfaces, scoped to this project. A
   quiet project says "nothing waiting on you here."
 - **What happened** — this project's briefing, on your own read mark. The same
-  panel as the Desk's, minus the project name, with *Mark read* beside it.
+  panel as the Desk's, minus the project name, with *Mark read* beside it. Its
+  lines come filed under three headings rather than as one list: **Worth your
+  eye** (setbacks worst-first, and anything asking for a decision), **What
+  moved** (scope settled, work closed, proof landed, documents published), and
+  **On the record** (bookkeeping — run tallies, decisions the CEO took on its
+  own authority, decisions you took), which is folded away until you open it.
+  The headline names what landed *and* the worst thing that did not; the money
+  is one row below it rather than repeated inside it. Each line is a fact, with
+  the standing explanation of what that kind of fact means printed quieter
+  underneath — it is the same sentence in every briefing, so it should never be
+  the reason a fact is hard to find.
 - **Is it working?** — working now, runs today against the daily ceiling, runs
   that ended early, and spend today.
 - **What happens next** — the calendar. Fourteen days by default (7 or 30 on

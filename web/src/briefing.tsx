@@ -33,6 +33,70 @@ const MARK: Record<BriefingLine["tone"], string> = {
   flat: "·",
 };
 
+/** The three questions, in the order a chairman asks them. The names come from
+    the composer; these are what he reads. */
+const HEADINGS: Record<BriefingLine["group"], string> = {
+  attention: "Worth your eye",
+  moved: "What moved",
+  record: "On the record",
+};
+
+/** One group of lines under its heading.
+
+    The panel used to print every line at one weight in the order the composer
+    queried them, so a stall sat between "20 deliverables published" and "the
+    CEO exercised 26 decisions" and read like a third tally. Thirteen equal
+    sentences is not a briefing, it is a paragraph — the reader ends up doing
+    the triage the panel exists to do.
+
+    The record group folds away, because it is the one group that is never why
+    anybody opened this. */
+function Group({
+  group,
+  lines,
+  to,
+}: {
+  group: BriefingLine["group"];
+  lines: BriefingLine[];
+  to: string;
+}) {
+  const foldable = group === "record";
+  const [open, setOpen] = useState(!foldable);
+  if (lines.length === 0) return null;
+  return (
+    <div className={`bgroup bg-${group}`}>
+      <div className="bghead">
+        <span className="bglbl">{HEADINGS[group]}</span>
+        {foldable && (
+          <button className="linkish bgfold" onClick={() => setOpen(!open)}>
+            {open ? "hide" : `${lines.length} line${lines.length === 1 ? "" : "s"}`}
+          </button>
+        )}
+      </div>
+      {open && (
+        <ul className="blines">
+          {lines.map((line, i) => (
+            <li key={`${line.kind}-${i}`} className={`bl ${line.tone}`}>
+              <span className="bm" aria-hidden="true">
+                {MARK[line.tone]}
+              </span>
+              <span className="bt">
+                {line.text}
+                {line.note && <span className="bnote">{line.note}</span>}
+              </span>
+              {line.where && (
+                <Link className="bgo" to={`${to}/${line.where}`}>
+                  look →
+                </Link>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function windowLabel(brief: Briefing): string {
   const hours = brief.window_hours;
   if (hours < 1) return "the last few minutes";
@@ -154,21 +218,14 @@ export function BriefingBlock({
       </div>
       <div className="bline">{brief.headline}</div>
       {brief.lines.length > 0 ? (
-        <ul className="blines">
-          {brief.lines.map((line, i) => (
-            <li key={`${line.kind}-${i}`} className={`bl ${line.tone}`}>
-              <span className="bm" aria-hidden="true">
-                {MARK[line.tone]}
-              </span>
-              <span className="bt">{line.text}</span>
-              {line.where && (
-                <Link className="bgo" to={`${to}/${line.where}`}>
-                  look →
-                </Link>
-              )}
-            </li>
-          ))}
-        </ul>
+        (["attention", "moved", "record"] as const).map((group) => (
+          <Group
+            key={group}
+            group={group}
+            to={to}
+            lines={brief.lines.filter((line) => line.group === group)}
+          />
+        ))
       ) : (
         <Pulse brief={brief} />
       )}

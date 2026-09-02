@@ -672,9 +672,18 @@ export interface RehearsalReport {
 
 export interface BriefingLine {
   kind: string;
+  /** The news: the part of this line that is different this window. */
   text: string;
+  /** The standing explanation of what this kind of line means — identical in
+      every briefing, which is why it is not welded into `text` with an
+      em-dash. Rendered quieter, and read only when a line surprises you. */
+  note: string | null;
   /** What it means, never how loud to be about it. */
   tone: "good" | "bad" | "flat";
+  /** Which of the three questions this answers. `attention` is a setback or an
+      ask, `moved` is what the window actually did, `record` is bookkeeping
+      that is true and was never why you opened the panel. */
+  group: "attention" | "moved" | "record";
   count: number | null;
   /** A tab under the project, so a fact can be followed to its evidence. */
   where: string | null;
@@ -693,7 +702,10 @@ export interface Briefing {
   window_hours: number;
   quiet: boolean;
   headline: string;
+  /** Already in reading order: attention first and worst-first within it, then
+      what moved, then the record. */
   lines: BriefingLine[];
+  groups: { attention: number; moved: number; record: number };
   money: { unit: "usd" | "tokens"; window: number; month_to_date: number; cap: number };
   /** Proof of life for an empty window: nothing wrong and nothing happening
       are different, and a blank panel cannot tell them apart. */

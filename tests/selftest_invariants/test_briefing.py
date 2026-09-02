@@ -14,6 +14,7 @@ same discipline as everything else:
 
 from __future__ import annotations
 
+from base64 import b64encode
 from datetime import UTC, datetime, timedelta
 
 from tests.conftest import ADMIN, agent_by_name, bearer, live_token, make_project
@@ -410,6 +411,134 @@ def test_a_malformed_since_is_refused_rather_than_guessed(client):
     assert "ISO datetime" in response.json()["detail"]
 
 
+# ── reading order: the triage the panel exists to do ────────────────────────────
+
+
+def cut(client, rid: str, reason: str = "the client already has this") -> None:
+    response = client.post(f"/admin/requirements/{rid}/cut",
+                           json={"reason": reason}, headers=ADMIN)
+    assert response.status_code == 200, response.text
+
+
+def test_every_line_is_filed_under_one_of_three_questions(client):
+    """A briefing that prints thirteen facts at one weight, in the order the
+    composer happened to query them, hands the reader the triage the panel
+    exists to do. Every line therefore declares which question it answers."""
+    project = deliver_project(client, slug="grouped")
+    token = ceo_token(project)
+    rid = propose(client, token)["requirement_id"]
+    accept(client, rid, project)
+    close_a_task(client, project, token, rid)
+    cut(client, propose(client, token)["requirement_id"])
+
+    payload = brief(client, project)
+    assert payload["lines"], "this window did things"
+    for line in payload["lines"]:
+        assert line["group"] in ("attention", "moved", "record"), line
+    by_kind = {line["kind"]: line for line in payload["lines"]}
+    assert by_kind["requirement_cut"]["group"] == "attention"
+    assert by_kind["tasks_done"]["group"] == "moved"
+    assert by_kind["runs"]["group"] == "record"
+    assert payload["groups"]["attention"] >= 1
+    assert sum(payload["groups"].values()) == len(payload["lines"])
+
+
+def test_the_lines_arrive_worst_first_not_in_query_order(client):
+    """The composer runs scope, then work, then proof, then runs — a sensible
+    order to write and a useless one to read. It put a stall between "20
+    deliverables published" and "the CEO exercised 26 decisions"."""
+    project = deliver_project(client, slug="ordered")
+    token = ceo_token(project)
+    rid = propose(client, token)["requirement_id"]
+    accept(client, rid, project)
+    close_a_task(client, project, token, rid)
+    cut(client, propose(client, token)["requirement_id"])
+
+    groups = [line["group"] for line in brief(client, project)["lines"]]
+    assert groups == sorted(groups, key=["attention", "moved", "record"].index)
+
+
+def test_nothing_bad_is_filed_as_bookkeeping(client):
+    """The record group folds away on the panel. A setback the reader has to
+    unfold to find is one he will not find, so tone outranks kind."""
+    for kind in briefing.RECORD:
+        assert briefing._line(kind, "x", tone="bad")["group"] == "attention"
+        assert briefing._line(kind, "x")["group"] == "record"
+
+
+def test_a_setback_reaches_the_headline_even_in_a_week_that_shipped(client):
+    """The headline used to promote a setback only when *nothing* landed, so a
+    window that shipped scope AND cut scope announced the shipping and left the
+    cut as a grey line ten. A good week with a hole in it is not a good week."""
+    project = deliver_project(client, slug="mixed")
+    token = ceo_token(project)
+    rid = propose(client, token)["requirement_id"]
+    accept(client, rid, project)
+    close_a_task(client, project, token, rid)
+    cut(client, propose(client, token)["requirement_id"])
+
+    headline = brief(client, project)["headline"]
+    assert "closed" in headline, "what landed still leads"
+    assert "but" in headline and "cut from scope" in headline
+
+
+def test_the_headline_does_not_reprint_the_money_row(client):
+    """It sat directly above a line that prints the same number: "…13 proofs
+    verified — 101,638,431 tokens spent" over "101.6M this window". A number
+    you are about to read twice is a number that stops being read."""
+    project = deliver_project(client, slug="nomoney")
+    token = ceo_token(project)
+    rid = propose(client, token)["requirement_id"]
+    accept(client, rid, project)
+    close_a_task(client, project, token, rid)
+
+    payload = brief(client, project)
+    assert "spent" not in payload["headline"]
+    assert "$" not in payload["headline"] and "token" not in payload["headline"]
+    assert payload["money"]["window"] is not None, "it is still one row lower"
+
+
+def test_the_standing_explanation_is_not_welded_onto_the_fact(client):
+    """"15 requirements settled true (R-30, R-33…) — the platform ran the
+    acceptance test itself" is one fact and one sentence the reader has seen
+    forty times. The second is kept, and kept out of the first."""
+    project = deliver_project(client, slug="noted")
+    token = ceo_token(project)
+    rid = propose(client, token)["requirement_id"]
+    accept(client, rid, project)
+    close_a_task(client, project, token, rid)
+
+    gate = next(line for line in brief(client, project)["lines"]
+                if line["kind"] == "plan_gate_closed")
+    assert gate["note"] == "the plan is staged, estimated and fits the money"
+    assert "staged" not in gate["text"], "the standing half lives in the note"
+    assert gate["text"] == "the plan gate closed — work may now be created"
+
+
+def test_a_document_revised_four_times_is_one_deliverable(client):
+    """"20 deliverables published (ticket.md v4, ticket.md v3, ticket.md v2…)"
+    overstated the week by four and buried what was actually new. The count is
+    documents; the revisions are the note."""
+    project = deliver_project(client, slug="revised")
+    token = ceo_token(project)
+    rid = propose(client, token)["requirement_id"]
+    accept(client, rid, project)
+    for body in (b"draft", b"second pass", b"final"):
+        response = client.post(
+            "/agent/artifacts",
+            json={"filename": "ticket.md", "content_base64": b64encode(body).decode()},
+            headers=bearer(token))
+        assert response.status_code == 200, response.text
+
+    line = next(line for line in brief(client, project)["lines"]
+                if line["kind"] == "published")
+    assert line["count"] == 1, "one document, whatever its version number"
+    assert line["text"].startswith("1 deliverable published")
+    assert "ticket.md v3" in line["text"], "the latest version, not the first"
+    assert "ticket.md v2" not in line["text"]
+    assert line["note"] == "2 of the 3 versions in the window were revisions of these"
+
+
 # ── the text rendering ──────────────────────────────────────────────────────────
 
 
@@ -429,6 +558,11 @@ def test_the_email_and_the_panel_cannot_disagree(client):
     assert payload["headline"] in text
     for line in payload["lines"]:
         assert line["text"] in text
+        if line["note"]:
+            assert line["note"] in text, "the explanation travels with the fact"
+    for group, heading in briefing.GROUP_HEADINGS.items():
+        if payload["groups"][group]:
+            assert heading in text, "the email groups the way the panel does"
     assert "Waiting on you" in text
 
 
