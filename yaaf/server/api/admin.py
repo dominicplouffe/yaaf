@@ -625,7 +625,8 @@ def _project_role_slugs(session: Session, project_id: str) -> set[str]:
     ).scalars().all())
 
 
-def _check_review_seat(session: Session, doc: ConstitutionDoc, teams: list[TeamSpec]) -> None:
+def _check_review_seat(session: Session, doc: ConstitutionDoc, teams: list[TeamSpec],
+                       *, solo: bool = False) -> None:
     """A project that asks for an independent read must hire someone who can
     give it one.
 
@@ -635,11 +636,18 @@ def _check_review_seat(session: Session, doc: ConstitutionDoc, teams: list[TeamS
     three front doors. The same sentence written into three prompts covers
     whichever one the author remembered.
 
-    A spec with no teams at all is left alone: solo mode and the fire drill
-    both build rosters that way, and refusing them here would be answering a
+    Two shapes are exempt, and the second one cost a green test to find.
+
+    A spec with no teams at all is left alone: refusing there would answer a
     question about staffing before anyone has staffed anything.
+
+    **Solo mode is exempt because an independent read is impossible in it.**
+    The CEO *is* the team — one brain plans and executes — so there is no
+    second reader to hire, and a rule demanding one would make solo projects
+    uncreatable rather than reviewed. The setting is stored as the chairman
+    wrote it and simply has nobody to bind; the form says so where he picks it.
     """
-    if doc.deliverable_review != "independent_read" or not teams:
+    if doc.deliverable_review != "independent_read" or not teams or solo:
         return
     _refuse_without_review_seat(session, {spec.role_slug for spec in teams})
 
@@ -706,7 +714,7 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
     # waiting to be got wrong.
     doc = ConstitutionDoc.model_validate(
         {**ConstitutionDoc().model_dump(), **default_autonomy(body.constitution)})
-    _check_review_seat(session, doc, body.teams)
+    _check_review_seat(session, doc, body.teams, solo=body.solo)
     deadline = body.deadline
     deadline_source = None
     if deadline is not None:

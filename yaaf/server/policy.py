@@ -1247,6 +1247,24 @@ def estimate_bias(session: Session, project_id: str) -> tuple[float, dict]:
     }
 
 
+def avg_usd_per_run_box(session: Session) -> float | None:
+    """What a run has actually cost on this install, across every project.
+
+    For the one question asked before a project exists: the new-project form
+    tells the chairman what a run has to average for his cap to hold, and that
+    sentence is only worth reading beside a number from a bill he has already
+    seen. None when there is not enough priced history to be honest — a fresh
+    box says nothing rather than guessing, the same refusal
+    :func:`affordable_runs` makes under subscription billing.
+    """
+    average, count = session.execute(
+        select(func.avg(Run.cost_usd), func.count(Run.id)).where(
+            Run.cost_usd.is_not(None), Run.cost_usd > 0
+        )
+    ).one()
+    return float(average) if count and count >= MIN_PRICED_RUNS and average else None
+
+
 def avg_usd_per_run(session: Session, project_id: str) -> float | None:
     """Trailing cost of a run, this project first and the whole box as a
     fallback. None when there is not enough priced history to be honest."""

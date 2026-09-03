@@ -174,6 +174,54 @@ def test_asking_for_a_read_with_nobody_to_give_one_is_refused(client):
                            "employees": ["Ada"]}]).status_code == 200
 
 
+#: The constitution the "Balanced" card on the new-project form now sends.
+#: Duplicated from `web/src/pages/NewProject.tsx` on purpose: this asserts the
+#: form's own default is creatable, and a copy that drifts is a form whose
+#: default is refused — which is exactly what shipped for ten minutes.
+BALANCED_CARD = {
+    "queue_ceiling": 8, "drought_hours": 24, "monthly_usd_cap": 1000,
+    "approval_threshold_usd": 250, "require_evidence_verification": False,
+    "stakes": "normal", "deliverable_review": "independent_read",
+    "max_usd_per_run": 2, "run_timeout_s": 1800,
+}
+
+
+def test_the_forms_own_default_card_creates_a_project(client):
+    """Every run preset asks for an independent read, so the form now sends a
+    constitution its own drafted roster cannot satisfy unless somebody staffs
+    the seat. The form warns and offers the team; this asserts the two halves
+    agree — the card as sent is refused without a reviewing seat and accepted
+    with one."""
+    _library(client)
+    refused = _create(client, "as-drafted", constitution=BALANCED_CARD, teams=[
+        {"role_slug": "scribe", "name": "Editorial", "employees": ["Ada"]},
+    ])
+    assert refused.status_code == 422, "the form must warn before this happens"
+
+    staffed = _create(client, "as-warned", constitution=BALANCED_CARD, teams=[
+        {"role_slug": "scribe", "name": "Editorial", "employees": ["Ada"]},
+        {"role_slug": "reader", "name": "Review", "employees": ["Juno"]},
+    ])
+    assert staffed.status_code == 200, staffed.text
+
+
+def test_solo_mode_is_never_refused_for_lacking_a_reader_it_cannot_have(client):
+    """Solo mode is one brain: the CEO IS the team, plans and executes under
+    byte-identical policy. There is no second reader to hire, so a rule
+    demanding one would make solo projects uncreatable rather than reviewed.
+
+    Found by running the form's own payload rather than by reading the guard —
+    the `not teams` exemption did not cover it, because solo passes one team
+    with no employees rather than no teams."""
+    _library(client)
+    created = client.post("/admin/projects", json={
+        "slug": "alone", "name": "Alone", "goal": "One brain, planning and doing.",
+        "chairman_email": CHAIR["email"], "constitution": BALANCED_CARD, "solo": True,
+        "teams": [{"role_slug": "scribe", "name": "Desk", "employees": []}],
+    }, headers=ADMIN)
+    assert created.status_code == 200, created.text
+
+
 def test_the_rule_cannot_be_amended_into_a_state_the_roster_cannot_keep(client):
     """Creation was the only guarded door, and it is not the only door.
 

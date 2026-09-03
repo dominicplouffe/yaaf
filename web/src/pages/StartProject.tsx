@@ -18,10 +18,12 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { get } from "../api";
 
-interface FounderStatus {
+export interface FounderStatus {
   credential_configured: boolean;
   billing_mode: string;
   model: string;
+  /** What a run has actually cost on this install; null until five are priced. */
+  avg_usd_per_run: number | null;
 }
 
 export default function StartProject() {
