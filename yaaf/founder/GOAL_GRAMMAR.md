@@ -262,22 +262,35 @@ and where none exists say what the goal is silent about.
 
 **Not every element applies to every project.** A one-week Deliver project with
 a fixed artifact does not need a bias or a resource-release condition, and
-saying so is a valid grade. What is very rarely optional is `finish_line`,
-`anti_metrics` and `failure_deliverable` — those three are what stop a project
-from grading itself.
+saying so is a valid grade.
 
-`beneficiary` and `standard` are the newest two and they fail differently from
-the rest, so grade them harder than their verdict counts suggest. Every other
-element, missing, produces a project that drifts or overspends — visibly.
-Missing these two produces a project that hits every requirement it was given,
-passes every gate, and is quietly the wrong work. There is no symptom to notice
-from the inside. **A goal that names neither is one where the chairman is the
-only thing standing between the brief and the ceiling**, which is the exact
-arrangement autonomous mode was supposed to remove.
+**Five of them are load-bearing** — `finish_line`, `standard`, `anti_metrics`,
+`quality_bar` and `failure_deliverable`. A goal missing any of those is graded
+not ready, and the Founder has to add it or say out loud why it was left out.
+Three of them stop a project grading itself; `standard` stops it grading itself
+against its own brief; and `quality_bar` is what settles "done" against "good"
+in the one direction that matters, because done is the half with a test behind
+it and it wins by default.
+
+Load-bearing is not the same as applicable. An element that genuinely does not
+apply is graded **present** with a note saying why — a project where done and
+good are the same thing answers `quality_bar` by saying that, and stays ready.
+What the list refuses is silence, not inapplicability.
+
+`beneficiary` and `standard` fail differently from the rest, so grade them
+harder than their verdict counts suggest. Every other element, missing,
+produces a project that drifts or overspends — visibly. Missing these two
+produces a project that hits every requirement it was given, passes every gate,
+and is quietly the wrong work. There is no symptom to notice from the inside.
+**A goal that names neither is one where the chairman is the only thing
+standing between the brief and the ceiling**, which is the exact arrangement
+autonomous mode was supposed to remove. `standard` is load-bearing for that
+reason; `beneficiary` is not yet, and the argument for promoting it too is the
+same one.
 
 ## What a grade is not
 
-It is not a style review. Long is fine; the reference goal is 4,700 characters.
+It is not a style review. Long is fine; the reference goal is 5,600 characters.
 Short is fine too, if it covers the ground. Do not ask for structure, headings,
 or shorter sentences — ask for **content that is missing**, and let the author
 write it however they write.

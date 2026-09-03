@@ -455,6 +455,50 @@ def test_the_grader_asks_for_every_element_by_name():
         assert f"`{element}`" in grammar, element
 
 
+def test_the_grammar_and_the_code_name_the_same_load_bearing_elements():
+    """Two copies of the bar drift, and this one drifts silently in the worst
+    direction: the grammar is what the Founder reads and the tuple is what
+    `ready` actually enforces, so a goal can be told it is fine by the document
+    and refused by the code, or the reverse. The grammar already argues this
+    about itself — "two copies drift, and then the critic starts failing goals
+    the author was never told about"."""
+    import re
+
+    from yaaf.founder.grade import GRAMMAR_PATH, LOAD_BEARING
+
+    grammar = GRAMMAR_PATH.read_text()
+    _, marker, rest = grammar.partition("are load-bearing**")
+    assert marker, "the grammar must state which elements are load-bearing"
+    sentence = rest.split(". ", 1)[0]
+    assert set(re.findall(r"`([a-z_]+)`", sentence)) == set(LOAD_BEARING)
+
+
+def test_a_goal_missing_one_load_bearing_element_is_not_ready():
+    """`ready` is the gate the Founder is told to fix against, and an element
+    that does not apply is graded *present* with a note saying why — so the
+    list refuses silence, not inapplicability. Both halves are asserted,
+    because a `ready` that ignored a missing element would make the whole
+    grade decorative."""
+    from yaaf.founder.grade import GOAL_ELEMENTS, LOAD_BEARING, ElementGrade, GoalGrade
+
+    def graded(**verdicts: str) -> GoalGrade:
+        return GoalGrade(
+            elements=[ElementGrade(name, verdicts.get(name, "present"), "")
+                      for name in GOAL_ELEMENTS],
+            summary="",
+        )
+
+    assert graded().ready
+
+    for element in LOAD_BEARING:
+        assert not graded(**{element: "missing"}).ready, element
+        assert not graded(**{element: "weak"}).ready, f"{element}: weak is not present"
+
+    # And an optional element missing does not block a project from starting.
+    optional = next(e for e in GOAL_ELEMENTS if e not in LOAD_BEARING)
+    assert graded(**{optional: "missing"}).ready, optional
+
+
 def test_the_cli_subprocess_does_not_inherit_the_platforms_secrets(monkeypatch):
     """The SDK builds the subprocess environment from `os.environ` and merges
     ours over it, so anything the control plane holds travels unless it is

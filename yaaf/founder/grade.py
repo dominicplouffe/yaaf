@@ -40,15 +40,29 @@ GOAL_ELEMENTS = (
     "failure_deliverable",
 )
 
-#: The three the grammar calls very rarely optional — the ones that stop a
-#: project grading itself. A goal missing any of these is not ready.
+#: The ones that stop a project grading itself, or grading itself against its
+#: own brief. A goal missing any of these is not ready.
 #:
-#: `standard` belongs here on the argument and is deliberately not here yet:
-#: promoting it would fail the reference goal in `docs/projects/`, which was
-#: written before the element existed and names no reference class. Fix the
-#: reference first, then promote — a load-bearing element the worked example
-#: does not satisfy teaches the Founder that the bar is negotiable.
-LOAD_BEARING = ("finish_line", "anti_metrics", "failure_deliverable")
+#: `standard` was held out of this list while the reference goal in
+#: `docs/projects/` did not satisfy it — a load-bearing element the worked
+#: example fails teaches the Founder that the bar is negotiable. The reference
+#: names a practice now, so it is promoted. It earns the place on the same
+#: argument the grammar makes for it: every other element, missing, produces a
+#: project that drifts or overspends *visibly*, while this one produces a
+#: project that hits every requirement it was given and is quietly the wrong
+#: work.
+#:
+#: `quality_bar` is here for the same reason at the level below: where "done"
+#: and "good" are different things and nobody said what good is, done wins,
+#: because done is the half with a test behind it.
+#:
+#: Being load-bearing does not mean an element must apply. The grammar's rule
+#: is that an element which genuinely does not apply is graded *present* with a
+#: note saying why — so a project where done and good are the same thing
+#: answers `quality_bar` by saying so, and stays ready. What this list refuses
+#: is silence.
+LOAD_BEARING = ("finish_line", "standard", "anti_metrics", "quality_bar",
+                "failure_deliverable")
 
 
 @dataclass
@@ -73,11 +87,12 @@ class GoalGrade:
 
     @property
     def ready(self) -> bool:
-        """Whether the load-bearing three are all present.
+        """Whether every load-bearing element is present.
 
         Deliberately not "everything is present": the grammar says elements can
         legitimately not apply, and a grader that demanded all ten would make
-        a one-week Deliver project impossible to start.
+        a one-week Deliver project impossible to start. It is not "the three"
+        either — see :data:`LOAD_BEARING`, which is five.
         """
         by_name = {e.element: e.verdict for e in self.elements}
         return all(by_name.get(name) == "present" for name in LOAD_BEARING)

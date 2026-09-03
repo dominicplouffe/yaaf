@@ -39,6 +39,18 @@ def _ok(response: Any) -> Any:
     return response.json()
 
 
+def _dump(payload: Any) -> str:
+    """A seed file, written the way the committed ones are written.
+
+    ``ensure_ascii=False`` is the whole point. Role prompts and goals are prose
+    full of em-dashes and curly quotes; escaped, every one of them becomes
+    ``\\u2014`` and a re-seed rewrites all thirty-four files with no change
+    anybody made. These files are read by humans and reviewed in diffs, so the
+    churn is the cost, not the encoding.
+    """
+    return json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
+
+
 def save_seed(client: _Client, directory: Path) -> tuple[int, int]:
     """Write every role and every project to `directory`. Returns the counts."""
     roles_dir, projects_dir = directory / "roles", directory / "projects"
@@ -51,12 +63,12 @@ def save_seed(client: _Client, directory: Path) -> tuple[int, int]:
         # A seeded role starts a fresh version chain on the new install; the
         # number it happened to reach on the old one means nothing there.
         body.pop("version", None)
-        (roles_dir / f"{body['slug']}.json").write_text(json.dumps(body, indent=2) + "\n")
+        (roles_dir / f"{body['slug']}.json").write_text(_dump(body))
 
     projects = _ok(client.get("/observe/projects"))
     for project in projects:
         bundle = _ok(client.get(f"/admin/projects/{project['id']}/export"))
-        (projects_dir / f"{project['slug']}.json").write_text(json.dumps(bundle, indent=2) + "\n")
+        (projects_dir / f"{project['slug']}.json").write_text(_dump(bundle))
 
     return len(roles), len(projects)
 
