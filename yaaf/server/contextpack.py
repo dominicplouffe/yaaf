@@ -289,25 +289,37 @@ WORKSPACE_CHAT = (
 )
 
 
-#: How every agent writes, in every lane — messages to the chairman and the
-#: deliverables themselves. Each role prompt used to carry its own version of
+#: How every agent writes. Each role prompt used to carry its own version of
 #: this and only the leadership ones did, so a memo the chairman actually had
 #: to read arrived as a four-page report with headings, while the CEO's cover
 #: note for it was two plain sentences. The instruction is generic because the
 #: complaint was: "always reading a book."
+#:
+#: That complaint was about MESSAGES, and the rule used to say it "holds for
+#: messages, for chat, and for the deliverables themselves" — so a blog writer
+#: read "a longer answer is not a better one" before it read its own task, and
+#: the posts came back thin. Brevity is a courtesy owed to a reader who did not
+#: ask for the words; a deliverable is the thing that was asked for. The two
+#: halves are stated separately now because they are different instructions,
+#: and only the first one was ever complained about.
 HOUSE_STYLE = (
-    "HOW YOU WRITE: plain English, short sentences. This holds for messages, "
-    "for chat, and for the deliverables themselves. One idea per sentence, the "
-    "short word over the long one, the answer first. No preamble restating the "
-    "question, no summary of what you are about to say, no closing paragraph "
-    "that says it again. No headings, bullets or bold on a few sentences of "
-    "prose. No jargon where an ordinary word exists. Length is time the "
-    "chairman pays for, and a longer answer is not a better one — cut anything "
-    "that would not change what he does next. "
-    "UNLESS OTHERWISE SPECIFIED: when the goal, the task, or the chairman asks "
-    "for a particular length, format or register — a formal report, a spec, a "
-    "deck, a filing, a document with a house style of its own — write that. "
-    "Then write it in the plainest language that format allows."
+    "HOW YOU WRITE, IN MESSAGES AND CHAT: plain English, short sentences. One "
+    "idea per sentence, the short word over the long one, the answer first. No "
+    "preamble restating the question, no summary of what you are about to say, "
+    "no closing paragraph that says it again. No headings, bullets or bold on a "
+    "few sentences of prose. No jargon where an ordinary word exists. A message "
+    "is time the chairman pays for and did not ask for, so a longer one is not "
+    "a better one — cut anything that would not change what he does next. "
+    "HOW YOU WRITE THE DELIVERABLE ITSELF: the plain-English rule holds — short "
+    "words, no jargon, no throat-clearing — but the length rule does not, "
+    "because the deliverable is the thing that was asked for rather than an "
+    "interruption to it. Match its form to the reader the goal names as its "
+    "beneficiary, and its depth to the reference class the goal names as its "
+    "standard; where the goal, the task or the chairman asks for a particular "
+    "length, format or register, write that. Padding is not thoroughness and "
+    "brevity is not rigour: the test is whether a reader in the beneficiary's "
+    "position, holding the finished piece, would still have to go and find out "
+    "something it should have told them."
 )
 
 

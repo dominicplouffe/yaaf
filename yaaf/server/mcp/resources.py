@@ -36,7 +36,7 @@ def listing(session: Session, principal: Principal) -> list[dict]:
          "description": "What needs the chairman, across every project",
          "mimeType": "application/json"},
         {"uri": "yaaf://docs/goal-grammar", "name": "GOAL_GRAMMAR.md",
-         "description": "The eight things a goal has to contain",
+         "description": "The ten things a goal has to contain",
          "mimeType": "text/markdown"},
     ]
     for project in chaired_projects(session, principal):

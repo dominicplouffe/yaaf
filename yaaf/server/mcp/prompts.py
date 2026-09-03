@@ -73,7 +73,7 @@ TEXT = {
     "design": (
         "Design a project for: {idea}\n\n"
         "Work in this order, and show me each step.\n"
-        "1. Read `yaaf://docs/goal-grammar`, then write a goal that satisfies all eight "
+        "1. Read `yaaf://docs/goal-grammar`, then write a goal that satisfies all ten "
         "elements. Say what you assumed.\n"
         "2. Call `grade_goal`. If it does not pass, fix the goal, not the grade.\n"
         "3. Call `catalog` to pick a CEO role and a roster. Prefer a crew if one fits. "

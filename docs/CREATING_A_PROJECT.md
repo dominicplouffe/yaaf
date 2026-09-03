@@ -84,7 +84,7 @@ Two things worth knowing:
   handed to your new CEO as its day-one briefing. You do not have to explain
   yourself twice.
 - **The goal is graded, not generated and forgotten.** The Founder grades its
-  own draft against [GOAL_GRAMMAR.md](GOAL_GRAMMAR.md) — the eight things a
+  own draft against [GOAL_GRAMMAR.md](GOAL_GRAMMAR.md) — the ten things a
   goal has to contain — before it shows you anything. That file is worth
   reading whether or not you use the Founder; it is what separates a goal that
   works from one that putters.

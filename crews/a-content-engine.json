@@ -6,7 +6,7 @@
   "domains": [
     "general"
   ],
-  "source": "authored",
+  "source": "examples/12-a-content-engine",
   "teams": [
     {
       "name": "Research",
@@ -20,6 +20,13 @@
       "role_slug": "blog-writer",
       "employees": [
         "Ada"
+      ]
+    },
+    {
+      "role_slug": "editor",
+      "name": "Review",
+      "employees": [
+        "Juno"
       ]
     },
     {

@@ -1,11 +1,11 @@
-# Examples — two you could do without yaaf, and nine you couldn't
+# Examples — two you could do without yaaf, and ten you couldn't
 
 Every example here has to answer one question, and answers it at the top of its
 page: **why not just a Claude Skill?**
 
 For the first two the honest answer is *"you could — that's the point."* They
 exist to teach you the loop on something you can check yourself in five minutes.
-For the other nine the answer names the specific thing that breaks: nobody is
+For the other ten the answer names the specific thing that breaks: nobody is
 awake at 02:00; a chat session cannot be woken by your app; a resumed session
 does not know it already opened that pull request; one agent cannot be its own
 skeptic; a link nobody fetched is not evidence.
@@ -57,10 +57,11 @@ Each of these breaks without the platform, for the reason in the last column.
 | 09 | [One idea, thirty days](09-one-idea-thirty-days.md) | Find a product idea and prove someone wants it | **Explore**, solo | Hold a bet to a kill date you can't quietly move, on evidence it didn't write |
 | 10 | [Read the filings](10-read-the-filings.md) | A company note you could defend to a skeptic | Deliver | Produce the *record* — verified claims, logged decisions, sampled work |
 | 11 | [Numbers you can defend](11-numbers-you-can-defend.md) | An answer from data, and the check that re-derives it | Deliver | Be checked. Every headline figure recomputes from a pinned copy, judged by an agent that did not write it |
+| 12 | [A content engine](12-a-content-engine.md) | Posts published to your blog, graded by who replied | **Operate** | Be read by someone who didn't write it — and grade itself months later on a reply it cannot author |
 
 Domains, so you can find yourself in one: writing, research, ops and
 integration, software maintenance, education, QA, monitoring, games, product
-discovery, regulated research, data analysis.
+discovery, regulated research, data analysis, content and publishing.
 
 ## The short version of the argument
 
