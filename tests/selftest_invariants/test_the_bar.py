@@ -174,6 +174,78 @@ def test_asking_for_a_read_with_nobody_to_give_one_is_refused(client):
                            "employees": ["Ada"]}]).status_code == 200
 
 
+def test_the_rule_cannot_be_amended_into_a_state_the_roster_cannot_keep(client):
+    """Creation was the only guarded door, and it is not the only door.
+
+    Found by rehearsing the upgrade rather than by reading the code: a running
+    project was amended to demand an independent read with nobody on its roster
+    who could give one, and the amendment was accepted with a 200. A rule that
+    holds at one door and not the other is a rule the chairman can set and then
+    watch do nothing.
+    """
+    _library(client)
+    created = _create(client, "growing", constitution={}, teams=[
+        {"role_slug": "scribe", "name": "Editorial", "employees": ["Ada"]},
+    ])
+    project_id = created.json()["id"]
+
+    refused = client.post(f"/admin/projects/{project_id}/amendments", headers=ADMIN, json={
+        "reason": "I want the work read before I see it",
+        "changes": {"deliverable_review": "independent_read"}})
+    assert refused.status_code == 422, refused.text
+    assert "wrote it" in refused.text and "reader" in refused.text
+
+    # Unchanged, not half-applied.
+    from yaaf.core.constitution import effective
+    with db_session() as session:
+        assert effective(session, project_id).deliverable_review == "none"
+
+    # Staff the seat and the same amendment lands — the refusal names a fix
+    # that works.
+    assert client.post(f"/admin/projects/{project_id}/teams", json={
+        "role_slug": "reader", "name": "Review", "employees": ["Juno"]},
+        headers=ADMIN).status_code == 200
+    accepted = client.post(f"/admin/projects/{project_id}/amendments", headers=ADMIN, json={
+        "reason": "now there is somebody to do it",
+        "changes": {"deliverable_review": "independent_read"}})
+    assert accepted.status_code == 200, accepted.text
+    with db_session() as session:
+        assert effective(session, project_id).deliverable_review == "independent_read"
+
+
+def test_a_clone_does_not_duplicate_a_promise_its_source_cannot_keep(client):
+    """The third door. A clone copies the constitution and the roster verbatim,
+    so a source in the broken state hands the twin the same broken promise —
+    which is how one install's mistake becomes two. Only reachable from a
+    project amended before that door was shut, so the state is forced here
+    directly rather than through the API that now refuses it."""
+    from yaaf.core.models import Constitution
+
+    _library(client)
+    created = _create(client, "legacy-broken", constitution={}, teams=[
+        {"role_slug": "scribe", "name": "Editorial", "employees": ["Ada"]},
+    ])
+    project_id = created.json()["id"]
+    with db_session() as session:
+        row = session.query(Constitution).filter_by(project_id=project_id).one()
+        row.body = {**row.body, "deliverable_review": "independent_read"}
+
+    refused = client.post(f"/admin/projects/{project_id}/clone",
+                          json={"slug": "twin", "name": "Twin"}, headers=ADMIN)
+    assert refused.status_code == 422, refused.text
+    with db_session() as session:
+        assert not session.query(Project).filter_by(slug="twin").first(), \
+            "a refused clone must not leave half a project behind"
+
+    # A source that CAN keep its rule clones fine.
+    assert client.post(f"/admin/projects/{project_id}/teams", json={
+        "role_slug": "reader", "name": "Review", "employees": ["Juno"]},
+        headers=ADMIN).status_code == 200
+    assert client.post(f"/admin/projects/{project_id}/clone",
+                       json={"slug": "twin", "name": "Twin"},
+                       headers=ADMIN).status_code == 200
+
+
 def test_an_install_that_says_nothing_is_byte_identical(client):
     """The promise this whole change rests on. yaaf is open source and these
     are dials, so a constitution written before they existed, and a project

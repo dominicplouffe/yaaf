@@ -583,30 +583,17 @@ CRAFT_CATEGORIES = ("content", "research", "build", "challenge")
 REVIEW_CATEGORY = "challenge"
 
 
-def _check_review_seat(session: Session, doc: ConstitutionDoc, teams: list[TeamSpec]) -> None:
-    """A project that asks for an independent read must hire someone who can
-    give it one.
-
-    This is the whole reason the rule is enforced HERE rather than in a prompt:
-    the form, the Founder and `mcp__yaaf__create_project` all build a
-    ProjectCreate and all land on this endpoint, so a check written once covers
-    three front doors. The same sentence written into three prompts covers
-    whichever one the author remembered.
+def _refuse_without_review_seat(session: Session, slugs: set[str]) -> None:
+    """Refuse unless one of these roles is a seat that reads somebody else's work.
 
     Category rather than slug on purpose — `editor`, `adversary`,
     `data-skeptic`, `plan-adversary` and a role this install wrote itself all
     answer, and a library that grows does not have to come back and edit a
     list.
     """
-    if doc.deliverable_review != "independent_read":
-        return
-    slugs = {spec.role_slug for spec in teams}
-    if not slugs:
-        return
-    reviewers = session.execute(
+    if slugs and session.execute(
         select(Role.slug).where(Role.slug.in_(slugs), Role.category == REVIEW_CATEGORY)
-    ).scalars().all()
-    if reviewers:
+    ).scalars().first():
         return
     available = session.execute(
         select(Role.slug).where(Role.category == REVIEW_CATEGORY).order_by(Role.slug)
@@ -621,6 +608,40 @@ def _check_review_seat(session: Session, doc: ConstitutionDoc, teams: list[TeamS
             "; or set deliverable_review to 'none' and say that is what you want."
         ),
     )
+
+
+def _project_role_slugs(session: Session, project_id: str) -> set[str]:
+    """The roles a project's teams are actually pinned to.
+
+    Through the version rather than by name: a team keeps the role version it
+    was hired on, and this has to describe the roster as it is rather than as
+    the library has since become.
+    """
+    return set(session.execute(
+        select(Role.slug)
+        .join(RoleVersion, RoleVersion.role_id == Role.id)
+        .join(Team, Team.role_version_id == RoleVersion.id)
+        .where(Team.project_id == project_id)
+    ).scalars().all())
+
+
+def _check_review_seat(session: Session, doc: ConstitutionDoc, teams: list[TeamSpec]) -> None:
+    """A project that asks for an independent read must hire someone who can
+    give it one.
+
+    This is the whole reason the rule is enforced HERE rather than in a prompt:
+    the form, the Founder and `mcp__yaaf__create_project` all build a
+    ProjectCreate and all land on this endpoint, so a check written once covers
+    three front doors. The same sentence written into three prompts covers
+    whichever one the author remembered.
+
+    A spec with no teams at all is left alone: solo mode and the fire drill
+    both build rosters that way, and refusing them here would be answering a
+    question about staffing before anyone has staffed anything.
+    """
+    if doc.deliverable_review != "independent_read" or not teams:
+        return
+    _refuse_without_review_seat(session, {spec.role_slug for spec in teams})
 
 #: What "this matters" buys a producing seat. Only ever upward: a role already
 #: at or above these keeps what it has.
@@ -1050,6 +1071,12 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
     source = _get_project(session, project_id)
     if session.execute(select(Project).where(Project.slug == body.slug)).scalar_one_or_none():
         raise HTTPException(status_code=409, detail="project slug already exists")
+    # A clone copies the constitution and the roster verbatim, so a source that
+    # cannot keep its own rule would hand the twin the same broken promise. It
+    # only reaches here from a project amended before that door was shut, and
+    # duplicating that state is how one install's mistake becomes two.
+    if effective(session, source.id).deliverable_review == "independent_read":
+        _refuse_without_review_seat(session, _project_role_slugs(session, source.id))
 
     integrations = {k: v for k, v in (source.integrations or {}).items()
                     if k not in _NON_CLONABLE_INTEGRATION_KEYS}
@@ -3016,6 +3043,13 @@ def amend_constitution(
     project_id: str, body: AmendmentIn, session: Session = Depends(db)
 ) -> dict:
     project = _get_project(session, project_id)
+    # A rule may not be amended into a state the roster cannot keep. Creation
+    # refuses this; amendment is the other door onto the same rule, and a rule
+    # that holds at one door and not the other is a rule the chairman can set
+    # and then watch do nothing. There is no route that removes a team, so the
+    # roster only ever grows — which is why this is the last door to close.
+    if body.changes.get("deliverable_review") == "independent_read":
+        _refuse_without_review_seat(session, _project_role_slugs(session, project.id))
     try:
         amendments = propose_amendment(
             session, project.id, project.chairman_user_id, body.reason, body.changes,
