@@ -8,7 +8,10 @@ moment it happens; and Slack socket mode trusts exactly one human."""
 
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
+
+import pytest
 
 from tests.conftest import ADMIN, amend, bearer, channel_of, live_token, make_project
 from yaaf.core import ids
@@ -26,6 +29,22 @@ from yaaf.core.models import (
 )
 from yaaf.server import dispatcher
 from yaaf.server.slack.socket import chairman_text
+
+
+def _chat_entry(monkeypatch):
+    """chat_entry as the image lays it out: both entrypoints in one directory,
+    so `sandbox_entry` is importable by bare name."""
+    import importlib
+    import sys
+
+    monkeypatch.setenv("YAAF_API_BASE_URL", "http://api:8080")
+    monkeypatch.setenv("YAAF_API_TOKEN", "test-token")
+    monkeypatch.setenv("YAAF_RUN_ID", "run_test")
+    monkeypatch.setenv("YAAF_TOOL_PERMISSIONS", "{}")
+    import yaaf.runner.sandbox_entry as sandbox_entry_module
+
+    sys.modules["sandbox_entry"] = importlib.reload(sandbox_entry_module)
+    return importlib.import_module("yaaf.runner.chat_entry")
 
 
 def _ceo_id(project: dict) -> str:
@@ -312,17 +331,7 @@ def test_boot_backlog_is_answered_not_skipped(client, monkeypatch):
     """A chairman message that arrived while no session was reading must be
     answered by the next session, not filed as history — restart amnesia was
     how a live 'Hello?' went silently unanswered."""
-    import importlib
-    import sys
-
-    monkeypatch.setenv("YAAF_API_BASE_URL", "http://api:8080")
-    monkeypatch.setenv("YAAF_API_TOKEN", "test-token")
-    monkeypatch.setenv("YAAF_RUN_ID", "run_test")
-    monkeypatch.setenv("YAAF_TOOL_PERMISSIONS", "{}")
-    import yaaf.runner.sandbox_entry as sandbox_entry_module
-
-    sys.modules["sandbox_entry"] = importlib.reload(sandbox_entry_module)
-    chat_entry = importlib.import_module("yaaf.runner.chat_entry")
+    chat_entry = _chat_entry(monkeypatch)
 
     messages = [
         {"id": "m1", "from_user": "u1", "body": "old, already read"},
@@ -341,18 +350,7 @@ def test_chat_harness_speaks_real_api_paths(client, monkeypatch):
     """The harness's hardcoded paths must be routes the app actually serves —
     the live failure this pins down: a plausible-looking path 404ing and being
     misread as a revoked token."""
-    import importlib
-    import sys
-
-    monkeypatch.setenv("YAAF_API_BASE_URL", "http://api:8080")
-    monkeypatch.setenv("YAAF_API_TOKEN", "test-token")
-    monkeypatch.setenv("YAAF_RUN_ID", "run_test")
-    monkeypatch.setenv("YAAF_TOOL_PERMISSIONS", "{}")
-    import yaaf.runner.sandbox_entry as sandbox_entry_module
-
-    # In the image both entrypoints sit in one directory; mirror that layout.
-    sys.modules["sandbox_entry"] = importlib.reload(sandbox_entry_module)
-    chat_entry = importlib.import_module("yaaf.runner.chat_entry")
+    chat_entry = _chat_entry(monkeypatch)
 
     calls: list[tuple[str, str]] = []
 
@@ -524,17 +522,7 @@ def test_stop_chat_container_keeps_every_containers_logs(monkeypatch):
 def test_chat_entry_failure_taxonomy(client, monkeypatch):
     """401/403 mean the token is dead; everything else is weather. And a turn
     whose ResultMessage says error must raise, not return a broken reply."""
-    import importlib
-    import sys
-
-    monkeypatch.setenv("YAAF_API_BASE_URL", "http://api:8080")
-    monkeypatch.setenv("YAAF_API_TOKEN", "test-token")
-    monkeypatch.setenv("YAAF_RUN_ID", "run_test")
-    monkeypatch.setenv("YAAF_TOOL_PERMISSIONS", "{}")
-    import yaaf.runner.sandbox_entry as sandbox_entry_module
-
-    sys.modules["sandbox_entry"] = importlib.reload(sandbox_entry_module)
-    chat_entry = importlib.import_module("yaaf.runner.chat_entry")
+    chat_entry = _chat_entry(monkeypatch)
 
     assert chat_entry._failure_kind(401) == "auth"
     assert chat_entry._failure_kind(403) == "auth"
@@ -548,6 +536,192 @@ def test_chat_entry_failure_taxonomy(client, monkeypatch):
     assert not chat_entry._turn_result_ok(result(True, "success"))
     assert not chat_entry._turn_result_ok(result(False, "error_max_turns"))
     assert not chat_entry._turn_result_ok(result(False, "error_during_execution"))
+
+
+# ── a failed turn says why, and a transient one is waited out ───────────────
+
+OVERLOADED = ("API Error: 529 Overloaded. This is a server-side issue, usually "
+              "temporary — try again in a moment.")
+
+
+class _ScriptExhausted(BaseException):
+    """Deliberately not an Exception — the lane retries those. A test that runs
+    off the end of its script must fail loudly rather than spin."""
+
+
+class _ScriptedClient:
+    """Stands in for ClaudeSDKClient. Every rebuild draws the next turn from
+    one script, so the script is the whole session as the chairman sees it."""
+
+    def __init__(self, turns, builds):
+        self._turns, self._builds = turns, builds
+
+    def __call__(self, options):  # ClaudeSDKClient(options)
+        self._builds.append(options)
+        return self
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def query(self, prompt):
+        pass
+
+    async def receive_response(self):
+        if not self._turns:
+            raise _ScriptExhausted("the lane took a turn the test did not script")
+        for message in self._turns.pop(0):
+            yield message
+
+
+class _Clock:
+    """Records a backoff instead of serving it: the schedule is the assertion,
+    and the test costs no wall clock."""
+
+    def __init__(self):
+        self.slept: list[float] = []
+
+    async def sleep(self, seconds):
+        self.slept.append(seconds)
+
+
+def _result(**overrides):
+    from claude_agent_sdk import ResultMessage
+
+    return ResultMessage(**{"subtype": "success", "duration_ms": 1,
+                            "duration_api_ms": 1, "is_error": False, "num_turns": 1,
+                            "session_id": "sess_1",
+                            "usage": {"input_tokens": 10, "output_tokens": 5,
+                                      "cache_creation_input_tokens": 0,
+                                      "cache_read_input_tokens": 0},
+                            **overrides})
+
+
+def _died(text, status=529):
+    """The live shape of an API failure: the CLI reports subtype "success",
+    sets is_error, and puts the prose in `result`."""
+    return [_result(is_error=True, api_error_status=status, result=text)]
+
+
+def _broke():
+    return [_result(is_error=True, subtype="error_during_execution")]
+
+
+def _said(text):
+    from claude_agent_sdk import AssistantMessage, TextBlock
+
+    return [AssistantMessage(content=[TextBlock(text=text)], model="m"), _result()]
+
+
+def _session(monkeypatch, tmp_path, turns, stop_after=1):
+    """A whole chat session over a scripted SDK and a fake agent API. The
+    chairman asks one more question per reply he gets, and his token is revoked
+    once `stop_after` replies are posted, so the session ends as a real one does."""
+    chat_entry = _chat_entry(monkeypatch)
+    posted, builds, clock = [], [], _Clock()
+    messages = [{"id": "m0", "from_user": "u1", "body": "SHOP.TO has been filled."}]
+
+    def call(method, path, payload=None, params=None):
+        if method == "GET" and path == "/agent/messages":
+            if len(posted) >= stop_after:
+                return {"status": 401, "body": {}}
+            while len(messages) < len(posted) + 1:
+                messages.append({"id": f"m{len(messages)}", "from_user": "u1",
+                                 "body": "and the next one?"})
+            return {"status": 200, "body": list(messages)}
+        if method == "POST" and path == "/agent/messages":
+            posted.append(payload["body"])
+        if path == "/agent/channels":
+            return {"status": 200,
+                    "body": [{"id": "chan_x", "kind": "boardroom", "unread": 1}]}
+        if path == "/agent/context":
+            return {"status": 200, "body": {"situation": {"why": "running"}}}
+        return {"status": 200, "body": {}}
+
+    (tmp_path / "system_prompt.txt").write_text("You are the CEO.")
+    monkeypatch.setattr(chat_entry.base, "STAGING", tmp_path)
+    monkeypatch.setattr(chat_entry.base, "_call", call)
+    monkeypatch.setattr(chat_entry, "ClaudeSDKClient", _ScriptedClient(turns, builds))
+    monkeypatch.setattr(chat_entry, "asyncio", clock)
+    return chat_entry, posted, builds, clock
+
+
+def test_a_dead_turn_carries_the_api_error_not_its_subtype(monkeypatch):
+    """A turn that dies on a 529 arrives as subtype "success" with is_error set,
+    so naming the failure by subtype raised TurnFailed('success') — a phrase
+    that told the chairman nothing and told the transient classifier, which
+    reads the exception's text, that an overload was fatal."""
+    chat_entry = _chat_entry(monkeypatch)
+    monkeypatch.setattr(chat_entry.base, "_call",
+                        lambda *a, **k: {"status": 200, "body": {}})
+
+    with pytest.raises(chat_entry.TurnFailed) as caught:
+        asyncio.run(chat_entry._run_turn(_ScriptedClient([_died(OVERLOADED)], []),
+                                         "chan_x", "hi"))
+
+    assert "529 Overloaded" in str(caught.value)
+    assert chat_entry.base._looks_transient(caught.value)
+    assert "529 Overloaded" in chat_entry._apology(caught.value, 3)
+    # A credential failure is still fatal: retrying one only delays the pause.
+    assert not chat_entry.base._looks_transient(
+        chat_entry.TurnFailed("Not logged in: please run /login"))
+
+
+def test_a_transient_turn_backs_off_and_still_answers(monkeypatch, tmp_path):
+    """An overloaded API must cost a wait, not an apology. The old lane spent
+    its one retry in the same second — two dead attempts inside a second and a
+    "(TurnFailed)" — while the 529 had another ten minutes to run."""
+    chat_entry, posted, builds, clock = _session(
+        monkeypatch, tmp_path,
+        [_died(OVERLOADED), _died(OVERLOADED), _said("Sold — 29 shares.")])
+
+    assert asyncio.run(chat_entry.main()) == 0
+    assert posted == ["Sold — 29 shares."]  # the answer he asked for, no apology
+    assert [s for s in clock.slept
+            if s in chat_entry.base.RESUME_BACKOFF_S] == [5.0, 20.0]
+    assert len(builds) == 3  # a dead client is not reused: one per attempt
+
+
+def test_a_fatal_turn_apologises_once_and_names_the_cause(monkeypatch, tmp_path):
+    """A failure a retry cannot fix is still poison: one attempt, then an
+    answer the chairman can act on rather than an error class name."""
+    chat_entry, posted, builds, clock = _session(
+        monkeypatch, tmp_path, [_died("Not logged in: please run /login", status=401)])
+
+    assert asyncio.run(chat_entry.main()) == 0
+    assert len(posted) == 1
+    assert "Not logged in" in posted[0] and "tried once" in posted[0]
+    assert [s for s in clock.slept if s in chat_entry.base.RESUME_BACKOFF_S] == []
+
+
+def test_transient_retries_are_bounded_and_the_apology_counts_them(monkeypatch, tmp_path):
+    """Three attempts is the work lane's bound and now the talk lane's. Past it
+    the chairman is told what happened, not left watching typing dots."""
+    chat_entry, posted, builds, clock = _session(
+        monkeypatch, tmp_path, [_died(OVERLOADED)] * 3)
+
+    assert asyncio.run(chat_entry.main()) == 0
+    assert len(posted) == 1
+    assert "3 times" in posted[0] and "529 Overloaded" in posted[0]
+    # Three attempts, then one more client that only finds the token gone.
+    assert len(builds) == 4
+
+
+def test_a_session_that_keeps_answering_is_never_rebuilt_to_death(monkeypatch, tmp_path):
+    """The rebuild cap exists to surface an SDK that is systematically broken,
+    and it counted a lifetime: six bad turns spread over three days killed a
+    session that had answered everything between them. It counts consecutive
+    failures now — one answered turn is the proof the SDK works."""
+    script = []
+    for _ in range(6):
+        script += [_broke(), _said("Answered.")]
+    chat_entry, posted, builds, _ = _session(monkeypatch, tmp_path, script, stop_after=12)
+
+    assert asyncio.run(chat_entry.main()) == 0  # 6 rebuilds > MAX_CLIENT_REBUILDS
+    assert len(posted) == 12
+    assert sum(1 for body in posted if "error_during_execution" in body) == 6
 
 
 def test_socket_mode_trusts_exactly_one_human():
