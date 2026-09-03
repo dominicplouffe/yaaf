@@ -38,6 +38,9 @@ HISTORY_BOOTSTRAP = 30
 # Bootstrap is context, not archive: message bodies run to 20k chars, and 30
 # uncut ones would put ~150k tokens into the first turn of every session.
 CHAT_HISTORY_MSG_CHARS = 1_000
+# Enough for "API Error: 529 Overloaded. This is a server-side issue…" and the
+# line after it; a stack trace pasted into the boardroom helps nobody.
+CAUSE_CHARS = 300
 
 # Only a genuine 401/403 means the token was revoked (project paused, kill
 # switch) — anything else is the API restarting, the network hiccuping, or a
@@ -181,8 +184,46 @@ def _transcript_block(messages: list[dict]) -> str:
 
 
 class TurnFailed(Exception):
-    """The CLI reported the turn as an error (error_max_turns,
-    error_during_execution, ...) — the reply text cannot be trusted."""
+    """The CLI reported the turn as an error — the reply text cannot be
+    trusted. It carries what the CLI actually said, because the subtype alone
+    is a lie in the commonest case: a turn that dies on an API failure arrives
+    as subtype "success" with is_error=True, so naming the failure by subtype
+    logged the self-contradictory ``TurnFailed('success')`` and threw the only
+    actionable words — "API Error: 529 Overloaded" — away. Two readers need
+    them: the chairman, who is owed a reason his answer never came, and
+    ``_looks_transient``, which classifies on the exception's text and so read
+    every overload as fatal."""
+
+
+def _result_error_text(result) -> str:
+    """The most informative line a failed result carries, in the SDK's own
+    order of preference (``_error_result_text`` in its query.py): the CLI's own
+    terminal errors, then the API-failure prose, then a non-success subtype,
+    then the bare HTTP status."""
+    errors = [str(error).strip() for error in (getattr(result, "errors", None) or [])
+              if str(error).strip()]
+    if errors:
+        return "; ".join(errors)
+    text = getattr(result, "result", None)
+    if isinstance(text, str) and text.strip():
+        return text.strip()
+    subtype = getattr(result, "subtype", None)
+    if isinstance(subtype, str) and subtype and subtype != "success":
+        return subtype
+    status = getattr(result, "api_error_status", None)
+    if status is not None:
+        return f"API error (HTTP {status})"
+    return "unknown error"
+
+
+def _apology(exc: BaseException, attempts: int) -> str:
+    """What the chairman gets instead of an answer. It names the cause:
+    "(TurnFailed)" told him nothing he could act on, wait out, or report."""
+    cause = str(exc) if isinstance(exc, TurnFailed) else repr(exc)
+    cause = " ".join(cause.split())[:CAUSE_CHARS]
+    tries = "once" if attempts == 1 else f"{attempts} times"
+    return (f"I couldn't compose that reply — I tried {tries} and hit: {cause}. "
+            "Send it again and I'll retry; the platform logs have the rest.")
 
 
 def _turn_result_ok(result) -> bool:
@@ -220,7 +261,7 @@ async def _run_turn(client: ClaudeSDKClient, channel_id: str, prompt: str) -> st
                 _cost_booked = max(_cost_booked, message.total_cost_usd)
             _book_usage(tokens_in, tokens_out, cache_creation, cache_read, cost_delta)
     if result is not None and not _turn_result_ok(result):
-        raise TurnFailed(getattr(result, "subtype", "unknown"))
+        raise TurnFailed(_result_error_text(result))
     return "\n".join(part for part in reply_parts if part.strip())
 
 
@@ -318,22 +359,37 @@ async def _serve(client: ClaudeSDKClient, channel_id: str, state: dict) -> int |
         try:
             reply = await _run_turn(client, channel_id, prompt)
         except Exception as exc:
-            _log(f"turn failed: {exc!r}; rebuilding the SDK client")
-            _set_typing(channel_id, 0)
             ids_ = {m["id"] for m in fresh}
-            if ids_ and not state["retried"].intersection(ids_):
-                # Retry the failed message exactly once on the fresh client;
-                # a message that kills two clients is poison — apologize and
-                # move on rather than crash-loop on it.
-                state["retried"].update(ids_)
+            attempt = 1 + max((state["attempts"].get(id_, 0) for id_ in ids_), default=0)
+            for id_ in ids_:
+                state["attempts"][id_] = attempt
+            # The work lane's classifier on the work lane's schedule. An
+            # overloaded API answers again in seconds, and the old code spent
+            # its one retry immediately: two dead attempts inside a second, an
+            # apology, and a 529 that still had ten minutes left to run. A
+            # message that kills the client for a NON-transient reason is still
+            # poison and still gets one attempt.
+            retrying = bool(ids_) and attempt < base.RESUME_ATTEMPTS \
+                and base._looks_transient(exc)
+            _log(f"turn failed on attempt {attempt}: {exc!r}; "
+                 + ("backing off, then rebuilding the SDK client" if retrying
+                    else "answering the chairman without it"))
+            if retrying:
+                delay = base.RESUME_BACKOFF_S[min(attempt - 1,
+                                                  len(base.RESUME_BACKOFF_S) - 1)]
+                # Hold the typing dots across the wait. A silent boardroom reads
+                # as a dead one and the chairman re-asks, which is a second paid
+                # turn into the same overloaded API.
+                _set_typing(channel_id, delay + POLL_S + 5)
                 state["backlog"] = fresh + state["backlog"]
+                await asyncio.sleep(delay)
             else:
-                _post_reply(channel_id,
-                            "I hit an internal error composing that reply — the platform "
-                            f"will surface it in my session logs. ({type(exc).__name__})")
+                _set_typing(channel_id, 0)
+                _post_reply(channel_id, _apology(exc, attempt))
             return None
 
         _set_typing(channel_id, 0)
+        state["turns_ok"] += 1
         if reply and not _post_reply(channel_id, reply):
             # Composed and undeliverable — a revoked token, a refused post. The
             # reply itself is lost, but the chairman is not left guessing: the
@@ -382,7 +438,8 @@ async def main() -> int:
         "last_seen": messages[-1]["id"] if messages else None,
         "history": history,
         "backlog": backlog,
-        "retried": set(),
+        "attempts": {},   # message id -> failed turns, so a retry can back off
+        "turns_ok": 0,    # answered turns, so the rebuild cap counts only failure
     }
 
     _log(f"chat session live on {channel_id}; {len(history)} message(s) of history, "
@@ -391,6 +448,7 @@ async def main() -> int:
     rebuilds = 0
     while True:
         _cost_booked = 0.0  # new CLI process: its cumulative total_cost_usd restarts at 0
+        answered = state["turns_ok"]
         try:
             async with ClaudeSDKClient(options) as client:
                 code = await _serve(client, channel_id, state)
@@ -398,7 +456,12 @@ async def main() -> int:
                     return code
         except Exception as exc:
             _log(f"sdk client failed: {exc!r}")
-        rebuilds += 1
+        # Consecutive, not lifetime. The cap exists to surface an SDK that is
+        # systematically broken; a session that lives for days collects five
+        # unrelated rebuilds — and a bad afternoon on the API now costs two per
+        # message — long before it is broken. One answered turn is proof it
+        # works, and starts the count over.
+        rebuilds = 0 if state["turns_ok"] > answered else rebuilds + 1
         if rebuilds > MAX_CLIENT_REBUILDS:
             _log("sdk client rebuilt too many times; exiting for the supervisor")
             return 1
