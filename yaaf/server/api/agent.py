@@ -13,8 +13,8 @@ import hashlib
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import func, or_, select
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from yaaf.core import ids
@@ -132,9 +132,20 @@ def board(ctx: RunContext = Depends(run_auth), session: Session = Depends(db)) -
             .limit(10)
         ).scalars()
     else:
+        # Own team, plus anything anywhere waiting on a read this agent can
+        # give. A reviewer sits on its own team by design, so a board filtered
+        # to team_id showed it nothing — it was woken for work it could not
+        # see, which is worse than not being woken at all.
+        visible = Task.team_id == ctx.agent.team_id
+        if policy.is_review_seat(session, ctx.agent):
+            visible = or_(visible, and_(
+                Task.status == TaskStatus.REVIEW,
+                Task.claimed_by_agent_id != ctx.agent.id,
+            ))
         tasks = session.execute(
             select(Task).where(
-                Task.team_id == ctx.agent.team_id,
+                Task.project_id == ctx.project.id,
+                visible,
                 Task.status.in_(policy.OPEN_TASK_STATUSES),
             )
         ).scalars()
@@ -287,11 +298,92 @@ def complete_task(
             )
         )
         outcome = "checking"
+    elif policy.review_is_owed(session, ctx.project, task):
+        # An observable test used to close on the claimant's own word, and 80%
+        # of those closes were never sampled. Where the chairman asked for an
+        # independent read, the task now waits for somebody who did not write
+        # it instead.
+        task.status = TaskStatus.REVIEW
+        policy.record_task_event(session, task, TaskStatus.REVIEW, f"agent:{ctx.agent.id}",
+                                 from_status=from_status)
+        outcome = "review"
     else:
         task.status = TaskStatus.DONE
         policy.record_task_event(session, task, TaskStatus.DONE, f"agent:{ctx.agent.id}",
                                  from_status=from_status)
         outcome = "done"
+    notify(session, WAKE_CHANNEL, ctx.project.id)
+    return {"task_id": task.id, "status": outcome}
+
+
+class TaskReview(BaseModel):
+    ok: bool
+    notes: str = Field(min_length=10)
+
+    @field_validator("notes")
+    @classmethod
+    def _not_blank(cls, raw: str) -> str:
+        # min_length counts spaces. "          " is ten characters and no reasons.
+        if len(raw.strip()) < 10:
+            raise ValueError("say what you found; whitespace is not a review")
+        return raw.strip()
+
+
+@router.post("/tasks/{task_id}/review")
+def review_task(
+    task_id: str,
+    body: TaskReview,
+    ctx: RunContext = Depends(run_auth),
+    session: Session = Depends(db),
+) -> dict:
+    """A verdict on somebody else's finished work.
+
+    `ok` closes the task. Not-ok hands it back to its claimant with the
+    notes, which are an ordinary outcome and not an escalation — returning
+    work costs a run and is supposed to. `notes` is required either way:
+    "it is fine" teaches the writer nothing and makes the pass unauditable.
+    """
+    task = session.get(Task, task_id)
+    if task is None or task.project_id != ctx.project.id:
+        raise Refusal("Unknown task.", status_code=404)
+    policy.check_task_review(session, ctx.project, ctx.agent, task)
+    from_status = task.status
+    note = body.notes.strip()
+    if body.ok:
+        task.status = TaskStatus.DONE
+        policy.record_task_event(session, task, TaskStatus.DONE, f"agent:{ctx.agent.id}",
+                                 note=f"reviewed: {note[:500]}", from_status=from_status)
+        outcome = "done"
+    else:
+        # A returned task costs two runs a cycle — the author's and the
+        # reader's — so an unbounded loop is a project that spends its day
+        # disagreeing with itself. Reuses the counter and the ceiling the
+        # command-check loop already has, for the same reason: past it, this is
+        # not a disagreement the two of them will settle by trying again.
+        task.check_failures = (task.check_failures or 0) + 1
+        cap = effective(session, ctx.project.id).task_check_failures_before_block
+        if cap and task.check_failures >= cap:
+            task.status = TaskStatus.BLOCKED
+            task.blocked_reason = (
+                f"Returned by review {task.check_failures} times; the last reason was: "
+                f"{note[:300]}. Two agents disagreeing this often is a question for "
+                "whoever planned the work, not another round.")
+            policy.record_task_event(session, task, TaskStatus.BLOCKED,
+                                     f"agent:{ctx.agent.id}",
+                                     note=f"returned {task.check_failures}x",
+                                     from_status=from_status)
+            policy.notice_review_returned(session, task, ctx.agent, note, blocked=True)
+            outcome = "blocked"
+        else:
+            # Back to the person who wrote it, still theirs, with the reasons.
+            task.status = TaskStatus.CLAIMED
+            task.blocked_reason = None
+            policy.record_task_event(session, task, TaskStatus.CLAIMED,
+                                     f"agent:{ctx.agent.id}",
+                                     note=f"returned: {note[:500]}",
+                                     from_status=from_status)
+            policy.notice_review_returned(session, task, ctx.agent, note)
+            outcome = "returned"
     notify(session, WAKE_CHANNEL, ctx.project.id)
     return {"task_id": task.id, "status": outcome}
 

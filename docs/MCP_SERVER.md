@@ -393,7 +393,7 @@ discovering later.
 |---|---|---|---|---|
 | `catalog` | Search the role and crew library. | `yaaf/founder/tools.py: search_roles, search_crews` | no | **done** (M4) |
 | `read_source` | What a candidate data source actually serves. | `yaaf/founder/tools.py: read_source` | no | **done** (M4) |
-| `grade_goal` | Grade a draft goal against [GOAL_GRAMMAR.md](GOAL_GRAMMAR.md) — eight things a goal must contain. | `yaaf/founder/tools.py` | no | **done** (M4) |
+| `grade_goal` | Grade a draft goal against [GOAL_GRAMMAR.md](GOAL_GRAMMAR.md) — ten things a goal must contain. | `yaaf/founder/tools.py` | no | **done** (M4) |
 | `rehearse` | The fire drill: simulate the project for N days, create nothing. | `POST /admin/rehearse` | no | **done** (M4) |
 | `create_project` | Create from a validated bundle. | `POST /admin/projects` | yes | **done** (M4) |
 | `clone_project` | Clone an existing one; export a spec. | `POST /admin/projects/{id}/clone`, `GET /export` | yes | **done** (M4) |

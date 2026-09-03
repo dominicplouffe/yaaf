@@ -375,3 +375,105 @@ def test_the_chase_never_wakes_an_agent(client):
     with db_session() as session:
         assert dispatcher.dispatch_once(session) == 0, (
             "a platform boardroom line bought a run")
+
+
+# ── the rhythm stops too ────────────────────────────────────────────────────────
+
+
+def _amend(client, project: dict, changes: dict) -> None:
+    from tests.conftest import ADMIN
+
+    response = client.post(f"/admin/projects/{project['id']}/amendments", headers=ADMIN,
+                           json={"reason": "putting the CEO on a rhythm", "changes": changes})
+    assert response.status_code == 200, response.text
+
+
+def _a_minute_ago_utc() -> str:
+    """A wall-clock time the daily wake is already past, whenever this runs."""
+    then = utcnow() - timedelta(minutes=1)
+    return f"{then.hour:02d}:{then.minute:02d}"
+
+
+def test_a_delivered_project_stops_keeping_its_rhythm(client):
+    """The chatter brake was only half of it. A standup and a planning beat are
+    not messages, so they walked straight past it — and unlike chatter they
+    re-arm forever: every morning at ceo_daily_at, every ceo_heartbeat_hours,
+    on a project the chairman was told is not spending. Nothing is left to plan
+    (every requirement is true and new scope is refused), so the whole run is
+    the CEO deciding not to invent work."""
+    project = delivered(client, "rhythm-stops")
+    _amend(client, project, {"ceo_daily_at": _a_minute_ago_utc(),
+                             "timezone": "UTC",
+                             "ceo_heartbeat_always": True})
+    with db_session() as session:
+        assert dispatcher.dispatch_once(session) == 0
+        assert session.query(RunQueue).count() == 0
+
+
+def test_the_same_rhythm_wakes_an_undelivered_project(client):
+    """The control, and the one that would catch this brake being turned into a
+    permanent gag: the standup is a real wake reason on a live project."""
+    project = delivered(client, "rhythm-runs")
+    _amend(client, project, {"ceo_daily_at": _a_minute_ago_utc(),
+                             "timezone": "UTC",
+                             "ceo_heartbeat_always": True})
+    with db_session() as session:
+        row = session.query(Requirement).filter_by(
+            project_id=project["id"], key="R-01").one()
+        row.status = RequirementStatus.IN_PROGRESS
+        row.met_at = None
+    with db_session() as session:
+        assert dispatcher.dispatch_once(session) == 1
+
+
+def test_the_slept_rhythm_does_not_burst_when_he_confirms(client):
+    """The beat has to advance while it is suppressed. If it did not, a project
+    that sat delivered for a week would replay every morning it missed the
+    moment its last requirement reopened — a burst of runs caused by the brake
+    that was supposed to save them."""
+    project = delivered(client, "no-burst")
+    _amend(client, project, {"ceo_daily_at": _a_minute_ago_utc(), "timezone": "UTC"})
+    with db_session() as session:
+        assert dispatcher.dispatch_once(session) == 0
+        beat = session.query(Heartbeat).filter_by(
+            agent_id=project["ceo_agent_id"], name="daily").one_or_none()
+        assert beat is not None, "the suppressed standup left no mark to dedup against"
+        assert beat.last_fired_at >= utcnow() - timedelta(minutes=5)
+
+
+def test_ordinary_notices_stop_buying_runs_but_the_readiness_one_does_not(client):
+    """Notices walked past the chatter brake the same way the rhythm did. Three
+    routine ones — an amendment note, a memo — coalesce into a wake on any
+    project, delivered or not, which is a run spent reading mail about work
+    that is finished. The readiness notice is the exception on purpose: it is
+    the news itself, and the CEO answering "we are done" in the boardroom is
+    how the chairman finds out from the agent he asks."""
+    project = delivered(client, "quiet-mail")
+    ceo = project["ceo_agent_id"]
+    with db_session() as session:
+        for i in range(dispatcher.NOTICE_COALESCE_COUNT):
+            session.add(Notice(
+                id=f"ntc_routine_{i}", project_id=project["id"], agent_id=ceo,
+                kind=NoticeKind.CONSTITUTION_AMENDED, body=f"routine {i}"))
+    with db_session() as session:
+        assert dispatcher.dispatch_once(session) == 0, "routine mail bought a run"
+
+    with db_session() as session:
+        session.add(Notice(id="ntc_ready", project_id=project["id"], agent_id=ceo,
+                           kind=NoticeKind.DELIVERY_READY, body="you are finished"))
+    with db_session() as session:
+        assert dispatcher.dispatch_once(session) == 1, (
+            "the CEO was never told it delivered")
+
+
+def test_urgent_notices_still_get_through_to_a_delivered_project(client):
+    """The brake is about routine mail, not about news. A budget breach or a
+    decided approval on a delivered project is exactly what cannot wait for a
+    click that may not come until Monday."""
+    project = delivered(client, "urgent-mail")
+    with db_session() as session:
+        session.add(Notice(id="ntc_urgent", project_id=project["id"],
+                           agent_id=project["ceo_agent_id"],
+                           kind=NoticeKind.BUDGET_EXHAUSTED, body="the cap is gone"))
+    with db_session() as session:
+        assert dispatcher.dispatch_once(session) == 1

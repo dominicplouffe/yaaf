@@ -90,6 +90,12 @@ def _rule(
 # hand-kept list on that side went stale — see the note in `_rule`.
 GROUP_THEMES = {
     "Budgets": "Money",
+    # Its own theme because it is the one answer that buys more than one thing:
+    # money AND the model the work is done on. Filed under Budgets it read as a
+    # spending dial, and a chairman looking for "how good does this have to be"
+    # had nowhere to look — which is how every project on this install ran at
+    # the library's effort whatever it was worth.
+    "The bar": "The bar",
     "Wake-loop brakes": "Pace & brakes",
     "Runs": "Pace & brakes",
     "Work discipline": "How work is run",
@@ -109,6 +115,7 @@ GROUP_THEMES = {
 #: project comes here to change.
 THEME_ORDER = [
     "Money",
+    "The bar",
     "Pace & brakes",
     "How work is run",
     "Autonomy",
@@ -168,6 +175,28 @@ class ConstitutionDoc(BaseModel):
         help="On, evidence counts only once the platform has fetched and checked it — "
              "evidence nobody can check is opinion. Off by default: most projects verify "
              "with the data at their disposal. The 'Show me proof' preset turns it on.")
+
+    deliverable_review: str = _rule(
+        "none", choices=["none", "independent_read"], group="The bar",
+        label="Who reads the work before you do",
+        help="'independent_read': the project must staff a seat whose job is to read "
+             "what the others produced — an editor, an adversary, a skeptic — and the "
+             "platform refuses a roster that asks for this and hires nobody who can do "
+             "it. 'none' is what every project did before this rule existed: the only "
+             "reader of a deliverable before you was the agent that wrote it, and 80% "
+             "of those closes were never sampled. Off by default so an install that "
+             "upgrades is unchanged; every preset on the new-project form turns it on.")
+
+    require_search_record: bool = _rule(
+        False, group="The bar", label="Research must say what it did not find",
+        help="On, a task that produces evidence cannot be completed without a search "
+             "record: what was looked for, where, and — the half that does the work — "
+             "what came back EMPTY. The alternative floor, a minimum number of cited "
+             "sources, is satisfied by fetching three pages and citing them whether or "
+             "not a claim derives from any, which buys a citation ritual that passes "
+             "the gate and looks like rigour. A search record is unverifiable and not "
+             "gameable in a way that resembles compliance, which is the more useful "
+             "property: a thin one reads as thin. Off by default.")
 
     # Autonomy thresholds (lana §6)
     approval_threshold_usd: float = _rule(
@@ -254,21 +283,29 @@ class ConstitutionDoc(BaseModel):
         help="Where the CEO is told it is approaching the plan — early enough to say "
              "something about it while there is still a choice to make.")
     stakes: str = _rule(
-        "normal", choices=["low", "normal", "high"], group="Budgets",
+        "normal", choices=["low", "normal", "high"], group="The bar",
         label="How much this project matters (stakes)",
         # The word is in the label because this rule is the one a chairman goes
         # LOOKING for, and could not find. The CEO calls it "STAKES: NORMAL" in
         # its own reports and the docs and CLI call it `stakes`, but the screen
         # called it nothing of the kind and there is no search here — so the one
         # dial written for "this desk trades a real account" was invisible to
-        # the person holding it.
-        help="How aggressively to spend when the budget turns out to be wrong, which it "
-             "will. HIGH: running out is worse than overspending — the CEO is told to "
-             "spend what the work needs and report, and it gets real headroom before "
-             "anyone worries. LOW: the work is not worth much; going over means stop and "
-             "ask. This is the difference between a project posting to LinkedIn and one "
-             "trading a real account, and until it existed both ran under identical "
-             "caution because the platform had no way to be told which was which.")
+        # the person holding it. It sits under The bar rather than Budgets now
+        # for the same reason: once it decides which model writes what you read,
+        # filing it under money is a second way to lose it.
+        help="Answered once, and it now buys two things. MONEY: how aggressively to "
+             "spend when the budget turns out to be wrong, which it will. HIGH means "
+             "running out is worse than overspending — the CEO is told to spend what "
+             "the work needs and report, and it gets real headroom before anyone "
+             "worries. LOW means the work is not worth much; going over means stop and "
+             "ask. CRAFT: at HIGH, the seats that produce or check what you actually "
+             "read are hired on the strongest model and the deepest reasoning, rather "
+             "than on whatever the shared role library says — because raising it in the "
+             "library raises it for every project on this install. Seats you gave an "
+             "explicit model or effort keep yours. Nothing is ever lowered. This is the "
+             "difference between a project posting to LinkedIn and one trading a real "
+             "account, and until it existed both ran under identical caution because "
+             "the platform had no way to be told which was which.")
     # The spend envelope (CEO Charter, stage C — docs/AUTONOMY.md). Real-world
     # purchases, as distinct from model spend. There is no spend_authority
     # switch on purpose: the money dial IS these numbers, and a switch would

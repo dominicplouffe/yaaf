@@ -49,6 +49,10 @@ GATES = {
     "wake_ceiling", "coalescing", "scheduled", "no_lead", "paused_agents",
     "stalled_requirement", "rework_owed", "awaiting_chairman", "awaiting_ceo",
     "blocked_tasks", "checks_lost", "checking",
+    # Finished work waiting on a reader who is not its author. In FINE: the
+    # project is working — this is a step the board passes through, and the
+    # reviewer's own wake clears it — but it is not a clock, so not in WAITS.
+    "review_owed",
     # Everything is true and only his click is left. NOT in FINE: the project
     # is fine, but it is waiting on him and he is the only one who can end it,
     # so this is the one quiet that earns a banner. Not in WAITS either — no
@@ -58,7 +62,7 @@ GATES = {
 }
 # Gates that mean the project is fine — working, or the platform verifying its
 # finished work. These never raise the banner.
-FINE = {"concurrency", "agents_busy", "checking", "awaiting_ceo"}
+FINE = {"concurrency", "agents_busy", "checking", "review_owed", "awaiting_ceo"}
 # The gates that are waiting out a clock. Only these may be dismissed in the
 # UI, and each has to name the moment it ends — a wait with no falsifiable time
 # in it reads as a permanent fault.
@@ -98,9 +102,10 @@ def _synthetic(gate: str | None) -> dict:
         "concurrency": {"in_flight": 3, "cap": 3},
         "waiting": {"ready_tasks": 1, "claimable_tasks": 0, "gated_tasks": 1,
                     "claimed_tasks": 0, "blocked_tasks": 1, "checking_tasks": 1,
-                    "notices": 2, "agents_with_work": 1},
+                    "reviewing_tasks": 1, "notices": 2, "agents_with_work": 1},
         "board": {"claimable": 0, "gated": 1, "next_gate_at": at, "blocked": 1,
-                  "checking": 1, "checks_lost": ["Shortlist the models"],
+                  "checking": 1, "reviewing": 1,
+                  "checks_lost": ["Shortlist the models"],
                   "leaderless_teams": ["Alpha"], "paused_agents": ["Mike"],
                   "stalled_requirements": ["R-02"],
                   "rework_owed": ["R-06"],

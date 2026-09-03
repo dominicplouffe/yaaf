@@ -239,7 +239,7 @@ def build_server(session: Session, state: dict, env: dict[str, str],
     async def _read_source(args):
         return await step("read_source", lambda: read_source(str(args.get("url", ""))))
 
-    @tool("grade_goal", "Grade goal prose against the eight elements of the goal "
+    @tool("grade_goal", "Grade goal prose against the ten elements of the goal "
           "grammar. Returns a verdict per element and, where one is missing or weak, "
           "the specific thing to add. Call this on your own draft before you propose it.",
           {"goal": str})

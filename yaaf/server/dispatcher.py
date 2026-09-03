@@ -91,6 +91,14 @@ URGENT_NOTICE_KINDS = {NoticeKind.BUDGET_WARNING, NoticeKind.BUDGET_EXHAUSTED,
                        # delivered after the deadline it was warning about.
                        NoticeKind.FLAG_OPENED}
 
+# What still buys a run on a project the chairman has been told is finished.
+# Everything else waits for his click: a CEO reading an amendment note or a
+# routine memo on a delivered project is a run spent on the exact thing the
+# banner, the email and the nag all say is not happening. DELIVERY_READY is in
+# here because it IS the news — the CEO has to learn it finished, and saying so
+# in the boardroom is what ends the silence the incident was made of.
+DELIVERED_WAKE_NOTICE_KINDS = URGENT_NOTICE_KINDS | {NoticeKind.DELIVERY_READY}
+
 # A commitment that stopped holding needs a re-forecast wake even on a day
 # ordinary work already spent the allowance — that wake is one of the three
 # things the reserved governance slice exists for.
@@ -628,6 +636,17 @@ def _board_reachability(session: Session, project: Project, cons: ConstitutionDo
             Requirement.project_id == project.id,
             Requirement.status == RequirementStatus.CHECKING)
     ).scalar_one() - len(observable))
+    # Finished work waiting on a second pair of eyes. Same shape as CHECKING —
+    # it wakes nobody in the ordinary lane and is claimed by nobody — with one
+    # difference that matters: no platform process moves it. It waits on an
+    # agent, so it is a real rung rather than a reassurance, and without it a
+    # board holding nothing but reads renders as "Nothing waiting. The board is
+    # empty", which is the exact sentence CHECKING was added here to stop.
+    reviewing = session.execute(
+        select(func.count(Task.id)).where(Task.project_id == project.id,
+                                          Task.status == TaskStatus.REVIEW)
+    ).scalar_one()
+
     lost_tasks, lost_requirements = policy.lost_checks(session, project.id, now)
     checks_lost = sorted([t.title for t in lost_tasks]
                          + [r.key for r in lost_requirements])
@@ -667,6 +686,8 @@ def _board_reachability(session: Session, project: Project, cons: ConstitutionDo
         unreachable = "blocked_tasks"
     elif checks_lost:
         unreachable = "checks_lost"
+    elif reviewing:
+        unreachable = "review_owed"
     elif checking_tasks or checking_requirements:
         unreachable = "checking"
     else:
@@ -678,6 +699,7 @@ def _board_reachability(session: Session, project: Project, cons: ConstitutionDo
         "next_gate_at": min(gates).isoformat() if gates else None,
         "blocked": blocked,
         "checking": checking_tasks + checking_requirements,
+        "reviewing": reviewing,
         "checks_lost": checks_lost,
         "leaderless_teams": sorted(leaderless),
         "paused_agents": sorted(parked),
@@ -934,6 +956,17 @@ def _activity_brief(state: dict) -> dict:
             "itself within minutes and tells the CEO if it keeps dying — the "
             "deliverable itself may well be fine, and nothing here needs you yet.")
 
+    if gate == "review_owed":
+        return brief(
+            "ok", "being read",
+            f"{board['reviewing']} finished piece(s) waiting on an independent read",
+            f"{board['reviewing']} finished piece(s) waiting to be read.",
+            "This project asks for work to be read by somebody who did not write it "
+            "before it closes, so these are done and waiting on their reader's next "
+            "wake. If they sit here, the reader is paused or gone — the platform "
+            "closes them itself rather than leaving them stuck, and you can turn the "
+            "read off under The bar in Settings.", banner=False)
+
     if gate == "checking":
         return brief(
             "ok", "verifying",
@@ -1183,6 +1216,9 @@ def activity_state(session: Session, project: Project, cons: ConstitutionDoc) ->
             # holding only CHECKING rows reads as work in hand, not as empty —
             # the stall watchdog and the chairman's screen both read this.
             "checking_tasks": board["checking"],
+            # And finished work waiting on a reader, for the same reason: a
+            # board of nothing but reads is a board with work in hand.
+            "reviewing_tasks": board["reviewing"],
             "notices": notices_total,
             "agents_with_work": len(with_work),
         },
@@ -1414,7 +1450,14 @@ def _wake_reasons(
         urgent = any(kind in URGENT_NOTICE_KINDS for kind, _ in pending)
         oldest = min(created_at for _, created_at in pending)
         ripe = oldest <= now - timedelta(minutes=NOTICE_COALESCE_MINUTES)
-        if urgent or ripe or len(pending) >= NOTICE_COALESCE_COUNT:
+        if delivered:
+            # Coalescing is the wrong question here. On a delivered project a
+            # third notice arriving, or an ordinary one ageing out, is not a
+            # reason to spend — only the short list above is.
+            wakes = any(kind in DELIVERED_WAKE_NOTICE_KINDS for kind, _ in pending)
+        else:
+            wakes = urgent or ripe or len(pending) >= NOTICE_COALESCE_COUNT
+        if wakes:
             reasons.append({"kind": "notices", "count": len(pending)})
         # The re-forecast wake is governance: it must land on the day the
         # allowance is gone, because that is exactly the day the date slipped.
@@ -1431,7 +1474,10 @@ def _wake_reasons(
     if agent.daily_at:
         personal = _daily_wake_due(session, project, cons, agent, now,
                                    raw=agent.daily_at, name="agent_daily")
-        if personal:
+        # Consumed even when delivered — the dedup beat has to advance or the
+        # rhythm bursts the moment the chairman confirms, replaying every
+        # morning it slept through.
+        if personal and not delivered:
             reasons.append(personal)
 
     # 4. Heartbeats: the CEO plans on a cadence even in silence — but silence
@@ -1452,6 +1498,12 @@ def _wake_reasons(
                     and not reasons
                     and not cons.ceo_heartbeat_always
                     and not _ceo_has_planning_material(session, project))
+            # A delivered project has nothing left to plan: every requirement
+            # is true and new scope is refused (policy.check_new_scope). A
+            # planning beat here is a run spent deciding not to invent work,
+            # and ceo_heartbeat_always does not override it — that setting is
+            # about silence on a live project, not about a finished one.
+            skip = skip or delivered
             if beat is None:
                 session.add(Heartbeat(agent_id=agent.id, name="planning", last_fired_at=now))
             else:
@@ -1463,7 +1515,7 @@ def _wake_reasons(
         #     timezone). Fires once per local day, at or after the target;
         #     lana's standup pattern, generalized.
         daily = _daily_wake_due(session, project, cons, agent, now)
-        if daily:
+        if daily and not delivered:
             reasons.append(daily)
 
         # 4c. An open review missing its variance narrative. Governance-
@@ -1572,6 +1624,27 @@ def _work_reasons(session: Session, agent: Agent, now) -> list[dict]:
                            Task.status == TaskStatus.READY)
     ):
         reasons.append({"kind": "assignment_ready", "task_id": task.id})
+
+    # Work finished by somebody else and waiting on a read. Without this a
+    # REVIEW task wakes nobody and sits there — the state would be a hole the
+    # board falls into rather than a step it passes through.
+    #
+    # One seat per task, not every seat. A roster with an editor AND a
+    # plan-adversary — which is the default this project's own doctrine argues
+    # for — woke both for the same piece, and the second one paid full price to
+    # find the task already closed. `policy.review_seats` is ordered, so the
+    # first eligible seat is the same answer on every tick and in every worker.
+    seats = policy.review_seats(session, agent.project_id)
+    if agent.id in {seat.id for seat in seats}:
+        for task in session.execute(
+            select(Task).where(Task.project_id == agent.project_id,
+                               Task.status == TaskStatus.REVIEW,
+                               Task.claimed_by_agent_id != agent.id)
+        ).scalars():
+            eligible = [s for s in seats if s.id != task.claimed_by_agent_id]
+            if eligible and eligible[0].id != agent.id:
+                continue
+            reasons.append({"kind": "review_owed", "task_id": task.id})
 
     # A claim with nothing running behind it: wake to push it forward — unless
     # it's a lead's decomposed task still waiting on open subtasks.

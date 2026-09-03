@@ -833,7 +833,8 @@ export default function Overview({
         </div>
         {(org?.teams ?? []).map((team) => {
           const teamTasks = (tasks ?? []).filter((t) => t.team_id === team.id);
-          const open = teamTasks.filter((t) => ["ready", "claimed", "checking"].includes(t.status)).length;
+          const open = teamTasks.filter(
+            (t) => ["ready", "claimed", "checking", "review"].includes(t.status)).length;
           const stuck = teamTasks.filter((t) => t.status === "blocked").length;
           return (
             <div className="card" key={team.id}>

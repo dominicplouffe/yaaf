@@ -33,6 +33,7 @@ from yaaf.core.models import (
 from yaaf.founder import agent as founder_agent
 from yaaf.founder import progress
 from yaaf.founder import runner as founder_runner
+from yaaf.server import policy
 from yaaf.server.api import settings as app_settings
 from yaaf.server.deps import admin_auth, db
 
@@ -109,6 +110,12 @@ def status(session: Session = Depends(db)) -> dict:
         "credential_configured": platform.has_credential(session),
         "billing_mode": platform.billing_mode(session),
         "model": platform.founder_model(session),
+        # What a run has actually cost here. The new-project form inverts the
+        # question rather than predicting a total — "your cap holds if a run
+        # averages under $X, and yours have averaged $Y" — because this box
+        # knows the second number and cannot know the first. Null on a fresh
+        # install, where the honest answer is that it has never priced a run.
+        "avg_usd_per_run": policy.avg_usd_per_run_box(session),
     }
 
 

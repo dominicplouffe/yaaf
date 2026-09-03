@@ -96,6 +96,40 @@ def _holding(pack: dict) -> dict | None:
     return None
 
 
+def _read_for_somebody_else(api: AgentApi, pack: dict) -> str | None:
+    """Sign off finished work waiting on an independent read, if this seat can.
+
+    Without this the drill cannot finish a bundle that asks for the read, and
+    the drill is the one place a chairman finds that out before he funds it:
+    `_close` reads a 200 as "closed", but under `deliverable_review` a 200
+    means the task went to REVIEW. Nobody reviewed it, the author's
+    one-at-a-time slot stayed occupied, and the whole crew wedged behind a
+    board that looked busy — the drill reported "it plans and creates work, but
+    nothing closed", which is a true sentence about the wrong subject.
+
+    It always signs off. A drill is a check that a well-behaved project can get
+    off the ground inside these rules, not a judgement of any work — there IS
+    no work, the stage is fabricated — so returning it would be inventing a
+    finding to look thorough, which is exactly what the editor seat is written
+    not to do.
+    """
+    waiting = [t for t in pack.get("board", {}).get("team_open", [])
+               if t["status"] == "review"
+               and t.get("claimed_by") != pack["you"]["agent_id"]]
+    reason = _reasons(pack).get("review_owed")
+    task_id = waiting[0]["id"] if waiting else (reason or {}).get("task_id")
+    if not task_id:
+        return None
+    response = api.post(f"/agent/tasks/{task_id}/review", json={
+        "ok": True,
+        "notes": ("Read it against the task's success test and the goal's standard. "
+                  "Nothing absent that the brief asked for."),
+    })
+    if response.status_code == 200:
+        return "read and signed off somebody else's finished work"
+    return None
+
+
 # ── the CEO ─────────────────────────────────────────────────────────────────────
 
 
@@ -271,6 +305,12 @@ def lead(api: AgentApi, job: RunJob) -> str:
     pack = job.context_pack
     reasons = _reasons(pack)
 
+    # Before anything else: somebody else's finished work is holding their one
+    # slot, and this seat is the only thing that can release it.
+    signed = _read_for_somebody_else(api, pack)
+    if signed is not None:
+        return "lead: " + signed
+
     # Finish what is in hand before picking anything up: one item at a time is
     # a rule, and a lead that collects work is a lead the platform refuses.
     held = _holding(pack)
@@ -321,6 +361,10 @@ def employee(api: AgentApi, job: RunJob) -> str:
     pack = job.context_pack
     reasons = _reasons(pack)
 
+    signed = _read_for_somebody_else(api, pack)
+    if signed is not None:
+        return "employee: " + signed
+
     held = _holding(pack)
     if held is not None:
         return _close(api, held["id"])
@@ -361,6 +405,11 @@ def _close(api: AgentApi, task_id: str) -> str:
     response = api.post(f"/agent/tasks/{task_id}/complete", json={
         "evidence": "Loaded the published stage back and read the date on it."})
     if response.status_code == 200:
+        # A 200 is not always a close. Under `deliverable_review` the task goes
+        # to REVIEW and waits on a reader; saying "closed" here is how the
+        # drill would report a green board that has not moved.
+        if response.json().get("status") == "review":
+            return "finished a task; it is waiting on an independent read"
         return "closed a task with evidence"
     if api.post(f"/agent/tasks/{task_id}/block", json={
             "reason": "Could not finish this within the rules as written."}).status_code == 200:

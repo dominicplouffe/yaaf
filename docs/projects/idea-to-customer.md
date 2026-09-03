@@ -77,6 +77,19 @@ also in the JSON.
 > and compliments are leading indicators, and this project is not graded on
 > leading indicators.
 >
+> THIS IS JUDGED AGAINST WHAT A COMPETENT SOLO SOFTWARE BUSINESS ACTUALLY DOES
+> to take its first money from a stranger — the practice, not this brief.
+> Everything written here is what the chairman knew to ask for, and it is a
+> subset of that standard rather than the whole of it. The paragraphs below
+> say nothing about pricing research, refunds and failed-payment handling, the
+> terms and privacy pages a processor requires before it will accept live
+> cards, sales tax where a sale triggers it, or a support address a buyer can
+> actually reach — and every one of those is between the product and the
+> money. Where the practice covers something this brief does not name, it is
+> in scope, and the omission is his mistake to be corrected rather than his
+> instruction to be obeyed. Go and find out what the practice covers; do not
+> assume this page is the checklist.
+>
 > PHASE ONE IS A BAKE-OFF, NOT A BRAINSTORM. Produce five candidate ideas and
 > research all five to the same depth before ranking any of them: what it is in
 > two sentences; who specifically has the problem, named tightly enough that you
@@ -144,8 +157,14 @@ also in the JSON.
 > What will not be accepted is a year of documents about a product nobody
 > outside this project ever saw.
 
-Six things are doing the work in there, and none of them is decoration:
+Seven things are doing the work in there, and none of them is decoration:
 
+- **A named standard the brief is only a subset of.** The one line that makes
+  the project bigger rather than smaller. Without it a competent, obedient CEO
+  satisfies every paragraph above and ships something with a hole in it that
+  any practitioner would have seen — and never notices, because nothing asked
+  what the brief left out. Terms pages, failed payments and sales tax are not
+  in this goal; they are between the product and the money anyway.
 - **Five ideas researched to the same depth before any ranking.** Without it a
   project researches its favourite and writes four strawmen around it.
 - **A named buyer you could go find ten of this week.** "Small businesses" is

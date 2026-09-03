@@ -191,9 +191,17 @@ def test_a_chat_session_is_told_the_truth_about_its_own_disk(client):
 def test_every_agent_is_told_to_write_in_plain_short_english(client):
     """The chairman's complaint: "always reading a book." Short plain prose was
     guidance only the leadership roles carried, and only about the boardroom —
-    so the deliverables he actually had to read came back as essays. The rule is
-    generic now: every agent, every lane, messages and deliverables alike, with
-    one escape hatch for a format somebody asked for."""
+    so the memos he actually had to read came back as essays. The rule is
+    generic now: every agent, every lane.
+
+    But it used to say the LENGTH half held "for the deliverables themselves"
+    too, and that was a different instruction wearing the same sentence. A blog
+    writer read "a longer answer is not a better one" before it read its task,
+    and the posts came back thin. A message is time he did not ask for; the
+    deliverable is the thing he asked for. So the halves are separate now, and
+    this asserts they stay separate — the plain-language rule reaches both, the
+    length rule reaches only the first, and the deliverable is aimed at the
+    goal's beneficiary and standard rather than at brevity."""
     from yaaf.core.models import Agent as AgentRow
     from yaaf.server.contextpack import build_system_prompt
 
@@ -210,8 +218,22 @@ def test_every_agent_is_told_to_write_in_plain_short_english(client):
 
     for who, prompt in prompts.items():
         assert "plain English, short sentences" in prompt, who
-        assert "deliverables" in prompt, f"{who}: deliverables are prose too"
-        assert "UNLESS OTHERWISE SPECIFIED" in prompt, (
+
+        # The length rule, and the fact that it is scoped to messages.
+        assert "a longer one is not a better one" in prompt, who
+        message_half, _, deliverable_half = prompt.partition(
+            "HOW YOU WRITE THE DELIVERABLE ITSELF:")
+        assert deliverable_half, f"{who}: the deliverable half must be stated at all"
+        assert "longer" not in deliverable_half.split("THE CONSTITUTION")[0], (
+            f"{who}: brevity must not follow the rule into the deliverable — that is "
+            "the instruction that produced thin posts")
+
+        # What the deliverable is aimed at instead.
+        assert "beneficiary" in deliverable_half and "standard" in deliverable_half, (
+            f"{who}: a deliverable is judged against the goal's reader and reference "
+            "class, not against a word count")
+        assert "Padding is not thoroughness and brevity is not rigour" in prompt, who
+        assert "asks for a particular length, format or register" in prompt, (
             f"{who}: a format the chairman asked for must still win")
 
 

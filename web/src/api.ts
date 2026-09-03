@@ -158,6 +158,8 @@ export interface Activity {
     | "blocked_tasks"
     | "checks_lost"
     | "checking"
+    | "review_owed"
+    | "delivery_ready"
     | null;
   brief: ActivityBrief;
   daily_runs: { used: number; cap: number; resets_at: string };
@@ -183,6 +185,7 @@ export interface Activity {
     /** Finished work the platform is still verifying. Counted so a board
         holding only checking rows reads as work in hand, not as empty. */
     checking_tasks: number;
+    reviewing_tasks: number;
     notices: number;
     agents_with_work: number;
   };
@@ -194,6 +197,8 @@ export interface Activity {
     blocked: number;
     /** Rows with the platform's own checker (tasks + command requirements). */
     checking: number;
+    /** Finished work waiting on a read by somebody who did not write it. */
+    reviewing: number;
     /** The wedged subset: checks whose run no longer exists anywhere. The
         janitor requeues these itself; named here so the quiet has a name. */
     checks_lost: string[];
@@ -937,6 +942,7 @@ export interface ProjectBundle {
     ceo_name: string;
     ceo_daily_at?: string | null;
     ceo_model_override?: string | null;
+    ceo_effort_override?: string | null;
     teams: {
       role_slug: string;
       name: string;
@@ -946,6 +952,8 @@ export interface ProjectBundle {
       schedules?: Record<string, string>;
       /** Per-agent model overrides, keyed by employee name. */
       model_overrides?: Record<string, string>;
+      /** Per-agent reasoning-effort overrides, keyed by employee name. */
+      effort_overrides?: Record<string, string>;
     }[];
     solo: boolean;
   };

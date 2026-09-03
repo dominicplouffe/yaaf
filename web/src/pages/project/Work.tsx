@@ -80,7 +80,8 @@ function verifyBadge(verification: string) {
 }
 
 const FILTERS = [
-  { key: "open", label: "Open", match: (s: string) => ["ready", "claimed", "checking"].includes(s) },
+  { key: "open", label: "Open",
+    match: (s: string) => ["ready", "claimed", "checking", "review"].includes(s) },
   { key: "blocked", label: "Blocked", match: (s: string) => s === "blocked" },
   { key: "done", label: "Done", match: (s: string) => s === "done" },
   { key: "killed", label: "Killed", match: (s: string) => s === "killed" },

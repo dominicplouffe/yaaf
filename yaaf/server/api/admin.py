@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import secrets as pysecrets
 from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
@@ -145,6 +146,13 @@ ROLE_CATEGORIES = (
 )
 ROLE_DOMAINS = ("general", "markets", "data", "games", "education")
 
+#: How hard the model thinks, as the Agent SDK names it. A closed set, so a
+#: typo is worth a 422 here rather than a container that starts, spends the
+#: claim, and dies inside the sandbox where the chairman sees only "the run
+#: failed".
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
+_EFFORT_PATTERN = f"^({'|'.join(EFFORTS)})$"
+
 
 class RoleIn(BaseModel):
     slug: str = Field(pattern="^[a-z0-9-]{2,64}$")
@@ -157,7 +165,7 @@ class RoleIn(BaseModel):
     description: str
     system_prompt: str
     model: str = "claude-sonnet-5"
-    effort: str = "high"
+    effort: str = Field(default="high", pattern=_EFFORT_PATTERN)
     tool_permissions: dict = Field(default_factory=dict)
     secret_scopes: list[str] = Field(default_factory=list)
 
@@ -471,6 +479,7 @@ class TeamSpec(BaseModel):
     # attach is missed at 09:00 every day, with no error anywhere.
     schedules: dict[str, str] = Field(default_factory=dict)
     model_overrides: dict[str, str] = Field(default_factory=dict)
+    effort_overrides: dict[str, str] = Field(default_factory=dict)
 
 
 class ProjectCreate(BaseModel):
@@ -497,6 +506,7 @@ class ProjectCreate(BaseModel):
     ceo_name: str = "CEO"
     ceo_daily_at: str | None = Field(default=None, pattern=_DAILY_AT_PATTERN)
     ceo_model_override: str | None = None
+    ceo_effort_override: str | None = Field(default=None, pattern=_EFFORT_PATTERN)
     teams: list[TeamSpec] = Field(default_factory=list)
     # Solo mode (the M2 single-agent arm): the CEO is placed as the sole member
     # — hence derived lead — of the only team, so one brain plans AND executes
@@ -525,6 +535,197 @@ def _latest_role_version(session: Session, slug: str) -> RoleVersion:
     ).scalar_one()
 
 
+def _check_team_people(spec: TeamSpec) -> None:
+    """Per-employee settings name people who are actually on the team, and
+    carry values the runtime understands.
+
+    A setting that silently fails to attach is the failure this exists for: a
+    wake schedule for a name nobody has is a standup missed at 09:00 every day
+    with no error anywhere, and an effort the SDK does not know reaches the
+    sandbox as an env var and kills the run there, where the chairman sees a
+    dead container rather than his own typo. Shared by project creation and
+    `add_team` so a team added later is checked exactly as one hired at
+    birth.
+    """
+    for field_name, mapping in (("schedules", spec.schedules),
+                                ("model_overrides", spec.model_overrides),
+                                ("effort_overrides", spec.effort_overrides)):
+        unknown = sorted(set(mapping) - set(spec.employees))
+        if unknown:
+            raise HTTPException(
+                status_code=422,
+                detail=f"team '{spec.name}' has {field_name} for "
+                       f"{', '.join(unknown)} — not among its employees",
+            )
+    bad_time = next((v for v in spec.schedules.values()
+                     if not re.fullmatch(r"([01]?\d|2[0-3]):[0-5]\d", v)), None)
+    if bad_time is not None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"team '{spec.name}' schedule '{bad_time}' is not HH:MM",
+        )
+    bad_effort = next((v for v in spec.effort_overrides.values()
+                       if v not in EFFORTS), None)
+    if bad_effort is not None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"team '{spec.name}' effort '{bad_effort}' is not one of "
+                   f"{', '.join(EFFORTS)}",
+        )
+
+#: Whose work IS the deliverable, or is the check on it. `growth` is outreach
+#: and support triage and `leadership` plans rather than writes, so neither is
+#: lifted — the CEO is already the only Opus seat in most rosters and its
+#: output is not what the chairman keeps.
+CRAFT_CATEGORIES = ("content", "research", "build", "challenge")
+
+#: Seats whose job is to read somebody else's work and disagree with it.
+REVIEW_CATEGORY = "challenge"
+
+
+def _refuse_without_review_seat(session: Session, slugs: set[str]) -> None:
+    """Refuse unless one of these roles is a seat that reads somebody else's work.
+
+    Category rather than slug on purpose — `editor`, `adversary`,
+    `data-skeptic`, `plan-adversary` and a role this install wrote itself all
+    answer, and a library that grows does not have to come back and edit a
+    list.
+    """
+    if slugs and session.execute(
+        select(Role.slug).where(Role.slug.in_(slugs), Role.category == REVIEW_CATEGORY)
+    ).scalars().first():
+        return
+    available = session.execute(
+        select(Role.slug).where(Role.category == REVIEW_CATEGORY).order_by(Role.slug)
+    ).scalars().all()
+    raise HTTPException(
+        status_code=422,
+        detail=(
+            "deliverable_review is 'independent_read', but no team on this roster "
+            "hires a reviewing seat — so the only reader of a deliverable would be "
+            "the agent that wrote it. Add a team on one of: "
+            f"{', '.join(available) or 'none installed — seed the role library first'}"
+            "; or set deliverable_review to 'none' and say that is what you want."
+        ),
+    )
+
+
+def _read_is_impossible(session: Session, project_id: str) -> bool:
+    """Whether this project has nowhere to put a reader.
+
+    Solo is the shape: the CEO *is* the team, one brain plans and executes, so
+    there is no second pair of eyes to hire and a rule demanding one would make
+    solo projects uncreatable rather than reviewed. Creation already exempted
+    it; the three doors that reopen the rule afterwards did not, so a solo
+    project created through the wizard — whose presets all set the read — had
+    every later "Add a team" refused for lacking a seat it was exempt from
+    hiring. The exemption has to hold at every door or it is not an exemption,
+    it is a trap.
+
+    It reads the roster rather than the stored topology, because the moment a
+    solo project gains a second team it is not solo any more and the rule has
+    somewhere to bind. The team being added counts: `add_team` asks this after
+    its own team is on the roster, so adding the reader is how the rule is
+    satisfied rather than the thing it refuses.
+    """
+    return session.execute(
+        select(func.count(Team.id)).where(Team.project_id == project_id)
+    ).scalar_one() <= 1 and session.execute(
+        select(func.count(Agent.id)).where(Agent.project_id == project_id,
+                                           Agent.kind != AgentKind.CEO)
+    ).scalar_one() == 0
+
+
+def _project_role_slugs(session: Session, project_id: str) -> set[str]:
+    """The roles a project's teams are actually pinned to.
+
+    Through the version rather than by name: a team keeps the role version it
+    was hired on, and this has to describe the roster as it is rather than as
+    the library has since become.
+    """
+    return set(session.execute(
+        select(Role.slug)
+        .join(RoleVersion, RoleVersion.role_id == Role.id)
+        .join(Team, Team.role_version_id == RoleVersion.id)
+        .where(Team.project_id == project_id)
+    ).scalars().all())
+
+
+def _check_review_seat(session: Session, doc: ConstitutionDoc, teams: list[TeamSpec],
+                       *, solo: bool = False) -> None:
+    """A project that asks for an independent read must hire someone who can
+    give it one.
+
+    This is the whole reason the rule is enforced HERE rather than in a prompt:
+    the form, the Founder and `mcp__yaaf__create_project` all build a
+    ProjectCreate and all land on this endpoint, so a check written once covers
+    three front doors. The same sentence written into three prompts covers
+    whichever one the author remembered.
+
+    Two shapes are exempt, and the second one cost a green test to find.
+
+    A spec with no teams at all is refused too. It used to be exempt on the
+    reasoning that refusing there answers a question about staffing before
+    anyone has staffed anything — but the rule then bound nothing, forever,
+    because no later route re-checked it. A project asking for a read with an
+    empty roster is asking for something it has not staffed.
+
+    **Solo mode is exempt because an independent read is impossible in it.**
+    The CEO *is* the team — one brain plans and executes — so there is no
+    second reader to hire, and a rule demanding one would make solo projects
+    uncreatable rather than reviewed. The setting is stored as the chairman
+    wrote it and simply has nobody to bind; the form says so where he picks it.
+    """
+    if doc.deliverable_review != "independent_read" or solo:
+        return
+    _refuse_without_review_seat(session, {spec.role_slug for spec in teams})
+
+#: What "this matters" buys a producing seat. Only ever upward: a role already
+#: at or above these keeps what it has.
+CRAFT_MODEL = "claude-opus-5"
+CRAFT_EFFORT = "xhigh"
+_EFFORT_RANK = {name: i for i, name in enumerate(EFFORTS)}
+
+#: Weakest to strongest, for the same "never downward" reason as the effort
+#: rank beside it. A model this install has never heard of ranks 0, so it is
+#: lifted rather than left — an unknown string is not evidence of strength.
+_MODEL_RANK = {
+    "claude-haiku-4-5": 1,
+    "claude-sonnet-5": 2,
+    "claude-opus-5": 3,
+    "claude-fable-5-1": 4,
+}
+
+
+def _craft_lift(
+    session: Session, slug: str, version: RoleVersion, cons: ConstitutionDoc
+) -> tuple[str | None, str | None]:
+    """The model and effort a high-stakes project hires this seat on.
+
+    Resolved HERE, at hire, and stamped onto the agent row — not read at
+    dispatch. Three reasons. The runner stays a lookup with no policy in it;
+    the choice is visible in the roster and in an exported bundle rather than
+    implied by a rule somebody has to go and read; and the chairman can still
+    hand-adjust one seat afterwards without fighting the setting that put it
+    there.
+
+    Returns what to stamp, or (None, None) to leave the role's own answer
+    alone. Never returns something weaker than the role already has: a dial
+    labelled "how much this matters" that could quietly downgrade a seat would
+    be a trap.
+    """
+    if cons.stakes != "high":
+        return None, None
+    role = session.execute(select(Role).where(Role.slug == slug)).scalar_one_or_none()
+    if role is None or role.category not in CRAFT_CATEGORIES:
+        return None, None
+    model = None if _MODEL_RANK.get(version.model, 0) >= _MODEL_RANK[CRAFT_MODEL] \
+        else CRAFT_MODEL
+    at_least = _EFFORT_RANK.get(CRAFT_EFFORT, 0)
+    effort = (None if _EFFORT_RANK.get(version.effort, 0) >= at_least else CRAFT_EFFORT)
+    return model, effort
+
+
 @router.post("/projects")
 def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
     chairman = session.execute(
@@ -541,25 +742,19 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
         )
     if not body.solo and any(not spec.employees for spec in body.teams):
         raise HTTPException(status_code=422, detail="every team needs at least one employee")
-    import re
-
     for spec in body.teams:
-        for field_name, mapping in (("schedules", spec.schedules),
-                                    ("model_overrides", spec.model_overrides)):
-            unknown = sorted(set(mapping) - set(spec.employees))
-            if unknown:
-                raise HTTPException(
-                    status_code=422,
-                    detail=f"team '{spec.name}' has {field_name} for "
-                           f"{', '.join(unknown)} — not among its employees",
-                )
-        bad_time = next((v for v in spec.schedules.values()
-                         if not re.fullmatch(r"([01]?\d|2[0-3]):[0-5]\d", v)), None)
-        if bad_time is not None:
-            raise HTTPException(
-                status_code=422,
-                detail=f"team '{spec.name}' schedule '{bad_time}' is not HH:MM",
-            )
+        _check_team_people(spec)
+    # The constitution freezes at creation. Overrides are validated against the
+    # schema; a spec with no opinion about the authority dial is given one
+    # here, so the form, the Founder, the MCP surface, a spec file and the fire
+    # drill all create the same project from the same silence.
+    #
+    # Built here rather than after the insert because the roster check below is
+    # a refusal, and a refusal that fires after rows are written is a rollback
+    # waiting to be got wrong.
+    doc = ConstitutionDoc.model_validate(
+        {**ConstitutionDoc().model_dump(), **default_autonomy(body.constitution)})
+    _check_review_seat(session, doc, body.teams, solo=body.solo)
     deadline = body.deadline
     deadline_source = None
     if deadline is not None:
@@ -604,12 +799,6 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
     session.flush()
     session.add(ProjectMember(project_id=project.id, user_id=chairman.id, role="chairman"))
 
-    # The constitution freezes at creation. Overrides are validated against the
-    # schema; a spec with no opinion about the authority dial is given one
-    # here, so the form, the Founder, the MCP surface, a spec file and the fire
-    # drill all create the same project from the same silence.
-    doc = ConstitutionDoc.model_validate(
-        {**ConstitutionDoc().model_dump(), **default_autonomy(body.constitution)})
     create_initial(session, project.id, doc)
 
     # Webhook secrets exist from birth. The platform_attested path was never
@@ -630,6 +819,7 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
         name=body.ceo_name,
         role_version_id=ceo_role_version.id,
         model_override=body.ceo_model_override,
+        effort_override=body.ceo_effort_override,
         daily_at=body.ceo_daily_at,
     )
     session.add(ceo)
@@ -641,6 +831,7 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
     team_out = []
     for spec in body.teams:
         role_version = _latest_role_version(session, spec.role_slug)
+        lift_model, lift_effort = _craft_lift(session, spec.role_slug, role_version, doc)
         team = Team(
             id=ids.new_id(ids.TEAM),
             project_id=project.id,
@@ -658,7 +849,12 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
                 kind=AgentKind.EMPLOYEE,
                 name=employee_name,
                 daily_at=spec.schedules.get(employee_name),
-                model_override=spec.model_overrides.get(employee_name),
+                # What the chairman named for this person wins; the stakes lift
+                # only fills a silence. Someone who deliberately put one seat on
+                # a cheaper model must not have it undone by a dial about the
+                # project as a whole.
+                model_override=spec.model_overrides.get(employee_name) or lift_model,
+                effort_override=spec.effort_overrides.get(employee_name) or lift_effort,
             )
             session.add(agent)
             agents.append(agent)
@@ -793,6 +989,8 @@ def export_project(project_id: str, include_values: bool = False,
             "schedules": {a.name: a.daily_at for a in members if a.daily_at},
             "model_overrides": {a.name: a.model_override
                                 for a in members if a.model_override},
+            "effort_overrides": {a.name: a.effort_override
+                                 for a in members if a.effort_override},
         })
 
     billing_secret_name = None
@@ -879,6 +1077,7 @@ def export_project(project_id: str, include_values: bool = False,
             "ceo_name": ceo.name,
             "ceo_daily_at": ceo.daily_at,
             "ceo_model_override": ceo.model_override,
+            "ceo_effort_override": ceo.effort_override,
             "teams": teams,
             "solo": ceo.team_id is not None,
         },
@@ -920,6 +1119,13 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
     source = _get_project(session, project_id)
     if session.execute(select(Project).where(Project.slug == body.slug)).scalar_one_or_none():
         raise HTTPException(status_code=409, detail="project slug already exists")
+    # A clone copies the constitution and the roster verbatim, so a source that
+    # cannot keep its own rule would hand the twin the same broken promise. It
+    # only reaches here from a project amended before that door was shut, and
+    # duplicating that state is how one install's mistake becomes two.
+    if (effective(session, source.id).deliverable_review == "independent_read"
+            and not _read_is_impossible(session, source.id)):
+        _refuse_without_review_seat(session, _project_role_slugs(session, source.id))
 
     integrations = {k: v for k, v in (source.integrations or {}).items()
                     if k not in _NON_CLONABLE_INTEGRATION_KEYS}
@@ -1021,6 +1227,7 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
                 role_version_id=source_ceo.role_version_id,
                 status=source_ceo.status,
                 model_override=source_ceo.model_override,
+                effort_override=source_ceo.effort_override,
                 daily_at=source_ceo.daily_at)
     session.add(ceo)
     session.add(Channel(id=ids.new_id(ids.CHANNEL), project_id=project.id,
@@ -1048,6 +1255,7 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
                           role_version_id=source_agent.role_version_id,
                           status=source_agent.status,
                           model_override=source_agent.model_override,
+                          effort_override=source_agent.effort_override,
                           daily_at=source_agent.daily_at)
             session.add(agent)
             agents.append(agent)
@@ -1177,7 +1385,24 @@ def add_team(project_id: str, body: TeamSpec, session: Session = Depends(db)) ->
     if not body.employees:
         raise HTTPException(status_code=422, detail="a team needs at least one employee")
     project = _get_project(session, project_id)
+    _check_team_people(body)
     role_version = _latest_role_version(session, body.role_slug)
+    # A team hired later is hired on the same terms as one hired at birth. It
+    # used to drop the per-employee settings on the floor — the TeamSpec
+    # carried them, this route ignored them — so a team added on Tuesday came
+    # back without the wakes and models its spec named.
+    cons = effective(session, project.id)
+    lift_model, lift_effort = _craft_lift(session, body.role_slug, role_version, cons)
+    # The one route that can satisfy the review rule after creation, so it is
+    # also the one that must not leave a project able to satisfy it and still
+    # not doing so. Checked AFTER this team is counted, since adding the
+    # reviewer is exactly how a project fixes it — and skipped entirely while
+    # the project is still solo, which is the shape that has nowhere to put a
+    # reader and is exempt at creation for the same reason.
+    if cons.deliverable_review == "independent_read" and not _read_is_impossible(
+            session, project.id):
+        _refuse_without_review_seat(
+            session, _project_role_slugs(session, project.id) | {body.role_slug})
     team = Team(
         id=ids.new_id(ids.TEAM),
         project_id=project.id,
@@ -1194,6 +1419,9 @@ def add_team(project_id: str, body: TeamSpec, session: Session = Depends(db)) ->
             team_id=team.id,
             kind=AgentKind.EMPLOYEE,
             name=employee_name,
+            daily_at=body.schedules.get(employee_name),
+            model_override=body.model_overrides.get(employee_name) or lift_model,
+            effort_override=body.effort_overrides.get(employee_name) or lift_effort,
         )
         session.add(agent)
         agents.append(agent)
@@ -2869,11 +3097,55 @@ def read_spend_window(project_id: str, session: Session = Depends(db)) -> dict:
         "adjustments": last.adjustments or []}}
 
 
+def _apply_craft_lift(session: Session, project_id: str, cons: ConstitutionDoc) -> list[str]:
+    """Re-hire the producing seats after `stakes` moved, and say whose.
+
+    Without this the dial is a dial only at creation: amending `stakes` to
+    `high` changed the budget headroom and the tone of one paragraph and left
+    every seat on whatever the shared library said — which is the exact
+    complaint the rule was written to answer, one door along.
+
+    It only ever raises, and it only touches a seat carrying no override at
+    all. A NULL override is the platform's own "nobody has said anything about
+    this seat"; anything else was either the chairman's answer or an earlier
+    lift's, and neither is this amendment's to overwrite. That also makes it
+    one-way: lowering `stakes` again does not demote, because the stamp on the
+    row is no longer distinguishable from a choice somebody made.
+    """
+    if cons.stakes != "high":
+        return []
+    lifted = []
+    rows = session.execute(
+        select(Agent, Role.slug, RoleVersion)
+        .join(Team, Team.id == Agent.team_id)
+        .join(RoleVersion, RoleVersion.id == Team.role_version_id)
+        .join(Role, Role.id == RoleVersion.role_id)
+        .where(Agent.project_id == project_id, Agent.kind != AgentKind.CEO)
+    ).all()
+    for agent, slug, version in rows:
+        if agent.model_override or agent.effort_override:
+            continue
+        model, effort = _craft_lift(session, slug, version, cons)
+        if model or effort:
+            agent.model_override = model
+            agent.effort_override = effort
+            lifted.append(agent.name)
+    return sorted(lifted)
+
+
 @router.post("/projects/{project_id}/amendments")
 def amend_constitution(
     project_id: str, body: AmendmentIn, session: Session = Depends(db)
 ) -> dict:
     project = _get_project(session, project_id)
+    # A rule may not be amended into a state the roster cannot keep. Creation
+    # refuses this; amendment is the other door onto the same rule, and a rule
+    # that holds at one door and not the other is a rule the chairman can set
+    # and then watch do nothing. There is no route that removes a team, so the
+    # roster only ever grows — which is why this is the last door to close.
+    if (body.changes.get("deliverable_review") == "independent_read"
+            and not _read_is_impossible(session, project.id)):
+        _refuse_without_review_seat(session, _project_role_slugs(session, project.id))
     try:
         amendments = propose_amendment(
             session, project.id, project.chairman_user_id, body.reason, body.changes,
@@ -2902,10 +3174,18 @@ def amend_constitution(
                 body=(f"The chairman amended the constitution (reason: {amendment.reason}). "
                       f"Changes now in force: {amendment.changes}. Plan accordingly."),
             ))
+    # `stakes` is the one amended rule that changes the roster rather than a
+    # number, so it has to be applied here too — the dial reads as live on the
+    # Settings screen and bought nothing after creation.
+    lifted = _apply_craft_lift(session, project.id, effective(session, project.id))
+
     # Name the fields rather than a category: a note that lists what you just
     # changed cannot go stale the way a note about which bucket it fell in did.
     changed_now = sorted({k for a in applied_now for k in a.changes})
     note_parts = [f"In force NOW: {', '.join(changed_now)}."]
+    if lifted:
+        note_parts.append(
+            f"Re-hired on a stronger model or deeper reasoning: {', '.join(lifted)}.")
     return {
         "amendments": [
             {"id": a.id, "effective_at": a.effective_at.isoformat(), "applied_now": True}

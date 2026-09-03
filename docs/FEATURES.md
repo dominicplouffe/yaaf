@@ -459,9 +459,10 @@ one step earlier.
 Four things make it more than a prompt:
 
 - **A written standard for goals.** [GOAL_GRAMMAR.md](GOAL_GRAMMAR.md) names
-  the eight things a goal has to contain — a finish line and the record that
-  settles it, the metrics that explicitly do not count, the bias marked as a
-  bias, what you will refuse to do yourself, what is owed if it fails. The
+  the ten things a goal has to contain — a finish line and the record that
+  settles it, who the output has to be right for, the body of practice it is
+  judged against, the metrics that explicitly do not count, the bias marked as
+  a bias, what you will refuse to do yourself, what is owed if it fails. The
   Founder grades its own draft against that file before showing you anything,
   and the grader reads the same copy. A goal stays prose; the grammar is what
   the critic argues from, never a template to fill in.

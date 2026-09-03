@@ -12,7 +12,7 @@ stamps amendment disclosure — the CEO can never claim it wasn't told.
 
 from __future__ import annotations
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from yaaf.core.constitution import ConstitutionDoc, effective
@@ -289,25 +289,37 @@ WORKSPACE_CHAT = (
 )
 
 
-#: How every agent writes, in every lane — messages to the chairman and the
-#: deliverables themselves. Each role prompt used to carry its own version of
+#: How every agent writes. Each role prompt used to carry its own version of
 #: this and only the leadership ones did, so a memo the chairman actually had
 #: to read arrived as a four-page report with headings, while the CEO's cover
 #: note for it was two plain sentences. The instruction is generic because the
 #: complaint was: "always reading a book."
+#:
+#: That complaint was about MESSAGES, and the rule used to say it "holds for
+#: messages, for chat, and for the deliverables themselves" — so a blog writer
+#: read "a longer answer is not a better one" before it read its own task, and
+#: the posts came back thin. Brevity is a courtesy owed to a reader who did not
+#: ask for the words; a deliverable is the thing that was asked for. The two
+#: halves are stated separately now because they are different instructions,
+#: and only the first one was ever complained about.
 HOUSE_STYLE = (
-    "HOW YOU WRITE: plain English, short sentences. This holds for messages, "
-    "for chat, and for the deliverables themselves. One idea per sentence, the "
-    "short word over the long one, the answer first. No preamble restating the "
-    "question, no summary of what you are about to say, no closing paragraph "
-    "that says it again. No headings, bullets or bold on a few sentences of "
-    "prose. No jargon where an ordinary word exists. Length is time the "
-    "chairman pays for, and a longer answer is not a better one — cut anything "
-    "that would not change what he does next. "
-    "UNLESS OTHERWISE SPECIFIED: when the goal, the task, or the chairman asks "
-    "for a particular length, format or register — a formal report, a spec, a "
-    "deck, a filing, a document with a house style of its own — write that. "
-    "Then write it in the plainest language that format allows."
+    "HOW YOU WRITE, IN MESSAGES AND CHAT: plain English, short sentences. One "
+    "idea per sentence, the short word over the long one, the answer first. No "
+    "preamble restating the question, no summary of what you are about to say, "
+    "no closing paragraph that says it again. No headings, bullets or bold on a "
+    "few sentences of prose. No jargon where an ordinary word exists. A message "
+    "is time the chairman pays for and did not ask for, so a longer one is not "
+    "a better one — cut anything that would not change what he does next. "
+    "HOW YOU WRITE THE DELIVERABLE ITSELF: the plain-English rule holds — short "
+    "words, no jargon, no throat-clearing — but the length rule does not, "
+    "because the deliverable is the thing that was asked for rather than an "
+    "interruption to it. Match its form to the reader the goal names as its "
+    "beneficiary, and its depth to the reference class the goal names as its "
+    "standard; where the goal, the task or the chairman asks for a particular "
+    "length, format or register, write that. Padding is not thoroughness and "
+    "brevity is not rigour: the test is whether a reader in the beneficiary's "
+    "position, holding the finished piece, would still have to go and find out "
+    "something it should have told them."
 )
 
 
@@ -1327,9 +1339,20 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
                 for a in undisclosed
             ]
     else:
+        # Own team, plus anything anywhere waiting on a read this agent can
+        # give — the same widening `/agent/board` got, and for the same reason.
+        # A reviewer sits on its own team by design, so the work it was woken
+        # for belongs to somebody else's: filtered to team_id, the pack it
+        # reads before doing anything simply did not contain the task. The
+        # wake reason named an id the pack could not explain.
+        visible = Task.team_id == agent.team_id
+        if policy.is_review_seat(session, agent):
+            visible = or_(visible, and_(Task.status == TaskStatus.REVIEW,
+                                        Task.claimed_by_agent_id != agent.id))
         team_tasks = session.execute(
             select(Task).where(
-                Task.team_id == agent.team_id, Task.status.in_(policy.OPEN_TASK_STATUSES)
+                Task.project_id == project.id, visible,
+                Task.status.in_(policy.OPEN_TASK_STATUSES)
             )
         ).scalars()
         pack["board"] = {
@@ -1344,7 +1367,10 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
     claimed = session.execute(
         select(Task).where(
             Task.claimed_by_agent_id == agent.id,
-            Task.status.in_([TaskStatus.CLAIMED, TaskStatus.CHECKING]),
+            # REVIEW included: it still occupies this agent's one-at-a-time
+            # slot, so a pack that omitted it showed an agent with no task and
+            # no way to take one — which reads as a bug in the claim rule.
+            Task.status.in_([TaskStatus.CLAIMED, TaskStatus.CHECKING, TaskStatus.REVIEW]),
         )
     ).scalars().first()
     if claimed is not None and "task" not in pack:

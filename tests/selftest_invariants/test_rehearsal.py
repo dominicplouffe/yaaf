@@ -603,3 +603,39 @@ def test_the_admin_route_runs_the_drill_out_of_process(client):
     assert response.json()["ok"] is True
     # The engine the test session is holding is untouched.
     assert client.get("/observe/projects", headers=ADMIN).status_code == 200
+
+
+def test_a_bundle_that_asks_for_an_independent_read_still_finishes():
+    """The drill is the one place a chairman finds out a bundle cannot run
+    before he funds it — so a drill that cannot run a rule the platform ships,
+    and the MCP `rehearse` description recommends, is worse than no drill.
+
+    `_close` read a 200 as "closed". Under `deliverable_review` a 200 means the
+    task went to REVIEW, nobody in the mock crew reviewed it, and REVIEW holds
+    the author's one-at-a-time slot — so the whole crew wedged and the report
+    said "it plans and creates work, but nothing closed". A true sentence about
+    the drill, read by the chairman as a sentence about his bundle.
+    """
+    report = rehearsal.rehearse(spec(
+        slug="reads", constitution={"deliverable_review": "independent_read"},
+        teams=[{"role_slug": "worker", "name": "Desk",
+                "employees": ["Ada", "Grace"], "lead": "Ada"},
+               {"role_slug": "reader", "name": "Review", "employees": ["Juno"]}],
+    ) | {"roles": ROLES + [
+        {"slug": "reader", "name": "Reader", "is_ceo_role": False,
+         "description": "reads", "category": "challenge",
+         "system_prompt": "You read finished work.", "model": "claude-sonnet-5"}]})
+    assert report["ok"], report["verdict"]
+    assert "closed it with evidence" in report["verdict"]
+    read = next(s for s in report["walk"] if s["key"] == "work_read")
+    assert read["ok"] and not read["na"], read
+
+
+def test_the_read_is_not_drawn_as_a_miss_on_a_bundle_that_never_asked(client=None):
+    """The other half: a rung nobody switched on must render N/A, not red.
+    Drawing it as a miss reports the absence of a feature as the failure of
+    one — the mistake NOT_IN_EXPLORE exists to prevent."""
+    report = rehearsal.rehearse(spec(slug="no-read"))
+    read = next(s for s in report["walk"] if s["key"] == "work_read")
+    assert read["na"] and not read["ok"], read
+    assert report["ok"], report["verdict"]

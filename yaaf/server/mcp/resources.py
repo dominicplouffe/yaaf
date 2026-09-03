@@ -22,6 +22,11 @@ from yaaf.server.mcp.auth import Principal, ToolRefusal, chaired_projects, resol
 #: read the rubric before it writes. Same file the grader loads.
 GRAMMAR_PATH = Path(__file__).resolve().parents[2] / "founder" / "GOAL_GRAMMAR.md"
 
+#: How a project is drafted, whichever door the drafter came through. Same file
+#: the Founder's system prompt appends — the whole point is that this surface
+#: and that one cannot drift about how a project is designed, which they had.
+DOCTRINE_PATH = Path(__file__).resolve().parents[2] / "founder" / "DESIGN_DOCTRINE.md"
+
 PER_PROJECT = {
     "briefing": "What changed in this project since you last looked",
     "plan": "Requirements, stages, the commitment and its projection",
@@ -36,7 +41,11 @@ def listing(session: Session, principal: Principal) -> list[dict]:
          "description": "What needs the chairman, across every project",
          "mimeType": "application/json"},
         {"uri": "yaaf://docs/goal-grammar", "name": "GOAL_GRAMMAR.md",
-         "description": "The eight things a goal has to contain",
+         "description": "The ten things a goal has to contain",
+         "mimeType": "text/markdown"},
+        {"uri": "yaaf://docs/design-doctrine", "name": "DESIGN_DOCTRINE.md",
+         "description": "How a project is drafted: the goal, dates, the roster, "
+                        "the constitution knobs worth an opinion",
          "mimeType": "text/markdown"},
     ]
     for project in chaired_projects(session, principal):
@@ -56,6 +65,8 @@ def read(session: Session, principal: Principal, uri: str) -> dict:
         return _json(uri, envelope.fit(observe.desk(live=True, session=session)))
     if uri == "yaaf://docs/goal-grammar":
         return _text(uri, _grammar(), "text/markdown")
+    if uri == "yaaf://docs/design-doctrine":
+        return _text(uri, _doctrine(), "text/markdown")
 
     prefix = "yaaf://project/"
     if uri.startswith(prefix) and uri.count("/") == 4:
@@ -81,6 +92,13 @@ def _grammar() -> str:
         return GRAMMAR_PATH.read_text()
     except OSError:  # pragma: no cover - only if the wheel loses its package data
         return "GOAL_GRAMMAR.md is not present in this install."
+
+
+def _doctrine() -> str:
+    try:
+        return DOCTRINE_PATH.read_text()
+    except OSError:  # pragma: no cover - only if the wheel loses its package data
+        return "DESIGN_DOCTRINE.md is not present in this install."
 
 
 def _json(uri: str, payload: dict) -> dict:
