@@ -663,6 +663,8 @@ export default function NewProject() {
           ...(bundle?.project.ceo_daily_at ? { ceo_daily_at: bundle.project.ceo_daily_at } : {}),
           ...(bundle?.project.ceo_model_override
             ? { ceo_model_override: bundle.project.ceo_model_override } : {}),
+          ...(bundle?.project.ceo_effort_override
+            ? { ceo_effort_override: bundle.project.ceo_effort_override } : {}),
           solo,
           teams: teams
             .filter((t) => t.role_slug && t.name && (solo || t.employees.trim()))
@@ -680,6 +682,7 @@ export default function NewProject() {
               // deliberate act.
               const schedules = keep({ ...t.schedules, ...fromBundle?.schedules });
               const modelOverrides = keep(fromBundle?.model_overrides);
+              const effortOverrides = keep(fromBundle?.effort_overrides);
               return {
                 role_slug: t.role_slug,
                 name: t.name.trim(),
@@ -688,6 +691,8 @@ export default function NewProject() {
                 ...(Object.keys(schedules).length ? { schedules } : {}),
                 ...(Object.keys(modelOverrides).length
                   ? { model_overrides: modelOverrides } : {}),
+                ...(Object.keys(effortOverrides).length
+                  ? { effort_overrides: effortOverrides } : {}),
               };
             }),
     };

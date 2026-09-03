@@ -937,6 +937,7 @@ export interface ProjectBundle {
     ceo_name: string;
     ceo_daily_at?: string | null;
     ceo_model_override?: string | null;
+    ceo_effort_override?: string | null;
     teams: {
       role_slug: string;
       name: string;
@@ -946,6 +947,8 @@ export interface ProjectBundle {
       schedules?: Record<string, string>;
       /** Per-agent model overrides, keyed by employee name. */
       model_overrides?: Record<string, string>;
+      /** Per-agent reasoning-effort overrides, keyed by employee name. */
+      effort_overrides?: Record<string, string>;
     }[];
     solo: boolean;
   };

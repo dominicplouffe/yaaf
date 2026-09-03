@@ -145,6 +145,13 @@ ROLE_CATEGORIES = (
 )
 ROLE_DOMAINS = ("general", "markets", "data", "games", "education")
 
+#: How hard the model thinks, as the Agent SDK names it. A closed set, so a
+#: typo is worth a 422 here rather than a container that starts, spends the
+#: claim, and dies inside the sandbox where the chairman sees only "the run
+#: failed".
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
+_EFFORT_PATTERN = f"^({'|'.join(EFFORTS)})$"
+
 
 class RoleIn(BaseModel):
     slug: str = Field(pattern="^[a-z0-9-]{2,64}$")
@@ -157,7 +164,7 @@ class RoleIn(BaseModel):
     description: str
     system_prompt: str
     model: str = "claude-sonnet-5"
-    effort: str = "high"
+    effort: str = Field(default="high", pattern=_EFFORT_PATTERN)
     tool_permissions: dict = Field(default_factory=dict)
     secret_scopes: list[str] = Field(default_factory=list)
 
@@ -471,6 +478,7 @@ class TeamSpec(BaseModel):
     # attach is missed at 09:00 every day, with no error anywhere.
     schedules: dict[str, str] = Field(default_factory=dict)
     model_overrides: dict[str, str] = Field(default_factory=dict)
+    effort_overrides: dict[str, str] = Field(default_factory=dict)
 
 
 class ProjectCreate(BaseModel):
@@ -497,6 +505,7 @@ class ProjectCreate(BaseModel):
     ceo_name: str = "CEO"
     ceo_daily_at: str | None = Field(default=None, pattern=_DAILY_AT_PATTERN)
     ceo_model_override: str | None = None
+    ceo_effort_override: str | None = Field(default=None, pattern=_EFFORT_PATTERN)
     teams: list[TeamSpec] = Field(default_factory=list)
     # Solo mode (the M2 single-agent arm): the CEO is placed as the sole member
     # — hence derived lead — of the only team, so one brain plans AND executes
@@ -545,7 +554,8 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
 
     for spec in body.teams:
         for field_name, mapping in (("schedules", spec.schedules),
-                                    ("model_overrides", spec.model_overrides)):
+                                    ("model_overrides", spec.model_overrides),
+                                    ("effort_overrides", spec.effort_overrides)):
             unknown = sorted(set(mapping) - set(spec.employees))
             if unknown:
                 raise HTTPException(
@@ -559,6 +569,18 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
             raise HTTPException(
                 status_code=422,
                 detail=f"team '{spec.name}' schedule '{bad_time}' is not HH:MM",
+            )
+        # Same reason the schedule is checked here: a dict's values get no
+        # pattern from the model, and an effort the SDK does not know reaches
+        # the sandbox as an env var and kills the run there, where the
+        # chairman sees a dead container rather than his own typo.
+        bad_effort = next((v for v in spec.effort_overrides.values()
+                           if v not in EFFORTS), None)
+        if bad_effort is not None:
+            raise HTTPException(
+                status_code=422,
+                detail=f"team '{spec.name}' effort '{bad_effort}' is not one of "
+                       f"{', '.join(EFFORTS)}",
             )
     deadline = body.deadline
     deadline_source = None
@@ -630,6 +652,7 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
         name=body.ceo_name,
         role_version_id=ceo_role_version.id,
         model_override=body.ceo_model_override,
+        effort_override=body.ceo_effort_override,
         daily_at=body.ceo_daily_at,
     )
     session.add(ceo)
@@ -659,6 +682,7 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
                 name=employee_name,
                 daily_at=spec.schedules.get(employee_name),
                 model_override=spec.model_overrides.get(employee_name),
+                effort_override=spec.effort_overrides.get(employee_name),
             )
             session.add(agent)
             agents.append(agent)
@@ -793,6 +817,8 @@ def export_project(project_id: str, include_values: bool = False,
             "schedules": {a.name: a.daily_at for a in members if a.daily_at},
             "model_overrides": {a.name: a.model_override
                                 for a in members if a.model_override},
+            "effort_overrides": {a.name: a.effort_override
+                                 for a in members if a.effort_override},
         })
 
     billing_secret_name = None
@@ -879,6 +905,7 @@ def export_project(project_id: str, include_values: bool = False,
             "ceo_name": ceo.name,
             "ceo_daily_at": ceo.daily_at,
             "ceo_model_override": ceo.model_override,
+            "ceo_effort_override": ceo.effort_override,
             "teams": teams,
             "solo": ceo.team_id is not None,
         },
@@ -1021,6 +1048,7 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
                 role_version_id=source_ceo.role_version_id,
                 status=source_ceo.status,
                 model_override=source_ceo.model_override,
+                effort_override=source_ceo.effort_override,
                 daily_at=source_ceo.daily_at)
     session.add(ceo)
     session.add(Channel(id=ids.new_id(ids.CHANNEL), project_id=project.id,
@@ -1048,6 +1076,7 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
                           role_version_id=source_agent.role_version_id,
                           status=source_agent.status,
                           model_override=source_agent.model_override,
+                          effort_override=source_agent.effort_override,
                           daily_at=source_agent.daily_at)
             session.add(agent)
             agents.append(agent)
