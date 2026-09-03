@@ -1,6 +1,6 @@
 # Governance — the constitution, rule by rule
 
-Each project runs under a **constitution**: 49 numbers and switches the agents
+Each project runs under a **constitution**: 55 numbers and switches the agents
 cannot edit, argue with, or talk their way around. Every one is enforced
 server-side in [`yaaf/server/policy.py`](../yaaf/server/policy.py) as an HTTP
 refusal or an automatic state change. The schema itself lives in
@@ -17,8 +17,9 @@ moment it exists, on the tab its group maps to in `GROUP_THEMES`.
 
 ## Changing a rule
 
-**In the dashboard:** Settings → **Rules in force**. All 49 sit behind six tabs
-— Money, Pace & brakes, How work is run, Autonomy, Memory, Rhythm & reporting —
+**In the dashboard:** Settings → **Rules in force**. All 55 sit behind seven tabs
+— Money, The bar, Pace & brakes, How work is run, Autonomy, Memory, Rhythm &
+reporting —
 one rule per row, with the group as a subhead. Edit anything on any tab; a tray
 at the foot of the pane lists every pending change across all of them, takes
 your reason, and shows you the before/after before it lands. Settings → **Money**
@@ -121,6 +122,7 @@ still reach you at every setting.
 |---|---|---|
 | `monthly_usd_cap` | 1000.0 | The unit under `api_key` billing. At 100% the project **pauses itself** and you're emailed. |
 | `monthly_token_cap` | 200,000,000 | The unit under `subscription` billing. Same hard stop. |
+| `hard_stop_multiple` | 3.0 | The wall, as a multiple of the budget. The budget is the plan you make before the work starts; this is where a runaway is actually stopped. They used to be one number, which is why every CEO lowballed: crossing your own plan was fatal, so the plan became a thing to stay well back from. 1.0 restores the old behaviour. |
 | `budget_warn_ratio` | 0.8 | The CEO is told to cut burn here — before the platform pauses the project for it. Also warns on the external envelope. |
 | `external_monthly_usd_cap` | 500.0 | The month's real-world spend wall (purchases, services) — separate from the model budget and enforced in **every** billing mode. A purchase that would cross it is refused with the arithmetic; no approval overrides it, only an amendment. 0 turns it off. |
 | `max_usd_per_purchase` | 100.0 | The most one purchase may be without an approval, even below the approval threshold. 0 turns the line off. |
@@ -131,6 +133,13 @@ Inside the envelope an autonomous CEO buys without asking; every purchase is
 cleared before money moves (`purchase_begin`), booked with its receipt
 (`purchase_finish`), and crash-retries can never buy twice. A spend made with
 raw tooling is booked with `spend_book` against the same walls.
+
+### The bar
+
+| Rule | Default | What it does |
+|---|---|---|
+| `stakes` | `normal` | `low` / `normal` / `high`. Answered once, it buys two things. **Money:** how hard to spend when the budget turns out to be wrong — `high` gets real headroom before anyone worries and the CEO is told to spend what the work needs and report; `low` means going over is a stop-and-ask. **Craft:** at `high`, the seats whose output *is* the deliverable or whose job is to check it (roles filed `content`, `research`, `build`, `challenge`) are hired on the strongest model and the deepest reasoning instead of on whatever the shared library says — because raising it in the library raises it for every project on the install. A seat you gave an explicit model or effort keeps yours, and nothing is ever lowered. Stamped onto the roster at hire, so it is visible in an export rather than implied by a rule. |
+| `deliverable_review` | `none` | `independent_read` means the work is read by somebody who did not write it, and the platform refuses a roster that asks for it and hires no seat filed `challenge` — an editor, an adversary, a skeptic. `none` is what every project did before this rule existed: the only reader of a deliverable before you was the agent that wrote it, and 80% of those closes were never sampled. Off by default so an install that upgrades is unchanged. |
 
 ### Memory
 
@@ -156,6 +165,8 @@ Memory-heavy roles (research desks, support) need more room than the defaults.
 | `requirement_check_failures_before_escalation` | 3 | A requirement whose acceptance test keeps failing this often stops being retried silently and becomes a question — the requirement-level twin of the rule above. |
 | `max_task_gate_hours` | 6 | The furthest ahead work may be scheduled with `not_before`. A gated task wakes nobody and shows on no screen as work in progress, so a project gated on one looks stopped. Gates beyond this are refused. |
 | `stall_hours` | 3.0 | Hours of silence before you are told. A project that quietly stopped is the failure mode this catches. |
+| `inbox_runs_per_project_per_day` | 40 | Reading the inbox has its own daily purse, so a busy mailbox cannot eat the allowance the work needs. |
+| `inbox_runs_per_project_per_hour` | 8 | The trailing-hour twin, for the same reason as `runs_per_project_per_hour`. |
 | `max_concurrent_runs` | 3 | Agents working simultaneously. Protects the provider rate limit every project on the box shares. |
 | `reserved_governance_runs` | 3 | Runs held out of the daily ceiling so a review, a cycle plan or a re-forecast can always happen. Ordinary work stops at the cap minus this. 0 turns it off. |
 

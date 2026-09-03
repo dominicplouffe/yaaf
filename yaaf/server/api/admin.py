@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import secrets as pysecrets
 from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
@@ -534,6 +535,128 @@ def _latest_role_version(session: Session, slug: str) -> RoleVersion:
     ).scalar_one()
 
 
+def _check_team_people(spec: TeamSpec) -> None:
+    """Per-employee settings name people who are actually on the team, and
+    carry values the runtime understands.
+
+    A setting that silently fails to attach is the failure this exists for: a
+    wake schedule for a name nobody has is a standup missed at 09:00 every day
+    with no error anywhere, and an effort the SDK does not know reaches the
+    sandbox as an env var and kills the run there, where the chairman sees a
+    dead container rather than his own typo. Shared by project creation and
+    `add_team` so a team added later is checked exactly as one hired at
+    birth.
+    """
+    for field_name, mapping in (("schedules", spec.schedules),
+                                ("model_overrides", spec.model_overrides),
+                                ("effort_overrides", spec.effort_overrides)):
+        unknown = sorted(set(mapping) - set(spec.employees))
+        if unknown:
+            raise HTTPException(
+                status_code=422,
+                detail=f"team '{spec.name}' has {field_name} for "
+                       f"{', '.join(unknown)} — not among its employees",
+            )
+    bad_time = next((v for v in spec.schedules.values()
+                     if not re.fullmatch(r"([01]?\d|2[0-3]):[0-5]\d", v)), None)
+    if bad_time is not None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"team '{spec.name}' schedule '{bad_time}' is not HH:MM",
+        )
+    bad_effort = next((v for v in spec.effort_overrides.values()
+                       if v not in EFFORTS), None)
+    if bad_effort is not None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"team '{spec.name}' effort '{bad_effort}' is not one of "
+                   f"{', '.join(EFFORTS)}",
+        )
+
+#: Whose work IS the deliverable, or is the check on it. `growth` is outreach
+#: and support triage and `leadership` plans rather than writes, so neither is
+#: lifted — the CEO is already the only Opus seat in most rosters and its
+#: output is not what the chairman keeps.
+CRAFT_CATEGORIES = ("content", "research", "build", "challenge")
+
+#: Seats whose job is to read somebody else's work and disagree with it.
+REVIEW_CATEGORY = "challenge"
+
+
+def _check_review_seat(session: Session, doc: ConstitutionDoc, teams: list[TeamSpec]) -> None:
+    """A project that asks for an independent read must hire someone who can
+    give it one.
+
+    This is the whole reason the rule is enforced HERE rather than in a prompt:
+    the form, the Founder and `mcp__yaaf__create_project` all build a
+    ProjectCreate and all land on this endpoint, so a check written once covers
+    three front doors. The same sentence written into three prompts covers
+    whichever one the author remembered.
+
+    Category rather than slug on purpose — `editor`, `adversary`,
+    `data-skeptic`, `plan-adversary` and a role this install wrote itself all
+    answer, and a library that grows does not have to come back and edit a
+    list.
+    """
+    if doc.deliverable_review != "independent_read":
+        return
+    slugs = {spec.role_slug for spec in teams}
+    if not slugs:
+        return
+    reviewers = session.execute(
+        select(Role.slug).where(Role.slug.in_(slugs), Role.category == REVIEW_CATEGORY)
+    ).scalars().all()
+    if reviewers:
+        return
+    available = session.execute(
+        select(Role.slug).where(Role.category == REVIEW_CATEGORY).order_by(Role.slug)
+    ).scalars().all()
+    raise HTTPException(
+        status_code=422,
+        detail=(
+            "deliverable_review is 'independent_read', but no team on this roster "
+            "hires a reviewing seat — so the only reader of a deliverable would be "
+            "the agent that wrote it. Add a team on one of: "
+            f"{', '.join(available) or 'none installed — seed the role library first'}"
+            "; or set deliverable_review to 'none' and say that is what you want."
+        ),
+    )
+
+#: What "this matters" buys a producing seat. Only ever upward: a role already
+#: at or above these keeps what it has.
+CRAFT_MODEL = "claude-opus-5"
+CRAFT_EFFORT = "xhigh"
+_EFFORT_RANK = {name: i for i, name in enumerate(EFFORTS)}
+
+
+def _craft_lift(
+    session: Session, slug: str, version: RoleVersion, cons: ConstitutionDoc
+) -> tuple[str | None, str | None]:
+    """The model and effort a high-stakes project hires this seat on.
+
+    Resolved HERE, at hire, and stamped onto the agent row — not read at
+    dispatch. Three reasons. The runner stays a lookup with no policy in it;
+    the choice is visible in the roster and in an exported bundle rather than
+    implied by a rule somebody has to go and read; and the chairman can still
+    hand-adjust one seat afterwards without fighting the setting that put it
+    there.
+
+    Returns what to stamp, or (None, None) to leave the role's own answer
+    alone. Never returns something weaker than the role already has: a dial
+    labelled "how much this matters" that could quietly downgrade a seat would
+    be a trap.
+    """
+    if cons.stakes != "high":
+        return None, None
+    role = session.execute(select(Role).where(Role.slug == slug)).scalar_one_or_none()
+    if role is None or role.category not in CRAFT_CATEGORIES:
+        return None, None
+    model = None if version.model == CRAFT_MODEL else CRAFT_MODEL
+    at_least = _EFFORT_RANK.get(CRAFT_EFFORT, 0)
+    effort = (None if _EFFORT_RANK.get(version.effort, 0) >= at_least else CRAFT_EFFORT)
+    return model, effort
+
+
 @router.post("/projects")
 def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
     chairman = session.execute(
@@ -550,38 +673,19 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
         )
     if not body.solo and any(not spec.employees for spec in body.teams):
         raise HTTPException(status_code=422, detail="every team needs at least one employee")
-    import re
-
     for spec in body.teams:
-        for field_name, mapping in (("schedules", spec.schedules),
-                                    ("model_overrides", spec.model_overrides),
-                                    ("effort_overrides", spec.effort_overrides)):
-            unknown = sorted(set(mapping) - set(spec.employees))
-            if unknown:
-                raise HTTPException(
-                    status_code=422,
-                    detail=f"team '{spec.name}' has {field_name} for "
-                           f"{', '.join(unknown)} — not among its employees",
-                )
-        bad_time = next((v for v in spec.schedules.values()
-                         if not re.fullmatch(r"([01]?\d|2[0-3]):[0-5]\d", v)), None)
-        if bad_time is not None:
-            raise HTTPException(
-                status_code=422,
-                detail=f"team '{spec.name}' schedule '{bad_time}' is not HH:MM",
-            )
-        # Same reason the schedule is checked here: a dict's values get no
-        # pattern from the model, and an effort the SDK does not know reaches
-        # the sandbox as an env var and kills the run there, where the
-        # chairman sees a dead container rather than his own typo.
-        bad_effort = next((v for v in spec.effort_overrides.values()
-                           if v not in EFFORTS), None)
-        if bad_effort is not None:
-            raise HTTPException(
-                status_code=422,
-                detail=f"team '{spec.name}' effort '{bad_effort}' is not one of "
-                       f"{', '.join(EFFORTS)}",
-            )
+        _check_team_people(spec)
+    # The constitution freezes at creation. Overrides are validated against the
+    # schema; a spec with no opinion about the authority dial is given one
+    # here, so the form, the Founder, the MCP surface, a spec file and the fire
+    # drill all create the same project from the same silence.
+    #
+    # Built here rather than after the insert because the roster check below is
+    # a refusal, and a refusal that fires after rows are written is a rollback
+    # waiting to be got wrong.
+    doc = ConstitutionDoc.model_validate(
+        {**ConstitutionDoc().model_dump(), **default_autonomy(body.constitution)})
+    _check_review_seat(session, doc, body.teams)
     deadline = body.deadline
     deadline_source = None
     if deadline is not None:
@@ -626,12 +730,6 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
     session.flush()
     session.add(ProjectMember(project_id=project.id, user_id=chairman.id, role="chairman"))
 
-    # The constitution freezes at creation. Overrides are validated against the
-    # schema; a spec with no opinion about the authority dial is given one
-    # here, so the form, the Founder, the MCP surface, a spec file and the fire
-    # drill all create the same project from the same silence.
-    doc = ConstitutionDoc.model_validate(
-        {**ConstitutionDoc().model_dump(), **default_autonomy(body.constitution)})
     create_initial(session, project.id, doc)
 
     # Webhook secrets exist from birth. The platform_attested path was never
@@ -664,6 +762,7 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
     team_out = []
     for spec in body.teams:
         role_version = _latest_role_version(session, spec.role_slug)
+        lift_model, lift_effort = _craft_lift(session, spec.role_slug, role_version, doc)
         team = Team(
             id=ids.new_id(ids.TEAM),
             project_id=project.id,
@@ -681,8 +780,12 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
                 kind=AgentKind.EMPLOYEE,
                 name=employee_name,
                 daily_at=spec.schedules.get(employee_name),
-                model_override=spec.model_overrides.get(employee_name),
-                effort_override=spec.effort_overrides.get(employee_name),
+                # What the chairman named for this person wins; the stakes lift
+                # only fills a silence. Someone who deliberately put one seat on
+                # a cheaper model must not have it undone by a dial about the
+                # project as a whole.
+                model_override=spec.model_overrides.get(employee_name) or lift_model,
+                effort_override=spec.effort_overrides.get(employee_name) or lift_effort,
             )
             session.add(agent)
             agents.append(agent)
@@ -1206,7 +1309,14 @@ def add_team(project_id: str, body: TeamSpec, session: Session = Depends(db)) ->
     if not body.employees:
         raise HTTPException(status_code=422, detail="a team needs at least one employee")
     project = _get_project(session, project_id)
+    _check_team_people(body)
     role_version = _latest_role_version(session, body.role_slug)
+    # A team hired later is hired on the same terms as one hired at birth. It
+    # used to drop the per-employee settings on the floor — the TeamSpec
+    # carried them, this route ignored them — so a team added on Tuesday came
+    # back without the wakes and models its spec named.
+    cons = effective(session, project.id)
+    lift_model, lift_effort = _craft_lift(session, body.role_slug, role_version, cons)
     team = Team(
         id=ids.new_id(ids.TEAM),
         project_id=project.id,
@@ -1223,6 +1333,9 @@ def add_team(project_id: str, body: TeamSpec, session: Session = Depends(db)) ->
             team_id=team.id,
             kind=AgentKind.EMPLOYEE,
             name=employee_name,
+            daily_at=body.schedules.get(employee_name),
+            model_override=body.model_overrides.get(employee_name) or lift_model,
+            effort_override=body.effort_overrides.get(employee_name) or lift_effort,
         )
         session.add(agent)
         agents.append(agent)
