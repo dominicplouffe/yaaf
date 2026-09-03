@@ -97,6 +97,11 @@ class TaskStatus(enum.StrEnum):
     READY = "ready"
     CLAIMED = "claimed"
     CHECKING = "checking"   # platform is executing a command-type success test
+    # Finished by its claimant and waiting on somebody who did not write it.
+    # Only observable-test tasks land here, and only where the constitution
+    # asks for an independent read: a command test is already judged by the
+    # platform, while an observable used to close on the author's own word.
+    REVIEW = "review"
     BLOCKED = "blocked"
     DONE = "done"
     KILLED = "killed"

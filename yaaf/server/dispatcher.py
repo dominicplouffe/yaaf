@@ -1573,6 +1573,17 @@ def _work_reasons(session: Session, agent: Agent, now) -> list[dict]:
     ):
         reasons.append({"kind": "assignment_ready", "task_id": task.id})
 
+    # Work finished by somebody else and waiting on a read. Without this a
+    # REVIEW task wakes nobody and sits there — the state would be a hole the
+    # board falls into rather than a step it passes through.
+    if agent.id in {seat.id for seat in policy.review_seats(session, agent.project_id)}:
+        for task in session.execute(
+            select(Task).where(Task.project_id == agent.project_id,
+                               Task.status == TaskStatus.REVIEW,
+                               Task.claimed_by_agent_id != agent.id)
+        ).scalars():
+            reasons.append({"kind": "review_owed", "task_id": task.id})
+
     # A claim with nothing running behind it: wake to push it forward — unless
     # it's a lead's decomposed task still waiting on open subtasks.
     claimed = session.execute(

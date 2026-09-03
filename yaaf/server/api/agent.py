@@ -287,11 +287,62 @@ def complete_task(
             )
         )
         outcome = "checking"
+    elif policy.review_is_owed(session, ctx.project, task):
+        # An observable test used to close on the claimant's own word, and 80%
+        # of those closes were never sampled. Where the chairman asked for an
+        # independent read, the task now waits for somebody who did not write
+        # it instead.
+        task.status = TaskStatus.REVIEW
+        policy.record_task_event(session, task, TaskStatus.REVIEW, f"agent:{ctx.agent.id}",
+                                 from_status=from_status)
+        outcome = "review"
     else:
         task.status = TaskStatus.DONE
         policy.record_task_event(session, task, TaskStatus.DONE, f"agent:{ctx.agent.id}",
                                  from_status=from_status)
         outcome = "done"
+    notify(session, WAKE_CHANNEL, ctx.project.id)
+    return {"task_id": task.id, "status": outcome}
+
+
+class TaskReview(BaseModel):
+    ok: bool
+    notes: str = Field(min_length=10)
+
+
+@router.post("/tasks/{task_id}/review")
+def review_task(
+    task_id: str,
+    body: TaskReview,
+    ctx: RunContext = Depends(run_auth),
+    session: Session = Depends(db),
+) -> dict:
+    """A verdict on somebody else's finished work.
+
+    `ok` closes the task. Not-ok hands it back to its claimant with the
+    notes, which are an ordinary outcome and not an escalation — returning
+    work costs a run and is supposed to. `notes` is required either way:
+    "it is fine" teaches the writer nothing and makes the pass unauditable.
+    """
+    task = session.get(Task, task_id)
+    if task is None or task.project_id != ctx.project.id:
+        raise Refusal("Unknown task.", status_code=404)
+    policy.check_task_review(session, ctx.project, ctx.agent, task)
+    from_status = task.status
+    note = body.notes.strip()
+    if body.ok:
+        task.status = TaskStatus.DONE
+        policy.record_task_event(session, task, TaskStatus.DONE, f"agent:{ctx.agent.id}",
+                                 note=f"reviewed: {note[:500]}", from_status=from_status)
+        outcome = "done"
+    else:
+        # Back to the person who wrote it, still theirs, with the reasons.
+        task.status = TaskStatus.CLAIMED
+        task.blocked_reason = None
+        policy.record_task_event(session, task, TaskStatus.CLAIMED, f"agent:{ctx.agent.id}",
+                                 note=f"returned: {note[:500]}", from_status=from_status)
+        policy.notice_review_returned(session, task, ctx.agent, note)
+        outcome = "returned"
     notify(session, WAKE_CHANNEL, ctx.project.id)
     return {"task_id": task.id, "status": outcome}
 

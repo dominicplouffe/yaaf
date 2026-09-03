@@ -1,0 +1,163 @@
+"""Invariant selftests: work with an observable test stops closing on its author's word.
+
+A command test is judged by the platform running it. An observable — which is
+what every prose deliverable gets, because a blog post has no exit code — used
+to go straight to DONE on ten characters of self-report, with a 20% sampled
+audit that explicitly never blocks anything. So the only reader of a
+deliverable before the chairman was the agent that wrote it.
+
+Where the constitution asks for an independent read, such a task now waits in
+REVIEW for somebody who did not write it. Off by default, so an install that
+upgrades is unchanged.
+"""
+
+from __future__ import annotations
+
+from tests.conftest import ADMIN, bearer, live_token, seed_role
+from yaaf.core.db import db_session
+from yaaf.core.models import Agent, Notice, Task, TaskStatus
+
+CHAIR = {"email": "chair@example.com", "display_name": "Chair"}
+OBSERVABLE = {"type": "observable", "target": "deliverables/post.md exists and cites its sources"}
+
+
+def _project(client, *, review: str) -> dict:
+    client.post("/admin/users", json=CHAIR, headers=ADMIN)
+    seed_role(client, "ceo", is_ceo=True, category="leadership")
+    seed_role(client, "scribe", category="content")
+    seed_role(client, "reader", category="challenge")
+    teams = [{"role_slug": "scribe", "name": "Editorial", "employees": ["Ada"]},
+             {"role_slug": "reader", "name": "Review", "employees": ["Juno"]}]
+    created = client.post("/admin/projects", json={
+        "slug": "desk", "name": "Desk", "goal": "Publish something worth reading.",
+        "chairman_email": CHAIR["email"],
+        "constitution": {"deliverable_review": review}, "teams": teams,
+    }, headers=ADMIN)
+    assert created.status_code == 200, created.text
+    project = created.json()
+    client.post(f"/admin/projects/{project['id']}/start", headers=ADMIN)
+    return project
+
+
+def _agent(project: dict, name: str) -> str:
+    for team in project["teams"]:
+        for agent in team["agents"]:
+            if agent["name"] == name:
+                return agent["id"]
+    raise AssertionError(name)
+
+
+def _finished_task(client, project: dict, *, success_test=None) -> str:
+    """A task written and completed by Ada, the way a deliverable arrives."""
+    _, ceo = live_token(project["id"], project["ceo_agent_id"])
+    editorial = next(t for t in project["teams"] if t["name"] == "Editorial")
+    created = client.post("/agent/tasks", headers=bearer(ceo), json={
+        "team_id": editorial["id"], "title": "Write the launch post",
+        "goal": "One post answering the question buyers actually ask.",
+        "success_test": success_test or OBSERVABLE,
+    })
+    assert created.status_code == 200, created.text
+    task_id = created.json()["id"]
+
+    _, ada = live_token(project["id"], _agent(project, "Ada"))
+    assert client.post(f"/agent/tasks/{task_id}/claim", headers=bearer(ada)).status_code == 200
+    done = client.post(f"/agent/tasks/{task_id}/complete", headers=bearer(ada),
+                       json={"evidence": "Wrote deliverables/post.md, 900 words, 6 sources."})
+    assert done.status_code == 200, done.text
+    return task_id, done.json()["status"]
+
+
+def test_without_the_rule_nothing_changes(client):
+    """The default, and what every existing project keeps doing."""
+    project = _project(client, review="none")
+    _, status = _finished_task(client, project)
+    assert status == "done"
+
+
+def test_an_observable_close_waits_for_somebody_who_did_not_write_it(client):
+    project = _project(client, review="independent_read")
+    task_id, status = _finished_task(client, project)
+    assert status == "review"
+
+    # The author cannot sign off their own work. That is the whole state.
+    _, ada = live_token(project["id"], _agent(project, "Ada"))
+    mine = client.post(f"/agent/tasks/{task_id}/review", headers=bearer(ada),
+                       json={"ok": True, "notes": "Looks good to me, shipping it."})
+    assert mine.status_code == 403 and "did not write it" in mine.text
+
+    _, juno = live_token(project["id"], _agent(project, "Juno"))
+    signed = client.post(f"/agent/tasks/{task_id}/review", headers=bearer(juno),
+                         json={"ok": True, "notes": "Checked both claims against the sources."})
+    assert signed.status_code == 200 and signed.json()["status"] == "done"
+    with db_session() as session:
+        assert session.get(Task, task_id).status == TaskStatus.DONE
+
+
+def test_a_returned_task_goes_back_to_its_author_with_the_reasons(client):
+    """Returning work is ordinary, not an escalation — and the author has to be
+    told, or a returned task looks exactly like one they already finished."""
+    project = _project(client, review="independent_read")
+    task_id, _ = _finished_task(client, project)
+
+    _, juno = live_token(project["id"], _agent(project, "Juno"))
+    sent_back = client.post(f"/agent/tasks/{task_id}/review", headers=bearer(juno), json={
+        "ok": False,
+        "notes": "Nothing here a reader could not get from the first page of results."})
+    assert sent_back.status_code == 200 and sent_back.json()["status"] == "returned"
+
+    with db_session() as session:
+        task = session.get(Task, task_id)
+        assert task.status == TaskStatus.CLAIMED
+        assert task.claimed_by_agent_id == _agent(project, "Ada"), "still hers to fix"
+        notice = session.query(Notice).filter_by(
+            agent_id=task.claimed_by_agent_id).order_by(Notice.id.desc()).first()
+        assert notice, "the author must be told, or a returned task looks finished"
+        assert "first page of results" in notice.body and task_id in notice.body
+
+
+def test_a_command_test_is_still_judged_by_the_platform(client):
+    """A reviewer would be a second opinion about an exit code. Only the
+    observable close — the one that used to be taken on trust — is read."""
+    project = _project(client, review="independent_read")
+    _, status = _finished_task(client, project, success_test={
+        "type": "command", "command": "test -f /workspace/deliverables/post.md"})
+    assert status == "checking"
+
+
+def test_only_a_reviewing_seat_signs_off(client):
+    """An opinion in the team room is free. Closing somebody's work is not."""
+    project = _project(client, review="independent_read")
+    task_id, _ = _finished_task(client, project)
+
+    added = client.post(f"/admin/projects/{project['id']}/teams", json={
+        "role_slug": "scribe", "name": "Second Desk", "employees": ["Kit"]}, headers=ADMIN)
+    assert added.status_code == 200, added.text
+    _, kit = live_token(project["id"], added.json()["agents"][0]["id"])
+    refused = client.post(f"/agent/tasks/{task_id}/review", headers=bearer(kit),
+                          json={"ok": True, "notes": "Read it, seems fine to me."})
+    assert refused.status_code == 403 and "discipline" in refused.text
+
+
+def test_a_project_that_lost_its_reviewer_still_closes_work(client):
+    """Creation refuses a roster with no reader, but a project can lose one
+    afterwards — an agent paused, a role refiled. A task stuck in REVIEW
+    forever would be worse than the self-report it replaced."""
+    project = _project(client, review="independent_read")
+    paused = client.post(f"/admin/agents/{_agent(project, 'Juno')}/pause",
+                         headers=ADMIN, json={"paused": True})
+    assert paused.status_code == 200, paused.text
+    _, status = _finished_task(client, project)
+    assert status == "done"
+
+
+def test_the_reviewer_is_woken_for_work_that_is_waiting(client):
+    """A REVIEW task that wakes nobody is a hole the board falls into."""
+    from yaaf.server import dispatcher
+
+    project = _project(client, review="independent_read")
+    task_id, _ = _finished_task(client, project)
+    with db_session() as session:
+        reasons = dispatcher._work_reasons(
+            session, session.get(Agent, _agent(project, "Juno")),
+            __import__("yaaf.core.models", fromlist=["utcnow"]).utcnow())
+    assert any(r["kind"] == "review_owed" and r["task_id"] == task_id for r in reasons), reasons

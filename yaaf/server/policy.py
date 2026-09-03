@@ -84,7 +84,8 @@ from yaaf.core.models import (
 
 log = logging.getLogger("yaaf.policy")
 
-OPEN_TASK_STATUSES = (TaskStatus.READY, TaskStatus.CLAIMED, TaskStatus.CHECKING, TaskStatus.BLOCKED)
+OPEN_TASK_STATUSES = (TaskStatus.READY, TaskStatus.CLAIMED, TaskStatus.CHECKING,
+                      TaskStatus.REVIEW, TaskStatus.BLOCKED)
 
 
 class Refusal(Exception):
@@ -713,6 +714,88 @@ def check_task_complete(
             "when its assignments are done or killed — not before.",
             status_code=409,
         )
+
+
+#: The discipline whose job is reading somebody else's work and disagreeing.
+REVIEW_CATEGORY = "challenge"
+
+
+def review_seats(session: Session, project_id: str) -> list[Agent]:
+    """Agents on this project whose role is a reviewing one."""
+    from yaaf.core.models import Role, RoleVersion
+
+    return list(session.execute(
+        select(Agent)
+        .join(Team, Team.id == Agent.team_id)
+        .join(RoleVersion, RoleVersion.id == Team.role_version_id)
+        .join(Role, Role.id == RoleVersion.role_id)
+        .where(Agent.project_id == project_id,
+               Agent.status == AgentStatus.ACTIVE,
+               Role.category == REVIEW_CATEGORY)
+    ).scalars())
+
+
+def review_is_owed(session: Session, project: Project, task: Task) -> bool:
+    """Whether this finished task waits for a second pair of eyes.
+
+    Only observable tests. A command test is already judged by the platform
+    running it, so a reviewer would be a second opinion about an exit code;
+    an observable is the one that used to close on the author's own word.
+
+    And only where somebody can actually give the read. Creation refuses a
+    roster that asks for one and hires nobody, but a project can lose its
+    reviewer afterwards — an agent paused, a role refiled — and a task stuck
+    in REVIEW forever would be worse than the self-report it replaced.
+    """
+    if task.success_test.get("type") != SuccessTestKind.OBSERVABLE:
+        return False
+    if effective(session, project.id).deliverable_review != "independent_read":
+        return False
+    return any(agent.id != task.claimed_by_agent_id
+               for agent in review_seats(session, project.id))
+
+
+def check_task_review(
+    session: Session, project: Project, agent: Agent, task: Task
+) -> None:
+    require_project_running(project)
+    if task.status != TaskStatus.REVIEW:
+        raise Refusal(
+            f"Task {task.id} is {task.status}; only work waiting on a read can be "
+            "reviewed.", status_code=409)
+    if task.claimed_by_agent_id == agent.id:
+        raise Refusal(
+            "You wrote this. The whole value of the read is that somebody who did "
+            "not write it looked at it — reviewing your own work is the thing this "
+            "state exists to prevent.", status_code=403)
+    if agent.id not in {seat.id for seat in review_seats(session, project.id)}:
+        raise Refusal(
+            "Only a reviewing seat closes a read. Your role is not in the "
+            f"'{REVIEW_CATEGORY}' discipline, so this is not yours to sign off — "
+            "say what you think in the team room instead.", status_code=403)
+
+
+def notice_review_returned(
+    session: Session, task: Task, reviewer: Agent, notes: str
+) -> None:
+    """Tell the author, in the reviewer's own words.
+
+    A returned task goes back to CLAIMED and would otherwise look to its
+    claimant exactly like a task it had already finished — the one thing that
+    would make the second pass useless.
+    """
+    from yaaf.core.models import Notice, NoticeKind
+
+    session.add(Notice(
+        id=ids.new_id(ids.NOTICE),
+        project_id=task.project_id,
+        agent_id=task.claimed_by_agent_id,
+        kind=NoticeKind.TASK_CHECK_FAILED,
+        body=(f"{reviewer.name} read your finished work on \"{task.title}\" and sent "
+              f"it back. This is ordinary, not an escalation.\n\n{notes}\n\n"
+              "Fix what they named, or say in your team room why you disagree, then "
+              f"complete the task again. ({task.id})"),
+    ))
 
 
 def check_task_kill(session: Session, agent: Agent, task: Task) -> None:
