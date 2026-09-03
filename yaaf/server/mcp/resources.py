@@ -66,7 +66,7 @@ def read(session: Session, principal: Principal, uri: str) -> dict:
     if uri == "yaaf://docs/goal-grammar":
         return _text(uri, _grammar(), "text/markdown")
     if uri == "yaaf://docs/design-doctrine":
-        return _text(uri, DOCTRINE_PATH.read_text(), "text/markdown")
+        return _text(uri, _doctrine(), "text/markdown")
 
     prefix = "yaaf://project/"
     if uri.startswith(prefix) and uri.count("/") == 4:
@@ -92,6 +92,13 @@ def _grammar() -> str:
         return GRAMMAR_PATH.read_text()
     except OSError:  # pragma: no cover - only if the wheel loses its package data
         return "GOAL_GRAMMAR.md is not present in this install."
+
+
+def _doctrine() -> str:
+    try:
+        return DOCTRINE_PATH.read_text()
+    except OSError:  # pragma: no cover - only if the wheel loses its package data
+        return "DESIGN_DOCTRINE.md is not present in this install."
 
 
 def _json(uri: str, payload: dict) -> dict:

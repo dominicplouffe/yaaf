@@ -91,6 +91,14 @@ URGENT_NOTICE_KINDS = {NoticeKind.BUDGET_WARNING, NoticeKind.BUDGET_EXHAUSTED,
                        # delivered after the deadline it was warning about.
                        NoticeKind.FLAG_OPENED}
 
+# What still buys a run on a project the chairman has been told is finished.
+# Everything else waits for his click: a CEO reading an amendment note or a
+# routine memo on a delivered project is a run spent on the exact thing the
+# banner, the email and the nag all say is not happening. DELIVERY_READY is in
+# here because it IS the news — the CEO has to learn it finished, and saying so
+# in the boardroom is what ends the silence the incident was made of.
+DELIVERED_WAKE_NOTICE_KINDS = URGENT_NOTICE_KINDS | {NoticeKind.DELIVERY_READY}
+
 # A commitment that stopped holding needs a re-forecast wake even on a day
 # ordinary work already spent the allowance — that wake is one of the three
 # things the reserved governance slice exists for.
@@ -1414,7 +1422,14 @@ def _wake_reasons(
         urgent = any(kind in URGENT_NOTICE_KINDS for kind, _ in pending)
         oldest = min(created_at for _, created_at in pending)
         ripe = oldest <= now - timedelta(minutes=NOTICE_COALESCE_MINUTES)
-        if urgent or ripe or len(pending) >= NOTICE_COALESCE_COUNT:
+        if delivered:
+            # Coalescing is the wrong question here. On a delivered project a
+            # third notice arriving, or an ordinary one ageing out, is not a
+            # reason to spend — only the short list above is.
+            wakes = any(kind in DELIVERED_WAKE_NOTICE_KINDS for kind, _ in pending)
+        else:
+            wakes = urgent or ripe or len(pending) >= NOTICE_COALESCE_COUNT
+        if wakes:
             reasons.append({"kind": "notices", "count": len(pending)})
         # The re-forecast wake is governance: it must land on the day the
         # allowance is gone, because that is exactly the day the date slipped.
@@ -1431,7 +1446,10 @@ def _wake_reasons(
     if agent.daily_at:
         personal = _daily_wake_due(session, project, cons, agent, now,
                                    raw=agent.daily_at, name="agent_daily")
-        if personal:
+        # Consumed even when delivered — the dedup beat has to advance or the
+        # rhythm bursts the moment the chairman confirms, replaying every
+        # morning it slept through.
+        if personal and not delivered:
             reasons.append(personal)
 
     # 4. Heartbeats: the CEO plans on a cadence even in silence — but silence
@@ -1452,6 +1470,12 @@ def _wake_reasons(
                     and not reasons
                     and not cons.ceo_heartbeat_always
                     and not _ceo_has_planning_material(session, project))
+            # A delivered project has nothing left to plan: every requirement
+            # is true and new scope is refused (policy.check_new_scope). A
+            # planning beat here is a run spent deciding not to invent work,
+            # and ceo_heartbeat_always does not override it — that setting is
+            # about silence on a live project, not about a finished one.
+            skip = skip or delivered
             if beat is None:
                 session.add(Heartbeat(agent_id=agent.id, name="planning", last_fired_at=now))
             else:
@@ -1463,7 +1487,7 @@ def _wake_reasons(
         #     timezone). Fires once per local day, at or after the target;
         #     lana's standup pattern, generalized.
         daily = _daily_wake_due(session, project, cons, agent, now)
-        if daily:
+        if daily and not delivered:
             reasons.append(daily)
 
         # 4c. An open review missing its variance narrative. Governance-

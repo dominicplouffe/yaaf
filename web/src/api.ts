@@ -158,6 +158,8 @@ export interface Activity {
     | "blocked_tasks"
     | "checks_lost"
     | "checking"
+    | "review_owed"
+    | "delivery_ready"
     | null;
   brief: ActivityBrief;
   daily_runs: { used: number; cap: number; resets_at: string };

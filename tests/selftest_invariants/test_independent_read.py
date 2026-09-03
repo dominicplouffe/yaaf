@@ -224,3 +224,102 @@ def test_the_floor_is_off_by_default_and_only_touches_evidence_work(client):
     inward = _claimed_evidence_task(client, project, external=False)
     assert _complete(client, project, inward,
                      "Moved the drafts into one folder.").status_code == 200
+
+
+# ── the fixes the first pass of this feature needed ─────────────────────────────
+
+
+def test_the_reviewer_can_actually_see_the_work_it_was_woken_for(client):
+    """The board is filtered to the agent's own team, and a review seat sits on
+    its own team by design — so the reviewer was woken for a task that did not
+    appear on the only screen it has. A wake with nothing on it is worse than
+    no wake: it buys a run to look at an empty board."""
+    project = _project(client, review="independent_read")
+    task_id, _ = _finished_task(client, project)
+
+    _, juno = live_token(project["id"], _agent(project, "Juno"))
+    board = client.get("/agent/board", headers=bearer(juno))
+    assert board.status_code == 200, board.text
+    waiting = [t for t in board.json()["open"] if t["id"] == task_id]
+    assert waiting, board.json()
+
+    # And not to everyone: an ordinary seat still sees only its own team.
+    added = client.post(f"/admin/projects/{project['id']}/teams", json={
+        "role_slug": "scribe", "name": "Second Desk", "employees": ["Kit"]}, headers=ADMIN)
+    _, kit = live_token(project["id"], added.json()["agents"][0]["id"])
+    other = client.get("/agent/board", headers=bearer(kit))
+    assert not [t for t in other.json()["open"] if t["id"] == task_id]
+
+
+def test_the_sandbox_can_reach_the_review_route(client):
+    """A rule the agent has no tool for is a rule that never fires. This route
+    shipped with no way in from the sandbox, which made the whole state dead in
+    production while every test here passed over HTTP."""
+    import os
+    from unittest import mock
+
+    # The module reads its run's identity at import; none of it is used here.
+    with mock.patch.dict(os.environ, {"YAAF_API_BASE_URL": "http://localhost",
+                                      "YAAF_API_TOKEN": "t", "YAAF_RUN_ID": "run_x"}):
+        from yaaf.runner import sandbox_entry
+
+    names = {getattr(t, "name", None) or t.__name__ for t in sandbox_entry.ALL_TOOLS}
+    assert any("task_review" in str(n) for n in names), sorted(str(n) for n in names)
+
+
+def test_work_in_review_still_occupies_its_author(client):
+    """One task at a time is counted from CLAIMED and CHECKING. A task in
+    REVIEW is finished but still the author's — a return hands it straight
+    back — so without REVIEW in that count the author frees a slot, claims
+    something else, and then owns two."""
+    project = _project(client, review="independent_read")
+    _finished_task(client, project)
+
+    _, ceo = live_token(project["id"], project["ceo_agent_id"])
+    editorial = next(t for t in project["teams"] if t["name"] == "Editorial")
+    second = client.post("/agent/tasks", headers=bearer(ceo), json={
+        "team_id": editorial["id"], "title": "Write the second post",
+        "goal": "Another one, while the first is being read.",
+        "success_test": OBSERVABLE})
+    _, ada = live_token(project["id"], _agent(project, "Ada"))
+    refused = client.post(f"/agent/tasks/{second.json()['id']}/claim", headers=bearer(ada))
+    assert refused.status_code == 409, refused.text
+
+
+def test_a_review_that_keeps_returning_becomes_a_question_not_a_loop(client):
+    """Two agents disagreeing costs two runs a cycle and re-arms forever. The
+    command-check loop already has a ceiling for exactly this; the read uses
+    the same counter and the same number."""
+    from yaaf.core.constitution import effective
+
+    project = _project(client, review="independent_read")
+    task_id, _ = _finished_task(client, project)
+    with db_session() as session:
+        cap = effective(session, project["id"]).task_check_failures_before_block
+
+    _, juno = live_token(project["id"], _agent(project, "Juno"))
+    for round_no in range(1, cap + 1):
+        sent_back = client.post(f"/agent/tasks/{task_id}/review", headers=bearer(juno),
+                                json={"ok": False, "notes": f"Still thin, round {round_no}."})
+        assert sent_back.status_code == 200, sent_back.text
+        expected = "blocked" if round_no == cap else "returned"
+        assert sent_back.json()["status"] == expected, (round_no, sent_back.text)
+        if expected == "returned":
+            _complete(client, project, task_id, "Rewrote it, same shape.")
+
+    with db_session() as session:
+        task = session.get(Task, task_id)
+        assert task.status == TaskStatus.BLOCKED
+        assert "whoever planned the work" in task.blocked_reason
+
+
+def test_whitespace_is_not_a_review(client):
+    """`min_length` counts spaces, and ten spaces is a sign-off with no reasons
+    in it — which is precisely the rubber stamp this whole state exists to
+    prevent."""
+    project = _project(client, review="independent_read")
+    task_id, _ = _finished_task(client, project)
+    _, juno = live_token(project["id"], _agent(project, "Juno"))
+    blank = client.post(f"/agent/tasks/{task_id}/review", headers=bearer(juno),
+                        json={"ok": True, "notes": "            "})
+    assert blank.status_code == 422, blank.text

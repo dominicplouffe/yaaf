@@ -666,7 +666,10 @@ def check_task_claim(session: Session, project: Project, agent: Agent, task: Tas
     already = session.execute(
         select(func.count(Task.id)).where(
             Task.claimed_by_agent_id == agent.id,
-            Task.status.in_([TaskStatus.CLAIMED, TaskStatus.CHECKING]),
+            # REVIEW counts: the work is finished but still this agent's, and a
+            # return hands it straight back. Without it the slot frees on
+            # completion and a returned task lands on somebody already holding one.
+            Task.status.in_([TaskStatus.CLAIMED, TaskStatus.CHECKING, TaskStatus.REVIEW]),
         )
     ).scalar_one()
     if already > 0:
@@ -736,6 +739,10 @@ def review_seats(session: Session, project_id: str) -> list[Agent]:
     ).scalars())
 
 
+def is_review_seat(session: Session, agent: Agent) -> bool:
+    return agent.id in {seat.id for seat in review_seats(session, agent.project_id)}
+
+
 def review_is_owed(session: Session, project: Project, task: Task) -> bool:
     """Whether this finished task waits for a second pair of eyes.
 
@@ -777,7 +784,7 @@ def check_task_review(
 
 
 def notice_review_returned(
-    session: Session, task: Task, reviewer: Agent, notes: str
+    session: Session, task: Task, reviewer: Agent, notes: str, *, blocked: bool = False
 ) -> None:
     """Tell the author, in the reviewer's own words.
 
@@ -794,8 +801,12 @@ def notice_review_returned(
         kind=NoticeKind.TASK_CHECK_FAILED,
         body=(f"{reviewer.name} read your finished work on \"{task.title}\" and sent "
               f"it back. This is ordinary, not an escalation.\n\n{notes}\n\n"
-              "Fix what they named, or say in your team room why you disagree, then "
-              f"complete the task again. ({task.id})"),
+              + ("Fix what they named, or say in your team room why you disagree, "
+                 f"then complete the task again. ({task.id})" if not blocked else
+                 f"That is {task.check_failures} returns, so the task is BLOCKED "
+                 "and now "
+                 "belongs to whoever planned it. Do not re-claim it; say in your "
+                 f"team room where you and {reviewer.name} disagree. ({task.id})")),
     ))
 
 

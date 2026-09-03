@@ -19,6 +19,8 @@ shipping this as a dial rather than as an opinion.
 
 from __future__ import annotations
 
+from sqlalchemy import select
+
 from tests.conftest import ADMIN, seed_role
 from yaaf.core.db import db_session
 from yaaf.core.models import Agent, AgentKind, Project
@@ -322,3 +324,78 @@ def test_an_install_that_says_nothing_is_byte_identical(client):
                                              kind=AgentKind.CEO).one()
         assert (ceo.model_override, ceo.effort_override) == (None, None)
         assert session.get(Project, project_id).status == "draft"
+
+
+# ── the ways the lift and the roster rule could be got around ───────────────────
+
+
+def test_the_lift_never_lowers_a_seat_the_library_already_placed_higher(client):
+    """The model check was `!= CRAFT_MODEL`, so a role the library deliberately
+    put on something stronger was stamped back DOWN to the craft model by a
+    dial whose entire promise is that it raises. The effort check next to it
+    already compared ranks; this one now does too."""
+    client.post("/admin/users", json=CHAIR, headers=ADMIN)
+    seed_role(client, "ceo", is_ceo=True, category="leadership")
+    seed_role(client, "reader", category="challenge", model="claude-fable-5-1",
+              effort="xhigh")
+    seed_role(client, "scribe", category="content", model="claude-sonnet-5",
+              effort="high")
+    created = _create(client, "no-demotion", constitution={"stakes": "high"}, teams=[
+        {"role_slug": "reader", "name": "Review", "employees": ["Juno"]},
+        {"role_slug": "scribe", "name": "Editorial", "employees": ["Ada"]},
+    ])
+    assert created.status_code == 200, created.text
+    seats = _seats(created.json()["id"])
+    assert seats["Juno"] == (None, None), "a stronger seat was demoted by the lift"
+    assert seats["Ada"] == ("claude-opus-5", "xhigh")
+
+
+def test_an_empty_roster_cannot_hold_a_rule_it_never_staffs(client):
+    """The check exempted a spec with no teams, on the reasoning that staffing
+    had not happened yet. But nothing re-checked afterwards, so the exemption
+    was permanent: a project could ask for an independent read, hire nobody who
+    could give one, and the rule bound nothing for the rest of its life."""
+    _library(client)
+    refused = _create(client, "hollow",
+                      constitution={"deliverable_review": "independent_read"}, teams=[])
+    assert refused.status_code == 422, refused.text
+    assert "read" in refused.text
+
+
+def test_adding_a_team_is_the_door_that_closes_it(client):
+    """The other half of the same fix, and the reason the empty case can be
+    refused at all: `add_team` is how a project gets its reviewer, so it has to
+    be checked AFTER the incoming team is counted — refusing there would make
+    the rule impossible to satisfy rather than merely enforced."""
+    _library(client)
+    created = _create(client, "grows-into-it",
+                      constitution={"deliverable_review": "independent_read"}, teams=[
+                          {"role_slug": "reader", "name": "Review",
+                           "employees": ["Juno"]}])
+    assert created.status_code == 200, created.text
+    project_id = created.json()["id"]
+
+    # The reviewer is already there, so an ordinary team lands.
+    assert client.post(f"/admin/projects/{project_id}/teams", json={
+        "role_slug": "scribe", "name": "Editorial", "employees": ["Ada"]},
+        headers=ADMIN).status_code == 200
+
+    # And the incoming team counts toward the rule: a project that lost its
+    # reviewer satisfies it again by adding one, not by being refused forever.
+    # Losing it the way a project really does — the team repinned onto a role
+    # that no longer challenges anything.
+    from yaaf.core.models import Role, RoleVersion, Team
+
+    with db_session() as session:
+        scribe = session.execute(
+            select(RoleVersion.id).join(Role, Role.id == RoleVersion.role_id)
+            .where(Role.slug == "scribe").order_by(RoleVersion.id.desc())
+        ).scalars().first()
+        session.query(Team).filter_by(project_id=project_id, name="Review").one() \
+            .role_version_id = scribe
+    blocked = client.post(f"/admin/projects/{project_id}/teams", json={
+        "role_slug": "hawker", "name": "Growth", "employees": ["Sol"]}, headers=ADMIN)
+    assert blocked.status_code == 422, blocked.text
+    assert client.post(f"/admin/projects/{project_id}/teams", json={
+        "role_slug": "reader", "name": "Second Read", "employees": ["Nia"]},
+        headers=ADMIN).status_code == 200

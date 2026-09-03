@@ -638,8 +638,11 @@ def _check_review_seat(session: Session, doc: ConstitutionDoc, teams: list[TeamS
 
     Two shapes are exempt, and the second one cost a green test to find.
 
-    A spec with no teams at all is left alone: refusing there would answer a
-    question about staffing before anyone has staffed anything.
+    A spec with no teams at all is refused too. It used to be exempt on the
+    reasoning that refusing there answers a question about staffing before
+    anyone has staffed anything — but the rule then bound nothing, forever,
+    because no later route re-checked it. A project asking for a read with an
+    empty roster is asking for something it has not staffed.
 
     **Solo mode is exempt because an independent read is impossible in it.**
     The CEO *is* the team — one brain plans and executes — so there is no
@@ -647,7 +650,7 @@ def _check_review_seat(session: Session, doc: ConstitutionDoc, teams: list[TeamS
     uncreatable rather than reviewed. The setting is stored as the chairman
     wrote it and simply has nobody to bind; the form says so where he picks it.
     """
-    if doc.deliverable_review != "independent_read" or not teams or solo:
+    if doc.deliverable_review != "independent_read" or solo:
         return
     _refuse_without_review_seat(session, {spec.role_slug for spec in teams})
 
@@ -656,6 +659,16 @@ def _check_review_seat(session: Session, doc: ConstitutionDoc, teams: list[TeamS
 CRAFT_MODEL = "claude-opus-5"
 CRAFT_EFFORT = "xhigh"
 _EFFORT_RANK = {name: i for i, name in enumerate(EFFORTS)}
+
+#: Weakest to strongest, for the same "never downward" reason as the effort
+#: rank beside it. A model this install has never heard of ranks 0, so it is
+#: lifted rather than left — an unknown string is not evidence of strength.
+_MODEL_RANK = {
+    "claude-haiku-4-5": 1,
+    "claude-sonnet-5": 2,
+    "claude-opus-5": 3,
+    "claude-fable-5-1": 4,
+}
 
 
 def _craft_lift(
@@ -680,7 +693,8 @@ def _craft_lift(
     role = session.execute(select(Role).where(Role.slug == slug)).scalar_one_or_none()
     if role is None or role.category not in CRAFT_CATEGORIES:
         return None, None
-    model = None if version.model == CRAFT_MODEL else CRAFT_MODEL
+    model = None if _MODEL_RANK.get(version.model, 0) >= _MODEL_RANK[CRAFT_MODEL] \
+        else CRAFT_MODEL
     at_least = _EFFORT_RANK.get(CRAFT_EFFORT, 0)
     effort = (None if _EFFORT_RANK.get(version.effort, 0) >= at_least else CRAFT_EFFORT)
     return model, effort
@@ -1352,6 +1366,13 @@ def add_team(project_id: str, body: TeamSpec, session: Session = Depends(db)) ->
     # back without the wakes and models its spec named.
     cons = effective(session, project.id)
     lift_model, lift_effort = _craft_lift(session, body.role_slug, role_version, cons)
+    # The one route that can satisfy the review rule after creation, so it is
+    # also the one that must not leave a project able to satisfy it and still
+    # not doing so. Checked AFTER this team is counted, since adding the
+    # reviewer is exactly how a project fixes it.
+    if cons.deliverable_review == "independent_read":
+        _refuse_without_review_seat(
+            session, _project_role_slugs(session, project.id) | {body.role_slug})
     team = Team(
         id=ids.new_id(ids.TEAM),
         project_id=project.id,
