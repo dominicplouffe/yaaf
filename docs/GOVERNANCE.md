@@ -1,6 +1,6 @@
 # Governance — the constitution, rule by rule
 
-Each project runs under a **constitution**: 55 numbers and switches the agents
+Each project runs under a **constitution**: 56 numbers and switches the agents
 cannot edit, argue with, or talk their way around. Every one is enforced
 server-side in [`yaaf/server/policy.py`](../yaaf/server/policy.py) as an HTTP
 refusal or an automatic state change. The schema itself lives in
@@ -17,7 +17,7 @@ moment it exists, on the tab its group maps to in `GROUP_THEMES`.
 
 ## Changing a rule
 
-**In the dashboard:** Settings → **Rules in force**. All 55 sit behind seven tabs
+**In the dashboard:** Settings → **Rules in force**. All 56 sit behind seven tabs
 — Money, The bar, Pace & brakes, How work is run, Autonomy, Memory, Rhythm &
 reporting —
 one rule per row, with the group as a subhead. Edit anything on any tab; a tray
@@ -139,6 +139,7 @@ raw tooling is booked with `spend_book` against the same walls.
 | Rule | Default | What it does |
 |---|---|---|
 | `stakes` | `normal` | `low` / `normal` / `high`. Answered once, it buys two things. **Money:** how hard to spend when the budget turns out to be wrong — `high` gets real headroom before anyone worries and the CEO is told to spend what the work needs and report; `low` means going over is a stop-and-ask. **Craft:** at `high`, the seats whose output *is* the deliverable or whose job is to check it (roles filed `content`, `research`, `build`, `challenge`) are hired on the strongest model and the deepest reasoning instead of on whatever the shared library says — because raising it in the library raises it for every project on the install. A seat you gave an explicit model or effort keeps yours, and nothing is ever lowered. Stamped onto the roster at hire, so it is visible in an export rather than implied by a rule. |
+| `require_search_record` | false | On, a task with `produces_external_evidence=true` cannot close without saying what it looked for, where, and what came back **empty**. The alternative floor — a count of cited sources — is satisfied by fetching three pages and citing them whether or not a claim derives from any, which buys a citation ritual that passes the gate and reads as rigour. A search record is unverifiable but not gameable in a way that resembles compliance: a thin one reads as thin. |
 | `deliverable_review` | `none` | `independent_read` means the work is read by somebody who did not write it, and the platform refuses a roster that asks for it and hires no seat filed `challenge` — an editor, an adversary, a skeptic. `none` is what every project did before this rule existed: the only reader of a deliverable before you was the agent that wrote it, and 80% of those closes were never sampled. Off by default so an install that upgrades is unchanged. |
 
 ### Memory

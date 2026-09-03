@@ -703,6 +703,7 @@ def check_task_complete(
             "Completion requires observed evidence: what you ran or looked at and what you "
             "actually saw. 'Done' is not evidence. Quote the output."
         )
+    check_search_record(session, project, task, evidence)
     open_subtasks = session.execute(
         select(func.count(Task.id)).where(
             Task.parent_task_id == task.id, Task.status.in_(OPEN_TASK_STATUSES)
@@ -796,6 +797,52 @@ def notice_review_returned(
               "Fix what they named, or say in your team room why you disagree, then "
               f"complete the task again. ({task.id})"),
     ))
+
+
+#: What a search record has to name. Not a format — three ideas, in whatever
+#: words the agent uses. "Empty" is the load-bearing one: it is what separates
+#: a question that was investigated from one that was summarised.
+_SEARCH_RECORD_HINTS = (
+    ("looked for", "searched for", "went looking", "set out to"),
+    ("looked in", "searched", "sources", "checked", "read", "fetched"),
+    ("empty", "nothing", "could not find", "no result", "not there",
+     "found none", "turned up nothing", "unanswered", "no source"),
+)
+
+
+def check_search_record(
+    session: Session, project: Project, task: Task, evidence: str
+) -> None:
+    """Research that says what it did NOT find, or it does not close.
+
+    The alternative floor — a minimum number of distinct cited domains — is
+    satisfied by fetching three pages and citing them whether or not a claim
+    derives from any of them. That buys a citation ritual which passes the
+    gate and reads as rigour, and it is worse than nothing because it is
+    indistinguishable from the real thing.
+
+    A search record is unverifiable: the platform cannot confirm a search
+    happened. But it is not gameable in a way that *resembles compliance* — a
+    thin one reads as thin, to the reviewer and to the chairman — and that is
+    the more useful property here. So this checks that the three ideas are
+    present at all, and leaves whether they are any good to the person reading
+    it. A keyword floor is a floor, not a judgement.
+    """
+    if not task.produces_external_evidence:
+        return
+    if not effective(session, project.id).require_search_record:
+        return
+    said = (evidence or "").lower()
+    if all(any(word in said for word in group) for group in _SEARCH_RECORD_HINTS):
+        return
+    raise Refusal(
+        "This task produces evidence, and its completion carries no search record. "
+        "Say what you went looking for, where you looked, and what came back EMPTY "
+        "— the last one is the half that does the work. A question you could not "
+        "answer, a figure everyone cites to one origin, a source that should exist "
+        "and does not: those are findings, and they are invisible unless you write "
+        "them down. Without them a shallow pass and a deep one look identical."
+    )
 
 
 def check_task_kill(session: Session, agent: Agent, task: Task) -> None:

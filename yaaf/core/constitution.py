@@ -187,6 +187,17 @@ class ConstitutionDoc(BaseModel):
              "of those closes were never sampled. Off by default so an install that "
              "upgrades is unchanged; every preset on the new-project form turns it on.")
 
+    require_search_record: bool = _rule(
+        False, group="The bar", label="Research must say what it did not find",
+        help="On, a task that produces evidence cannot be completed without a search "
+             "record: what was looked for, where, and — the half that does the work — "
+             "what came back EMPTY. The alternative floor, a minimum number of cited "
+             "sources, is satisfied by fetching three pages and citing them whether or "
+             "not a claim derives from any, which buys a citation ritual that passes "
+             "the gate and looks like rigour. A search record is unverifiable and not "
+             "gameable in a way that resembles compliance, which is the more useful "
+             "property: a thin one reads as thin. Off by default.")
+
     # Autonomy thresholds (lana §6)
     approval_threshold_usd: float = _rule(
         250.0, ge=0, group="Autonomy", label="Spending that needs your approval",

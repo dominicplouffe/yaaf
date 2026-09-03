@@ -161,3 +161,66 @@ def test_the_reviewer_is_woken_for_work_that_is_waiting(client):
             session, session.get(Agent, _agent(project, "Juno")),
             __import__("yaaf.core.models", fromlist=["utcnow"]).utcnow())
     assert any(r["kind"] == "review_owed" and r["task_id"] == task_id for r in reasons), reasons
+
+
+# ── the depth floor ─────────────────────────────────────────────────────────────
+
+
+def _claimed_evidence_task(client, project: dict, *, external: bool = True) -> str:
+    _, ceo = live_token(project["id"], project["ceo_agent_id"])
+    editorial = next(t for t in project["teams"] if t["name"] == "Editorial")
+    created = client.post("/agent/tasks", headers=bearer(ceo), json={
+        "team_id": editorial["id"], "title": "Find out what buyers actually ask",
+        "goal": "The question, and where the answer comes from.",
+        "success_test": OBSERVABLE, "produces_external_evidence": external,
+    })
+    assert created.status_code == 200, created.text
+    task_id = created.json()["id"]
+    _, ada = live_token(project["id"], _agent(project, "Ada"))
+    assert client.post(f"/agent/tasks/{task_id}/claim",
+                       headers=bearer(ada)).status_code == 200
+    return task_id
+
+
+def _complete(client, project: dict, task_id: str, evidence: str):
+    _, ada = live_token(project["id"], _agent(project, "Ada"))
+    return client.post(f"/agent/tasks/{task_id}/complete", headers=bearer(ada),
+                       json={"evidence": evidence})
+
+
+def test_research_that_never_says_what_it_missed_does_not_close(client):
+    """A summary of whatever ranks well is a fact about search engines, not
+    about the world, and it is indistinguishable from real work unless the
+    empty results are written down."""
+    project = _project(client, review="none")
+    client.post(f"/admin/projects/{project['id']}/amendments", headers=ADMIN, json={
+        "reason": "shallow passes are reading identically to deep ones",
+        "changes": {"require_search_record": True}})
+
+    task_id = _claimed_evidence_task(client, project)
+    thin = _complete(client, project, task_id, "Read the top results and summarised them.")
+    assert thin.status_code == 422
+    assert "EMPTY" in thin.text
+
+    # The same task, once the record is there — the agent adds it and closes.
+    full = _complete(client, project, task_id, (
+        "I looked for published pricing for the three competitors. I searched their "
+        "sites, G2 and two industry reports. Two publish nothing — every figure "
+        "quoted online traces back to one 2023 blog post, so that number came back "
+        "empty as an independent source."))
+    assert full.status_code == 200, full.text
+
+
+def test_the_floor_is_off_by_default_and_only_touches_evidence_work(client):
+    """An install that upgrades is unchanged, and a task that produces no
+    outside evidence is not a research pass to be graded."""
+    project = _project(client, review="none")
+    off = _claimed_evidence_task(client, project)
+    assert _complete(client, project, off,
+                     "Summarised the top results.").status_code == 200
+
+    client.post(f"/admin/projects/{project['id']}/amendments", headers=ADMIN, json={
+        "reason": "turning the floor on", "changes": {"require_search_record": True}})
+    inward = _claimed_evidence_task(client, project, external=False)
+    assert _complete(client, project, inward,
+                     "Moved the drafts into one folder.").status_code == 200
