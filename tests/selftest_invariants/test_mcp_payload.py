@@ -162,7 +162,7 @@ def test_resources_are_a_convenience_not_the_only_path(client):
     uris = {r["uri"] for r in
             rpc(client, reader["token"], "resources/list").json()["result"]["resources"]}
     assert uris == {
-        "yaaf://desk", "yaaf://docs/goal-grammar",
+        "yaaf://desk", "yaaf://docs/goal-grammar", "yaaf://docs/design-doctrine",
         f"yaaf://project/{SLUG}/briefing", f"yaaf://project/{SLUG}/plan",
         f"yaaf://project/{SLUG}/goal", f"yaaf://project/{SLUG}/constitution",
     }

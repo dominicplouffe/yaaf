@@ -178,9 +178,15 @@ def test_the_founder_may_still_draft_an_undated_project():
 def test_the_founder_prompt_states_the_measured_pace():
     """The founder invented ten-week schedules because nothing ever told it how
     fast agents actually are. If that calibration goes missing, the habit comes
-    straight back."""
-    from yaaf.founder.prompt import SYSTEM
+    straight back.
 
-    assert "under a day" in SYSTEM
-    assert "127" in SYSTEM, "the measured record, not an adjective"
-    assert "do not write a date at all" in SYSTEM
+    Asserted against the ASSEMBLED prompt rather than the `SYSTEM` literal: the
+    dates section lives in `DESIGN_DOCTRINE.md` now, because the MCP drafting
+    path needs it just as badly and used to have none of it. What matters is
+    what the Founder reads, not which file it came from."""
+    from yaaf.founder.prompt import system_prompt
+
+    prompt = system_prompt()
+    assert "under a day" in prompt
+    assert "127" in prompt, "the measured record, not an adjective"
+    assert "do not write a date at all" in prompt

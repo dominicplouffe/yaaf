@@ -29,7 +29,8 @@
       "cycle_frequency": "weekly",
       "cycle_day": 0,
       "review_interval_days": 14,
-      "runs_per_project_per_day": 40
+      "runs_per_project_per_day": 40,
+      "deliverable_review": "independent_read"
     },
     "integrations": {
       "runtime": "agent_sdk"

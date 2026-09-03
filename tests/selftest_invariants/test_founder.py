@@ -455,6 +455,33 @@ def test_the_grader_asks_for_every_element_by_name():
         assert f"`{element}`" in grammar, element
 
 
+def test_both_drafting_paths_read_the_same_design_doctrine():
+    """One copy, two readers — the rule the goal grammar states about itself,
+    applied to the thing above it.
+
+    It had already gone wrong here: `/yaaf:design` was ten lines against the
+    Founder's two hundred and forty-nine, said the grammar had eight elements
+    when it has ten, and mentioned the constitution nowhere — so an
+    MCP-drafted project took every default and could never set the dial that
+    decides how good the work is. This asserts the doctrine reaches both
+    doors, and that neither one is quietly restating it instead."""
+    from yaaf.founder.prompt import DOCTRINE_PATH, system_prompt
+    from yaaf.server.mcp import prompts as mcp_prompts
+    from yaaf.server.mcp import resources
+
+    doctrine = DOCTRINE_PATH.read_text()
+    assert doctrine in system_prompt(), "the Founder must read it verbatim"
+    assert resources.DOCTRINE_PATH == DOCTRINE_PATH, "the MCP surface serves another file"
+    assert "yaaf://docs/design-doctrine" in mcp_prompts.TEXT["design"], (
+        "the MCP drafting prompt must send its reader to the doctrine")
+
+    # The content that made the split worth doing at all.
+    for required in ("`stakes`", "do not write a date at all",
+                     "Argue for the smallest team that can do the work",
+                     "Who reads this, and what would they compare it to"):
+        assert required in doctrine, required
+
+
 def test_the_grammar_and_the_code_name_the_same_load_bearing_elements():
     """Two copies of the bar drift, and this one drifts silently in the worst
     direction: the grammar is what the Founder reads and the tuple is what

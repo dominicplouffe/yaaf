@@ -150,6 +150,65 @@ def _real_constitution(project_id: str) -> dict:
         return ConstitutionDoc.model_validate(row.body).model_dump()
 
 
+def _craft_findings(project_id: str, cons_doc: dict) -> list[str]:
+    """What the bundle says about how good the work has to be.
+
+    The drill's standing disclaimer holds — a competent, dull crew tells you
+    nothing about whether a real model would do the job WELL. But these are
+    facts about the *configuration*, which is exactly what the drill is
+    entitled to state flatly, and they are the ones nobody could see before
+    launching: a project can ask for its work to be read and hire nobody who
+    reads, and a project can be told it matters and staff its writing seats at
+    the library's cheapest setting anyway.
+
+    Deliberately NOT here: whether the goal names a standard or a beneficiary.
+    That is a judgement about prose, `grade_goal` is what makes it, and it
+    costs a model call — which is the one thing a $0 drill may not spend. A
+    regex over a goal would be a guess wearing a finding's clothes.
+    """
+    from sqlalchemy import select
+
+    from yaaf.core.db import db_session
+    from yaaf.core.models import Role, RoleVersion, Team
+
+    findings: list[str] = []
+    with db_session() as session:
+        rows = list(session.execute(
+            select(Team.name, Role.slug, Role.category, RoleVersion.model, RoleVersion.effort)
+            .join(RoleVersion, RoleVersion.id == Team.role_version_id)
+            .join(Role, Role.id == RoleVersion.role_id)
+            .where(Team.project_id == project_id)
+        ))
+    if not rows:
+        return findings
+
+    if cons_doc.get("deliverable_review") == "independent_read":
+        if any(category == "challenge" for _, _, category, _, _ in rows):
+            findings.append(
+                "The work will be read by a seat that did not write it, and this "
+                "roster hires one — that is the rule and the staffing agreeing.")
+        else:
+            # Creation refuses this, so a drill reaching it means the spec was
+            # built by hand and would be rejected at the door.
+            findings.append(
+                "This bundle asks for an independent read and hires nobody in the "
+                "challenge discipline to give one. Creating it will be refused.")
+
+    if cons_doc.get("stakes") == "high":
+        thin = sorted({
+            f"{name} ({slug})" for name, slug, category, model, effort in rows
+            if category in ("content", "research", "build", "challenge")
+            and (model != "claude-opus-5" or effort not in ("xhigh", "max"))
+        })
+        if thin:
+            findings.append(
+                f"Stakes are high, so {', '.join(thin)} will be hired above what "
+                "the shared role library says — a stronger model and deeper "
+                "reasoning, for this project only. That is the point of the "
+                "setting and it is also what it costs.")
+    return findings
+
+
 def _pace(project_id: str, cons_doc: dict, days: int) -> dict:
     """The four limits, over the chairman's real numbers.
 
@@ -454,6 +513,7 @@ def build(client, project_id: str | None, spec: dict, steps: list[dict],
         report["agenda"] = {}
         report["health"] = []
         report["findings"] = []
+        report["craft"] = []
         return report
 
     cons_doc = _real_constitution(project_id)
@@ -461,6 +521,7 @@ def build(client, project_id: str | None, spec: dict, steps: list[dict],
     report["plan"] = plan
     report["capacity"] = _pace(project_id, cons_doc, days)
     report["findings"] = _structural_findings(client, project_id, report["capacity"])
+    report["craft"] = _craft_findings(project_id, cons_doc)
     report["money"] = _money(project_id, cons_doc, plan, usd_per_run)
     report["days"] = days
     try:
@@ -512,6 +573,12 @@ def render_text(report: dict) -> str:
         out.append("")
     else:
         out.append("It never had to wait for you.")
+        out.append("")
+
+    if report.get("craft"):
+        out.append("How good this is set up to be")
+        for line in report["craft"]:
+            out.append(f"  · {line}")
         out.append("")
 
     if report.get("findings"):

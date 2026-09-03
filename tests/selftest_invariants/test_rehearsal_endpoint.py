@@ -14,7 +14,7 @@ may hold the `client` its sibling module deliberately avoids.
 
 from __future__ import annotations
 
-from tests.conftest import ADMIN, seed_role
+from tests.conftest import ADMIN, make_project, seed_role
 from yaaf.core.db import db_session
 from yaaf.server.api.admin import _carry_library_roles
 
@@ -114,3 +114,44 @@ def test_the_endpoint_carries_them_for_real(client):
     walk = {step["key"]: step for step in response.json()["walk"]}
     assert walk["roles"]["ok"], walk["roles"]["detail"]
     assert walk["created"]["ok"], walk["created"]["detail"]
+
+
+def test_the_drill_says_what_the_bundle_asks_of_the_work(client):
+    """The drill used to disclaim all of this — "it says nothing about whether
+    the work would be any good" — and that sentence is still true about the
+    WORK. It was never true about the staffing, which is a fact about the
+    bundle and exactly what a drill is entitled to state flatly.
+
+    Two things nobody could see before launching: a project can ask for its
+    work to be read and hire nobody who reads, and a project can be told it
+    matters and still staff its writing seats at the library's cheapest
+    setting. Both are decided at creation and neither shows up in a wall."""
+    from yaaf.core.db import db_session
+    from yaaf.core.models import Constitution
+    from yaaf.rehearsal.report import _craft_findings
+
+    project = make_project(client, start=False)
+    project_id = project["id"]
+
+    def craft(**rules) -> list[str]:
+        with db_session() as session:
+            row = session.query(Constitution).filter_by(project_id=project_id).one()
+            row.body = {**row.body, **rules}
+        from yaaf.rehearsal.report import _real_constitution
+        return _craft_findings(project_id, _real_constitution(project_id))
+
+    # Silent by default: a bundle with no opinion gets no paragraph.
+    assert craft(stakes="normal", deliverable_review="none") == []
+
+    # `worker` is uncategorised in the fixture, so it is neither a reviewing
+    # seat nor one the stakes lift reaches — which is the refusal's case.
+    asked = craft(deliverable_review="independent_read")
+    assert len(asked) == 1 and "will be refused" in asked[0], asked
+
+    # And the drill names the seats a high-stakes project will pay more for.
+    with db_session() as session:
+        from yaaf.core.models import Role
+        session.query(Role).filter_by(slug="worker").one().category = "content"
+    lifted = craft(stakes="high", deliverable_review="none")
+    assert len(lifted) == 1 and "Stakes are high" in lifted[0], lifted
+    assert "Alpha" in lifted[0], "name the team, not just the rule"
