@@ -367,9 +367,12 @@ export default function NewProject() {
   const reviewRoles = roles.filter((r) => r.category === "challenge");
   const hasReviewSeat = teams.some(
     (t) => reviewRoles.some((r) => r.slug === t.role_slug));
+  // Deliberately NOT gated on the roster being non-empty. It was, and that hid
+  // the warning for exactly the shape the server refuses hardest — a blank
+  // roster asking for a read it has not staffed — so the one case where the
+  // chairman most needs telling was the one case he was not told.
   const needsReviewSeat =
-    craft.review === "independent_read" && !solo && !hasReviewSeat
-    && teams.some((t) => t.role_slug);
+    craft.review === "independent_read" && !solo && !hasReviewSeat;
 
   function addReviewTeam() {
     // `editor` is the seat written for prose; anything else in the discipline
@@ -1521,9 +1524,18 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
                   </button>
                 </>
               ) : (
-                " This install has no reviewing role installed — seed the role library, "
-                + "or set Who reads the work in the constitution below to 'none'."
+                " This install has no reviewing role installed, so there is nobody to "
+                + "hire — seed the role library, or turn the read off here."
               )}
+              {" "}
+              <button type="button" className="small" style={{ marginTop: 8 }}
+                onClick={() => setCraft((prev) => ({ ...prev, review: "none" }))}>
+                turn the read off for this project
+              </button>
+              {/* The escape has to be IN the form. The card sets this rule and
+                  the form renders no field for it, so the only way out of the
+                  refusal used to be editing the constitution after creating a
+                  project the server would not create. */}
             </div>
           )}
           <p className="help" style={{ marginTop: 10 }}>

@@ -148,10 +148,40 @@ def test_the_drill_says_what_the_bundle_asks_of_the_work(client):
     asked = craft(deliverable_review="independent_read")
     assert len(asked) == 1 and "will be refused" in asked[0], asked
 
-    # And the drill names the seats a high-stakes project will pay more for.
-    with db_session() as session:
-        from yaaf.core.models import Role
-        session.query(Role).filter_by(slug="worker").one().category = "content"
-    lifted = craft(stakes="high", deliverable_review="none")
+    # And the drill names the seats a high-stakes project actually paid more
+    # for. It reads the stamps on the hired rows rather than recomputing the
+    # lift, so this needs a project the lift really ran on: an edited category
+    # after the fact hires nobody, and a report that announced a lift there
+    # would be describing arithmetic instead of the roster.
+    seed_role(client, "scribe", category="content", model="claude-sonnet-5",
+              effort="high")
+    high = client.post("/admin/projects", json={
+        "slug": "matters", "name": "Matters",
+        "goal": "Ship one briefing note the committee can act on.",
+        "chairman_email": "chair@example.com",
+        "constitution": {"stakes": "high"},
+        "teams": [{"role_slug": "scribe", "name": "Editorial", "employees": ["Ada"]}],
+    }, headers=ADMIN)
+    assert high.status_code == 200, high.text
+    from yaaf.rehearsal.report import _real_constitution
+
+    lifted = _craft_findings(high.json()["id"], _real_constitution(high.json()["id"]))
     assert len(lifted) == 1 and "Stakes are high" in lifted[0], lifted
-    assert "Alpha" in lifted[0], "name the team, not just the rule"
+    assert "Ada" in lifted[0] and "Editorial" in lifted[0], \
+        "name the seat and its team, not just the rule"
+
+    # A seat the library already placed at or above the craft model is NOT
+    # announced: the lift leaves it alone, and a finding that says otherwise is
+    # the drill contradicting the thing it is describing.
+    seed_role(client, "sage", category="research", model="claude-fable-5-1",
+              effort="xhigh")
+    already = client.post("/admin/projects", json={
+        "slug": "already", "name": "Already",
+        "goal": "Ship one briefing note the committee can act on.",
+        "chairman_email": "chair@example.com",
+        "constitution": {"stakes": "high"},
+        "teams": [{"role_slug": "sage", "name": "Research", "employees": ["Rey"]}],
+    }, headers=ADMIN)
+    assert already.status_code == 200, already.text
+    assert _craft_findings(already.json()["id"],
+                           _real_constitution(already.json()["id"])) == []

@@ -111,7 +111,7 @@ def test_save_seed_writes_a_folder_seed_can_read(client, tmp_path):
     # em-dash lands as a \\u2014 escape, so the first re-seed rewrites all
     # thirty-four committed role files with no change anybody made and drowns
     # the real diff. These files are reviewed by humans; that is the reason.
-    raw = (tmp_path / "roles" / "scribe.json").read_text()
+    raw = (tmp_path / "roles" / "scribe.json").read_text(encoding="utf-8")
     assert prose in raw, "the prompt must appear in the file as it was written"
     assert "\\u" not in raw, "seed files are UTF-8 prose, not escape sequences"
 
@@ -128,3 +128,40 @@ def test_save_seed_writes_a_folder_seed_can_read(client, tmp_path):
 
     listed = {p["slug"] for p in client.get("/observe/projects", headers=ADMIN).json()}
     assert "origin" in listed, "the seeded project did not come back"
+
+
+def test_the_seed_names_its_encoding_rather_than_inheriting_one(client, tmp_path):
+    """`write_text` and `read_text` default to the LOCALE's encoding. So the
+    change that made these files readable prose also made `yaaf save-seed`
+    raise UnicodeEncodeError under `LANG=C` — a backup command that works on
+    the laptop and dies on the server, which is the worst place to find out.
+    The old ASCII output was locale-proof by accident.
+
+    Asserted over the source rather than by faking a locale, because `open()`
+    resolves its default encoding in C and cannot be monkeypatched from Python:
+    a test that patched `locale` would pass on a broken file and prove nothing.
+    """
+    import re
+    from pathlib import Path
+
+    import yaaf.core.seed as seedlib
+
+    source = Path(seedlib.__file__).read_text(encoding="utf-8")
+    unqualified = [
+        line.strip() for line in source.splitlines()
+        if re.search(r"\.(write|read)_text\(", line)
+        and "encoding=" not in line
+    ]
+    assert not unqualified, (
+        "a seed file read or written in the box's locale encoding: " + str(unqualified))
+
+    # And the round trip still works, so the assertion above is about a file
+    # that does its job rather than one that merely satisfies a grep.
+    make_project(client, slug="named-encoding", start=False)
+    seed_role(client, "scribe",
+              system_prompt="You write things people read — properly, not quickly.")
+    client.headers.update(ADMIN)
+    seedlib.save_seed(client, tmp_path)
+    assert seedlib.restore_roles(client, tmp_path)
+    raw = (tmp_path / "roles" / "scribe.json").read_text(encoding="utf-8")
+    assert "properly, not quickly" in raw

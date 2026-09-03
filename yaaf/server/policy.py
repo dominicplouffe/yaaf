@@ -26,6 +26,7 @@ Rules enforced here (constitution reference in parentheses):
 from __future__ import annotations
 
 import logging
+import re
 from datetime import UTC, datetime, time, timedelta
 from typing import NamedTuple
 from zoneinfo import ZoneInfo
@@ -725,7 +726,12 @@ REVIEW_CATEGORY = "challenge"
 
 
 def review_seats(session: Session, project_id: str) -> list[Agent]:
-    """Agents on this project whose role is a reviewing one."""
+    """Agents on this project whose role is a reviewing one.
+
+    Ordered, and callers depend on it: the dispatcher picks the first eligible
+    seat as the one seat woken for a given task, so an unordered result would
+    wake a different reviewer on every tick and pay for each of them.
+    """
     from yaaf.core.models import Role, RoleVersion
 
     return list(session.execute(
@@ -736,6 +742,7 @@ def review_seats(session: Session, project_id: str) -> list[Agent]:
         .where(Agent.project_id == project_id,
                Agent.status == AgentStatus.ACTIVE,
                Role.category == REVIEW_CATEGORY)
+        .order_by(Agent.id)
     ).scalars())
 
 
@@ -820,6 +827,16 @@ _SEARCH_RECORD_HINTS = (
      "found none", "turned up nothing", "unanswered", "no source"),
 )
 
+#: Matched on word boundaries, not as substrings. The middle group is the
+#: reason: "read" is inside "already", "ready" and "reader", so as a substring
+#: it matched almost any completion note ever written and the middle third of
+#: the floor was free. A multi-word phrase still matches across whitespace.
+_SEARCH_RECORD_PATTERNS = tuple(
+    tuple(re.compile(r"\b" + r"\s+".join(re.escape(w) for w in phrase.split()) + r"\b")
+          for phrase in group)
+    for group in _SEARCH_RECORD_HINTS
+)
+
 
 def check_search_record(
     session: Session, project: Project, task: Task, evidence: str
@@ -844,7 +861,8 @@ def check_search_record(
     if not effective(session, project.id).require_search_record:
         return
     said = (evidence or "").lower()
-    if all(any(word in said for word in group) for group in _SEARCH_RECORD_HINTS):
+    if all(any(pattern.search(said) for pattern in group)
+           for group in _SEARCH_RECORD_PATTERNS):
         return
     raise Refusal(
         "This task produces evidence, and its completion carries no search record. "

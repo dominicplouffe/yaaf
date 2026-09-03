@@ -211,6 +211,27 @@ def test_research_that_never_says_what_it_missed_does_not_close(client):
     assert full.status_code == 200, full.text
 
 
+def test_the_middle_of_the_floor_is_not_free(client):
+    """The three groups were matched as substrings, and "read" is inside
+    "already", "ready" and "reader" — so the "where you looked" third was
+    satisfied by almost any sentence in English, including the exact shallow
+    note this rule exists to refuse."""
+    project = _project(client, review="none")
+    client.post(f"/admin/projects/{project['id']}/amendments", headers=ADMIN, json={
+        "reason": "turning the floor on", "changes": {"require_search_record": True}})
+
+    task_id = _claimed_evidence_task(client, project)
+    # "already" carries "read"; "nothing" and "looked for" carry the other two.
+    sneaky = _complete(client, project, task_id, (
+        "I looked for the pricing and already had nothing useful on file."))
+    assert sneaky.status_code == 422, sneaky.text
+
+    honest = _complete(client, project, task_id, (
+        "I looked for published pricing. I searched their sites and two industry "
+        "reports; two of the three came back empty as an independent source."))
+    assert honest.status_code == 200, honest.text
+
+
 def test_the_floor_is_off_by_default_and_only_touches_evidence_work(client):
     """An install that upgrades is unchanged, and a task that produces no
     outside evidence is not a research pass to be graded."""
@@ -323,3 +344,98 @@ def test_whitespace_is_not_a_review(client):
     blank = client.post(f"/agent/tasks/{task_id}/review", headers=bearer(juno),
                         json={"ok": True, "notes": "            "})
     assert blank.status_code == 422, blank.text
+
+
+# ── the ways a REVIEW task could be a hole instead of a step ────────────────────
+
+
+def test_a_task_stranded_in_review_is_closed_rather_than_wedged(client):
+    """`review_is_owed` asks whether a reader exists before the fork, so a
+    project with none never sends work to REVIEW. This is the other order: the
+    task went in while a reader existed and then the reader was paused. Nothing
+    else clears it — the claim reaper only looks at CLAIMED, `lost_checks` only
+    at CHECKING — and REVIEW holds its author's one-at-a-time slot, so the
+    wedge is not one task but that seat, permanently."""
+    from yaaf.core.constitution import effective
+    from yaaf.server import janitor
+
+    project = _project(client, review="independent_read")
+    task_id, status = _finished_task(client, project)
+    assert status == "review"
+
+    paused = client.post(f"/admin/agents/{_agent(project, 'Juno')}/pause",
+                         headers=ADMIN, json={"paused": True})
+    assert paused.status_code == 200, paused.text
+
+    with db_session() as session:
+        row = session.get(__import__("yaaf.core.models", fromlist=["Project"]).Project,
+                          project["id"])
+        janitor.release_unreadable_reviews(session, row)
+        effective(session, row.id)
+    with db_session() as session:
+        task = session.get(Task, task_id)
+        assert task.status == TaskStatus.DONE
+        assert "no reviewing seat" in _last_event_note(session, task_id)
+
+    # And the author's slot is free again.
+    _, ceo = live_token(project["id"], project["ceo_agent_id"])
+    editorial = next(t for t in project["teams"] if t["name"] == "Editorial")
+    nxt = client.post("/agent/tasks", headers=bearer(ceo), json={
+        "team_id": editorial["id"], "title": "Write the next post",
+        "goal": "The seat has to be usable again.", "success_test": OBSERVABLE})
+    _, ada = live_token(project["id"], _agent(project, "Ada"))
+    assert client.post(f"/agent/tasks/{nxt.json()['id']}/claim",
+                       headers=bearer(ada)).status_code == 200
+
+
+def _last_event_note(session, task_id: str) -> str:
+    from yaaf.core.models import TaskEvent
+
+    event = session.query(TaskEvent).filter_by(task_id=task_id) \
+        .order_by(TaskEvent.id.desc()).first()
+    return event.note or ""
+
+
+def test_a_board_of_nothing_but_reads_does_not_render_as_empty(client):
+    """The exact bug CHECKING was added to this ladder to fix, one state along:
+    a REVIEW row wakes nobody in the ordinary lane and is claimed by nobody, so
+    without a rung of its own a project whose whole board is waiting on a
+    reader reported "Nothing waiting. The board is empty" — to the chairman and
+    to the stall watchdog."""
+    from yaaf.core.constitution import effective
+    from yaaf.core.models import Project
+    from yaaf.server import dispatcher
+
+    project = _project(client, review="independent_read")
+    _finished_task(client, project)
+    with db_session() as session:
+        row = session.get(Project, project["id"])
+        state = dispatcher.activity_state(session, row, effective(session, row.id))
+    assert state["board"]["reviewing"] == 1
+    assert state["waiting"]["reviewing_tasks"] == 1, (
+        "the stall watchdog reads this; at zero it returns early and says nothing")
+    assert state["board"]["unreachable"] != "nothing_waiting"
+
+
+def test_only_one_reviewer_is_woken_for_a_piece(client):
+    """Two reviewing seats — the roster this project's own doctrine argues for
+    — both woke for the same piece, and the second one paid full price to find
+    it already closed."""
+    from yaaf.core.models import Agent, Project, utcnow
+    from yaaf.server import dispatcher
+
+    project = _project(client, review="independent_read")
+    added = client.post(f"/admin/projects/{project['id']}/teams", json={
+        "role_slug": "reader", "name": "Second Read", "employees": ["Nia"]},
+        headers=ADMIN)
+    assert added.status_code == 200, added.text
+    task_id, _ = _finished_task(client, project)
+
+    with db_session() as session:
+        row = session.get(Project, project["id"])
+        woken = [
+            agent.name for agent in session.query(Agent).filter_by(project_id=row.id)
+            if any(r["kind"] == "review_owed" and r["task_id"] == task_id
+                   for r in dispatcher._work_reasons(session, agent, utcnow()))
+        ]
+    assert len(woken) == 1, woken

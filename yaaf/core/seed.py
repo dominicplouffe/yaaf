@@ -47,6 +47,12 @@ def _dump(payload: Any) -> str:
     ``\\u2014`` and a re-seed rewrites all thirty-four files with no change
     anybody made. These files are read by humans and reviewed in diffs, so the
     churn is the cost, not the encoding.
+
+    It is also why every read and write below passes ``encoding="utf-8"``.
+    ``write_text`` defaults to the locale's encoding, so the moment this stopped
+    emitting pure ASCII, ``yaaf save-seed`` started raising ``UnicodeEncodeError``
+    on any box running under ``LANG=C`` — a backup command that fails on the
+    server and works on the laptop.
     """
     return json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
 
@@ -63,12 +69,12 @@ def save_seed(client: _Client, directory: Path) -> tuple[int, int]:
         # A seeded role starts a fresh version chain on the new install; the
         # number it happened to reach on the old one means nothing there.
         body.pop("version", None)
-        (roles_dir / f"{body['slug']}.json").write_text(_dump(body))
+        (roles_dir / f"{body['slug']}.json").write_text(_dump(body), encoding="utf-8")
 
     projects = _ok(client.get("/observe/projects"))
     for project in projects:
         bundle = _ok(client.get(f"/admin/projects/{project['id']}/export"))
-        (projects_dir / f"{project['slug']}.json").write_text(_dump(bundle))
+        (projects_dir / f"{project['slug']}.json").write_text(_dump(bundle), encoding="utf-8")
 
     return len(roles), len(projects)
 
@@ -77,7 +83,7 @@ def restore_roles(client: _Client, directory: Path) -> list[tuple[str, int]]:
     """Roles first: a project spec names the roles its teams run."""
     out = []
     for path in sorted((directory / "roles").glob("*.json")):
-        response = client.post("/admin/roles", json=json.loads(path.read_text()))
+        response = client.post("/admin/roles", json=json.loads(path.read_text(encoding="utf-8")))
         out.append((path.stem, response.status_code))
     return out
 
@@ -87,7 +93,7 @@ def restore_projects(client: _Client, directory: Path, chairman_email: str) -> l
     not begin spending money — starting a project stays a deliberate act."""
     out = []
     for path in sorted((directory / "projects").glob("*.json")):
-        bundle = json.loads(path.read_text())
+        bundle = json.loads(path.read_text(encoding="utf-8"))
         spec = bundle.get("project", bundle)
         spec.setdefault("slug", path.stem)
         # A bundle carries no chairman: that is an identity on this install,

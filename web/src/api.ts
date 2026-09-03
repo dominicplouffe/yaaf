@@ -185,6 +185,7 @@ export interface Activity {
     /** Finished work the platform is still verifying. Counted so a board
         holding only checking rows reads as work in hand, not as empty. */
     checking_tasks: number;
+    reviewing_tasks: number;
     notices: number;
     agents_with_work: number;
   };
@@ -196,6 +197,8 @@ export interface Activity {
     blocked: number;
     /** Rows with the platform's own checker (tasks + command requirements). */
     checking: number;
+    /** Finished work waiting on a read by somebody who did not write it. */
+    reviewing: number;
     /** The wedged subset: checks whose run no longer exists anywhere. The
         janitor requeues these itself; named here so the quiet has a name. */
     checks_lost: string[];

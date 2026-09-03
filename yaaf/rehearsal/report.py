@@ -46,6 +46,7 @@ WALK = [
     ("work_created", "Work was created"),
     ("work_claimed", "Work was claimed"),
     ("evidence", "Evidence was filed"),
+    ("work_read", "Finished work was read by somebody else"),
     ("work_closed", "Work closed with evidence"),
     ("commitment", "A delivery date was proposed"),
     ("commitment_signed", "The delivery date was signed"),
@@ -115,6 +116,12 @@ def observe(client, project_id: str, tick: int, steps: list[dict]) -> None:
         _mark(steps, "work_created", True, f"{len(board)} task(s)", tick)
     if any(t["status"] in ("claimed", "checking", "done", "blocked") for t in board):
         _mark(steps, "work_claimed", True, "an agent picked it up", tick)
+    # Named as its own rung because it is the one step in the walk that a rule
+    # in the chairman's own bundle switches on. When he asked for the read, a
+    # drill that closed work without one closed it the old way, and he would
+    # have read "1 closed" as evidence the rule works.
+    if any(t["status"] == "review" for t in board):
+        _mark(steps, "work_read", True, "waiting on a reader", tick)
     done = [t for t in board if t["status"] == "done"]
     if done:
         _mark(steps, "work_closed", True, f"{len(done)} closed", tick)
@@ -169,21 +176,47 @@ def _craft_findings(project_id: str, cons_doc: dict) -> list[str]:
     from sqlalchemy import select
 
     from yaaf.core.db import db_session
-    from yaaf.core.models import Role, RoleVersion, Team
+    from yaaf.core.models import Agent, AgentKind, Project, Role, RoleVersion, Team
 
     findings: list[str] = []
     with db_session() as session:
-        rows = list(session.execute(
-            select(Team.name, Role.slug, Role.category, RoleVersion.model, RoleVersion.effort)
-            .join(RoleVersion, RoleVersion.id == Team.role_version_id)
-            .join(Role, Role.id == RoleVersion.role_id)
+        project = session.get(Project, project_id)
+        solo = project is not None and project.topology == "solo"
+        categories = set(session.execute(
+            select(Role.category)
+            .join(RoleVersion, RoleVersion.role_id == Role.id)
+            .join(Team, Team.role_version_id == RoleVersion.id)
             .where(Team.project_id == project_id)
-        ))
-    if not rows:
+        ).scalars())
+        # What the seats were ACTUALLY hired on, rather than what a second copy
+        # of the lift's arithmetic thinks they should have been. This function
+        # had that second copy and it had already drifted: it compared the
+        # model with `!=` where the lift compares rank, so it announced a lift
+        # for a role the library had deliberately placed HIGHER, and it never
+        # saw the per-employee overrides that beat the lift outright. The
+        # stamps are on the rows; read them.
+        lifted = sorted({
+            f"{agent.name} ({team_name})" for agent, team_name in session.execute(
+                select(Agent, Team.name)
+                .join(Team, Team.id == Agent.team_id)
+                .where(Agent.project_id == project_id, Agent.kind != AgentKind.CEO)
+            )
+            if agent.model_override or agent.effort_override
+        })
+    if not categories:
         return findings
 
     if cons_doc.get("deliverable_review") == "independent_read":
-        if any(category == "challenge" for _, _, category, _, _ in rows):
+        if solo:
+            # `_check_review_seat` exempts solo, and saying otherwise here
+            # would be a confident wrong finding about the chairman's own
+            # bundle — the drill's worst possible output.
+            findings.append(
+                "This bundle asks for an independent read, but it is solo: the CEO "
+                "is the whole team, so there is nobody who did not write the work. "
+                "The setting is stored as you wrote it and simply has nobody to "
+                "bind. Add a second seat if you want the read to happen.")
+        elif "challenge" in categories:
             findings.append(
                 "The work will be read by a seat that did not write it, and this "
                 "roster hires one — that is the rule and the staffing agreeing.")
@@ -194,18 +227,12 @@ def _craft_findings(project_id: str, cons_doc: dict) -> list[str]:
                 "This bundle asks for an independent read and hires nobody in the "
                 "challenge discipline to give one. Creating it will be refused.")
 
-    if cons_doc.get("stakes") == "high":
-        thin = sorted({
-            f"{name} ({slug})" for name, slug, category, model, effort in rows
-            if category in ("content", "research", "build", "challenge")
-            and (model != "claude-opus-5" or effort not in ("xhigh", "max"))
-        })
-        if thin:
-            findings.append(
-                f"Stakes are high, so {', '.join(thin)} will be hired above what "
-                "the shared role library says — a stronger model and deeper "
-                "reasoning, for this project only. That is the point of the "
-                "setting and it is also what it costs.")
+    if cons_doc.get("stakes") == "high" and lifted:
+        findings.append(
+            f"Stakes are high, so {', '.join(lifted)} were hired above what the "
+            "shared role library says — a stronger model, deeper reasoning, or "
+            "both, for this project only. That is the point of the setting and it "
+            "is also what it costs.")
     return findings
 
 
@@ -450,6 +477,12 @@ def build(client, project_id: str | None, spec: dict, steps: list[dict],
     refusals = refusals or []
     ok, verdict = _verdict(steps, refusals)
     explore = spec.get("mode", "explore") == "explore"
+    # The read is a rule the chairman switches on, so on a bundle that did not
+    # ask for it the rung is not a miss — drawing it red would report the
+    # absence of a feature as the failure of one, which is what NOT_IN_EXPLORE
+    # exists to prevent one line above.
+    no_read = (spec.get("constitution") or {}).get(
+        "deliverable_review", "none") != "independent_read"
     walk = []
     by_key = {s["key"]: s for s in steps}
     for key, label in WALK:
@@ -457,7 +490,7 @@ def build(client, project_id: str | None, spec: dict, steps: list[dict],
         walk.append({
             "key": key, "label": label,
             "ok": bool(step and step["ok"]),
-            "na": explore and key in NOT_IN_EXPLORE,
+            "na": (explore and key in NOT_IN_EXPLORE) or (key == "work_read" and no_read),
             "detail": step["detail"] if step else None,
             "tick": step["tick"] if step else None,
         })

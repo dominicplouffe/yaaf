@@ -636,6 +636,17 @@ def _board_reachability(session: Session, project: Project, cons: ConstitutionDo
             Requirement.project_id == project.id,
             Requirement.status == RequirementStatus.CHECKING)
     ).scalar_one() - len(observable))
+    # Finished work waiting on a second pair of eyes. Same shape as CHECKING —
+    # it wakes nobody in the ordinary lane and is claimed by nobody — with one
+    # difference that matters: no platform process moves it. It waits on an
+    # agent, so it is a real rung rather than a reassurance, and without it a
+    # board holding nothing but reads renders as "Nothing waiting. The board is
+    # empty", which is the exact sentence CHECKING was added here to stop.
+    reviewing = session.execute(
+        select(func.count(Task.id)).where(Task.project_id == project.id,
+                                          Task.status == TaskStatus.REVIEW)
+    ).scalar_one()
+
     lost_tasks, lost_requirements = policy.lost_checks(session, project.id, now)
     checks_lost = sorted([t.title for t in lost_tasks]
                          + [r.key for r in lost_requirements])
@@ -675,6 +686,8 @@ def _board_reachability(session: Session, project: Project, cons: ConstitutionDo
         unreachable = "blocked_tasks"
     elif checks_lost:
         unreachable = "checks_lost"
+    elif reviewing:
+        unreachable = "review_owed"
     elif checking_tasks or checking_requirements:
         unreachable = "checking"
     else:
@@ -686,6 +699,7 @@ def _board_reachability(session: Session, project: Project, cons: ConstitutionDo
         "next_gate_at": min(gates).isoformat() if gates else None,
         "blocked": blocked,
         "checking": checking_tasks + checking_requirements,
+        "reviewing": reviewing,
         "checks_lost": checks_lost,
         "leaderless_teams": sorted(leaderless),
         "paused_agents": sorted(parked),
@@ -942,6 +956,17 @@ def _activity_brief(state: dict) -> dict:
             "itself within minutes and tells the CEO if it keeps dying — the "
             "deliverable itself may well be fine, and nothing here needs you yet.")
 
+    if gate == "review_owed":
+        return brief(
+            "ok", "being read",
+            f"{board['reviewing']} finished piece(s) waiting on an independent read",
+            f"{board['reviewing']} finished piece(s) waiting to be read.",
+            "This project asks for work to be read by somebody who did not write it "
+            "before it closes, so these are done and waiting on their reader's next "
+            "wake. If they sit here, the reader is paused or gone — the platform "
+            "closes them itself rather than leaving them stuck, and you can turn the "
+            "read off under The bar in Settings.", banner=False)
+
     if gate == "checking":
         return brief(
             "ok", "verifying",
@@ -1191,6 +1216,9 @@ def activity_state(session: Session, project: Project, cons: ConstitutionDoc) ->
             # holding only CHECKING rows reads as work in hand, not as empty —
             # the stall watchdog and the chairman's screen both read this.
             "checking_tasks": board["checking"],
+            # And finished work waiting on a reader, for the same reason: a
+            # board of nothing but reads is a board with work in hand.
+            "reviewing_tasks": board["reviewing"],
             "notices": notices_total,
             "agents_with_work": len(with_work),
         },
@@ -1600,12 +1628,22 @@ def _work_reasons(session: Session, agent: Agent, now) -> list[dict]:
     # Work finished by somebody else and waiting on a read. Without this a
     # REVIEW task wakes nobody and sits there — the state would be a hole the
     # board falls into rather than a step it passes through.
-    if agent.id in {seat.id for seat in policy.review_seats(session, agent.project_id)}:
+    #
+    # One seat per task, not every seat. A roster with an editor AND a
+    # plan-adversary — which is the default this project's own doctrine argues
+    # for — woke both for the same piece, and the second one paid full price to
+    # find the task already closed. `policy.review_seats` is ordered, so the
+    # first eligible seat is the same answer on every tick and in every worker.
+    seats = policy.review_seats(session, agent.project_id)
+    if agent.id in {seat.id for seat in seats}:
         for task in session.execute(
             select(Task).where(Task.project_id == agent.project_id,
                                Task.status == TaskStatus.REVIEW,
                                Task.claimed_by_agent_id != agent.id)
         ).scalars():
+            eligible = [s for s in seats if s.id != task.claimed_by_agent_id]
+            if eligible and eligible[0].id != agent.id:
+                continue
             reasons.append({"kind": "review_owed", "task_id": task.id})
 
     # A claim with nothing running behind it: wake to push it forward — unless

@@ -12,7 +12,7 @@ stamps amendment disclosure — the CEO can never claim it wasn't told.
 
 from __future__ import annotations
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from yaaf.core.constitution import ConstitutionDoc, effective
@@ -1339,9 +1339,20 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
                 for a in undisclosed
             ]
     else:
+        # Own team, plus anything anywhere waiting on a read this agent can
+        # give — the same widening `/agent/board` got, and for the same reason.
+        # A reviewer sits on its own team by design, so the work it was woken
+        # for belongs to somebody else's: filtered to team_id, the pack it
+        # reads before doing anything simply did not contain the task. The
+        # wake reason named an id the pack could not explain.
+        visible = Task.team_id == agent.team_id
+        if policy.is_review_seat(session, agent):
+            visible = or_(visible, and_(Task.status == TaskStatus.REVIEW,
+                                        Task.claimed_by_agent_id != agent.id))
         team_tasks = session.execute(
             select(Task).where(
-                Task.team_id == agent.team_id, Task.status.in_(policy.OPEN_TASK_STATUSES)
+                Task.project_id == project.id, visible,
+                Task.status.in_(policy.OPEN_TASK_STATUSES)
             )
         ).scalars()
         pack["board"] = {
@@ -1356,7 +1367,10 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
     claimed = session.execute(
         select(Task).where(
             Task.claimed_by_agent_id == agent.id,
-            Task.status.in_([TaskStatus.CLAIMED, TaskStatus.CHECKING]),
+            # REVIEW included: it still occupies this agent's one-at-a-time
+            # slot, so a pack that omitted it showed an agent with no task and
+            # no way to take one — which reads as a bug in the claim rule.
+            Task.status.in_([TaskStatus.CLAIMED, TaskStatus.CHECKING, TaskStatus.REVIEW]),
         )
     ).scalars().first()
     if claimed is not None and "task" not in pack:

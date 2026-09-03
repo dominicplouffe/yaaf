@@ -610,6 +610,32 @@ def _refuse_without_review_seat(session: Session, slugs: set[str]) -> None:
     )
 
 
+def _read_is_impossible(session: Session, project_id: str) -> bool:
+    """Whether this project has nowhere to put a reader.
+
+    Solo is the shape: the CEO *is* the team, one brain plans and executes, so
+    there is no second pair of eyes to hire and a rule demanding one would make
+    solo projects uncreatable rather than reviewed. Creation already exempted
+    it; the three doors that reopen the rule afterwards did not, so a solo
+    project created through the wizard — whose presets all set the read — had
+    every later "Add a team" refused for lacking a seat it was exempt from
+    hiring. The exemption has to hold at every door or it is not an exemption,
+    it is a trap.
+
+    It reads the roster rather than the stored topology, because the moment a
+    solo project gains a second team it is not solo any more and the rule has
+    somewhere to bind. The team being added counts: `add_team` asks this after
+    its own team is on the roster, so adding the reader is how the rule is
+    satisfied rather than the thing it refuses.
+    """
+    return session.execute(
+        select(func.count(Team.id)).where(Team.project_id == project_id)
+    ).scalar_one() <= 1 and session.execute(
+        select(func.count(Agent.id)).where(Agent.project_id == project_id,
+                                           Agent.kind != AgentKind.CEO)
+    ).scalar_one() == 0
+
+
 def _project_role_slugs(session: Session, project_id: str) -> set[str]:
     """The roles a project's teams are actually pinned to.
 
@@ -1097,7 +1123,8 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
     # cannot keep its own rule would hand the twin the same broken promise. It
     # only reaches here from a project amended before that door was shut, and
     # duplicating that state is how one install's mistake becomes two.
-    if effective(session, source.id).deliverable_review == "independent_read":
+    if (effective(session, source.id).deliverable_review == "independent_read"
+            and not _read_is_impossible(session, source.id)):
         _refuse_without_review_seat(session, _project_role_slugs(session, source.id))
 
     integrations = {k: v for k, v in (source.integrations or {}).items()
@@ -1369,8 +1396,11 @@ def add_team(project_id: str, body: TeamSpec, session: Session = Depends(db)) ->
     # The one route that can satisfy the review rule after creation, so it is
     # also the one that must not leave a project able to satisfy it and still
     # not doing so. Checked AFTER this team is counted, since adding the
-    # reviewer is exactly how a project fixes it.
-    if cons.deliverable_review == "independent_read":
+    # reviewer is exactly how a project fixes it — and skipped entirely while
+    # the project is still solo, which is the shape that has nowhere to put a
+    # reader and is exempt at creation for the same reason.
+    if cons.deliverable_review == "independent_read" and not _read_is_impossible(
+            session, project.id):
         _refuse_without_review_seat(
             session, _project_role_slugs(session, project.id) | {body.role_slug})
     team = Team(
@@ -3067,6 +3097,42 @@ def read_spend_window(project_id: str, session: Session = Depends(db)) -> dict:
         "adjustments": last.adjustments or []}}
 
 
+def _apply_craft_lift(session: Session, project_id: str, cons: ConstitutionDoc) -> list[str]:
+    """Re-hire the producing seats after `stakes` moved, and say whose.
+
+    Without this the dial is a dial only at creation: amending `stakes` to
+    `high` changed the budget headroom and the tone of one paragraph and left
+    every seat on whatever the shared library said — which is the exact
+    complaint the rule was written to answer, one door along.
+
+    It only ever raises, and it only touches a seat carrying no override at
+    all. A NULL override is the platform's own "nobody has said anything about
+    this seat"; anything else was either the chairman's answer or an earlier
+    lift's, and neither is this amendment's to overwrite. That also makes it
+    one-way: lowering `stakes` again does not demote, because the stamp on the
+    row is no longer distinguishable from a choice somebody made.
+    """
+    if cons.stakes != "high":
+        return []
+    lifted = []
+    rows = session.execute(
+        select(Agent, Role.slug, RoleVersion)
+        .join(Team, Team.id == Agent.team_id)
+        .join(RoleVersion, RoleVersion.id == Team.role_version_id)
+        .join(Role, Role.id == RoleVersion.role_id)
+        .where(Agent.project_id == project_id, Agent.kind != AgentKind.CEO)
+    ).all()
+    for agent, slug, version in rows:
+        if agent.model_override or agent.effort_override:
+            continue
+        model, effort = _craft_lift(session, slug, version, cons)
+        if model or effort:
+            agent.model_override = model
+            agent.effort_override = effort
+            lifted.append(agent.name)
+    return sorted(lifted)
+
+
 @router.post("/projects/{project_id}/amendments")
 def amend_constitution(
     project_id: str, body: AmendmentIn, session: Session = Depends(db)
@@ -3077,7 +3143,8 @@ def amend_constitution(
     # that holds at one door and not the other is a rule the chairman can set
     # and then watch do nothing. There is no route that removes a team, so the
     # roster only ever grows — which is why this is the last door to close.
-    if body.changes.get("deliverable_review") == "independent_read":
+    if (body.changes.get("deliverable_review") == "independent_read"
+            and not _read_is_impossible(session, project.id)):
         _refuse_without_review_seat(session, _project_role_slugs(session, project.id))
     try:
         amendments = propose_amendment(
@@ -3107,10 +3174,18 @@ def amend_constitution(
                 body=(f"The chairman amended the constitution (reason: {amendment.reason}). "
                       f"Changes now in force: {amendment.changes}. Plan accordingly."),
             ))
+    # `stakes` is the one amended rule that changes the roster rather than a
+    # number, so it has to be applied here too — the dial reads as live on the
+    # Settings screen and bought nothing after creation.
+    lifted = _apply_craft_lift(session, project.id, effective(session, project.id))
+
     # Name the fields rather than a category: a note that lists what you just
     # changed cannot go stale the way a note about which bucket it fell in did.
     changed_now = sorted({k for a in applied_now for k in a.changes})
     note_parts = [f"In force NOW: {', '.join(changed_now)}."]
+    if lifted:
+        note_parts.append(
+            f"Re-hired on a stronger model or deeper reasoning: {', '.join(lifted)}.")
     return {
         "amendments": [
             {"id": a.id, "effective_at": a.effective_at.isoformat(), "applied_now": True}

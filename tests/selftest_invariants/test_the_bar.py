@@ -399,3 +399,78 @@ def test_adding_a_team_is_the_door_that_closes_it(client):
     assert client.post(f"/admin/projects/{project_id}/teams", json={
         "role_slug": "reader", "name": "Second Read", "employees": ["Nia"]},
         headers=ADMIN).status_code == 200
+
+
+def test_amending_stakes_actually_re_hires_the_seats(client):
+    """The dial reads as live on the Settings screen and bought nothing after
+    creation: only `create_project` and `add_team` ran the lift, so amending
+    `stakes` to high changed the budget headroom and the tone of a paragraph
+    and left every seat on the library's model — which is the complaint the
+    rule was written to answer, one door along."""
+    _library(client)
+    created = _create(client, "grew-into-it", constitution={}, teams=[
+        {"role_slug": "scribe", "name": "Editorial", "employees": ["Ada"]},
+        {"role_slug": "hawker", "name": "Growth", "employees": ["Sol"]},
+    ])
+    project_id = created.json()["id"]
+    assert _seats(project_id)["Ada"] == (None, None)
+
+    amended = client.post(f"/admin/projects/{project_id}/amendments", headers=ADMIN,
+                          json={"reason": "this turned out to matter",
+                                "changes": {"stakes": "high"}})
+    assert amended.status_code == 200, amended.text
+    assert "Ada" in amended.json()["note"], "say whose hire changed"
+
+    seats = _seats(project_id)
+    assert seats["Ada"] == ("claude-opus-5", "xhigh")
+    assert seats["Sol"] == (None, None), "the lift is still aimed, not blanket"
+
+
+def test_amending_stakes_does_not_overwrite_an_answer_somebody_gave(client):
+    """A NULL override is the platform's own "nobody has said anything about
+    this seat". Anything else was the chairman's answer or an earlier lift's,
+    and neither is an amendment's to overwrite — which also makes this one-way:
+    lowering stakes again does not demote, because a stamp on the row is no
+    longer distinguishable from a choice."""
+    _library(client)
+    created = _create(client, "his-answer", constitution={}, teams=[
+        {"role_slug": "scribe", "name": "Editorial", "employees": ["Ada", "Kit"],
+         "model_overrides": {"Kit": "claude-haiku-4-5"}},
+    ])
+    project_id = created.json()["id"]
+    client.post(f"/admin/projects/{project_id}/amendments", headers=ADMIN,
+                json={"reason": "raising the bar", "changes": {"stakes": "high"}})
+    seats = _seats(project_id)
+    assert seats["Kit"] == ("claude-haiku-4-5", None), "his answer survived"
+    assert seats["Ada"] == ("claude-opus-5", "xhigh")
+
+    client.post(f"/admin/projects/{project_id}/amendments", headers=ADMIN,
+                json={"reason": "back down", "changes": {"stakes": "low"}})
+    assert _seats(project_id)["Ada"] == ("claude-opus-5", "xhigh"), \
+        "lowering the dial must not silently demote a seat"
+
+
+def test_a_solo_project_can_still_grow_a_team(client):
+    """Solo is exempt from the review rule at creation — the CEO is the team,
+    so there is nobody who did not write the work. The three doors that reopen
+    the rule afterwards were not exempt, so a solo project created through the
+    wizard, whose presets all set the read, had every later "Add a team"
+    refused for lacking a seat it was exempt from hiring."""
+    _library(client)
+    created = client.post("/admin/projects", json={
+        "slug": "alone", "name": "Alone", "goal": "Publish something worth reading.",
+        "chairman_email": CHAIR["email"], "solo": True,
+        "constitution": {"deliverable_review": "independent_read"},
+        "teams": [{"role_slug": "scribe", "name": "Desk", "employees": []}],
+    }, headers=ADMIN)
+    assert created.status_code == 200, created.text
+    project_id = created.json()["id"]
+
+    grown = client.post(f"/admin/projects/{project_id}/teams", json={
+        "role_slug": "digger", "name": "Research", "employees": ["Rey"]}, headers=ADMIN)
+    assert grown.status_code == 200, grown.text
+
+    # And once it has somewhere to put a reader, the rule binds again.
+    blocked = client.post(f"/admin/projects/{project_id}/teams", json={
+        "role_slug": "hawker", "name": "Growth", "employees": ["Sol"]}, headers=ADMIN)
+    assert blocked.status_code == 422, blocked.text

@@ -154,6 +154,7 @@ def _janitor_project(session: Session, project: Project) -> None:
     expire_approvals(session, project, cons)
     enforce_budget(session, project, cons)
     release_dead_claims(session, project, cons)
+    release_unreadable_reviews(session, project)
     requeue_lost_checks(session, project)
     elect_missing_leads(session, project)
     check_plan(session, project, cons)
@@ -1549,6 +1550,38 @@ def release_dead_claims(session: Session, project: Project, cons: ConstitutionDo
     return released
 
 
+def release_unreadable_reviews(session: Session, project: Project) -> int:
+    """A task waiting on a read that nobody left alive can give.
+
+    `review_is_owed` asks the same question before the fork, so a project with
+    no reviewer never sends work to REVIEW in the first place. This is the
+    other order: the task went in while a reader existed, and then the reader
+    was paused, deleted or refiled. Nothing else clears it — the janitor's
+    claim reaper only looks at CLAIMED, `lost_checks` only at CHECKING — and
+    REVIEW counts against its author's one-task-at-a-time slot, so the wedge is
+    not one task but the whole seat, permanently.
+
+    It closes rather than returning to the author, for the reason the roster
+    rule already states: a task stuck in REVIEW forever is worse than the
+    self-report it replaced. The event says the read never happened, so the
+    audit trail does not claim a second pair of eyes that nobody had.
+    """
+    waiting = list(session.execute(
+        select(Task).where(Task.project_id == project.id,
+                           Task.status == TaskStatus.REVIEW)
+    ).scalars())
+    if not waiting or policy.review_seats(session, project.id):
+        return 0
+    for task in waiting:
+        from_status = task.status
+        task.status = TaskStatus.DONE
+        policy.record_task_event(
+            session, task, TaskStatus.DONE, "janitor",
+            note="closed unread: the project has no reviewing seat left",
+            from_status=from_status)
+    return len(waiting)
+
+
 # ── lost checks: a wedge nothing else will ever clear ───────────────────────────
 
 # After this many requeues for the same stay in CHECKING, the CEO is told once:
@@ -2494,7 +2527,7 @@ def warn_stall(session: Session, project: Project, cons: ConstitutionDoc) -> Non
     waiting = state["waiting"]
     if not (waiting["ready_tasks"] or waiting["claimed_tasks"]
             or waiting["blocked_tasks"] or waiting["checking_tasks"]
-            or waiting["notices"]):
+            or waiting["reviewing_tasks"] or waiting["notices"]):
         return  # nothing on the board: quiet is the right answer, not a stall
     # A gate that names its own clearing time is a wait, not a stall — the
     # watchdog exists for silence nobody can explain, not for one the product
