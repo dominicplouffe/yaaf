@@ -203,13 +203,24 @@ def test_the_desk_shows_a_question_the_ceo_is_waiting_on(client):
 
     desk = client.get("/observe/desk", headers=ADMIN).json()
     row = next(p for p in desk["projects"] if p["id"] == project["id"])
-    waiting = row["awaiting_you"]["asks"]
+    waiting = row["pending_asks"]
     assert len(waiting) == 1
     assert waiting[0]["title"].startswith("Which of the five")
     # The honest row is not "answer me" — it is "answer me by then, or this
     # happens", which is what makes ignoring it a choice rather than a hole.
     assert waiting[0]["default_action"]
     assert waiting[0]["answer_by"]
+    # Beside the approvals, not inside `awaiting_you`. That dict means "what
+    # the dial left with you"; an ask is the opposite — a decision the CEO
+    # holds and wants your read on anyway. One exempt member would make the
+    # emptiness of the other three unreadable.
+    assert "asks" not in row["awaiting_you"]
+
+    # And it reaches the screen he goes to in order to decide things.
+    on_page = client.get(f"/observe/projects/{project['id']}/asks",
+                         headers=ADMIN).json()
+    assert [a["status"] for a in on_page] == ["open"]
+    assert on_page[0]["default_action"]
 
     health = client.get(f"/observe/projects/{project['id']}/health",
                         headers=ADMIN).json()
@@ -231,7 +242,7 @@ def test_an_answered_question_leaves_his_desk(client):
 
     desk = client.get("/observe/desk", headers=ADMIN).json()
     row = next(p for p in desk["projects"] if p["id"] == project["id"])
-    assert row["awaiting_you"]["asks"] == []
+    assert row["pending_asks"] == []
 
 
 # ── 3. the window closing is what wakes a project that has nothing left ─────────

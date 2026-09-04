@@ -56,6 +56,7 @@ from yaaf.core.models import (
     utcnow,
 )
 from yaaf.server import agenda, briefing, policy, typing_state
+from yaaf.server import asks as ask_lib
 from yaaf.server.deps import admin_auth, db
 from yaaf.server.dispatcher import activity_state, chat_session_live
 from yaaf.server.velocity import commitment_projection, project_velocity, standing_record
@@ -139,16 +140,6 @@ def _awaiting_chairman(session: Session, project: Project, cons) -> dict:
     return {
         "plan": len(waiting["plan"]),
         "verdicts": [{"key": r.key, "statement": r.statement} for r in waiting["verdicts"]],
-        # What the CEO asked and is still waiting on. `answer_by` and
-        # `default_action` ride along because the honest version of this row is
-        # not "answer me" — it is "answer me by then, or this happens", which
-        # is also what makes ignoring it a real choice rather than a hole.
-        "asks": [
-            {"id": a.id, "title": a.title,
-             "answer_by": a.answer_by.isoformat(),
-             "default_action": a.default_action}
-            for a in waiting["asks"]
-        ],
         "commitment": None if commitment is None else {
             "id": commitment.id,
             "deliver_by": commitment.deliver_by.isoformat(),
@@ -211,6 +202,17 @@ def desk(live: bool = False, session: Session = Depends(db)) -> dict:
                        Approval.status == ApprovalStatus.PENDING)
                 .order_by(Approval.expires_at)
             ).scalars()
+        ]
+        # Beside the approvals rather than in `awaiting_you`: both are clocked
+        # things he answers, neither is gated on the dial, and they belong on
+        # the same screen. `default_action` rides along because the honest row
+        # is not "answer me" — it is "answer me by then, or this happens",
+        # which is what makes ignoring one a real choice instead of a hole.
+        pending_asks = [
+            {"id": a.id, "title": a.title, "body": a.body,
+             "answer_by": aware(a.answer_by).isoformat(),
+             "default_action": a.default_action}
+            for a in ask_lib.open_asks(session, project.id)
         ]
         hyps = list(
             session.execute(
@@ -299,6 +301,7 @@ def desk(live: bool = False, session: Session = Depends(db)) -> dict:
                 session, project.id, day_ago),
             "ceo_judgment": policy.ceo_judgment(session, project.id),
             "pending_approvals": pending,
+            "pending_asks": pending_asks,
             "expired_bets": expired_bets,
             "kill_dates_soon": kill_dates_soon,
             "audit": {"completed": int(completed), "audited": int(audited),
@@ -697,8 +700,6 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
     # asked, it told you when it stops waiting, and it wrote down what it does
     # then, so nothing is stuck. It is here because "he never answered" and "he
     # was never asked" used to look identical from this page.
-    from yaaf.server import asks as ask_lib
-
     pending_asks = ask_lib.open_asks(session, project.id)
     if pending_asks:
         soonest = min(a.answer_by for a in pending_asks)
@@ -1328,6 +1329,37 @@ def approvals(project_id: str, session: Session = Depends(db)) -> list[dict]:
          "expires_at": a.expires_at.isoformat(),
          "decided_at": a.decided_at.isoformat() if a.decided_at else None,
          "decision_note": a.decision_note}
+        for a in rows
+    ]
+
+
+@router.get("/projects/{project_id}/asks")
+def asks(project_id: str, session: Session = Depends(db)) -> list[dict]:
+    """The CEO's questions to the chairman, live and settled.
+
+    Shaped like `/approvals` and read by the same screen, because they are the
+    same kind of thing from his side: something clocked, addressed to him, that
+    resolves with or without him. The difference is only what happens at the
+    clock — an approval decides itself per the constitution, an ask hands back
+    to the CEO's own stated default, which is why that sentence travels here.
+    """
+    from yaaf.core.models import Ask
+
+    rows = session.execute(
+        select(Ask)
+        .where(Ask.project_id == project_id)
+        .order_by(Ask.created_at.desc())
+        .limit(100)
+    ).scalars()
+    return [
+        {"id": a.id, "title": a.title, "body": a.body, "status": a.status,
+         "asked_by": a.asked_by_agent_id,
+         "answer_by": a.answer_by.isoformat(),
+         "default_action": a.default_action,
+         "asked_in_message_id": a.asked_in_message_id,
+         "answered_at": a.answered_at.isoformat() if a.answered_at else None,
+         "lapsed_at": a.lapsed_at.isoformat() if a.lapsed_at else None,
+         "closed_at": a.closed_at.isoformat() if a.closed_at else None}
         for a in rows
     ]
 

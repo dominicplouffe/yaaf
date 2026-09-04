@@ -244,8 +244,9 @@ Running every ~15s per project, without an agent asking:
   `approval_timeout_decision`.
 - **Answers, nags and lapses asks**: a question the CEO put to you is marked
   answered the moment you say anything in the boardroom after it, chased
-  halfway through its window, and at `answer_by` becomes the default the CEO
-  wrote down when it asked — which wakes it to do that and tell you.
+  halfway through its window (proportional, because an ask's window can be
+  hours where an approval's is days), and at `answer_by` becomes the default
+  the CEO wrote down when it asked — which wakes it to do that and tell you.
 - **Enforces budgets**: warns the CEO at `budget_warn_ratio`, pauses the
   project at 100%, notifies you.
 - **Warns on memory pressure** at `memory_warn_ratio` and on an active

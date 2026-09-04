@@ -2477,18 +2477,17 @@ def awaiting_chairman(session: Session, project: Project, cons: ConstitutionDoc)
     asking for a decision he gave away.
     """
     from yaaf.core.models import Commitment, CommitmentStatus, SuccessTestKind
-    from yaaf.server import asks as ask_lib
 
-    out: dict = {"plan": [], "verdicts": [], "commitment": None, "asks": []}
+    out: dict = {"plan": [], "verdicts": [], "commitment": None}
 
-    # Not gated on the dial, unlike everything below. The other three are
-    # decisions he kept; an ask is a question his CEO chose to put to him
-    # BECAUSE it holds the decision and wants his read on it anyway. Hiding
-    # those on an autonomous project would restore the exact silence this
-    # exists to end — and the emptiness elsewhere here would go on reading as
-    # "nothing waiting" while the project waited.
-    out["asks"] = ask_lib.open_asks(session, project.id)
-
+    # Asks are deliberately NOT here, though they were once. Every member of
+    # this dict is a decision the dial left with the chairman, which is what
+    # lets an autonomous project read empty and mean it. An ask is the
+    # opposite: a question the CEO put to him about something it holds, and it
+    # carries a clock. Clocked things that are his to answer live beside
+    # `pending_approvals` — same shelf, same shape, same screen — rather than
+    # in here, where one member exempt from the dial would make the emptiness
+    # unreadable for all of them.
     if not ceo_holds(cons, "plan_authority"):
         # Proposed scope is not scope: the CEO may not build against it and may
         # not accept it, so the requirement waits on a human or on nothing.

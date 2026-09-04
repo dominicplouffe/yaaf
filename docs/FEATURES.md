@@ -189,9 +189,12 @@ Outside Explore mode the root object is not the task, it is the
   row on your desk carrying when it stops waiting and exactly what it will do
   if you say nothing. It never blocks; the project keeps working. Answer, and
   it acts on that. Say nothing, and at the window it does what it wrote down
-  and tells you it did. Neither half can be silent: the question is on your
-  desk while it is open, and the CEO cannot go back to ordinary status posts
-  until it has said what it did about the answer it got or the one it did not.
+  and tells you it did. It sits on your Decisions screen beside the pending
+  approvals, which is the right neighbour: both are clocked, both are yours to
+  answer, and both resolve whether or not you do. Neither half can be silent:
+  the question is on your desk while it is open, and the CEO cannot go back to
+  ordinary status posts until it has said what it did about the answer it got
+  or the one it did not.
 - **`yaaf spend-report`** breaks spend down by agent, role, model, and wake
   reason, straight from the database.
 

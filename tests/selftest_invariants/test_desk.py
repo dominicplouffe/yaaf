@@ -144,18 +144,17 @@ def test_an_autonomous_desk_asks_for_none_of_them(client):
     decision he deliberately gave away, and the emptiness here is the dial
     working rather than nothing having happened.
 
-    `asks` is empty here for a different reason and is not dial-gated: a
-    question the CEO chose to put to him is not a decision he kept, it is one
-    it holds and wants his read on anyway. Hiding those on an autonomous
-    project would restore the exact silence they exist to end."""
+    The whole dict, deliberately: a new category of "waiting on you" must not
+    reach this page without someone deciding it belongs on the dial. One did
+    try — asks — and this assertion is what stopped it. Clocked things he
+    answers live in `pending_asks`, beside `pending_approvals`."""
     project = make_project(client, slug="autonomous", constitution=AUTONOMOUS)
     _stage_all_three(project["id"])
 
     # Same three rows in the database as the supervised case above; the only
     # difference is the constitution.
     row = _desk(client, live=True)["projects"][0]
-    assert row["awaiting_you"] == {"plan": 0, "verdicts": [], "commitment": None,
-                                   "asks": []}
+    assert row["awaiting_you"] == {"plan": 0, "verdicts": [], "commitment": None}
 
 
 def test_autonomy_never_delegates_the_undelegable_approvals(client):
@@ -282,7 +281,6 @@ def test_an_autonomous_project_is_never_chased_for_either(client):
     assert _notices(project["id"], "scope.proposal_nag") == []
     assert _notices(project["id"], "commitment.proposal_nag") == []
     assert _desk(client, live=True)["projects"][0]["awaiting_you"] == {
-        "asks": [],
         "plan": 0, "verdicts": [], "commitment": None}
 
 

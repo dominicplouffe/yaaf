@@ -362,7 +362,7 @@ export function buildItems(projects: DeskProject[], reload: () => void): Item[] 
         ),
       });
     }
-    for (const ask of w.asks) {
+    for (const ask of p.pending_asks) {
       items.push({
         key: ask.id, tier: 2, at: new Date(ask.answer_by).getTime(), clocked: true,
         yours: true, project: p, kind: "your CEO asked",
