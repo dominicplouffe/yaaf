@@ -1,0 +1,26 @@
+{
+  "slug": "launch-watch",
+  "name": "A launch watch",
+  "outcome": "A new product's first ninety days watched daily, with one change to make tomorrow and a retrospective at the end.",
+  "ceo_role_slug": "ceo",
+  "domains": [
+    "data"
+  ],
+  "source": "authored",
+  "teams": [
+    {
+      "name": "Analytics",
+      "role_slug": "ppc-analyst",
+      "employees": [
+        "Rae"
+      ]
+    },
+    {
+      "name": "Strategy",
+      "role_slug": "ppc-strategist",
+      "employees": [
+        "Idris"
+      ]
+    }
+  ]
+}

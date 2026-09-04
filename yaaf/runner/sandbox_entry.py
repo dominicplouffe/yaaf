@@ -470,6 +470,26 @@ async def t_spend_book(args):
 
 
 @tool(
+    "data_write_request",
+    "Ask the chairman to approve ONE call your data source's allowlist refuses "
+    "— a change to his live account, not a read. Pass the arguments you intend "
+    "to send, exactly: he decides on those, the platform records their "
+    "fingerprint, and the approval is spendable on nothing else. Approved, it "
+    "buys exactly one call — a second change needs a second approval, so batch "
+    "with the tool's own bulk arguments rather than filing twenty requests. "
+    "Say WHY in terms of what it does to his numbers, not what it does to your "
+    "task. Unanswered it expires to no; plan the work that does not need it.",
+    {"server": str, "tool": str, "arguments": dict, "why": str},
+)
+async def t_data_write_request(args):
+    payload = {"source": (args.get("server") or "").strip(),
+               "tool": (args.get("tool") or "").strip(),
+               "arguments": args.get("arguments") or {},
+               "why": (args.get("why") or "").strip()}
+    return _text(_call("POST", "/agent/data_writes", payload))
+
+
+@tool(
     "assist_request",
     "Any agent. A step only a HUMAN can do is blocking you — a captcha, a 2FA code, a "
     "KYC form, a signature, an account only the chairman can touch. Never try to defeat "
@@ -968,8 +988,11 @@ def _row_count(body: str, countable: bool) -> int | None:
     "ONLY; the answer is in the file, not the preview. Any mcp__* tools you do have are "
     "for small lookups you will read in full; use this for anything larger. Your "
     "workspace persists across runs, so check for an existing file before fetching "
-    "again, and leave the script that processed it behind for the next run.",
-    {"server": str, "tool": str, "arguments": dict, "path": str},
+    "again, and leave the script that processed it behind for the next run. "
+    "approval_id: only for a tool your source's allowlist refuses — file "
+    "data_write_request first, wait to be woken with the decision, then pass "
+    "the approved id here with the SAME arguments you had approved.",
+    {"server": str, "tool": str, "arguments": dict, "path": str, "approval_id": str},
 )
 async def t_data_fetch(args):
     specs = _data_source_specs()
@@ -993,12 +1016,42 @@ async def t_data_fetch(args):
         except Exception as exc:
             return _text({"status": 0, "body": {
                 "error": f"data source {name!r} could not be reached: {exc!r}"}})
-        return _text({"status": 200, "body": {"server": name, "tools": [
-            {"name": t.name,
-             "description": (getattr(t, "description", "") or "")[:DATA_FETCH_ERROR_CHARS],
-             "input_schema": json.dumps(getattr(t, "inputSchema", None) or {},
-                                        default=str)[:DATA_FETCH_SCHEMA_CHARS]}
-            for t in (getattr(listing, "tools", None) or [])]}})
+        allowlist = config.get("tools")
+        return _text({"status": 200, "body": {
+            "server": name,
+            # Said here so an agent plans around the rule instead of discovering
+            # it one refusal at a time.
+            "note": ("Every tool on this source is yours to call." if allowlist is None else
+                     "Tools marked needs_approval are refused until the chairman approves "
+                     "ONE call with the exact arguments — file data_write_request."),
+            "tools": [
+                {"name": t.name,
+                 "description": (getattr(t, "description", "") or "")[:DATA_FETCH_ERROR_CHARS],
+                 "needs_approval": allowlist is not None and t.name not in allowlist,
+                 "input_schema": json.dumps(getattr(t, "inputSchema", None) or {},
+                                            default=str)[:DATA_FETCH_SCHEMA_CHARS]}
+                for t in (getattr(listing, "tools", None) or [])]}})
+
+    # The allowlist is checked before the destination is even resolved: a
+    # refused call must not have picked a path, reached the vendor, or written
+    # a byte. An approval is the ONLY way past it, it is spent server-side, and
+    # it is spent against these exact arguments — so an approval obtained for a
+    # $5 bid change cannot be replayed on a $5,000 one.
+    allowlist = config.get("tools")
+    if allowlist is not None and tool_name not in allowlist:
+        arguments = args.get("arguments") or {}
+        approval_id = (args.get("approval_id") or "").strip()
+        if not approval_id:
+            return _text({"status": 403, "body": {
+                "error": f"{name}.{tool_name} is not one of the tools this source may be "
+                         f"called with. Callable without an approval: "
+                         f"{', '.join(sorted(allowlist)) or 'none'}. To make this call, "
+                         f"file data_write_request with the exact arguments and wait to be "
+                         f"woken with the decision — then call again with approval_id."}})
+        spent = _call("POST", f"/agent/data_writes/{approval_id}/spend",
+                      {"source": name, "tool": tool_name, "arguments": arguments})
+        if spent["status"] >= 400:
+            return _text(spent)
 
     destination = (args.get("path") or "").strip()
     if not destination:
@@ -1075,12 +1128,20 @@ ALL_TOOLS = [
 
 
 def run_tools() -> list:
-    """ALL_TOOLS plus data_fetch when this role actually has a data source.
+    """ALL_TOOLS plus data_fetch when this role actually has a data source, and
+    data_write_request when one of those sources refuses anything.
 
     Gated for the same reason _builtin_tools() is: an undeclared schema is pure
     input-token cost on every API call, and a fetch tool for a role with nothing
-    to fetch from is a schema nobody can use."""
-    return [*ALL_TOOLS, t_data_fetch] if _data_source_specs() else list(ALL_TOOLS)
+    to fetch from is a schema nobody can use. A role whose every source is
+    unrestricted has nothing to ask permission for either."""
+    specs = _data_source_specs()
+    if not specs:
+        return list(ALL_TOOLS)
+    tools = [*ALL_TOOLS, t_data_fetch]
+    if any(config.get("tools") is not None for config in specs.values()):
+        tools.append(t_data_write_request)
+    return tools
 
 
 # ── hooks: the platform's ears inside the session, record-only ─────────────────
@@ -1161,7 +1222,17 @@ def _allowed_tools() -> list[str]:
     # Server-level grant: every tool the external MCP server offers. Bulk
     # sources are deliberately absent — they are reached only through
     # data_fetch, which never routes their results through the context.
-    allowed += [f"mcp__{name}" for name in _external_mcp_servers()]
+    #
+    # A source carrying an allowlist is granted tool by tool instead, or the
+    # server-level grant would hand an inline source exactly the tools its
+    # allowlist exists to refuse.
+    specs = _data_source_specs()
+    for name in _external_mcp_servers():
+        allowlist = specs[name].get("tools")
+        if allowlist is None:
+            allowed.append(f"mcp__{name}")
+        else:
+            allowed += [f"mcp__{name}__{tool}" for tool in allowlist]
     return allowed
 
 
@@ -1198,6 +1269,8 @@ def _data_source_specs(env: dict[str, str] | None = None) -> dict[str, dict]:
             continue
         config: dict = {"type": spec.get("transport", "http"), "url": url,
                         "access": spec.get("access", "inline")}
+        if spec.get("tools") is not None:
+            config["tools"] = list(spec["tools"])
         token = env.get(spec.get("bearer_env", ""))
         if token:
             config["headers"] = {"Authorization": f"Bearer {token}"}
@@ -1214,7 +1287,7 @@ def _external_mcp_servers(env: dict[str, str] | None = None) -> dict[str, dict]:
     than advice — the wrong call cannot be made, because the tool is not there.
     Bulk sources stay reachable through data_fetch, which writes to disk.
     """
-    return {name: {k: v for k, v in config.items() if k != "access"}
+    return {name: {k: v for k, v in config.items() if k not in ("access", "tools")}
             for name, config in _data_source_specs(env).items()
             if config.get("access") != "bulk"}
 

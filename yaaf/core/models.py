@@ -1633,6 +1633,15 @@ class Approval(Base):
     decided_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     decision_note: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    # A TOOL_REQUEST approval that carries a grant IS the capability: approving
+    # it is what lets data_fetch make one call the source's allowlist otherwise
+    # refuses. {"source", "tool", "arguments_sha256"} — the digest is why an
+    # approval cannot be spent on different arguments than the ones decided on.
+    # Null on every other kind, and on tool requests filed as prose.
+    grant: Mapped[dict | None] = mapped_column(JSONVariant)
+    # One call, one approval. Set the moment the granted call is made, so a
+    # replay finds it spent rather than approved.
+    spent_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
 
 class Secret(Base):
