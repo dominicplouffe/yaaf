@@ -371,3 +371,55 @@ def test_only_the_ceo_files_directives(client):
                           json={"from_message_id": said, "changes": CADENCE,
                                 "reason": "I heard this second-hand and acted on it."})
     assert refused.status_code == 403
+
+
+# ── the pack and the gate are one fact ──────────────────────────────────────────
+
+
+def _may_post(client, project: dict) -> bool:
+    _, token = live_token(project["id"], project["ceo_agent_id"], kind="chat_session")
+    return client.get("/agent/context",
+                      headers=bearer(token)).json()["chairman"]["may_post_status_now"]
+
+
+def test_may_post_status_now_never_disagrees_with_the_endpoint(client):
+    """`may_post_status_now` is a promise about what POST /agent/messages will
+    do, and for the flag override it was a promise nothing kept: the permission
+    was computed in the context pack and enforced nowhere, so a CEO that read
+    "the cadence does not hold you here", believed it, and posted got a 429.
+    A permission asserted in a prompt and denied at the gate is worse than no
+    permission at all, so the two now share one predicate — and this walks the
+    states that used to diverge.
+    """
+    project = _with_cadence(client, constitution={"chairman_report_interval_hours": 4,
+                                                  "timezone": "UTC"})
+
+    def agree(where: str) -> None:
+        promised = _may_post(client, project)
+        landed = _post(client, project, f"status at {where}").status_code == 200
+        assert promised == landed, (
+            f"{where}: the pack said may_post_status_now={promised} and the endpoint "
+            f"{'allowed' if landed else 'refused'} the post")
+
+    agree("the first post ever")          # nothing reported yet — always lands
+    agree("inside a closed slot")         # spent it a moment ago — refused
+    _chairman_says(client, project)
+    agree("an open turn from him")        # his message opens exactly one reply
+    agree("that turn already spent")      # and the next post is a status again
+
+    # An ask that ran out its window: owed, so one post goes through — and the
+    # post after it faces the cadence again.
+    _, token = live_token(project["id"], project["ceo_agent_id"])
+    asked = client.post("/agent/asks", headers=bearer(token), json={
+        "title": "Which candidate?", "body": "Five ranked; my pick is first.",
+        "answer_by_hours": 6,
+        "default_action": "Take the top-ranked one and tell you I did."})
+    assert asked.status_code == 200, asked.text
+    with db_session() as session:
+        from yaaf.core.models import Ask, AskStatus
+
+        ask = session.query(Ask).filter(Ask.project_id == project["id"]).one()
+        ask.status, ask.lapsed_at = AskStatus.LAPSED, utcnow()
+
+    agree("an ask that lapsed")
+    agree("the same ask, already spoken for")

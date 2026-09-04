@@ -139,6 +139,16 @@ def _awaiting_chairman(session: Session, project: Project, cons) -> dict:
     return {
         "plan": len(waiting["plan"]),
         "verdicts": [{"key": r.key, "statement": r.statement} for r in waiting["verdicts"]],
+        # What the CEO asked and is still waiting on. `answer_by` and
+        # `default_action` ride along because the honest version of this row is
+        # not "answer me" — it is "answer me by then, or this happens", which
+        # is also what makes ignoring it a real choice rather than a hole.
+        "asks": [
+            {"id": a.id, "title": a.title,
+             "answer_by": a.answer_by.isoformat(),
+             "default_action": a.default_action}
+            for a in waiting["asks"]
+        ],
         "commitment": None if commitment is None else {
             "id": commitment.id,
             "deliver_by": commitment.deliver_by.isoformat(),
@@ -681,6 +691,22 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
             "raised with you — each one is arithmetic or a failed check, not an "
             "opinion. It is required to bring them to the boardroom with a proposal, "
             "and the reporting cadence does not hold it back from doing so.",
+            "boardroom")
+
+    # Questions the CEO put to you and is still waiting on. Not a warning: it
+    # asked, it told you when it stops waiting, and it wrote down what it does
+    # then, so nothing is stuck. It is here because "he never answered" and "he
+    # was never asked" used to look identical from this page.
+    from yaaf.server import asks as ask_lib
+
+    pending_asks = ask_lib.open_asks(session, project.id)
+    if pending_asks:
+        soonest = min(a.answer_by for a in pending_asks)
+        add("asks", "ok",
+            f"{len(pending_asks)} question(s) from your CEO waiting on you, the first "
+            f"stopping at {soonest.isoformat(timespec='minutes')}. Nothing is blocked: "
+            "each one names what it will do unanswered, and it will tell you when it "
+            "does.",
             "boardroom")
 
     # Liveness. Every other check on this page asks "is this project set up

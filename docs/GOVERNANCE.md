@@ -1,6 +1,6 @@
 # Governance — the constitution, rule by rule
 
-Each project runs under a **constitution**: 56 numbers and switches the agents
+Each project runs under a **constitution**: 58 numbers and switches the agents
 cannot edit, argue with, or talk their way around. Every one is enforced
 server-side in [`yaaf/server/policy.py`](../yaaf/server/policy.py) as an HTTP
 refusal or an automatic state change. The schema itself lives in
@@ -88,6 +88,8 @@ Also enforced here, and not tunable because they're structural:
 | `approval_threshold_usd` | 250.0 | Spends at or above this — and anything legally ambiguous — wait for you. |
 | `approval_timeout_days` | 7 | An unanswered approval decides itself here, so a vacationing chairman degrades the project instead of deadlocking it. |
 | `approval_timeout_decision` | `"deny"` | What that expiry decides. Default-deny: silence is not consent. |
+| `ask_window_hours_max` | 72.0 | The longest window your CEO may give you to answer a question. It names a shorter one when the work has a deadline. There is no setting for what an unanswered question decides — the CEO writes that down before it asks, and you see it on the desk. |
+| `max_open_asks` | 3 | How many unanswered questions your CEO may have on your desk at once. Asking is cheap for it and expensive for you. |
 | `plan_authority` | `"chairman"` | Who accepts proposed scope. `"ceo"`: the CEO accepts its own proposals — the plan gate runs the same arithmetic, every acceptance is audited and sent to you. |
 | `scope_authority` | `"chairman"` | Who may cut, reopen, restage, reestimate, reword and unsequence. `"ceo"` hands the verbs to the CEO, on the record, reversibly. Your routes never close. |
 | `commitment_authority` | `"chairman"` | Who signs the delivery date, and who resets one that has stopped holding. `"ceo"`: proposing adopts the platform's own projection immediately, and `commitment_reset` re-adopts it on a slip — the CEO still cannot write a date, only accept the arithmetic's. Your own Move is unrestricted, because you may promise what the arithmetic does not. |
@@ -240,6 +242,10 @@ Running every ~15s per project, without an agent asking:
 - **Expires hypotheses** at their kill date.
 - **Nags then expires approvals** per `approval_timeout_days` /
   `approval_timeout_decision`.
+- **Answers, nags and lapses asks**: a question the CEO put to you is marked
+  answered the moment you say anything in the boardroom after it, chased
+  halfway through its window, and at `answer_by` becomes the default the CEO
+  wrote down when it asked — which wakes it to do that and tell you.
 - **Enforces budgets**: warns the CEO at `budget_warn_ratio`, pauses the
   project at 100%, notifies you.
 - **Warns on memory pressure** at `memory_warn_ratio` and on an active

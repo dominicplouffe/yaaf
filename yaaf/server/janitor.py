@@ -44,6 +44,8 @@ from yaaf.core.models import (
     AgentStatus,
     Approval,
     ApprovalStatus,
+    Ask,
+    AskStatus,
     AuditLog,
     AuditSample,
     AuditSampleStatus,
@@ -78,6 +80,7 @@ from yaaf.core.models import (
     Team,
     utcnow,
 )
+from yaaf.server import asks as ask_lib
 from yaaf.server import briefing, policy
 from yaaf.server.notify import boardroom_line, chairman_notify
 from yaaf.server.verifier import verify_pending_evidence
@@ -152,6 +155,9 @@ def _janitor_project(session: Session, project: Project) -> None:
     expire_hypotheses(session, project)
     nag_approvals(session, project, cons)
     expire_approvals(session, project, cons)
+    answer_asks(session, project)
+    nag_asks(session, project)
+    expire_asks(session, project)
     enforce_budget(session, project, cons)
     release_dead_claims(session, project, cons)
     release_unreadable_reviews(session, project)
@@ -1789,6 +1795,87 @@ def expire_approvals(session: Session, project: Project, cons: ConstitutionDoc) 
     return expired
 
 
+# ── asks: his half of a question, on a clock ────────────────────────────────────
+
+#: How far into the window the chase goes out. An approval nags at a fixed 48h
+#: because its window is measured in days; an ask's window can be six hours, so
+#: a fixed horizon would either fire instantly or never. Proportional is the
+#: only thing that means the same at both scales.
+ASK_NAG_FRACTION = 0.5
+
+
+def answer_asks(session: Session, project: Project) -> int:
+    """Anything he said in the boardroom after the question answers it.
+
+    Mechanical on purpose. "Has he answered" is a question about whether a
+    message exists; leaving it to the CEO to judge would mean a CEO could
+    conclude it had not been answered and keep the row open, or conclude it had
+    and close one he invented an answer to.
+    """
+    from yaaf.core.models import Channel, ChannelKind
+
+    boardroom = session.execute(
+        select(Channel).where(Channel.project_id == project.id,
+                              Channel.kind == ChannelKind.BOARDROOM)
+    ).scalars().first()
+    if boardroom is None:
+        return 0
+    return ask_lib.mark_answered(session, project.id, boardroom.id)
+
+
+def nag_asks(session: Session, project: Project) -> int:
+    """Chase him once, partway through the window he was given."""
+    now = utcnow()
+    nagged = 0
+    for ask in ask_lib.open_asks(session, project.id):
+        if ask.nag_sent_at is not None:
+            continue
+        span = (ask.answer_by - ask.created_at).total_seconds()
+        if span <= 0 or now < ask.created_at + timedelta(seconds=span * ASK_NAG_FRACTION):
+            continue
+        chairman_notify(
+            session, project,
+            f"your CEO is waiting on you: {ask.title}",
+            f"Asked {ask.created_at:%Y-%m-%d %H:%M} UTC; it stops waiting at "
+            f"{ask.answer_by:%Y-%m-%d %H:%M} UTC.\n\n{ask.body[:2000]}\n\n"
+            f"If you say nothing, it will: {ask.default_action}",
+        )
+        ask.nag_sent_at = now
+        nagged += 1
+    return nagged
+
+
+def expire_asks(session: Session, project: Project) -> int:
+    """The window closes and the CEO's own stated default becomes the plan.
+
+    This notice is the load-bearing part of the whole mechanism. A project that
+    is waiting on an answer has, by construction, closed the work that raised
+    the question — which empties the board, which suppresses the planning wake.
+    There is no next run to fold this into. So ASK_LAPSED is urgent, and it is
+    what makes the default actually happen rather than merely be on file.
+    """
+    now = utcnow()
+    lapsed = 0
+    for ask in session.execute(
+        select(Ask).where(Ask.project_id == project.id,
+                          Ask.status == AskStatus.OPEN,
+                          Ask.answer_by <= now)
+    ).scalars():
+        ask.status = AskStatus.LAPSED
+        ask.lapsed_at = now
+        _notice_agent(
+            session, project, ask.asked_by_agent_id, NoticeKind.ASK_LAPSED,
+            f"Your question '{ask.title}' reached {ask.answer_by:%Y-%m-%d %H:%M} UTC with "
+            f"no answer from the chairman. What you said you would do: {ask.default_action}\n\n"
+            "Do that now — it is what he was told would happen, so doing something else "
+            "without telling him is worse than never having asked. Then post what you did "
+            "in the boardroom (the cadence does not hold this) and close the ask citing "
+            "that message.",
+        )
+        lapsed += 1
+    return lapsed
+
+
 # ── budgets ─────────────────────────────────────────────────────────────────────
 
 
@@ -2527,8 +2614,14 @@ def warn_stall(session: Session, project: Project, cons: ConstitutionDoc) -> Non
     waiting = state["waiting"]
     if not (waiting["ready_tasks"] or waiting["claimed_tasks"]
             or waiting["blocked_tasks"] or waiting["checking_tasks"]
-            or waiting["reviewing_tasks"] or waiting["notices"]):
-        return  # nothing on the board: quiet is the right answer, not a stall
+            or waiting["reviewing_tasks"] or waiting["notices"]
+            # Open scope with a closed board is the one shape of "nothing on
+            # the board" that is not quiet at all. Every other term here is a
+            # task row or a notice, so a project waiting on the chairman with
+            # its work finished under it read as zero across the board and
+            # bought silence from the one watchdog written to notice silence.
+            or waiting["open_scope_no_board"]):
+        return  # nothing on the board and nothing open: quiet is the right answer
     # A gate that names its own clearing time is a wait, not a stall — the
     # watchdog exists for silence nobody can explain, not for one the product
     # already explains with a moment attached.

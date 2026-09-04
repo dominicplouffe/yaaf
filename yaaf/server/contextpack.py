@@ -108,9 +108,11 @@ def constitution_prose(cons: ConstitutionDoc, project: Project) -> str:
         "- Asking the chairman is allowed, never required. Default to deciding and "
         "reporting ('I decided X because Y — say so if you disagree'), or file an approval "
         "as a recommendation you would defend. When you feel strongly enough that you want "
-        "his answer before deciding, ask him plainly (override='question' if between "
-        "cadence slots — it is recorded and he sees it). A project that waits on answers "
-        "it did not need is stalled; a project that never asks is guessing.\n"
+        "his answer before deciding, use ask_chairman: the cadence does not hold it, it "
+        "does not block you, and it carries when you stop waiting and what you do then. A "
+        "project that waits on answers it did not need is stalled; a project that never "
+        "asks is guessing; a project holding a finished thing he has not seen, because the "
+        "slot was closed, is the worst of the three.\n"
         "- When the chairman gives you a plan order in the boardroom — cut this, reopen "
         "that, move a stage, change an estimate — EXECUTE it with directive_file citing "
         "his message, rather than asking him to press the button himself. His word is the "
@@ -222,8 +224,8 @@ def _authority_clause(cons: ConstitutionDoc) -> str:
           "A decision you hold does NOT go to him as an approval — an approval blocks "
           "on a human and carries a default-deny clock, and filing one for something "
           "he has already delegated is refused. Decide it, then tell him what you did "
-          "and why. If you want his view first, ask in the boardroom "
-          "(override='question') and keep working while you wait.\n"
+          "and why. If you want his view first, ask_chairman and keep working while "
+          "you wait.\n"
     )
 
 
@@ -241,7 +243,8 @@ def _cadence_clause(cons: ConstitutionDoc) -> str:
     return (
         f"- Unprompted boardroom status: at most every {cadence.interval_hours:g}h{window}. "
         "Posting between slots is refused. Replying to something the chairman actually said is "
-        "always allowed and is not a status. See the `chairman` block in your context for when "
+        "always allowed and is not a status. Neither is asking him something — ask_chairman "
+        "goes through at any hour. See the `chairman` block in your context for when "
         "your next slot opens.\n"
     )
 
@@ -393,15 +396,22 @@ def _chairman_state(session: Session, project: Project, agent: Agent, now) -> di
     # reply is always allowed, and it is the one post that is never a status.
     unanswered = last_chairman is not None and (last_report is None or last_chairman > last_report)
     slot = policy.next_report_slot(cadence, last_report)
-    # An open flag is not merely PERMITTED past the cadence — it is the one
-    # thing that requires a post. Every other mechanism here is a brake, which
-    # is how a CEO sitting on a red cycle with a closed slot ended up unable to
-    # raise it at all, and how one that was asked directly said "solid
-    # progress" instead.
+    # An open flag, or an ask that finished waiting, is not merely PERMITTED
+    # past the cadence — it is the one thing that REQUIRES a post. Every other
+    # mechanism here is a brake, which is how a CEO sitting on a red cycle with
+    # a closed slot ended up unable to raise it at all, and how one that was
+    # asked directly said "solid progress" instead.
+    #
+    # Asked of `policy` rather than recomputed, because this value is a promise
+    # about what the endpoint will do: the flag override lived here and was
+    # enforced nowhere, so the pack said "the cadence does not hold you here"
+    # and the post was refused anyway. A permission asserted in a prompt and
+    # denied at the gate is worse than no permission.
     from yaaf.server import flags as flag_lib
 
     unraised = flag_lib.unraised_count(session, project.id)
-    may_report = unanswered or slot is None or now >= slot or bool(unraised)
+    owes_him = policy.obligation_unmet(session, project, agent, last_report)
+    may_report = unanswered or slot is None or now >= slot or owes_him
     state = {
         "boardroom_channel_id": boardroom.id,
         "your_last_report_at": last_report.isoformat() if last_report else None,
@@ -416,6 +426,23 @@ def _chairman_state(session: Session, project: Project, agent: Agent, now) -> di
         state["window_local"] = (f"{start.strftime('%H:%M')}-{end.strftime('%H:%M')} "
                                  f"{cadence.tz.key}")
     state["unraised_flags"] = unraised
+    # Questions of your own, live or finished. A run is stateless, so without
+    # this the CEO cannot tell that it already asked — which is how the same
+    # question gets asked twice, and how a window closes with nobody acting on
+    # the default the CEO itself wrote down.
+    from yaaf.server import asks as ask_lib
+
+    state["asks"] = ask_lib.asks_for_context(session, project.id, agent.id)
+    owed = [a for a in state["asks"] if a["status"] in ask_lib.OWED_STATUSES]
+    if owed and owes_him:
+        state["note"] = (
+            f"{len(owed)} question(s) of yours are finished waiting: he answered, or the "
+            "window you named ran out and the default you wrote down now stands. Say what "
+            "you did about each one in the boardroom and close it with ask_close citing "
+            "that message. The cadence does not hold this, and an ask does not close by "
+            "going quiet."
+        )
+        return state
     if unraised:
         state["note"] = (
             f"{unraised} flag(s) the chairman has NOT been told about. The cadence does "
@@ -426,10 +453,14 @@ def _chairman_state(session: Session, project: Project, agent: Agent, now) -> di
         )
     elif cadence.enforced:
         state["note"] = (
-            "The platform enforces this: an unprompted boardroom status posted before "
-            "next_slot_at is REFUSED. Replying to an unanswered message from him is always "
-            "allowed. If may_post_status_now is false, do not write a status this run — "
-            "fold what you have into the next slot."
+            "The platform enforces this: an unprompted boardroom STATUS posted before "
+            "next_slot_at is REFUSED. Three things are not a status and are always "
+            "allowed: replying to an unanswered message from him, ask_chairman, and "
+            "saying what you did about an ask he answered or that ran out its window. "
+            "Fold a status into the next slot — but if what you are holding is a "
+            "question the next move depends on, or something finished he has not seen, "
+            "that is not a status and folding it is how a slot you were waiting for "
+            "becomes a slot nobody ever wakes you for."
             if not may_report else
             "The slot is open — if you have something worth his time, this is the run to say it."
         )

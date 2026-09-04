@@ -599,6 +599,11 @@ export interface DeskProject {
     plan: number;
     verdicts: { key: string; statement: string }[];
     commitment: { id: string; deliver_by: string; scope_count: number } | null;
+    /** Questions the CEO put to you. Not gated on the dial, unlike the three
+        above: these are decisions the CEO HOLDS and wants your read on anyway,
+        so hiding them on an autonomous project would restore the silence they
+        exist to end. Each names when it stops waiting and what happens then. */
+    asks: { id: string; title: string; answer_by: string; default_action: string }[];
   };
   evidence_7d: number;
   /** Yesterday, paired — the "burned money, proved nothing" signal. */

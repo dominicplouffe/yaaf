@@ -477,7 +477,7 @@ def test_an_owner_decision_is_refused_when_the_dial_already_granted_it(client):
     error = refused.json()["error"]
     assert "commitment_reset" in error, "the refusal must name the verb to use instead"
     assert "scope_act" in error
-    assert "boardroom" in error, "and the non-blocking way to ask anyway"
+    assert "ask_chairman" in error, "and the non-blocking way to ask anyway"
 
 
 def test_the_undelegable_kinds_still_reach_the_chairman_under_full_autonomy(client):

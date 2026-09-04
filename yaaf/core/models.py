@@ -341,6 +341,13 @@ class ApprovalStatus(enum.StrEnum):
     EXPIRED = "expired"  # timed out; constitution default decision is DENY
 
 
+class AskStatus(enum.StrEnum):
+    OPEN = "open"  # asked, and the chairman has not spoken since
+    ANSWERED = "answered"  # he replied in the boardroom
+    LAPSED = "lapsed"  # the window passed; the CEO's stated default now stands
+    CLOSED = "closed"  # the CEO acted on the answer, or on the default, and said so
+
+
 class MemoryScope(enum.StrEnum):
     PROJECT = "project"  # curated by the CEO
     TEAM = "team"        # curated by the team lead
@@ -427,6 +434,12 @@ class NoticeKind(enum.StrEnum):
     COMMITMENT_RECOVERED = "commitment_recovered"
     COMMITMENT_MET = "commitment_met"
     COMMITMENT_REVALIDATED = "commitment_revalidated"
+    # The chairman's window on a question closed without an answer. Urgent for
+    # the same reason a flag is: this notice IS the wake that makes the CEO's
+    # stated default happen. Delivered on the next scheduled anything, it is a
+    # decision announced after the moment it was supposed to be taken — and on
+    # a project whose board emptied while it waited, there is no next anything.
+    ASK_LAPSED = "ask_lapsed"
 
 
 # ── people & projects ───────────────────────────────────────────────────────────
@@ -1632,6 +1645,71 @@ class Approval(Base):
     decided_by_user_id: Mapped[str | None] = mapped_column(String(40))
     decided_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     decision_note: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class Ask(Base):
+    """A question to the chairman that the next move depends on, with a clock.
+
+    An approval is the wrong shape for this and is refused for it: it blocks on
+    a human and carries a default-deny, so filing one for a decision he already
+    delegated parks his own delegation back on his desk. The verb that refusal
+    names is asking him in the boardroom — and until this table existed, that
+    was a message and nothing else. No clock, no nag, no desk row, no state. A
+    CEO with a finished deliverable and a closed cadence slot deferred the ask
+    to a slot that never arrived, because closing the work that produced it
+    emptied the board that was the only thing still waking anybody. Six hours
+    of silence, on both sides, over a message that was written and ready.
+
+    So an ask is a row. It never blocks — the CEO keeps working, which is the
+    one property of asking that was always true and worth keeping. What is new
+    is that it cannot be silent:
+
+    * `answer_by` is a real moment, named by the CEO when it asks.
+    * `default_action` is what happens if that moment passes, written down
+      BEFORE the wait rather than reconstructed after it. A question whose
+      asker cannot say what it will do unanswered is not a question, it is a
+      deadlock with better manners.
+    * The lapse notices the CEO — urgently, because that notice is the wake.
+    * While it is OPEN the chairman sees it on his desk, so "he never answered"
+      and "he was never asked" stop looking identical from his side.
+
+    It closes the way a flag closes: by being acted on and said out loud, with
+    the boardroom message as proof. Going quiet is not a way out of one.
+    """
+
+    __tablename__ = "asks"
+    __table_args__ = (Index("ix_asks_project_status", "project_id", "status"),)
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    asked_by_agent_id: Mapped[str] = mapped_column(String(40))
+    title: Mapped[str] = mapped_column(String(300))
+    body: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(16), default=AskStatus.OPEN)
+    # The moment the CEO said it would stop waiting. Capped by the constitution
+    # so a CEO cannot grant itself a week of not deciding, nor five minutes of
+    # theatre before doing what it wanted anyway.
+    answer_by: Mapped[datetime] = mapped_column(UTCDateTime)
+    # Exactly what happens at answer_by with no answer. Required, and quoted
+    # back verbatim in the lapse notice: the CEO is held to the sentence it
+    # wrote when it still did not know which way he would go.
+    default_action: Mapped[str] = mapped_column(Text)
+    asked_in_message_id: Mapped[str] = mapped_column(String(40))
+    # He is nagged before the window closes, for the same reason an approval
+    # nags: degrading is fine, degrading silently is not.
+    nag_sent_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    answered_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    answered_in_message_id: Mapped[str | None] = mapped_column(String(40))
+    # When it actually became the CEO's to finish — his reply, or the janitor
+    # closing the window. Distinct from `answer_by`, which is only where the
+    # window was nominally drawn, and the distinction is load-bearing: the one
+    # free boardroom post an owed ask buys is spent by the CEO posting AFTER
+    # this moment, so comparing against the nominal time would hand the free
+    # post to a message written before the obligation existed.
+    lapsed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    closed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    closed_in_message_id: Mapped[str | None] = mapped_column(String(40))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 

@@ -13,7 +13,8 @@ The lines these tests hold:
     always scored against the FIRST estimate
   * no agent route exists for any of these verbs — the CEO reaches them only
     through a directive citing the chairman's own boardroom message
-  * the ask verb: override='question' passes the cadence and is recorded
+  * the ask verb: asking is ask_chairman, not an override, and the cadence
+    has never held it
 """
 
 from __future__ import annotations
@@ -368,7 +369,15 @@ def test_an_order_must_be_a_known_verb_with_its_fields(client):
 # ── the ask verb ────────────────────────────────────────────────────────────────
 
 
-def test_a_question_passes_the_cadence_and_is_recorded(client):
+def test_asking_is_not_an_override_and_the_cadence_never_held_it(client):
+    """The override existed, worked, and bought nothing.
+
+    'question' passed the cadence and left a message — no clock, no default, no
+    row on his desk. A CEO used it exactly as designed and still sat six hours
+    on a finished deliverable, because a message is not a thing anyone can be
+    woken by. So the override is gone, it names its replacement, and the
+    replacement was never a status in the first place.
+    """
     project = make_project(
         client, slug="asks",
         constitution={"chairman_report_interval_hours": 4, "timezone": "UTC"})
@@ -384,12 +393,27 @@ def test_a_question_passes_the_cadence_and_is_recorded(client):
     assert silent.status_code == 429
 
     _, token = live_token(project["id"], project["ceo_agent_id"])
-    asked = client.post("/agent/messages", headers=bearer(token),
+    stale = client.post("/agent/messages", headers=bearer(token),
                         json={"channel_id": channel, "override": "question",
                               "body": "Do you want the audit deck in French too?"})
+    assert stale.status_code == 422
+    assert "ask_chairman" in stale.text
+
+    # The verb it names goes through against the same closed slot.
+    _, token = live_token(project["id"], project["ceo_agent_id"])
+    asked = client.post("/agent/asks", headers=bearer(token), json={
+        "title": "Audit deck in French too?",
+        "body": "Costs one extra pass. Your call before we typeset.",
+        "answer_by_hours": 6,
+        "default_action": "Ship English only and offer French as a follow-up.",
+    })
     assert asked.status_code == 200, asked.text
     with db_session() as session:
         overrides = session.query(AuditLog).filter(
             AuditLog.project_id == project["id"],
             AuditLog.action == "boardroom.cadence_override").all()
-        assert [o.detail["reason"] for o in overrides] == ["question"]
+        assert overrides == [], "asking never was a break-glass claim"
+        opened = session.query(AuditLog).filter(
+            AuditLog.project_id == project["id"],
+            AuditLog.action == "ask.opened").all()
+        assert len(opened) == 1

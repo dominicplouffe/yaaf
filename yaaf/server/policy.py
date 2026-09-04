@@ -1878,13 +1878,53 @@ def check_approval_request(cons: ConstitutionDoc, kind: str) -> None:
         "would not happen. Decide it: scope_act to accept, cut, reopen, restage, "
         "reestimate or reword, commitment_reset to reset the date to the platform's "
         "projection. Every one is audited, disclosed to him in full, and reversible by "
-        "him at any time. If you genuinely want his opinion first, ask him in the "
-        "boardroom with override='question' — asking never blocks, and never stops you "
-        "deciding in the meantime. Money over the threshold, anything legally "
+        "him at any time. If you genuinely want his opinion first, ask him with "
+        "ask_chairman — it never blocks and never stops you deciding in the meantime, "
+        "and it carries the moment you stop waiting and what you do then, so the "
+        "project moves either way. Money over the threshold, anything legally "
         "ambiguous, a credential you do not have, and a step only a human can take are "
         "still his: those approval kinds are unaffected.",
         status_code=403,
     )
+
+
+def check_ask(session: Session, project: Project, agent: Agent,
+              cons: ConstitutionDoc, answer_by_hours: float) -> None:
+    """The two limits on asking: how long you may wait, and how many at once.
+
+    Neither is about whether the question is worth his time — that judgement
+    stays the CEO's, and the desk shows him how often it is exercised. These
+    bound the two ways asking stops being cheap for him: a window so long the
+    project is parked behind it, and a queue deep enough that answering becomes
+    a chore he puts off, which is the failure this whole mechanism exists to
+    make impossible.
+    """
+    from yaaf.server import asks as ask_lib
+
+    if agent.kind != AgentKind.CEO:
+        raise Refusal(
+            "The boardroom is the CEO's channel with the chairman. Put it to your CEO "
+            "in the leadership room and let it carry what needs carrying.",
+            status_code=403,
+        )
+    if answer_by_hours > cons.ask_window_hours_max:
+        raise Refusal(
+            f"{answer_by_hours:g}h is longer than the {cons.ask_window_hours_max:g}h this "
+            "constitution allows you to wait. Pick a window you can defend against the "
+            "work's own deadline — the point of naming one is that the project keeps "
+            "moving when it passes, and a window nobody would ever reach is the same as "
+            "not naming one.",
+            status_code=422,
+        )
+    open_now = ask_lib.open_count(session, project.id)
+    if open_now >= cons.max_open_asks:
+        raise Refusal(
+            f"{open_now} question(s) already waiting on the chairman, and this "
+            f"constitution allows {cons.max_open_asks}. Asking is cheap for you and "
+            "expensive for him. Wait for an answer, let a window close and act on the "
+            "default you named, or decide this one yourself and tell him what you did.",
+            status_code=429,
+        )
 
 
 def commitment_scope_frozen(
@@ -2023,7 +2063,12 @@ def check_thread_not_frozen(session: Session, thread_id: str | None) -> None:
 # limit here.
 
 DEFAULT_REPORT_INTERVAL_HOURS = 0.0  # off unless the chairman sets a cadence
-REPORT_OVERRIDES = ("blocker", "budget", "approval", "question")
+#: 'question' used to be the fourth. It is gone because it was a way past the
+#: cadence and nothing else — the same code path as 'blocker', leaving a message
+#: with no clock, no default and no row on his desk. A CEO used it correctly and
+#: still waited six hours for an answer nobody knew it was owed. Asking is now
+#: `ask_chairman`, which is not a status and never faced this gate.
+REPORT_OVERRIDES = ("blocker", "budget", "approval")
 
 
 class ReportCadence(NamedTuple):
@@ -2126,6 +2171,21 @@ def check_chairman_report(
     # again and faces the cadence.
     if last_chairman is not None and (last_ceo is None or last_chairman > last_ceo):
         return
+    # Two standing obligations to speak, each spent the same way the chairman's
+    # own open turn is: they buy the post that discharges them, not a standing
+    # exemption. Without that bound a CEO could ask one question, let it lapse,
+    # never close it, and have turned the cadence off for the life of the
+    # project — which is a worse hole than the one this whole change closes.
+    #
+    # An ask he answered, or whose window ran out: what the CEO owes now is not
+    # a status, it is what it did about the answer or in the absence of one.
+    # And an open flag, which is where "the cadence does not hold you here" has
+    # to be true — it was written into the context pack and enforced nowhere,
+    # so a CEO that read it, believed it and posted was refused anyway, and the
+    # only door left was to claim 'blocker', a different sentence about a
+    # different thing.
+    if obligation_unmet(session, project, agent, last_ceo):
+        return
     if override is not None:
         _check_report_override(session, project, agent, override)
         return
@@ -2148,13 +2208,48 @@ def check_chairman_report(
     )
 
 
+def obligation_unmet(session: Session, project: Project, agent: Agent,
+                      last_ceo: datetime | None) -> bool:
+    """Does the CEO owe the chairman a sentence it has not yet said?
+
+    An ask becomes owed the moment he answers it or its window closes; a flag
+    the moment it opens. Either buys exactly one post — the one that discharges
+    it — and it is spent by posting, the same way his own open turn is. A CEO
+    that posts and still leaves the ask unclosed or the flag unraised faces the
+    cadence again on its next status, and he can see both counts, so going
+    quiet stays visible rather than becoming free.
+    """
+    from yaaf.core.models import FlagStatus
+    from yaaf.server import asks as ask_lib
+    from yaaf.server import flags as flag_lib
+
+    moments = [ask.answered_at or ask.lapsed_at
+               for ask in ask_lib.owed(session, project.id, agent.id)]
+    moments += [flag.opened_at for flag in flag_lib.open_flags(session, project.id)
+                if flag.status == FlagStatus.OPEN]
+    moments = [m for m in moments if m is not None]
+    if not moments:
+        return False
+    return last_ceo is None or last_ceo < max(moments)
+
+
 def _check_report_override(
     session: Session, project: Project, agent: Agent, override: str
 ) -> None:
+    if override == "question":
+        raise Refusal(
+            "Asking is no longer an override. It used to be one, and it bought nothing: a "
+            "question that got past the cadence was still only a message, so a project "
+            "could sit waiting on an answer the chairman did not know he owed, on a desk "
+            "that truthfully said nothing was waiting. Use ask_chairman instead — it posts "
+            "to the boardroom, the cadence has never held it, and it carries the two things "
+            "a message cannot: when you stop waiting, and what you do then. It does not "
+            "block you; keep working while you wait.")
     if override not in REPORT_OVERRIDES:
         raise Refusal(
             f"'{override}' is not a break-glass reason. The cadence breaks for exactly "
-            f"these: {', '.join(REPORT_OVERRIDES)}.")
+            f"these: {', '.join(REPORT_OVERRIDES)}. A question is not one of them — that "
+            "is ask_chairman, and it is not a status.")
     if override == "approval":
         pending = session.execute(
             select(func.count(Approval.id)).where(
@@ -2382,8 +2477,17 @@ def awaiting_chairman(session: Session, project: Project, cons: ConstitutionDoc)
     asking for a decision he gave away.
     """
     from yaaf.core.models import Commitment, CommitmentStatus, SuccessTestKind
+    from yaaf.server import asks as ask_lib
 
-    out: dict = {"plan": [], "verdicts": [], "commitment": None}
+    out: dict = {"plan": [], "verdicts": [], "commitment": None, "asks": []}
+
+    # Not gated on the dial, unlike everything below. The other three are
+    # decisions he kept; an ask is a question his CEO chose to put to him
+    # BECAUSE it holds the decision and wants his read on it anyway. Hiding
+    # those on an autonomous project would restore the exact silence this
+    # exists to end — and the emptiness elsewhere here would go on reading as
+    # "nothing waiting" while the project waited.
+    out["asks"] = ask_lib.open_asks(session, project.id)
 
     if not ceo_holds(cons, "plan_authority"):
         # Proposed scope is not scope: the CEO may not build against it and may
