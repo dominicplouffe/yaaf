@@ -131,6 +131,26 @@ export const isLive = (p: DeskProject) => p.status === "running";
     drought taught us that a badge nobody can act on is worse than both. */
 export const needsYou = (i: Item) => i.yours === true;
 
+/** How many decisions one project is holding the chairman up on — the same
+    rows the Desk would draw for it, counted rather than rendered. Projects
+    used to answer this itself, from `pending_approvals` + `expired_bets` +
+    "is it paused", and the two pages disagreed in both directions: a paused
+    project with nothing to decide read "1 waiting on you", and its badge
+    linked to a desk that had no row for it. The desk is the definition (see
+    `isLive`: a paused project is a state, not a request), so the desk answers.
+
+    Cached on the project object itself: the counts are pure functions of the
+    row, the list is rebuilt on every poll, and the sorts here call this
+    O(n log n) times per render. */
+const NEEDS = new WeakMap<DeskProject, number>();
+export function needsYouCount(p: DeskProject): number {
+  const hit = NEEDS.get(p);
+  if (hit !== undefined) return hit;
+  const n = buildItems([p], () => {}).filter(needsYou).length;
+  NEEDS.set(p, n);
+  return n;
+}
+
 /** The foot of the desk: everything the CEO is resolving, as a count and a
     pointer, never as a row.
 

@@ -3,6 +3,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { DeskProject, DeskView, get } from "../api";
 import { usePoll } from "../hooks";
 import { AsOf, Skeleton, clip, fmtAgo, fmtUnit } from "../ui";
+import { needsYouCount } from "./Desk";
 
 export function statusBadge(status: string) {
   const cls =
@@ -22,14 +23,22 @@ function isTerminal(p: DeskProject): boolean {
   return p.status === "stopped" || p.status === "completed";
 }
 
-/** Only things with a consequence if ignored: an approval that auto-denies, a
-    bet past its kill date, a project the platform paused. The optional
-    spot-check is deliberately not counted — a card that shouts "1 waiting on
-    you" when the honest answer is "nothing is" teaches the reader to stop
-    reading the number. Terminal projects can need nothing. */
+/** Only things with a consequence if ignored, and only on a project that is
+    running: an approval that auto-denies, a bet past its kill date, a frozen
+    thread, a switch the CEO parked on the chairman. The optional spot-check is
+    deliberately not counted — a card that shouts "1 waiting on you" when the
+    honest answer is "nothing is" teaches the reader to stop reading the number.
+
+    This page does not decide any of that: the Desk does, and this asks it (see
+    `needsYouCount`). It used to count for itself and got two things wrong that
+    the chip's own link exposed — a paused project counted as one decision
+    because it was paused, and its parked approvals counted too, so a portfolio
+    with seven projects held read "12 waiting on you" and sent the chairman to
+    a desk with nothing on it. Pausing is a state, not a request; a held
+    project's approvals are held with it. Both are zero here now, as are
+    drafts' and terminals'. */
 function needsYou(p: DeskProject): number {
-  if (isTerminal(p)) return 0;
-  return p.pending_approvals.length + p.expired_bets.length + (p.status === "paused" ? 1 : 0);
+  return needsYouCount(p);
 }
 
 // ── the scopes ─────────────────────────────────────────────────────────────────
