@@ -8,10 +8,24 @@ swallowed: a broken SMTP server must never break an enforcement tick.
 
 Configure with YAAF_SMTP_HOST (+ optional YAAF_SMTP_USERNAME/PASSWORD/FROM)
 and/or YAAF_CHAIRMAN_WEBHOOK_URL (receives a JSON POST). Unconfigured = log only.
+
+A project may name its own webhook in `integrations.chairman_webhook_url`, which
+takes precedence over the app-wide one. That exists because the app-wide setting
+cannot say WHOSE notice it is carrying: with several projects on one deployment
+the receiver gets a stream of messages and no way to route them. A project-scoped
+URL also gets a signature, under `integrations.chairman_webhook_secret`, so the
+receiver can tell a real delivery from anything else that can reach the address.
+
+That secret is deliberately NOT the `webhook_secret` the inbound connectors use.
+That one authenticates senders TO yaaf; this one authenticates yaaf to a
+receiver. Different directions and different parties, so losing one must not
+hand over the other.
 """
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import logging
 import smtplib
@@ -71,13 +85,25 @@ def chairman_notify(session: Session, project: Project, subject: str, body: str)
     cfg = settings()
     email = chairman.email if chairman is not None else None
     slug = project.slug
+    # Resolved here, not in the thread: the thread never touches the database.
+    integrations = project.integrations or {}
+    hook = integrations.get("chairman_webhook_url") or cfg.chairman_webhook_url
+    # Only a project's own hook is signed. The app-wide one predates signing and
+    # has no per-project secret to sign under, so adding a header there would be
+    # a signature every receiver would have to ignore.
+    secret = (
+        integrations.get("chairman_webhook_secret")
+        if integrations.get("chairman_webhook_url")
+        else None
+    )
+    project_id = project.id
 
     def _deliver() -> None:
         try:
             if cfg.smtp_host and email:
                 _send_email(email, f"[yaaf/{slug}] {subject}", body)
-            if cfg.chairman_webhook_url:
-                _send_webhook(cfg.chairman_webhook_url, slug, subject, body)
+            if hook:
+                _send_webhook(hook, slug, subject, body, secret=secret, project_id=project_id)
         except Exception:  # pragma: no cover - best-effort by contract
             log.warning("chairman notify delivery failed for %s", slug, exc_info=True)
 
@@ -103,13 +129,28 @@ def _send_email(to: str, subject: str, body: str) -> None:
         log.warning("chairman email to %s failed", to, exc_info=True)
 
 
-def _send_webhook(url: str, project_slug: str, subject: str, body: str) -> None:
-    payload = json.dumps(
-        {"project": project_slug, "subject": subject, "text": f"*{subject}*\n{body}"}
-    ).encode()
-    req = urllib.request.Request(
-        url, data=payload, headers={"Content-Type": "application/json"}, method="POST"
-    )
+def _send_webhook(url: str, project_slug: str, subject: str, body: str,
+                  *, secret: str | None = None, project_id: str | None = None) -> None:
+    """POST the notice, signed when the project provisioned a secret.
+
+    The `text` field keeps the Slack-compatible shape the app-wide hook has
+    always sent, so an existing receiver is unaffected. `project_id` is added
+    for a receiver that has to route: a slug is the chairman's name for the
+    project and can be edited, an id cannot.
+    """
+    envelope = {"project": project_slug, "subject": subject, "text": f"*{subject}*\n{body}"}
+    if project_id:
+        envelope["project_id"] = project_id
+    payload = json.dumps(envelope).encode()
+    headers = {"Content-Type": "application/json"}
+    if secret:
+        # Over the raw body, hex, `sha256=` prefixed — computed exactly as
+        # `_require_signature` verifies an inbound one, so one convention
+        # serves both directions and a receiver can reuse yaaf's own wording.
+        headers["X-Yaaf-Signature"] = "sha256=" + hmac.new(
+            secret.encode(), payload, hashlib.sha256
+        ).hexdigest()
+    req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
     try:
         urllib.request.urlopen(req, timeout=15)
     except Exception:
