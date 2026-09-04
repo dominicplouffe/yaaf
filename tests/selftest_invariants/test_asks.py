@@ -554,3 +554,33 @@ def test_a_lapsed_ask_still_wakes_on_a_day_the_allowance_is_gone(client):
     assert "ask_lapsed" in kinds
     assert "ask_lapsed" in dispatcher.GOVERNANCE_REASON_KINDS, (
         "the reserved slice is exactly for a wake whose job is to tell him")
+
+
+def test_an_owed_ask_does_not_hide_an_unraised_flag(client):
+    """Obligations compose. They must never shadow one another.
+
+    The first cut of the ask note returned early, which swallowed the flag
+    note whole — so a CEO holding both saw only its own question, and the one
+    mechanism whose entire purpose is "deciding this is not worth his time is a
+    judgement you do not have" was the thing quietly decided for it. A brake
+    that hides an accelerator is worse than either alone.
+    """
+    from yaaf.core.models import FlagKind
+    from yaaf.server import flags
+
+    project = _project(client, slug="both")
+    _ask(client, project)
+    _lapse(project)
+    _tick(project)
+    with db_session() as session:
+        flags.open_flag(session, session.get(Project, project["id"]),
+                        FlagKind.WORK_STARVED,
+                        "2 tasks ready and the allowance is spent.",
+                        arithmetic={"claimable_tasks": 2})
+
+    _, token = live_token(project["id"], project["ceo_agent_id"], kind="chat_session")
+    chairman = client.get("/agent/context", headers=bearer(token)).json()["chairman"]
+    assert chairman["unraised_flags"] == 1
+    assert len(chairman["asks"]) == 1
+    assert "ask_close" in chairman["note"], "the ask it owes"
+    assert "flag_raise" in chairman["note"], "and the flag it has not raised"

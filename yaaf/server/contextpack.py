@@ -434,24 +434,34 @@ def _chairman_state(session: Session, project: Project, agent: Agent, now) -> di
 
     state["asks"] = ask_lib.asks_for_context(session, project.id, agent.id)
     owed = [a for a in state["asks"] if a["status"] in ask_lib.OWED_STATUSES]
+
+    # Obligations COMPOSE; they must never shadow each other. The first cut of
+    # this returned early on an owed ask, which silently swallowed the flag
+    # note — so a CEO holding both saw only the question, and the one mechanism
+    # in the platform whose entire purpose is "you do not get to decide this is
+    # not worth his time" was the thing quietly decided for it. Whatever else
+    # is true, every obligation the CEO has to speak is named in this block.
+    notes = []
     if owed and owes_him:
-        state["note"] = (
+        notes.append(
             f"{len(owed)} question(s) of yours are finished waiting: he answered, or the "
             "window you named ran out and the default you wrote down now stands. Say what "
             "you did about each one in the boardroom and close it with ask_close citing "
             "that message. The cadence does not hold this, and an ask does not close by "
             "going quiet."
         )
-        return state
     if unraised:
-        state["note"] = (
+        notes.append(
             f"{unraised} flag(s) the chairman has NOT been told about. The cadence does "
             "not hold you here — raising these is the reason this run may post. Say what "
             "tripped, quote the arithmetic, and propose what to cut or raise; then close "
             "each one with flag_raise citing the message. Deciding it is not worth his "
             "time is a judgement you do not have: he can see the count."
         )
-    elif cadence.enforced:
+    if notes:
+        state["note"] = " ".join(notes)
+        return state
+    if cadence.enforced:
         state["note"] = (
             "The platform enforces this: an unprompted boardroom STATUS posted before "
             "next_slot_at is REFUSED. Three things are not a status and are always "

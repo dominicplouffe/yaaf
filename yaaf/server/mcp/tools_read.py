@@ -448,13 +448,13 @@ def files(principal: Principal, session: Session, arguments: dict) -> dict:
     scope="read",
     description=(
         "The judgement record. view: decisions (what the CEO decided and why), reviews, "
-        "cycles, hypotheses, suggestions, memories, approvals. This is where 'how did we "
+        "cycles, hypotheses, suggestions, memories, approvals, asks. This is where 'how did we "
         "get here' is answered."
     ),
     input_schema=_schema(
         view={"type": "string",
               "enum": ["decisions", "reviews", "cycles", "hypotheses", "suggestions",
-                       "memories", "approvals"]},
+                       "memories", "approvals", "asks"]},
         limit={"type": "integer", "description": "decisions only: rows, default 20"},
     ),
     carries_agent_text=True,
@@ -470,6 +470,7 @@ def record(principal: Principal, session: Session, arguments: dict) -> dict:
             "reviews": observe.reviews, "cycles": observe.cycles,
             "hypotheses": observe.hypotheses, "suggestions": observe.suggestions,
             "memories": observe.memories, "approvals": observe.approvals,
+            "asks": observe.asks,
         }[view]
         result = _observe(handler, project_id=row.id, session=session)
         payload = _as_dict(result) if isinstance(result, dict) else {view: result}
