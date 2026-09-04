@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import json
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends
@@ -24,6 +25,8 @@ from yaaf.core.models import (
     Account,
     AgentKind,
     Approval,
+    ApprovalKind,
+    ApprovalStatus,
     AuditLog,
     Channel,
     ChannelKind,
@@ -1857,6 +1860,160 @@ def approval_list(ctx: RunContext = Depends(run_auth), session: Session = Depend
         }
         for a in rows
     ]
+
+
+# ── approved writes ─────────────────────────────────────────────────────────────
+#
+# A data source can name the tools it may be called with (`mcp_servers[].tools`).
+# Anything else is refused in the sandbox — and these two endpoints are the only
+# way past that refusal, because the rule that lets a call through has to live
+# where an agent cannot argue with it.
+#
+# The shape is one call, one approval. The chairman decides on a rendered call
+# with its literal arguments; the platform stores their fingerprint; spending
+# checks the fingerprint again and burns the approval. So an approval obtained
+# for one change cannot be replayed on a bigger one, or on a second one.
+
+
+def _arguments_digest(arguments: dict | None) -> str:
+    """The fingerprint the chairman's decision is bound to.
+
+    Canonical: sorted keys, no incidental whitespace. Computed HERE and never
+    accepted from a caller — a digest an agent supplies is a digest an agent
+    chooses.
+    """
+    canonical = json.dumps(arguments or {}, sort_keys=True, separators=(",", ":"),
+                           default=str)
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def _project_data_source(project, name: str) -> dict | None:
+    for source in (project.integrations or {}).get("mcp_servers", []):
+        if source.get("name") == name:
+            return source
+    return None
+
+
+class DataWriteRequest(BaseModel):
+    source: str = Field(min_length=1, max_length=64)
+    tool: str = Field(min_length=1, max_length=128)
+    arguments: dict = Field(default_factory=dict)
+    why: str = Field(default="", max_length=4000)
+
+
+@router.post("/data_writes")
+def data_write_request(
+    body: DataWriteRequest, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
+) -> dict:
+    """File ONE call for the chairman to approve, fingerprint and all."""
+    source = _project_data_source(ctx.project, body.source)
+    if source is None:
+        raise Refusal(
+            f"{body.source!r} is not one of this project's data sources.", status_code=404)
+    allowlist = source.get("tools")
+    if allowlist is None:
+        raise Refusal(
+            f"{body.source}.{body.tool} needs no approval — this source has no allowlist. "
+            "Call it with data_fetch.")
+    if body.tool in allowlist:
+        raise Refusal(
+            f"{body.source}.{body.tool} is already yours to call. Use data_fetch; an "
+            "approval here would put a decision on the chairman's desk that changes "
+            "nothing.")
+
+    cons = effective(session, ctx.project.id)
+    rendered = json.dumps(body.arguments or {}, indent=2, sort_keys=True, default=str)
+    row = _file_approval(
+        session, ctx, ApprovalKind.TOOL_REQUEST,
+        f"Run {body.source}.{body.tool} on your account",
+        (f"{body.why}\n\n" if body.why else "")
+        + f"This would call `{body.tool}` on your connected {body.source} account "
+          f"with exactly these arguments:\n\n```json\n"
+          f"{rendered[:4000]}\n```\n\n"
+          "Approving authorises this one call and nothing else — the arguments above "
+          "are part of what you are approving, and a different call needs a new "
+          "approval.",
+    )
+    row.grant = {"source": body.source, "tool": body.tool,
+                 "arguments_sha256": _arguments_digest(body.arguments)}
+    chairman_notify(
+        session, ctx.project,
+        f"Approve a change to your {body.source} account?",
+        f"{row.title}\n\n{row.body}",
+    )
+    return {
+        "id": row.id,
+        "expires_at": row.expires_at.isoformat(),
+        "note": (
+            f"Filed. Unanswered within {cons.approval_timeout_days} days this expires as "
+            "DENIED and you are woken to re-plan. When it is approved, call data_fetch "
+            "with approval_id and the SAME arguments — the approval is bound to them, and "
+            "it is good for one call."
+        ),
+    }
+
+
+class DataWriteSpend(BaseModel):
+    source: str
+    tool: str
+    arguments: dict = Field(default_factory=dict)
+
+
+@router.post("/data_writes/{approval_id}/spend")
+def data_write_spend(
+    approval_id: str, body: DataWriteSpend,
+    ctx: RunContext = Depends(run_auth), session: Session = Depends(db),
+) -> dict:
+    """Burn an approved grant for exactly the call it was approved for.
+
+    Every refusal here is written to be read by the agent that hit it, because
+    it arrives as its tool output — it should say what to do next, not merely
+    that something was denied.
+    """
+    approval = session.get(Approval, approval_id)
+    if approval is None or approval.project_id != ctx.project.id:
+        raise Refusal(f"{approval_id!r} is not an approval on this project.", status_code=404)
+    grant = approval.grant or {}
+    if not grant:
+        raise Refusal(
+            f"Approval {approval_id} carries no grant, so it authorises no call. File the "
+            "call with data_write_request, which records what is being approved.")
+    if approval.status != ApprovalStatus.APPROVED:
+        raise Refusal(
+            f"Approval {approval_id} is {approval.status}, not approved."
+            + (" It expired undecided, which the constitution reads as no — re-plan around"
+               " it or file it again with a reason that answers why it went unanswered."
+               if approval.status == ApprovalStatus.EXPIRED else ""),
+            status_code=409)
+    if approval.spent_at is not None:
+        raise Refusal(
+            f"Approval {approval_id} was already spent at "
+            f"{approval.spent_at.isoformat()}. One approval buys one call — file another.",
+            status_code=409)
+    if grant.get("source") != body.source or grant.get("tool") != body.tool:
+        raise Refusal(
+            f"Approval {approval_id} authorises {grant.get('source')}.{grant.get('tool')}, "
+            f"not {body.source}.{body.tool}.", status_code=409)
+    if grant.get("arguments_sha256") != _arguments_digest(body.arguments):
+        raise Refusal(
+            f"These are not the arguments approval {approval_id} was approved for. The "
+            "chairman decided on a specific call, so changing the arguments voids it — "
+            "file the call you actually intend with data_write_request.", status_code=409)
+
+    approval.spent_at = utcnow()
+    session.add(
+        AuditLog(
+            id=ids.new_id(ids.AUDIT),
+            project_id=approval.project_id,
+            actor=f"agent:{ctx.agent.id}",
+            action="data_write.spend",
+            entity="approval",
+            entity_id=approval.id,
+            detail={"source": body.source, "tool": body.tool,
+                    "arguments_sha256": grant.get("arguments_sha256")},
+        )
+    )
+    return {"id": approval.id, "spent": True}
 
 
 class SpendIn(BaseModel):

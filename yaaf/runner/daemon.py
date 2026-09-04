@@ -290,6 +290,10 @@ def _merge_project_data_sources(session: Session, project: Project, role_version
                     # writes to a workspace file); the sandbox never mounts them
                     # as tools, so their rows cannot enter a model's context.
                     "access": source.get("access", "inline")}
+            if source.get("tools") is not None:
+                # The allowlist travels with the source, so the sandbox refuses
+                # an ungranted tool without asking this process anything.
+                spec["tools"] = list(source["tools"])
             if source.get("bearer_secret"):
                 spec["bearer_env"] = _env_var_name(source["bearer_secret"])
             specs.append(spec)
