@@ -231,6 +231,29 @@ button.eye:hover { color: var(--ink); }
 .msg .who { font-size: 11px; color: var(--muted); margin-bottom: 3px; }
 .msg .body { word-break: break-word; }
 .msg .when { font-size: 10px; color: var(--muted); margin-top: 4px; text-align: right; }
+/* The head of the scroller: the sentinel that pulls older messages in, and the
+   cap that says there is nothing above it. Both are quiet — the reader should
+   be reading the conversation, not the paging. */
+.chat-earlier, .chat-start {
+  align-self: center; font-size: 11px; color: var(--muted);
+  background: none; border: 0; padding: 4px 8px;
+}
+.chat-earlier { cursor: pointer; text-decoration: underline dotted; }
+.chat-earlier:disabled { cursor: default; text-decoration: none; opacity: 0.7; }
+.chat-day {
+  align-self: stretch; text-align: center; font-size: 11px; color: var(--muted);
+  margin: 4px 0; border-top: 1px solid var(--border); line-height: 0;
+}
+.chat-day span { background: var(--page); padding: 0 10px; }
+/* "Jump to latest", over the foot of the chat. Only drawn for a reader who has
+   scrolled away from the live end. */
+.chat-wrap { position: relative; }
+.chat-jump {
+  position: absolute; right: 16px; bottom: 14px; z-index: 2;
+  font-size: 12px; padding: 5px 11px; border-radius: 999px; cursor: pointer;
+  background: var(--accent); color: #fff; border: 1px solid var(--border);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+}
 .msg.typing .body { display: flex; gap: 4px; padding: 4px 0; }
 .typing-dot {
   width: 7px; height: 7px; border-radius: 50%; background: var(--muted);
