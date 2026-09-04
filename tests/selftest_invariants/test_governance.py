@@ -411,6 +411,30 @@ def test_every_rule_describes_itself(client):
     assert {f["theme"] for f in fields} == set(THEME_ORDER)
 
 
+def test_every_rule_is_written_down_where_a_chairman_reads_about_them():
+    """GOVERNANCE.md is the only place a rule is explained at length, and it is
+    hand-kept, so it rots exactly the way the settings screen's hand-kept field
+    list did — silently, and toward saying less than the truth. It had drifted
+    five rules and one whole count behind before this test existed: `stakes`
+    and `hard_stop_multiple` shipped undocumented, and the page still claimed
+    forty-nine.
+
+    Checked as prose rather than as a table so a rule can be explained wherever
+    it belongs; all this refuses is a rule nobody wrote down at all."""
+    from pathlib import Path
+
+    from yaaf.core.constitution import ConstitutionDoc
+
+    governance = Path("docs/GOVERNANCE.md").read_text()
+    rules = list(ConstitutionDoc.model_fields)
+    undocumented = [name for name in rules if f"`{name}`" not in governance]
+    assert not undocumented, f"add these to docs/GOVERNANCE.md: {undocumented}"
+    # And the count in its opening line, which is the first thing that goes
+    # stale and the one a reader trusts without checking.
+    assert f"constitution**: {len(rules)} numbers" in governance, (
+        f"docs/GOVERNANCE.md must say {len(rules)} rules")
+
+
 def test_string_rules_with_a_fixed_set_offer_it(client):
     """A rule whose validator accepts four words should not be a free text box.
     The choices ride the schema so the editor draws a menu, and the validator

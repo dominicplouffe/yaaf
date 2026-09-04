@@ -204,7 +204,16 @@ def rehearse(principal: Principal, session: Session, arguments: dict) -> dict:
         "CEO accepts its own plan, signs the platform's projected date and judges its "
         "own unverifiable closes, all audited and all reversible. Set the five Autonomy "
         "rules in `spec.constitution` to hold those verbs yourself — the preview names "
-        "which dial you are about to get."
+        "which dial you are about to get. "
+        "Two rules decide how good the work will be, and silence on them is also an "
+        "answer. `stakes` (low|normal|high) buys money AND craft: at high, the seats "
+        "that write and check the deliverable are hired on the strongest model at the "
+        "deepest reasoning rather than on whatever the shared role library says. "
+        "`deliverable_review` set to 'independent_read' means the work is read by an "
+        "agent that did not write it — and a roster asking for that with no seat in "
+        "the `challenge` discipline is refused here, not quietly ignored. Say which "
+        "you chose and what it costs; there is no card in this conversation to say it "
+        "for you."
     ),
     input_schema={
         "type": "object",

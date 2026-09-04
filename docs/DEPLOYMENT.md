@@ -537,6 +537,45 @@ mkdir -p backups && (cd deploy && docker compose exec -T db pg_dump -U yaaf yaaf
 Pre-1.0: read the commit log before upgrading a deployment with running
 projects — APIs are still moving.
 
+#### What "the bar" release does to projects that already exist
+
+Rehearsed rather than reasoned about: a project was created on the previous
+commit, the migrations were applied over it, and the answers below are what
+that project actually did afterwards. Migration `0026` adds one nullable
+column and backfills nothing.
+
+**Nothing is re-hired.** The new craft dial (`stakes: high` buying a stronger
+model and deeper reasoning for the seats that produce or check the deliverable)
+is applied *at hire*, so it never reaches back into a roster that already
+exists. A project that had `stakes: high` set before the upgrade came out the
+other side with every seat still on the model its role names. `deliverable_review`
+reads as `none` for any constitution that never mentioned it.
+
+**Three things do change, and only the first needs no action from you:**
+
+- **Agents are told something different on their next run.** System prompts are
+  rebuilt every wake, so the house style's split lands immediately: the
+  length rule now applies to messages and chat, and a deliverable is aimed at
+  the goal's beneficiary and standard instead of at brevity. This is the one
+  change with no opt-in, and it is the point of the release — a blog writer
+  used to read "a longer answer is not a better one" before it read its task.
+- **The role library does not reach running teams.** A team keeps the role
+  version it was hired on, so the rewritten `writer`, `researcher` and
+  `marketer` prompts and the new `editor` role apply to **new projects only**.
+  To adopt them on a project that already exists, use *adopt latest role
+  version* on the team (`POST /admin/teams/{id}/repin`) — per team, and
+  deliberately, which is the same door the drift warning has always pointed at.
+- **A team added to a `stakes: high` project is hired on the new terms.** It
+  will run on a stronger model than its existing siblings, and cost more per
+  run than they do. `add_team` also stopped dropping the per-employee wakes and
+  model overrides its own spec carried, which it had been doing silently.
+
+**One thing that can start refusing.** `effort` is now a closed set
+(`low|medium|high|xhigh|max`) rather than free text, on roles and on the new
+per-seat override. Re-seeding a role whose effort is spelled anything else now
+returns 422 instead of storing a value that would have killed the run inside
+the sandbox. Roles already in the database are not re-validated.
+
 ### Scaling
 
 Add runners, not API servers. Runs are leased with a TTL heartbeat, so several

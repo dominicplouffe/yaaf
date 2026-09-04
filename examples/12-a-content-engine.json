@@ -1,0 +1,84 @@
+{
+  "yaaf_bundle": 1,
+  "kind": "project_setup",
+  "source_slug": "content-engine",
+  "exported_at": "2026-09-03T00:00:00+00:00",
+  "values_included": false,
+  "project": {
+    "slug": "content-engine",
+    "name": "A Content Engine",
+    "goal": "Publish posts that earn a reader, on ONE SUBJECT I ACTUALLY KNOW SOMETHING ABOUT — replace this with yours, and name the site they go to. Set the WordPress credential in Settings before starting; without it the posts are drafts in the workspace and nothing reaches the world.\n\nTHE FINISH LINE is a response from outside this project: a link to a post from a domain we do not control, or a reply, comment or email from a named person who is not the chairman. One of those, traced to a specific post. Analytics on our own site is a diary entry — it tells us the page was served, not that anybody wanted it — so it is evidence about traffic and never the finish line.\n\nTHE READER is the person who typed the question into a search box at the moment they needed the answer, not the chairman who commissioned the desk. They are mid-task and slightly annoyed. A post that satisfies the brief and leaves them still looking has failed, however well it reads here.\n\nTHE STANDARD is what a respected publication in this subject actually covers when it treats the question seriously — NAME THE ONE YOU WOULD BE COMPARED TO. The instructions in this goal are a subset of that standard, not the whole of it. Where the practice covers something this brief does not mention, it is in scope, and the omission is mine to have corrected rather than my instruction to obey.\n\nWHAT DOES NOT COUNT: posts published, words written, impressions, keyword rankings, an \"SEO score\", time-on-page, and the chairman saying he liked it. Every one of those can go up for a month while nobody outside has read a thing, and a desk under pressure will reach for them. They are not the grade.\n\nMETHOD, and these are rules rather than preferences: one post answers one question a real person actually asks — find the question before choosing the topic. Research it before writing a sentence; every factual claim carries a source somebody opened, or the claim comes out. Nothing reaches WordPress until the editor has read it and each of their findings is either fixed or answered in writing — a post the writer alone was happy with is a post nobody outside this desk has read. Where a claim is contested, say so and give the strongest version of the other side.\n\nA BIAS, NOT A RULE: prefer one post that goes deeper on a single question than five that survey a field. Depth is what a reader cannot get from the first page of results, and the first page of results is our actual competitor. If the evidence says short and frequent is what earns readers in this subject, take that and argue for it — the ranking is on what responds, not on my taste.\n\nTHE QUALITY BAR: every post must contain at least one thing a reader could not have assembled from the first page of search results in ten minutes — a number we worked out, a source nobody else quotes, a question everyone else skips, or a plainly stated limit on what is actually known. A post without that is competent filler, and competent filler is worse than no post: it costs the same, teaches us nothing about whether anybody wants this, and is the version that gets no second visit. The editor owns this bar. It constrains ambition rather than licensing gold-plating — it is a reason to publish less, never a reason to never publish.\n\nWHAT I WILL AND WILL NOT DO: I press publish on a WordPress draft, and that is my approval. I will not write posts, will not supply the angle, and will not distribute anything — I will not post about it, will not email my contacts, and will not introduce you to anyone. Distribution is this desk's job. Ask me only for what you cannot get yourselves.\n\nMONEY IS SHORT ON PURPOSE while we are still finding out whether anyone wants this. A desk that spends its budget on volume before it has one outside response has learned nothing expensively. The cap goes up at a review once a post has earned a response we can point to.\n\nIF NOTHING RESPONDS: after three cycles with no outside response, the deliverable is an honest account, not another post — which questions we chose and why, what we published, what the evidence says about whether this subject has readers we can reach, and what would have to be different. That is a real result and I will read it as one. What I will not accept is a quarter of posts nobody outside this project ever read, reported as progress because the queue kept moving.",
+    "billing_mode": "api_key",
+    "mode": "operate",
+    "controlled_domains": [
+      "your-site.example"
+    ],
+    "deadline": null,
+    "chairman_email": null,
+    "constitution": {
+      "chairman_report_interval_hours": 4.0,
+      "chairman_report_window_local": "08:00-20:00",
+      "timezone": "America/New_York",
+      "queue_ceiling": 6,
+      "monthly_usd_cap": 150,
+      "approval_threshold_usd": 25,
+      "drought_hours": 168,
+      "external_ratio_min": 0.5,
+      "require_evidence_verification": true,
+      "stakes": "normal",
+      "cycle_frequency": "weekly",
+      "cycle_day": 0,
+      "review_interval_days": 14,
+      "runs_per_project_per_day": 40,
+      "deliverable_review": "independent_read"
+    },
+    "integrations": {
+      "runtime": "agent_sdk"
+    },
+    "billing_secret_name": "anthropic-api-key",
+    "ceo_role_slug": "ceo",
+    "ceo_name": "CEO",
+    "ceo_model_override": null,
+    "teams": [
+      {
+        "role_slug": "researcher",
+        "name": "Research",
+        "employees": [
+          "Rey"
+        ]
+      },
+      {
+        "role_slug": "blog-writer",
+        "name": "Editorial",
+        "employees": [
+          "Ada"
+        ]
+      },
+      {
+        "role_slug": "editor",
+        "name": "Review",
+        "employees": [
+          "Juno"
+        ]
+      },
+      {
+        "role_slug": "marketer",
+        "name": "Growth",
+        "employees": [
+          "Sol"
+        ]
+      }
+    ],
+    "solo": false
+  },
+  "roles": [],
+  "secrets": [
+    {
+      "name": "wordpress",
+      "role_scopes": [
+        "blog-writer"
+      ],
+      "kind": "service"
+    }
+  ]
+}

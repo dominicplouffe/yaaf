@@ -55,7 +55,8 @@ def test_bundle_carries_design_not_plumbing(client):
     assert bundle["values_included"] is False
     assert spec["teams"] == [{"role_slug": "worker", "name": "Alpha",
                               "employees": ["Lead", "Emp2"], "lead": "Lead",
-                              "schedules": {}, "model_overrides": {}}]
+                              "schedules": {}, "model_overrides": {},
+                              "effort_overrides": {}}]
     assert spec["constitution"]["queue_ceiling"] == 5
     assert spec["ceo_role_slug"] == "ceo"
     assert spec["solo"] is False
@@ -121,7 +122,8 @@ def test_solo_bundle_round_trips(client):
     assert bundle["project"]["solo"] is True
     assert bundle["project"]["teams"] == [{"role_slug": "worker", "name": "Solo",
                                            "employees": [], "lead": None,
-                                           "schedules": {}, "model_overrides": {}}]
+                                           "schedules": {}, "model_overrides": {},
+                                           "effort_overrides": {}}]
 
     created = client.post("/admin/projects", json={
         **bundle["project"], "slug": "solo-twin", "chairman_email": "chair@example.com",
@@ -185,7 +187,8 @@ def test_full_backup_carries_every_value(client):
 def test_full_backup_round_trips_the_people_and_the_wiring(client):
     """The half of the design the old export dropped: the repo evidence
     attests against, the chairman's identity, and the people's settings —
-    daily wakes and model overrides — must survive export → create."""
+    daily wakes, model overrides and effort overrides — must survive
+    export → create."""
     project = make_project(client, start=False)
     ceo_id = project["ceo_agent_id"]
     emp_id = agent_by_name(project, "Emp2")
@@ -196,6 +199,8 @@ def test_full_backup_round_trips_the_people_and_the_wiring(client):
     with db_session() as session:
         session.get(Project, project["id"]).github_repo = "acme/site"
         session.get(Agent, emp_id).model_override = "claude-haiku-4-5-20251001"
+        session.get(Agent, emp_id).effort_override = "xhigh"
+        session.get(Agent, ceo_id).effort_override = "max"
 
     bundle = _export(client, project["id"], include_values=True)
     spec = bundle["project"]
@@ -204,6 +209,8 @@ def test_full_backup_round_trips_the_people_and_the_wiring(client):
     assert spec["ceo_daily_at"] == "08:30"
     assert spec["teams"][0]["schedules"] == {"Emp2": "17:45"}
     assert spec["teams"][0]["model_overrides"] == {"Emp2": "claude-haiku-4-5-20251001"}
+    assert spec["teams"][0]["effort_overrides"] == {"Emp2": "xhigh"}
+    assert spec["ceo_effort_override"] == "max"
 
     created = client.post("/admin/projects", json={**spec, "slug": "restored"},
                           headers=ADMIN)
@@ -214,9 +221,11 @@ def test_full_backup_round_trips_the_people_and_the_wiring(client):
         ceo = session.query(Agent).filter_by(project_id=restored_id,
                                              kind=AgentKind.CEO).one()
         assert ceo.daily_at == "08:30"
+        assert ceo.effort_override == "max"
         emp = session.query(Agent).filter_by(project_id=restored_id, name="Emp2").one()
         assert emp.daily_at == "17:45"
         assert emp.model_override == "claude-haiku-4-5-20251001"
+        assert emp.effort_override == "xhigh"
 
 
 def test_people_settings_for_unknown_names_are_refused(client):

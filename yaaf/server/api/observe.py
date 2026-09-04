@@ -12,7 +12,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.responses import PlainTextResponse
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from yaaf.core import artifacts
@@ -968,18 +968,55 @@ def channel_typing(channel_id: str) -> dict:
 
 
 @router.get("/channels/{channel_id}/messages")
-def channel_messages(channel_id: str, limit: int = 100, session: Session = Depends(db)) -> list[dict]:
-    channel = session.get(Channel, channel_id)
-    agents = ({} if channel is None
-              else _name_maps(session, channel.project_id)[0])
+def channel_messages(channel_id: str, limit: int = 100, before: str | None = None,
+                     session: Session = Depends(db)) -> list[dict]:
+    """The newest `limit` messages in a channel, oldest first — and, with
+    `before`, the page of `limit` that sits immediately older than that message.
+
+    The cursor is a message id rather than a timestamp, and that is a decision
+    rather than a convenience. `created_at` is not unique: two rows written in
+    the same instant are ordinary here, and a timestamp cursor then has to pick
+    between `<` (which drops the tied sibling — a message gone from the chat
+    forever) and `<=` (which hands the boundary row back every time, and never
+    advances at all through a tie group bigger than a page). An id is exact, it
+    round-trips as an opaque string, and the caller already holds it.
+
+    So the order is `(created_at, id)` in both directions, in the cursor and out
+    of it. Ordering by the timestamp alone would let two same-instant rows swap
+    places between one page and the next, which shows up as a message the reader
+    sees twice or never — precisely at the seam they just scrolled across."""
+    query = select(Message).where(Message.channel_id == channel_id)
+    if before is not None:
+        anchor = session.get(Message, before)
+        # A cursor from another channel is refused rather than ignored. The
+        # query is channel-scoped either way, so nothing leaks; what a silent
+        # fallback would do is return the *newest* page to a caller asking for
+        # an older one, so "load older" appears to work while prepending
+        # duplicates it already has.
+        if anchor is None or anchor.channel_id != channel_id:
+            raise HTTPException(status_code=400, detail="unknown cursor")
+        query = query.where(
+            or_(
+                Message.created_at < anchor.created_at,
+                and_(Message.created_at == anchor.created_at, Message.id < anchor.id),
+            )
+        )
     rows = list(
         session.execute(
-            select(Message)
-            .where(Message.channel_id == channel_id)
-            .order_by(Message.created_at.desc())
+            query.order_by(Message.created_at.desc(), Message.id.desc())
             .limit(min(limit, 500))
         ).scalars()
     )[::-1]
+    # Names for the senders on this page only. This used to be _name_maps,
+    # which reads every agent *and* every team in the project and throws the
+    # teams away — two full scans on an endpoint the boardroom polls every two
+    # seconds.
+    sender_ids = {m.sender_agent_id for m in rows if m.sender_agent_id}
+    agents = (
+        {a.id: a.name for a in session.execute(
+            select(Agent.id, Agent.name).where(Agent.id.in_(sender_ids))).all()}
+        if sender_ids else {}
+    )
     return [
         {
             "id": m.id, "from_agent": m.sender_agent_id, "from_user": m.sender_user_id,

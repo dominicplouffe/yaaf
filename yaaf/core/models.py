@@ -97,6 +97,11 @@ class TaskStatus(enum.StrEnum):
     READY = "ready"
     CLAIMED = "claimed"
     CHECKING = "checking"   # platform is executing a command-type success test
+    # Finished by its claimant and waiting on somebody who did not write it.
+    # Only observable-test tasks land here, and only where the constitution
+    # asks for an independent read: a command test is already judged by the
+    # platform, while an observable used to close on the author's own word.
+    REVIEW = "review"
     BLOCKED = "blocked"
     DONE = "done"
     KILLED = "killed"
@@ -648,7 +653,17 @@ class Agent(Base):
     # Pinned role for the CEO; employees inherit their team's pinned role version.
     role_version_id: Mapped[str | None] = mapped_column(String(40))
     status: Mapped[str] = mapped_column(String(16), default=AgentStatus.ACTIVE)
+    # This seat's model and reasoning effort, when the role library's answer is
+    # not the right one for this project. Both null means "whatever the role
+    # says", which is the case for almost every seat.
+    #
+    # `effort_override` arrived late and its absence was load-bearing: a
+    # project could buy a better model for the seat whose output the chairman
+    # actually reads and could not buy it more thinking, because effort was
+    # readable only from the role version every project on the install shares.
+    # Raising it in the library would have raised it everywhere.
     model_override: Mapped[str | None] = mapped_column(String(64))
+    effort_override: Mapped[str | None] = mapped_column(String(16))
     # Per-agent daily wake, "HH:MM" in the constitution's timezone (stage E).
     # The CEO's standup generalized: a support agent that checks the inbox
     # every morning, a metrics agent that reports at close. Chairman-set;

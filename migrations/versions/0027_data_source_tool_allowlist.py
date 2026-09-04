@@ -12,8 +12,8 @@ and a `spent_at` that makes it good for exactly one call.
 Both are nullable with no default, so every approval that already exists reads as
 "carries no grant" — which is what an approval filed as prose has always been.
 
-Revision ID: 0026
-Revises: 0025
+Revision ID: 0027
+Revises: 0026
 """
 
 from __future__ import annotations
@@ -23,8 +23,8 @@ from alembic import op
 
 from yaaf.core.migration_ops import add_column_if_missing
 
-revision = "0026"
-down_revision = "0025"
+revision = "0027"
+down_revision = "0026"
 branch_labels = None
 depends_on = None
 

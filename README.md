@@ -11,11 +11,12 @@ Say this in the Claude window you already have open:
 In one sitting, Claude:
 
 1. **Drafts the crew.** Goal, teams, who's on each, budget, deadline — hiring
-   from a library of 32 job descriptions and 14 pre-built crews rather than
+   from a library of 34 job descriptions and 14 pre-built crews rather than
    inventing people.
-2. **Gets argued with.** The platform grades the draft against the eight things
-   a goal has to contain to work — a finish line, what explicitly *doesn't*
-   count, what you'll refuse to do. Free, and before anything exists.
+2. **Gets argued with.** The platform grades the draft against the ten things
+   a goal has to contain to work — a finish line, who the work has to be right
+   for, the standard it is judged against, what explicitly *doesn't* count,
+   what you'll refuse to do. Free, and before anything exists.
 3. **Runs a dress rehearsal.** The whole project simulated on scripted agents
    for $0: where it would stall, what it would cost, how often it would stop and
    wait for you.

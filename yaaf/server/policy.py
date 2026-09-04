@@ -26,6 +26,7 @@ Rules enforced here (constitution reference in parentheses):
 from __future__ import annotations
 
 import logging
+import re
 from datetime import UTC, datetime, time, timedelta
 from typing import NamedTuple
 from zoneinfo import ZoneInfo
@@ -84,7 +85,8 @@ from yaaf.core.models import (
 
 log = logging.getLogger("yaaf.policy")
 
-OPEN_TASK_STATUSES = (TaskStatus.READY, TaskStatus.CLAIMED, TaskStatus.CHECKING, TaskStatus.BLOCKED)
+OPEN_TASK_STATUSES = (TaskStatus.READY, TaskStatus.CLAIMED, TaskStatus.CHECKING,
+                      TaskStatus.REVIEW, TaskStatus.BLOCKED)
 
 
 class Refusal(Exception):
@@ -665,7 +667,10 @@ def check_task_claim(session: Session, project: Project, agent: Agent, task: Tas
     already = session.execute(
         select(func.count(Task.id)).where(
             Task.claimed_by_agent_id == agent.id,
-            Task.status.in_([TaskStatus.CLAIMED, TaskStatus.CHECKING]),
+            # REVIEW counts: the work is finished but still this agent's, and a
+            # return hands it straight back. Without it the slot frees on
+            # completion and a returned task lands on somebody already holding one.
+            Task.status.in_([TaskStatus.CLAIMED, TaskStatus.CHECKING, TaskStatus.REVIEW]),
         )
     ).scalar_one()
     if already > 0:
@@ -702,6 +707,7 @@ def check_task_complete(
             "Completion requires observed evidence: what you ran or looked at and what you "
             "actually saw. 'Done' is not evidence. Quote the output."
         )
+    check_search_record(session, project, task, evidence)
     open_subtasks = session.execute(
         select(func.count(Task.id)).where(
             Task.parent_task_id == task.id, Task.status.in_(OPEN_TASK_STATUSES)
@@ -713,6 +719,159 @@ def check_task_complete(
             "when its assignments are done or killed — not before.",
             status_code=409,
         )
+
+
+#: The discipline whose job is reading somebody else's work and disagreeing.
+REVIEW_CATEGORY = "challenge"
+
+
+def review_seats(session: Session, project_id: str) -> list[Agent]:
+    """Agents on this project whose role is a reviewing one.
+
+    Ordered, and callers depend on it: the dispatcher picks the first eligible
+    seat as the one seat woken for a given task, so an unordered result would
+    wake a different reviewer on every tick and pay for each of them.
+    """
+    from yaaf.core.models import Role, RoleVersion
+
+    return list(session.execute(
+        select(Agent)
+        .join(Team, Team.id == Agent.team_id)
+        .join(RoleVersion, RoleVersion.id == Team.role_version_id)
+        .join(Role, Role.id == RoleVersion.role_id)
+        .where(Agent.project_id == project_id,
+               Agent.status == AgentStatus.ACTIVE,
+               Role.category == REVIEW_CATEGORY)
+        .order_by(Agent.id)
+    ).scalars())
+
+
+def is_review_seat(session: Session, agent: Agent) -> bool:
+    return agent.id in {seat.id for seat in review_seats(session, agent.project_id)}
+
+
+def review_is_owed(session: Session, project: Project, task: Task) -> bool:
+    """Whether this finished task waits for a second pair of eyes.
+
+    Only observable tests. A command test is already judged by the platform
+    running it, so a reviewer would be a second opinion about an exit code;
+    an observable is the one that used to close on the author's own word.
+
+    And only where somebody can actually give the read. Creation refuses a
+    roster that asks for one and hires nobody, but a project can lose its
+    reviewer afterwards — an agent paused, a role refiled — and a task stuck
+    in REVIEW forever would be worse than the self-report it replaced.
+    """
+    if task.success_test.get("type") != SuccessTestKind.OBSERVABLE:
+        return False
+    if effective(session, project.id).deliverable_review != "independent_read":
+        return False
+    return any(agent.id != task.claimed_by_agent_id
+               for agent in review_seats(session, project.id))
+
+
+def check_task_review(
+    session: Session, project: Project, agent: Agent, task: Task
+) -> None:
+    require_project_running(project)
+    if task.status != TaskStatus.REVIEW:
+        raise Refusal(
+            f"Task {task.id} is {task.status}; only work waiting on a read can be "
+            "reviewed.", status_code=409)
+    if task.claimed_by_agent_id == agent.id:
+        raise Refusal(
+            "You wrote this. The whole value of the read is that somebody who did "
+            "not write it looked at it — reviewing your own work is the thing this "
+            "state exists to prevent.", status_code=403)
+    if agent.id not in {seat.id for seat in review_seats(session, project.id)}:
+        raise Refusal(
+            "Only a reviewing seat closes a read. Your role is not in the "
+            f"'{REVIEW_CATEGORY}' discipline, so this is not yours to sign off — "
+            "say what you think in the team room instead.", status_code=403)
+
+
+def notice_review_returned(
+    session: Session, task: Task, reviewer: Agent, notes: str, *, blocked: bool = False
+) -> None:
+    """Tell the author, in the reviewer's own words.
+
+    A returned task goes back to CLAIMED and would otherwise look to its
+    claimant exactly like a task it had already finished — the one thing that
+    would make the second pass useless.
+    """
+    from yaaf.core.models import Notice, NoticeKind
+
+    session.add(Notice(
+        id=ids.new_id(ids.NOTICE),
+        project_id=task.project_id,
+        agent_id=task.claimed_by_agent_id,
+        kind=NoticeKind.TASK_CHECK_FAILED,
+        body=(f"{reviewer.name} read your finished work on \"{task.title}\" and sent "
+              f"it back. This is ordinary, not an escalation.\n\n{notes}\n\n"
+              + ("Fix what they named, or say in your team room why you disagree, "
+                 f"then complete the task again. ({task.id})" if not blocked else
+                 f"That is {task.check_failures} returns, so the task is BLOCKED "
+                 "and now "
+                 "belongs to whoever planned it. Do not re-claim it; say in your "
+                 f"team room where you and {reviewer.name} disagree. ({task.id})")),
+    ))
+
+
+#: What a search record has to name. Not a format — three ideas, in whatever
+#: words the agent uses. "Empty" is the load-bearing one: it is what separates
+#: a question that was investigated from one that was summarised.
+_SEARCH_RECORD_HINTS = (
+    ("looked for", "searched for", "went looking", "set out to"),
+    ("looked in", "searched", "sources", "checked", "read", "fetched"),
+    ("empty", "nothing", "could not find", "no result", "not there",
+     "found none", "turned up nothing", "unanswered", "no source"),
+)
+
+#: Matched on word boundaries, not as substrings. The middle group is the
+#: reason: "read" is inside "already", "ready" and "reader", so as a substring
+#: it matched almost any completion note ever written and the middle third of
+#: the floor was free. A multi-word phrase still matches across whitespace.
+_SEARCH_RECORD_PATTERNS = tuple(
+    tuple(re.compile(r"\b" + r"\s+".join(re.escape(w) for w in phrase.split()) + r"\b")
+          for phrase in group)
+    for group in _SEARCH_RECORD_HINTS
+)
+
+
+def check_search_record(
+    session: Session, project: Project, task: Task, evidence: str
+) -> None:
+    """Research that says what it did NOT find, or it does not close.
+
+    The alternative floor — a minimum number of distinct cited domains — is
+    satisfied by fetching three pages and citing them whether or not a claim
+    derives from any of them. That buys a citation ritual which passes the
+    gate and reads as rigour, and it is worse than nothing because it is
+    indistinguishable from the real thing.
+
+    A search record is unverifiable: the platform cannot confirm a search
+    happened. But it is not gameable in a way that *resembles compliance* — a
+    thin one reads as thin, to the reviewer and to the chairman — and that is
+    the more useful property here. So this checks that the three ideas are
+    present at all, and leaves whether they are any good to the person reading
+    it. A keyword floor is a floor, not a judgement.
+    """
+    if not task.produces_external_evidence:
+        return
+    if not effective(session, project.id).require_search_record:
+        return
+    said = (evidence or "").lower()
+    if all(any(pattern.search(said) for pattern in group)
+           for group in _SEARCH_RECORD_PATTERNS):
+        return
+    raise Refusal(
+        "This task produces evidence, and its completion carries no search record. "
+        "Say what you went looking for, where you looked, and what came back EMPTY "
+        "— the last one is the half that does the work. A question you could not "
+        "answer, a figure everyone cites to one origin, a source that should exist "
+        "and does not: those are findings, and they are invisible unless you write "
+        "them down. Without them a shallow pass and a deep one look identical."
+    )
 
 
 def check_task_kill(session: Session, agent: Agent, task: Task) -> None:
@@ -1245,6 +1404,24 @@ def estimate_bias(session: Session, project_id: str) -> tuple[float, dict]:
         "actual": actual,
         "multiplier": round(ratio, 2),
     }
+
+
+def avg_usd_per_run_box(session: Session) -> float | None:
+    """What a run has actually cost on this install, across every project.
+
+    For the one question asked before a project exists: the new-project form
+    tells the chairman what a run has to average for his cap to hold, and that
+    sentence is only worth reading beside a number from a bill he has already
+    seen. None when there is not enough priced history to be honest — a fresh
+    box says nothing rather than guessing, the same refusal
+    :func:`affordable_runs` makes under subscription billing.
+    """
+    average, count = session.execute(
+        select(func.avg(Run.cost_usd), func.count(Run.id)).where(
+            Run.cost_usd.is_not(None), Run.cost_usd > 0
+        )
+    ).one()
+    return float(average) if count and count >= MIN_PRICED_RUNS and average else None
 
 
 def avg_usd_per_run(session: Session, project_id: str) -> float | None:

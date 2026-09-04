@@ -17,6 +17,7 @@ import {
 } from "../datasource";
 import { CeoPicker, HirePanel, needsOf, roughMonthly } from "../roles";
 import { SecretInput } from "../ui";
+import type { FounderStatus } from "./StartProject";
 
 interface TeamDraft {
   role_slug: string;
@@ -81,27 +82,51 @@ const AUTONOMY_PRESETS = [
       capability_authority: "chairman" } },
 ] as const;
 
-// How the project runs day to day: pace, money, proof. A preset is nothing
-// but a bundle of ordinary constitution numbers — picking one fills the
-// fields below, every field stays editable here and later in Settings →
-// Rules in force. Deliberately orthogonal to the authority presets above:
-// these never touch who holds the verbs.
+// How the project runs day to day: pace, money, proof — and, since the bar
+// landed, how finished the work has to be. A preset is nothing but a bundle of
+// ordinary constitution numbers — picking one fills the fields below, every
+// field stays editable here and later in Settings → Rules in force.
+// Deliberately orthogonal to the authority presets above: these never touch
+// who holds the verbs.
+//
+// Two things here are not arbitrary. "Full send" used to say "as fast as
+// possible", which made the only card a chairman would pick for excellent work
+// the one optimising for the clock — and speed is not this platform's scarce
+// resource, since the median project finishes its whole accepted scope inside
+// a day. Cost being secondary now buys DEPTH. And the cheap card is labelled
+// cheap: it used to say "Slow & steady", which reads as take-your-time-and-do-
+// it-properly, over the settings that produce the least finished work anybody
+// can order here.
+//
+// Every card asks for an independent read, because the review is one extra run
+// per deliverable and the expensive part is the model, not the reader. What
+// separates the cards is money, pace, proof and which model the producing
+// seats are hired on.
 const RUN_PRESETS = [
   { value: "full_send", label: "Full send",
-    blurb: "Deliver as fast as possible; cost is secondary. Big budget, big queue, " +
-      "hourly reports.",
-    knobs: { queue: 16, drought: 72, cap: 5000, threshold: 1000, verify: false, report: 1 } },
+    blurb: "Nothing spared. The seats that write and check the work run on the " +
+      "strongest model at the deepest reasoning, with the per-run ceiling and " +
+      "timeout raised so a long piece is not cut off mid-thought. Big budget, " +
+      "big queue, hourly reports.",
+    knobs: { queue: 16, drought: 72, cap: 5000, threshold: 1000, verify: false, report: 1,
+             stakes: "high", review: "independent_read", runUsd: 8, runTimeout: 3600 } },
   { value: "balanced", label: "Balanced",
-    blurb: "Steady pace, a real budget, a report every hour. The default for a reason.",
-    knobs: { queue: 8, drought: 24, cap: 1000, threshold: 250, verify: false, report: 1 } },
-  { value: "frugal", label: "Slow & steady",
-    blurb: "Small budget, small queue, a report every few hours. Right for a " +
-      "long-running side project.",
-    knobs: { queue: 4, drought: 48, cap: 200, threshold: 50, verify: false, report: 4 } },
+    blurb: "Steady pace, a real budget, a report every hour, and the work read " +
+      "by somebody who did not write it. The default for a reason.",
+    knobs: { queue: 8, drought: 24, cap: 1000, threshold: 250, verify: false, report: 1,
+             stakes: "normal", review: "independent_read", runUsd: 2, runTimeout: 1800 } },
+  { value: "frugal", label: "Cheap and patient",
+    blurb: "Small budget, small queue, a report every few hours — still read " +
+      "before it reaches you. Right for a long-running side project. The read " +
+      "costs a run per deliverable, so expect roughly a quarter less throughput " +
+      "for it.",
+    knobs: { queue: 4, drought: 48, cap: 200, threshold: 50, verify: false, report: 4,
+             stakes: "low", review: "independent_read", runUsd: 2, runTimeout: 1800 } },
   { value: "show_me_proof", label: "Show me proof",
     blurb: "External validation matters: evidence counts only once the platform " +
       "verifies it, and a proof drought blocks busywork.",
-    knobs: { queue: 8, drought: 24, cap: 1000, threshold: 250, verify: true, report: 1 } },
+    knobs: { queue: 8, drought: 24, cap: 1000, threshold: 250, verify: true, report: 1,
+             stakes: "normal", review: "independent_read", runUsd: 2, runTimeout: 1800 } },
 ] as const;
 
 // Remembered across projects — there is one chairman on this install, and
@@ -208,6 +233,15 @@ export default function NewProject() {
   // Constitution knobs surfaced in the wizard — a run preset fills them,
   // every one stays editable, and all of them can change later in Settings.
   const [runPreset, setRunPreset] = useState("balanced");
+  // The craft half of a preset. No form fields of their own — the same choice
+  // `max_usd_per_run` has always made here — so they ride the card and are
+  // edited in Settings → Rules in force afterwards.
+  const [craft, setCraft] = useState(() => {
+    const k = RUN_PRESETS.find((p) => p.value === "balanced")!.knobs;
+    return { stakes: k.stakes, review: k.review, runUsd: k.runUsd,
+             runTimeout: k.runTimeout } as {
+      stakes: string; review: string; runUsd: number; runTimeout: number };
+  });
   const [queueCeiling, setQueueCeiling] = useState(8);
   const [droughtHours, setDroughtHours] = useState(24);
   const [usdCap, setUsdCap] = useState(1000);
@@ -249,6 +283,8 @@ export default function NewProject() {
   // the whole form; the file's full constitution/config and any role
   // definitions the library lacks ride along at submit time.
   const [bundle, setBundle] = useState<ProjectBundle | null>(null);
+  // Only for the cost line under the run presets: what a run has cost here.
+  const [status, setStatus] = useState<FounderStatus | null>(null);
   const [solo, setSolo] = useState(false);
   const [done, setDone] = useState<string | null>(null);
   const [webhooks, setWebhooks] = useState<{
@@ -266,6 +302,8 @@ export default function NewProject() {
     // A library with no crews is normal before `yaaf seed-crews` has run, and
     // must never take the role list down with it.
     get<CrewSummary[]>("/admin/crews").then(setCrews).catch(() => {});
+    // Best-effort: the cost line says so itself when the number is missing.
+    get<FounderStatus>("/admin/founder/status").then(setStatus).catch(() => {});
     get<RoleSummary[]>("/admin/roles")
       .then((rows) => {
         setRoles(rows);
@@ -314,9 +352,36 @@ export default function NewProject() {
     setApprovalThreshold(knobs.threshold);
     setRequireVerification(knobs.verify);
     setReportHours(knobs.report);
+    setCraft({ stakes: knobs.stakes, review: knobs.review,
+               runUsd: knobs.runUsd, runTimeout: knobs.runTimeout });
   }
 
   const ceoRole = roles.find((r) => r.is_ceo_role);
+
+  // Every run preset asks for the work to be read by somebody who did not
+  // write it, and the server refuses a roster that asks for that and hires
+  // nobody who can. Without this the chairman fills the whole form and meets
+  // a 422 at the end — the refusal is right and discovering it there is not.
+  // Solo mode is exempt: the CEO is the team, so there is no second reader to
+  // hire and the setting has nobody to bind.
+  const reviewRoles = roles.filter((r) => r.category === "challenge");
+  const hasReviewSeat = teams.some(
+    (t) => reviewRoles.some((r) => r.slug === t.role_slug));
+  // Deliberately NOT gated on the roster being non-empty. It was, and that hid
+  // the warning for exactly the shape the server refuses hardest — a blank
+  // roster asking for a read it has not staffed — so the one case where the
+  // chairman most needs telling was the one case he was not told.
+  const needsReviewSeat =
+    craft.review === "independent_read" && !solo && !hasReviewSeat;
+
+  function addReviewTeam() {
+    // `editor` is the seat written for prose; anything else in the discipline
+    // reads work too, so the first one installed will do.
+    const pick = reviewRoles.find((r) => r.slug === "editor") ?? reviewRoles[0];
+    if (!pick) return;
+    setTeams((prev) => [...prev,
+      { role_slug: pick.slug, name: "Review", employees: "Juno", lead: "" }]);
+  }
 
   function setTeam(i: number, patch: Partial<TeamDraft>) {
     setTeams((prev) => prev.map((t, j) => (j === i ? { ...t, ...patch } : t)));
@@ -487,6 +552,16 @@ export default function NewProject() {
       if (cons.approval_threshold_usd !== undefined) {
         setApprovalThreshold(cons.approval_threshold_usd);
       }
+      // The craft half, when a file or a Founder draft has an opinion about
+      // it. Left alone otherwise, so a spec written before these rules existed
+      // keeps whatever card is selected rather than being silently downgraded.
+      const craftCons = p.constitution as Record<string, string | number>;
+      setCraft((prev) => ({
+        stakes: (craftCons.stakes as string) ?? prev.stakes,
+        review: (craftCons.deliverable_review as string) ?? prev.review,
+        runUsd: (craftCons.max_usd_per_run as number) ?? prev.runUsd,
+        runTimeout: (craftCons.run_timeout_s as number) ?? prev.runTimeout,
+      }));
     } catch (err) {
       setBundle(null);
       setError((err as Error).message);
@@ -646,6 +721,13 @@ export default function NewProject() {
             monthly_usd_cap: usdCap,
             approval_threshold_usd: approvalThreshold,
             require_evidence_verification: requireVerification,
+            stakes: craft.stakes,
+            deliverable_review: craft.review,
+            // The brakes move with the tier or the card is a lie: a writer on
+            // the strongest model at the deepest reasoning, under a $2 ceiling
+            // and a 30-minute timeout, dies mid-piece.
+            max_usd_per_run: craft.runUsd,
+            run_timeout_s: craft.runTimeout,
             chairman_report_interval_hours: reportHours,
             chairman_report_window_local: reportWindow.trim() || null,
             timezone: timezone.trim() || "UTC",
@@ -663,6 +745,8 @@ export default function NewProject() {
           ...(bundle?.project.ceo_daily_at ? { ceo_daily_at: bundle.project.ceo_daily_at } : {}),
           ...(bundle?.project.ceo_model_override
             ? { ceo_model_override: bundle.project.ceo_model_override } : {}),
+          ...(bundle?.project.ceo_effort_override
+            ? { ceo_effort_override: bundle.project.ceo_effort_override } : {}),
           solo,
           teams: teams
             .filter((t) => t.role_slug && t.name && (solo || t.employees.trim()))
@@ -680,6 +764,7 @@ export default function NewProject() {
               // deliberate act.
               const schedules = keep({ ...t.schedules, ...fromBundle?.schedules });
               const modelOverrides = keep(fromBundle?.model_overrides);
+              const effortOverrides = keep(fromBundle?.effort_overrides);
               return {
                 role_slug: t.role_slug,
                 name: t.name.trim(),
@@ -688,6 +773,8 @@ export default function NewProject() {
                 ...(Object.keys(schedules).length ? { schedules } : {}),
                 ...(Object.keys(modelOverrides).length
                   ? { model_overrides: modelOverrides } : {}),
+                ...(Object.keys(effortOverrides).length
+                  ? { effort_overrides: effortOverrides } : {}),
               };
             }),
     };
@@ -1420,9 +1507,60 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
               </button>
             ))}
           </div>
+          {needsReviewSeat && (
+            <div style={{ marginTop: 10, padding: "10px 12px", borderRadius: 8,
+              border: "1px solid var(--warn, var(--border))",
+              background: "rgba(229,158,57,0.07)", fontSize: 13 }}>
+              This preset asks for the work to be read by somebody who did not write it,
+              and no team on your roster does that — so the only reader of a deliverable
+              before you would be the agent that wrote it. Creating it will be refused.
+              {reviewRoles.length ? (
+                <>
+                  {" "}
+                  <button type="button" className="small" onClick={addReviewTeam}
+                    style={{ marginTop: 8 }}>
+                    add a Review team ({(reviewRoles.find((r) => r.slug === "editor")
+                      ?? reviewRoles[0]).name})
+                  </button>
+                </>
+              ) : (
+                " This install has no reviewing role installed, so there is nobody to "
+                + "hire — seed the role library, or turn the read off here."
+              )}
+              {" "}
+              <button type="button" className="small" style={{ marginTop: 8 }}
+                onClick={() => setCraft((prev) => ({ ...prev, review: "none" }))}>
+                turn the read off for this project
+              </button>
+              {/* The escape has to be IN the form. The card sets this rule and
+                  the form renders no field for it, so the only way out of the
+                  refusal used to be editing the constitution after creating a
+                  project the server would not create. */}
+            </div>
+          )}
           <p className="help" style={{ marginTop: 10 }}>
-            Pace, money and proof — a preset just fills the numbers in the Constitution
-            section below. Adjust any of them there, now or later in Settings.
+            Pace, money, proof and how finished the work has to be — a preset just fills
+            the numbers in the Constitution section below. Adjust any of them there, now
+            or later in Settings. Every preset asks for the work to be read by somebody
+            who did not write it, which means the roster needs a reviewing seat; the
+            {" "}<b>Full send</b> card also hires the writing and checking seats on the
+            strongest model, and raises the per-run ceiling so a long piece survives.
+          </p>
+          <p className="help" style={{ marginTop: 6 }}>
+            {/* The rehearsal's own argument, reused: do not invent a price, invert
+                the question. This box knows what a run has cost it and cannot know
+                what this project's runs will cost. */}
+            {(() => {
+              const perRun = usdCap / Math.max(1, queueCeiling * 8);
+              const seen = status?.avg_usd_per_run;
+              return seen
+                ? `Your $${usdCap.toLocaleString()} cap holds if a run averages under ` +
+                  `$${perRun.toFixed(2)}. Runs on this install have averaged ` +
+                  `$${seen.toFixed(2)}.`
+                : `Your $${usdCap.toLocaleString()} cap holds if a run averages under ` +
+                  `$${perRun.toFixed(2)}. This install has never priced a run, so there ` +
+                  "is nothing to check that against yet.";
+            })()}
           </p>
         </div>
         <h2>Constitution (frozen at creation)</h2>

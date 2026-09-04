@@ -23,6 +23,13 @@
       "employees": [
         "Ada"
       ]
+    },
+    {
+      "role_slug": "editor",
+      "name": "Review",
+      "employees": [
+        "Kit"
+      ]
     }
   ]
 }

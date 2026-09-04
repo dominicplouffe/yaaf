@@ -181,6 +181,22 @@ async def t_task_complete(args):
     )
 
 
+@tool(
+    "task_review",
+    "Sign off, or send back, work somebody else finished and left waiting for a "
+    "read. `ok` true closes it; false returns it to whoever wrote it with your "
+    "notes. Say what is ABSENT and which standard it fails — returning work is "
+    "ordinary here, not an escalation, and 'looks fine' teaches the writer "
+    "nothing. You cannot review your own work.",
+    {"task_id": str, "ok": bool, "notes": str},
+)
+async def t_task_review(args):
+    return _text(
+        _call("POST", f"/agent/tasks/{args['task_id']}/review",
+              {"ok": bool(args["ok"]), "notes": args["notes"]})
+    )
+
+
 @tool("task_block", "Block your claimed task with a reason; the CEO will re-plan.",
       {"task_id": str, "reason": str})
 async def t_task_block(args):
@@ -1093,7 +1109,8 @@ async def t_data_fetch(args):
 
 
 ALL_TOOLS = [
-    t_board, t_task_create, t_task_claim, t_task_complete, t_task_block, t_task_kill,
+    t_board, t_task_create, t_task_claim, t_task_complete, t_task_review,
+    t_task_block, t_task_kill,
     t_requirement_propose, t_requirement_depends_on,
     t_suggest, t_channels, t_messages_read, t_message_post, t_directive_file,
     t_memory_search, t_memory_add, t_memory_supersede, t_memory_compact, t_memory_forget,

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 
-from tests.conftest import ADMIN, amend, make_project
+from tests.conftest import ADMIN, amend, make_project, seed_role
 from yaaf.core.db import db_session
 from yaaf.core.models import Project
 
@@ -92,16 +92,28 @@ def test_save_seed_writes_a_folder_seed_can_read(client, tmp_path):
     from yaaf.core import seed as seedlib
 
     make_project(client, slug="origin", start=False)
+    # A role whose prompt reads like the shipped ones do — every prompt in
+    # `roles/` is prose, and prose has em-dashes in it.
+    prose = "You write things people read — and you do not call it “done” early."
+    seed_role(client, "scribe", system_prompt=prose)
     # The seed talks over HTTP like everything else; the test client stands in
     # for the network, and the admin header rides on it.
     client.headers.update(ADMIN)
     seedlib.save_seed(client, tmp_path)
 
     roles = sorted(p.name for p in (tmp_path / "roles").glob("*.json"))
-    assert roles == ["ceo.json", "worker.json"]
+    assert roles == ["ceo.json", "scribe.json", "worker.json"]
     written = json.loads((tmp_path / "roles" / "ceo.json").read_text())
     assert written["system_prompt"], "a role without its prompt is not a role"
     assert "version" not in written, "a seeded role starts a fresh version chain"
+
+    # Prose, written as prose. With json.dumps' default ensure_ascii every
+    # em-dash lands as a \\u2014 escape, so the first re-seed rewrites all
+    # thirty-four committed role files with no change anybody made and drowns
+    # the real diff. These files are reviewed by humans; that is the reason.
+    raw = (tmp_path / "roles" / "scribe.json").read_text(encoding="utf-8")
+    assert prose in raw, "the prompt must appear in the file as it was written"
+    assert "\\u" not in raw, "seed files are UTF-8 prose, not escape sequences"
 
     spec = json.loads((tmp_path / "projects" / "origin.json").read_text())["project"]
     assert spec["goal"] == "Prove the framework works end to end."
@@ -116,3 +128,40 @@ def test_save_seed_writes_a_folder_seed_can_read(client, tmp_path):
 
     listed = {p["slug"] for p in client.get("/observe/projects", headers=ADMIN).json()}
     assert "origin" in listed, "the seeded project did not come back"
+
+
+def test_the_seed_names_its_encoding_rather_than_inheriting_one(client, tmp_path):
+    """`write_text` and `read_text` default to the LOCALE's encoding. So the
+    change that made these files readable prose also made `yaaf save-seed`
+    raise UnicodeEncodeError under `LANG=C` — a backup command that works on
+    the laptop and dies on the server, which is the worst place to find out.
+    The old ASCII output was locale-proof by accident.
+
+    Asserted over the source rather than by faking a locale, because `open()`
+    resolves its default encoding in C and cannot be monkeypatched from Python:
+    a test that patched `locale` would pass on a broken file and prove nothing.
+    """
+    import re
+    from pathlib import Path
+
+    import yaaf.core.seed as seedlib
+
+    source = Path(seedlib.__file__).read_text(encoding="utf-8")
+    unqualified = [
+        line.strip() for line in source.splitlines()
+        if re.search(r"\.(write|read)_text\(", line)
+        and "encoding=" not in line
+    ]
+    assert not unqualified, (
+        "a seed file read or written in the box's locale encoding: " + str(unqualified))
+
+    # And the round trip still works, so the assertion above is about a file
+    # that does its job rather than one that merely satisfies a grep.
+    make_project(client, slug="named-encoding", start=False)
+    seed_role(client, "scribe",
+              system_prompt="You write things people read — properly, not quickly.")
+    client.headers.update(ADMIN)
+    seedlib.save_seed(client, tmp_path)
+    assert seedlib.restore_roles(client, tmp_path)
+    raw = (tmp_path / "roles" / "scribe.json").read_text(encoding="utf-8")
+    assert "properly, not quickly" in raw
