@@ -406,18 +406,24 @@ def test_open_scope_with_an_empty_board_still_wakes_the_ceo(client):
 
     with db_session() as session:
         project_row = session.get(Project, project["id"])
-        assert dispatcher._open_scope_with_no_board(session, project["id"]) == 1
-        state = dispatcher.activity_state(
-            session, project_row, effective(session, project["id"]))
+        cons = effective(session, project["id"])
+        assert dispatcher._open_scope_with_no_board(session, project_row, cons) == 1
+        state = dispatcher.activity_state(session, project_row, cons)
         assert state["waiting"]["open_scope_no_board"] == 1
-        assert dispatcher._ceo_has_planning_material(session, project_row)
+        assert dispatcher._ceo_has_planning_material(session, project_row, cons)
 
 
 def test_the_watchdog_speaks_for_open_scope_nobody_is_working(client):
     """Every counter `warn_stall` looked at was a task row or a notice, so the
     one shape of quiet that never clears itself bought silence from the
-    watchdog written to notice silence."""
-    project = _project(client, slug="silent-scope", stall_hours=2)
+    watchdog written to notice silence.
+
+    Autonomous, like the project this came from: the CEO holds `verdict_policy`,
+    so a CHECKING requirement with an empty board is ITS move and its silence is
+    a real stall. The supervised twin of this is the test below, and it must
+    stay quiet."""
+    project = _project(client, slug="silent-scope", stall_hours=2,
+                       verdict_policy="ceo_judgment")
     _drain()
     with db_session() as session:
         requirement = Requirement(
@@ -443,6 +449,55 @@ def test_the_watchdog_speaks_for_open_scope_nobody_is_working(client):
 
     _tick(project)
     assert len(_notices(project, NoticeKind.STALLED)) == 1
+
+
+def test_scope_parked_on_the_chairman_is_not_the_project_going_quiet(client):
+    """The regression this term nearly shipped with.
+
+    On a supervised project a CHECKING requirement with an observable test is
+    waiting on HIM. Its board is empty for a reason that is not a fault, the
+    ladder already says `awaiting_chairman`, and he is already chased for it
+    once a day. Counting it as open scope would wake the CEO every heartbeat to
+    conclude "still waiting on him" at full price, and email him every few hours
+    that his project has gone quiet — about a silence he is producing. The
+    subtraction follows the autonomy dial, so the autonomous twin above still
+    stalls.
+    """
+    project = _project(client, slug="his-move", stall_hours=2)
+    _drain()
+    with db_session() as session:
+        requirement = Requirement(
+            id=ids.new_id(ids.REQUIREMENT), project_id=project["id"], key="R-09",
+            statement="The launch post is live and reads well.",
+            acceptance_test={"type": "observable", "target": "the post is live"},
+            status=RequirementStatus.CHECKING, stage=1)
+        session.add(requirement)
+        session.add(Task(
+            id=ids.new_id(ids.TASK), project_id=project["id"],
+            team_id=project["teams"][0]["id"], requirement_id=requirement.id,
+            created_by_agent_id=project["ceo_agent_id"],
+            title="Write it", goal="Write it.",
+            success_test={"type": "command", "command": "true"},
+            status=TaskStatus.DONE, created_at=utcnow(), updated_at=utcnow()))
+        for notice in session.query(Notice).filter(Notice.consumed_at.is_(None)):
+            notice.consumed_at = utcnow()
+        for row in session.query(RunQueue).all():
+            session.delete(row)
+        for run in session.query(Run).all():
+            run.created_at = utcnow() - timedelta(hours=4)
+
+    with db_session() as session:
+        row = session.get(Project, project["id"])
+        cons = effective(session, project["id"])
+        assert dispatcher._open_scope_with_no_board(session, row, cons) == 0
+        assert not dispatcher._ceo_has_planning_material(session, row, cons)
+        # The screen still names it — this is about not nagging him for it.
+        assert dispatcher.activity_state(
+            session, row, cons)["blocked_by"] == "awaiting_chairman"
+
+    _tick(project)
+    assert _notices(project, NoticeKind.STALLED) == [], (
+        "he is the one holding it up; telling him his project is quiet is noise")
 
 
 def test_an_unclosed_ask_does_not_switch_the_cadence_off(client):

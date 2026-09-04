@@ -1100,7 +1100,7 @@ def activity_state(session: Session, project: Project, cons: ConstitutionDoc) ->
             due = beat is None or beat.last_fired_at <= now - timedelta(hours=hours)
             if due and (beat is None
                         or cons.ceo_heartbeat_always
-                        or _ceo_has_planning_material(session, project)):
+                        or _ceo_has_planning_material(session, project, cons)):
                 pending += 1
                 heartbeat_due = True
         wakes = _wakes_last_hour(session, agent)
@@ -1158,15 +1158,17 @@ def activity_state(session: Session, project: Project, cons: ConstitutionDoc) ->
         blocked_by = board["unreachable"]
     elif (inbox_today >= cons.inbox_runs_per_project_per_day
           or inbox_hour >= cons.inbox_runs_per_project_per_hour) and all(
-              r["pending_detail"]["unread"] and not (
+              not r["busy"] and r["pending_detail"]["unread"] and not (
                   r["pending_detail"]["work"] or r["pending_detail"]["notices"]
                   or r["pending_detail"]["heartbeat"])
               for r in with_work):
-        # Everyone holding anything is holding only unread mail, and the lane
-        # that reads mail is spent. `_dispatch_project` refuses every one of
-        # those runs; this ladder had no rung for it, so a project with
+        # Everyone holding anything is idle, holding only unread mail, and the
+        # lane that reads mail is spent. `_dispatch_project` refuses every one
+        # of those runs; this ladder had no rung for it, so a project with
         # sixty-five unread messages and no way to read any of them reported
         # that a run should start on the next tick, for the rest of the day.
+        # `not busy` matters: a run still in flight means the project is
+        # working, and `agents_busy` below is the honest sentence for that.
         blocked_by = "inbox_runs"
     elif all(r["busy"] for r in with_work):
         blocked_by = "agents_busy"
@@ -1264,7 +1266,7 @@ def activity_state(session: Session, project: Project, cons: ConstitutionDoc) ->
             # nothing about work it has not finished — which is how the stall
             # watchdog came to disarm itself on the exact projects it was
             # written for.
-            "open_scope_no_board": _open_scope_with_no_board(session, project.id),
+            "open_scope_no_board": _open_scope_with_no_board(session, project, cons),
             "notices": notices_total,
             # Counted here because the fallback brief used to assert its
             # absence — "nobody has unread work" — on a project where three
@@ -1553,7 +1555,7 @@ def _wake_reasons(
             skip = (beat is not None
                     and not reasons
                     and not cons.ceo_heartbeat_always
-                    and not _ceo_has_planning_material(session, project))
+                    and not _ceo_has_planning_material(session, project, cons))
             # A delivered project has nothing left to plan: every requirement
             # is true and new scope is refused (policy.check_new_scope). A
             # planning beat here is a run spent deciding not to invent work,
@@ -1604,7 +1606,8 @@ def _wake_reasons(
     return reasons
 
 
-def _ceo_has_planning_material(session: Session, project: Project) -> bool:
+def _ceo_has_planning_material(session: Session, project: Project,
+                               cons: ConstitutionDoc) -> bool:
     """Anything the planning heartbeat could act on: an open top-level task, a
     live (or expired-awaiting-decision) bet, or scope that is open with nothing
     left on the board under it. With none of them — and no other wake reason —
@@ -1623,7 +1626,7 @@ def _ceo_has_planning_material(session: Session, project: Project) -> bool:
     """
     if policy.open_top_level_tasks(session, project.id):
         return True
-    if _open_scope_with_no_board(session, project.id):
+    if _open_scope_with_no_board(session, project, cons):
         return True
     return session.execute(
         select(func.count(Hypothesis.id)).where(
@@ -1633,22 +1636,38 @@ def _ceo_has_planning_material(session: Session, project: Project) -> bool:
     ).scalar_one() > 0
 
 
-def _open_scope_with_no_board(session: Session, project_id: str) -> int:
-    """Requirements still open whose every task is closed.
+def _open_scope_with_no_board(session: Session, project: Project,
+                              cons: ConstitutionDoc) -> int:
+    """Requirements still open, whose every task is closed, and which THIS
+    project's CEO could actually do something about.
 
     Read-only, and counted rather than merely tested, because two places need
     it: the planning wake above, and the stall watchdog — whose guard was six
     task-and-notice counters, every one of which reads zero in exactly this
-    state. A project can be doing nothing, with scope open and a chairman
-    waiting, and be invisible to both.
+    state. A project can be doing nothing, with scope open, and be invisible to
+    both.
+
+    The subtraction is the whole of the correctness here. Scope parked on the
+    chairman's own verdict has an empty board for a reason that is not a fault:
+    it is HIS move, `blocked_by` already says so, and `nag_observable_requirements`
+    already chases him daily. Counting it here would wake the CEO every heartbeat
+    to conclude "still waiting on him", at full price, and email him every few
+    hours that his project has gone quiet — about a silence he is producing. The
+    set is taken from `policy.awaiting_chairman` rather than from the statuses,
+    so it follows the autonomy dial: where the CEO holds `verdict_policy`, a
+    CHECKING requirement IS its move and does count.
     """
-    open_reqs = session.execute(
-        select(Requirement.id).where(
-            Requirement.project_id == project_id,
-            Requirement.status.in_(
-                [RequirementStatus.IN_PROGRESS, RequirementStatus.CHECKING]),
-        )
-    ).scalars().all()
+    parked = {r.id for r in policy.awaiting_chairman(session, project, cons)["verdicts"]}
+    open_reqs = [
+        rid for rid in session.execute(
+            select(Requirement.id).where(
+                Requirement.project_id == project.id,
+                Requirement.status.in_(
+                    [RequirementStatus.IN_PROGRESS, RequirementStatus.CHECKING]),
+            )
+        ).scalars()
+        if rid not in parked
+    ]
     if not open_reqs:
         return 0
     with_board = set(session.execute(
