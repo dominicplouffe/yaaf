@@ -397,3 +397,29 @@ def test_a_project_with_no_constitution_does_not_take_the_page_down(client):
     assert payload["live"] is True
     with db_session() as session:
         assert session.get(Project, project["id"]) is not None
+
+
+def test_a_question_to_him_is_a_date_on_the_strip(client):
+    """`_clock_events` collects "the things that resolve themselves" — an
+    approval auto-decides, a bet dies on its date. A question the CEO put to
+    him is the same shape: a moment he can let pass, after which it resolves
+    without him. It was missing, which made the strip quietly incomplete for
+    the one date where the resolution is the CEO's own written sentence."""
+    from tests.conftest import bearer, live_token
+
+    project = make_project(client, slug="agenda-ask")
+    _, token = live_token(project["id"], project["ceo_agent_id"])
+    asked = client.post("/agent/asks", headers=bearer(token), json={
+        "title": "which candidate for the launch post",
+        "body": "Five ranked, my pick is first. Your call before we write.",
+        "answer_by_hours": 30,
+        "default_action": "Take the top-ranked one and tell you I did."})
+    assert asked.status_code == 200, asked.text
+
+    payload = client.get(f"/observe/projects/{project['id']}/agenda",
+                         headers=ADMIN).json()
+    event = next(e for e in payload["events"] if e["kind"] == "ask_window")
+    assert "stops waiting" in event["label"]
+    assert "Take the top-ranked one" in event["detail"]
+    # It resolves without him, like the approval beside it.
+    assert event["tone"] == "consequence"

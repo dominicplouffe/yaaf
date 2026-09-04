@@ -30,6 +30,7 @@ Five properties are enforced here:
 
 from __future__ import annotations
 
+import inspect
 from datetime import timedelta
 
 from tests.conftest import (
@@ -584,3 +585,44 @@ def test_an_owed_ask_does_not_hide_an_unraised_flag(client):
     assert len(chairman["asks"]) == 1
     assert "ask_close" in chairman["note"], "the ask it owes"
     assert "flag_raise" in chairman["note"], "and the flag it has not raised"
+
+
+def test_an_ask_reaches_every_surface_its_sibling_does(client):
+    """The bug class this whole change kept re-committing.
+
+    `Ask` was designed once and wired in four times, each round missing a place
+    `Approval` had occupied for months: the Decisions screen, the daily brief's
+    "what decided itself while you were away", the agenda's dated events, the
+    websocket change stamp. None of those failed a test when they were missing,
+    because each is a different file and absence is not an error anywhere. So
+    absence is an error here.
+
+    Adding a surface to approvals and not to asks should fail this. Deciding an
+    ask genuinely does not belong somewhere is fine — delete the line and say
+    why in the commit.
+    """
+    from yaaf.core.models import Ask
+    from yaaf.server import agenda, briefing
+    from yaaf.server.api import observe, ws
+    from yaaf.server.mcp import tools_read
+
+    # The chairman's four read surfaces, checked as code rather than prose.
+    assert "asks" in inspect.getsource(observe.desk), "the desk row"
+    assert hasattr(observe, "asks"), "the per-project endpoint the Decisions page reads"
+    assert "asks_lapsed" in briefing.LINE_OWNER, "the daily brief's line registry"
+    assert "asks_lapsed" in inspect.getsource(briefing._self_acting_lines), (
+        "the brief's 'what decided itself while you were away' section")
+    assert "ask_window" in inspect.getsource(agenda._clock_events), "the agenda strip"
+    assert "Ask" in inspect.getsource(ws._change_stamp), (
+        "the live-refresh fingerprint — an ask settles by mutating status in "
+        "place, so without this the screen goes stale on the one transition "
+        "that matters")
+    assert "asks" in inspect.getsource(tools_read), "his own MCP eyes"
+
+    # And it is genuinely reachable end to end, not merely mentioned.
+    project = _project(client, slug="surfaces")
+    assert _ask(client, project).status_code == 200
+    assert client.get(f"/observe/projects/{project['id']}/asks",
+                      headers=ADMIN).json()[0]["status"] == "open"
+    with db_session() as session:
+        assert session.query(Ask).count() == 1

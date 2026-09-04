@@ -53,3 +53,37 @@ docstring so the next person knows it is deliberate.
 `CONTRIBUTING.md` holds the rules about what the product may and may not do.
 Read it before adding a rule or an endpoint; it is short and it is the point of
 the project.
+
+## Adding a concept? Match its sibling's footprint
+
+The most expensive mistake made in this repo is not a wrong design. It is a
+right design wired into half the places it belongs. A new object gets its
+model, its endpoint, its janitor pass and its tests — and then silently misses
+the daily brief, the agenda, the change stamp, the MCP reader and the CLI,
+because each of those is a different file and **not one of them fails**. The
+suite stays green. The gap only shows up in production, as a screen that is
+quietly stale or a section that claims completeness it no longer has.
+
+So before calling a new domain concept done, find its nearest existing sibling
+and diff the footprints:
+
+```bash
+git grep -l Approval -- yaaf web/src docs | sort > /tmp/sibling
+git grep -l Ask      -- yaaf web/src docs | sort > /tmp/new
+comm -23 /tmp/sibling /tmp/new
+```
+
+Every line that comes back is either a place your concept belongs, or a
+sentence you owe about why it does not. Both answers are fine. Skipping the
+question is what is not — it is how `Ask` shipped four times in a row missing a
+surface `Approval` had held for months.
+
+### Two red flags that mean you are already off the path
+
+1. **You are editing an existing test's assertion so your change passes.**
+   That assertion is a rule somebody wrote down, usually after being burned.
+   Read what it was protecting before you widen it. Twice in one change it was
+   protecting the thing that was actually wrong.
+2. **You are writing a comment explaining why your addition is exempt from the
+   stated rule of the container you just put it in.** It belongs in a different
+   container. The comment is the tell, every time.

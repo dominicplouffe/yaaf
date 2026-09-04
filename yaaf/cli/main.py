@@ -599,6 +599,13 @@ def approvals(project: str) -> None:
 
 
 @app.command()
+def asks(project: str) -> None:
+    """Questions the CEO put to you, live and settled."""
+    with _client() as client:
+        _show(client.get(f"/observe/projects/{_resolve_project(client, project)}/asks"))
+
+
+@app.command()
 def audit(project: str, n: int = typer.Option(5, "--n")) -> None:
     """A random spot-audit sample of recent evidence and completed tasks."""
     with _client() as client:
