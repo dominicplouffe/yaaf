@@ -45,15 +45,19 @@ export function usePoll<T>(fn: () => Promise<T>, intervalMs = 5000, deps: unknow
   return { data, error, at, reload };
 }
 
+/** Built once. `toLocaleString` builds one of these per call, and the tables
+    and chat logs here call it per row per render — a few hundred formatters a
+    second on a busy page, for four fields that never change. */
+const WHEN = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
 export function fmtWhen(iso: string | null): string {
   if (!iso) return "—";
-  const d = new Date(iso);
-  return d.toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return WHEN.format(new Date(iso));
 }
 
 export function fmtUsd(n: number | null | undefined): string {
