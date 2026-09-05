@@ -20,8 +20,8 @@ before the wait rather than reconstructed after it.
 
 Guarded, as every post-baseline revision must be.
 
-Revision ID: 0027
-Revises: 0026
+Revision ID: 0030
+Revises: 0029
 """
 
 from __future__ import annotations
@@ -31,8 +31,8 @@ import sqlalchemy as sa
 from yaaf.core.migration_ops import create_index_if_missing, create_table_if_missing
 from yaaf.core.models import UTCDateTime
 
-revision = "0027"
-down_revision = "0026"
+revision = "0030"
+down_revision = "0029"
 branch_labels = None
 depends_on = None
 
