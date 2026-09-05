@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import json
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends
@@ -24,6 +25,8 @@ from yaaf.core.models import (
     Account,
     AgentKind,
     Approval,
+    ApprovalKind,
+    ApprovalStatus,
     AuditLog,
     Channel,
     ChannelKind,
@@ -63,6 +66,7 @@ from yaaf.server import policy, typing_state
 from yaaf.server.deps import RunContext, db, run_auth
 from yaaf.server.notify import chairman_notify
 from yaaf.server.policy import Refusal
+from yaaf.server.rows import approval_row
 
 router = APIRouter()
 
@@ -1141,9 +1145,23 @@ def memory_forget(
 # acceptance test and writes the result itself.
 
 
+class RequirementMeta(BaseModel):
+    """What the project's owner would call this requirement. Not checked by the
+    platform; shown by whoever presents the plan to the person who hired it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=1, max_length=120)
+    description: str = Field(default="", max_length=400)
+    cadence: str | None = Field(default=None, pattern="^(daily|weekly)$")
+    due: str | None = Field(default=None, max_length=40)
+    lands: str | None = Field(default=None, pattern="^(report|memo|note|table)$")
+
+
 class RequirementPropose(BaseModel):
     statement: str = Field(min_length=10, max_length=2000)
     acceptance_test: dict
+    meta: RequirementMeta | None = None
     stage: int = Field(default=1, ge=1, le=50)
     est_runs: int | None = Field(default=None, ge=1, le=10_000)
     depends_on: list[str] = Field(default_factory=list)
@@ -1193,6 +1211,7 @@ def propose_requirement(
         key=policy.next_requirement_key(session, ctx.project.id),
         statement=body.statement.strip(),
         acceptance_test=body.acceptance_test,
+        meta=body.meta.model_dump(mode="json") if body.meta else None,
         status=RequirementStatus.PROPOSED,
         stage=body.stage,
         recurrence=body.recurrence,
@@ -2102,6 +2121,257 @@ def approval_list(ctx: RunContext = Depends(run_auth), session: Session = Depend
     ]
 
 
+# ── approved writes ─────────────────────────────────────────────────────────────
+#
+# A data source can name the tools it may be called with (`mcp_servers[].tools`).
+# Anything else is refused in the sandbox — and these two endpoints are the only
+# way past that refusal, because the rule that lets a call through has to live
+# where an agent cannot argue with it.
+#
+# The shape is one call, one approval. The chairman decides on a rendered call
+# with its literal arguments; the platform stores their fingerprint; spending
+# checks the fingerprint again and burns the approval. So an approval obtained
+# for one change cannot be replayed on a bigger one, or on a second one.
+
+
+def _arguments_digest(arguments: dict | None) -> str:
+    """The fingerprint the chairman's decision is bound to.
+
+    Canonical: sorted keys, no incidental whitespace. Computed HERE and never
+    accepted from a caller — a digest an agent supplies is a digest an agent
+    chooses.
+    """
+    canonical = json.dumps(arguments or {}, sort_keys=True, separators=(",", ":"),
+                           default=str)
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def _project_data_source(project, name: str) -> dict | None:
+    for source in (project.integrations or {}).get("mcp_servers", []):
+        if source.get("name") == name:
+            return source
+    return None
+
+
+class DisclosedChange(BaseModel):
+    """One before → after, on one thing: a campaign's daily budget, a keyword's bid."""
+
+    entity: str = Field(min_length=1, max_length=200)
+    field: str = Field(min_length=1, max_length=80)
+    before: str | float | int | bool | None = None
+    after: str | float | int | bool | None = None
+
+
+class DisclosedEvidence(BaseModel):
+    """The rows the ask rests on, with what a person needs to reconcile them."""
+
+    columns: list[str] = Field(min_length=1, max_length=30)
+    rows: list[list[str | float | int | bool | None]] = Field(default_factory=list, max_length=200)
+    period_start: str | None = Field(default=None, max_length=40)
+    period_end: str | None = Field(default=None, max_length=40)
+    currency: str | None = Field(default=None, max_length=8)
+    as_of: str | None = Field(default=None, max_length=40)
+
+
+class DisclosedEstimate(BaseModel):
+    label: str = Field(min_length=1, max_length=120)
+    value: str = Field(min_length=1, max_length=80)
+    basis: str = Field(default="", max_length=1000)
+
+
+class Disclosure(BaseModel):
+    """What the chairman needs to decide well. Bounded, because it is stored on
+    the approval row and rendered to a person; an agent that wants to show
+    ten thousand rows shows the two hundred that matter."""
+
+    category: str | None = Field(default=None, max_length=64)
+    change_set: list[DisclosedChange] = Field(default_factory=list, max_length=500)
+    scope_counts: dict[str, int] = Field(default_factory=dict)
+    evidence: DisclosedEvidence | None = None
+    estimate: DisclosedEstimate | None = None
+    reversible: bool | None = None
+    counter_case: str = Field(default="", max_length=4000)
+    spend_affected_usd_month: float | None = None
+
+
+class DataWriteRequest(BaseModel):
+    source: str = Field(min_length=1, max_length=64)
+    tool: str = Field(min_length=1, max_length=128)
+    arguments: dict = Field(default_factory=dict)
+    why: str = Field(default="", max_length=4000)
+    # Prose for the chairman, never part of the grant: the digest binds the
+    # arguments, and two requests that differ only here spend identically.
+    disclosure: Disclosure | None = None
+
+
+@router.post("/data_writes")
+def data_write_request(
+    body: DataWriteRequest, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
+) -> dict:
+    """File ONE call for the chairman to approve, fingerprint and all."""
+    source = _project_data_source(ctx.project, body.source)
+    if source is None:
+        raise Refusal(
+            f"{body.source!r} is not one of this project's data sources.", status_code=404)
+    allowlist = source.get("tools")
+    if allowlist is None:
+        raise Refusal(
+            f"{body.source}.{body.tool} needs no approval — this source has no allowlist. "
+            "Call it with data_fetch.")
+    if body.tool in allowlist:
+        raise Refusal(
+            f"{body.source}.{body.tool} is already yours to call. Use data_fetch; an "
+            "approval here would put a decision on the chairman's desk that changes "
+            "nothing.")
+
+    cons = effective(session, ctx.project.id)
+    rendered = json.dumps(body.arguments or {}, indent=2, sort_keys=True, default=str)
+    row = _file_approval(
+        session, ctx, ApprovalKind.TOOL_REQUEST,
+        f"Run {body.source}.{body.tool} on your account",
+        (f"{body.why}\n\n" if body.why else "")
+        + f"This would call `{body.tool}` on your connected {body.source} account "
+          f"with exactly these arguments:\n\n```json\n"
+          f"{rendered[:4000]}\n```\n\n"
+          "Approving authorises this one call and nothing else — the arguments above "
+          "are part of what you are approving, and a different call needs a new "
+          "approval.",
+    )
+    row.grant = {"source": body.source, "tool": body.tool,
+                 "arguments_sha256": _arguments_digest(body.arguments)}
+    row.disclosure = body.disclosure.model_dump(mode="json") if body.disclosure else None
+    session.flush()
+    chairman_notify(
+        session, ctx.project,
+        f"Approve a change to your {body.source} account?",
+        f"{row.title}\n\n{row.body}",
+        kind="approval_requested", data={"approval": approval_row(row)},
+    )
+    return {
+        "id": row.id,
+        "expires_at": row.expires_at.isoformat(),
+        "note": (
+            f"Filed. Unanswered within {cons.approval_timeout_days} days this expires as "
+            "DENIED and you are woken to re-plan. When it is approved, call data_fetch "
+            "with approval_id and the SAME arguments — the approval is bound to them, and "
+            "it is good for one call."
+        ),
+    }
+
+
+class DataWriteSpend(BaseModel):
+    source: str
+    tool: str
+    arguments: dict = Field(default_factory=dict)
+
+
+@router.post("/data_writes/{approval_id}/spend")
+def data_write_spend(
+    approval_id: str, body: DataWriteSpend,
+    ctx: RunContext = Depends(run_auth), session: Session = Depends(db),
+) -> dict:
+    """Burn an approved grant for exactly the call it was approved for.
+
+    Every refusal here is written to be read by the agent that hit it, because
+    it arrives as its tool output — it should say what to do next, not merely
+    that something was denied.
+    """
+    approval = session.get(Approval, approval_id)
+    if approval is None or approval.project_id != ctx.project.id:
+        raise Refusal(f"{approval_id!r} is not an approval on this project.", status_code=404)
+    grant = approval.grant or {}
+    if not grant:
+        raise Refusal(
+            f"Approval {approval_id} carries no grant, so it authorises no call. File the "
+            "call with data_write_request, which records what is being approved.")
+    if approval.status != ApprovalStatus.APPROVED:
+        raise Refusal(
+            f"Approval {approval_id} is {approval.status}, not approved."
+            + (" It expired undecided, which the constitution reads as no — re-plan around"
+               " it or file it again with a reason that answers why it went unanswered."
+               if approval.status == ApprovalStatus.EXPIRED else ""),
+            status_code=409)
+    if approval.spent_at is not None:
+        raise Refusal(
+            f"Approval {approval_id} was already spent at "
+            f"{approval.spent_at.isoformat()}. One approval buys one call — file another.",
+            status_code=409)
+    if grant.get("source") != body.source or grant.get("tool") != body.tool:
+        raise Refusal(
+            f"Approval {approval_id} authorises {grant.get('source')}.{grant.get('tool')}, "
+            f"not {body.source}.{body.tool}.", status_code=409)
+    if grant.get("arguments_sha256") != _arguments_digest(body.arguments):
+        raise Refusal(
+            f"These are not the arguments approval {approval_id} was approved for. The "
+            "chairman decided on a specific call, so changing the arguments voids it — "
+            "file the call you actually intend with data_write_request.", status_code=409)
+
+    approval.spent_at = utcnow()
+    session.add(
+        AuditLog(
+            id=ids.new_id(ids.AUDIT),
+            project_id=approval.project_id,
+            actor=f"agent:{ctx.agent.id}",
+            action="data_write.spend",
+            entity="approval",
+            entity_id=approval.id,
+            detail={"source": body.source, "tool": body.tool,
+                    "arguments_sha256": grant.get("arguments_sha256")},
+        )
+    )
+    return {"id": approval.id, "spent": True}
+
+
+class ObservedEffect(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    label: str = Field(min_length=1, max_length=120)
+    value: str = Field(min_length=1, max_length=80)
+    basis: str = Field(default="", max_length=500)
+    as_of: str | None = Field(default=None, max_length=40)
+
+
+class DataWriteOutcome(BaseModel):
+    ok: bool
+    observed: ObservedEffect | None = None
+    note: str = Field(default="", max_length=2000)
+
+
+@router.post("/data_writes/{approval_id}/outcome")
+def data_write_outcome(
+    approval_id: str, body: DataWriteOutcome,
+    ctx: RunContext = Depends(run_auth), session: Session = Depends(db),
+) -> dict:
+    """What a spent grant actually did, filed after the fact.
+
+    The disclosure said what the call would do and `spent_at` says it was made;
+    this is the only record of what came of it. Refused before the spend: an
+    outcome for a call that has not happened is a forecast wearing a receipt.
+    """
+    approval = session.get(Approval, approval_id)
+    if approval is None or approval.project_id != ctx.project.id:
+        raise Refusal(f"{approval_id!r} is not an approval on this project.", status_code=404)
+    if approval.spent_at is None:
+        raise Refusal(
+            f"Approval {approval_id} has not been spent, so it has no outcome yet. Make "
+            "the call with data_fetch and approval_id first, then file what it did.",
+            status_code=409)
+    detail = body.model_dump(mode="json")
+    detail["filed_at"] = utcnow().isoformat()
+    session.add(
+        AuditLog(
+            id=ids.new_id(ids.AUDIT),
+            project_id=approval.project_id,
+            actor=f"agent:{ctx.agent.id}",
+            action="data_write.outcome",
+            entity="approval",
+            entity_id=approval.id,
+            detail=detail,
+        )
+    )
+    return {"id": approval.id, "outcome": detail}
+
+
 class SpendIn(BaseModel):
     usd: float = Field(gt=0)
     note: str = Field(min_length=5)
@@ -2276,12 +2546,14 @@ def assist_request(
         entity="approval", entity_id=approval.id,
         detail={"what": body.what[:300], "where": body.where},
     ))
+    session.flush()
     chairman_notify(
         session, ctx.project, f"Human needed: {body.what[:120]}",
         approval.body + "\n\nAnswer on the Decisions screen — your note travels "
         "back verbatim and wakes the agent. This is the one step autonomy never "
         "takes from you: the platform hands over security challenges, it never "
         "defeats them.",
+        kind="approval_requested", data={"approval": approval_row(approval)},
     )
     notify(session, WAKE_CHANNEL, ctx.project.id)
     return {
@@ -2343,10 +2615,12 @@ def need_request(
         detail={"title": body.title, "roles": body.roles,
                 "est_usd_per_month": body.est_usd_per_month},
     ))
+    session.flush()
     chairman_notify(
         session, ctx.project, f"The project needs: {body.title}",
         "\n".join(detail_lines) + "\n\nFulfill or decline it on the Decisions screen "
         "— fulfilling stores the credential and scopes the roles in one motion.",
+        kind="approval_requested", data={"approval": approval_row(approval)},
     )
     notify(session, WAKE_CHANNEL, ctx.project.id)
     return {
@@ -2766,6 +3040,17 @@ def artifact_put(
         requirement_ids=[r.id for r in satisfied],
     )
     session.add(row)
+    session.flush()
+    chairman_notify(
+        session, ctx.project, f"deliverable published: {filename} v{version}",
+        f"{filename} (v{version}, {len(data)} bytes) is in the artifact store"
+        + (f", satisfying {', '.join(r.key for r in satisfied)}." if satisfied else "."),
+        kind="deliverable_published",
+        data={"deliverable": {"id": row.id, "name": filename, "version": version,
+                              "key": key, "size": len(data),
+                              "published_at": row.published_at.isoformat() if row.published_at else None,
+                              "satisfies": [r.key for r in satisfied]}},
+    )
     # The digest is returned at write time so the author can record what it
     # shipped and a later reader can prove the store still holds those bytes.
     return {"uri": uri, "key": key, "size": len(data), "sha256": digest,

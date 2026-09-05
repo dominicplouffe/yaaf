@@ -1,0 +1,49 @@
+{
+  "slug": "always-on-desk",
+  "name": "An always-on advertising desk",
+  "outcome": "A standup each morning and a Monday memo the owner could forward to a client without editing it.",
+  "ceo_role_slug": "ceo",
+  "domains": [
+    "data"
+  ],
+  "source": "authored",
+  "teams": [
+    {
+      "name": "Analytics",
+      "role_slug": "ppc-analyst",
+      "employees": [
+        "Rae",
+        "Tomas"
+      ],
+      "lead": "Rae"
+    },
+    {
+      "name": "Strategy",
+      "role_slug": "ppc-strategist",
+      "employees": [
+        "Idris"
+      ]
+    },
+    {
+      "name": "Attribution",
+      "role_slug": "attribution-reviewer",
+      "employees": [
+        "Wren"
+      ]
+    },
+    {
+      "name": "Executability",
+      "role_slug": "executability-checker",
+      "employees": [
+        "Nadia"
+      ]
+    },
+    {
+      "name": "Editorial",
+      "role_slug": "exec-communicator",
+      "employees": [
+        "Ada"
+      ]
+    }
+  ]
+}

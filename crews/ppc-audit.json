@@ -1,0 +1,33 @@
+{
+  "slug": "ppc-audit",
+  "name": "An advertising audit",
+  "outcome": "One audit of the advertising account a non-technical owner can act on: where money is going to waste, what to fix first, and what it is worth.",
+  "ceo_role_slug": "ceo",
+  "domains": [
+    "data"
+  ],
+  "source": "authored",
+  "teams": [
+    {
+      "name": "Analytics",
+      "role_slug": "ppc-analyst",
+      "employees": [
+        "Rae"
+      ]
+    },
+    {
+      "name": "Strategy",
+      "role_slug": "ppc-strategist",
+      "employees": [
+        "Idris"
+      ]
+    },
+    {
+      "name": "Executability",
+      "role_slug": "executability-checker",
+      "employees": [
+        "Nadia"
+      ]
+    }
+  ]
+}

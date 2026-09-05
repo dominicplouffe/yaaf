@@ -1454,6 +1454,14 @@ class DataSourceIn(BaseModel):
     # expensive path stops existing for it. Default inline: a source that was
     # already connected keeps behaving exactly as it did.
     access: Literal["inline", "bulk"] = "inline"
+    # The tools this source may be called with. None on a NEW source means
+    # unrestricted — every install that predates this keeps behaving exactly as
+    # it did. None on an EDIT keeps whatever allowlist the source already has,
+    # for the same reason `bearer` does: a save that only regrants roles must
+    # never silently disarm enforcement. An empty list is the strict end of the
+    # range, not a way to clear it — no tool may be called without an approval.
+    # To go back to unrestricted, delete the source and add it again.
+    tools: list[str] | None = None
     # None means "infer from bearer" so every existing caller keeps meaning
     # what it always meant; "oauth" switches the source to the browser
     # sign-in flow, where the token secret holds a refreshed access token
@@ -1728,6 +1736,9 @@ def add_data_source(project_id: str, body: DataSourceIn, session: Session = Depe
         "access": body.access,
         "auth": auth,
     }
+    allowlist = body.tools if body.tools is not None else (prior or {}).get("tools")
+    if allowlist is not None:
+        entry["tools"] = sorted({t.strip() for t in allowlist if t.strip()})
 
     needs_connect = False
     if auth == "oauth":
@@ -1795,7 +1806,8 @@ def add_data_source(project_id: str, body: DataSourceIn, session: Session = Depe
     project.integrations = {**(project.integrations or {}), "mcp_servers": [*servers, entry]}
     _audit(session, project.id, "mcp_server.save", "project", project.id,
            {"name": body.name, "roles": body.roles, "host": entry["url_host"],
-            "access": body.access, "auth": auth, "check_ok": check["ok"]})
+            "access": body.access, "auth": auth, "check_ok": check["ok"],
+            "tools": entry.get("tools")})
     return {"name": body.name, "check": check, "needs_connect": needs_connect,
             "note": "Effective on each granted role's next run."}
 
@@ -2607,6 +2619,33 @@ def _apply_decision(session: Session, approval: Approval, project: Project,
     _audit(session, approval.project_id, "approval.decide", "approval", approval.id,
            {"approve": approve, **(audit_detail or {})})
     notify(session, WAKE_CHANNEL, approval.project_id)
+
+
+class ApprovalExtend(BaseModel):
+    days: int = Field(ge=1, le=30)
+    reason: str = Field(min_length=3, max_length=500)
+
+
+@router.post("/approvals/{approval_id}/extend")
+def extend_approval(
+    approval_id: str, body: ApprovalExtend, session: Session = Depends(db)
+) -> dict:
+    """Move a pending approval's deadline out. For the receiver that could not
+    reach the chairman — the clock should not run while nobody could see it.
+    The nag re-arms so the new deadline gets its own chase."""
+    approval = session.get(Approval, approval_id)
+    if approval is None:
+        raise HTTPException(status_code=404, detail="unknown approval")
+    if approval.status != ApprovalStatus.PENDING:
+        raise HTTPException(status_code=409, detail=f"approval already {approval.status}")
+    now = utcnow()
+    was = approval.expires_at
+    approval.expires_at = max(approval.expires_at, now) + timedelta(days=body.days)
+    approval.nag_sent_at = None
+    _audit(session, approval.project_id, "approval.extend", "approval", approval.id,
+           {"days": body.days, "reason": body.reason,
+            "from": was.isoformat(), "to": approval.expires_at.isoformat()})
+    return {"id": approval.id, "expires_at": approval.expires_at.isoformat()}
 
 
 @router.post("/approvals/{approval_id}/decide")

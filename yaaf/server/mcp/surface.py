@@ -112,6 +112,11 @@ WITHHELD = {
     "POST /admin/projects/{project_id}/github":
         "provisioning takes a GitHub token — a credential value, inbound, that the "
         "chairman should paste where only they can read it.",
+    "POST /admin/approvals/{approval_id}/extend":
+        "moving a pending approval's deadline is for the receiver that could not "
+        "reach the chairman — an outage on its side, not a judgment. A model "
+        "holding this verb could keep its own request alive past the default-deny "
+        "clock, which is the clock's whole point.",
     "POST /admin/approvals/{approval_id}/fulfill":
         "fulfilling a need means supplying a secret value to satisfy an agent's "
         "request; that stays in the browser.",

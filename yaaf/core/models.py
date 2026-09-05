@@ -779,6 +779,10 @@ class Requirement(Base):
     statement: Mapped[str] = mapped_column(Text)
     # Same shape as a task's: {"type": "command", ...} | {"type": "observable", ...}
     acceptance_test: Mapped[dict] = mapped_column(JSONVariant)
+    # What the project's owner would call it: title, a one-line description in
+    # their terms, when it lands, where. Never read by the plan gate or the
+    # checker — that is `acceptance_test` — so it can say anything.
+    meta: Mapped[dict | None] = mapped_column(JSONVariant)
     status: Mapped[str] = mapped_column(String(16), default=RequirementStatus.PROPOSED)
     # Met once and closed, or owed again every cycle. TERMINAL everywhere
     # except Operate, where a standing requirement is the normal shape and
@@ -1646,6 +1650,20 @@ class Approval(Base):
     decided_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     decision_note: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    # A TOOL_REQUEST approval that carries a grant IS the capability: approving
+    # it is what lets data_fetch make one call the source's allowlist otherwise
+    # refuses. {"source", "tool", "arguments_sha256"} — the digest is why an
+    # approval cannot be spent on different arguments than the ones decided on.
+    # Null on every other kind, and on tool requests filed as prose.
+    grant: Mapped[dict | None] = mapped_column(JSONVariant)
+    # One call, one approval. Set the moment the granted call is made, so a
+    # replay finds it spent rather than approved.
+    spent_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # What the chairman needs to decide well, structured: the change set
+    # (before → after), the rows it rests on, the estimated effect, whether it
+    # can be undone, and the case against. Prose for a person, never part of
+    # the grant — the digest binds the arguments, not the argument.
+    disclosure: Mapped[dict | None] = mapped_column(JSONVariant)
 
 
 class Ask(Base):
