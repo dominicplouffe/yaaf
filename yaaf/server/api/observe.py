@@ -58,6 +58,7 @@ from yaaf.core.models import (
 from yaaf.server import agenda, briefing, policy, typing_state
 from yaaf.server.deps import admin_auth, db
 from yaaf.server.dispatcher import activity_state, chat_session_live
+from yaaf.server.rows import approval_row
 from yaaf.server.velocity import commitment_projection, project_velocity, standing_record
 
 router = APIRouter(dependencies=[Depends(admin_auth)])
@@ -857,6 +858,9 @@ def plan_view(project_id: str, session: Session = Depends(db)) -> dict:
                 "id": r.id,
                 "key": r.key,
                 "statement": r.statement,
+                "meta": r.meta,
+                "recurrence": r.recurrence,
+                "cycle_id": r.cycle_id,
                 "status": r.status,
                 "stage": r.stage,
                 "test_kind": (r.acceptance_test or {}).get("type"),
@@ -1289,28 +1293,24 @@ def hypotheses(project_id: str, session: Session = Depends(db)) -> list[dict]:
 
 @router.get("/projects/{project_id}/approvals")
 def approvals(project_id: str, session: Session = Depends(db)) -> list[dict]:
-    rows = session.execute(
+    rows = list(session.execute(
         select(Approval)
         .where(Approval.project_id == project_id)
         .order_by(Approval.created_at.desc())
         .limit(100)
-    ).scalars()
-    return [
-        {"id": a.id, "kind": a.kind, "title": a.title, "body": a.body,
-         "amount_usd": a.amount_usd, "status": a.status,
-         "requested_by": a.requested_by_agent_id,
-         "created_at": a.created_at.isoformat(),
-         "expires_at": a.expires_at.isoformat(),
-         "decided_at": a.decided_at.isoformat() if a.decided_at else None,
-         "decision_note": a.decision_note,
-         # A TOOL_REQUEST's grant names the call the chairman is deciding on, and
-         # spent_at is when the granted call was actually made. A client that
-         # renders "you approved · applied at" needs both; neither is secret.
-         "grant": a.grant,
-         "spent_at": a.spent_at.isoformat() if a.spent_at else None,
-         "disclosure": a.disclosure}
-        for a in rows
-    ]
+    ).scalars())
+    # The outcome an agent filed after spending a grant: the newest per approval.
+    outcomes: dict[str, dict] = {}
+    if rows:
+        for entry in session.execute(
+            select(AuditLog)
+            .where(AuditLog.project_id == project_id,
+                   AuditLog.action == "data_write.outcome",
+                   AuditLog.entity_id.in_([a.id for a in rows]))
+            .order_by(AuditLog.at.asc())
+        ).scalars():
+            outcomes[entry.entity_id] = entry.detail or {}
+    return [approval_row(a, outcome=outcomes.get(a.id)) for a in rows]
 
 
 @router.get("/projects/{project_id}/memories")
@@ -1457,17 +1457,17 @@ def cycles(project_id: str, session: Session = Depends(db)) -> dict:
         select(Cycle).where(Cycle.project_id == project.id)
         .order_by(Cycle.ordinal.desc()).limit(50)
     ).scalars())
+    def _row(c) -> dict:
+        return {"id": c.id, "ordinal": c.ordinal, "status": c.status,
+                "goal": c.goal,
+                "due_at": c.due_at.isoformat() if c.due_at else None,
+                "opened_at": c.opened_at.isoformat(),
+                "closed_at": c.closed_at.isoformat() if c.closed_at else None,
+                "narrative": c.narrative}
+
     return {
-        "current": next(
-            ({"ordinal": c.ordinal, "opened_at": c.opened_at.isoformat()}
-             for c in rows if c.status == CycleStatus.OPEN), None),
-        "history": [
-            {"ordinal": c.ordinal, "status": c.status,
-             "opened_at": c.opened_at.isoformat(),
-             "closed_at": c.closed_at.isoformat() if c.closed_at else None,
-             "narrative": c.narrative}
-            for c in rows if c.status != CycleStatus.OPEN
-        ],
+        "current": next((_row(c) for c in rows if c.status == CycleStatus.OPEN), None),
+        "history": [_row(c) for c in rows if c.status != CycleStatus.OPEN],
     }
 
 

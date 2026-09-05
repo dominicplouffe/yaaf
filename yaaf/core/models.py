@@ -766,6 +766,10 @@ class Requirement(Base):
     statement: Mapped[str] = mapped_column(Text)
     # Same shape as a task's: {"type": "command", ...} | {"type": "observable", ...}
     acceptance_test: Mapped[dict] = mapped_column(JSONVariant)
+    # What the project's owner would call it: title, a one-line description in
+    # their terms, when it lands, where. Never read by the plan gate or the
+    # checker — that is `acceptance_test` — so it can say anything.
+    meta: Mapped[dict | None] = mapped_column(JSONVariant)
     status: Mapped[str] = mapped_column(String(16), default=RequirementStatus.PROPOSED)
     # Met once and closed, or owed again every cycle. TERMINAL everywhere
     # except Operate, where a standing requirement is the normal shape and

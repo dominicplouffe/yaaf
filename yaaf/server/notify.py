@@ -72,7 +72,8 @@ def boardroom_line(session: Session, project_id: str, body: str) -> None:
     ))
 
 
-def chairman_notify(session: Session, project: Project, subject: str, body: str) -> None:
+def chairman_notify(session: Session, project: Project, subject: str, body: str,
+                    *, kind: str | None = None, data: dict | None = None) -> None:
     """Send subject/body to the project's chairman via every configured channel.
 
     Delivery happens on a fire-and-forget thread: SMTP and webhook I/O carry
@@ -103,7 +104,8 @@ def chairman_notify(session: Session, project: Project, subject: str, body: str)
             if cfg.smtp_host and email:
                 _send_email(email, f"[yaaf/{slug}] {subject}", body)
             if hook:
-                _send_webhook(hook, slug, subject, body, secret=secret, project_id=project_id)
+                _send_webhook(hook, slug, subject, body, secret=secret, project_id=project_id,
+                              kind=kind, data=data)
         except Exception:  # pragma: no cover - best-effort by contract
             log.warning("chairman notify delivery failed for %s", slug, exc_info=True)
 
@@ -130,17 +132,25 @@ def _send_email(to: str, subject: str, body: str) -> None:
 
 
 def _send_webhook(url: str, project_slug: str, subject: str, body: str,
-                  *, secret: str | None = None, project_id: str | None = None) -> None:
+                  *, secret: str | None = None, project_id: str | None = None,
+                  kind: str | None = None, data: dict | None = None) -> None:
     """POST the notice, signed when the project provisioned a secret.
 
     The `text` field keeps the Slack-compatible shape the app-wide hook has
     always sent, so an existing receiver is unaffected. `project_id` is added
     for a receiver that has to route: a slug is the chairman's name for the
-    project and can be edited, an id cannot.
+    project and can be edited, an id cannot. `kind` names the event for a
+    receiver that routes on it rather than on the subject's wording, and
+    `data` carries the row the notice is about (an `approval`, a
+    `deliverable`, a `cycle`) in the same shape the observe API lists it.
     """
     envelope = {"project": project_slug, "subject": subject, "text": f"*{subject}*\n{body}"}
     if project_id:
         envelope["project_id"] = project_id
+    if kind:
+        envelope["kind"] = kind
+    if data:
+        envelope.update(data)
     payload = json.dumps(envelope).encode()
     headers = {"Content-Type": "application/json"}
     if secret:

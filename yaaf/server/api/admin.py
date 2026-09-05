@@ -2621,6 +2621,33 @@ def _apply_decision(session: Session, approval: Approval, project: Project,
     notify(session, WAKE_CHANNEL, approval.project_id)
 
 
+class ApprovalExtend(BaseModel):
+    days: int = Field(ge=1, le=30)
+    reason: str = Field(min_length=3, max_length=500)
+
+
+@router.post("/approvals/{approval_id}/extend")
+def extend_approval(
+    approval_id: str, body: ApprovalExtend, session: Session = Depends(db)
+) -> dict:
+    """Move a pending approval's deadline out. For the receiver that could not
+    reach the chairman — the clock should not run while nobody could see it.
+    The nag re-arms so the new deadline gets its own chase."""
+    approval = session.get(Approval, approval_id)
+    if approval is None:
+        raise HTTPException(status_code=404, detail="unknown approval")
+    if approval.status != ApprovalStatus.PENDING:
+        raise HTTPException(status_code=409, detail=f"approval already {approval.status}")
+    now = utcnow()
+    was = approval.expires_at
+    approval.expires_at = max(approval.expires_at, now) + timedelta(days=body.days)
+    approval.nag_sent_at = None
+    _audit(session, approval.project_id, "approval.extend", "approval", approval.id,
+           {"days": body.days, "reason": body.reason,
+            "from": was.isoformat(), "to": approval.expires_at.isoformat()})
+    return {"id": approval.id, "expires_at": approval.expires_at.isoformat()}
+
+
 @router.post("/approvals/{approval_id}/decide")
 def decide_approval(
     approval_id: str, body: ApprovalDecision, session: Session = Depends(db)
