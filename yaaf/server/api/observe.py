@@ -1299,9 +1299,15 @@ def approvals(project_id: str, session: Session = Depends(db)) -> list[dict]:
         {"id": a.id, "kind": a.kind, "title": a.title, "body": a.body,
          "amount_usd": a.amount_usd, "status": a.status,
          "requested_by": a.requested_by_agent_id,
+         "created_at": a.created_at.isoformat(),
          "expires_at": a.expires_at.isoformat(),
          "decided_at": a.decided_at.isoformat() if a.decided_at else None,
-         "decision_note": a.decision_note}
+         "decision_note": a.decision_note,
+         # A TOOL_REQUEST's grant names the call the chairman is deciding on, and
+         # spent_at is when the granted call was actually made. A client that
+         # renders "you approved · applied at" needs both; neither is secret.
+         "grant": a.grant,
+         "spent_at": a.spent_at.isoformat() if a.spent_at else None}
         for a in rows
     ]
 
