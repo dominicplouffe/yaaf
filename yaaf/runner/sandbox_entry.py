@@ -478,14 +478,25 @@ async def t_spend_book(args):
     "buys exactly one call — a second change needs a second approval, so batch "
     "with the tool's own bulk arguments rather than filing twenty requests. "
     "Say WHY in terms of what it does to his numbers, not what it does to your "
-    "task. Unanswered it expires to no; plan the work that does not need it.",
-    {"server": str, "tool": str, "arguments": dict, "why": str},
+    "task. Unanswered it expires to no; plan the work that does not need it. "
+    "ALWAYS fill `disclosure` — it is what he decides on: `change_set` as "
+    "[{entity, field, before, after}] for every thing that changes; "
+    "`scope_counts` like {campaigns: 3, keywords: 14}; `evidence` as {columns, "
+    "rows (the ones that matter, 200 at most), period_start, period_end, "
+    "currency, as_of}; `estimate` as {label, value, basis} labelled as an "
+    "estimate; `reversible` true/false; `counter_case` — the honest reason he "
+    "might say no; `spend_affected_usd_month`; and `category` (one of: bids, "
+    "budgets, targeting, negative_keywords, campaign_state, placements, other). "
+    "A request without a disclosure is a paragraph with buttons.",
+    {"server": str, "tool": str, "arguments": dict, "why": str, "disclosure": dict},
 )
 async def t_data_write_request(args):
     payload = {"source": (args.get("server") or "").strip(),
                "tool": (args.get("tool") or "").strip(),
                "arguments": args.get("arguments") or {},
                "why": (args.get("why") or "").strip()}
+    if isinstance(args.get("disclosure"), dict) and args["disclosure"]:
+        payload["disclosure"] = args["disclosure"]
     return _text(_call("POST", "/agent/data_writes", payload))
 
 

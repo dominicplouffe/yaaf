@@ -1986,11 +1986,55 @@ def _project_data_source(project, name: str) -> dict | None:
     return None
 
 
+class DisclosedChange(BaseModel):
+    """One before → after, on one thing: a campaign's daily budget, a keyword's bid."""
+
+    entity: str = Field(min_length=1, max_length=200)
+    field: str = Field(min_length=1, max_length=80)
+    before: str | float | int | bool | None = None
+    after: str | float | int | bool | None = None
+
+
+class DisclosedEvidence(BaseModel):
+    """The rows the ask rests on, with what a person needs to reconcile them."""
+
+    columns: list[str] = Field(min_length=1, max_length=30)
+    rows: list[list[str | float | int | bool | None]] = Field(default_factory=list, max_length=200)
+    period_start: str | None = Field(default=None, max_length=40)
+    period_end: str | None = Field(default=None, max_length=40)
+    currency: str | None = Field(default=None, max_length=8)
+    as_of: str | None = Field(default=None, max_length=40)
+
+
+class DisclosedEstimate(BaseModel):
+    label: str = Field(min_length=1, max_length=120)
+    value: str = Field(min_length=1, max_length=80)
+    basis: str = Field(default="", max_length=1000)
+
+
+class Disclosure(BaseModel):
+    """What the chairman needs to decide well. Bounded, because it is stored on
+    the approval row and rendered to a person; an agent that wants to show
+    ten thousand rows shows the two hundred that matter."""
+
+    category: str | None = Field(default=None, max_length=64)
+    change_set: list[DisclosedChange] = Field(default_factory=list, max_length=500)
+    scope_counts: dict[str, int] = Field(default_factory=dict)
+    evidence: DisclosedEvidence | None = None
+    estimate: DisclosedEstimate | None = None
+    reversible: bool | None = None
+    counter_case: str = Field(default="", max_length=4000)
+    spend_affected_usd_month: float | None = None
+
+
 class DataWriteRequest(BaseModel):
     source: str = Field(min_length=1, max_length=64)
     tool: str = Field(min_length=1, max_length=128)
     arguments: dict = Field(default_factory=dict)
     why: str = Field(default="", max_length=4000)
+    # Prose for the chairman, never part of the grant: the digest binds the
+    # arguments, and two requests that differ only here spend identically.
+    disclosure: Disclosure | None = None
 
 
 @router.post("/data_writes")
@@ -2028,6 +2072,7 @@ def data_write_request(
     )
     row.grant = {"source": body.source, "tool": body.tool,
                  "arguments_sha256": _arguments_digest(body.arguments)}
+    row.disclosure = body.disclosure.model_dump(mode="json") if body.disclosure else None
     chairman_notify(
         session, ctx.project,
         f"Approve a change to your {body.source} account?",

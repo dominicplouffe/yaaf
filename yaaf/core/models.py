@@ -1642,6 +1642,11 @@ class Approval(Base):
     # One call, one approval. Set the moment the granted call is made, so a
     # replay finds it spent rather than approved.
     spent_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # What the chairman needs to decide well, structured: the change set
+    # (before → after), the rows it rests on, the estimated effect, whether it
+    # can be undone, and the case against. Prose for a person, never part of
+    # the grant — the digest binds the arguments, not the argument.
+    disclosure: Mapped[dict | None] = mapped_column(JSONVariant)
 
 
 class Secret(Base):
