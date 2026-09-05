@@ -1307,7 +1307,8 @@ def approvals(project_id: str, session: Session = Depends(db)) -> list[dict]:
          # spent_at is when the granted call was actually made. A client that
          # renders "you approved · applied at" needs both; neither is secret.
          "grant": a.grant,
-         "spent_at": a.spent_at.isoformat() if a.spent_at else None}
+         "spent_at": a.spent_at.isoformat() if a.spent_at else None,
+         "disclosure": a.disclosure}
         for a in rows
     ]
 
