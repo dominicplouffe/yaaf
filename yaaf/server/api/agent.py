@@ -66,6 +66,7 @@ from yaaf.server import policy, typing_state
 from yaaf.server.deps import RunContext, db, run_auth
 from yaaf.server.notify import chairman_notify
 from yaaf.server.policy import Refusal
+from yaaf.server.rows import approval_row
 
 router = APIRouter()
 
@@ -1144,9 +1145,23 @@ def memory_forget(
 # acceptance test and writes the result itself.
 
 
+class RequirementMeta(BaseModel):
+    """What the project's owner would call this requirement. Not checked by the
+    platform; shown by whoever presents the plan to the person who hired it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=1, max_length=120)
+    description: str = Field(default="", max_length=400)
+    cadence: str | None = Field(default=None, pattern="^(daily|weekly)$")
+    due: str | None = Field(default=None, max_length=40)
+    lands: str | None = Field(default=None, pattern="^(report|memo|note|table)$")
+
+
 class RequirementPropose(BaseModel):
     statement: str = Field(min_length=10, max_length=2000)
     acceptance_test: dict
+    meta: RequirementMeta | None = None
     stage: int = Field(default=1, ge=1, le=50)
     est_runs: int | None = Field(default=None, ge=1, le=10_000)
     depends_on: list[str] = Field(default_factory=list)
@@ -1196,6 +1211,7 @@ def propose_requirement(
         key=policy.next_requirement_key(session, ctx.project.id),
         statement=body.statement.strip(),
         acceptance_test=body.acceptance_test,
+        meta=body.meta.model_dump(mode="json") if body.meta else None,
         status=RequirementStatus.PROPOSED,
         stage=body.stage,
         recurrence=body.recurrence,
@@ -2073,10 +2089,12 @@ def data_write_request(
     row.grant = {"source": body.source, "tool": body.tool,
                  "arguments_sha256": _arguments_digest(body.arguments)}
     row.disclosure = body.disclosure.model_dump(mode="json") if body.disclosure else None
+    session.flush()
     chairman_notify(
         session, ctx.project,
         f"Approve a change to your {body.source} account?",
         f"{row.title}\n\n{row.body}",
+        kind="approval_requested", data={"approval": approval_row(row)},
     )
     return {
         "id": row.id,
@@ -2151,6 +2169,56 @@ def data_write_spend(
         )
     )
     return {"id": approval.id, "spent": True}
+
+
+class ObservedEffect(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    label: str = Field(min_length=1, max_length=120)
+    value: str = Field(min_length=1, max_length=80)
+    basis: str = Field(default="", max_length=500)
+    as_of: str | None = Field(default=None, max_length=40)
+
+
+class DataWriteOutcome(BaseModel):
+    ok: bool
+    observed: ObservedEffect | None = None
+    note: str = Field(default="", max_length=2000)
+
+
+@router.post("/data_writes/{approval_id}/outcome")
+def data_write_outcome(
+    approval_id: str, body: DataWriteOutcome,
+    ctx: RunContext = Depends(run_auth), session: Session = Depends(db),
+) -> dict:
+    """What a spent grant actually did, filed after the fact.
+
+    The disclosure said what the call would do and `spent_at` says it was made;
+    this is the only record of what came of it. Refused before the spend: an
+    outcome for a call that has not happened is a forecast wearing a receipt.
+    """
+    approval = session.get(Approval, approval_id)
+    if approval is None or approval.project_id != ctx.project.id:
+        raise Refusal(f"{approval_id!r} is not an approval on this project.", status_code=404)
+    if approval.spent_at is None:
+        raise Refusal(
+            f"Approval {approval_id} has not been spent, so it has no outcome yet. Make "
+            "the call with data_fetch and approval_id first, then file what it did.",
+            status_code=409)
+    detail = body.model_dump(mode="json")
+    detail["filed_at"] = utcnow().isoformat()
+    session.add(
+        AuditLog(
+            id=ids.new_id(ids.AUDIT),
+            project_id=approval.project_id,
+            actor=f"agent:{ctx.agent.id}",
+            action="data_write.outcome",
+            entity="approval",
+            entity_id=approval.id,
+            detail=detail,
+        )
+    )
+    return {"id": approval.id, "outcome": detail}
 
 
 class SpendIn(BaseModel):
@@ -2327,12 +2395,14 @@ def assist_request(
         entity="approval", entity_id=approval.id,
         detail={"what": body.what[:300], "where": body.where},
     ))
+    session.flush()
     chairman_notify(
         session, ctx.project, f"Human needed: {body.what[:120]}",
         approval.body + "\n\nAnswer on the Decisions screen — your note travels "
         "back verbatim and wakes the agent. This is the one step autonomy never "
         "takes from you: the platform hands over security challenges, it never "
         "defeats them.",
+        kind="approval_requested", data={"approval": approval_row(approval)},
     )
     notify(session, WAKE_CHANNEL, ctx.project.id)
     return {
@@ -2394,10 +2464,12 @@ def need_request(
         detail={"title": body.title, "roles": body.roles,
                 "est_usd_per_month": body.est_usd_per_month},
     ))
+    session.flush()
     chairman_notify(
         session, ctx.project, f"The project needs: {body.title}",
         "\n".join(detail_lines) + "\n\nFulfill or decline it on the Decisions screen "
         "— fulfilling stores the credential and scopes the roles in one motion.",
+        kind="approval_requested", data={"approval": approval_row(approval)},
     )
     notify(session, WAKE_CHANNEL, ctx.project.id)
     return {
@@ -2817,6 +2889,17 @@ def artifact_put(
         requirement_ids=[r.id for r in satisfied],
     )
     session.add(row)
+    session.flush()
+    chairman_notify(
+        session, ctx.project, f"deliverable published: {filename} v{version}",
+        f"{filename} (v{version}, {len(data)} bytes) is in the artifact store"
+        + (f", satisfying {', '.join(r.key for r in satisfied)}." if satisfied else "."),
+        kind="deliverable_published",
+        data={"deliverable": {"id": row.id, "name": filename, "version": version,
+                              "key": key, "size": len(data),
+                              "published_at": row.published_at.isoformat() if row.published_at else None,
+                              "satisfies": [r.key for r in satisfied]}},
+    )
     # The digest is returned at write time so the author can record what it
     # shipped and a later reader can prove the store still holds those bytes.
     return {"uri": uri, "key": key, "size": len(data), "sha256": digest,

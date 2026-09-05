@@ -80,6 +80,7 @@ from yaaf.core.models import (
 )
 from yaaf.server import briefing, policy
 from yaaf.server.notify import boardroom_line, chairman_notify
+from yaaf.server.rows import approval_row
 from yaaf.server.verifier import verify_pending_evidence
 
 log = logging.getLogger("yaaf.janitor")
@@ -800,6 +801,15 @@ def roll_cycles(session: Session, project: Project, cons: ConstitutionDoc) -> No
             + f", {len(unsettled)} carried forward. No review narrative was "
               "written this cycle."
         )
+
+    chairman_notify(
+        session, project, f"cycle {cycle.ordinal} closed {cycle.status}", cycle.narrative or "",
+        kind="cycle_closed",
+        data={"cycle": {"id": cycle.id, "ordinal": cycle.ordinal, "status": cycle.status,
+                        "goal": cycle.goal,
+                        "opened_at": cycle.opened_at.isoformat() if cycle.opened_at else None,
+                        "closed_at": now.isoformat()}},
+    )
 
     # Two consecutive cycles with nothing made true pause the project: a
     # rhythm nobody dances to is a bill, not a project.
@@ -1752,6 +1762,7 @@ def nag_approvals(session: Session, project: Project, cons: ConstitutionDoc) -> 
             f"'{approval.title}' expires at {approval.expires_at:%Y-%m-%d %H:%M} UTC and "
             f"the timeout decision is {cons.approval_timeout_decision.upper()}. "
             f"Decide it in the approvals inbox.\n\n{approval.body[:2000]}",
+            kind="approval_expiring", data={"approval": approval_row(approval)},
         )
         approval.nag_sent_at = utcnow()
         nagged += 1
@@ -1778,6 +1789,13 @@ def expire_approvals(session: Session, project: Project, cons: ConstitutionDoc) 
             approval.status = ApprovalStatus.EXPIRED
             approval.decision_note = "expired: no chairman decision in time; default is deny"
         approval.decided_at = now
+        chairman_notify(
+            session, project,
+            f"approval expired: {approval.title}",
+            f"'{approval.title}' expired at {now:%Y-%m-%d %H:%M} UTC without a decision and "
+            f"is {'APPROVED' if approve_on_timeout else 'DENIED'} per this constitution.",
+            kind="approval_expired", data={"approval": approval_row(approval)},
+        )
         _notice_agent(
             session, project, approval.requested_by_agent_id, NoticeKind.APPROVAL_EXPIRED,
             f"Approval '{approval.title}' expired unanswered and is "

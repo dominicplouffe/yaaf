@@ -137,13 +137,21 @@ async def t_task_create(args):
     "mark one met: the platform runs the test and writes the result. "
     "stage is the order this happens in (1, 2, 3…); est_runs is your honest guess at "
     "how many runs it will take, and it is compared against what it actually costs. "
-    "depends_on lists requirement ids that must be settled first.",
+    "depends_on lists requirement ids that must be settled first. "
+    "recurrence is 'terminal' (met once) or 'standing' (owed again every cycle; "
+    "Operate only). ALWAYS fill meta — it is what the project's OWNER sees: "
+    "{title: a noun they want ('Wasted-spend list'), description: one line of what "
+    "they get in spreadsheet terms, cadence: daily|weekly|null, due: an ISO date or "
+    "null, lands: report|memo|note|table}. The statement is for the platform; meta "
+    "is for the person who hired you.",
     {
         "statement": str,
         "acceptance_test": dict,
         "stage": int,
         "est_runs": int,
         "depends_on": list,
+        "recurrence": str,
+        "meta": dict,
     },
 )
 async def t_requirement_propose(args):
@@ -501,6 +509,24 @@ async def t_data_write_request(args):
 
 
 @tool(
+    "data_write_outcome",
+    "After a data_fetch spent an approval, file what the call DID — on the run that "
+    "made it, or the next one once the effect can be read. ok: whether the call "
+    "succeeded; observed: {label, value, basis, as_of} — the effect in the owner's "
+    "numbers ('ad spend on the 14 terms', '$0 in the 7 days since', the window it "
+    "covers); note: anything else he should know. Without this the owner sees "
+    "'approved · applied' and never learns whether it worked.",
+    {"approval_id": str, "ok": bool, "observed": dict, "note": str},
+)
+async def t_data_write_outcome(args):
+    payload = {"ok": bool(args.get("ok", True)), "note": (args.get("note") or "").strip()}
+    if isinstance(args.get("observed"), dict) and args["observed"]:
+        payload["observed"] = args["observed"]
+    approval_id = (args.get("approval_id") or "").strip()
+    return _text(_call("POST", f"/agent/data_writes/{approval_id}/outcome", payload))
+
+
+@tool(
     "assist_request",
     "Any agent. A step only a HUMAN can do is blocking you — a captcha, a 2FA code, a "
     "KYC form, a signature, an account only the chairman can touch. Never try to defeat "
@@ -656,11 +682,12 @@ async def t_side_effect_finish(args):
     "write it to the workspace and hand over the path. filename optionally renames "
     "the artifact (plain name, no path separators; defaults to the file's own name). "
     "content_base64 is a fallback for small payloads you have in hand and nowhere on "
-    "disk; filename is required with it. Max 5 MB decoded either way. Returns the "
+    "disk; filename is required with it. Max 5 MB decoded either way. satisfies "
+    "lists the requirement keys (R-03) this file delivers on. Returns the "
     "artifact's uri, key, size and sha256 — cite the uri in evidence, task "
     "completions and messages. The uri is NOT a path in your sandbox: read it back "
     "with artifact_get, never with a file tool.",
-    {"path": str, "filename": str, "content_base64": str},
+    {"path": str, "filename": str, "content_base64": str, "satisfies": list},
 )
 async def t_artifact_put(args):
     path = (args.get("path") or "").strip()
@@ -691,10 +718,10 @@ async def t_artifact_put(args):
     if not filename:
         return _text({"status": 422, "body": {
             "error": "filename is required with content_base64."}})
-    return _text(
-        _call("POST", "/agent/artifacts",
-              {"filename": filename, "content_base64": encoded})
-    )
+    payload = {"filename": filename, "content_base64": encoded}
+    if isinstance(args.get("satisfies"), list) and args["satisfies"]:
+        payload["satisfies"] = [str(k) for k in args["satisfies"]]
+    return _text(_call("POST", "/agent/artifacts", payload))
 
 
 @tool(
@@ -1151,7 +1178,7 @@ def run_tools() -> list:
         return list(ALL_TOOLS)
     tools = [*ALL_TOOLS, t_data_fetch]
     if any(config.get("tools") is not None for config in specs.values()):
-        tools.append(t_data_write_request)
+        tools.extend([t_data_write_request, t_data_write_outcome])
     return tools
 
 
