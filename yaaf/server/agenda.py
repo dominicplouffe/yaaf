@@ -16,7 +16,8 @@ So a rhythm carries its `every` sentence, its true `next` firing, and the local
 days it touches — enough to paint a strip without pretending each tick is news.
 
 **Events** happen once, on a date, and most of them have a consequence
-attached: an approval auto-decides, a bet's work blocks, a promise comes due.
+attached: an approval auto-decides, a question to the chairman stops waiting,
+a bet's work blocks, a promise comes due.
 
 Everything is read in the constitution's one timezone, the same one the
 dispatcher reads — a calendar that disagreed with the wake it is drawing would
@@ -58,6 +59,7 @@ from yaaf.core.models import (
     Team,
     utcnow,
 )
+from yaaf.server import asks as ask_lib
 
 #: How far ahead the strip looks by default. Two weeks is one review interval
 #: plus slack, which is the span over which a chairman's plans are still soft.
@@ -313,6 +315,20 @@ def _clock_events(session: Session, project: Project, tz: ZoneInfo,
             expires, "approval_expiry", f"“{approval.title[:70]}” auto-decides", tz,
             detail=f"{approval.kind.replace('_', ' ')} — silence is a decision here",
             tone="consequence", where="records/decisions",
+        ))
+    # A question the CEO put to him is the same shape of date as an approval
+    # expiring: a moment he can let pass, after which the thing resolves without
+    # him. The difference is only which way it resolves — an approval falls to
+    # the constitution's default, an ask to the sentence the CEO wrote before it
+    # asked, which is why that sentence is the detail here.
+    for ask in ask_lib.open_asks(session, project.id):
+        answer_by = _aware(ask.answer_by)
+        if answer_by > horizon:
+            continue
+        out.append(_event(
+            answer_by, "ask_window", f"“{ask.title[:70]}” stops waiting", tz,
+            detail=f"then: {ask.default_action[:90]}",
+            tone="consequence", where="decisions",
         ))
     for bet in session.execute(
         select(Hypothesis).where(

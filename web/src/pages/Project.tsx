@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Navigate, NavLink, Route, Routes, useParams } from "react-router-dom";
 import {
   ApprovalRow,
+  AskRow,
   Dashboard,
   get,
   HealthCheck,
@@ -54,6 +55,7 @@ export interface ProjectCtx {
   projectId: string;
   dash: Dashboard;
   approvals: ApprovalRow[];
+  asks: AskRow[];
   hypotheses: HypothesisRow[];
   org: OrgView | null;
   health: ProjectHealth | null;
@@ -492,6 +494,10 @@ export default function ProjectPage() {
     () => get<ApprovalRow[]>(`/observe/projects/${projectId}/approvals`),
     6000,
   );
+  const { data: asks } = usePoll(
+    () => get<AskRow[]>(`/observe/projects/${projectId}/asks`),
+    6000,
+  );
   const { data: hypotheses } = usePoll(
     () => get<HypothesisRow[]>(`/observe/projects/${projectId}/hypotheses`),
     15000,
@@ -517,6 +523,7 @@ export default function ProjectPage() {
     projectId,
     dash,
     approvals: approvals ?? [],
+    asks: asks ?? [],
     hypotheses: hypotheses ?? [],
     org,
     health,

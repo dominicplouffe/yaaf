@@ -45,6 +45,7 @@ from yaaf.core.models import (
     Approval,
     ApprovalStatus,
     Artifact,
+    Ask,
     AuditLog,
     AuditSample,
     AuditSampleStatus,
@@ -177,6 +178,10 @@ LINE_OWNER: dict[str, str] = {
     "published": MATERIAL,
     # Only he can sign these, so only he can be at fault for them.
     "approvals_expired": MATERIAL,
+    # And the mirror of it: a question whose window ran out, where the CEO then
+    # did the thing it had told him it would do. Material at every dial setting
+    # — it asked BECAUSE it wanted his read, and he did not give one.
+    "asks_lapsed": MATERIAL,
     "rules_changed": MATERIAL,
     # Governed by the dial.
     "plan_gate_closed": "plan_authority",
@@ -212,6 +217,7 @@ SEVERITY = (
     "plan_gate_reopened",
     "notice_commitment_at_risk",
     "approvals_expired",
+    "asks_lapsed",
     "evidence_failed",
     "bets_expired",
     "notice_memory_full",
@@ -628,6 +634,22 @@ def _self_acting_lines(session: Session, project: Project, since, until) -> list
             f"timed out unanswered and {_plural(len(expired_approvals), 'was', 'were')} "
             f"decided by the constitution's default ({titles})",
             tone="bad", count=len(expired_approvals), where="records/decisions",
+        ))
+
+    lapsed_asks = list(session.execute(
+        select(Ask).where(
+            Ask.project_id == project.id,
+            Ask.lapsed_at > since,
+            Ask.lapsed_at <= until,
+        ).order_by(Ask.lapsed_at)
+    ).scalars())
+    if lapsed_asks:
+        titles = ", ".join(f"“{a.title[:60]}”" for a in lapsed_asks[:3])
+        lines.append(_line(
+            "asks_lapsed",
+            f"{len(lapsed_asks)} {_plural(len(lapsed_asks), 'question')} to you ran out "
+            f"of time and the CEO did what it had told you it would ({titles})",
+            tone="bad", count=len(lapsed_asks), where="decisions",
         ))
 
     expired_bets = list(session.execute(

@@ -22,13 +22,21 @@ import inspect
 import re
 from datetime import timedelta
 
-from tests.conftest import ADMIN, agent_by_name, bearer, live_token, make_project
+from tests.conftest import (
+    ADMIN,
+    agent_by_name,
+    bearer,
+    channel_of,
+    live_token,
+    make_project,
+)
 from yaaf.core import ids
 from yaaf.core.constitution import effective
 from yaaf.core.db import db_session
 from yaaf.core.models import (
     Agent,
     AgentStatus,
+    Message,
     Notice,
     NoticeKind,
     Project,
@@ -49,6 +57,11 @@ GATES = {
     "wake_ceiling", "coalescing", "scheduled", "no_lead", "paused_agents",
     "stalled_requirement", "rework_owed", "awaiting_chairman", "awaiting_ceo",
     "blocked_tasks", "checks_lost", "checking",
+    # Everyone holding anything is holding only unread mail and the reading
+    # allowance is spent. NOT in FINE — the project is stopped, not working —
+    # and not in WAITS, because which clock ends it depends on whether the
+    # daily or the hourly ceiling is the binding one.
+    "inbox_runs",
     # Finished work waiting on a reader who is not its author. In FINE: the
     # project is working — this is a step the board passes through, and the
     # reviewer's own wake clears it — but it is not a clock, so not in WAITS.
@@ -100,9 +113,12 @@ def _synthetic(gate: str | None) -> dict:
         "wake_ceiling": {"cap": 6, "frees_at": at, "agents_held": 1},
         "coalescing": {"ripe_at": at, "agents_held": 1},
         "concurrency": {"in_flight": 3, "cap": 3},
+        "inbox_runs": {"used_today": 40, "cap_today": 40,
+                       "used_this_hour": 3, "cap_this_hour": 8},
         "waiting": {"ready_tasks": 1, "claimable_tasks": 0, "gated_tasks": 1,
                     "claimed_tasks": 0, "blocked_tasks": 1, "checking_tasks": 1,
-                    "reviewing_tasks": 1, "notices": 2, "agents_with_work": 1},
+                    "reviewing_tasks": 1, "notices": 2, "unread": 4,
+                    "open_scope_no_board": 0, "agents_with_work": 1},
         "board": {"claimable": 0, "gated": 1, "next_gate_at": at, "blocked": 1,
                   "checking": 1, "reviewing": 1,
                   "checks_lost": ["Shortlist the models"],
@@ -508,3 +524,53 @@ def test_the_health_page_carries_the_same_sentence(client):
     activity = [c for c in health["checks"] if c["key"] == "activity"]
     assert len(activity) == 1
     assert "scheduled for" in activity[0]["detail"]
+
+
+def test_a_spent_reading_allowance_is_a_gate_with_a_name(client):
+    """The rung the ladder never had.
+
+    `_dispatch_project` refuses every inbox run once the reading allowance is
+    gone — correctly; reading must not crowd out working — and nothing above it
+    knew. So a project with agents holding sixty-five unread messages between
+    them, and no way to read any of them until midnight, reported that a run
+    should start on the next tick. For eleven hours.
+    """
+    project = make_project(client, constitution={"inbox_runs_per_project_per_day": 0})
+    _drain()
+    team_room = channel_of(client, project["id"], "team")
+    with db_session() as session:
+        session.add(Message(
+            id=ids.new_id(ids.MESSAGE), project_id=project["id"],
+            channel_id=team_room, sender_agent_id=agent_by_name(project, "Lead"),
+            body="the numbers in section four do not add up",
+            created_at=utcnow() - timedelta(minutes=30)))
+
+    state = _activity(project)
+    assert state["waiting"]["unread"] >= 1
+    assert state["blocked_by"] == "inbox_runs", state["brief"]
+    assert state["brief"]["tone"] == "serious"
+    assert "reading allowance is spent" in state["brief"]["headline"]
+
+    # And the dispatcher agrees, which is the property the sentence claims.
+    with db_session() as session:
+        assert dispatcher.dispatch_once(session) == 0
+
+
+def test_a_quiet_board_does_not_claim_nobody_has_mail(client):
+    """The fallback sentence asserted something it had never checked. `behind`
+    was built from claimable, gated and notices — never unread — so "the board
+    is empty and nobody has unread work" printed over three agents holding
+    sixty-five messages."""
+    project = make_project(client)
+    _drain()
+    team_room = channel_of(client, project["id"], "team")
+    with db_session() as session:
+        session.add(Message(
+            id=ids.new_id(ids.MESSAGE), project_id=project["id"],
+            channel_id=team_room, sender_agent_id=agent_by_name(project, "Lead"),
+            body="picking this up in the morning",
+            created_at=utcnow() - timedelta(minutes=30)))
+
+    brief = _activity(project)["brief"]
+    assert "nobody is holding unread work" not in brief["detail"]
+    assert "unread" in brief["short"] or "unread" in brief["detail"]

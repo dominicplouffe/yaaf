@@ -210,6 +210,16 @@ class ConstitutionDoc(BaseModel):
         "deny", group="Autonomy", label="What an expired approval decides",
         choices=["deny", "approve"],
         help="'deny' or 'approve'. Default-deny: silence is not consent.")
+    ask_window_hours_max: float = _rule(
+        72.0, gt=0, group="Autonomy", label="Longest window your CEO may wait on an answer",
+        help="A question to you carries the moment it stops waiting and what it will do "
+             "then. This is the furthest out that moment may be — it names a shorter one "
+             "when the work has a deadline. There is no setting for what an unanswered "
+             "question decides: the CEO writes that down before it asks, and you see it.")
+    max_open_asks: int = _rule(
+        3, ge=1, group="Autonomy", label="Unanswered questions allowed on your desk",
+        help="A CEO past this must wait for an answer or a window to close before asking "
+             "again. Asking is cheap for it and expensive for you.")
 
     # The authority dial (CEO Charter, stage B — docs/AUTONOMY.md). Integrity
     # rules never move; these decide only WHO holds each verb. 'chairman' is

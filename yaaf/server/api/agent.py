@@ -1951,6 +1951,157 @@ def approval_request(
     }
 
 
+# ── asks: a question to him that cannot go quiet ────────────────────────────────
+
+
+class AskIn(BaseModel):
+    title: str = Field(min_length=4, max_length=300)
+    body: str = Field(min_length=10)
+    answer_by_hours: float = Field(gt=0)
+    # Long enough that "decide later" does not fit. The value of this field is
+    # that it is written before the answer is known; a placeholder would make
+    # the whole mechanism ceremonial.
+    default_action: str = Field(min_length=20, max_length=2000)
+
+
+class AskCloseIn(BaseModel):
+    ask_id: str
+    message_id: str
+
+
+@router.post("/asks")
+def ask_chairman(
+    body: AskIn, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
+) -> dict:
+    """Put a question to the chairman, with the moment you stop waiting.
+
+    This is deliberately not a status, so the reporting cadence never sees it.
+    A cadence exists to stop a CEO narrating at him; it was never meant to stop
+    one asking him something the next move depends on — and when it did, the
+    project sat for six hours on a finished deliverable while his desk said
+    nothing was waiting.
+
+    It does not block. Keep working: the whole point of `default_action` is
+    that the project has somewhere to go if he says nothing at all.
+    """
+    from yaaf.core.models import Ask
+
+    cons = effective(session, ctx.project.id)
+    policy.check_ask(session, ctx.project, ctx.agent, cons, body.answer_by_hours)
+    boardroom = session.execute(
+        select(Channel).where(Channel.project_id == ctx.project.id,
+                              Channel.kind == ChannelKind.BOARDROOM)
+    ).scalars().first()
+    if boardroom is None:
+        raise Refusal("This project has no boardroom.", status_code=404)
+
+    answer_by = utcnow() + timedelta(hours=body.answer_by_hours)
+    message = Message(
+        id=ids.new_id(ids.MESSAGE),
+        project_id=ctx.project.id,
+        channel_id=boardroom.id,
+        sender_agent_id=ctx.agent.id,
+        body=(f"**{body.title}**\n\n{body.body}\n\n"
+              f"_Answer by {answer_by.isoformat(timespec='minutes')}. "
+              f"If I have not heard from you: {body.default_action}_"),
+    )
+    session.add(message)
+    row = Ask(
+        id=ids.new_id(ids.ASK),
+        project_id=ctx.project.id,
+        asked_by_agent_id=ctx.agent.id,
+        title=body.title,
+        body=body.body,
+        answer_by=answer_by,
+        default_action=body.default_action.strip(),
+        asked_in_message_id=message.id,
+    )
+    session.add(row)
+    session.add(AuditLog(
+        id=ids.new_id(ids.AUDIT), project_id=ctx.project.id,
+        actor=f"agent:{ctx.agent.id}", action="ask.opened",
+        entity="ask", entity_id=row.id,
+        detail={"title": body.title, "answer_by": answer_by.isoformat(),
+                "default_action": row.default_action[:500]},
+    ))
+    notify(session, WAKE_CHANNEL, ctx.project.id)
+    return {
+        "ask_id": row.id,
+        "message_id": message.id,
+        "answer_by": answer_by.isoformat(),
+        "note": (
+            "Asked, and on his desk until he answers. You are not blocked — keep "
+            f"working. If he says nothing by {answer_by.isoformat(timespec='minutes')} "
+            "you will be woken to do exactly what you just wrote down, and to tell him "
+            "you did."
+        ),
+    }
+
+
+@router.post("/asks/close")
+def close_ask(
+    body: AskCloseIn, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
+) -> dict:
+    """Close an ask by having acted on it and said so in the boardroom.
+
+    Same shape as raising a flag, for the same reason: the row exists to make
+    silence visible, so it cannot be cleared by more silence. An ask he
+    answered closes when the CEO says what it did with the answer; an ask that
+    lapsed closes when the CEO says it took the default it named.
+    """
+    from yaaf.core.models import Ask, AskStatus
+    from yaaf.server import asks as ask_lib
+
+    if ctx.agent.kind != AgentKind.CEO:
+        raise Refusal("Only the CEO speaks to the chairman.", status_code=403)
+    ask = session.get(Ask, body.ask_id)
+    if ask is None or ask.project_id != ctx.project.id:
+        raise Refusal("No such ask.", status_code=404)
+    if ask.status == AskStatus.OPEN:
+        raise Refusal(
+            "That question is still open — he has not answered and its window has not "
+            "closed. Closing it now would be deciding on his behalf while still claiming "
+            "to have asked. Act on your own authority and say so, or wait.",
+            status_code=409,
+        )
+    if ask.status not in ask_lib.OWED_STATUSES:
+        raise Refusal(f"That ask is already {ask.status}.", status_code=409)
+
+    message = session.get(Message, body.message_id)
+    boardroom = session.execute(
+        select(Channel).where(Channel.project_id == ctx.project.id,
+                              Channel.kind == ChannelKind.BOARDROOM)
+    ).scalars().first()
+    if (message is None or boardroom is None or message.channel_id != boardroom.id
+            or message.sender_agent_id != ctx.agent.id):
+        raise Refusal(
+            "message_id must be a boardroom message you posted. The ask closes because "
+            "he was told what you did about it; the message is the proof, and without "
+            "it this verb would just be a way of marking his question as handled.",
+            status_code=422,
+        )
+
+    was = ask.status
+    ask.status = AskStatus.CLOSED
+    ask.closed_at = utcnow()
+    ask.closed_in_message_id = message.id
+    session.add(AuditLog(
+        id=ids.new_id(ids.AUDIT), project_id=ctx.project.id,
+        actor=f"agent:{ctx.agent.id}", action="ask.closed",
+        entity="ask", entity_id=ask.id,
+        detail={"was": was, "message_id": message.id},
+    ))
+    return {"ask_id": ask.id, "status": ask.status,
+            "note": "Closed. He knows what happened, which is the whole of the job."}
+
+
+@router.get("/asks")
+def ask_list(ctx: RunContext = Depends(run_auth), session: Session = Depends(db)) -> list[dict]:
+    from yaaf.server import asks as ask_lib
+
+    return ask_lib.asks_for_context(session, ctx.project.id, ctx.agent.id)
+
+
 @router.get("/approvals")
 def approval_list(ctx: RunContext = Depends(run_auth), session: Session = Depends(db)) -> list[dict]:
     rows = session.execute(

@@ -439,3 +439,28 @@ def test_only_one_reviewer_is_woken_for_a_piece(client):
                    for r in dispatcher._work_reasons(session, agent, utcnow()))
         ]
     assert len(woken) == 1, woken
+
+
+def test_every_tool_defined_in_the_sandbox_is_actually_offered():
+    """A rule the agent has no tool for is a rule that never fires — and the
+    quiet version of that failure is a tool that exists, works over HTTP, has
+    tests, and was never added to ALL_TOOLS. It is one line, in a different
+    place from the definition, and nothing before this noticed when it was
+    missed. `ask_chairman` shipped that way and was caught by hand.
+    """
+    import os
+    from unittest import mock
+
+    with mock.patch.dict(os.environ, {"YAAF_API_BASE_URL": "http://localhost",
+                                      "YAAF_API_TOKEN": "t", "YAAF_RUN_ID": "run_x"}):
+        from yaaf.runner import sandbox_entry
+
+    offered = {getattr(t, "name", None) or t.__name__ for t in sandbox_entry.run_tools()}
+    defined = {
+        getattr(obj, "name", None) or name
+        for name, obj in vars(sandbox_entry).items()
+        if name.startswith("t_") and callable(obj) and hasattr(obj, "name")
+    }
+    assert defined - offered == set(), (
+        f"defined in the sandbox but never offered to an agent: "
+        f"{sorted(str(n) for n in defined - offered)}")

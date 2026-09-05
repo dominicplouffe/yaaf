@@ -362,6 +362,22 @@ export function buildItems(projects: DeskProject[], reload: () => void): Item[] 
         ),
       });
     }
+    for (const ask of p.pending_asks) {
+      items.push({
+        key: ask.id, tier: 2, at: new Date(ask.answer_by).getTime(), clocked: true,
+        yours: true, project: p, kind: "your CEO asked",
+        what: <>{ask.title}</>,
+        consequence: (
+          <>
+            <span className="tick">stops waiting {fmtSoon(ask.answer_by)}</span>
+            <span className="dim">· then: {clip(ask.default_action, 90)}</span>
+          </>
+        ),
+        actions: (
+          <Link className="act pri" to={`${to}/boardroom`}>Answer in the boardroom</Link>
+        ),
+      });
+    }
     for (const bet of p.kill_dates_soon) {
       items.push({
         key: bet.id, tier: 2, at: new Date(bet.kill_date).getTime(), clocked: true,

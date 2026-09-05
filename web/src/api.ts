@@ -575,6 +575,35 @@ export interface DeskApproval {
   expires_at: string;
 }
 
+/** One of the CEO's questions to you, live or settled. Shaped like an
+    approval because from your side it is the same kind of thing: clocked,
+    addressed to you, and it resolves whether or not you answer. The
+    difference is only what happens at the clock — an approval decides itself
+    per the constitution, an ask hands back to the CEO's own stated default. */
+export interface AskRow {
+  id: string;
+  title: string;
+  body: string;
+  status: "open" | "answered" | "lapsed" | "closed";
+  asked_by: string;
+  answer_by: string;
+  default_action: string;
+  asked_in_message_id: string;
+  answered_at: string | null;
+  lapsed_at: string | null;
+  closed_at: string | null;
+}
+
+/** A question the CEO is waiting on you for. It never blocks the project:
+    `default_action` is what happens at `answer_by` if you say nothing. */
+export interface DeskAsk {
+  id: string;
+  title: string;
+  body: string;
+  answer_by: string;
+  default_action: string;
+}
+
 export interface DeskBet {
   id: string;
   statement: string;
@@ -610,6 +639,10 @@ export interface DeskProject {
     conversion: number | null;
   };
   pending_approvals: DeskApproval[];
+  /** Questions the CEO put to you, each naming when it stops waiting and what
+      it does then. Beside the approvals rather than in `awaiting_you`: both
+      are clocked things you answer, and neither is gated on the dial. */
+  pending_asks: DeskAsk[];
   expired_bets: DeskBet[];
   kill_dates_soon: DeskBet[];
   audit: { completed: number; audited: number; unaudited: number };

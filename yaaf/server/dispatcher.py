@@ -62,9 +62,10 @@ log = logging.getLogger("yaaf.dispatcher")
 
 # Wake reasons that may spend the constitution's reserved governance runs.
 # These are the wakes whose job is to *report on* the work — a status review, a
-# new cycle's plan, a commitment that needs re-forecasting — so they must still
-# be possible on a day the project has spent its ordinary allowance.
-GOVERNANCE_REASON_KINDS = {"review", "cycle_plan", "commitment"}
+# new cycle's plan, a commitment that needs re-forecasting, a question to the
+# chairman that ran out its window — so they must still be possible on a day
+# the project has spent its ordinary allowance.
+GOVERNANCE_REASON_KINDS = {"review", "cycle_plan", "commitment", "ask_lapsed"}
 
 # Notice coalescing: the janitor drips notices (a reaped run, a drought, an
 # expiry) and each alone is not worth a full-price run. Chairman-driven or
@@ -89,7 +90,12 @@ URGENT_NOTICE_KINDS = {NoticeKind.BUDGET_WARNING, NoticeKind.BUDGET_EXHAUSTED,
                        NoticeKind.COMMITMENT_AT_RISK, NoticeKind.COMMITMENT_BREACHED,
                        # A flag that waits out a batching window is a warning
                        # delivered after the deadline it was warning about.
-                       NoticeKind.FLAG_OPENED}
+                       NoticeKind.FLAG_OPENED,
+                       # A lapsed ask is the strongest case of all: the project
+                       # emptied its own board to wait for this answer, so there
+                       # is no next wake to batch into. This notice IS the wake
+                       # that makes the CEO's stated default happen.
+                       NoticeKind.ASK_LAPSED}
 
 # What still buys a run on a project the chairman has been told is finished.
 # Everything else waits for his click: a CEO reading an amendment note or a
@@ -758,6 +764,8 @@ def _activity_brief(state: dict) -> dict:
         behind.append(f"{waiting['gated_tasks']} task(s) scheduled for later")
     if waiting["notices"]:
         behind.append(f"{waiting['notices']} notice(s) undelivered")
+    if waiting["unread"]:
+        behind.append(f"{waiting['unread']} message(s) unread")
     queue = f" {_listed(behind)} waiting behind it." if behind else ""
 
     def brief(tone, chip, short, headline, detail, *, banner=True, sig=None, clears_at=None):
@@ -796,6 +804,24 @@ def _activity_brief(state: dict) -> dict:
             "brake that stops a whole day's runs going before lunch; it clears on "
             "its own and usually needs nothing from you.",
             sig="pacing", clears_at=p["frees_at"])
+
+    if gate == "inbox_runs":
+        i = state["inbox_runs"]
+        daily = i["used_today"] >= i["cap_today"]
+        which = (f"{i['used_today']} of {i['cap_today']} today"
+                 if daily else f"{i['used_this_hour']} of {i['cap_this_hour']} this hour")
+        return brief(
+            "serious", "inbox full",
+            f"nobody can read their mail ({which})",
+            "Everyone with something to do has only unread mail, and the reading "
+            "allowance is spent.",
+            f"Reading has its own ceiling so it cannot crowd out working — {which}. "
+            f"Right now it is the only thing anyone has, so the project is stopped "
+            f"until {'00:00 UTC' if daily else 'the ceiling rolls off within the hour'}."
+            f"{queue} If a project genuinely talks this much, raise 'Inbox runs per "
+            "day, whole project' in Settings — or look at why it is talking instead "
+            "of working.",
+            sig=None)
 
     if gate == "governance_reserve":
         g = state["governance_reserve"]
@@ -1003,8 +1029,8 @@ def _activity_brief(state: dict) -> dict:
         "ok", "idle",
         "nothing waiting; an idle project costs nothing",
         "Nothing waiting.",
-        "The board is empty and nobody has unread work. An idle project costs exactly "
-        "nothing — that is the point.", banner=False)
+        "The board is empty and nobody is holding unread work. An idle project costs "
+        "exactly nothing — that is the point.", banner=False)
 
 
 def activity_state(session: Session, project: Project, cons: ConstitutionDoc) -> dict:
@@ -1074,7 +1100,7 @@ def activity_state(session: Session, project: Project, cons: ConstitutionDoc) ->
             due = beat is None or beat.last_fired_at <= now - timedelta(hours=hours)
             if due and (beat is None
                         or cons.ceo_heartbeat_always
-                        or _ceo_has_planning_material(session, project)):
+                        or _ceo_has_planning_material(session, project, cons)):
                 pending += 1
                 heartbeat_due = True
         wakes = _wakes_last_hour(session, agent)
@@ -1130,6 +1156,20 @@ def activity_state(session: Session, project: Project, cons: ConstitutionDoc) ->
         # on the board that nobody can reach — and those two used to render
         # identically, as an empty, reassuring sentence.
         blocked_by = board["unreachable"]
+    elif (inbox_today >= cons.inbox_runs_per_project_per_day
+          or inbox_hour >= cons.inbox_runs_per_project_per_hour) and all(
+              not r["busy"] and r["pending_detail"]["unread"] and not (
+                  r["pending_detail"]["work"] or r["pending_detail"]["notices"]
+                  or r["pending_detail"]["heartbeat"])
+              for r in with_work):
+        # Everyone holding anything is idle, holding only unread mail, and the
+        # lane that reads mail is spent. `_dispatch_project` refuses every one
+        # of those runs; this ladder had no rung for it, so a project with
+        # sixty-five unread messages and no way to read any of them reported
+        # that a run should start on the next tick, for the rest of the day.
+        # `not busy` matters: a run still in flight means the project is
+        # working, and `agents_busy` below is the honest sentence for that.
+        blocked_by = "inbox_runs"
     elif all(r["busy"] for r in with_work):
         blocked_by = "agents_busy"
     elif all(r["busy"] or r["wakes_last_hour"] >= r["wake_cap"] for r in with_work):
@@ -1152,6 +1192,7 @@ def activity_state(session: Session, project: Project, cons: ConstitutionDoc) ->
         select(func.count(Notice.id)).where(Notice.project_id == project.id,
                                             Notice.consumed_at.is_(None))
     ).scalar_one()
+    unread_total = sum(r["pending_detail"]["unread"] for r in rows)
 
     # When the throttle lifts: the earliest slot among the agents it is
     # actually holding back. Only meaningful when the ceiling is the gate —
@@ -1219,7 +1260,18 @@ def activity_state(session: Session, project: Project, cons: ConstitutionDoc) ->
             # And finished work waiting on a reader, for the same reason: a
             # board of nothing but reads is a board with work in hand.
             "reviewing_tasks": board["reviewing"],
+            # Scope that is open with nothing left under it. Every counter
+            # above is a task row or a notice, and this is the one state where
+            # all of them are legitimately zero while the project is doing
+            # nothing about work it has not finished — which is how the stall
+            # watchdog came to disarm itself on the exact projects it was
+            # written for.
+            "open_scope_no_board": _open_scope_with_no_board(session, project, cons),
             "notices": notices_total,
+            # Counted here because the fallback brief used to assert its
+            # absence — "nobody has unread work" — on a project where three
+            # agents held sixty-five between them.
+            "unread": unread_total,
             "agents_with_work": len(with_work),
         },
         "board": board,
@@ -1463,6 +1515,12 @@ def _wake_reasons(
         # allowance is gone, because that is exactly the day the date slipped.
         if any(kind in COMMITMENT_NOTICE_KINDS for kind, _ in pending):
             reasons.append({"kind": "commitment"})
+        # Governance-classed for the same reason: the CEO told him what it
+        # would do unanswered, and a day whose allowance is gone must not be a
+        # day it silently does not do it. This is the only wake that can make
+        # the default happen at all.
+        if any(kind == NoticeKind.ASK_LAPSED for kind, _ in pending):
+            reasons.append({"kind": "ask_lapsed"})
 
     # 3. Work: ready tasks this agent could claim, or a claim to push forward.
     reasons.extend(_work_reasons(session, agent, now))
@@ -1497,7 +1555,7 @@ def _wake_reasons(
             skip = (beat is not None
                     and not reasons
                     and not cons.ceo_heartbeat_always
-                    and not _ceo_has_planning_material(session, project))
+                    and not _ceo_has_planning_material(session, project, cons))
             # A delivered project has nothing left to plan: every requirement
             # is true and new scope is refused (policy.check_new_scope). A
             # planning beat here is a run spent deciding not to invent work,
@@ -1548,12 +1606,27 @@ def _wake_reasons(
     return reasons
 
 
-def _ceo_has_planning_material(session: Session, project: Project) -> bool:
-    """Anything the planning heartbeat could act on: an open top-level task or
-    a live (or expired-awaiting-decision) bet. With neither — and no other wake
-    reason — a heartbeat wake buys a full-price run to conclude "nothing to
-    do"."""
+def _ceo_has_planning_material(session: Session, project: Project,
+                               cons: ConstitutionDoc) -> bool:
+    """Anything the planning heartbeat could act on: an open top-level task, a
+    live (or expired-awaiting-decision) bet, or scope that is open with nothing
+    left on the board under it. With none of them — and no other wake reason —
+    a heartbeat wake buys a full-price run to conclude "nothing to do".
+
+    That third term is the one this function was missing, and its absence had
+    the sign backwards. Open scope with an empty board is not "nothing to
+    plan"; it is the single state where planning is the ONLY thing left to do,
+    because every other wake reason on this project is a task or a message and
+    there are none of either. `check_stalled_requirements` has named this in
+    its docstring since it was written — "an empty board is exactly what
+    suppresses the CEO's planning heartbeat, so the project goes completely
+    silent over work that is still formally open" — and it stayed a comment
+    about a bug rather than a fix for one until a project spent six hours
+    proving it.
+    """
     if policy.open_top_level_tasks(session, project.id):
+        return True
+    if _open_scope_with_no_board(session, project, cons):
         return True
     return session.execute(
         select(func.count(Hypothesis.id)).where(
@@ -1561,6 +1634,49 @@ def _ceo_has_planning_material(session: Session, project: Project) -> bool:
             Hypothesis.status.in_([HypothesisStatus.ACTIVE, HypothesisStatus.EXPIRED]),
         )
     ).scalar_one() > 0
+
+
+def _open_scope_with_no_board(session: Session, project: Project,
+                              cons: ConstitutionDoc) -> int:
+    """Requirements still open, whose every task is closed, and which THIS
+    project's CEO could actually do something about.
+
+    Read-only, and counted rather than merely tested, because two places need
+    it: the planning wake above, and the stall watchdog — whose guard was six
+    task-and-notice counters, every one of which reads zero in exactly this
+    state. A project can be doing nothing, with scope open, and be invisible to
+    both.
+
+    The subtraction is the whole of the correctness here. Scope parked on the
+    chairman's own verdict has an empty board for a reason that is not a fault:
+    it is HIS move, `blocked_by` already says so, and `nag_observable_requirements`
+    already chases him daily. Counting it here would wake the CEO every heartbeat
+    to conclude "still waiting on him", at full price, and email him every few
+    hours that his project has gone quiet — about a silence he is producing. The
+    set is taken from `policy.awaiting_chairman` rather than from the statuses,
+    so it follows the autonomy dial: where the CEO holds `verdict_policy`, a
+    CHECKING requirement IS its move and does count.
+    """
+    parked = {r.id for r in policy.awaiting_chairman(session, project, cons)["verdicts"]}
+    open_reqs = [
+        rid for rid in session.execute(
+            select(Requirement.id).where(
+                Requirement.project_id == project.id,
+                Requirement.status.in_(
+                    [RequirementStatus.IN_PROGRESS, RequirementStatus.CHECKING]),
+            )
+        ).scalars()
+        if rid not in parked
+    ]
+    if not open_reqs:
+        return 0
+    with_board = set(session.execute(
+        select(Task.requirement_id).where(
+            Task.requirement_id.in_(open_reqs),
+            Task.status.in_(policy.OPEN_TASK_STATUSES),
+        ).distinct()
+    ).scalars())
+    return sum(1 for rid in open_reqs if rid not in with_board)
 
 
 def _daily_wake_due(session: Session, project: Project, cons: ConstitutionDoc,

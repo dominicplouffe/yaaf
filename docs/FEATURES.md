@@ -184,6 +184,17 @@ Outside Explore mode the root object is not the task, it is the
 - **Approval threshold.** Spends at or above a USD line — and anything legally
   ambiguous — wait for you. Unanswered approvals nag, then decide themselves
   after N days, default-deny.
+- **Questions with a clock.** When the CEO wants your read on something it
+  could decide itself, it asks in the boardroom — and the question becomes a
+  row on your desk carrying when it stops waiting and exactly what it will do
+  if you say nothing. It never blocks; the project keeps working. Answer, and
+  it acts on that. Say nothing, and at the window it does what it wrote down
+  and tells you it did. It sits on your Decisions screen beside the pending
+  approvals, which is the right neighbour: both are clocked, both are yours to
+  answer, and both resolve whether or not you do. Neither half can be silent:
+  the question is on your desk while it is open, and the CEO cannot go back to
+  ordinary status posts until it has said what it did about the answer it got
+  or the one it did not.
 - **`yaaf spend-report`** breaks spend down by agent, role, model, and wake
   reason, straight from the database.
 

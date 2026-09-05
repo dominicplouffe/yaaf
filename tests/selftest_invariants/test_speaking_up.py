@@ -373,6 +373,20 @@ def test_a_flag_overrides_the_reporting_cadence(client):
     assert after["may_post_status_now"] is True, "an open flag must require a post"
     assert "has NOT been told" in after["note"]
 
+    # And the endpoint agrees. It did not, for as long as this test existed:
+    # the override lived in the context pack and in `policy.check_chairman_report`
+    # there was no mention of flags at all, so a CEO that read "the cadence does
+    # not hold you here", believed it, and posted was refused anyway — and the
+    # only door left was to claim 'blocker', which is a different sentence about
+    # a different thing. A permission asserted in a prompt and denied at the
+    # gate is worse than no permission.
+    _, token = live_token(project["id"], project["ceo_agent_id"])
+    posted = client.post("/agent/messages", headers=bearer(token), json={
+        "channel_id": _channel_id(project["id"], "boardroom"),
+        "body": "Two tasks ready and the allowance is spent. I propose raising it.",
+    })
+    assert posted.status_code == 200, posted.text
+
 
 def test_a_flag_cannot_be_closed_by_going_quiet(client):
     """It closes by being said out loud, with a proposal. Closing one

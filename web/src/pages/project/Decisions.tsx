@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { AmendmentRow, ApprovalRow, CeoDecisionRow, get, post } from "../../api";
+import { Link } from "react-router-dom";
+import { AmendmentRow, ApprovalRow, AskRow, CeoDecisionRow, get, post } from "../../api";
 import { fmtUsd, fmtWhen, usePoll } from "../../hooks";
 import { grantRoles, RoleGrants } from "../../roles";
 import { clockClass, downloadCsv, ExportCsv, fmtLeft } from "../../ui";
@@ -278,8 +279,37 @@ function CeoDecisions({ projectId }: { projectId: string }) {
 /** Everything you decided, and everything that decided itself while you were
     away. Approvals used to be a tab that stood empty most days; the live ones
     now travel with you in the strip, and this is where they come to rest. */
+/** A question the CEO put to you. It is not an approval: nothing is blocked
+    while it waits, and if you say nothing it does not fail closed — the CEO
+    does the thing it wrote down before it asked. So there are no decide
+    buttons here. You answer it by talking to it, which is the point. */
+function AskCard({ ask, to }: { ask: AskRow; to: string }) {
+  const live = ask.status === "open";
+  return (
+    <div className={`card${live ? " hot" : ""}`} style={{ margin: "10px 0" }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+        <strong>{ask.title}</strong>
+        <span className={`badge ${live ? "warn" : "good"}`}>{ask.status}</span>
+        {live && (
+          <span className="help">
+            stops waiting {new Date(ask.answer_by).toLocaleString()}
+          </span>
+        )}
+      </div>
+      <p style={{ whiteSpace: "pre-wrap", margin: "8px 0" }}>{ask.body}</p>
+      <p className="help" style={{ margin: "6px 0" }}>
+        {live ? "If you say nothing, it will: " : "Its stated default was: "}
+        <strong>{ask.default_action}</strong>
+      </p>
+      <Link className="act pri" to={`${to}/boardroom`}>
+        {live ? "Answer in the boardroom" : "Read the thread"}
+      </Link>
+    </div>
+  );
+}
+
 export default function Decisions({ ctx }: { ctx: ProjectCtx }) {
-  const { projectId, dash, approvals, reloadApprovals } = ctx;
+  const { projectId, dash, approvals, asks, reloadApprovals } = ctx;
   const { data: amendments } = usePoll(
     () => get<AmendmentRow[]>(`/admin/projects/${projectId}/amendments`),
     15000,
@@ -292,13 +322,29 @@ export default function Decisions({ ctx }: { ctx: ProjectCtx }) {
     .filter((a) => a.status !== "pending")
     .sort((a, b) => (b.decided_at ?? "").localeCompare(a.decided_at ?? ""));
   const rows = amendments ?? [];
+  const openAsks = asks.filter((a) => a.status === "open");
+  const settledAsks = asks.filter((a) => a.status !== "open");
+  const to = `/projects/${projectId}`;
 
   return (
     <>
       <p className="subtitle">
         Approvals expire to <strong>DENY</strong>. That is the whole design: a chairman who never
-        logs in slows the project down, but can never wedge it.
+        logs in slows the project down, but can never wedge it. Questions below them work the
+        other way round — nothing is blocked while one waits, and silence hands the decision
+        back to the CEO on the terms it wrote down before it asked.
       </p>
+
+      {openAsks.length > 0 && (
+        <>
+          <h2 className="zone hot">
+            Your CEO asked <span className="cnt">{openAsks.length}</span>
+          </h2>
+          {openAsks.map((a) => (
+            <AskCard key={a.id} ask={a} to={to} />
+          ))}
+        </>
+      )}
 
       {pending.length > 0 && (
         <>
@@ -316,6 +362,17 @@ export default function Decisions({ ctx }: { ctx: ProjectCtx }) {
                 ctx.reload();
               }}
             />
+          ))}
+        </>
+      )}
+
+      {settledAsks.length > 0 && (
+        <>
+          <h2 className="zone">
+            Questions — the record <span className="cnt">{settledAsks.length}</span>
+          </h2>
+          {settledAsks.map((a) => (
+            <AskCard key={a.id} ask={a} to={to} />
           ))}
         </>
       )}

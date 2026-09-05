@@ -142,7 +142,12 @@ def test_an_autonomous_desk_asks_for_none_of_them(client):
     """Same three rows staged, same data — but the constitution put all three
     in the CEO's hands. Asking the chairman anyway would be asking for a
     decision he deliberately gave away, and the emptiness here is the dial
-    working rather than nothing having happened."""
+    working rather than nothing having happened.
+
+    The whole dict, deliberately: a new category of "waiting on you" must not
+    reach this page without someone deciding it belongs on the dial. One did
+    try — asks — and this assertion is what stopped it. Clocked things he
+    answers live in `pending_asks`, beside `pending_approvals`."""
     project = make_project(client, slug="autonomous", constitution=AUTONOMOUS)
     _stage_all_three(project["id"])
 

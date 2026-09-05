@@ -198,6 +198,36 @@ def test_an_approval_that_timed_out_is_reported_as_having_decided_itself(client)
     assert "buy the data feed" in line["text"]
 
 
+def test_a_question_that_ran_out_of_time_is_named_here_too(client):
+    """`_self_acting_lines` promises "every automatic resolution in the window
+    is named here", and a lapsed ask is exactly one: the CEO asked, the window
+    closed, and it did the thing it had told him it would do. Shipping the
+    mechanism without this line would have made that docstring false, and a
+    section that claims completeness and is not is worse than no section."""
+    from yaaf.core.models import Ask
+    from yaaf.server import janitor
+
+    project = make_project(client, slug="lapsed-brief")
+    _, token = live_token(project["id"], project["ceo_agent_id"])
+    asked = client.post("/agent/asks", headers=bearer(token), json={
+        "title": "which candidate for the launch post",
+        "body": "Five ranked, my pick is first. Your call before we write.",
+        "answer_by_hours": 6,
+        "default_action": "Take the top-ranked one and tell you I did."})
+    assert asked.status_code == 200, asked.text
+
+    with db_session() as session:
+        session.get(Ask, asked.json()["ask_id"]).answer_by = utcnow() - timedelta(minutes=1)
+    with db_session() as session:
+        janitor.expire_asks(session, session.get(Project, project["id"]))
+
+    payload = brief(client, project)
+    assert "asks_lapsed" in kinds(payload)
+    line = next(x for x in payload["lines"] if x["kind"] == "asks_lapsed")
+    assert line["tone"] == "bad"
+    assert "which candidate for the launch post" in line["text"]
+
+
 def test_a_quiet_window_says_which_kind_of_quiet_it_is(client):
     """*Nothing is wrong* and *nothing is happening* are different screens."""
     project = make_project(client, slug="silent")
@@ -595,14 +625,14 @@ def test_an_outcome_is_material_even_where_its_management_is_delegated(client):
     yours = {kind: briefing._yours(kind, autonomous) for kind in (
         "requirement_met", "requirement_cut", "published", "notice_revenue",
         "notice_budget_exhausted", "notice_stalled", "notice_commitment_breached",
-        "approvals_expired", "rules_changed",
+        "approvals_expired", "asks_lapsed", "rules_changed",
         "requirement_accepted", "tasks_done", "evidence_verified", "ceo_authority",
         "plan_gate_closed", "runs", "runs_dead",
     )}
     assert all(yours[kind] for kind in (
         "requirement_met", "requirement_cut", "published", "notice_revenue",
         "notice_budget_exhausted", "notice_stalled", "notice_commitment_breached",
-        "approvals_expired", "rules_changed")), yours
+        "approvals_expired", "asks_lapsed", "rules_changed")), yours
     assert not any(yours[kind] for kind in (
         "requirement_accepted", "tasks_done", "evidence_verified", "ceo_authority",
         "plan_gate_closed", "runs", "runs_dead")), yours

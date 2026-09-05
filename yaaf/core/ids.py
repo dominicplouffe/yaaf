@@ -44,6 +44,7 @@ LEDGER = "ledg"
 RUN = "run"
 SIDE_EFFECT = "sfx"
 APPROVAL = "appr"
+ASK = "ask"  # a question to the chairman, with the moment it stops waiting
 SECRET = "secr"
 AUDIT = "audt"
 NOTICE = "ntce"

@@ -245,11 +245,10 @@ async def t_messages_read(args):
     "Post to one of your channels. Boardroom: CEO<->chairman. Leadership: CEO+leads. "
     "Team room: your team. Use thread_id to reply in a thread. An unprompted boardroom "
     "status is refused between the chairman's cadence slots (see the `chairman` block in "
-    "your context); set override to 'blocker', 'budget', 'approval' or 'question' only "
-    "when it truly cannot wait — overrides are recorded and he sees them. 'question' is "
-    "the ask verb: when you feel strongly enough that you want his answer before "
-    "deciding, ask him plainly. Allowed always, required never — when in doubt, decide "
-    "and report.",
+    "your context); set override to 'blocker', 'budget' or 'approval' only when it truly "
+    "cannot wait — overrides are recorded and he sees them. Asking him something is NOT "
+    "a status and is not an override: that is ask_chairman, which this gate has never "
+    "held.",
     {"channel_id": str, "body": str, "thread_id": str, "override": str},
 )
 async def t_message_post(args):
@@ -259,6 +258,38 @@ async def t_message_post(args):
     if args.get("override"):
         payload["override"] = args["override"]
     return _text(_call("POST", "/agent/messages", payload))
+
+
+@tool(
+    "ask_chairman",
+    "Put a question to the chairman that your next move depends on. The reporting "
+    "cadence does not hold this — a question is not a status. It does NOT block: keep "
+    "working while you wait. answer_by_hours is when you stop waiting; default_action is "
+    "exactly what you will do if he has not answered by then, and you are held to it, so "
+    "write the real thing rather than 'decide later'. If the window passes you are woken "
+    "to do it and to tell him you did. Use this instead of sitting on something he needs "
+    "to see — a question nobody knows is waiting is how a project spends a day idle.",
+    {"title": str, "body": str, "answer_by_hours": float, "default_action": str},
+)
+async def t_ask_chairman(args):
+    return _text(_call("POST", "/agent/asks", {
+        "title": args["title"], "body": args["body"],
+        "answer_by_hours": args["answer_by_hours"],
+        "default_action": args["default_action"],
+    }))
+
+
+@tool(
+    "ask_close",
+    "Close one of your questions by having acted on it and said so. message_id is the "
+    "boardroom message where you told him what you did — with his answer, or with the "
+    "default you named when its window passed. An ask does not close by going quiet.",
+    {"ask_id": str, "message_id": str},
+)
+async def t_ask_close(args):
+    return _text(_call("POST", "/agent/asks/close", {
+        "ask_id": args["ask_id"], "message_id": args["message_id"],
+    }))
 
 
 @tool(
@@ -447,8 +478,7 @@ async def t_decision_add(args):
     "to DENIED. An approval BLOCKS on a human, so it is the wrong tool for anything the "
     "constitution already put in your hands: where the authority dial grants you the "
     "plan, the scope and the date, an owner_decision is refused and names the verb to "
-    "use instead. To want his opinion without blocking, ask in the boardroom with "
-    "override='question' and keep going.",
+    "use instead. To want his opinion without blocking, use ask_chairman and keep going.",
     {"kind": str, "title": str, "body": str, "amount_usd": float},
 )
 async def t_approval_request(args):
@@ -1151,6 +1181,7 @@ ALL_TOOLS = [
     t_task_block, t_task_kill,
     t_requirement_propose, t_requirement_depends_on,
     t_suggest, t_channels, t_messages_read, t_message_post, t_directive_file,
+    t_ask_chairman, t_ask_close,
     t_memory_search, t_memory_add, t_memory_supersede, t_memory_compact, t_memory_forget,
     t_memory_tool,
     t_evidence_add, t_review_narrative, t_commitment_propose, t_commitment_reset,

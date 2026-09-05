@@ -34,6 +34,7 @@ from yaaf.core.config import settings
 from yaaf.core.db import session_factory
 from yaaf.core.models import (
     Approval,
+    Ask,
     Evidence,
     Message,
     Notice,
@@ -86,6 +87,17 @@ def _change_stamp(project_id: str) -> dict | None:
                 .scalar()
             )
         )
+        # An ask settles by mutating status in place — answered, lapsed, closed
+        # — with no new row and no new created_at, exactly the case the comment
+        # above describes. So it gets the status-shaped extra too, or the strip
+        # and the Decisions page would go stale on the one transition that
+        # matters most: a question running out of time.
+        ask_statuses = dict(
+            session.query(Ask.status, func.count(Ask.id))
+            .filter(Ask.project_id == project_id)
+            .group_by(Ask.status)
+            .all()
+        )
         return {
             "type": "stamp",
             "project": project_id,
@@ -95,6 +107,7 @@ def _change_stamp(project_id: str) -> dict | None:
             "runs": _count_max(session, Run, Run.created_at, project_id)
             + [run_statuses],
             "approvals": approvals,
+            "asks": _count_max(session, Ask, Ask.created_at, project_id) + [ask_statuses],
             "evidence": _count_max(session, Evidence, Evidence.created_at, project_id),
             "notices": _count_max(session, Notice, Notice.created_at, project_id),
         }
