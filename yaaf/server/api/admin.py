@@ -80,6 +80,7 @@ from yaaf.core.models import (
     VerificationStatus,
     utcnow,
 )
+from yaaf.founder import doctrine
 from yaaf.server import briefing, policy
 from yaaf.server.api.agent import WAKE_CHANNEL
 from yaaf.server.deps import admin_auth, db
@@ -794,6 +795,7 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
         deadline=deadline,
         deadline_source=deadline_source,
         topology=topology,
+        doctrine_stamp=doctrine.fingerprint(),
     )
     session.add(project)
     session.flush()
@@ -1169,6 +1171,11 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
         # claiming a hierarchy it does not have. Like mode, it is frozen at
         # creation, so getting it wrong here cannot be corrected later.
         topology=source.topology,
+        # The clone is founded NOW, so it is current — unlike `mode` and
+        # `topology` above, which are the source's truth carried over. Copying
+        # the source's stamp would let a twin of an August project be reported
+        # as August-era doctrine forever, which is the opposite of the point.
+        doctrine_stamp=doctrine.fingerprint(),
         deadline=None if deadline_expired else source.deadline,
         deadline_source=None if deadline_expired else source.deadline_source,
         billing_mode=source.billing_mode,
@@ -2205,6 +2212,55 @@ def billing_check(project_id: str, session: Session = Depends(db)) -> dict:
     _audit(session, project.id, "billing.check", "project", project.id,
            {"ok": result["ok"]})
     return result
+
+
+@router.post("/projects/{project_id}/regrade-goal")
+async def regrade_goal(project_id: str, session: Session = Depends(db)) -> dict:
+    """Grade a RUNNING project's goal against the goal grammar as it stands now.
+
+    The structural drift checks on `/health` are free and run on every load.
+    This is the other half, and it is neither: grading prose needs a model, so
+    it costs money and it is on demand — the chairman asks, once, when he wants
+    to know. A weekly re-grade of every project would be a recurring bill for an
+    answer that changes only when the grammar does.
+
+    It reports and changes nothing. The Founder wrote this goal under the
+    doctrine of the day it ran, and a platform that rewrote a live project's
+    objective mid-season because the rubric moved would be a worse failure than
+    the drift it is fixing. What the chairman gets is the same grade the Founder
+    would have had to satisfy today, on the goal he is actually running.
+    """
+    from yaaf.core.platform import NoPlatformCredential, founder_env
+    from yaaf.founder.grade import LOAD_BEARING, grade_goal
+
+    project = _get_project(session, project_id)
+    try:
+        env = founder_env(session)
+    except NoPlatformCredential as exc:
+        # Answered as a refusal rather than a 500: grading calls a model, and a
+        # missing platform credential is a thing the chairman fixes in Settings,
+        # not a bug.
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    grade = await grade_goal(project.goal, env=env)
+    return {
+        "project_id": project.id,
+        "graded_at": utcnow().isoformat(),
+        "doctrine_stamp": project.doctrine_stamp,
+        "doctrine_current": doctrine.fingerprint(),
+        "elements": [
+            {"element": e.element, "verdict": e.verdict, "note": e.note}
+            for e in grade.elements
+        ],
+        "missing": grade.missing,
+        "weak": grade.weak,
+        # Which of the gaps are load-bearing, because "missing 3 of 10" says
+        # nothing until you know which three. The FPL goal was missing
+        # `standard` — the element whose stated job is to give a project
+        # permission to want more than it was told.
+        "load_bearing_gaps": [e for e in grade.missing + grade.weak if e in LOAD_BEARING],
+        "ready": grade.ready,
+        "summary": grade.summary,
+    }
 
 
 @router.post("/projects/{project_id}/start")
