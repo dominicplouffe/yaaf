@@ -1270,6 +1270,31 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
                     "past the date, new scope freezes and the chairman is emailed."
                 ),
             }
+        # The CEO's own scoreboard, shown to the CEO. This number has been
+        # computed since it was written — "what to queue, kill and
+        # prioritize is the CEO's actual product; this is its scoreboard" —
+        # and went to the chairman's two screens and nowhere else, so the
+        # only party who could act on it was the only party who could not
+        # see it.
+        #
+        # It is gameable in one specific way: a CEO could farm cheap
+        # external evidence. That risk is real and is priced here rather
+        # than hidden, because a scoreboard withheld from the person being
+        # scored is not a scoreboard, it is surveillance — and the
+        # planning-quality judge grades manufactured busywork as harshly as
+        # idleness, so the cheap route is not a winning one.
+        judgment = policy.ceo_judgment(session, project.id)
+        judgment["note"] = (
+            "Of the top-level tasks you created, this is the share that ever "
+            "produced countable external evidence — proof from outside this "
+            "project. It is the measure of your product, which is what you chose "
+            "to queue and kill. Raising it by creating easy work that produces "
+            "cheap evidence would be the one way to make this number lie; it is "
+            "also read by the planning-quality judge, which scores busywork and "
+            "idleness the same."
+        )
+        pack["ceo_judgment"] = judgment
+
         if requirements:
             blocked = {
                 r.id: [d.key for d in policy.unmet_dependencies(session, r)]

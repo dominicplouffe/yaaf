@@ -39,7 +39,7 @@ from yaaf.core.models import (
     RequirementStatus,
     utcnow,
 )
-from yaaf.server import policy
+from yaaf.server import metrics, policy
 
 log = logging.getLogger("yaaf.flags")
 
@@ -229,6 +229,53 @@ def evaluate(session: Session, project: Project, cons: ConstitutionDoc) -> int:
     else:
         _resolve(session, project, FlagKind.WORK_STARVED, None,
                  "the allowance cleared or the board emptied")
+
+    # 5. The desk gated itself shut. WORK_STARVED above needs a WALL to have
+    #    stopped the work; this is the case where nothing stopped it and there
+    #    is still nothing to do, because every task on the board carries a
+    #    start time the CEO chose. An idle desk is an idle desk whoever caused
+    #    it, and the version nobody was watching for is the self-inflicted one.
+    gated = state["waiting"].get("gated_tasks") or 0
+    if gated and not ready and not starving:
+        if open_flag(
+            session, project, FlagKind.SELF_GATED,
+            f"Nothing is claimable and no cap is stopping you: {gated} task(s) carry a "
+            f"start time you set, so nobody may claim them and nobody is woken for "
+            f"them. If the dates are right, say why the desk is idle until then. If "
+            f"they are a habit, bring work forward.",
+            arithmetic={"claimable_tasks": ready, "gated_tasks": gated,
+                        "blocked_by": state["blocked_by"]},
+            subject_id=None,
+        ):
+            opened += 1
+    else:
+        _resolve(session, project, FlagKind.SELF_GATED, None,
+                 "work became claimable, or a real cap took over")
+
+    # 6. The objective is moving away from its target. The only kind here that
+    #    is about whether the project is WINNING rather than whether it is
+    #    behaving; everything above can be satisfied by a project losing
+    #    tidily. Subject is the requirement, so two metrics going wrong are two
+    #    pieces of news rather than one that overwrites the other.
+    for board in metrics.project_scoreboard(session, project.id):
+        requirement_key = board["requirement_key"]
+        if board["verdict"] == "losing":
+            trend = " -> ".join(str(v) for v in board["trend"][-4:])
+            if open_flag(
+                session, project, FlagKind.LOSING_GROUND,
+                f"{requirement_key} is going the wrong way: {board['value']} against a "
+                f"target of {board['target']}, and further from it than when this "
+                f"window opened ({trend}). Say what you are changing, and what it "
+                f"costs — not what you have been doing.",
+                arithmetic={"requirement": requirement_key, "value": board["value"],
+                            "target": board["target"], "trend": board["trend"],
+                            "direction": board["direction"]},
+                subject_id=board["requirement_key"],
+            ):
+                opened += 1
+        else:
+            _resolve(session, project, FlagKind.LOSING_GROUND, requirement_key,
+                     f"the measurement turned: {board['verdict']}")
 
     return opened
 

@@ -187,6 +187,24 @@ class FlagKind(enum.StrEnum):
     # obligation to say what the money bought, which is the whole difference
     # between a budget and a wall.
     BUDGET_OVERRUN = "budget_overrun"
+    # The measured objective is moving AWAY from its target. Every kind above
+    # this line is about process or money: a missed obligation, a slipped date,
+    # a spent allowance, an overrun. None of them can say the project is
+    # losing, so a desk 15 points behind the field average tripped nothing at
+    # all while re-explaining a cycle-boundary artifact six times in five days.
+    #
+    # Arithmetic, like every other member: the latest reading is further from
+    # target than the oldest in the window. Not "worse than last time" — one
+    # bad reading is noise, and a flag that cried wolf on noise would be muted
+    # inside a week, which is worse than not having it.
+    LOSING_GROUND = "losing_ground"
+    # Nothing is claimable, and the reason is the project's own start times
+    # rather than any cap. WORK_STARVED cannot see this: it fires when a WALL
+    # stopped work, so a CEO that gates its own board 90 hours out produces
+    # claimable 0, gated 8, and an idle desk that trips nothing. That is not a
+    # hypothetical — it is 2026-09-04, and the only thing that noticed was a
+    # warning on a screen nobody is obliged to read.
+    SELF_GATED = "self_gated"
 
 
 class FlagStatus(enum.StrEnum):

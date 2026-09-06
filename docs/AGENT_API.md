@@ -133,6 +133,33 @@ may *write* to team scope.
 | `POST /hypotheses/{id}/extend` | | Chairman-only, once. |
 | `POST /decisions` | `subject`, `body` | Put a decision on the record. |
 
+## Flags: what the platform makes you say
+
+A flag is the platform deciding the chairman needs to hear something. Every kind
+is arithmetic or a failed test — never a judgement the CEO makes about whether
+the news is worth his time. Raising them **overrides the reporting cadence**: a
+run may post for this even when it may not post a status.
+
+| Endpoint | Body | Notes |
+|---|---|---|
+| `GET /flags` | — | The open flags and whether each has been raised. They also arrive in the context pack every wake, until you say something. |
+| `POST /flags/raise` | `flag_id`, `message_id`, `proposal` | Close a flag **by having told him**. Two steps: post the news in the boardroom, then raise with that `message_id` — the message is the proof, which is why saying it in the boardroom does not close the flag on its own. `proposal` is required: a flag without one is anxiety forwarded to his desk. Closing it dismissively is legitimate and expected — *"the cycle boundary caused it, no action needed"* is this verb working. What is not available is leaving it open while reporting that everything is fine. |
+
+The kinds: `standing_missed`, `deadline_at_risk`, `cycle_missed`, `work_starved`,
+`spend_window`, `budget_overrun`, and two that are about the project rather than
+its paperwork — `losing_ground` (the measured objective is further from target
+than when the window opened) and `self_gated` (nothing is claimable and no cap
+is responsible, because every task carries a start time the CEO chose).
+
+> **This section is here because it was missing, and that cost five days.**
+> `POST /flags/raise` shipped as a route with no tool exposing it, while the
+> context pack told the CEO every wake to *"close each one with flag_raise"*.
+> A live CEO carried one unraised flag from 1 September, explained it in the
+> boardroom six times, and wrote in its own run: *"the platform has no tool to
+> close it, only a post at a real cadence slot."* It was right. An obligation
+> the platform can open and an agent cannot discharge is not strict, it is
+> broken — and it teaches the agent that the rules are noise.
+
 ## Money and approvals
 
 | Endpoint | Body | Notes |

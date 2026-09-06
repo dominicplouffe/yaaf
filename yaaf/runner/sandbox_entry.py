@@ -474,6 +474,30 @@ async def t_hypothesis_kill(args):
     )
 
 
+@tool(
+    "flag_raise",
+    "Close a flag by having TOLD the chairman, with what you propose doing about it. "
+    "Two steps, in this order: message_post the news in the boardroom, then flag_raise "
+    "with that message_id — the message is the proof he was told, which is why saying "
+    "it in the boardroom does not close the flag on its own and why nothing else can. "
+    "flag_id comes from the flags in your context pack. The proposal is required: a "
+    "flag without one is anxiety forwarded to his desk, and what you add over a "
+    "monitoring alert is the sentence AFTER the bad news — what broke, the arithmetic, "
+    "the ways out, the one you would pick, and what you need from him. Closing it "
+    "dismissively is legitimate and expected: 'the cycle boundary caused it, no action "
+    "needed' is this verb working exactly as intended. What is not available is leaving "
+    "it open while telling him everything is fine.",
+    {"flag_id": str, "message_id": str, "proposal": str},
+)
+async def t_flag_raise(args):
+    return _text(_call("POST", "/agent/flags/raise", dict(args)))
+
+
+@tool("flags_list", "The flags open on this project and whether each has been raised.", {})
+async def t_flags_list(args):
+    return _text(_call("GET", "/agent/flags"))
+
+
 @tool("decision_add", "Append to the decision record: what was decided and why.",
       {"subject": str, "body": str})
 async def t_decision_add(args):
@@ -1195,6 +1219,7 @@ ALL_TOOLS = [
     t_memory_tool,
     t_evidence_add, t_review_narrative, t_commitment_propose, t_commitment_reset,
     t_scope_act,
+    t_flag_raise, t_flags_list,
     t_hypothesis_add, t_hypothesis_kill, t_decision_add,
     t_approval_request, t_approvals_list, t_spend_book,
     t_need_request, t_credentials_list, t_credential_scope,
