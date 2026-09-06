@@ -110,6 +110,16 @@ class TaskStatus(enum.StrEnum):
 class SuccessTestKind(enum.StrEnum):
     COMMAND = "command"        # platform-executed in the task's sandbox
     OBSERVABLE = "observable"  # names a checkable artifact/URL/metric; spot-audited
+    # A number the platform reads on a schedule, from a source the project does
+    # not author. The other two kinds can only ask "does this artifact exist and
+    # say the right words", which is why every requirement on every desk became
+    # a grep over /workspace and the objective itself — the rank, the revenue,
+    # the deficit — had no requirement, no test and no place in the plan.
+    #
+    # `GOAL_GRAMMAR.md` already stated the rule this implements: "a finish line
+    # the project can write into its own status report is not a finish line."
+    # COMMAND and OBSERVABLE are both, structurally, exactly that.
+    METRIC = "metric"
     # Only ever on R-00, the planning requirement, and only ever written by the
     # platform: the test is a structural check of the plan itself — is there
     # scope, is it staged, is it estimated, does it fit the money — evaluated
@@ -117,6 +127,25 @@ class SuccessTestKind(enum.StrEnum):
     # refused, because a project that can author its own planning gate does not
     # have one.
     PLAN = "plan"
+
+
+class MetricDirection(enum.StrEnum):
+    """Which way is winning. Rank falls, revenue rises."""
+
+    INCREASING = "increasing"
+    DECREASING = "decreasing"
+
+
+class MetricSourceKind(enum.StrEnum):
+    """Where a reading comes from. Every one of these is outside the project.
+
+    There is deliberately no `workspace` or `agent_reported` member. A source an
+    agent can write is a diary entry, and `verifier.py` already refuses evidence
+    from a domain the project controls for the same reason.
+    """
+
+    HTTP_JSON = "http_json"  # GET a JSON document, read one path out of it
+    LEDGER = "ledger"        # sum a LedgerKind over the project's own ledger
 
 
 class ProjectMode(enum.StrEnum):
@@ -1183,6 +1212,40 @@ class RequirementCycleResult(Base):
     met_by_run_id: Mapped[str | None] = mapped_column(String(40))
     check_output: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class Measurement(Base):
+    """One reading of one metric, at one moment.
+
+    A row per reading rather than a column on the requirement, because the
+    *trend* is the information and a latest-value column throws it away. "We
+    are losing" is not a fact about a number; it is a fact about a sequence,
+    and a platform that keeps only the current value can report a position but
+    can never report a direction. `RequirementCycleResult` is the precedent —
+    the same argument, made for standing obligations.
+
+    Written only by `yaaf.server.metrics`, from a source outside the project.
+    There is no agent verb that writes one, for the same reason nothing but the
+    platform marks a requirement MET.
+    """
+
+    __tablename__ = "measurements"
+    __table_args__ = (
+        Index("ix_measurements_requirement_at", "requirement_id", "at"),
+        Index("ix_measurements_project_at", "project_id", "at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    requirement_id: Mapped[str] = mapped_column(String(40))
+    value: Mapped[float] = mapped_column(Float)
+    at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    # What was actually fetched, so a reading that looks wrong can be argued
+    # with rather than trusted. Truncated; this is evidence, not a cache.
+    source_note: Mapped[str | None] = mapped_column(Text)
+    # A reading that could not be taken is still a row: a metric that silently
+    # stops measuring is a scoreboard that silently stops saying you are losing.
+    error: Mapped[str | None] = mapped_column(Text)
 
 
 class OverrunOutcome(enum.StrEnum):

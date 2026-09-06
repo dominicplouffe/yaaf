@@ -65,12 +65,37 @@ kept forever. Writing a small number to get past the gate buys one round.
 ```json
 {"type": "command",    "command": "pytest tests/ -q && ruff check ."}
 {"type": "observable", "target":  "https://pypi.org/project/foo/ shows version 0.2.0"}
+{"type": "metric",     "source": {"kind": "http_json",
+                                  "url": "https://api.example.com/stats.json",
+                                  "path": "$.current[-1].overall_rank"},
+                       "direction": "decreasing", "target": 500000,
+                       "measure_every_hours": 24}
 ```
 
 A `command` is executed **by the platform**, in a sandbox — not by the agent
 that wants it to pass. An `observable` names something a stranger could check,
-and lands in the chairman's spot-audit sample. Prose is refused. The same two
-shapes serve as a requirement's `acceptance_test`.
+and lands in the chairman's spot-audit sample. Prose is refused. All three
+shapes serve as a requirement's `acceptance_test`; only the first two are
+available as a task's `success_test`.
+
+A `metric` is a number the platform **reads on a schedule**, from a source you
+do not author — an HTTP JSON document, or the project's own ledger, whose
+revenue rows only a signed webhook can write. It behaves unlike the other two
+in four ways, and each is deliberate:
+
+- **It settles on the reading, never on the work.** Closing every task under a
+  metric requirement settles nothing. That is the point: a finish line you can
+  reach by finishing your own to-do list is not a finish line.
+- **It can therefore be accepted before you know how.** A command test has to
+  describe the work, so scope you do not yet understand becomes fiction. A
+  metric test describes the *outcome*, so week one can hold it honestly.
+- **Going the wrong way blocks nothing.** A failing command means the work is
+  wrong. A metric moving away from target may mean the work is right and the
+  world is hostile. It reports `losing`, and stops nobody.
+- **Nobody can write a reading**, including you. There is no verb.
+
+If a requirement *is* the objective — the rank, the revenue, the number the
+project exists to move — it is a metric, and nothing else will do.
 
 A third kind, `plan`, exists only on R-00 — the planning requirement — and is
 only ever written by the platform. An agent proposing one is refused: a project

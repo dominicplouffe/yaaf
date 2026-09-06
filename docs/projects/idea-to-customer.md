@@ -157,6 +157,28 @@ also in the JSON.
 > What will not be accepted is a year of documents about a product nobody
 > outside this project ever saw.
 
+**And since 2026-09-06 that finish line is a row, not only a sentence.** The goal
+prose above says exactly the right thing and, for most of this project's life, the
+platform could not read it: `Project.goal` is a Text column, interpolated into a
+system prompt and consumed by no gate, no forecast and no score. What the platform
+could verify was a shell command run against the project's own workspace, so that
+is what scope became everywhere it was tried.
+
+A `metric` acceptance test closes that gap, and this goal is the cleanest possible
+case for it, because the ledger's revenue rows are already unforgeable from inside
+the project — only the connector's signature books one:
+
+```json
+{"type": "metric",
+ "source": {"kind": "ledger", "ledger_kind": "revenue"},
+ "direction": "increasing", "target": 1,
+ "measure_every_hours": 24}
+```
+
+Target `1`: one dollar from one stranger. The platform reads it, keeps every
+reading, and settles the requirement when the money arrives — nobody here can
+write that number, mark it met, or argue with it.
+
 Seven things are doing the work in there, and none of them is decoration:
 
 - **A named standard the brief is only a subset of.** The one line that makes

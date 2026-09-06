@@ -217,13 +217,33 @@ def project_velocity(session: Session, project_id: str) -> dict:
     met_long = _met_count(session, project_id, long_since)
     runs_short = _runs_in_window(session, project_id, short_since)
 
-    remaining = len([
+    from yaaf.server import metrics as metrics_mod
+
+    open_scope = [
         r for r in policy.scope_requirements(session, project_id)
         if r.status in policy.OPEN_REQUIREMENT_STATUSES
-    ])
+    ]
+    # A metric requirement is not a unit of work and must not be divided by a
+    # pace measured in units of work. The FPL desk is the worked example: eleven
+    # grep-over-workspace requirements plus a season-long rank target, burned
+    # down at the rate memos were landing, produced `weeks_left_at_pace: 1.1`
+    # on a 38-gameweek season. The memos really were nearly done. The season
+    # was not, and the arithmetic had no way to know the difference.
+    #
+    # So the burn-down answers only the question it can answer — when does the
+    # *work* run out — and the metric answers its own, beside it. Same argument
+    # as the STANDING exclusion in `_met_count`, one object further along.
+    metric_reqs = [r for r in open_scope if metrics_mod.is_metric(r.acceptance_test)]
+    remaining = len(open_scope) - len(metric_reqs)
     per_week_short = round(met_short / (SHORT_WINDOW_DAYS / 7), 2)
+    scoreboard = [metrics_mod.scoreboard(session, r) for r in metric_reqs]
 
     return {
+        # The objective, measured. Empty for a project whose finish line is
+        # still only prose, which is most of them.
+        "metrics": scoreboard,
+        "metrics_open": len(metric_reqs),
+        "losing": [s["requirement_key"] for s in scoreboard if s["verdict"] == "losing"],
         "met_3w": met_short,
         "per_week_3w": per_week_short,
         "met_12w": met_long,
@@ -234,6 +254,12 @@ def project_velocity(session: Session, project_id: str) -> dict:
         # and a made-up number would be worse.
         "weeks_left_at_pace": (
             round(remaining / per_week_short, 1) if per_week_short > 0 else None
+        ),
+        # Said out loud, because "1.1 weeks left" on a project with an open
+        # season-long target is true about the work and a lie about the goal.
+        "weeks_left_covers": (
+            "the work only — this project's objective is measured separately, "
+            "see `metrics`" if metric_reqs else "all open scope"
         ),
         "runs_3w": runs_short,
         "worst_failure": _worst_failure(session, project_id),

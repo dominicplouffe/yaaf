@@ -81,7 +81,8 @@ from yaaf.core.models import (
     utcnow,
 )
 from yaaf.server import asks as ask_lib
-from yaaf.server import briefing, policy
+from yaaf.server import briefing, metrics, policy
+from yaaf.server.metrics import measure_due as measure_due_metrics
 from yaaf.server.notify import boardroom_line, chairman_notify
 from yaaf.server.rows import approval_row
 from yaaf.server.verifier import verify_pending_evidence
@@ -126,6 +127,11 @@ def janitor_once(session: Session) -> None:
     for project in session.execute(select(Project)).scalars():
         _janitor_project(session, project)
     verify_pending_evidence(session)
+    # Beside evidence verification on purpose: both are the platform going and
+    # looking at the outside world on its own schedule, and neither can be
+    # asked for or skipped by an agent. A metric that only got read when
+    # somebody remembered would be a scoreboard the project controls.
+    measure_due_metrics(session)
     # Slack mirroring moved to its own 2s loop (slack.socket.fast_mirror_loop):
     # chat-grade latency, and no double-post race with an enforcement tick.
 
@@ -152,6 +158,7 @@ def _janitor_project(session: Session, project: Project) -> None:
         cons = effective(session, project.id)
     except LookupError:
         return
+    metrics.settle_metrics(session, project.id)
     reap_stale_runs(session, project, cons)
     expire_hypotheses(session, project)
     nag_approvals(session, project, cons)
@@ -620,6 +627,15 @@ def check_finished_requirements(session: Session, project: Project,
         )
     ).scalars().all()
     for requirement in live:
+        # A metric requirement does not settle on work closing. Its verdict is
+        # a reading, and the reading arrives on its own schedule whether or not
+        # anybody has finished anything — which is exactly what lets it be
+        # accepted in week one by a project that does not yet know how it will
+        # get there. Left in this loop it would reach the `else` branch below
+        # and park on the chairman to "confirm the observable", which is the
+        # one thing a measured number never needs. See `settle_metrics`.
+        if metrics.is_metric(requirement.acceptance_test):
+            continue
         tasks = session.execute(
             select(Task).where(Task.requirement_id == requirement.id)
         ).scalars().all()

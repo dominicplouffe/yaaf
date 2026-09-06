@@ -175,7 +175,7 @@ def countable_external_evidence(session: Session, project_id: str, since: dateti
     """External evidence that actually counts: platform-attested, or
     agent-claimed AND verified. The most gameable field in the system is only
     trusted after the platform checked it."""
-    return session.execute(
+    claimed = session.execute(
         select(func.count(Evidence.id)).where(
             Evidence.project_id == project_id,
             Evidence.kind == EvidenceKind.EXTERNAL,
@@ -185,6 +185,22 @@ def countable_external_evidence(session: Session, project_id: str, since: dateti
             Evidence.created_at >= since,
         )
     ).scalar_one()
+    # A metric reading is external evidence by construction — the platform
+    # fetched a number from a source the project cannot write — so it counts
+    # and it breaks a drought. This also gives `drought_hours`, one of only two
+    # floors the constitution has, something real to enforce: a project whose
+    # scoreboard is still being measured is demonstrably in contact with the
+    # outside world, whatever its memo folder looks like.
+    from yaaf.core.models import Measurement
+
+    measured = session.execute(
+        select(func.count(Measurement.id)).where(
+            Measurement.project_id == project_id,
+            Measurement.error.is_(None),
+            Measurement.at >= since,
+        )
+    ).scalar_one()
+    return claimed + measured
 
 
 def ceo_judgment(session: Session, project_id: str) -> dict:
@@ -255,10 +271,16 @@ def validate_success_test(cons: ConstitutionDoc, success_test: dict) -> None:
                 "not a sentiment. 'The report looks good' is not a test; "
                 "'https://example.com/report.pdf exists and contains a Q3 revenue table' is."
             )
+    elif kind == SuccessTestKind.METRIC:
+        from yaaf.server import metrics
+
+        metrics.validate_metric_test(success_test)
     else:
         raise Refusal(
-            'success_test must be {"type": "command", "command": ...} (platform-executed) '
-            'or {"type": "observable", "target": ...} (spot-audited). '
+            'success_test must be {"type": "command", "command": ...} (platform-executed), '
+            '{"type": "observable", "target": ...} (spot-audited), or '
+            '{"type": "metric", "source": ..., "direction": ..., "target": ...} '
+            "(platform-measured, from a source you do not author). "
             "A task without a falsifiable test is not work, it is intention."
         )
 
@@ -464,6 +486,14 @@ def check_task_create(
     not_before: datetime | None = None,
 ) -> None:
     require_project_running(project)
+    if success_test.get("type") == SuccessTestKind.METRIC:
+        raise Refusal(
+            "A metric belongs on a requirement, not a task. A task's check runs when "
+            "the work closes; a metric is read on a schedule and may not move for "
+            "weeks, so a task carrying one could never be completed. Propose the "
+            "metric as a requirement and give this task a command the platform can "
+            "run against what you actually built."
+        )
     validate_success_test(cons, success_test)
     check_task_gate(cons, not_before)
 

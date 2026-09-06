@@ -129,9 +129,18 @@ async def t_task_create(args):
     "requirement_propose",
     "CEO only. Propose something that must be TRUE at the end — not a task, an outcome. "
     "acceptance_test has the same shape as a success test: "
-    '{"type":"command","command":...} the platform runs itself, or '
-    '{"type":"observable","target":...} the chairman confirms. Prefer a command: an '
-    "observable puts him in the loop every time it closes. "
+    '{"type":"command","command":...} the platform runs itself, '
+    '{"type":"observable","target":...} the chairman confirms, or '
+    '{"type":"metric","source":{"kind":"http_json","url":...,"path":"$.a.b[-1].c"},'
+    '"direction":"decreasing","target":500000,"measure_every_hours":24} '
+    "the platform MEASURES on a schedule. "
+    "If this requirement is the objective itself — the rank, the revenue, the number "
+    "the project exists to move — it is a metric, and nothing else will do: a command "
+    "greps a file you wrote, so a finish line you can write into your own status "
+    "report is not a finish line. Use a command for work that must be verifiably "
+    "done, and an observable only when neither fits — it puts the chairman in the "
+    "loop every time it closes, and a metric never does, because the platform reads "
+    "the number itself. "
     "This is a PROPOSAL and creates no scope — the chairman accepts it, and until he "
     "does no work may be created for it. You cannot accept your own, and you cannot "
     "mark one met: the platform runs the test and writes the result. "

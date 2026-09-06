@@ -1049,6 +1049,47 @@ def _situation(session: Session, project: Project, cons: ConstitutionDoc) -> dic
     }
 
 
+
+def _scoreboard_note(board: list[dict]) -> str:
+    """What the numbers oblige you to say. Arithmetic, never a mood.
+
+    Modelled line for line on the budget block's note, which is the only
+    sentence in the platform that has ever made a CEO volunteer a number before
+    the chairman asked for it. That sentence works. This one points it at the
+    objective instead of the spend.
+    """
+    losing = [m for m in board if m["verdict"] == "losing"]
+    unknown = [m for m in board if m["verdict"] == "unknown"]
+    met = [m for m in board if m["verdict"] == "met"]
+
+    if losing:
+        worst = losing[0]
+        return (
+            f"{worst['requirement_key']} is going the wrong way: {worst['value']} "
+            f"against a target of {worst['target']}, and further from it than when "
+            f"this window opened ({' -> '.join(str(v) for v in worst['trend'])}). "
+            "Say so now, with the number, and say what you are changing — do not "
+            "wait to be asked, and do not lead with the spend. Running lighter to "
+            "protect a budget while this number moves away from you is not thrift, "
+            "it is the wrong trade. If closing the gap costs more than you have, "
+            "that is the thing to put to the chairman."
+        )
+    if unknown and not met:
+        return (
+            "The objective has no usable reading yet. A finish line nobody is "
+            "measuring is prose again; if the source is wrong, fix it or say so."
+        )
+    if met and len(met) == len(board):
+        return (
+            "Every measured target is met. That is the finish line, not the memo "
+            "count — say it to the chairman with the number."
+        )
+    return (
+        "Measured and moving the right way. Report the number, not the activity: "
+        "what moved it is worth more to him than what you did."
+    )
+
+
 def build_context_pack(session: Session, run: Run, agent: Agent, project: Project) -> dict:
     cons = effective(session, project.id)
 
@@ -1262,6 +1303,23 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
             # "are we faster than last week" — and a planner that cannot see
             # its own pace can only plan by optimism.
             pack["velocity"] = project_velocity(session, project.id)
+            # The scoreboard, beside the pace and written with the same
+            # authority as `situation.budget` — deliberately, because that
+            # block is the proof this shape works. It carries a sentence that
+            # says "say so now, with the number", and it is the only place the
+            # platform has ever obliged a CEO to volunteer a number before
+            # being asked. Every one of those sentences was about money.
+            #
+            # A CEO used to arrive at its wake holding a fully-projected spend
+            # forecast it had not asked for and nothing whatsoever about
+            # whether it was winning; it re-derived its own scoreboard from
+            # files every time, or did not. This is the counterpart.
+            board = pack["velocity"].get("metrics") or []
+            if board:
+                pack["scoreboard"] = {
+                    "metrics": board,
+                    "note": _scoreboard_note(board),
+                }
             # How the recurring obligations have actually gone. "Met in 23 of
             # the last 24 cycles" is a fact about an Operate project that no
             # burndown could express and no prose could be checked against.

@@ -175,6 +175,12 @@ LINE_OWNER: dict[str, str] = {
     "notice_commitment_met": MATERIAL,
     "requirement_met": MATERIAL,
     "requirement_cut": MATERIAL,
+    # The objective, measured. Material at every dial setting and not
+    # negotiable by it: the split above is "an outcome is material, its
+    # management is delegated", and this line IS the outcome. A chairman who
+    # delegated the running of the project did not thereby delegate being told
+    # whether it is winning — that is the one thing delegation is FOR.
+    "metric": MATERIAL,
     "published": MATERIAL,
     # Only he can sign these, so only he can be at fault for them.
     "approvals_expired": MATERIAL,
@@ -312,6 +318,36 @@ def _keys(keys: list[str], show: int = 4) -> str:
 
 
 # ── the window's facts ──────────────────────────────────────────────────────────
+
+
+def _metric_lines(session: Session, project: Project, since, until) -> list[dict]:
+    """The objective, measured. First, because it is the only line here that is
+    about whether the project is winning rather than about whether it is busy.
+
+    This module adds no judgement of its own — it is arithmetic over the record,
+    at zero tokens — and a metric reading is exactly that: a number the platform
+    fetched from a source the project does not author, compared with a target
+    the chairman accepted. It qualifies on the same grounds `MET` leads
+    `_scope_lines`: no agent could have caused this line by asserting it.
+
+    Only measured requirements produce lines, so a project whose finish line is
+    still prose sees nothing new here, which is every project that exists today.
+    """
+    from yaaf.server import metrics
+
+    lines = []
+    for board in metrics.project_scoreboard(session, project.id):
+        if board["verdict"] == "unknown":
+            continue
+        tone = {"losing": "bad", "met": "good", "gaining": "good"}.get(board["verdict"], "flat")
+        arrow = " -> ".join(str(v) for v in board["trend"][-3:])
+        lines.append(_line(
+            "metric",
+            f"{board['requirement_key']}: {board['value']} against a target of "
+            f"{board['target']} ({board['verdict']}). Recent: {arrow}.",
+            tone=tone,
+        ))
+    return lines
 
 
 def _scope_lines(session: Session, project: Project, since, until) -> list[dict]:
@@ -1120,6 +1156,7 @@ def project_briefing(session: Session, project: Project,
     since = min(_aware(since) or until, until)
 
     lines: list[dict] = []
+    lines += _metric_lines(session, project, since, until)
     lines += _scope_lines(session, project, since, until)
     lines += _work_lines(session, project, since, until)
     lines += _proof_lines(session, project, since, until)

@@ -55,7 +55,7 @@ from yaaf.core.models import (
     VerificationStatus,
     utcnow,
 )
-from yaaf.server import agenda, briefing, policy, typing_state
+from yaaf.server import agenda, briefing, metrics, policy, typing_state
 from yaaf.server import asks as ask_lib
 from yaaf.server.deps import admin_auth, db
 from yaaf.server.dispatcher import activity_state, chat_session_live
@@ -892,6 +892,13 @@ def plan_view(project_id: str, session: Session = Depends(db)) -> dict:
                 "stage": r.stage,
                 "test_kind": (r.acceptance_test or {}).get("type"),
                 "acceptance_test": r.acceptance_test,
+                # The readings, for a requirement the platform measures. None
+                # for every other kind, which is every requirement that existed
+                # before metrics did.
+                "measurement": (
+                    metrics.scoreboard(session, r)
+                    if metrics.is_metric(r.acceptance_test) else None
+                ),
                 "est_runs": r.est_runs,
                 "spent": spend.get(r.id, {"runs": 0, "usd": 0}),
                 "failure_load": r.failure_load,

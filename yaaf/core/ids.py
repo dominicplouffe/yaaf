@@ -28,6 +28,7 @@ REQUIREMENT = "reqt"
 REQUIREMENT_EVENT = "rqte"
 REQUIREMENT_EDGE = "rqed"
 REQUIREMENT_RESULT = "rqcr"  # one standing requirement, judged for one cycle
+MEASUREMENT = "meas"  # one reading of a metric the project does not author
 FLAG = "flag"  # an obligation to speak, opened by the platform
 SPEND_WINDOW = "spwn"  # a funded period for measuring what work costs
 OVERRUN = "ovrn"  # a month that went past its plan, and the account of why
