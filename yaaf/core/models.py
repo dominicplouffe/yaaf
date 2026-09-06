@@ -373,6 +373,17 @@ class ApprovalKind(enum.StrEnum):
     LEGAL = "legal"
     OWNER_DECISION = "owner_decision"
     TOOL_REQUEST = "tool_request"
+    # A case for more of a capacity dial — runs, concurrency, queue depth, the
+    # month's money. Its own kind rather than a tool_request because it is the
+    # only one where the CEO is arguing for *itself*, and the chairman should
+    # be able to see at a glance how often that happens.
+    #
+    # Nine verbs existed for saying something and none for asking for more of
+    # anything. A CEO that had correctly identified its run ration as the
+    # binding constraint could describe it in the boardroom and nothing else:
+    # "if we ever want genuinely more runs in a day, that's a separate dial and
+    # I'd come to you with what it buys before asking." It had no way to come.
+    CAPACITY = "capacity"
     # The human-assist protocol (CEO Charter, stage E): a step only a human
     # can do — a captcha, a 2FA code, a KYC form, an account only he can
     # touch. Any agent may file one; the chairman's answer rides the decision

@@ -1406,18 +1406,45 @@ def runs_spent_on(session: Session, requirement_id: str) -> int:
     ).scalar_one()
 
 
-def estimate_bias(session: Session, project_id: str) -> tuple[float, dict]:
-    """How wrong this CEO's estimates have been, as a multiplier ≥ 1.
+#: How many settled requirements the bias is measured over. A window, not all
+#: history — because without one the multiplier is a permanent sentence.
+#:
+#: A project that overran early carried that overrun into every plan it would
+#: ever make: the FPL desk sat at 1.64 on eight settled requirements from its
+#: first fortnight, so `check_plan_affordable` refused any plan that did not fit
+#: inside 61% of its own budget, forever, and the only legal responses were to
+#: cut scope or to estimate smaller than it believed.
+#:
+#: The anti-gaming property survives intact, because it never depended on the
+#: window being infinite. Within any window the ratio is still floored at 1, so
+#: over-estimating once still buys nothing. What the window removes is the part
+#: that was never anti-gaming at all — that a project which has since become
+#: accurate goes on paying for a bad month it cannot work off.
+#:
+#: Long relative to a cycle on purpose: short enough to be earnable, far too
+#: long to be gamed by one deliberate over-estimate.
+BIAS_WINDOW_SETTLED = 12
 
-    Never below 1. A ratio that could shrink an estimate would let a CEO buy
-    headroom by over-estimating once and then under-estimating everything
-    after — the same gaming the multiplier exists to price in, run backwards.
+
+def estimate_bias(session: Session, project_id: str) -> tuple[float, dict]:
+    """How wrong this CEO's recent estimates have been, as a multiplier ≥ 1.
+
+    Never below 1 within the window. A ratio that could shrink an estimate would
+    let a CEO buy headroom by over-estimating once and then under-estimating
+    everything after — the same gaming the multiplier exists to price in, run
+    backwards.
     """
     settled = [
         r
         for r in scope_requirements(session, project_id, all_cycles=True)
         if r.status in CLOSED_REQUIREMENT_STATUSES and (r.est_runs_first or r.est_runs)
     ]
+    # Most recently settled first, then trimmed to the window: accuracy is a
+    # thing a project can now demonstrate, rather than a verdict it received
+    # once. `met_at` is when the platform ruled; a cut requirement has none, so
+    # it falls back to creation order via the id, which is time-ordered.
+    settled.sort(key=lambda r: (r.met_at is not None, r.met_at or "", r.id), reverse=True)
+    settled = settled[:BIAS_WINDOW_SETTLED]
     # Scored against the FIRST estimate, always: reestimate moves est_runs for
     # the plan arithmetic, never the number the ratio judges.
     pairs = [(r.est_runs_first or r.est_runs, runs_spent_on(session, r.id))
@@ -1429,7 +1456,8 @@ def estimate_bias(session: Session, project_id: str) -> tuple[float, dict]:
     actual = sum(a for _, a in pairs)
     ratio = max(1.0, actual / estimated) if estimated else 1.0
     return ratio, {
-        "basis": f"{len(pairs)} settled requirements",
+        "basis": f"{len(pairs)} most recently settled requirements",
+        "window": BIAS_WINDOW_SETTLED,
         "estimated": estimated,
         "actual": actual,
         "multiplier": round(ratio, 2),

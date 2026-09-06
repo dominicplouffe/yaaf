@@ -43,8 +43,26 @@ from yaaf.server import policy
 SHORT_WINDOW_DAYS = 21
 LONG_WINDOW_DAYS = 84
 
-DEAD_STATUSES = (RunStatus.FAILED, RunStatus.REAPED, RunStatus.KILLED,
-                 RunStatus.TERMINATED_REFUSALS)
+#: Runs that went wrong. TERMINATED_REFUSALS is deliberately NOT here.
+#:
+#: A run that hit the refusal cap did not fail; it asked for things the rules
+#: said no to. Counted as failure it made probing a wall arithmetically
+#: identical to breaking, and the chain ran all the way to a flag: refusal ->
+#: dead run -> measured failure_rate up -> retry reserve up -> forecast slack
+#: down -> DEADLINE_AT_RISK. A CEO that tested where the edges were made its
+#: own project look like it was falling apart, and the constitution's advice
+#: was to stop testing.
+#:
+#: The wake was still spent, so `capacity` still counts it against the run
+#: budget — that is arithmetic and stays true. What changes is that it stops
+#: being reported as the project failing, and gets its own number instead.
+DEAD_STATUSES = (RunStatus.FAILED, RunStatus.REAPED, RunStatus.KILLED)
+
+#: Runs that ended because the agent hit the per-run refusal cap. Its own
+#: number, because "how often is this project told no" is a real and useful
+#: signal — it is just not the same signal as "how often does this project
+#: break", and one of the two was invisible while they shared a counter.
+PROBE_STATUSES = (RunStatus.TERMINATED_REFUSALS,)
 
 
 def _met_count(session: Session, project_id: str, since) -> int:
@@ -143,6 +161,7 @@ def _runs_in_window(session: Session, project_id: str, since) -> dict:
     was refunded; `work` is the rest.
     """
     total, dead, attributed, usd, attributed_usd = 0, 0, 0, 0.0, 0.0
+    probed = 0
     inbox, noop, work = 0, 0, 0
     rows = session.execute(
         select(Run.status, Run.requirement_id, Run.cost_usd, Run.kind,
@@ -156,6 +175,8 @@ def _runs_in_window(session: Session, project_id: str, since) -> dict:
         total += 1
         if status in DEAD_STATUSES:
             dead += 1
+        elif status in PROBE_STATUSES:
+            probed += 1
         if requirement_id:
             attributed += 1
             attributed_usd += cost or 0.0
@@ -174,6 +195,12 @@ def _runs_in_window(session: Session, project_id: str, since) -> dict:
         "total": total,
         "dead": dead,
         "failure_share": round(dead / total, 3) if total else 0.0,
+        # Runs that ended by being told no, reported apart from runs that broke.
+        # A high number here is worth looking at and is not the same news: it
+        # may be an agent misreading the rules, or a rule that is in the way of
+        # work somebody wants done.
+        "probed": probed,
+        "refused_share": round(probed / total, 3) if total else 0.0,
         "attributed": attributed,
         "attributed_share": round(attributed / total, 3) if total else 0.0,
         "usd": round(usd, 2),

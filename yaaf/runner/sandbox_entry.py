@@ -637,6 +637,27 @@ async def t_accounts_list(args):
 
 
 @tool(
+    "capacity_request",
+    "CEO only. Put a case to the chairman for MORE of a capacity dial — runs a day, "
+    "runs an hour, concurrency, queue depth, the month's money. This is the verb for "
+    "the constraint that is actually binding: if you have worked out that the run "
+    "ration is what paces you, say so here with the arithmetic rather than describing "
+    "it in the boardroom, where it is a remark nobody can act on. "
+    "rule is the constitution field; `to` is the number you want. All three of buys / "
+    "costs / without are required and are the point — what more room BUYS in outcomes, "
+    "what it COSTS in money and runs, and what happens WITHOUT it. A request without "
+    "them is a wish. "
+    "It does not block and it does not move the dial: keep working at the cap you have, "
+    "plan for it, and treat a yes as upside. Unanswered it expires to no, which is the "
+    "same as today. You may not request a lower bar, a change to who decides, or less "
+    "auditing — those are his judgement about the project, not its throughput.",
+    {"rule": str, "to": float, "buys": str, "costs": str, "without": str},
+)
+async def t_capacity_request(args):
+    return _text(_call("POST", "/agent/capacity", dict(args)))
+
+
+@tool(
     "need_request",
     "CEO only. File a NEED with the chairman: a capability the project lacks — 'I need "
     "AWS access, give me a key', 'we need a Stripe account', 'SMTP credentials for the "
@@ -1222,7 +1243,7 @@ ALL_TOOLS = [
     t_flag_raise, t_flags_list,
     t_hypothesis_add, t_hypothesis_kill, t_decision_add,
     t_approval_request, t_approvals_list, t_spend_book,
-    t_need_request, t_credentials_list, t_credential_scope,
+    t_capacity_request, t_need_request, t_credentials_list, t_credential_scope,
     t_assist_request, t_account_record, t_accounts_list,
     t_purchase_begin, t_purchase_finish,
     t_side_effect_begin, t_side_effect_finish,
