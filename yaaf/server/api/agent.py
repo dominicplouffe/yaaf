@@ -786,6 +786,8 @@ def scope_act(
                       status_code=403)
     cons = effective(session, ctx.project.id)
     policy.check_self_scope_action(cons, body.action)
+    if body.action.get("kind") == "accept":
+        policy.check_self_accept_after_delivery(session, ctx.project)
     result, detail = _execute_scope_action(
         session, ctx, body.action,
         f"{body.reason} [self-exercised under the constitution's authority dial]",
@@ -1192,7 +1194,10 @@ def propose_requirement(
     # commitment check misses because a promise that was KEPT is neither at risk
     # nor breached.
     policy.check_scope_within_commitment(session, ctx.project, cons)
-    policy.check_scope_after_delivery(session, ctx.project)
+    # NOT check_scope_after_delivery: a proposal creates no scope, so a project
+    # that delivered early and can see the next move may put it on the table.
+    # What it may not do is accept its own — see check_self_accept_after_delivery,
+    # enforced on the scope verb rather than here.
     policy.check_plan_affordable(session, ctx.project, cons, body.est_runs or 0)
     if (body.recurrence == Recurrence.STANDING
             and ctx.project.mode != ProjectMode.OPERATE):

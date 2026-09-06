@@ -175,8 +175,9 @@ def test_but_it_is_still_reported(client):
             session.add(Run(id=ids.new_id(ids.RUN), project_id=project["id"],
                             agent_id=project["ceo_agent_id"], kind=RunKind.AGENT_RUN,
                             trigger={"type": "test"}, metered=True, status=status))
-    from yaaf.core.models import utcnow
     from datetime import timedelta
+
+    from yaaf.core.models import utcnow
 
     with db_session() as session:
         pace = velocity._runs_in_window(session, project["id"],
@@ -204,4 +205,108 @@ def test_estimate_bias_is_measured_over_a_window(client):
     # deliberate over-estimate.
     assert BIAS_WINDOW_SETTLED >= 8, (
         "the window is short enough to game by over-estimating a couple of times"
+    )
+
+
+# ── a cycle verdict carries what it did ─────────────────────────────────────────
+
+
+def test_a_missed_cycle_flag_says_how_much_landed(client):
+    """MISSED with 9 of 10 met is not the same event as MISSED with 0 of 10, and
+    the status alone cannot tell them apart.
+
+    Every FlagKind is supposed to be arithmetic. This one carried the ordinal,
+    the timestamp and the goal — and no counts — so the CEO on the desk that
+    prompted this re-explained the distinction to its chairman six times in five
+    days, by hand, out of its own run allowance. The numbers were on the row all
+    along; they were never in the sentence.
+    """
+    from yaaf.core import ids
+    from yaaf.core.constitution import effective
+    from yaaf.core.models import Cycle, CycleStatus, FlagKind, Project
+    from yaaf.server import flags
+
+    project = make_project(client, slug="cycle1")
+    with db_session() as session:
+        session.add(Cycle(
+            id=ids.new_id(ids.CYCLE), project_id=project["id"], ordinal=1,
+            status=CycleStatus.MISSED, goal="Ship the GW3 memo",
+            scorecard={"accepted": 10, "met": 9, "carried": 1,
+                       "met_keys": [f"R-{n:02d}" for n in range(1, 10)],
+                       "carried_keys": ["R-10"]},
+        ))
+    with db_session() as session:
+        row = session.get(Project, project["id"])
+        flags.evaluate(session, row, effective(session, row.id))
+
+    with db_session() as session:
+        flag = next(f for f in flags.open_flags(session, project["id"])
+                    if f.kind == FlagKind.CYCLE_MISSED)
+        assert "9 of 10 met" in flag.summary, flag.summary
+        assert "R-10" in flag.summary, "the flag does not say what was carried"
+        assert flag.arithmetic["met"] == 9 and flag.arithmetic["carried"] == 1
+
+
+# ── the run cap is a plan, not a cliff ──────────────────────────────────────────
+
+
+def test_the_run_plan_and_the_run_wall_are_two_numbers(client):
+    """Money learned this first: a number that is fatal to cross is not a plan
+    anybody works to, it is a cliff everybody stands back from — and a safe
+    number is indistinguishable from an honest one from outside. Runs were
+    never given the same treatment, so crossing the daily cap was silently
+    fatal for the rest of the day, with no account, no flag and no way to ask.
+    """
+    from yaaf.core.constitution import effective
+
+    with db_session() as session:
+        cons = effective(session, make_project(client, slug="wall")["id"])
+    assert cons.runs_hard_stop_multiple > 1.0, (
+        "the run plan and the run wall are still the same number"
+    )
+
+
+def test_the_concurrency_dial_is_untouched_by_the_overrun(client):
+    """The one dial whose help text says it protects the provider rate limit
+    every project on the box shares. It caps simultaneity, not volume, so it
+    goes on binding absolutely however far past its daily plan a project runs —
+    otherwise one project's overrun is every other project's outage."""
+    import inspect
+
+    from yaaf.server import dispatcher
+
+    source = inspect.getsource(dispatcher._dispatch_project)
+    assert "runs_hard_stop_multiple" in source
+    assert "max_concurrent_runs" not in source.split("wall =")[1].split("\n\n")[0], (
+        "the run overrun was applied to the shared concurrency limit"
+    )
+
+
+def test_going_past_the_plan_opens_an_account(client):
+    """Not a failure and not a stop — an obligation to say what the extra runs
+    bought, which is the whole difference between a plan and a cliff."""
+    from yaaf.core import ids
+    from yaaf.core.constitution import effective
+    from yaaf.core.models import FlagKind, Project, Run, RunKind
+    from yaaf.server import flags
+
+    project = make_project(client, slug="overrun",
+                           constitution={"runs_per_project_per_day": 4,
+                                         "runs_hard_stop_multiple": 2.0})
+    with db_session() as session:
+        for _ in range(6):
+            session.add(Run(id=ids.new_id(ids.RUN), project_id=project["id"],
+                            agent_id=project["ceo_agent_id"], kind=RunKind.AGENT_RUN,
+                            trigger={"type": "test"}, status=RunStatus.DONE))
+    with db_session() as session:
+        row = session.get(Project, project["id"])
+        flags.evaluate(session, row, effective(session, row.id))
+
+    with db_session() as session:
+        opened = {f.kind: f for f in flags.open_flags(session, project["id"])}
+    assert FlagKind.RUN_OVERRUN in opened, f"no account was opened: {list(opened)}"
+    flag = opened[FlagKind.RUN_OVERRUN]
+    assert flag.arithmetic["plan"] == 4 and flag.arithmetic["wall"] == 8
+    assert "capacity_request" in flag.summary, (
+        "the account does not name the verb for asking the plan to be raised"
     )

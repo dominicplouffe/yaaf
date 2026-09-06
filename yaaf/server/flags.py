@@ -49,6 +49,25 @@ log = logging.getLogger("yaaf.flags")
 HISTORICAL_KINDS = (FlagKind.CYCLE_MISSED, FlagKind.STANDING_MISSED)
 
 
+def _scoreline(cycle) -> str:
+    """What the cycle actually did, in the flag that makes the CEO explain it.
+
+    Every FlagKind is supposed to be arithmetic. This one carried the ordinal,
+    the timestamp and the goal — and no numbers, so "missed" read the same
+    whether nine of ten requirements landed or none did. The CEO on the desk
+    that prompted this re-explained that distinction to its chairman six times
+    in five days, by hand, out of its own run allowance. The numbers were always
+    on the row; they were just never in the sentence.
+    """
+    card = cycle.scorecard or {}
+    if not card.get("accepted"):
+        return "."
+    met, accepted = card.get("met", 0), card["accepted"]
+    carried = ", ".join(card.get("carried_keys") or []) or "none"
+    return (f": {met} of {accepted} met, {card.get('carried', 0)} carried forward "
+            f"({carried}).")
+
+
 def open_flag(session: Session, project: Project, kind: str, summary: str,
               arithmetic: dict | None = None, subject_id: str | None = None) -> Flag | None:
     """Open one, unless this exact condition is already flagged.
@@ -177,13 +196,15 @@ def evaluate(session: Session, project: Project, cons: ConstitutionDoc) -> int:
     if last_closed is not None and open_flag(
             session, project, FlagKind.CYCLE_MISSED,
             f"Cycle {last_closed.ordinal} closed with scope still open"
-            + (f" — its goal was: {last_closed.goal[:200]}" if last_closed.goal else "")
-            + ". The rhythm rolled on, as it should; this is the part that "
+            + _scoreline(last_closed)
+            + (f" Its goal was: {last_closed.goal[:200]}." if last_closed.goal else "")
+            + " The rhythm rolled on, as it should; this is the part that "
               "should not roll on quietly.",
             arithmetic={"cycle": last_closed.ordinal,
                         "closed_at": (last_closed.closed_at.isoformat()
                                       if last_closed.closed_at else None),
-                        "goal": last_closed.goal},
+                        "goal": last_closed.goal,
+                        **(last_closed.scorecard or {})},
             subject_id=last_closed.id,
     ):
         opened += 1
@@ -251,6 +272,32 @@ def evaluate(session: Session, project: Project, cons: ConstitutionDoc) -> int:
     else:
         _resolve(session, project, FlagKind.SELF_GATED, None,
                  "work became claimable, or a real cap took over")
+
+    # 5b. Past the daily run plan, and still working. The budget learned this
+    #     first: a number that is fatal to cross is not a plan anybody works to.
+    #     Crossing the run cap used to be silently fatal for the day — no
+    #     account, no flag, no way to ask — so the only safe move was to stay
+    #     well under it, and a safe number is indistinguishable from an honest
+    #     one from outside.
+    day = state["daily_runs"]
+    wall = max(day["cap"], int(day["cap"] * cons.runs_hard_stop_multiple))
+    in_overrun = day["used"] > day["cap"] and wall > day["cap"]
+    if in_overrun:
+        if open_flag(
+            session, project, FlagKind.RUN_OVERRUN,
+            f"{day['used']} runs today against a plan of {day['cap']}; the wall is "
+            f"{wall}. You are working in the overrun, which is allowed and is the "
+            f"point — say what the extra runs bought. If the plan is simply too low "
+            f"for the work, that is a capacity_request with the arithmetic, not a "
+            f"month of quietly running over.",
+            arithmetic={"used": day["used"], "plan": day["cap"], "wall": wall,
+                        "multiple": cons.runs_hard_stop_multiple},
+            subject_id=day["resets_at"][:10],   # one flag per day, not per tick
+        ):
+            opened += 1
+    else:
+        _resolve(session, project, FlagKind.RUN_OVERRUN, day["resets_at"][:10],
+                 "the day rolled or the plan was raised")
 
     # 6. The objective is moving away from its target. The only kind here that
     #    is about whether the project is WINNING rather than whether it is

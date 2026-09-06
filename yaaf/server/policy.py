@@ -2067,6 +2067,36 @@ def check_scope_after_delivery(session: Session, project: Project) -> None:
     )
 
 
+def check_self_accept_after_delivery(session: Session, project: Project) -> None:
+    """A delivered project may still be PROPOSED to; it may not accept its own.
+
+    The freeze this replaces refused the proposal itself, which made "I have
+    finished early and can see the next move" unsayable in any form with state
+    behind it — the only remaining channel was a boardroom remark nobody can
+    act on later. Scope frozen on lateness, on breach AND on success meant the
+    one thing a project could never do was succeed and keep going.
+
+    But read what the freeze was actually built for: a CEO that, 36 hours after
+    reporting 13 of 13 true, "opened R-14 and accepted it on its own authority".
+    The abuse is the second half. A proposal creates no scope by construction —
+    the chairman accepts it, and until he does no work may be created for it —
+    so a project that proposes after delivering has put a card on the table and
+    changed nothing. Self-accepting is how it grows itself back open behind a
+    chairman who believes it is done, and that is what stays refused, at every
+    dial setting, including the ones that normally delegate scope to the CEO.
+    """
+    if not delivered_awaiting_confirmation(session, project):
+        return
+    raise Refusal(
+        "You may propose this, and you may not accept it. Every requirement is true "
+        "and the chairman has been told the project is finished, so scope does not "
+        "grow here without him — whatever the authority dial says the rest of the "
+        "time. Your proposal is already on his desk with the delivery; he can accept "
+        "it in one click, and until he does, nothing about the delivery has changed.",
+        status_code=409,
+    )
+
+
 # ── message rules ───────────────────────────────────────────────────────────────
 
 

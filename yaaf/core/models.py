@@ -205,6 +205,12 @@ class FlagKind(enum.StrEnum):
     # hypothetical — it is 2026-09-04, and the only thing that noticed was a
     # warning on a screen nobody is obliged to read.
     SELF_GATED = "self_gated"
+    # The project went past its daily run PLAN and is working in the space
+    # between the plan and the wall. Not a failure and not a stop — an
+    # obligation to say what the extra runs bought, which is the whole
+    # difference between a plan and a cliff. Exactly the shape BUDGET_OVERRUN
+    # already has; runs were simply never given it.
+    RUN_OVERRUN = "run_overrun"
 
 
 class FlagStatus(enum.StrEnum):
@@ -1199,6 +1205,12 @@ class Cycle(Base):
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
     ordinal: Mapped[int] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(String(16), default=CycleStatus.OPEN)
+    # What actually landed, kept at close. MISSED with 9 of 10 met is not the
+    # same event as MISSED with 0 of 10, and the status alone cannot tell them
+    # apart — so a CEO whose cycle straddled a deadline spent a run a week
+    # hand-explaining the difference, six times in five days, because the flag
+    # that made it explain carried the ordinal and the goal and no numbers.
+    scorecard: Mapped[dict | None] = mapped_column(JSONVariant)
     opened_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     closed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     narrative: Mapped[str | None] = mapped_column(Text)  # uncapped, on purpose

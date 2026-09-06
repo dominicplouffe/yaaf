@@ -355,6 +355,20 @@ class ConstitutionDoc(BaseModel):
     runs_per_project_per_day: int = _rule(
         150, ge=1, group="Wake-loop brakes", label="Runs per day, whole project",
         help="The daily activity ceiling across every agent.")
+    runs_hard_stop_multiple: float = _rule(
+        1.5, ge=1.0, group="Wake-loop brakes",
+        label="Run hard stop, as a multiple of the daily cap",
+        help="The wall, as distinct from the plan. The daily cap is what the project "
+             "should need; at cap × this, ordinary work really does stop for the day. "
+             "Between the two the project keeps working and OWES an account — the same "
+             "shape as the budget, which learned this first: a number that is fatal to "
+             "cross is not a plan anybody works to, it is a cliff everybody stands back "
+             "from, and the damage is that a safe number and an honest one look "
+             "identical from outside. 1.0 restores the old behaviour, where the plan "
+             "and the wall are the same number. This does NOT touch 'Runs in flight at "
+             "once', which is what protects the provider rate limit the whole box "
+             "shares — that one is simultaneity, not volume, and it still binds "
+             "absolutely.")
     runs_per_project_per_hour: int = _rule(
         15, ge=1, group="Wake-loop brakes", label="Runs per hour, whole project",
         help="The pacing brake. The daily ceiling refills all at once, so without this a "

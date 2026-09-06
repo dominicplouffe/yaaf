@@ -813,6 +813,17 @@ def roll_cycles(session: Session, project: Project, cons: ConstitutionDoc) -> No
         cycle.status = CycleStatus.COMPLETED
     else:
         cycle.status = CycleStatus.SKIPPED  # nothing accepted, or nothing made true
+    # The verdict is one of three words and the difference between a cycle that
+    # made nine of ten things true and one that made none is invisible in all
+    # three. Kept here so the flag, the brief and the chairman all read the same
+    # numbers, and so nobody has to reconstruct them by hand a week later.
+    cycle.scorecard = {
+        "accepted": len(accepted),
+        "met": len(met),
+        "carried": len(unsettled),
+        "met_keys": [r.key for r in met],
+        "carried_keys": [r.key for r in unsettled],
+    }
     cycle.closed_at = now
     if not cycle.narrative:
         # No review wrote one this cycle; the platform leaves an honest stub

@@ -35,6 +35,7 @@ from datetime import timedelta
 
 from tests.conftest import (
     agent_by_name,
+    amend,
     bearer,
     channel_of,
     live_token,
@@ -179,26 +180,63 @@ def test_the_brake_is_a_named_gate_the_chairman_can_read(client):
 # ── scope may not grow back ─────────────────────────────────────────────────────
 
 
-def test_a_delivered_project_refuses_new_scope(client):
-    """`check_scope_within_commitment` freezes scope while a date does NOT
-    hold, so a project that delivered on time had strictly fewer guards than one
-    running late. This is the missing half."""
+def test_a_delivered_project_cannot_accept_its_own_scope(client):
+    """Scope may not grow back after delivery. That rule is unchanged; what it
+    attaches to moved, 2026-09-06, and the move is worth reading.
+
+    The incident this file was written for: 36 hours after reporting 13 of 13
+    true, a CEO "opened R-14 and accepted it on its own authority". The guard
+    added then refused the PROPOSAL, which was the earliest point it could be
+    stopped — and which also made "I have finished early and can see the next
+    move" unsayable in any form with state behind it. Scope was frozen when a
+    project was late, when it had breached, AND when it had succeeded, so the
+    one thing a project could never do was succeed and keep going.
+
+    The abuse was always the second half of that sentence. A proposal creates no
+    scope by construction: the chairman accepts it, and until he does no work
+    may be created for it. So the guard now sits on ACCEPTANCE, where the growth
+    actually happens — and sits there at every dial setting, including the ones
+    that otherwise delegate scope to the CEO. That is strictly stronger than
+    before on the thing that matters: previously a project whose dial said
+    `scope_authority: ceo` was stopped only by the propose-time refusal, and
+    anything that got a requirement onto the books by another route could still
+    be self-accepted.
+    """
     project = delivered(client, "no-regrowth")
     token = ceo_token(project)
-    refused = client.post(
+    # `accept` is held by plan_authority. This is the case the guard exists
+    # for: under the default dial acceptance is already a 403, so a test that
+    # never turns this on proves nothing about post-delivery growth.
+    amend(client, project["id"], plan_authority="ceo")
+
+    proposed = client.post(
         "/agent/requirements",
         json={"statement": "One more thing should be true before this ships",
               "acceptance_test": CMD_TEST, "est_runs": 2},
         headers=bearer(token))
-    assert refused.status_code == 409, refused.text
-    detail = refused.json()["error"]
-    assert "confirmation" in detail and "boardroom" in detail
+    assert proposed.status_code == 200, (
+        "a delivered project may put the next move on the table: " + proposed.text
+    )
+
+    refused = client.post(
+        "/agent/scope",
+        json={"action": {"kind": "accept",
+                         "requirement_key": proposed.json()["key"]},
+              "reason": "it is obviously worth doing and I am here now"},
+        headers=bearer(token))
+    assert refused.status_code == 409, (
+        "a delivered project accepted its own scope: " + refused.text
+    )
+    assert "may not accept" in refused.json()["error"]
 
 
-def test_rewording_the_proposal_does_not_get_it_in(client):
-    """The refusal is about the project's state, not the words. The CEO in the
-    incident reached scope by way of a colleague's review finding, so the
-    attack is the same requirement dressed as a defect report."""
+def test_the_proposal_is_not_scope_until_he_says_so(client):
+    """The protection, stated as the thing that actually matters: whatever the
+    CEO proposes after delivering, the delivery is unchanged and no work can be
+    created for it."""
+    from yaaf.core.db import db_session
+    from yaaf.core.models import Requirement, RequirementStatus
+
     project = delivered(client, "no-rewording")
     token = ceo_token(project)
     for statement in ("A documentation-accuracy gap in section 10 is closed",
@@ -209,7 +247,24 @@ def test_rewording_the_proposal_does_not_get_it_in(client):
             json={"statement": statement, "acceptance_test": CMD_TEST,
                   "est_runs": 1},
             headers=bearer(token))
-        assert response.status_code == 409, f"{statement!r} got in: {response.text}"
+        assert response.status_code == 200, response.text
+        requirement_id = response.json()["requirement_id"]
+
+        with db_session() as session:
+            assert session.get(Requirement, requirement_id).status == (
+                RequirementStatus.PROPOSED
+            ), "a post-delivery proposal landed as accepted scope"
+
+        # ...and no work may be created for it, which is what "creates no scope"
+        # means in practice.
+        task = client.post("/agent/tasks", json={
+            "team_id": project["teams"][0]["id"], "title": "start on it",
+            "goal": "get ahead", "success_test": CMD_TEST,
+            "requirement_id": requirement_id,
+        }, headers=bearer(token))
+        assert task.status_code >= 400, (
+            f"work was created against an unaccepted post-delivery proposal: {task.text}"
+        )
 
 
 def test_reopening_lets_scope_move_again(client):
