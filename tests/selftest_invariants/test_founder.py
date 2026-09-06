@@ -191,17 +191,26 @@ def test_the_founder_runs_on_the_credential_the_agents_run_on(client, founder):
     def last_env(calls):
         return next(c["env"] for c in reversed(calls) if "env" in c)
 
+    def unusable(env, name):
+        """`subprocess_env` merges over os.environ, so the only way to remove a
+        variable is to blank it (see `_SCRUB_EXACT`). Absent and empty are the
+        same guarantee; asserting absence alone passes only on a machine that
+        happens not to carry the other credential, and fails on any developer
+        box with ANTHROPIC_API_KEY exported — which running the
+        planning-quality gate requires."""
+        return env.get(name, "") == ""
+
     calls = founder()
     start(client, "hello")
     assert last_env(calls)["ANTHROPIC_API_KEY"] == API_KEY
-    assert "CLAUDE_CODE_OAUTH_TOKEN" not in last_env(calls)
+    assert unusable(last_env(calls), "CLAUDE_CODE_OAUTH_TOKEN")
 
     client.put("/admin/founder/credential",
                json={"value": OAUTH_TOKEN, "mode": "subscription"}, headers=ADMIN)
     calls = founder()
     start(client, "hello again")
     assert last_env(calls)["CLAUDE_CODE_OAUTH_TOKEN"] == OAUTH_TOKEN
-    assert "ANTHROPIC_API_KEY" not in last_env(calls)
+    assert unusable(last_env(calls), "ANTHROPIC_API_KEY")
 
     # Byte-for-byte the shape the runner builds for a project's agents.
     with db_session() as session:

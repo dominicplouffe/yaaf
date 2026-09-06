@@ -69,6 +69,15 @@ the knob, and it is why CI time tracks shard count rather than test count.
    never just a notification.** If your PR adds a rule, the enforcement must
    live server-side where an agent's token can't reach around it. "The agent
    is instructed not to" does not count.
+
+   **An automatic state change may point either way.** A rule that *fires when
+   a project is under-reaching* is as legitimate as one that refuses when it
+   over-reaches, and is enforced the same way: server-side, where an agent's
+   token can't reach around it. This half of the rule was always here and was
+   never read — the platform grew ~200 refusal sites and two floors, and the
+   word "ambition" appears in `yaaf/**/*.py` exactly zero times. A floor is
+   not a lesser rule or a special case. "The agent is encouraged to" does not
+   count, for the same reason its mirror image doesn't.
 2. **Every rule ships with an attack.** New forcing function → new test in
    `tests/selftest_invariants/` that tries to break it *over HTTP, as an agent
    would* — forged tokens, wrong roles, rephrased requests. If you can't

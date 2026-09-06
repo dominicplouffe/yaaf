@@ -63,7 +63,7 @@ golden-transcript evals, green on SQLite and Postgres in CI.
 
 | Layer | State |
 |---|---|
-| Policy engine — every rule as a refusal | Built. The invariant suite attacks each one over HTTP. |
+| Policy engine — every rule as a refusal or a floor | Built. The invariant suite attacks each one over HTTP. A rule may fire when a project is *under*-reaching as well as refuse when it over-reaches; the floors are far younger and far fewer. |
 | Requirements, stages, dependencies, the plan gate | Built. Chairman accepts scope; nothing but the platform writes `met`. |
 | Commitments — a delivery date the platform owns and re-projects | Built. Re-validated on rule change, scope change, and failure load. |
 | Cycles and the review — the Operate rhythm and the standing meeting | Built. The janitor opens reviews with zero tokens. |

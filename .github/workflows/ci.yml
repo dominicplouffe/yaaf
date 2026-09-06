@@ -124,7 +124,39 @@ jobs:
       # --durations=10 is visibility, not a gate: a timing assertion would go
       # flaky on a loaded runner, but a list of the slowest tests in the log is
       # what tells us when something has started to cost real money.
-      - run: python -m pytest tests/ -q -n auto --durations=10 --splits 4 --group ${{ matrix.shard }}
+      - run: >-
+          python -m pytest tests/ -q -n auto --durations=10
+          --ignore=tests/test_planning_quality.py
+          --splits 4 --group ${{ matrix.shard }}
+
+  # The one paid test in the repo, in a job of its own so the $0 suite stays
+  # $0 and stays shardable. It grades whether a CEO that was losing said so —
+  # the question the golden diffs are structurally blind to — and the chairman
+  # funded it per-PR on 2026-09-06.
+  #
+  # YAAF_JUDGE_REQUIRED=1 makes an unreachable judge a FAILURE rather than a
+  # skip. Without it, a runner with no credential turns the gate off and
+  # reports green, which is how every optional gate has ever died.
+  #
+  # Fork PRs do not get secrets, so this job cannot run on them: `if` skips it
+  # rather than failing it. That is a real hole — a fork can land a change this
+  # gate would have caught — and the mitigation is that it runs on the merge to
+  # main, not that the hole is small.
+  judgment:
+    needs: changes
+    if: needs.changes.outputs.python == 'true' && github.event.pull_request.head.repo.fork != true
+    runs-on: ubuntu-latest
+    env:
+      YAAF_JUDGE_REQUIRED: "1"
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e ".[dev]"
+      - run: python -m pytest tests/test_planning_quality.py -q --durations=5
 
   web:
     needs: changes

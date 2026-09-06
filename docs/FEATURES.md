@@ -430,10 +430,16 @@ evidence at all about your *project*.
 
 ## 17. Proving it works
 
-- **626 tests** run offline on SQLite and on Postgres in CI: an invariant suite
-  that attacks every rule over HTTP, chaos tests (crash, reap, retry), golden
-  transcript evals that gate prompt edits, and end-to-end runs against a mock
-  model.
+- **The test suite** runs offline on SQLite and on Postgres in CI: an invariant
+  suite that attacks every rule over HTTP, chaos tests (crash, reap, retry),
+  golden transcript evals that gate prompt edits, and end-to-end runs against a
+  mock model. One scenario (`losing_ceo`) fails by doing too *little* — a CEO
+  that is behind, has capacity and says nothing does not pass.
+- **One paid test.** `tests/test_planning_quality.py` calls a model to grade
+  whether a CEO's *judgment* was any good — a question golden diffs are
+  structurally blind to, since a project can be perfectly compliant and quietly
+  losing. It is the only test in the repo that costs money, runs as its own CI
+  job, and everything else stays $0 in tokens.
 - **Mock runtime** (`runtime: mock`) swaps the Agent SDK for scripted
   behaviours, which is how CI drives a whole project — planning, decomposition,
   claims, completions, evidence, every governance trip — for $0. Behaviours are
