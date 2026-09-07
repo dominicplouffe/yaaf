@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { Briefing, BriefingLine, DeskBriefing, get, post } from "./api";
+import { Briefing, BriefingLine, get, post } from "./api";
 import { fmtWhen, usePoll } from "./hooks";
 import { fmtAgo, fmtSoon, fmtUnit } from "./ui";
 
@@ -235,126 +235,6 @@ export function BriefingBlock({
       <Money brief={brief} />
       <Waiting brief={brief} />
       <NextUp brief={brief} />
-    </div>
-  );
-}
-
-/** The Desk's panel: every running project on its own mark.
-
-    Running only, like the rest of the desk. The endpoint returns every
-    non-terminal project because the window and the mark are per project and a
-    caller may want all of them; the desk is the working set, and a paused
-    project's "nothing settled" line is a fact about a project nobody is
-    working on.
-
-    Per-project marks rather than one box-wide stamp, because reading one
-    project's brief says nothing about having read another's — and a single
-    mark would be moved by opening the first and would swallow the three you
-    never looked at. */
-export function DeskBriefingPanel() {
-  const { data, reload } = usePoll(
-    () => get<DeskBriefing>("/observe/briefing"),
-    30000,
-  );
-  const [open, setOpen] = useState(true);
-  const [busy, setBusy] = useState(false);
-
-  async function markRead(briefs: Briefing[]) {
-    setBusy(true);
-    try {
-      // The window the panel DREW, not the moment of the click: anything that
-      // landed while it sat on screen has to survive to the next read.
-      await Promise.all(
-        briefs.map((b) =>
-          post(`/admin/projects/${b.project_id}/briefing/seen`, { until: b.until }),
-        ),
-      );
-      reload();
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  if (!data) return null;
-  const live = data.projects.filter((b) => b.status === "running");
-  if (live.length === 0) return null;
-  // Split on what needed HIM, not on whether the project was busy. An
-  // autonomous project can close twenty-six tasks, publish five documents and
-  // burn a hundred million tokens without a single thing on the panel being
-  // his to do — and under the dial he set, that is a success, not a headline.
-  // Splitting on `quiet` gave it a full block anyway, so the reward for
-  // delegating well was a longer desk.
-  const news = live.filter((b) => b.needs_you > 0);
-  const silent = live.filter((b) => b.needs_you === 0);
-
-  // Nothing needing him is not nothing to say — it is the proof-of-life
-  // sentence — but it does not deserve the top of the desk, so it collapses to
-  // one line above the rows that do have consequences attached.
-  if (news.length === 0) {
-    return (
-      <div className="bpanel hushed">
-        <div className="bpanel-head">
-          <span className="bttl">Since you were last here</span>
-          <span className="dim">
-            nothing needs you across your {live.length} running project
-            {live.length === 1 ? "" : "s"}
-          </span>
-          <div className="spacer" />
-          <button className="linkish" onClick={() => setOpen(!open)}>
-            {open ? "hide" : "show each"}
-          </button>
-        </div>
-        {open && (
-          <div className="bhushed">
-            {live.map((b) => (
-              <div key={b.project_id} className="bhrow">
-                <Link className="co" to={`/projects/${b.project_id}`}>
-                  {b.name}
-                </Link>
-                <span className="dim">{b.headline}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  return (
-    <div className="bpanel">
-      <div className="bpanel-head">
-        <span className="bttl">Since you were last here</span>
-        <span className="dim">
-          {news.length} project{news.length === 1 ? "" : "s"} need
-          {news.length === 1 ? "s" : ""} you
-          {silent.length > 0 && `, ${silent.length} the CEO is running itself`}
-        </span>
-        <div className="spacer" />
-        {/* What the panel drew, not what the endpoint sent: marking a paused
-            project read would consume a window the chairman was never shown. */}
-        <button className="linkish" disabled={busy} onClick={() => markRead(live)}>
-          {busy ? "marking…" : "Mark all read"}
-        </button>
-      </div>
-      {news.map((brief) => (
-        <BriefingBlock
-          key={brief.project_id}
-          brief={brief}
-          onSeen={(b) => markRead([b])}
-        />
-      ))}
-      {silent.length > 0 && (
-        <div className="bhushed">
-          {silent.map((b) => (
-            <div key={b.project_id} className="bhrow">
-              <Link className="co" to={`/projects/${b.project_id}`}>
-                {b.name}
-              </Link>
-              <span className="dim">{b.headline}</span>
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   );
 }

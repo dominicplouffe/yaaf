@@ -259,10 +259,20 @@ def test_the_run_plan_and_the_run_wall_are_two_numbers(client):
     """
     from yaaf.core.constitution import effective
 
+    # The rule exists and is settable. Its DEFAULT is 1.0 on purpose — see
+    # test_governance_reserve.py::test_the_run_wall_defaults_to_the_plan — so
+    # what is asserted here is that a chairman who raises it gets a wall above
+    # the plan, not that every project starts with one.
+    project = make_project(client, slug="wall",
+                           constitution={"runs_per_project_per_day": 20,
+                                         "runs_hard_stop_multiple": 2.0})
     with db_session() as session:
-        cons = effective(session, make_project(client, slug="wall")["id"])
-    assert cons.runs_hard_stop_multiple > 1.0, (
-        "the run plan and the run wall are still the same number"
+        cons = effective(session, project["id"])
+    assert cons.runs_hard_stop_multiple == 2.0
+    wall = max(cons.runs_per_project_per_day,
+               int(cons.runs_per_project_per_day * cons.runs_hard_stop_multiple))
+    assert wall == 40 and wall > cons.runs_per_project_per_day, (
+        "the run plan and the run wall are still the same number when raised"
     )
 
 

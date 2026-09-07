@@ -114,6 +114,7 @@ def test_ordinary_work_stops_short_of_the_ceiling_by_the_reservation(client):
     project = make_project(
         client,
         constitution={"runs_per_project_per_day": 10, "reserved_governance_runs": 3,
+                      "runs_hard_stop_multiple": 1.5,
                       "runs_per_project_per_hour": 1000, "wakes_per_agent_per_hour": 1000,
                       "max_concurrent_runs": 1},
     )
@@ -121,6 +122,8 @@ def test_ordinary_work_stops_short_of_the_ceiling_by_the_reservation(client):
 
     used = _used_today(project)
     # cap 10, multiple 1.5 -> wall 15; reservation 3 -> ordinary stops at 12.
+    # The multiple is set explicitly: this test is about the reservation being
+    # held against the wall, not about what the wall happens to default to.
     assert used == 12, f"ordinary work should stop at wall - reserved = 12, used {used}"
 
     # The remaining three are not lost — they are unavailable to ordinary work
@@ -156,6 +159,7 @@ def test_the_reservation_never_takes_more_than_half_a_day(client):
     project = make_project(
         client,
         constitution={"runs_per_project_per_day": 4, "reserved_governance_runs": 3,
+                      "runs_hard_stop_multiple": 1.5,
                       "runs_per_project_per_hour": 1000, "wakes_per_agent_per_hour": 1000,
                       "max_concurrent_runs": 1},
     )
@@ -175,6 +179,7 @@ def test_turning_the_reservation_off_gives_the_whole_day_to_work(client):
     project = make_project(
         client,
         constitution={"runs_per_project_per_day": 5, "reserved_governance_runs": 0,
+                      "runs_hard_stop_multiple": 1.5,
                       "runs_per_project_per_hour": 1000, "wakes_per_agent_per_hour": 1000,
                       "max_concurrent_runs": 1},
     )
@@ -211,3 +216,30 @@ def test_governance_reasons_are_recognised_as_governance():
     assert not dispatcher._is_governance([{"kind": "heartbeat", "name": "planning"}])
     assert not dispatcher._is_governance([{"kind": "team_task_ready"}])
     assert not dispatcher._is_governance([])
+
+
+def test_the_run_wall_defaults_to_the_plan(client):
+    """A new rule with a default above 1 would have raised the daily volume of
+    every project on the install the moment it shipped, without anyone choosing
+    that for any of them — no per-project opt-in, nothing to accept, just more
+    runs on the next tick after deploy. That is the exact shape of change
+    PLAN-07 exists to make visible, arriving through a default.
+
+    So the machinery ships neutral: plan and wall the same number, byte-identical
+    to the behaviour before the rule existed, and the chairman raises it on the
+    desks whose run ration is actually what paces them.
+    """
+    from yaaf.core.constitution import ConstitutionDoc, effective
+
+    assert ConstitutionDoc.model_fields["runs_hard_stop_multiple"].default == 1.0
+
+    project = make_project(
+        client,
+        constitution={"runs_per_project_per_day": 10, "reserved_governance_runs": 3,
+                      "runs_per_project_per_hour": 1000, "wakes_per_agent_per_hour": 1000,
+                      "max_concurrent_runs": 1},
+    )
+    with db_session() as session:
+        assert effective(session, project["id"]).runs_hard_stop_multiple == 1.0
+    _run_until_settled(project)
+    assert _used_today(project) == 7, "the default changed how much work a project does"
