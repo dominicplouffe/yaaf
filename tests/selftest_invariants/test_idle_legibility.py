@@ -109,7 +109,10 @@ def _synthetic(gate: str | None) -> dict:
         "blocked_by": gate,
         "daily_runs": {"used": 150, "cap": 150, "resets_at": at},
         "pacing": {"used": 15, "cap": 15, "frees_at": at},
-        "governance_reserve": {"reserved": 3, "ordinary_cap": 147, "active": True},
+        # `wall` mirrors activity_state: the daily cap is the plan and ordinary
+        # work stops short of the wall above it.
+        "governance_reserve": {"reserved": 3, "ordinary_cap": 222, "active": True,
+                               "wall": 225},
         "wake_ceiling": {"cap": 6, "frees_at": at, "agents_held": 1},
         "coalescing": {"ripe_at": at, "agents_held": 1},
         "concurrency": {"in_flight": 3, "cap": 3},

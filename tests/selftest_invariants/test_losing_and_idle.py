@@ -162,6 +162,40 @@ def test_a_board_gated_shut_by_its_own_ceo_trips_a_flag(client):
     )
 
 
+def test_it_does_not_fire_when_a_real_cap_is_the_gate(client):
+    """SELF_GATED says "no cap is stopping you". If the hourly brake, the wake
+    ceiling or the inbox lane is the actual gate, that sentence is false and the
+    CEO is being made to account for an idleness it did not cause."""
+    from datetime import timedelta
+
+    from yaaf.core.constitution import effective
+    from yaaf.core.models import utcnow
+    from yaaf.server import dispatcher
+
+    project = deliver_project(client, constitution={"max_task_gate_hours": 96,
+                                                    "runs_per_project_per_hour": 1})
+    token = ceo_token(project)
+    requirement = propose(client, token)
+    accept(client, requirement["requirement_id"], project)
+    client.post("/agent/tasks", json={
+        "team_id": project["teams"][0]["id"], "title": "later",
+        "goal": "gated", "success_test": {"type": "command", "command": "test -s x.md"},
+        "requirement_id": requirement["requirement_id"],
+        "not_before": (utcnow() + timedelta(hours=90)).isoformat(),
+    }, headers=bearer(token))
+
+    with db_session() as session:
+        row = session.get(Project, project["id"])
+        state = dispatcher.activity_state(session, row, effective(session, row.id))
+    # Whatever the gate is, the flag must agree with it: it may only fire when
+    # the gate is not one of the caps.
+    evaluate(project)
+    fired = FlagKind.SELF_GATED in flag_kinds(project["id"])
+    assert fired == (state["blocked_by"] not in flags.CAP_GATES), (
+        f"SELF_GATED fired={fired} while blocked_by={state['blocked_by']!r}"
+    )
+
+
 def test_it_clears_when_work_becomes_claimable(client):
     project = deliver_project(client)
     token = ceo_token(project)

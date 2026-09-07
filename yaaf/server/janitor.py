@@ -82,7 +82,6 @@ from yaaf.core.models import (
 )
 from yaaf.server import asks as ask_lib
 from yaaf.server import briefing, metrics, policy
-from yaaf.server.metrics import measure_due as measure_due_metrics
 from yaaf.server.notify import boardroom_line, chairman_notify
 from yaaf.server.rows import approval_row
 from yaaf.server.verifier import verify_pending_evidence
@@ -127,11 +126,6 @@ def janitor_once(session: Session) -> None:
     for project in session.execute(select(Project)).scalars():
         _janitor_project(session, project)
     verify_pending_evidence(session)
-    # Beside evidence verification on purpose: both are the platform going and
-    # looking at the outside world on its own schedule, and neither can be
-    # asked for or skipped by an agent. A metric that only got read when
-    # somebody remembered would be a scoreboard the project controls.
-    measure_due_metrics(session)
     # Slack mirroring moved to its own 2s loop (slack.socket.fast_mirror_loop):
     # chat-grade latency, and no double-post race with an enforcement tick.
 
@@ -158,6 +152,13 @@ def _janitor_project(session: Session, project: Project) -> None:
         cons = effective(session, project.id)
     except LookupError:
         return
+    # Beside evidence verification in spirit: both are the platform going and
+    # looking at the outside world on its own schedule, and neither can be
+    # asked for or skipped by an agent. Per-project and here rather than in
+    # either sweep function, so it reaches production (`janitor_all`) as well
+    # as the tests (`janitor_once`) and so one project's slow endpoint is
+    # isolated by janitor_all's own per-project transaction and except.
+    metrics.measure_due(session, project.id)
     metrics.settle_metrics(session, project.id)
     reap_stale_runs(session, project, cons)
     expire_hypotheses(session, project)

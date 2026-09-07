@@ -115,7 +115,7 @@ like any other constitution grab.
 approval is **refused**, naming the verb to use instead: an approval blocks on a
 human and carries a default-deny clock, so filing one for a decision you already
 delegated is the one way an autonomous project can still stall on you. The four
-kinds the dial cannot delegate — `spend`, `legal`, `tool_request`, `assist` —
+kinds the dial cannot delegate — `spend`, `legal`, `tool_request`, `assist`, `capacity` —
 still reach you at every setting.
 
 ### Budgets

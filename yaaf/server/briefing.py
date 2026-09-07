@@ -333,18 +333,37 @@ def _metric_lines(session: Session, project: Project, since, until) -> list[dict
     Only measured requirements produce lines, so a project whose finish line is
     still prose sees nothing new here, which is every project that exists today.
     """
+    from yaaf.core.models import Measurement
     from yaaf.server import metrics
 
+    # Windowed like every other line in this module. Without this the same
+    # scoreboard line repeats in every brief forever, including briefs
+    # regenerated for a past window, which is what trains a reader to skip a
+    # section. A metric read once a day therefore appears on the days it was
+    # read and not on the others.
+    measured_in_window = {
+        rid for (rid,) in session.execute(
+            select(Measurement.requirement_id).where(
+                Measurement.project_id == project.id,
+                Measurement.at > since,
+                Measurement.at <= until,
+            )
+        )
+    }
     lines = []
-    for board in metrics.project_scoreboard(session, project.id):
+    for requirement in metrics.metric_requirements(session, project.id):
+        if requirement.id not in measured_in_window:
+            continue
+        board = metrics.scoreboard(session, requirement)
         if board["verdict"] == "unknown":
             continue
         tone = {"losing": "bad", "met": "good", "gaining": "good"}.get(board["verdict"], "flat")
         arrow = " -> ".join(str(v) for v in board["trend"][-3:])
+        stale = " Last read failed; this number is older than it looks." if board["stale"] else ""
         lines.append(_line(
             "metric",
             f"{board['requirement_key']}: {board['value']} against a target of "
-            f"{board['target']} ({board['verdict']}). Recent: {arrow}.",
+            f"{board['target']} ({board['verdict']}). Recent: {arrow}.{stale}",
             tone=tone,
         ))
     return lines

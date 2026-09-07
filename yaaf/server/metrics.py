@@ -41,16 +41,17 @@ import json
 from datetime import timedelta
 from typing import Any
 
-import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from yaaf.core import ids
+from yaaf.core import ids, safefetch
 from yaaf.core.models import (
     LedgerEntry,
     Measurement,
     MetricDirection,
     MetricSourceKind,
+    Project,
+    ProjectStatus,
     Requirement,
     SuccessTestKind,
     utcnow,
@@ -62,6 +63,21 @@ MAX_BYTES = 2_000_000
 #: information in it: the things worth having a finish line about move on the
 #: order of days.
 MIN_MEASURE_HOURS = 1.0
+#: Requirement statuses worth spending a fetch on: accepted scope, not yet
+#: settled. Mirrors `policy.OPEN_REQUIREMENT_STATUSES`, spelled out here so this
+#: module does not import policy at module scope.
+LIVE_STATUSES = ("pending", "in_progress", "checking")
+
+#: Ledger kinds a metric may sum: the ones no agent verb can write.
+#:
+#: `LedgerKind`'s own docstring says REVENUE "is written only by signed webhooks
+#: — no agent verb exists", and that is the entire reason this source kind is
+#: allowed to exist. MODEL_USAGE and EXTERNAL_SPEND are booked by agent routes
+#: (`/agent/chat_usage`, `/agent/ledger/spend`, `/agent/purchases/{id}/finish`),
+#: so a metric summing either is a target the project reaches by spending its
+#: own money — the self-authored finish line this whole test kind exists to
+#: make impossible.
+UNFORGEABLE_LEDGER_KINDS = frozenset({"revenue"})
 DEFAULT_MEASURE_HOURS = 24.0
 #: How many readings a verdict looks at. Two points is noise; a season is not
 #: a direction either.
@@ -101,11 +117,15 @@ def validate_metric_test(success_test: dict) -> None:
                 'e.g. "$.current[-1].overall_rank".'
             )
     elif kind == MetricSourceKind.LEDGER:
-        if not (source.get("ledger_kind") or "").strip():
+        ledger_kind = (source.get("ledger_kind") or "").strip()
+        if ledger_kind not in UNFORGEABLE_LEDGER_KINDS:
             raise Refusal(
-                'metric source.ledger_kind must name what to sum, e.g. "revenue" — '
-                "the ledger's revenue rows are booked by a signed webhook and cannot "
-                "be written from inside the project."
+                f"metric source.ledger_kind must be one of "
+                f"{', '.join(sorted(UNFORGEABLE_LEDGER_KINDS))} — the ledger rows this "
+                "project cannot write. `model_usage` and `external_spend` are booked by "
+                "agent verbs from inside the project, so a metric summing them is a "
+                "number you can move by spending money, which is a status report with "
+                "extra steps."
             )
     else:
         raise Refusal(
@@ -174,9 +194,11 @@ def extract(document: Any, path: str) -> float:
 
 
 def _default_fetch(url: str) -> tuple[int, bytes]:
-    with httpx.Client(follow_redirects=True, timeout=FETCH_TIMEOUT_S) as client:
-        response = client.get(url)
-        return response.status_code, response.content[:MAX_BYTES]
+    """Through the SSRF guard, because this runs in the janitor and not in the
+    sandbox: the per-role egress allowlist that governs an agent's own traffic
+    does not apply to a fetch the platform makes on its behalf."""
+    return safefetch.fetch(url, timeout=FETCH_TIMEOUT_S, max_bytes=MAX_BYTES,
+                           user_agent="yaaf-metrics/0.1")
 
 
 def read_value(session: Session, requirement: Requirement, fetch=None) -> tuple[float, str]:
@@ -232,11 +254,37 @@ def record(session: Session, requirement: Requirement, fetch=None) -> Measuremen
 # ── the schedule ────────────────────────────────────────────────────────────────
 
 
-def metric_requirements(session: Session, project_id: str | None = None) -> list[Requirement]:
+def metric_requirements(session: Session, project_id: str | None = None,
+                        *, live_only: bool = False) -> list[Requirement]:
+    """Metric requirements, optionally only the ones worth spending a fetch on.
+
+    `live_only` is what the measuring loop uses, and it matters for more than
+    tidiness. Without it the platform polls:
+
+    * **PROPOSED** requirements the chairman never accepted — so proposing
+      alone, with no human in the loop, would be enough to start outbound
+      traffic on a schedule the agent chose;
+    * **MET and CUT** ones, forever, because nothing else ever stops a metric;
+    * requirements on paused, stopped and completed projects.
+
+    Reporting (`scoreboard`, the Plan screen) deliberately does NOT pass it: a
+    settled metric still has readings worth showing, and a proposal the chairman
+    is looking at should display what it would measure.
+    """
     stmt = select(Requirement)
     if project_id:
         stmt = stmt.where(Requirement.project_id == project_id)
-    return [r for r in session.execute(stmt).scalars() if is_metric(r.acceptance_test)]
+    if live_only:
+        stmt = stmt.where(Requirement.status.in_(LIVE_STATUSES))
+    rows = [r for r in session.execute(stmt).scalars() if is_metric(r.acceptance_test)]
+    if not live_only:
+        return rows
+    running = {
+        pid for (pid,) in session.execute(
+            select(Project.id).where(Project.status == ProjectStatus.RUNNING)
+        )
+    }
+    return [r for r in rows if r.project_id in running]
 
 
 def latest(session: Session, requirement_id: str) -> Measurement | None:
@@ -268,10 +316,19 @@ def is_due(session: Session, requirement: Requirement, now=None) -> bool:
     return (now or utcnow()) - last.at >= timedelta(hours=hours)
 
 
-def measure_due(session: Session, fetch=None, now=None) -> int:
-    """Take every reading that is due. The janitor's entry point."""
+def measure_due(session: Session, project_id: str | None = None,
+                fetch=None, now=None) -> int:
+    """Take every reading that is due for one project. The janitor's entry point.
+
+    Per-project, and called from `_janitor_project`, so it reaches BOTH janitor
+    entry points. It was first wired into `janitor_once` alone — whose docstring
+    says in as many words that it is the test harness's entry point and that
+    production uses `janitor_all` — which made the entire feature green in CI
+    and dead in production: no reading was ever taken, so every scoreboard sat
+    at `unknown` and no metric requirement could ever settle.
+    """
     taken = 0
-    for requirement in metric_requirements(session):
+    for requirement in metric_requirements(session, project_id, live_only=True):
         if is_due(session, requirement, now=now):
             record(session, requirement, fetch=fetch)
             taken += 1
@@ -321,17 +378,31 @@ def scoreboard(session: Session, requirement: Requirement) -> dict:
         last_gap = abs(target - values[-1])
         verdict = "losing" if last_gap > first_gap else "gaining" if last_gap < first_gap else "flat"
 
-    last = latest(session, requirement.id)
+    # Two different readings, kept apart on purpose. `value` and `measured_at`
+    # both come from the last SUCCESSFUL reading, because stamping a week-old
+    # number with this morning's failed-read timestamp is exactly the confusion
+    # `record` exists to prevent — "a scoreboard that stops reporting looks
+    # exactly like one reporting no change". `error` and `attempted_at` describe
+    # the most recent attempt of any kind, so a source that has gone down says
+    # so beside a number that is honestly labelled as old.
+    last_ok = rows[-1] if rows else None
+    last_any = latest(session, requirement.id)
+    stale = bool(last_any is not None and last_any.error and last_ok is not None
+                 and last_any.id != last_ok.id)
     return {
         "requirement_key": requirement.key,
         "statement": requirement.statement,
-        "value": values[-1] if values else None,
+        "value": last_ok.value if last_ok else None,
         "target": target,
         "direction": direction,
         "trend": values,
         "verdict": verdict,
-        "measured_at": last.at.isoformat() if last else None,
-        "error": last.error if last else None,
+        "measured_at": last_ok.at.isoformat() if last_ok else None,
+        "attempted_at": last_any.at.isoformat() if last_any else None,
+        "error": last_any.error if last_any else None,
+        # The number is real but is not current, and every surface that prints
+        # it needs to be able to say so rather than implying a fresh reading.
+        "stale": stale,
     }
 
 

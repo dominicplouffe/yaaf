@@ -437,3 +437,110 @@ def janitor_sweep(session) -> None:
     from yaaf.server.janitor import janitor_once
 
     janitor_once(session)
+
+
+def test_a_settled_metric_does_not_speed_up_the_pace(client):
+    """It is out of `remaining`, so it must be out of the pace numerator too.
+
+    Otherwise a season-long target landing raises requirements-met-per-week on a
+    denominator that deliberately excludes it, and `commitment_projection`
+    divides one by the other to promise the chairman an earlier date — the
+    memos look faster because the season finished.
+    """
+    from yaaf.server import velocity
+
+    project = deliver_project(client, slug="pace")
+    token = ceo_token(project)
+    metric = propose(client, token, test=RANK_TEST,
+                     statement="Overall rank is inside the top 500,000")
+    accept(client, metric["requirement_id"], project)
+    with db_session() as session:
+        session.get(Requirement, metric["requirement_id"]).status = (
+            RequirementStatus.IN_PROGRESS
+        )
+    with db_session() as session:
+        metrics.record(session, session.get(Requirement, metric["requirement_id"]),
+                       fetch=fetch_returning(412_000))
+    with db_session() as session:
+        metrics.settle_metrics(session, project["id"])
+
+    with db_session() as session:
+        pace = velocity.project_velocity(session, project["id"])
+    assert pace["met_3w"] == 0, (
+        f"the settled metric counted as scope landing: met_3w={pace['met_3w']}"
+    )
+
+
+def test_a_metric_cannot_switch_off_the_drought_floor(client):
+    """`measure_every_hours` is agent-authored and floored at one hour, so if a
+    reading counted as countable external evidence a CEO could propose one
+    metric on an hourly schedule and guarantee the drought never fired again.
+
+    A floor an agent's own request can disable is what house rule 1 forbids, and
+    the two were never the same question anyway: a drought asks whether the
+    PROJECT produced proof from outside itself; a reading is the platform going
+    and looking at a number on a timer. A ledger-source metric never leaves the
+    box at all.
+    """
+    from yaaf.server import policy
+
+    project = deliver_project(client, slug="drought")
+    token = ceo_token(project)
+    metric = propose(client, token, test={**RANK_TEST, "measure_every_hours": 1},
+                     statement="Overall rank is inside the top 500,000")
+    accept(client, metric["requirement_id"], project)
+
+    with db_session() as session:
+        requirement = session.get(Requirement, metric["requirement_id"])
+        metrics.record(session, requirement, fetch=fetch_returning(400_000))
+
+    with db_session() as session:
+        from datetime import timedelta
+
+        from yaaf.core.models import utcnow
+
+        counted = policy.countable_external_evidence(
+            session, project["id"], utcnow() - timedelta(hours=24))
+    assert counted == 0, (
+        "a metric reading counts as the project's own external evidence, so an "
+        "hourly metric disables the drought floor for good"
+    )
+
+
+# ── the platform's own network is not the agent's to point ──────────────────────
+
+
+def test_a_metric_cannot_point_the_platform_at_its_own_network(client):
+    """These fetches do not happen in the sandbox.
+
+    An agent run is a container behind a per-role egress allowlist. The metric
+    measurer runs in the janitor, on the platform's own network, with the
+    platform's credentials ambient — so a URL an agent supplies is a request for
+    the CONTROL PLANE to connect somewhere of the agent's choosing. Left open
+    that reaches cloud metadata, the database on localhost, and any admin port
+    on the loopback interface; and since the failure string is read back through
+    `Measurement.error`, a refused connection and a parse failure are
+    distinguishable, which maps a network one port at a time.
+    """
+    from yaaf.core.safefetch import UnsafeURL, fetch
+
+    for url in ("http://169.254.169.254/latest/meta-data/iam/security-credentials/",
+                "http://127.0.0.1:5432/", "http://localhost:8080/admin",
+                "http://10.0.0.5/internal", "file:///etc/passwd"):
+        try:
+            fetch(url)
+        except UnsafeURL:
+            continue
+        except Exception as exc:   # noqa: BLE001 — any connection attempt is the failure
+            raise AssertionError(f"{url} was attempted, not refused: {exc}") from exc
+        raise AssertionError(f"{url} was fetched")
+
+
+def test_the_evidence_verifier_is_behind_the_same_guard():
+    """It fetches agent-supplied URLs from the same process and predates the
+    metric measurer, so it had the same hole and now shares the fix."""
+    import inspect
+
+    from yaaf.server import verifier
+
+    assert "safefetch" in inspect.getsource(verifier._default_fetch)

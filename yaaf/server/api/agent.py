@@ -1194,10 +1194,11 @@ def propose_requirement(
     # commitment check misses because a promise that was KEPT is neither at risk
     # nor breached.
     policy.check_scope_within_commitment(session, ctx.project, cons)
-    # NOT check_scope_after_delivery: a proposal creates no scope, so a project
-    # that delivered early and can see the next move may put it on the table.
-    # What it may not do is accept its own — see check_self_accept_after_delivery,
-    # enforced on the scope verb rather than here.
+    # A proposal creates no scope, so a project that delivered early and can see
+    # the next move may put it on the table — what it may not do is accept its
+    # own (check_self_accept_after_delivery, on the scope verb). It may not bury
+    # him in proposals either, which is the other half of the same incident.
+    policy.check_proposals_after_delivery(session, ctx.project, cons)
     policy.check_plan_affordable(session, ctx.project, cons, body.est_runs or 0)
     if (body.recurrence == Recurrence.STANDING
             and ctx.project.mode != ProjectMode.OPERATE):
@@ -2698,6 +2699,8 @@ def capacity_request(
     chairman_notify(
         session, ctx.project, f"The project is asking for more {body.rule}",
         f"{body.buys[:300]}",
+        kind="approval_requested",
+        data={"approval": approval_row(approval)},
     )
     return {
         "approval_id": approval.id,

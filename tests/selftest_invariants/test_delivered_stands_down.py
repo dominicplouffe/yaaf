@@ -230,6 +230,36 @@ def test_a_delivered_project_cannot_accept_its_own_scope(client):
     assert "may not accept" in refused.json()["error"]
 
 
+def test_proposals_after_delivery_are_bounded(client):
+    """The other half of the incident. The CEO in it was not misbehaving: every
+    task it could create was refused, and a new requirement was the only move
+    the platform did not refuse. A project in that state, woken repeatedly, will
+    keep finding that move — so the number waiting on him is capped by
+    `queue_ceiling`, the dial that already means "how many open things at once",
+    rather than by a new number nobody chose."""
+    from yaaf.core.constitution import effective
+    from yaaf.core.db import db_session
+
+    project = delivered(client, "bounded")
+    token = ceo_token(project)
+    with db_session() as session:
+        ceiling = effective(session, project["id"]).queue_ceiling
+
+    for n in range(ceiling + 2):
+        response = client.post(
+            "/agent/requirements",
+            json={"statement": f"Another thing that should be true, number {n}",
+                  "acceptance_test": CMD_TEST, "est_runs": 1},
+            headers=bearer(token))
+        if response.status_code != 200:
+            assert "ceiling" in response.json()["error"], response.text
+            break
+    else:
+        raise AssertionError(
+            f"a delivered project filed {ceiling + 2} proposals with no bound"
+        )
+
+
 def test_the_proposal_is_not_scope_until_he_says_so(client):
     """The protection, stated as the thing that actually matters: whatever the
     CEO proposes after delivering, the delivery is unchanged and no work can be

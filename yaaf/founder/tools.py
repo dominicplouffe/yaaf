@@ -288,7 +288,7 @@ def build_server(session: Session, state: dict, env: dict[str, str],
         if not isinstance(project, dict):
             return ok({"error": "project must be an object"})
         bundle = as_bundle(project)
-        problems = validate(bundle) + doctrine_problems(bundle.get("project") or {})
+        problems = validate(bundle) + doctrine_problems(bundle.get("project") or {}, session)
         if problems:
             # Refused rather than stored: a draft the create endpoint would
             # reject is worse than no draft, because the review screen would
@@ -373,7 +373,7 @@ def validate(bundle: dict) -> list[str]:
     return date_problems(project) + constitution_problems(project.get("constitution") or {})
 
 
-def doctrine_problems(project: dict) -> list[str]:
+def doctrine_problems(project: dict, session=None) -> list[str]:
     """What the DOCTRINE requires of a draft, as distinct from what the create
     endpoint will accept.
 
@@ -389,7 +389,7 @@ def doctrine_problems(project: dict) -> list[str]:
     it is held to the doctrine and he is not, which is the whole distinction
     between a contract and a standard.
     """
-    return roster_problems(project) + stakes_problems(project)
+    return roster_problems(project, session) + stakes_problems(project)
 
 
 def stakes_problems(project: dict) -> list[str]:
@@ -423,7 +423,7 @@ def stakes_problems(project: dict) -> list[str]:
     ]
 
 
-def roster_problems(project: dict) -> list[str]:
+def roster_problems(project: dict, session=None) -> list[str]:
     """A Deliver or Operate roster with nobody whose job is to disagree.
 
     `DESIGN_DOCTRINE.md` already says `plan-adversary` survives the cut on
@@ -447,18 +447,21 @@ def roster_problems(project: dict) -> list[str]:
     if not teams:
         return []
 
+    from contextlib import nullcontext
+
     from sqlalchemy import select
 
     from yaaf.core.db import db_session
     from yaaf.core.models import Role
 
     slugs = {t.get("role_slug") for t in teams if t.get("role_slug")}
-    with db_session() as session:
+    # The caller's session when there is one. Opening a second while the first
+    # is live takes another pooled connection mid-transaction, and the new one
+    # cannot see rows the old one has not committed.
+    with (nullcontext(session) if session is not None else db_session()) as db:
         categories = {
             role.category
-            for role in session.execute(
-                select(Role).where(Role.slug.in_(slugs))
-            ).scalars()
+            for role in db.execute(select(Role).where(Role.slug.in_(slugs))).scalars()
         }
     if "challenge" in categories:
         return []

@@ -7,7 +7,7 @@ while quietly losing. `evals/judge.py` reserved `planning_quality` for that
 question and left it `NotImplementedError` for months; this is the gate that
 consumes it.
 
-**This test costs money.** It makes two model calls per run, by the chairman's
+**This test costs money.** Three model calls per run across its two tests, by the chairman's
 explicit decision (PLAN-01 open question 2, answered 2026-09-06: "every PR,
 accept the cost"). Everything else in `tests/` is $0 in tokens and stays that
 way — if you are adding a test, this is not the file to copy.
@@ -34,6 +34,8 @@ import pytest
 
 from evals import harness
 from evals.judge import JudgeUnavailable, judge_transcript
+
+pytestmark = pytest.mark.paid
 
 SCENARIO = harness.SCENARIOS_DIR / "losing_ceo.yaml"
 

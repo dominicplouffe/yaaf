@@ -175,7 +175,22 @@ def countable_external_evidence(session: Session, project_id: str, since: dateti
     """External evidence that actually counts: platform-attested, or
     agent-claimed AND verified. The most gameable field in the system is only
     trusted after the platform checked it."""
-    claimed = session.execute(
+    # Metric readings are deliberately NOT counted here, and the reasoning is
+    # worth keeping because the opposite looked obviously right for a day.
+    #
+    # A reading is external and platform-verified, so counting it seems to fit —
+    # and it would have given `drought_hours`, one of only two floors the
+    # constitution has, something real to enforce. But the cadence is
+    # agent-authored (`measure_every_hours`, floored at one hour), so a CEO that
+    # wanted the drought never to fire again could propose a single metric on an
+    # hourly schedule and switch the floor off permanently. A floor an agent's
+    # own request can disable is precisely what house rule 1 forbids.
+    #
+    # The deeper objection is that it was never the same thing. A drought asks
+    # whether the PROJECT has produced proof from outside itself. A metric
+    # reading is the platform going and looking at a number on a timer; nobody
+    # here did anything. A ledger-source metric does not even leave the box.
+    return session.execute(
         select(func.count(Evidence.id)).where(
             Evidence.project_id == project_id,
             Evidence.kind == EvidenceKind.EXTERNAL,
@@ -185,22 +200,6 @@ def countable_external_evidence(session: Session, project_id: str, since: dateti
             Evidence.created_at >= since,
         )
     ).scalar_one()
-    # A metric reading is external evidence by construction — the platform
-    # fetched a number from a source the project cannot write — so it counts
-    # and it breaks a drought. This also gives `drought_hours`, one of only two
-    # floors the constitution has, something real to enforce: a project whose
-    # scoreboard is still being measured is demonstrably in contact with the
-    # outside world, whatever its memo folder looks like.
-    from yaaf.core.models import Measurement
-
-    measured = session.execute(
-        select(func.count(Measurement.id)).where(
-            Measurement.project_id == project_id,
-            Measurement.error.is_(None),
-            Measurement.at >= since,
-        )
-    ).scalar_one()
-    return claimed + measured
 
 
 def ceo_judgment(session: Session, project_id: str) -> dict:
@@ -1906,9 +1905,12 @@ def commitment_resets(session: Session, commitment: Commitment) -> int:
 
 # The approval kinds that stay the chairman's at every autonomy level, because
 # each is something the dial does not and cannot delegate: money above his line,
-# legal weight, a credential only he holds the value of, and a security
-# challenge only a human may answer.
-UNDELEGABLE_APPROVALS = frozenset({"spend", "legal", "tool_request", "assist"})
+# legal weight, a credential only he holds the value of, a security challenge
+# only a human may answer — and the project's own capacity, which is the one
+# kind where the CEO is arguing for itself. A dial that could delegate that
+# would let a project vote itself more room, which is the thing `directive_file`
+# is restricted to prevent.
+UNDELEGABLE_APPROVALS = frozenset({"spend", "legal", "tool_request", "assist", "capacity"})
 
 # Which switches would have to be the CEO's for "a decision that is genuinely
 # the owner's" to be, in fact, the CEO's.
@@ -2043,28 +2045,42 @@ def check_scope_within_commitment(
     )
 
 
-def check_scope_after_delivery(session: Session, project: Project) -> None:
-    """The other half of the commitment guarantee. `check_scope_within_commitment`
-    freezes scope while the date does NOT hold — so a project that delivered on
-    time had strictly fewer guards than one running late, and could grow itself
-    back open after telling the chairman it was finished.
+def check_proposals_after_delivery(
+    session: Session, project: Project, cons: ConstitutionDoc
+) -> None:
+    """A delivered project may propose, within a bound.
 
-    One did: 36 hours after reporting 13 of 13 true, a CEO woken by its own
-    agents' chatter opened R-14 and accepted it on its own authority. It was not
-    misbehaving. Every task it could have created was refused — against a met
-    requirement ("it is already true") or with no requirement at all — and a new
-    requirement was the only move left that the platform did not refuse.
+    Its predecessor refused post-delivery proposals outright, after a CEO woken
+    by its own agents' chatter opened R-14 and accepted it on its own authority
+    36 hours after reporting 13 of 13 true. Acceptance is now guarded directly
+    (`check_self_accept_after_delivery`), which is where the growth actually
+    happens — but that left the other half of the incident unbounded. The CEO in
+    it was not misbehaving: every task it could create was refused, and a new
+    requirement was the only move the platform did not refuse. A project in that
+    state, woken repeatedly, will keep finding that move.
+
+    So the number of proposals it may have waiting is bounded by
+    `queue_ceiling` — the dial that already means "how many open things at once"
+    — rather than by a new number nobody chose. He is looking at a finished
+    project and a decision; he should not also be looking at a list.
     """
     if not delivered_awaiting_confirmation(session, project):
         return
-    raise Refusal(
-        "No new scope: every requirement is true and this delivery is waiting on "
-        "the chairman's confirmation. He has been told it is finished, and adding "
-        "work now would reopen a project he believes is done. If something really "
-        "must be true before it ships, say so in the boardroom and let him decide "
-        "— reopening is his, and he can do it in one click on the project page.",
-        status_code=409,
-    )
+    waiting = session.execute(
+        select(func.count(Requirement.id)).where(
+            Requirement.project_id == project.id,
+            Requirement.status == RequirementStatus.PROPOSED,
+        )
+    ).scalar_one()
+    if waiting >= cons.queue_ceiling:
+        raise Refusal(
+            f"{waiting} proposals are already waiting on the chairman and this project "
+            f"has reported itself finished. That is the ceiling ({cons.queue_ceiling}). "
+            "He is looking at a delivery and a decision; a queue of ideas behind it "
+            "makes the decision harder, not better. If one of the waiting proposals "
+            "matters less than this one, cut it.",
+            status_code=409,
+        )
 
 
 def check_self_accept_after_delivery(session: Session, project: Project) -> None:

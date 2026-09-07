@@ -9,6 +9,7 @@ itself to the same standard: every rule ships with a test that attacks it.
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"   # Python 3.12+
 .venv/bin/python -m pytest tests/ -n auto  # whole suite, offline, $0 in tokens
+.venv/bin/python -m pytest -m paid tests/       # the one test that calls a model
 .venv/bin/ruff check .                   # lint
 cd web && npm install && npm run build   # type-checks the SPA
 ```

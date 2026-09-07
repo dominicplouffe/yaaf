@@ -126,7 +126,6 @@ jobs:
       # what tells us when something has started to cost real money.
       - run: >-
           python -m pytest tests/ -q -n auto --durations=10
-          --ignore=tests/test_planning_quality.py
           --splits 4 --group ${{ matrix.shard }}
 
   # The one paid test in the repo, in a job of its own so the $0 suite stays
@@ -156,7 +155,7 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install -e ".[dev]"
-      - run: python -m pytest tests/test_planning_quality.py -q --durations=5
+      - run: python -m pytest -m paid tests/test_planning_quality.py -q --durations=5
 
   web:
     needs: changes

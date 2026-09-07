@@ -83,13 +83,21 @@ def _met_count(session: Session, project_id: str, since) -> int:
     answer — "met in 23 of the last 24 cycles" — and it lives in
     RequirementCycleResult, where it cannot be mistaken for progress.
     """
+    from yaaf.server import metrics as metrics_mod
+
     plan = policy.plan_requirement(session, project_id)
-    standing = [
+    excluded = [
         r.id for r in session.execute(
-            select(Requirement).where(
-                Requirement.project_id == project_id,
-                Requirement.recurrence == Recurrence.STANDING)
+            select(Requirement).where(Requirement.project_id == project_id)
         ).scalars()
+        # Standing, for the reason above. And metric requirements, because
+        # `project_velocity` subtracts them from `remaining` — counting a
+        # settled one here would raise the pace on a denominator that
+        # deliberately excludes it, and `commitment_projection` divides one by
+        # the other to promise the chairman a date. A season-long rank target
+        # landing would have made the remaining MEMOS look faster.
+        if r.recurrence == Recurrence.STANDING
+        or metrics_mod.is_metric(r.acceptance_test)
     ]
     stmt = (
         select(func.count(RequirementEvent.id))
@@ -101,8 +109,8 @@ def _met_count(session: Session, project_id: str, since) -> int:
     )
     if plan is not None:
         stmt = stmt.where(RequirementEvent.requirement_id != plan.id)
-    if standing:
-        stmt = stmt.where(RequirementEvent.requirement_id.not_in(standing))
+    if excluded:
+        stmt = stmt.where(RequirementEvent.requirement_id.not_in(excluded))
     return session.execute(stmt).scalar_one()
 
 

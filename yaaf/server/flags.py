@@ -48,6 +48,13 @@ log = logging.getLogger("yaaf.flags")
 #: raising them closes them.
 HISTORICAL_KINDS = (FlagKind.CYCLE_MISSED, FlagKind.STANDING_MISSED)
 
+#: Gates that mean a WALL stopped the work, as opposed to the project having
+#: scheduled its own board shut. `dispatcher.activity_state` names each of
+#: these; anything outside this set is the project's own doing or the
+#: chairman's, and is not an excuse for an idle desk.
+CAP_GATES = ("daily_runs", "pacing", "concurrency", "inbox_runs",
+             "wake_ceiling", "governance_reserve")
+
 
 def _scoreline(cycle) -> str:
     """What the cycle actually did, in the flag that makes the CEO explain it.
@@ -256,8 +263,18 @@ def evaluate(session: Session, project: Project, cons: ConstitutionDoc) -> int:
     #    is still nothing to do, because every task on the board carries a
     #    start time the CEO chose. An idle desk is an idle desk whoever caused
     #    it, and the version nobody was watching for is the self-inflicted one.
+    # `starving` above covers only the two caps WORK_STARVED reports on, but
+    # every gate in CAP_GATES is a wall the project ran into rather than one it
+    # built. SELF_GATED's whole claim is that NO cap is responsible, so firing
+    # while the hourly brake or the wake ceiling is the real gate obliges the
+    # CEO to account for a self-inflicted idleness that is not self-inflicted.
+    #
+    # `scheduled` is deliberately not a cap: it is the dispatcher's own name for
+    # "the only work on the board carries a start time somebody set", which is
+    # exactly this flag's subject.
     gated = state["waiting"].get("gated_tasks") or 0
-    if gated and not ready and not starving:
+    capped = state["blocked_by"] in CAP_GATES
+    if gated and not ready and not capped:
         if open_flag(
             session, project, FlagKind.SELF_GATED,
             f"Nothing is claimable and no cap is stopping you: {gated} task(s) carry a "

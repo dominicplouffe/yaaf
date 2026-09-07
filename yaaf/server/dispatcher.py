@@ -795,13 +795,22 @@ def _activity_brief(state: dict) -> dict:
 
     if gate == "daily_runs":
         d = state["daily_runs"]
+        # Falls back to the plan: a state assembled without the wall (an older
+        # cached shape, a synthetic one) should read as it always did rather
+        # than raise inside the sentence that explains why nothing is running.
+        wall = state["governance_reserve"].get("wall") or d["cap"]
+        # The wall, not the plan, because the wall is where work actually stops.
+        # Reporting the plan here printed "out of runs for today (225 of 150)".
+        over = (f" That is past the daily plan of {d['cap']}, which is allowed — "
+                f"the CEO owes an account of what the extra runs bought."
+                if d["used"] > d["cap"] else "")
         return brief(
             "serious", "capped",
-            f"out of runs for today ({d['used']} of {d['cap']}), resumes 00:00 UTC",
-            f"Out of runs for today — {d['used']} of {d['cap']} used.",
+            f"out of runs for today ({d['used']} of {wall}), resumes 00:00 UTC",
+            f"Out of runs for today — {d['used']} of {wall} used.",
             f"Nothing starts until the count resets at 00:00 UTC.{queue} Runs that "
-            "died still spent the allowance. Raise 'Runs per day, whole project' in "
-            "Settings if this is tighter than you meant it to be.",
+            f"died still spent the allowance.{over} Raise 'Runs per day, whole "
+            "project' in Settings if this is tighter than you meant it to be.",
             sig="daily_runs", clears_at=d["resets_at"])
 
     if gate == "pacing":
