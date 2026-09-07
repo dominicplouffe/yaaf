@@ -388,6 +388,51 @@ def test_a_task_cannot_carry_a_metric(client):
     assert "belongs on a requirement" in refused.json()["error"]
 
 
+def test_a_deliver_project_can_hold_an_outcome_it_cannot_yet_decompose(client):
+    """The plan gate and ambition are no longer a choice between two.
+
+    PLAN-05's whole finding was that the only mode in which a project could be
+    genuinely ambitious was Explore — the one mode with none of the verification
+    machinery. `docs/projects/idea-to-customer.md` says why in as many words:
+    take Deliver "and the project owes a plan before it may create any work at
+    all, and in week one it would be writing acceptance tests for a product it
+    has not chosen yet. Those requirements would be fiction, and the plan gate
+    would be checking the arithmetic of fiction."
+
+    That was true of the two test kinds that existed. A `command` test describes
+    the WORK, so committing to one in week one means inventing work you have not
+    designed. A `metric` test describes the OUTCOME, so it can be accepted
+    before anybody knows how — the test does not get truer or falser depending
+    on what you decide to do about it.
+
+    So: a Deliver project whose entire scope is a number it does not yet know
+    how to move, and whose plan gate closes anyway. This is PLAN-05's stated
+    acceptance test, and it passing is why that plan dissolved instead of being
+    built.
+    """
+    from yaaf.server import policy
+
+    project = deliver_project(client, slug="outcome")
+    token = ceo_token(project)
+    metric = propose(client, token, test=RANK_TEST, est_runs=40,
+                     statement="Overall rank is inside the top 500,000 at GW38")
+    accept(client, metric["requirement_id"], project)
+    tick(project)
+
+    with db_session() as session:
+        plan = policy.plan_requirement(session, project["id"])
+        assert plan.status == RequirementStatus.MET, (
+            "the plan gate did not close on a project whose only scope is a "
+            "measured outcome, so Deliver still forces fiction"
+        )
+
+    # And work may be created for it without the requirement having described
+    # that work — which is the half a command test cannot do.
+    made = make_task(client, token, project, metric["requirement_id"],
+                     success_test=CMD_TEST)
+    assert made.status_code == 200, made.text
+
+
 def janitor_sweep(session) -> None:
     from yaaf.server.janitor import janitor_once
 
