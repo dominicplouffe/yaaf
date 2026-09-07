@@ -1,6 +1,6 @@
 # Governance — the constitution, rule by rule
 
-Each project runs under a **constitution**: 58 numbers and switches the agents
+Each project runs under a **constitution**: 59 numbers and switches the agents
 cannot edit, argue with, or talk their way around. Every one is enforced
 server-side in [`yaaf/server/policy.py`](../yaaf/server/policy.py) as an HTTP
 refusal or an automatic state change. The schema itself lives in
@@ -115,7 +115,7 @@ like any other constitution grab.
 approval is **refused**, naming the verb to use instead: an approval blocks on a
 human and carries a default-deny clock, so filing one for a decision you already
 delegated is the one way an autonomous project can still stall on you. The four
-kinds the dial cannot delegate — `spend`, `legal`, `tool_request`, `assist` —
+kinds the dial cannot delegate — `spend`, `legal`, `tool_request`, `assist`, `capacity` —
 still reach you at every setting.
 
 ### Budgets
@@ -159,7 +159,8 @@ Memory-heavy roles (research desks, support) need more room than the defaults.
 | Rule | Default | What it does |
 |---|---|---|
 | `wakes_per_agent_per_hour` | 6 | The runaway-loop brake. Every wake is a paid model call. |
-| `runs_per_project_per_day` | 150 | Daily activity ceiling across every agent. |
+| `runs_per_project_per_day` | 150 | The daily activity **plan** across every agent — what the project should need, not the most it may have. |
+| `runs_hard_stop_multiple` | 1.0 | The run wall, as a multiple of the daily plan. Between the plan and the wall the project keeps working and **owes an account** — a `run_overrun` flag it must raise with what the extra runs bought. Crossing the plan used to be silently fatal for the rest of the day, with no account, no flag and no way to ask, so the only safe move was to stay well under it. Same lesson as `hard_stop_multiple` for money, learned twice. **It defaults to 1.0** — plan and wall the same number, exactly as before this rule existed — because a default above 1 would have raised the daily run volume of every project on the install the moment it shipped, with no per-project opt-in and nothing to accept. Raise it on a desk whose run ration is what is actually pacing it. It does **not** touch `max_concurrent_runs`, which is what protects the provider rate limit the whole box shares — that is simultaneity rather than volume, and it still binds absolutely. |
 | `runs_per_project_per_hour` | 15 | The pacing brake, on a trailing hour. Without it a project spends the day's allowance by lunch and sits dead until midnight. |
 | `pair_breaker_messages` | 10 | Two agents this deep in one thread with nothing landing are talking, not working — the thread **freezes** until you unfreeze it. |
 | `max_usd_per_run` | 2.0 | USD one run may spend. It is warned as it approaches and stopped at the line. 0 turns it off. |

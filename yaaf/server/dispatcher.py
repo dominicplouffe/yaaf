@@ -332,8 +332,19 @@ def _dispatch_project(session: Session, project: Project, cons: ConstitutionDoc)
     # against a ceiling of 1 would make every run a governance run and the
     # project would report on work it was never allowed to do — the brake
     # eating the thing it exists to protect.
-    reserved = min(cons.reserved_governance_runs, cons.runs_per_project_per_day // 2)
-    governance_only = today >= cons.runs_per_project_per_day - reserved
+    # The plan and the wall are two numbers now, as they already are for money.
+    # The daily cap is what the project should need; the wall is cap x
+    # runs_hard_stop_multiple. Between them work continues and the project owes
+    # an account (flags.RUN_OVERRUN). At the wall, ordinary work stops.
+    #
+    # `max_concurrent_runs` is deliberately untouched: that is the dial whose
+    # help text says it protects the provider rate limit every project on the
+    # box shares, and it caps simultaneity rather than volume — so it goes on
+    # binding absolutely no matter how far past its daily plan a project runs.
+    wall = max(cons.runs_per_project_per_day,
+               int(cons.runs_per_project_per_day * cons.runs_hard_stop_multiple))
+    reserved = min(cons.reserved_governance_runs, wall // 2)
+    governance_only = today >= wall - reserved
 
     # Pacing. Without this the daily ceiling is the only brake, and it is a
     # fixed window with no rate limit: six agents at six wakes an hour is
@@ -345,7 +356,7 @@ def _dispatch_project(session: Session, project: Project, cons: ConstitutionDoc)
     # and — the case this was written for — a project whose hourly ceiling went
     # to four agents acknowledging a broadcast may still run the two agents
     # holding ready tasks.
-    work_blocked = (today >= cons.runs_per_project_per_day
+    work_blocked = (today >= wall
                     or hourly_runs_used(session, project, now)
                     >= cons.runs_per_project_per_hour)
 
@@ -784,13 +795,22 @@ def _activity_brief(state: dict) -> dict:
 
     if gate == "daily_runs":
         d = state["daily_runs"]
+        # Falls back to the plan: a state assembled without the wall (an older
+        # cached shape, a synthetic one) should read as it always did rather
+        # than raise inside the sentence that explains why nothing is running.
+        wall = state["governance_reserve"].get("wall") or d["cap"]
+        # The wall, not the plan, because the wall is where work actually stops.
+        # Reporting the plan here printed "out of runs for today (225 of 150)".
+        over = (f" That is past the daily plan of {d['cap']}, which is allowed — "
+                f"the CEO owes an account of what the extra runs bought."
+                if d["used"] > d["cap"] else "")
         return brief(
             "serious", "capped",
-            f"out of runs for today ({d['used']} of {d['cap']}), resumes 00:00 UTC",
-            f"Out of runs for today — {d['used']} of {d['cap']} used.",
+            f"out of runs for today ({d['used']} of {wall}), resumes 00:00 UTC",
+            f"Out of runs for today — {d['used']} of {wall} used.",
             f"Nothing starts until the count resets at 00:00 UTC.{queue} Runs that "
-            "died still spent the allowance. Raise 'Runs per day, whole project' in "
-            "Settings if this is tighter than you meant it to be.",
+            f"died still spent the allowance.{over} Raise 'Runs per day, whole "
+            "project' in Settings if this is tighter than you meant it to be.",
             sig="daily_runs", clears_at=d["resets_at"])
 
     if gate == "pacing":
@@ -1063,8 +1083,10 @@ def activity_state(session: Session, project: Project, cons: ConstitutionDoc) ->
     max_concurrent = _max_concurrent(cons)
     # The same clamp `_dispatch_project` enforces with: past this line ordinary
     # work is done for the day and only governance may still spend.
-    reserved = min(cons.reserved_governance_runs, cons.runs_per_project_per_day // 2)
-    governance_only = used >= cons.runs_per_project_per_day - reserved
+    run_wall = max(cons.runs_per_project_per_day,
+                   int(cons.runs_per_project_per_day * cons.runs_hard_stop_multiple))
+    reserved = min(cons.reserved_governance_runs, run_wall // 2)
+    governance_only = used >= run_wall - reserved
 
     agents = list(
         session.execute(
@@ -1139,7 +1161,7 @@ def activity_state(session: Session, project: Project, cons: ConstitutionDoc) ->
     with_work = [r for r in rows if r["pending"]]
     free = [r for r in with_work
             if not r["busy"] and r["wakes_last_hour"] < r["wake_cap"]]
-    if used >= cons.runs_per_project_per_day:
+    if used >= run_wall:
         blocked_by = "daily_runs"
     elif used_hour >= cons.runs_per_project_per_hour:
         blocked_by = "pacing"
@@ -1218,7 +1240,10 @@ def activity_state(session: Session, project: Project, cons: ConstitutionDoc) ->
         },
         "governance_reserve": {
             "reserved": reserved,
-            "ordinary_cap": max(0, cons.runs_per_project_per_day - reserved),
+            "ordinary_cap": max(0, run_wall - reserved),
+            # The plan stays visible beside the wall: it is what the CEO paces
+            # against and what the overrun account is measured from.
+            "wall": run_wall,
             "active": governance_only,
         },
         # The reading lane, on the same shape as the work lane. Reported even

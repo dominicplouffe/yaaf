@@ -175,6 +175,21 @@ def countable_external_evidence(session: Session, project_id: str, since: dateti
     """External evidence that actually counts: platform-attested, or
     agent-claimed AND verified. The most gameable field in the system is only
     trusted after the platform checked it."""
+    # Metric readings are deliberately NOT counted here, and the reasoning is
+    # worth keeping because the opposite looked obviously right for a day.
+    #
+    # A reading is external and platform-verified, so counting it seems to fit —
+    # and it would have given `drought_hours`, one of only two floors the
+    # constitution has, something real to enforce. But the cadence is
+    # agent-authored (`measure_every_hours`, floored at one hour), so a CEO that
+    # wanted the drought never to fire again could propose a single metric on an
+    # hourly schedule and switch the floor off permanently. A floor an agent's
+    # own request can disable is precisely what house rule 1 forbids.
+    #
+    # The deeper objection is that it was never the same thing. A drought asks
+    # whether the PROJECT has produced proof from outside itself. A metric
+    # reading is the platform going and looking at a number on a timer; nobody
+    # here did anything. A ledger-source metric does not even leave the box.
     return session.execute(
         select(func.count(Evidence.id)).where(
             Evidence.project_id == project_id,
@@ -255,10 +270,16 @@ def validate_success_test(cons: ConstitutionDoc, success_test: dict) -> None:
                 "not a sentiment. 'The report looks good' is not a test; "
                 "'https://example.com/report.pdf exists and contains a Q3 revenue table' is."
             )
+    elif kind == SuccessTestKind.METRIC:
+        from yaaf.server import metrics
+
+        metrics.validate_metric_test(success_test)
     else:
         raise Refusal(
-            'success_test must be {"type": "command", "command": ...} (platform-executed) '
-            'or {"type": "observable", "target": ...} (spot-audited). '
+            'success_test must be {"type": "command", "command": ...} (platform-executed), '
+            '{"type": "observable", "target": ...} (spot-audited), or '
+            '{"type": "metric", "source": ..., "direction": ..., "target": ...} '
+            "(platform-measured, from a source you do not author). "
             "A task without a falsifiable test is not work, it is intention."
         )
 
@@ -464,6 +485,14 @@ def check_task_create(
     not_before: datetime | None = None,
 ) -> None:
     require_project_running(project)
+    if success_test.get("type") == SuccessTestKind.METRIC:
+        raise Refusal(
+            "A metric belongs on a requirement, not a task. A task's check runs when "
+            "the work closes; a metric is read on a schedule and may not move for "
+            "weeks, so a task carrying one could never be completed. Propose the "
+            "metric as a requirement and give this task a command the platform can "
+            "run against what you actually built."
+        )
     validate_success_test(cons, success_test)
     check_task_gate(cons, not_before)
 
@@ -1376,18 +1405,45 @@ def runs_spent_on(session: Session, requirement_id: str) -> int:
     ).scalar_one()
 
 
-def estimate_bias(session: Session, project_id: str) -> tuple[float, dict]:
-    """How wrong this CEO's estimates have been, as a multiplier ≥ 1.
+#: How many settled requirements the bias is measured over. A window, not all
+#: history — because without one the multiplier is a permanent sentence.
+#:
+#: A project that overran early carried that overrun into every plan it would
+#: ever make: the FPL desk sat at 1.64 on eight settled requirements from its
+#: first fortnight, so `check_plan_affordable` refused any plan that did not fit
+#: inside 61% of its own budget, forever, and the only legal responses were to
+#: cut scope or to estimate smaller than it believed.
+#:
+#: The anti-gaming property survives intact, because it never depended on the
+#: window being infinite. Within any window the ratio is still floored at 1, so
+#: over-estimating once still buys nothing. What the window removes is the part
+#: that was never anti-gaming at all — that a project which has since become
+#: accurate goes on paying for a bad month it cannot work off.
+#:
+#: Long relative to a cycle on purpose: short enough to be earnable, far too
+#: long to be gamed by one deliberate over-estimate.
+BIAS_WINDOW_SETTLED = 12
 
-    Never below 1. A ratio that could shrink an estimate would let a CEO buy
-    headroom by over-estimating once and then under-estimating everything
-    after — the same gaming the multiplier exists to price in, run backwards.
+
+def estimate_bias(session: Session, project_id: str) -> tuple[float, dict]:
+    """How wrong this CEO's recent estimates have been, as a multiplier ≥ 1.
+
+    Never below 1 within the window. A ratio that could shrink an estimate would
+    let a CEO buy headroom by over-estimating once and then under-estimating
+    everything after — the same gaming the multiplier exists to price in, run
+    backwards.
     """
     settled = [
         r
         for r in scope_requirements(session, project_id, all_cycles=True)
         if r.status in CLOSED_REQUIREMENT_STATUSES and (r.est_runs_first or r.est_runs)
     ]
+    # Most recently settled first, then trimmed to the window: accuracy is a
+    # thing a project can now demonstrate, rather than a verdict it received
+    # once. `met_at` is when the platform ruled; a cut requirement has none, so
+    # it falls back to creation order via the id, which is time-ordered.
+    settled.sort(key=lambda r: (r.met_at is not None, r.met_at or "", r.id), reverse=True)
+    settled = settled[:BIAS_WINDOW_SETTLED]
     # Scored against the FIRST estimate, always: reestimate moves est_runs for
     # the plan arithmetic, never the number the ratio judges.
     pairs = [(r.est_runs_first or r.est_runs, runs_spent_on(session, r.id))
@@ -1399,7 +1455,8 @@ def estimate_bias(session: Session, project_id: str) -> tuple[float, dict]:
     actual = sum(a for _, a in pairs)
     ratio = max(1.0, actual / estimated) if estimated else 1.0
     return ratio, {
-        "basis": f"{len(pairs)} settled requirements",
+        "basis": f"{len(pairs)} most recently settled requirements",
+        "window": BIAS_WINDOW_SETTLED,
         "estimated": estimated,
         "actual": actual,
         "multiplier": round(ratio, 2),
@@ -1848,9 +1905,12 @@ def commitment_resets(session: Session, commitment: Commitment) -> int:
 
 # The approval kinds that stay the chairman's at every autonomy level, because
 # each is something the dial does not and cannot delegate: money above his line,
-# legal weight, a credential only he holds the value of, and a security
-# challenge only a human may answer.
-UNDELEGABLE_APPROVALS = frozenset({"spend", "legal", "tool_request", "assist"})
+# legal weight, a credential only he holds the value of, a security challenge
+# only a human may answer — and the project's own capacity, which is the one
+# kind where the CEO is arguing for itself. A dial that could delegate that
+# would let a project vote itself more room, which is the thing `directive_file`
+# is restricted to prevent.
+UNDELEGABLE_APPROVALS = frozenset({"spend", "legal", "tool_request", "assist", "capacity"})
 
 # Which switches would have to be the CEO's for "a decision that is genuinely
 # the owner's" to be, in fact, the CEO's.
@@ -1985,26 +2045,70 @@ def check_scope_within_commitment(
     )
 
 
-def check_scope_after_delivery(session: Session, project: Project) -> None:
-    """The other half of the commitment guarantee. `check_scope_within_commitment`
-    freezes scope while the date does NOT hold — so a project that delivered on
-    time had strictly fewer guards than one running late, and could grow itself
-    back open after telling the chairman it was finished.
+def check_proposals_after_delivery(
+    session: Session, project: Project, cons: ConstitutionDoc
+) -> None:
+    """A delivered project may propose, within a bound.
 
-    One did: 36 hours after reporting 13 of 13 true, a CEO woken by its own
-    agents' chatter opened R-14 and accepted it on its own authority. It was not
-    misbehaving. Every task it could have created was refused — against a met
-    requirement ("it is already true") or with no requirement at all — and a new
-    requirement was the only move left that the platform did not refuse.
+    Its predecessor refused post-delivery proposals outright, after a CEO woken
+    by its own agents' chatter opened R-14 and accepted it on its own authority
+    36 hours after reporting 13 of 13 true. Acceptance is now guarded directly
+    (`check_self_accept_after_delivery`), which is where the growth actually
+    happens — but that left the other half of the incident unbounded. The CEO in
+    it was not misbehaving: every task it could create was refused, and a new
+    requirement was the only move the platform did not refuse. A project in that
+    state, woken repeatedly, will keep finding that move.
+
+    So the number of proposals it may have waiting is bounded by
+    `queue_ceiling` — the dial that already means "how many open things at once"
+    — rather than by a new number nobody chose. He is looking at a finished
+    project and a decision; he should not also be looking at a list.
+    """
+    if not delivered_awaiting_confirmation(session, project):
+        return
+    waiting = session.execute(
+        select(func.count(Requirement.id)).where(
+            Requirement.project_id == project.id,
+            Requirement.status == RequirementStatus.PROPOSED,
+        )
+    ).scalar_one()
+    if waiting >= cons.queue_ceiling:
+        raise Refusal(
+            f"{waiting} proposals are already waiting on the chairman and this project "
+            f"has reported itself finished. That is the ceiling ({cons.queue_ceiling}). "
+            "He is looking at a delivery and a decision; a queue of ideas behind it "
+            "makes the decision harder, not better. If one of the waiting proposals "
+            "matters less than this one, cut it.",
+            status_code=409,
+        )
+
+
+def check_self_accept_after_delivery(session: Session, project: Project) -> None:
+    """A delivered project may still be PROPOSED to; it may not accept its own.
+
+    The freeze this replaces refused the proposal itself, which made "I have
+    finished early and can see the next move" unsayable in any form with state
+    behind it — the only remaining channel was a boardroom remark nobody can
+    act on later. Scope frozen on lateness, on breach AND on success meant the
+    one thing a project could never do was succeed and keep going.
+
+    But read what the freeze was actually built for: a CEO that, 36 hours after
+    reporting 13 of 13 true, "opened R-14 and accepted it on its own authority".
+    The abuse is the second half. A proposal creates no scope by construction —
+    the chairman accepts it, and until he does no work may be created for it —
+    so a project that proposes after delivering has put a card on the table and
+    changed nothing. Self-accepting is how it grows itself back open behind a
+    chairman who believes it is done, and that is what stays refused, at every
+    dial setting, including the ones that normally delegate scope to the CEO.
     """
     if not delivered_awaiting_confirmation(session, project):
         return
     raise Refusal(
-        "No new scope: every requirement is true and this delivery is waiting on "
-        "the chairman's confirmation. He has been told it is finished, and adding "
-        "work now would reopen a project he believes is done. If something really "
-        "must be true before it ships, say so in the boardroom and let him decide "
-        "— reopening is his, and he can do it in one click on the project page.",
+        "You may propose this, and you may not accept it. Every requirement is true "
+        "and the chairman has been told the project is finished, so scope does not "
+        "grow here without him — whatever the authority dial says the rest of the "
+        "time. Your proposal is already on his desk with the delivery; he can accept "
+        "it in one click, and until he does, nothing about the delivery has changed.",
         status_code=409,
     )
 

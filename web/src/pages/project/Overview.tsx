@@ -126,14 +126,26 @@ function HealthLine({ ctx }: { ctx: ProjectCtx }) {
             >
               adopt latest role version
             </button>
-          ) : check.where === "settings" && check.status !== "ok" ? (
-            <Link to={`/projects/${projectId}/settings`}>fix in Settings →</Link>
+          ) : check.status !== "ok" && WHERE_TO[check.where ?? ""] ? (
+            <Link to={`/projects/${projectId}/${check.where}`}>
+              {WHERE_TO[check.where!]} →
+            </Link>
           ) : null}
         </div>
       ))}
     </div>
   );
 }
+
+/** Where a health check says the fix lives. A check that names a destination
+    the reader cannot click is a check that gets read once and then skipped:
+    before this, only `settings` was linked, so drift reported against the plan
+    or the roster arrived as a sentence with nowhere to go. */
+const WHERE_TO: Record<string, string> = {
+  settings: "fix in Settings",
+  plan: "open the Plan",
+  boardroom: "open the boardroom",
+};
 
 /** Budget meter with pace: position is a fact, the projected cap date is the
     decision aid — a fuel gauge vs a range estimate. */

@@ -351,6 +351,7 @@ def build_system_prompt(session: Session, agent: Agent, project: Project,
         f"You are {agent.name}, an agent in the project \"{project.name}\".\n"
         f"PROJECT GOAL: {project.goal}\n\n"
         f"{position}\n\n{role_prompt}\n\n{HOUSE_STYLE}\n\n"
+        f"{PRECEDENCE}\n\n"
         f"{constitution_prose(cons, project)}\n\n"
         "MECHANICS: you interact with the platform through the yaaf tools (board, tasks, "
         "messages, memory, evidence, approvals). Each run is stateless: read your context, "
@@ -359,6 +360,35 @@ def build_system_prompt(session: Session, agent: Agent, project: Project,
         f"{WORKSPACE_CHAT if lane == 'chat' else WORKSPACE_RUN}\n\n"
         f"{UNTRUSTED_NOTE}"
     )
+
+
+#: Which text wins when two parts of this prompt disagree.
+#:
+#: The charter above is written once, by the Founder, at creation, from whatever
+#: it understood on that day — and it is domain-specific, confident and often in
+#: capitals. What follows is the platform's own constitution, which the chairman
+#: can amend at any time and which is enforced by refusals the agent's token
+#: cannot reach around.
+#:
+#: Nothing used to say which governed. On one live desk the Founder had written
+#: "COST DISCIPLINE, AND IT IS A REAL CONSTRAINT, NOT A PREFERENCE... it is a job
+#: you do by NOT commissioning work", and further down the platform said "spend
+#: what the work needs, and do not manufacture frugality to look careful". Both
+#: true, flatly contradictory, and the louder one was simply earlier. The desk
+#: ran light while fifteen points behind and defended it twice.
+#:
+#: This does not make the charter advisory. It settles the specific case where
+#: the two disagree, which is the case that was silently being decided by
+#: paragraph order.
+PRECEDENCE = (
+    "PRECEDENCE: your charter above is what you are for; the constitution below is "
+    "what this project may do, and the chairman can change it at any time. Where they "
+    "disagree, the constitution wins — including where your charter is more cautious "
+    "than the rules require. A charter that tells you to spend less, ship less or ask "
+    "for less than the constitution allows is a preference somebody wrote before this "
+    "week's evidence existed, not a limit. Say so, rather than quietly obeying the "
+    "tighter of the two."
+)
 
 
 # Context is a lease, not a library: packs carry enough to act and the tools
@@ -1049,6 +1079,47 @@ def _situation(session: Session, project: Project, cons: ConstitutionDoc) -> dic
     }
 
 
+
+def _scoreboard_note(board: list[dict]) -> str:
+    """What the numbers oblige you to say. Arithmetic, never a mood.
+
+    Modelled line for line on the budget block's note, which is the only
+    sentence in the platform that has ever made a CEO volunteer a number before
+    the chairman asked for it. That sentence works. This one points it at the
+    objective instead of the spend.
+    """
+    losing = [m for m in board if m["verdict"] == "losing"]
+    unknown = [m for m in board if m["verdict"] == "unknown"]
+    met = [m for m in board if m["verdict"] == "met"]
+
+    if losing:
+        worst = losing[0]
+        return (
+            f"{worst['requirement_key']} is going the wrong way: {worst['value']} "
+            f"against a target of {worst['target']}, and further from it than when "
+            f"this window opened ({' -> '.join(str(v) for v in worst['trend'])}). "
+            "Say so now, with the number, and say what you are changing — do not "
+            "wait to be asked, and do not lead with the spend. Running lighter to "
+            "protect a budget while this number moves away from you is not thrift, "
+            "it is the wrong trade. If closing the gap costs more than you have, "
+            "that is the thing to put to the chairman."
+        )
+    if unknown and not met:
+        return (
+            "The objective has no usable reading yet. A finish line nobody is "
+            "measuring is prose again; if the source is wrong, fix it or say so."
+        )
+    if met and len(met) == len(board):
+        return (
+            "Every measured target is met. That is the finish line, not the memo "
+            "count — say it to the chairman with the number."
+        )
+    return (
+        "Measured and moving the right way. Report the number, not the activity: "
+        "what moved it is worth more to him than what you did."
+    )
+
+
 def build_context_pack(session: Session, run: Run, agent: Agent, project: Project) -> dict:
     cons = effective(session, project.id)
 
@@ -1229,6 +1300,31 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
                     "past the date, new scope freezes and the chairman is emailed."
                 ),
             }
+        # The CEO's own scoreboard, shown to the CEO. This number has been
+        # computed since it was written — "what to queue, kill and
+        # prioritize is the CEO's actual product; this is its scoreboard" —
+        # and went to the chairman's two screens and nowhere else, so the
+        # only party who could act on it was the only party who could not
+        # see it.
+        #
+        # It is gameable in one specific way: a CEO could farm cheap
+        # external evidence. That risk is real and is priced here rather
+        # than hidden, because a scoreboard withheld from the person being
+        # scored is not a scoreboard, it is surveillance — and the
+        # planning-quality judge grades manufactured busywork as harshly as
+        # idleness, so the cheap route is not a winning one.
+        judgment = policy.ceo_judgment(session, project.id)
+        judgment["note"] = (
+            "Of the top-level tasks you created, this is the share that ever "
+            "produced countable external evidence — proof from outside this "
+            "project. It is the measure of your product, which is what you chose "
+            "to queue and kill. Raising it by creating easy work that produces "
+            "cheap evidence would be the one way to make this number lie; it is "
+            "also read by the planning-quality judge, which scores busywork and "
+            "idleness the same."
+        )
+        pack["ceo_judgment"] = judgment
+
         if requirements:
             blocked = {
                 r.id: [d.key for d in policy.unmet_dependencies(session, r)]
@@ -1262,6 +1358,23 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
             # "are we faster than last week" — and a planner that cannot see
             # its own pace can only plan by optimism.
             pack["velocity"] = project_velocity(session, project.id)
+            # The scoreboard, beside the pace and written with the same
+            # authority as `situation.budget` — deliberately, because that
+            # block is the proof this shape works. It carries a sentence that
+            # says "say so now, with the number", and it is the only place the
+            # platform has ever obliged a CEO to volunteer a number before
+            # being asked. Every one of those sentences was about money.
+            #
+            # A CEO used to arrive at its wake holding a fully-projected spend
+            # forecast it had not asked for and nothing whatsoever about
+            # whether it was winning; it re-derived its own scoreboard from
+            # files every time, or did not. This is the counterpart.
+            board = pack["velocity"].get("metrics") or []
+            if board:
+                pack["scoreboard"] = {
+                    "metrics": board,
+                    "note": _scoreboard_note(board),
+                }
             # How the recurring obligations have actually gone. "Met in 23 of
             # the last 24 cycles" is a fact about an Operate project that no
             # burndown could express and no prose could be checked against.

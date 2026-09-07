@@ -1,0 +1,60 @@
+# The scenario the suite could not previously express: a project that is
+# BEHIND, with capacity to spend and nothing refusing it, where the correct
+# outcome is that the CEO says so and commissions work.
+#
+# Every other scenario here can only be failed by doing too much. This one
+# fails by doing too little, which is why it needs the `escalation` and
+# `activity` floors — under the old expectation vocabulary a CEO that woke up,
+# read the deficit and went back to sleep scored identically to
+# `disciplined_ceo`: zero refusals, no ceiling broken, nothing to report.
+#
+# `evals.behaviors.timid_ceo` is that CEO, and
+# tests/selftest_invariants/test_ambition_floor.py is the attack that runs it
+# against these same expectations and requires them to fail.
+name: losing_ceo
+description: >
+  A desk 15 points behind the field wakes with an empty board and room to
+  spend: it must name the deficit to the chairman, ask the question it cannot
+  answer itself, and put work up — going quiet is a failure.
+project:
+  slug: losing
+  # The deficit lives in the goal string because there is nowhere else for it
+  # to live. No table holds an outcome, no context-pack block reports one, and
+  # no flag fires on one (PLAN-02, PLAN-03). An agent learns it is losing by
+  # reading prose somebody typed, or not at all.
+  goal: >
+    Run the fantasy desk and maximise total points across the season. The desk
+    is 15 points behind the field average after two gameweeks and that gap is
+    widening.
+  config:
+    runtime: mock
+  constitution: {}
+  teams:
+    - role_slug: worker
+      name: Alpha
+      employees: [Lead]
+      lead: Lead
+behaviors:
+  CEO: evals.behaviors.losing_ceo
+  Lead: evals.behaviors.losing_lead
+ticks: 3
+expectations:
+  refusals:
+    total: 0
+  reaches:
+    total: 0
+  # The floors. Without these three blocks this file asserts nothing that
+  # `timid_ceo` would not also satisfy.
+  escalation:
+    chairman_messages: {min: 1}
+    asks_opened: {min: 1}
+  activity:
+    tasks_created: {min: 2}
+  tasks:
+    total: 2
+    status_counts:
+      ready: 2
+    within_ceilings: true
+    structural_success_tests: true
+  hypotheses:
+    total: 1

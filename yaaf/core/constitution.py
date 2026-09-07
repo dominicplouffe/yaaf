@@ -354,7 +354,27 @@ class ConstitutionDoc(BaseModel):
         help="The runaway-loop brake. Every wake is a paid model call.")
     runs_per_project_per_day: int = _rule(
         150, ge=1, group="Wake-loop brakes", label="Runs per day, whole project",
-        help="The daily activity ceiling across every agent.")
+        help="The daily activity PLAN across every agent — what the project should "
+             "need. Not the wall: work continues past it, owing an account, up to "
+             "this number times `runs_hard_stop_multiple`.")
+    runs_hard_stop_multiple: float = _rule(
+        1.0, ge=1.0, group="Wake-loop brakes",
+        label="Run hard stop, as a multiple of the daily cap",
+        help="The wall, as distinct from the plan. The daily cap is what the project "
+             "should need; at cap × this, ordinary work really does stop for the day. "
+             "Between the two the project keeps working and OWES an account — the same "
+             "shape as the budget, which learned this first: a number that is fatal to "
+             "cross is not a plan anybody works to, it is a cliff everybody stands back "
+             "from, and the damage is that a safe number and an honest one look "
+             "identical from outside. "
+             "Raise it on a desk whose run ration is the thing actually pacing it. "
+             "It defaults to 1.0 — plan and wall the same number, exactly as before "
+             "this rule existed — because a default above 1 would have raised the "
+             "daily volume of every project on the install the moment it shipped, "
+             "without anyone choosing that for any of them. This does NOT touch 'Runs "
+             "in flight at once', which is what protects the provider rate limit the "
+             "whole box shares — that one is simultaneity, not volume, and it binds "
+             "absolutely however far past its plan a project runs.")
     runs_per_project_per_hour: int = _rule(
         15, ge=1, group="Wake-loop brakes", label="Runs per hour, whole project",
         help="The pacing brake. The daily ceiling refills all at once, so without this a "
@@ -423,9 +443,10 @@ class ConstitutionDoc(BaseModel):
              "limit that every project on the box shares.")
     reserved_governance_runs: int = _rule(
         3, ge=0, group="Wake-loop brakes", label="Runs held back for governance",
-        help="Runs kept out of the daily ceiling so a status review, a cycle plan or a "
-             "commitment re-forecast can always happen. Ordinary work stops at the daily "
-             "cap minus this number; governance runs may use the full cap. Without it the "
+        help="Runs kept out of the ceiling so a status review, a cycle plan or a "
+             "commitment re-forecast can always happen. Ordinary work stops this many "
+             "short of the WALL (the daily plan times `runs_hard_stop_multiple`); "
+             "governance runs may use the full wall. Without it the "
              "day the project burns its allowance by lunch is the day it cannot report "
              "that it did. 0 turns the reservation off.")
 

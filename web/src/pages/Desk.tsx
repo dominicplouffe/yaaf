@@ -1,6 +1,5 @@
 import { Link } from "react-router-dom";
 import { DeskProject, DeskView, get } from "../api";
-import { DeskBriefingPanel } from "../briefing";
 import { usePoll } from "../hooks";
 import {
   clip,
@@ -596,7 +595,6 @@ export default function Desk() {
           "what breaks if I close this tab"; a chairman arriving after three
           days asks the earlier question first, and used to have to reconstruct
           it from four tables in Records. */}
-      <DeskBriefingPanel />
 
       {running === 0 && idle === 0 && (
         <EmptyDesk finished={data.finished} />

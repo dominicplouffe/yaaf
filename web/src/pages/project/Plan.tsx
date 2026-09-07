@@ -25,7 +25,17 @@ interface PlanRequirement {
   status: string;
   stage: number;
   test_kind: string | null;
-  acceptance_test: { type?: string; command?: string; target?: string };
+  acceptance_test: {
+    type?: string; command?: string; target?: string;
+    direction?: string; target_value?: number;
+  };
+  /** Present only for a `metric` requirement: what the platform has actually
+      read, and which way it is going. Null for every other kind. */
+  measurement: {
+    value: number | null; target: number; direction: string | null;
+    trend: number[]; verdict: string; measured_at: string | null;
+    error: string | null;
+  } | null;
   est_runs: number | null;
   spent: { runs: number; usd: number };
   failure_load: number;
@@ -287,7 +297,38 @@ function testLine(r: PlanRequirement): string {
   const test = r.acceptance_test || {};
   if (test.type === "command") return test.command ?? "";
   if (test.type === "observable") return test.target ?? "";
+  if (test.type === "metric") {
+    const m = r.measurement;
+    const aim = `${test.direction === "decreasing" ? "below" : "at or above"} ${m?.target ?? "?"}`;
+    if (!m || m.value === null) return `measured — no reading yet; target ${aim}`;
+    return `${m.value} — target ${aim}`;
+  }
   return "structural — the platform checks the plan itself";
+}
+
+/** A measured requirement wears its verdict, because the number IS the status.
+    "in progress" on a rank target says nothing a chairman can act on; "losing,
+    6,698,328 against 500,000" says the whole thing. */
+function MetricVerdict({ m }: { m: NonNullable<PlanRequirement["measurement"]> }) {
+  const tone: Record<string, string> = {
+    losing: "var(--bad, #b4342b)",
+    gaining: "var(--good, #2e7d32)",
+    met: "var(--good, #2e7d32)",
+  };
+  return (
+    <div style={{ marginTop: 6, fontSize: 12 }}>
+      <span style={{ color: tone[m.verdict] ?? "var(--ink-2)", fontWeight: 600 }}>
+        {m.verdict}
+      </span>
+      {m.trend.length > 1 && (
+        <span className="help"> · {m.trend.slice(-4).join(" → ")}</span>
+      )}
+      {m.error && <span className="help"> · last read failed: {m.error}</span>}
+      {m.measured_at && !m.error && (
+        <span className="help"> · read {new Date(m.measured_at).toLocaleString()}</span>
+      )}
+    </div>
+  );
 }
 
 /** One requirement, in full: the statement is the headline, the test is one
@@ -343,6 +384,7 @@ function RequirementCard({ r, onCritical, onDone }: {
           <div style={{ fontFamily: "var(--mono, monospace)", fontSize: 12 }}>
             {r.test_kind === "command" ? "$ " : ""}{testLine(r)}
           </div>
+          {r.measurement && <MetricVerdict m={r.measurement} />}
           {r.check_output && !r.chairman_verdict && (
             <div style={{ marginTop: 6 }}>
               <span className="help">last check: </span>{r.check_output}

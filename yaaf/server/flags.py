@@ -39,7 +39,7 @@ from yaaf.core.models import (
     RequirementStatus,
     utcnow,
 )
-from yaaf.server import policy
+from yaaf.server import metrics, policy
 
 log = logging.getLogger("yaaf.flags")
 
@@ -47,6 +47,32 @@ log = logging.getLogger("yaaf.flags")
 #: rolled cannot un-roll — so they are never auto-resolved. Only the CEO
 #: raising them closes them.
 HISTORICAL_KINDS = (FlagKind.CYCLE_MISSED, FlagKind.STANDING_MISSED)
+
+#: Gates that mean a WALL stopped the work, as opposed to the project having
+#: scheduled its own board shut. `dispatcher.activity_state` names each of
+#: these; anything outside this set is the project's own doing or the
+#: chairman's, and is not an excuse for an idle desk.
+CAP_GATES = ("daily_runs", "pacing", "concurrency", "inbox_runs",
+             "wake_ceiling", "governance_reserve")
+
+
+def _scoreline(cycle) -> str:
+    """What the cycle actually did, in the flag that makes the CEO explain it.
+
+    Every FlagKind is supposed to be arithmetic. This one carried the ordinal,
+    the timestamp and the goal — and no numbers, so "missed" read the same
+    whether nine of ten requirements landed or none did. The CEO on the desk
+    that prompted this re-explained that distinction to its chairman six times
+    in five days, by hand, out of its own run allowance. The numbers were always
+    on the row; they were just never in the sentence.
+    """
+    card = cycle.scorecard or {}
+    if not card.get("accepted"):
+        return "."
+    met, accepted = card.get("met", 0), card["accepted"]
+    carried = ", ".join(card.get("carried_keys") or []) or "none"
+    return (f": {met} of {accepted} met, {card.get('carried', 0)} carried forward "
+            f"({carried}).")
 
 
 def open_flag(session: Session, project: Project, kind: str, summary: str,
@@ -177,13 +203,15 @@ def evaluate(session: Session, project: Project, cons: ConstitutionDoc) -> int:
     if last_closed is not None and open_flag(
             session, project, FlagKind.CYCLE_MISSED,
             f"Cycle {last_closed.ordinal} closed with scope still open"
-            + (f" — its goal was: {last_closed.goal[:200]}" if last_closed.goal else "")
-            + ". The rhythm rolled on, as it should; this is the part that "
+            + _scoreline(last_closed)
+            + (f" Its goal was: {last_closed.goal[:200]}." if last_closed.goal else "")
+            + " The rhythm rolled on, as it should; this is the part that "
               "should not roll on quietly.",
             arithmetic={"cycle": last_closed.ordinal,
                         "closed_at": (last_closed.closed_at.isoformat()
                                       if last_closed.closed_at else None),
-                        "goal": last_closed.goal},
+                        "goal": last_closed.goal,
+                        **(last_closed.scorecard or {})},
             subject_id=last_closed.id,
     ):
         opened += 1
@@ -229,6 +257,89 @@ def evaluate(session: Session, project: Project, cons: ConstitutionDoc) -> int:
     else:
         _resolve(session, project, FlagKind.WORK_STARVED, None,
                  "the allowance cleared or the board emptied")
+
+    # 5. The desk gated itself shut. WORK_STARVED above needs a WALL to have
+    #    stopped the work; this is the case where nothing stopped it and there
+    #    is still nothing to do, because every task on the board carries a
+    #    start time the CEO chose. An idle desk is an idle desk whoever caused
+    #    it, and the version nobody was watching for is the self-inflicted one.
+    # `starving` above covers only the two caps WORK_STARVED reports on, but
+    # every gate in CAP_GATES is a wall the project ran into rather than one it
+    # built. SELF_GATED's whole claim is that NO cap is responsible, so firing
+    # while the hourly brake or the wake ceiling is the real gate obliges the
+    # CEO to account for a self-inflicted idleness that is not self-inflicted.
+    #
+    # `scheduled` is deliberately not a cap: it is the dispatcher's own name for
+    # "the only work on the board carries a start time somebody set", which is
+    # exactly this flag's subject.
+    gated = state["waiting"].get("gated_tasks") or 0
+    capped = state["blocked_by"] in CAP_GATES
+    if gated and not ready and not capped:
+        if open_flag(
+            session, project, FlagKind.SELF_GATED,
+            f"Nothing is claimable and no cap is stopping you: {gated} task(s) carry a "
+            f"start time you set, so nobody may claim them and nobody is woken for "
+            f"them. If the dates are right, say why the desk is idle until then. If "
+            f"they are a habit, bring work forward.",
+            arithmetic={"claimable_tasks": ready, "gated_tasks": gated,
+                        "blocked_by": state["blocked_by"]},
+            subject_id=None,
+        ):
+            opened += 1
+    else:
+        _resolve(session, project, FlagKind.SELF_GATED, None,
+                 "work became claimable, or a real cap took over")
+
+    # 5b. Past the daily run plan, and still working. The budget learned this
+    #     first: a number that is fatal to cross is not a plan anybody works to.
+    #     Crossing the run cap used to be silently fatal for the day — no
+    #     account, no flag, no way to ask — so the only safe move was to stay
+    #     well under it, and a safe number is indistinguishable from an honest
+    #     one from outside.
+    day = state["daily_runs"]
+    wall = max(day["cap"], int(day["cap"] * cons.runs_hard_stop_multiple))
+    in_overrun = day["used"] > day["cap"] and wall > day["cap"]
+    if in_overrun:
+        if open_flag(
+            session, project, FlagKind.RUN_OVERRUN,
+            f"{day['used']} runs today against a plan of {day['cap']}; the wall is "
+            f"{wall}. You are working in the overrun, which is allowed and is the "
+            f"point — say what the extra runs bought. If the plan is simply too low "
+            f"for the work, that is a capacity_request with the arithmetic, not a "
+            f"month of quietly running over.",
+            arithmetic={"used": day["used"], "plan": day["cap"], "wall": wall,
+                        "multiple": cons.runs_hard_stop_multiple},
+            subject_id=day["resets_at"][:10],   # one flag per day, not per tick
+        ):
+            opened += 1
+    else:
+        _resolve(session, project, FlagKind.RUN_OVERRUN, day["resets_at"][:10],
+                 "the day rolled or the plan was raised")
+
+    # 6. The objective is moving away from its target. The only kind here that
+    #    is about whether the project is WINNING rather than whether it is
+    #    behaving; everything above can be satisfied by a project losing
+    #    tidily. Subject is the requirement, so two metrics going wrong are two
+    #    pieces of news rather than one that overwrites the other.
+    for board in metrics.project_scoreboard(session, project.id):
+        requirement_key = board["requirement_key"]
+        if board["verdict"] == "losing":
+            trend = " -> ".join(str(v) for v in board["trend"][-4:])
+            if open_flag(
+                session, project, FlagKind.LOSING_GROUND,
+                f"{requirement_key} is going the wrong way: {board['value']} against a "
+                f"target of {board['target']}, and further from it than when this "
+                f"window opened ({trend}). Say what you are changing, and what it "
+                f"costs — not what you have been doing.",
+                arithmetic={"requirement": requirement_key, "value": board["value"],
+                            "target": board["target"], "trend": board["trend"],
+                            "direction": board["direction"]},
+                subject_id=board["requirement_key"],
+            ):
+                opened += 1
+        else:
+            _resolve(session, project, FlagKind.LOSING_GROUND, requirement_key,
+                     f"the measurement turned: {board['verdict']}")
 
     return opened
 

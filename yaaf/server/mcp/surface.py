@@ -72,6 +72,14 @@ REACHED = {
 #: Routes no tool reaches, and the reason. A reason is required: "we did not
 #: get to it" is a fine answer, but it has to be written down as one.
 WITHHELD = {
+    "POST /admin/projects/{project_id}/regrade-goal":
+        "grading goal prose calls a model, so this verb spends every time it is "
+        "used — and unlike the rest of the drift picture it answers a question "
+        "that only changes when the grammar does. The free half (doctrine-drift, "
+        "no-adversary, no-standing-scope) is arithmetic over rows and already "
+        "reaches every surface that reads project health, so a model holding "
+        "this would be paying for an answer it can mostly already see. It stays "
+        "a deliberate click by the person whose money it is.",
     "POST /admin/overruns/{overrun_id}/decide":
         "ruling on a month that went over is the chairman's half of the budget "
         "conversation, and it can move the budget in the same motion. A model "

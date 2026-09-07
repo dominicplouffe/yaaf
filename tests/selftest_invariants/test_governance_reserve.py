@@ -101,26 +101,39 @@ def _used_today(project: dict) -> int:
 
 def test_ordinary_work_stops_short_of_the_ceiling_by_the_reservation(client):
     """Ordinary wakes must leave the reserved slice alone, so a review always
-    has somewhere to run."""
+    has somewhere to run.
+
+    The numbers moved on 2026-09-06 and the rule did not. The daily cap used to
+    be both the plan and the wall; it is now the plan, with the wall at cap x
+    `runs_hard_stop_multiple`. The reservation is held against the point where
+    ordinary work actually stops — the wall — so governance keeps a slice
+    nothing else can take, which is the whole of what this test protects.
+    Governance is not delayed by the change: below the threshold both lanes run,
+    so the reserve has only ever been about crowding out, never about waiting.
+    """
     project = make_project(
         client,
         constitution={"runs_per_project_per_day": 10, "reserved_governance_runs": 3,
+                      "runs_hard_stop_multiple": 1.5,
                       "runs_per_project_per_hour": 1000, "wakes_per_agent_per_hour": 1000,
                       "max_concurrent_runs": 1},
     )
     _run_until_settled(project)
 
     used = _used_today(project)
-    assert used == 7, f"ordinary work should stop at cap - reserved = 7, used {used}"
+    # cap 10, multiple 1.5 -> wall 15; reservation 3 -> ordinary stops at 12.
+    # The multiple is set explicitly: this test is about the reservation being
+    # held against the wall, not about what the wall happens to default to.
+    assert used == 12, f"ordinary work should stop at wall - reserved = 12, used {used}"
 
     # The remaining three are not lost — they are unavailable to ordinary work
-    # only, and the dispatcher still reports the day as not yet spent.
+    # only. `cap` stays the PLAN, which is what the CEO is pacing against.
     with db_session() as session:
         row = session.get(Project, project["id"])
         cons = effective(session, project["id"])
         state = dispatcher.activity_state(session, row, cons)
     assert state["daily_runs"]["cap"] == 10
-    assert state["daily_runs"]["used"] == 7
+    assert state["daily_runs"]["used"] == 12
 
 
 def test_a_reservation_can_never_eat_the_whole_day(client):
@@ -146,25 +159,33 @@ def test_the_reservation_never_takes_more_than_half_a_day(client):
     project = make_project(
         client,
         constitution={"runs_per_project_per_day": 4, "reserved_governance_runs": 3,
+                      "runs_hard_stop_multiple": 1.5,
                       "runs_per_project_per_hour": 1000, "wakes_per_agent_per_hour": 1000,
                       "max_concurrent_runs": 1},
     )
     _run_until_settled(project)
     used = _used_today(project)
-    assert used == 2, f"4-run day, reservation clamped to 2, so work gets 2 — used {used}"
+    # cap 4, multiple 1.5 -> wall 6; the clamp is half the WALL, so 3 is
+    # reservable and ordinary work gets 3. The property under test is unchanged:
+    # the reservation can never eat so much of the day that every run becomes a
+    # governance run and the project reports on work it was never allowed to do.
+    assert used == 3, f"6-run wall, reservation clamped to 3, so work gets 3 — used {used}"
 
 
 def test_turning_the_reservation_off_gives_the_whole_day_to_work(client):
     """0 is a real setting: a project with no reviews should not hold runs back
-    for a meeting that never happens."""
+    for a meeting that never happens. With nothing reserved, work gets
+    everything up to the wall."""
     project = make_project(
         client,
         constitution={"runs_per_project_per_day": 5, "reserved_governance_runs": 0,
+                      "runs_hard_stop_multiple": 1.5,
                       "runs_per_project_per_hour": 1000, "wakes_per_agent_per_hour": 1000,
                       "max_concurrent_runs": 1},
     )
     _run_until_settled(project)
-    assert _used_today(project) == 5
+    # cap 5, multiple 1.5 -> wall 7, reservation 0 -> work gets all 7.
+    assert _used_today(project) == 7
 
 
 def test_the_reservation_is_a_rule_the_chairman_can_move(client):
@@ -195,3 +216,30 @@ def test_governance_reasons_are_recognised_as_governance():
     assert not dispatcher._is_governance([{"kind": "heartbeat", "name": "planning"}])
     assert not dispatcher._is_governance([{"kind": "team_task_ready"}])
     assert not dispatcher._is_governance([])
+
+
+def test_the_run_wall_defaults_to_the_plan(client):
+    """A new rule with a default above 1 would have raised the daily volume of
+    every project on the install the moment it shipped, without anyone choosing
+    that for any of them — no per-project opt-in, nothing to accept, just more
+    runs on the next tick after deploy. That is the exact shape of change
+    PLAN-07 exists to make visible, arriving through a default.
+
+    So the machinery ships neutral: plan and wall the same number, byte-identical
+    to the behaviour before the rule existed, and the chairman raises it on the
+    desks whose run ration is actually what paces them.
+    """
+    from yaaf.core.constitution import ConstitutionDoc, effective
+
+    assert ConstitutionDoc.model_fields["runs_hard_stop_multiple"].default == 1.0
+
+    project = make_project(
+        client,
+        constitution={"runs_per_project_per_day": 10, "reserved_governance_runs": 3,
+                      "runs_per_project_per_hour": 1000, "wakes_per_agent_per_hour": 1000,
+                      "max_concurrent_runs": 1},
+    )
+    with db_session() as session:
+        assert effective(session, project["id"]).runs_hard_stop_multiple == 1.0
+    _run_until_settled(project)
+    assert _used_today(project) == 7, "the default changed how much work a project does"

@@ -20,7 +20,6 @@ import hashlib
 import logging
 from urllib.parse import urlparse
 
-import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -150,6 +149,10 @@ def _verify_one(session: Session, evidence: Evidence, fetch) -> None:
 
 
 def _default_fetch(url: str) -> tuple[int, bytes]:
-    with httpx.Client(follow_redirects=True, timeout=FETCH_TIMEOUT_S) as client:
-        response = client.get(url, headers={"User-Agent": "yaaf-verifier/0.1"})
-        return response.status_code, response.content[:MAX_BYTES]
+    """Through the SSRF guard. Evidence URLs are agent-supplied and this runs in
+    the janitor, on the platform's own network — the same exposure the metric
+    measurer has, and it predates it."""
+    from yaaf.core import safefetch
+
+    return safefetch.fetch(url, timeout=FETCH_TIMEOUT_S, max_bytes=MAX_BYTES,
+                           user_agent="yaaf-verifier/0.1")

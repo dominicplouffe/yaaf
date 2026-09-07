@@ -110,6 +110,16 @@ class TaskStatus(enum.StrEnum):
 class SuccessTestKind(enum.StrEnum):
     COMMAND = "command"        # platform-executed in the task's sandbox
     OBSERVABLE = "observable"  # names a checkable artifact/URL/metric; spot-audited
+    # A number the platform reads on a schedule, from a source the project does
+    # not author. The other two kinds can only ask "does this artifact exist and
+    # say the right words", which is why every requirement on every desk became
+    # a grep over /workspace and the objective itself — the rank, the revenue,
+    # the deficit — had no requirement, no test and no place in the plan.
+    #
+    # `GOAL_GRAMMAR.md` already stated the rule this implements: "a finish line
+    # the project can write into its own status report is not a finish line."
+    # COMMAND and OBSERVABLE are both, structurally, exactly that.
+    METRIC = "metric"
     # Only ever on R-00, the planning requirement, and only ever written by the
     # platform: the test is a structural check of the plan itself — is there
     # scope, is it staged, is it estimated, does it fit the money — evaluated
@@ -117,6 +127,25 @@ class SuccessTestKind(enum.StrEnum):
     # refused, because a project that can author its own planning gate does not
     # have one.
     PLAN = "plan"
+
+
+class MetricDirection(enum.StrEnum):
+    """Which way is winning. Rank falls, revenue rises."""
+
+    INCREASING = "increasing"
+    DECREASING = "decreasing"
+
+
+class MetricSourceKind(enum.StrEnum):
+    """Where a reading comes from. Every one of these is outside the project.
+
+    There is deliberately no `workspace` or `agent_reported` member. A source an
+    agent can write is a diary entry, and `verifier.py` already refuses evidence
+    from a domain the project controls for the same reason.
+    """
+
+    HTTP_JSON = "http_json"  # GET a JSON document, read one path out of it
+    LEDGER = "ledger"        # sum a LedgerKind over the project's own ledger
 
 
 class ProjectMode(enum.StrEnum):
@@ -158,6 +187,30 @@ class FlagKind(enum.StrEnum):
     # obligation to say what the money bought, which is the whole difference
     # between a budget and a wall.
     BUDGET_OVERRUN = "budget_overrun"
+    # The measured objective is moving AWAY from its target. Every kind above
+    # this line is about process or money: a missed obligation, a slipped date,
+    # a spent allowance, an overrun. None of them can say the project is
+    # losing, so a desk 15 points behind the field average tripped nothing at
+    # all while re-explaining a cycle-boundary artifact six times in five days.
+    #
+    # Arithmetic, like every other member: the latest reading is further from
+    # target than the oldest in the window. Not "worse than last time" — one
+    # bad reading is noise, and a flag that cried wolf on noise would be muted
+    # inside a week, which is worse than not having it.
+    LOSING_GROUND = "losing_ground"
+    # Nothing is claimable, and the reason is the project's own start times
+    # rather than any cap. WORK_STARVED cannot see this: it fires when a WALL
+    # stopped work, so a CEO that gates its own board 90 hours out produces
+    # claimable 0, gated 8, and an idle desk that trips nothing. That is not a
+    # hypothetical — it is 2026-09-04, and the only thing that noticed was a
+    # warning on a screen nobody is obliged to read.
+    SELF_GATED = "self_gated"
+    # The project went past its daily run PLAN and is working in the space
+    # between the plan and the wall. Not a failure and not a stop — an
+    # obligation to say what the extra runs bought, which is the whole
+    # difference between a plan and a cliff. Exactly the shape BUDGET_OVERRUN
+    # already has; runs were simply never given it.
+    RUN_OVERRUN = "run_overrun"
 
 
 class FlagStatus(enum.StrEnum):
@@ -326,6 +379,17 @@ class ApprovalKind(enum.StrEnum):
     LEGAL = "legal"
     OWNER_DECISION = "owner_decision"
     TOOL_REQUEST = "tool_request"
+    # A case for more of a capacity dial — runs, concurrency, queue depth, the
+    # month's money. Its own kind rather than a tool_request because it is the
+    # only one where the CEO is arguing for *itself*, and the chairman should
+    # be able to see at a glance how often that happens.
+    #
+    # Nine verbs existed for saying something and none for asking for more of
+    # anything. A CEO that had correctly identified its run ration as the
+    # binding constraint could describe it in the boardroom and nothing else:
+    # "if we ever want genuinely more runs in a day, that's a separate dial and
+    # I'd come to you with what it buys before asking." It had no way to come.
+    CAPACITY = "capacity"
     # The human-assist protocol (CEO Charter, stage E): a step only a human
     # can do — a captcha, a 2FA code, a KYC form, an account only he can
     # touch. Any agent may file one; the chairman's answer rides the decision
@@ -495,6 +559,12 @@ class Project(Base):
     # platform's own arithmetic. It then paced the work regardless, which is
     # how a project that had shipped everything sat idle for thirteen hours
     # because a number in a paragraph said November.
+    # What the Founder knew when this project was made. A content fingerprint
+    # of the doctrine files, so "founded under older doctrine than we now ship"
+    # is a fact the platform holds rather than something a person reconstructs
+    # from `git log`. Null on every project founded before the stamp existed,
+    # which is exactly the population it exists to find.
+    doctrine_stamp: Mapped[str | None] = mapped_column(String(16))
     deadline: Mapped[datetime | None] = mapped_column(UTCDateTime)
     # Where that date came from, in the shape `cycles.due_source` established:
     # {"kind": "external"|"chairman", "url", "note", "recorded_at"}. A deadline
@@ -1135,6 +1205,12 @@ class Cycle(Base):
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
     ordinal: Mapped[int] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(String(16), default=CycleStatus.OPEN)
+    # What actually landed, kept at close. MISSED with 9 of 10 met is not the
+    # same event as MISSED with 0 of 10, and the status alone cannot tell them
+    # apart — so a CEO whose cycle straddled a deadline spent a run a week
+    # hand-explaining the difference, six times in five days, because the flag
+    # that made it explain carried the ordinal and the goal and no numbers.
+    scorecard: Mapped[dict | None] = mapped_column(JSONVariant)
     opened_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     closed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     narrative: Mapped[str | None] = mapped_column(Text)  # uncapped, on purpose
@@ -1183,6 +1259,40 @@ class RequirementCycleResult(Base):
     met_by_run_id: Mapped[str | None] = mapped_column(String(40))
     check_output: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class Measurement(Base):
+    """One reading of one metric, at one moment.
+
+    A row per reading rather than a column on the requirement, because the
+    *trend* is the information and a latest-value column throws it away. "We
+    are losing" is not a fact about a number; it is a fact about a sequence,
+    and a platform that keeps only the current value can report a position but
+    can never report a direction. `RequirementCycleResult` is the precedent —
+    the same argument, made for standing obligations.
+
+    Written only by `yaaf.server.metrics`, from a source outside the project.
+    There is no agent verb that writes one, for the same reason nothing but the
+    platform marks a requirement MET.
+    """
+
+    __tablename__ = "measurements"
+    __table_args__ = (
+        Index("ix_measurements_requirement_at", "requirement_id", "at"),
+        Index("ix_measurements_project_at", "project_id", "at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    requirement_id: Mapped[str] = mapped_column(String(40))
+    value: Mapped[float] = mapped_column(Float)
+    at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    # What was actually fetched, so a reading that looks wrong can be argued
+    # with rather than trusted. Truncated; this is evidence, not a cache.
+    source_note: Mapped[str | None] = mapped_column(Text)
+    # A reading that could not be taken is still a row: a metric that silently
+    # stops measuring is a scoreboard that silently stops saying you are losing.
+    error: Mapped[str | None] = mapped_column(Text)
 
 
 class OverrunOutcome(enum.StrEnum):

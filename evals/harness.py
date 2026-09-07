@@ -381,8 +381,12 @@ _ID_PREFIXES = sorted(
     reverse=True,
 )
 _ID_RE = re.compile(r"\b(" + "|".join(_ID_PREFIXES) + r")_([0-9a-f]{20,32})\b")
+# Seconds are optional: agent-facing prose rounds. `/agent/asks` answers with
+# "if he says nothing by 2026-09-08T15:33+00:00", and a normalizer that only
+# matched second-precision left that wall clock in the golden — a transcript
+# that diffs against itself one minute later.
 _TS_RE = re.compile(
-    r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?"
+    r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?"
 )
 
 
@@ -454,6 +458,53 @@ def _transcript_refusals(transcript: list[dict]) -> list[dict]:
     return refusals
 
 
+#: Walls that refuse MORE OF A PERMITTED THING, rather than refusing a wrong
+#: thing. Hitting one is a project asking for capacity it has not got; it is
+#: not misconduct. The platform counted both as the same event for a long
+#: time, which is how "an agent probing a ceiling" and "an agent misbehaving"
+#: became one signal — and a scenario could then only ever pin reaching as
+#: failure. Splitting them is what lets `reaches` be pinned separately from
+#: `refusals` without un-pinning either.
+REACHING_MARKERS = (
+    "Queue ceiling:",
+    "Subtask ceiling:",
+    "One item at a time:",
+)
+
+
+def _is_reach(error: str) -> bool:
+    return any(marker in error for marker in REACHING_MARKERS)
+
+
+def _check_refusal_block(
+    failures: list[str], label: str, rows: list[dict], want: dict
+) -> None:
+    """`refusals` and `reaches` are counted identically and differ only in what
+    they mean, so they share one checker."""
+    if not want:
+        return
+    if "total" in want:
+        _check_bound(failures, f"{label}.total", len(rows), want["total"])
+    by_path = Counter(r["path"] for r in rows)
+    for path, bound in (want.get("by_path") or {}).items():
+        _check_bound(failures, f"{label}.by_path[{path}]", by_path.get(path, 0), bound)
+    joined = "\n".join(r["error"] for r in rows)
+    for needle in want.get("substrings") or []:
+        if needle not in joined:
+            failures.append(f"{label}.substrings: no entry mentions {needle!r}")
+
+
+def _ok_posts(transcript: list[dict], path: str) -> list[dict]:
+    """Agent POSTs to one endpoint that the platform actually accepted."""
+    return [
+        e for e in transcript
+        if e.get("event") == "api"
+        and e.get("method") == "POST"
+        and 200 <= e["status"] < 300
+        and _ID_RE.sub("{id}", e["path"]) == path
+    ]
+
+
 def check_expectations(
     scenario: Scenario, transcript: list[dict], project_id: str
 ) -> list[str]:
@@ -462,17 +513,17 @@ def check_expectations(
     expected = scenario.expectations or {}
     failures: list[str] = []
 
-    refusals = _transcript_refusals(transcript)
-    want_refusals = expected.get("refusals", {})
-    if "total" in want_refusals:
-        _check_bound(failures, "refusals.total", len(refusals), want_refusals["total"])
-    by_path = Counter(r["path"] for r in refusals)
-    for path, bound in (want_refusals.get("by_path") or {}).items():
-        _check_bound(failures, f"refusals.by_path[{path}]", by_path.get(path, 0), bound)
-    all_errors = "\n".join(r["error"] for r in refusals)
-    for needle in want_refusals.get("substrings") or []:
-        if needle not in all_errors:
-            failures.append(f"refusals.substrings: no refusal mentions {needle!r}")
+    refused = _transcript_refusals(transcript)
+    _check_refusal_block(
+        failures, "refusals",
+        [r for r in refused if not _is_reach(r["error"])],
+        expected.get("refusals", {}),
+    )
+    _check_refusal_block(
+        failures, "reaches",
+        [r for r in refused if _is_reach(r["error"])],
+        expected.get("reaches", {}),
+    )
 
     with db_session() as session:
         cons = effective(session, project_id)
@@ -487,6 +538,19 @@ def check_expectations(
         ]
         hypothesis_count = (
             session.query(Hypothesis).filter(Hypothesis.project_id == project_id).count()
+        )
+        # An agent-authored message in the boardroom is the CEO speaking to the
+        # chairman. Counted from the record rather than the transcript because
+        # what matters to a floor is that it LANDED, not that it was attempted.
+        chairman_messages = (
+            session.query(Message)
+            .join(Channel, Message.channel_id == Channel.id)
+            .filter(
+                Message.project_id == project_id,
+                Message.sender_agent_id.isnot(None),
+                Channel.kind == ChannelKind.BOARDROOM,
+            )
+            .count()
         )
 
     want_tasks = expected.get("tasks", {})
@@ -529,6 +593,36 @@ def check_expectations(
     want_hypotheses = expected.get("hypotheses", {})
     if "total" in want_hypotheses:
         _check_bound(failures, "hypotheses.total", hypothesis_count, want_hypotheses["total"])
+
+    # ── floors ──────────────────────────────────────────────────────────────
+    #
+    # Everything above this line can only be tripped by a project doing too
+    # much: more refusals than allowed, more tasks than the ceiling, a success
+    # test too vague to check. A scenario whose CEO did NOTHING satisfies all
+    # of it — `refusals.total: 0` is what silence looks like too. These two
+    # blocks are the other direction, and they are the reason house rule 1
+    # says an automatic state change may point either way: a floor is pinned
+    # the same way a ceiling is, and fails the same build.
+
+    want_escalation = expected.get("escalation", {})
+    if "chairman_messages" in want_escalation:
+        _check_bound(failures, "escalation.chairman_messages",
+                     chairman_messages, want_escalation["chairman_messages"])
+    if "asks_opened" in want_escalation:
+        _check_bound(failures, "escalation.asks_opened",
+                     len(_ok_posts(transcript, "/agent/asks")), want_escalation["asks_opened"])
+    if "flags_raised" in want_escalation:
+        _check_bound(failures, "escalation.flags_raised",
+                     len(_ok_posts(transcript, "/agent/flags/raise")),
+                     want_escalation["flags_raised"])
+
+    want_activity = expected.get("activity", {})
+    if "tasks_created" in want_activity:
+        _check_bound(failures, "activity.tasks_created",
+                     len(_ok_posts(transcript, "/agent/tasks")), want_activity["tasks_created"])
+    if "runs_used" in want_activity:
+        runs = sum(1 for e in transcript if e.get("event") == "run_start")
+        _check_bound(failures, "activity.runs_used", runs, want_activity["runs_used"])
 
     return failures
 

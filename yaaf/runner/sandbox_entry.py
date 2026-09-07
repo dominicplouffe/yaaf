@@ -129,9 +129,18 @@ async def t_task_create(args):
     "requirement_propose",
     "CEO only. Propose something that must be TRUE at the end — not a task, an outcome. "
     "acceptance_test has the same shape as a success test: "
-    '{"type":"command","command":...} the platform runs itself, or '
-    '{"type":"observable","target":...} the chairman confirms. Prefer a command: an '
-    "observable puts him in the loop every time it closes. "
+    '{"type":"command","command":...} the platform runs itself, '
+    '{"type":"observable","target":...} the chairman confirms, or '
+    '{"type":"metric","source":{"kind":"http_json","url":...,"path":"$.a.b[-1].c"},'
+    '"direction":"decreasing","target":500000,"measure_every_hours":24} '
+    "the platform MEASURES on a schedule. "
+    "If this requirement is the objective itself — the rank, the revenue, the number "
+    "the project exists to move — it is a metric, and nothing else will do: a command "
+    "greps a file you wrote, so a finish line you can write into your own status "
+    "report is not a finish line. Use a command for work that must be verifiably "
+    "done, and an observable only when neither fits — it puts the chairman in the "
+    "loop every time it closes, and a metric never does, because the platform reads "
+    "the number itself. "
     "This is a PROPOSAL and creates no scope — the chairman accepts it, and until he "
     "does no work may be created for it. You cannot accept your own, and you cannot "
     "mark one met: the platform runs the test and writes the result. "
@@ -465,6 +474,30 @@ async def t_hypothesis_kill(args):
     )
 
 
+@tool(
+    "flag_raise",
+    "Close a flag by having TOLD the chairman, with what you propose doing about it. "
+    "Two steps, in this order: message_post the news in the boardroom, then flag_raise "
+    "with that message_id — the message is the proof he was told, which is why saying "
+    "it in the boardroom does not close the flag on its own and why nothing else can. "
+    "flag_id comes from the flags in your context pack. The proposal is required: a "
+    "flag without one is anxiety forwarded to his desk, and what you add over a "
+    "monitoring alert is the sentence AFTER the bad news — what broke, the arithmetic, "
+    "the ways out, the one you would pick, and what you need from him. Closing it "
+    "dismissively is legitimate and expected: 'the cycle boundary caused it, no action "
+    "needed' is this verb working exactly as intended. What is not available is leaving "
+    "it open while telling him everything is fine.",
+    {"flag_id": str, "message_id": str, "proposal": str},
+)
+async def t_flag_raise(args):
+    return _text(_call("POST", "/agent/flags/raise", dict(args)))
+
+
+@tool("flags_list", "The flags open on this project and whether each has been raised.", {})
+async def t_flags_list(args):
+    return _text(_call("GET", "/agent/flags"))
+
+
 @tool("decision_add", "Append to the decision record: what was decided and why.",
       {"subject": str, "body": str})
 async def t_decision_add(args):
@@ -601,6 +634,27 @@ async def t_account_record(args):
 )
 async def t_accounts_list(args):
     return _text(_call("GET", "/agent/accounts"))
+
+
+@tool(
+    "capacity_request",
+    "CEO only. Put a case to the chairman for MORE of a capacity dial — runs a day, "
+    "runs an hour, concurrency, queue depth, the month's money. This is the verb for "
+    "the constraint that is actually binding: if you have worked out that the run "
+    "ration is what paces you, say so here with the arithmetic rather than describing "
+    "it in the boardroom, where it is a remark nobody can act on. "
+    "rule is the constitution field; `to` is the number you want. All three of buys / "
+    "costs / without are required and are the point — what more room BUYS in outcomes, "
+    "what it COSTS in money and runs, and what happens WITHOUT it. A request without "
+    "them is a wish. "
+    "It does not block and it does not move the dial: keep working at the cap you have, "
+    "plan for it, and treat a yes as upside. Unanswered it expires to no, which is the "
+    "same as today. You may not request a lower bar, a change to who decides, or less "
+    "auditing — those are his judgement about the project, not its throughput.",
+    {"rule": str, "to": float, "buys": str, "costs": str, "without": str},
+)
+async def t_capacity_request(args):
+    return _text(_call("POST", "/agent/capacity", dict(args)))
 
 
 @tool(
@@ -1186,9 +1240,10 @@ ALL_TOOLS = [
     t_memory_tool,
     t_evidence_add, t_review_narrative, t_commitment_propose, t_commitment_reset,
     t_scope_act,
+    t_flag_raise, t_flags_list,
     t_hypothesis_add, t_hypothesis_kill, t_decision_add,
     t_approval_request, t_approvals_list, t_spend_book,
-    t_need_request, t_credentials_list, t_credential_scope,
+    t_capacity_request, t_need_request, t_credentials_list, t_credential_scope,
     t_assist_request, t_account_record, t_accounts_list,
     t_purchase_begin, t_purchase_finish,
     t_side_effect_begin, t_side_effect_finish,

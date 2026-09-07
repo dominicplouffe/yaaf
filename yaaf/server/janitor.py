@@ -81,7 +81,7 @@ from yaaf.core.models import (
     utcnow,
 )
 from yaaf.server import asks as ask_lib
-from yaaf.server import briefing, policy
+from yaaf.server import briefing, metrics, policy
 from yaaf.server.notify import boardroom_line, chairman_notify
 from yaaf.server.rows import approval_row
 from yaaf.server.verifier import verify_pending_evidence
@@ -152,6 +152,14 @@ def _janitor_project(session: Session, project: Project) -> None:
         cons = effective(session, project.id)
     except LookupError:
         return
+    # Beside evidence verification in spirit: both are the platform going and
+    # looking at the outside world on its own schedule, and neither can be
+    # asked for or skipped by an agent. Per-project and here rather than in
+    # either sweep function, so it reaches production (`janitor_all`) as well
+    # as the tests (`janitor_once`) and so one project's slow endpoint is
+    # isolated by janitor_all's own per-project transaction and except.
+    metrics.measure_due(session, project.id)
+    metrics.settle_metrics(session, project.id)
     reap_stale_runs(session, project, cons)
     expire_hypotheses(session, project)
     nag_approvals(session, project, cons)
@@ -620,6 +628,15 @@ def check_finished_requirements(session: Session, project: Project,
         )
     ).scalars().all()
     for requirement in live:
+        # A metric requirement does not settle on work closing. Its verdict is
+        # a reading, and the reading arrives on its own schedule whether or not
+        # anybody has finished anything — which is exactly what lets it be
+        # accepted in week one by a project that does not yet know how it will
+        # get there. Left in this loop it would reach the `else` branch below
+        # and park on the chairman to "confirm the observable", which is the
+        # one thing a measured number never needs. See `settle_metrics`.
+        if metrics.is_metric(requirement.acceptance_test):
+            continue
         tasks = session.execute(
             select(Task).where(Task.requirement_id == requirement.id)
         ).scalars().all()
@@ -797,6 +814,17 @@ def roll_cycles(session: Session, project: Project, cons: ConstitutionDoc) -> No
         cycle.status = CycleStatus.COMPLETED
     else:
         cycle.status = CycleStatus.SKIPPED  # nothing accepted, or nothing made true
+    # The verdict is one of three words and the difference between a cycle that
+    # made nine of ten things true and one that made none is invisible in all
+    # three. Kept here so the flag, the brief and the chairman all read the same
+    # numbers, and so nobody has to reconstruct them by hand a week later.
+    cycle.scorecard = {
+        "accepted": len(accepted),
+        "met": len(met),
+        "carried": len(unsettled),
+        "met_keys": [r.key for r in met],
+        "carried_keys": [r.key for r in unsettled],
+    }
     cycle.closed_at = now
     if not cycle.narrative:
         # No review wrote one this cycle; the platform leaves an honest stub

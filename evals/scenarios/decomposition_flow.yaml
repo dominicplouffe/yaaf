@@ -28,6 +28,11 @@ behaviors:
 ticks: 7
 expectations:
   refusals:
+    total: 0
+  # The one-over assignment is the lead asking for more decomposition than it
+  # has, which is a reach and not misconduct. Classified the same way wherever
+  # it is hit — a classification that applied in one scenario would be a fudge.
+  reaches:
     total: 1
     by_path:
       /agent/tasks: 1

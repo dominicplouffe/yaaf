@@ -17,6 +17,8 @@ function whyYours(kind: string): string {
       return "The CEO judged this a direction change, not an execution detail. On a project whose authority dial hands it the plan, the scope and the date, this kind is refused instead — it decides and tells you.";
     case "tool_request":
       return "An agent is asking for a capability it does not have. Only you can grant one.";
+    case "capacity":
+      return "The project is asking for more room to work — runs, concurrency, queue depth or money. It is the one kind where the CEO argues for itself, so it stays yours at every autonomy setting. It is not blocking: the project keeps working at the cap it has, and if you say nothing the cap simply stays.";
     case "assist":
       return "A step only a human can do — a captcha, a 2FA code, a form. Your note travels back verbatim (a code, a 'done', a 'no') and wakes the agent. The platform hands over security challenges; it never defeats them.";
     default:

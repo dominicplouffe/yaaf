@@ -75,3 +75,10 @@ ignore = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# The one paid test in the repo is opt-in. CONTRIBUTING and CLAUDE.md both
+# document `pytest -n auto` as offline and $0, and it is — this marker is what
+# keeps that true on a developer box that has ANTHROPIC_API_KEY exported, which
+# is the expected state for anyone working on the Founder.
+#   run it with:  pytest -m paid tests/test_planning_quality.py
+markers = ["paid: calls a model and costs money; excluded from the default run"]
+addopts = ["-m", "not paid"]

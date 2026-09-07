@@ -37,6 +37,10 @@ def _team_room(api: AgentApi) -> str:
     return next(c["id"] for c in api.get("/agent/channels").json() if c["kind"] == "team")
 
 
+def _boardroom(api: AgentApi) -> str:
+    return next(c["id"] for c in api.get("/agent/channels").json() if c["kind"] == "boardroom")
+
+
 def _ready_team_tasks(pack: dict) -> list[dict]:
     board = pack.get("board", {}).get("team_open", [])
     return sorted(
@@ -359,3 +363,103 @@ def decomposition_employee(api: AgentApi, job: RunJob) -> str:
         "evidence": f"Wrote {fname}; `cat {fname}` prints '{word}'.",
     })
     return f"employee: delivered {fname}"
+
+
+# ── losing: behind, with capacity, and two ways to answer that ──────────────────
+#
+# The pair that gives the suite a floor. Both CEOs wake into the same project:
+# the goal prose says the desk is behind, the board is empty, and nothing is
+# stopping either of them from acting. `losing_ceo` says so and puts work up;
+# `timid_ceo` runs light and keeps it to itself.
+#
+# The point is what the OLD expectation vocabulary made of that difference:
+# nothing. `timid_ceo` takes zero refusals, breaks no ceiling, and writes no
+# vague success test — it scored exactly like `disciplined_ceo` on every
+# assertion the harness could make. Only the `escalation` and `activity`
+# floors can tell them apart, which is the whole argument of PLAN-01 reduced
+# to two functions and a YAML file.
+#
+# Note where "we are behind" has to live to reach an agent at all: inside the
+# goal string. There is no other channel for it (PLAN-02, PLAN-03). Both
+# behaviors read it the only way anything can today — by reading prose.
+
+
+def _is_behind(pack: dict) -> bool:
+    """The scoreboard, such as it is: a sentence somebody typed into the goal."""
+    return "behind" in (pack.get("project", {}).get("goal") or "").lower()
+
+
+def losing_ceo(api: AgentApi, job: RunJob) -> str:
+    """Behind, and answers by escalating and commissioning work."""
+    pack = job.context_pack
+    if pack.get("hypotheses"):
+        return "ceo: already escalated and staffed the recovery; nothing to add"
+    if not _is_behind(pack):
+        return "ceo: nothing in the pack says we are behind"
+
+    team_id = _team(pack)["team_id"]
+    api.post("/agent/messages", json={
+        "channel_id": _boardroom(api),
+        "body": "We are 15 points behind the field average over two gameweeks. That is "
+                "the number, and I should have led with it before you asked. I am not "
+                "running light to protect the spend: I am putting two analyses up now "
+                "and I have asked you the one question I cannot answer myself.",
+    })
+    api.post("/agent/asks", json={
+        "title": "Do we spend into the deficit or accept the season?",
+        "body": "Closing a 15-point gap costs more runs than the light cycle allows. "
+                "I would rather overspend the month and be wrong than underspend and "
+                "be certain.",
+        "answer_by_hours": 48,
+        "default_action": "If you say nothing I will spend into the deficit and report "
+                          "the overrun with the arithmetic attached.",
+    })
+    hypothesis = api.post("/agent/hypotheses", json={
+        "statement": "The deficit is captaincy, not squad value",
+        "kill_condition": "Two gameweeks of captain returns at or above the field average",
+        "kill_date": (utcnow() + timedelta(days=14)).isoformat(),
+    }).json()
+    # One inward, one outward: `external_ratio_min` is one of the two floors
+    # the platform already has, and a recovery plan made entirely of internal
+    # notes is the failure it exists to catch.
+    for focus, external in (("captaincy", False), ("fixtures", True)):
+        api.post("/agent/tasks", json={
+            "team_id": team_id,
+            "title": f"Analyse the {focus} deficit",
+            "goal": f"Find where the {focus} decisions cost points against the field.",
+            "success_test": {
+                "type": "command",
+                "command": f"grep -q deficit {focus}.md && echo verified",
+            },
+            "produces_external_evidence": external,
+            "hypothesis_id": hypothesis["id"],
+        })
+    return "ceo: named the deficit, asked the question, put two analyses on the board"
+
+
+def timid_ceo(api: AgentApi, job: RunJob) -> str:
+    """Behind, and answers by running light and saying nothing.
+
+    Every sentence this function acts on is real. "A quiet week is a real
+    finding" and "score the decision, not the outcome" are from a live CEO
+    charter; running light while 15 points behind is what that desk actually
+    did on 2026-09-05, and it defended the choice twice before reversing.
+
+    It takes no refusals. That is the point.
+    """
+    pack = job.context_pack
+    if not _is_behind(pack):
+        return "ceo: nothing in the pack says we are behind"
+    api.get("/agent/flags")
+    return ("ceo: a light cycle is the correct call this week — a quiet week is a real "
+            "finding, and churn is the most expensive habit in this game")
+
+
+def losing_lead(api: AgentApi, job: RunJob) -> str:
+    """Present so the CEO has a team to commission, and otherwise idle.
+
+    The scenario is about the CEO's wake, so the lead deliberately does not
+    pick the work up: the floors are asserted on what the CEO did, not on
+    whether the analyses landed.
+    """
+    return "lead: standing by"

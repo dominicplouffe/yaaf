@@ -43,8 +43,26 @@ from yaaf.server import policy
 SHORT_WINDOW_DAYS = 21
 LONG_WINDOW_DAYS = 84
 
-DEAD_STATUSES = (RunStatus.FAILED, RunStatus.REAPED, RunStatus.KILLED,
-                 RunStatus.TERMINATED_REFUSALS)
+#: Runs that went wrong. TERMINATED_REFUSALS is deliberately NOT here.
+#:
+#: A run that hit the refusal cap did not fail; it asked for things the rules
+#: said no to. Counted as failure it made probing a wall arithmetically
+#: identical to breaking, and the chain ran all the way to a flag: refusal ->
+#: dead run -> measured failure_rate up -> retry reserve up -> forecast slack
+#: down -> DEADLINE_AT_RISK. A CEO that tested where the edges were made its
+#: own project look like it was falling apart, and the constitution's advice
+#: was to stop testing.
+#:
+#: The wake was still spent, so `capacity` still counts it against the run
+#: budget — that is arithmetic and stays true. What changes is that it stops
+#: being reported as the project failing, and gets its own number instead.
+DEAD_STATUSES = (RunStatus.FAILED, RunStatus.REAPED, RunStatus.KILLED)
+
+#: Runs that ended because the agent hit the per-run refusal cap. Its own
+#: number, because "how often is this project told no" is a real and useful
+#: signal — it is just not the same signal as "how often does this project
+#: break", and one of the two was invisible while they shared a counter.
+PROBE_STATUSES = (RunStatus.TERMINATED_REFUSALS,)
 
 
 def _met_count(session: Session, project_id: str, since) -> int:
@@ -65,13 +83,21 @@ def _met_count(session: Session, project_id: str, since) -> int:
     answer — "met in 23 of the last 24 cycles" — and it lives in
     RequirementCycleResult, where it cannot be mistaken for progress.
     """
+    from yaaf.server import metrics as metrics_mod
+
     plan = policy.plan_requirement(session, project_id)
-    standing = [
+    excluded = [
         r.id for r in session.execute(
-            select(Requirement).where(
-                Requirement.project_id == project_id,
-                Requirement.recurrence == Recurrence.STANDING)
+            select(Requirement).where(Requirement.project_id == project_id)
         ).scalars()
+        # Standing, for the reason above. And metric requirements, because
+        # `project_velocity` subtracts them from `remaining` — counting a
+        # settled one here would raise the pace on a denominator that
+        # deliberately excludes it, and `commitment_projection` divides one by
+        # the other to promise the chairman a date. A season-long rank target
+        # landing would have made the remaining MEMOS look faster.
+        if r.recurrence == Recurrence.STANDING
+        or metrics_mod.is_metric(r.acceptance_test)
     ]
     stmt = (
         select(func.count(RequirementEvent.id))
@@ -83,8 +109,8 @@ def _met_count(session: Session, project_id: str, since) -> int:
     )
     if plan is not None:
         stmt = stmt.where(RequirementEvent.requirement_id != plan.id)
-    if standing:
-        stmt = stmt.where(RequirementEvent.requirement_id.not_in(standing))
+    if excluded:
+        stmt = stmt.where(RequirementEvent.requirement_id.not_in(excluded))
     return session.execute(stmt).scalar_one()
 
 
@@ -143,6 +169,7 @@ def _runs_in_window(session: Session, project_id: str, since) -> dict:
     was refunded; `work` is the rest.
     """
     total, dead, attributed, usd, attributed_usd = 0, 0, 0, 0.0, 0.0
+    probed = 0
     inbox, noop, work = 0, 0, 0
     rows = session.execute(
         select(Run.status, Run.requirement_id, Run.cost_usd, Run.kind,
@@ -156,6 +183,8 @@ def _runs_in_window(session: Session, project_id: str, since) -> dict:
         total += 1
         if status in DEAD_STATUSES:
             dead += 1
+        elif status in PROBE_STATUSES:
+            probed += 1
         if requirement_id:
             attributed += 1
             attributed_usd += cost or 0.0
@@ -174,6 +203,12 @@ def _runs_in_window(session: Session, project_id: str, since) -> dict:
         "total": total,
         "dead": dead,
         "failure_share": round(dead / total, 3) if total else 0.0,
+        # Runs that ended by being told no, reported apart from runs that broke.
+        # A high number here is worth looking at and is not the same news: it
+        # may be an agent misreading the rules, or a rule that is in the way of
+        # work somebody wants done.
+        "probed": probed,
+        "refused_share": round(probed / total, 3) if total else 0.0,
         "attributed": attributed,
         "attributed_share": round(attributed / total, 3) if total else 0.0,
         "usd": round(usd, 2),
@@ -217,13 +252,33 @@ def project_velocity(session: Session, project_id: str) -> dict:
     met_long = _met_count(session, project_id, long_since)
     runs_short = _runs_in_window(session, project_id, short_since)
 
-    remaining = len([
+    from yaaf.server import metrics as metrics_mod
+
+    open_scope = [
         r for r in policy.scope_requirements(session, project_id)
         if r.status in policy.OPEN_REQUIREMENT_STATUSES
-    ])
+    ]
+    # A metric requirement is not a unit of work and must not be divided by a
+    # pace measured in units of work. The FPL desk is the worked example: eleven
+    # grep-over-workspace requirements plus a season-long rank target, burned
+    # down at the rate memos were landing, produced `weeks_left_at_pace: 1.1`
+    # on a 38-gameweek season. The memos really were nearly done. The season
+    # was not, and the arithmetic had no way to know the difference.
+    #
+    # So the burn-down answers only the question it can answer — when does the
+    # *work* run out — and the metric answers its own, beside it. Same argument
+    # as the STANDING exclusion in `_met_count`, one object further along.
+    metric_reqs = [r for r in open_scope if metrics_mod.is_metric(r.acceptance_test)]
+    remaining = len(open_scope) - len(metric_reqs)
     per_week_short = round(met_short / (SHORT_WINDOW_DAYS / 7), 2)
+    scoreboard = [metrics_mod.scoreboard(session, r) for r in metric_reqs]
 
     return {
+        # The objective, measured. Empty for a project whose finish line is
+        # still only prose, which is most of them.
+        "metrics": scoreboard,
+        "metrics_open": len(metric_reqs),
+        "losing": [s["requirement_key"] for s in scoreboard if s["verdict"] == "losing"],
         "met_3w": met_short,
         "per_week_3w": per_week_short,
         "met_12w": met_long,
@@ -234,6 +289,12 @@ def project_velocity(session: Session, project_id: str) -> dict:
         # and a made-up number would be worse.
         "weeks_left_at_pace": (
             round(remaining / per_week_short, 1) if per_week_short > 0 else None
+        ),
+        # Said out loud, because "1.1 weeks left" on a project with an open
+        # season-long target is true about the work and a lie about the goal.
+        "weeks_left_covers": (
+            "the work only — this project's objective is measured separately, "
+            "see `metrics`" if metric_reqs else "all open scope"
         ),
         "runs_3w": runs_short,
         "worst_failure": _worst_failure(session, project_id),

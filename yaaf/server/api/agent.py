@@ -786,6 +786,8 @@ def scope_act(
                       status_code=403)
     cons = effective(session, ctx.project.id)
     policy.check_self_scope_action(cons, body.action)
+    if body.action.get("kind") == "accept":
+        policy.check_self_accept_after_delivery(session, ctx.project)
     result, detail = _execute_scope_action(
         session, ctx, body.action,
         f"{body.reason} [self-exercised under the constitution's authority dial]",
@@ -1192,7 +1194,11 @@ def propose_requirement(
     # commitment check misses because a promise that was KEPT is neither at risk
     # nor breached.
     policy.check_scope_within_commitment(session, ctx.project, cons)
-    policy.check_scope_after_delivery(session, ctx.project)
+    # A proposal creates no scope, so a project that delivered early and can see
+    # the next move may put it on the table — what it may not do is accept its
+    # own (check_self_accept_after_delivery, on the scope verb). It may not bury
+    # him in proposals either, which is the other half of the same incident.
+    policy.check_proposals_after_delivery(session, ctx.project, cons)
     policy.check_plan_affordable(session, ctx.project, cons, body.est_runs or 0)
     if (body.recurrence == Recurrence.STANDING
             and ctx.project.mode != ProjectMode.OPERATE):
@@ -2572,6 +2578,142 @@ class NeedIn(BaseModel):
     est_usd_per_month: float | None = Field(default=None, ge=0)
     suggested_secret_name: str | None = Field(default=None, max_length=120)
     roles: list[str] = Field(default_factory=list)
+
+
+#: Dials a project may put a case for more of. Deliberately only the ones that
+#: govern HOW MUCH WORK IT MAY DO — throughput, queue depth, the month's money.
+#:
+#: The mirror of `directive_file`, which is restricted to rules that *limit what
+#: the CEO asks of the chairman*, on the stated grounds that "an agent filing
+#: its own constitution is how a project votes itself a bigger budget". That
+#: reasoning is right and it left a hole: it made asking impossible as well as
+#: taking. This list is the asking half, and nothing on it changes by filing —
+#: every one still needs the chairman's signature.
+#:
+#: Not here, on purpose: everything in Autonomy (who decides what is not
+#: capacity), the quality bar, verdict policy and the audit rates. A project
+#: arguing for a lower bar on itself is not a capacity request.
+REQUESTABLE_CAPACITY = {
+    "runs_per_project_per_day",
+    "runs_per_project_per_hour",
+    "inbox_runs_per_project_per_day",
+    "max_concurrent_runs",
+    "reserved_governance_runs",
+    "queue_ceiling",
+    "subtask_ceiling",
+    "monthly_usd_cap",
+    "monthly_token_cap",
+}
+
+#: The one requestable dial that is not this project's to spend. Asking for it
+#: has to say so out loud, because the chairman granting it is taking headroom
+#: from every other project on the box.
+SHARED_CAPACITY = {"max_concurrent_runs"}
+
+
+class CapacityIn(BaseModel):
+    rule: str
+    to: float
+    # The arithmetic, and it is required. A capacity request without it is a
+    # wish, and the difference between this verb and complaining in the
+    # boardroom is that this one carries the numbers to decide on.
+    buys: str = Field(min_length=20, max_length=2000)
+    costs: str = Field(min_length=10, max_length=2000)
+    without: str = Field(min_length=20, max_length=2000)
+
+
+@router.post("/capacity")
+def capacity_request(
+    body: CapacityIn, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
+) -> dict:
+    """Put a case to the chairman for more of a capacity dial.
+
+    Every "raise it" instruction in the platform used to point at a verb that
+    could only describe the problem. The CEO on the desk that prompted this had
+    the diagnosis exactly right — "the platform also rations runs... that's what
+    actually paces us now" — and then: "if we ever want genuinely more runs in a
+    day, that's a separate dial and I'd come to you with what it buys before
+    asking." There was no route by which it could come.
+
+    It does not change the dial. It rides the same desk, clock and default-deny
+    as every other approval, and it does not block: the project keeps working at
+    the cap it has while he decides, which is the whole reason this is not an
+    `owner_decision`.
+    """
+
+    if ctx.agent.kind != AgentKind.CEO:
+        raise Refusal(
+            "Only the CEO argues for the project's capacity. If you are short of "
+            "room, say so to the CEO — a suggestion survives your run.",
+            status_code=403,
+        )
+    if body.rule not in REQUESTABLE_CAPACITY:
+        raise Refusal(
+            f"{body.rule!r} is not a capacity dial. You may put a case for "
+            f"{', '.join(sorted(REQUESTABLE_CAPACITY))} — the rules that govern how "
+            "much work this project may do. Rules about who decides, what the bar is, "
+            "or how often you are audited are the chairman's judgement about the "
+            "project, not its throughput, and arguing for a lower bar on yourself is "
+            "not a capacity request.",
+            status_code=422,
+        )
+    cons = effective(session, ctx.project.id)
+    current = getattr(cons, body.rule)
+    if body.to <= current:
+        raise Refusal(
+            f"{body.rule} is already {current} and you asked for {body.to}. This verb is "
+            "for arguing you need MORE room. To hold yourself to less, file it as a "
+            "directive — that one you may set yourself.",
+            status_code=422,
+        )
+
+    shared = body.rule in SHARED_CAPACITY
+    detail = [
+        f"Raise {body.rule} from {current} to {body.to:g}.",
+        f"What it buys: {body.buys}",
+        f"What it costs: {body.costs}",
+        f"What happens without it: {body.without}",
+    ]
+    if shared:
+        detail.append(
+            "NOTE: this dial protects the provider rate limit every project on this "
+            "box shares. Granting it takes headroom from the others, which is not "
+            "true of the rest of this list."
+        )
+    approval = _file_approval(
+        session, ctx, ApprovalKind.CAPACITY,
+        f"Capacity: {body.rule} {current} -> {body.to:g}", "\n".join(detail))
+    _boardroom_system_line(
+        session, ctx.project.id,
+        f"📈 CAPACITY: raise {body.rule} from {current} to {body.to:g}"
+        f"{' (shared across the box)' if shared else ''} — {body.buys[:400]}\n"
+        f"Decide it on the Decisions screen. Unanswered, it expires to no in "
+        f"{cons.approval_timeout_days} days and the cap stays where it is.")
+    session.add(AuditLog(
+        id=ids.new_id(ids.AUDIT), project_id=ctx.project.id,
+        actor=f"agent:{ctx.agent.id}", action="capacity.request",
+        entity="approval", entity_id=approval.id,
+        detail={"rule": body.rule, "from": current, "to": body.to, "shared": shared},
+    ))
+    session.flush()
+    chairman_notify(
+        session, ctx.project, f"The project is asking for more {body.rule}",
+        f"{body.buys[:300]}",
+        kind="approval_requested",
+        data={"approval": approval_row(approval)},
+    )
+    return {
+        "approval_id": approval.id,
+        "rule": body.rule,
+        "from": current,
+        "to": body.to,
+        "note": (
+            "Filed, with the arithmetic. You are not blocked and the cap has not "
+            "moved: keep working at the number you have. If he says nothing it "
+            "expires to no, which is the same as today — so plan for today's cap and "
+            "treat a yes as upside."
+        ),
+    }
 
 
 @router.post("/needs")

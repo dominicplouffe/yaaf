@@ -93,10 +93,17 @@ def test_the_ceo_can_see_every_limit_that_gates_a_run(client):
     _, ceo = live_token(project["id"], project["ceo_agent_id"], kind="chat_session")
     situation = client.get("/agent/context", headers=bearer(ceo)).json()["situation"]
 
-    # Ordinary work stops at the daily cap MINUS the reserve, so the cap alone
-    # overstates what may be spent on work.
+    # Ordinary work stops at the WALL minus the reserve. Since 2026-09-06 the
+    # daily cap is the plan and the wall sits above it at cap x
+    # `runs_hard_stop_multiple`, so a CEO that reasons from the cap alone is now
+    # wrong in the other direction — it understates the room it actually has,
+    # which is the same class of error this test was written for. Both numbers
+    # have to be visible, and the newest limit is part of "every limit".
     reserve = situation["governance_reserve"]
-    assert reserve["ordinary_cap"] <= situation["runs_today"]["cap"]
+    assert reserve["wall"] >= situation["runs_today"]["cap"], (
+        "the CEO cannot see the wall, only the plan"
+    )
+    assert reserve["ordinary_cap"] <= reserve["wall"]
     assert reserve["reserved"] >= 0
     assert "active" in reserve
 

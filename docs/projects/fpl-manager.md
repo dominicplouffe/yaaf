@@ -586,13 +586,27 @@ are both literally falsifiable bets with kill dates:
 The good ones tie to the one genuinely external, platform-verifiable oracle:
 
 ```json
-{"type": "observable", "target": "https://fantasy.premierleague.com/api/entry/<TEAM_ID>/ shows overall_rank below 100000"}
+{"type": "metric",     "source": {"kind": "http_json",
+                                  "url": "https://fantasy.premierleague.com/api/entry/<TEAM_ID>/history/",
+                                  "path": "$.current[-1].overall_rank"},
+                       "direction": "decreasing", "target": 100000,
+                       "measure_every_hours": 24}
 {"type": "observable", "target": "The GW memo names a single transfer, captain, XI and bench order, each with expected points and effective ownership"}
 {"type": "command",    "command": "python optimizer/solve.py --horizon 5 && python -m pytest optimizer/tests -q"}
 ```
 
 That first one is why this project is unusually well-suited to yaaf: unlike most work, it has
 a public scoreboard that updates every week and cannot be argued with.
+
+**And it must be a `metric`, not an observable.** This documentation used to write it as an
+observable — a sentence for a human to eyeball, sampled at 20% with a 48-hour expiry — which
+made the one number the project exists to move indistinguishable from a claim about a memo.
+The consequence was measured on the live desk: eleven requirements, every one a `grep` over
+`/workspace`, no requirement for the rank at all, and a platform reporting `weeks_left_at_pace:
+1.1` on a 38-gameweek season because the only thing it could count was memos and the memos were
+nearly written. A metric requirement is read by the platform on its own schedule, keeps every
+reading, and is excluded from the burn-down — so the season stops being confused with the
+paperwork about the season.
 
 ---
 

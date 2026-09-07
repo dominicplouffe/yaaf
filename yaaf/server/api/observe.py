@@ -36,7 +36,9 @@ from yaaf.core.models import (
     MemoryScope,
     Message,
     Project,
+    ProjectMode,
     ProjectStatus,
+    Recurrence,
     Requirement,
     RequirementEvent,
     RequirementStatus,
@@ -55,7 +57,7 @@ from yaaf.core.models import (
     VerificationStatus,
     utcnow,
 )
-from yaaf.server import agenda, briefing, policy, typing_state
+from yaaf.server import agenda, briefing, metrics, policy, typing_state
 from yaaf.server import asks as ask_lib
 from yaaf.server.deps import admin_auth, db
 from yaaf.server.dispatcher import activity_state, chat_session_live
@@ -651,10 +653,93 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
             .order_by(RoleVersion.version.desc()).limit(1)
         ).scalar_one()
         if latest.version > pinned.version:
+            # Say what moved, not just that something did. A drift warning with
+            # no content is a number nobody acts on: it reports that a newer
+            # version exists and gives the reader nothing to decide with, so it
+            # sits on the screen for months. each version's `description` is what
+            # its author already wrote when publishing it.
+            behind = session.execute(
+                select(RoleVersion).where(
+                    RoleVersion.role_id == role.id,
+                    RoleVersion.version > pinned.version,
+                ).order_by(RoleVersion.version)
+            ).scalars().all()
+            changes = "; ".join(
+                f"v{v.version}: {(v.description or 'no description').strip()[:160]}"
+                for v in behind[:4]
+            )
             add(f"role-drift:{team.name}", "warn",
                 f"team '{team.name}' runs role '{role.slug}' v{pinned.version}; "
-                f"v{latest.version} exists — adopt it when ready",
+                f"v{latest.version} exists. What changed since — {changes}. "
+                "Adopting it repins this team to the current charter.",
                 "overview", {"kind": "repin", "team_id": team.id})
+
+    # ── doctrine drift ──────────────────────────────────────────────────────
+    #
+    # The Founder runs once, so a project keeps the doctrine it was made under
+    # for its whole life. Six fixes landed in five days and the desk being
+    # watched had been founded before all of them; it would have run nine more
+    # months on 26 August's rules with nobody able to see that from anywhere but
+    # `git log`.
+    #
+    # All three checks are arithmetic over rows, at zero tokens. Re-grading the
+    # goal prose against the current grammar needs a model and real money, and
+    # is deliberately NOT here — these are the structural half, and the
+    # structural half is what the FPL desk was actually missing.
+    if project.status == ProjectStatus.RUNNING:
+        from yaaf.founder import doctrine
+
+        if not doctrine.is_current(project.doctrine_stamp):
+            was = project.doctrine_stamp or "before the platform recorded it"
+            add("doctrine-drift", "warn",
+                f"founded under doctrine {was}; the current doctrine is "
+                f"{doctrine.fingerprint()}. What the Founder has learned since is not "
+                "reaching this project — the Founder runs once, at creation. Nothing "
+                "here is broken; this is a decision for you about whether to carry the "
+                "changes across.",
+                "overview")
+
+        # A roster with nobody whose job is to disagree. DESIGN_DOCTRINE says
+        # plan-adversary survives the cut on purpose and belongs on every
+        # Deliver and Operate project, and gives the reason: the CEO wrote the
+        # plan and on an autonomous project also accepted it, so it is the only
+        # reader of that plan with no distance from it.
+        if project.mode in (ProjectMode.DELIVER, ProjectMode.OPERATE):
+            categories = {
+                role.category
+                for role in session.execute(
+                    select(Role)
+                    .join(RoleVersion, RoleVersion.role_id == Role.id)
+                    .join(Team, Team.role_version_id == RoleVersion.id)
+                    .where(Team.project_id == project.id)
+                ).scalars()
+            }
+            if "challenge" not in categories:
+                add("no-adversary", "warn",
+                    "no seat on this project exists to disagree with the plan. The CEO "
+                    "wrote it and, on an autonomous project, accepted it too — so it is "
+                    "the only reader of that plan with no distance from it. Hiring one "
+                    "`challenge` role is the whole fix.",
+                    "settings")
+
+        # An Operate project with no standing scope is re-creating the same
+        # obligation by hand every cycle. `Recurrence.STANDING` exists for
+        # exactly this and names it: expressed as TERMINAL, a project that had
+        # shipped 1 of 38 memos looked finished.
+        if project.mode == ProjectMode.OPERATE:
+            standing = session.execute(
+                select(func.count(Requirement.id)).where(
+                    Requirement.project_id == project.id,
+                    Requirement.recurrence == Recurrence.STANDING,
+                )
+            ).scalar_one()
+            if not standing:
+                add("no-standing-scope", "warn",
+                    "this project runs on a rhythm and owns no standing requirements, so "
+                    "whatever it owes again next cycle is being re-proposed by hand every "
+                    "time — and a burn-down of work that recurs reads as nearly finished. "
+                    "`recurrence: standing` is what that shape is for.",
+                    "plan")
 
     # Slack: config present implies its secrets exist.
     slack = integrations.get("slack") or {}
@@ -892,6 +977,13 @@ def plan_view(project_id: str, session: Session = Depends(db)) -> dict:
                 "stage": r.stage,
                 "test_kind": (r.acceptance_test or {}).get("type"),
                 "acceptance_test": r.acceptance_test,
+                # The readings, for a requirement the platform measures. None
+                # for every other kind, which is every requirement that existed
+                # before metrics did.
+                "measurement": (
+                    metrics.scoreboard(session, r)
+                    if metrics.is_metric(r.acceptance_test) else None
+                ),
                 "est_runs": r.est_runs,
                 "spent": spend.get(r.id, {"runs": 0, "usd": 0}),
                 "failure_load": r.failure_load,
