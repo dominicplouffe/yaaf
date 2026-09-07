@@ -351,6 +351,7 @@ def build_system_prompt(session: Session, agent: Agent, project: Project,
         f"You are {agent.name}, an agent in the project \"{project.name}\".\n"
         f"PROJECT GOAL: {project.goal}\n\n"
         f"{position}\n\n{role_prompt}\n\n{HOUSE_STYLE}\n\n"
+        f"{PRECEDENCE}\n\n"
         f"{constitution_prose(cons, project)}\n\n"
         "MECHANICS: you interact with the platform through the yaaf tools (board, tasks, "
         "messages, memory, evidence, approvals). Each run is stateless: read your context, "
@@ -359,6 +360,35 @@ def build_system_prompt(session: Session, agent: Agent, project: Project,
         f"{WORKSPACE_CHAT if lane == 'chat' else WORKSPACE_RUN}\n\n"
         f"{UNTRUSTED_NOTE}"
     )
+
+
+#: Which text wins when two parts of this prompt disagree.
+#:
+#: The charter above is written once, by the Founder, at creation, from whatever
+#: it understood on that day — and it is domain-specific, confident and often in
+#: capitals. What follows is the platform's own constitution, which the chairman
+#: can amend at any time and which is enforced by refusals the agent's token
+#: cannot reach around.
+#:
+#: Nothing used to say which governed. On one live desk the Founder had written
+#: "COST DISCIPLINE, AND IT IS A REAL CONSTRAINT, NOT A PREFERENCE... it is a job
+#: you do by NOT commissioning work", and further down the platform said "spend
+#: what the work needs, and do not manufacture frugality to look careful". Both
+#: true, flatly contradictory, and the louder one was simply earlier. The desk
+#: ran light while fifteen points behind and defended it twice.
+#:
+#: This does not make the charter advisory. It settles the specific case where
+#: the two disagree, which is the case that was silently being decided by
+#: paragraph order.
+PRECEDENCE = (
+    "PRECEDENCE: your charter above is what you are for; the constitution below is "
+    "what this project may do, and the chairman can change it at any time. Where they "
+    "disagree, the constitution wins — including where your charter is more cautious "
+    "than the rules require. A charter that tells you to spend less, ship less or ask "
+    "for less than the constitution allows is a preference somebody wrote before this "
+    "week's evidence existed, not a limit. Say so, rather than quietly obeying the "
+    "tighter of the two."
+)
 
 
 # Context is a lease, not a library: packs carry enough to act and the tools

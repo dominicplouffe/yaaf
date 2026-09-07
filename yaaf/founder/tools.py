@@ -288,7 +288,7 @@ def build_server(session: Session, state: dict, env: dict[str, str],
         if not isinstance(project, dict):
             return ok({"error": "project must be an object"})
         bundle = as_bundle(project)
-        problems = validate(bundle)
+        problems = validate(bundle) + doctrine_problems(bundle.get("project") or {})
         if problems:
             # Refused rather than stored: a draft the create endpoint would
             # reject is worse than no draft, because the review screen would
@@ -371,6 +371,104 @@ def validate(bundle: dict) -> list[str]:
         return [f"{'.'.join(str(p) for p in err['loc'])}: {err['msg']}"
                 for err in exc.errors()][:10]
     return date_problems(project) + constitution_problems(project.get("constitution") or {})
+
+
+def doctrine_problems(project: dict) -> list[str]:
+    """What the DOCTRINE requires of a draft, as distinct from what the create
+    endpoint will accept.
+
+    These two must not be the same list. `validate` mirrors
+    `POST /admin/projects` and cannot be allowed to drift from it, because the
+    chairman founds projects through that endpoint himself — through the form
+    and through MCP — and he is entitled to build a two-person Deliver project
+    with no adversary if that is what he wants. He is the one these rules exist
+    to serve.
+
+    The Founder is not. It runs once, unsupervised, from a paragraph of brief,
+    and what it writes is read by every agent for the life of the project. So
+    it is held to the doctrine and he is not, which is the whole distinction
+    between a contract and a standard.
+    """
+    return roster_problems(project) + stakes_problems(project)
+
+
+def stakes_problems(project: dict) -> list[str]:
+    """`stakes` has to be chosen, not defaulted into.
+
+    It is the only dial in the platform whose text says "do not thin the work,
+    cut corners or slow down to stay under the plan... if you find yourself
+    choosing the cheaper option to protect a number, you have the trade
+    backwards", and it is also the sole trigger for the better model on the
+    seats that ARE the deliverable. `DESIGN_DOCTRINE.md` already tells the
+    Founder to name the level in one line with what it buys and what it costs.
+
+    On the desk that prompted this, the founding constitution did not set it at
+    all. Not "set it low" — never mentioned it, so it defaulted, so the one
+    sentence in the platform that argues against thinning the work was never
+    switched on and nobody chose that. An unset dial is a decision nobody made
+    and nobody can find later.
+
+    Any of the three values passes. What is refused is silence.
+    """
+    if (project.get("mode") or "").lower() not in ("deliver", "operate"):
+        return []
+    if (project.get("constitution") or {}).get("stakes"):
+        return []
+    return [
+        "constitution.stakes: choose it explicitly (low, normal or high) rather than "
+        "letting it default. It is the only rule that tells the project not to thin "
+        "the work to protect a number, and it decides which seats get the better "
+        "model. `normal` is often right — say so on purpose, in one line, with what "
+        "it buys and what it costs."
+    ]
+
+
+def roster_problems(project: dict) -> list[str]:
+    """A Deliver or Operate roster with nobody whose job is to disagree.
+
+    `DESIGN_DOCTRINE.md` already says `plan-adversary` survives the cut on
+    purpose and belongs on every Deliver and Operate project, and gives the
+    reason: the CEO wrote the plan and, on an autonomous project, accepted it
+    too, so it is the only reader of that plan with no distance from it. It was
+    a paragraph, and paragraphs lose to "argue for the smallest team" three
+    lines above them — the desk that prompted this shipped seven analysts and no
+    skeptic.
+
+    A refusal rather than advice, on the precedent the platform already set:
+    `deliverable_review: independent_read` refuses a roster that asks for the
+    read and hires nobody who can do it. This is the same shape one level up.
+
+    Any `challenge` role satisfies it. The requirement is that somebody's job is
+    to attack the work, not that a particular slug appears.
+    """
+    if (project.get("mode") or "").lower() not in ("deliver", "operate"):
+        return []
+    teams = project.get("teams") or []
+    if not teams:
+        return []
+
+    from sqlalchemy import select
+
+    from yaaf.core.db import db_session
+    from yaaf.core.models import Role
+
+    slugs = {t.get("role_slug") for t in teams if t.get("role_slug")}
+    with db_session() as session:
+        categories = {
+            role.category
+            for role in session.execute(
+                select(Role).where(Role.slug.in_(slugs))
+            ).scalars()
+        }
+    if "challenge" in categories:
+        return []
+    return [
+        "teams: a Deliver or Operate project needs at least one `challenge` seat — "
+        "somebody whose job is to attack the plan rather than produce output. The CEO "
+        "wrote the plan and on an autonomous project accepted it too, so it is the only "
+        "reader with no distance from it. `plan-adversary` is the default answer; any "
+        "challenge role satisfies this."
+    ]
 
 
 def date_problems(project: dict) -> list[str]:
