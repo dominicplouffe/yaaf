@@ -28,7 +28,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
-from yaaf.core import platform
+from yaaf.core import plan_usage, platform
 from yaaf.core.models import Secret
 from yaaf.server.deps import admin_auth, db
 from yaaf.server.slack import provision as slack_provision
@@ -271,6 +271,7 @@ def _save_llm(session: Session, row: Secret, name: str, value: str | None) -> di
         if problem:
             raise HTTPException(status_code=422, detail=problem)
         row.ciphertext = encrypt(value)
+        plan_usage.forget(row.id)
     row.name = name
     session.add(row)
     try:
@@ -323,3 +324,30 @@ def delete_llm_credential(credential_id: str, session: Session = Depends(db)) ->
 
     assigned_credential(session, credential_id)
     return delete_secret(credential_id, session)
+
+
+@router.get("/llm-credentials/{credential_id}/usage")
+def llm_credential_usage(credential_id: str, refresh: bool = False,
+                         session: Session = Depends(db)) -> dict:
+    """What Anthropic says is left on the plan behind a subscription credential.
+
+    Read-only and unaudited: this is polled by screens, and the value it reads
+    is the same one the token's owner sees under `/usage`. The token never
+    leaves the server — it is decrypted here, sent to Anthropic, and the
+    response carries only percentages and reset times. `refresh=true` skips
+    the minute-long cache for a reader who just watched a run finish.
+
+    API keys have no plan meter; the reading for one says so rather than 404,
+    because the screen asking is the same screen either way.
+    """
+    from sqlalchemy import select
+
+    from yaaf.core.crypto import decrypt
+
+    row = session.scalar(select(Secret).where(Secret.id == credential_id,
+                                              Secret.llm_mode.is_not(None)))
+    if row is None:
+        raise HTTPException(status_code=404, detail="unknown LLM credential")
+    token = decrypt(row.ciphertext) if row.llm_mode == "subscription" else ""
+    return {"credential_id": row.id, "mode": row.llm_mode,
+            **plan_usage.reading(row.id, row.llm_mode, token, refresh=refresh)}

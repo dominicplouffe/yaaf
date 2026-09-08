@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { del, get, patch, post } from "./api";
-import { SecretInput } from "./ui";
+import { fmtAgo, fmtSoon, SecretInput } from "./ui";
 
 interface Credential {
   id: string;
@@ -93,8 +93,8 @@ export function LlmCredentials() {
     </div>}
     {rows === null ? <p role="status">Loading credentials… <button onClick={() => reload().catch(e => setError(e.message))}>Retry</button></p> : rows.length === 0 ? <p>No credentials yet. Add your first credential to connect a project.</p> : <>
       <label className="field">Search credentials<input type="search" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by name" /></label>
-      <table><thead><tr><th>Name</th><th>Type</th><th>Assigned projects</th><th>Actions</th></tr></thead><tbody>
-        {filtered?.map(row => <tr key={row.id}><td><strong>{row.name}</strong></td><td data-label="Type">{modeLabel(row.mode)}</td><td data-label="Assigned projects">{row.projects.length ? row.projects.map((p, i) => <span key={p.id}>{i > 0 && ", "}<Link to={`/projects/${p.id}/settings`}>{p.name}</Link></span>) : <span className="muted">Not assigned</span>}</td><td className="llm-actions">
+      <table><thead><tr><th>Name</th><th>Type</th><th>Assigned projects</th><th>Plan usage</th><th>Actions</th></tr></thead><tbody>
+        {filtered?.map(row => <tr key={row.id}><td><strong>{row.name}</strong></td><td data-label="Type">{modeLabel(row.mode)}</td><td data-label="Assigned projects">{row.projects.length ? row.projects.map((p, i) => <span key={p.id}>{i > 0 && ", "}<Link to={`/projects/${p.id}/settings`}>{p.name}</Link></span>) : <span className="muted">Not assigned</span>}</td><td data-label="Plan usage"><PlanMeterCompact credentialId={row.id} mode={row.mode} /></td><td className="llm-actions">
           <button className="small" disabled={busy || editing !== null || removing !== null} onClick={() => edit(row)} aria-label={`Edit ${row.name}`}>Edit</button>{" "}
           <button className="small danger" disabled={busy || editing !== null || removing !== null || row.projects.length > 0} title={row.projects.length ? "Reassign all projects before deleting" : `Delete ${row.name}`} onClick={() => { setRemoving(row); setError(""); }} aria-label={`Delete ${row.name}`}>Delete</button>
           {row.projects.length > 0 && <div className="help">In use · deletion locked</div>}
@@ -102,4 +102,168 @@ export function LlmCredentials() {
       </tbody></table>{filtered?.length === 0 && <p>No credentials match your search.</p>}
     </>}
   </section>;
+}
+
+// ── the plan meter behind a subscription credential ─────────────────────────────
+//
+// An API key is metered per call, in dollars, and the monthly budget is the only
+// gauge that matters. A subscription token is different: Anthropic meters it
+// against a five-hour session window and a seven-day window, and when either
+// hits 100% every call is refused until it resets — no matter what the monthly
+// cap says. A chairman whose runs started failing at 3pm deserves to see that
+// the session window is full and clears at 3:22, not a generic credential error.
+//
+// The server reads the meter from the same endpoint Claude Code's `/usage` uses.
+// It is Anthropic's number, not yaaf's: shown, never enforced.
+
+export interface PlanWindow { key: string; label: string; utilization: number; resets_at: string | null }
+export interface PlanUsage {
+  credential_id: string; mode: string; available: boolean; reason: string | null;
+  windows: PlanWindow[]; fetched_at: string; cached: boolean;
+}
+
+const usageUrl = (id: string, refresh: boolean) =>
+  `${endpoint}/${id}/usage${refresh ? "?refresh=true" : ""}`;
+
+/** Polls a credential's plan reading once a minute (the server caches for the
+    same minute) and hands back a forced refresh for the reader who just
+    watched a run finish. Does nothing for a non-subscription credential. */
+export function usePlanUsage(credentialId: string | null, mode: string | null) {
+  const [data, setData] = useState<PlanUsage | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const active = !!credentialId && mode === "subscription";
+  const load = useCallback((refresh: boolean) => {
+    if (!active || !credentialId) return;
+    setBusy(true);
+    get<PlanUsage>(usageUrl(credentialId, refresh))
+      .then((d) => { setData(d); setError(null); })
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setBusy(false));
+  }, [active, credentialId]);
+  useEffect(() => {
+    if (!active) { setData(null); setError(null); return; }
+    load(false);
+    const timer = setInterval(() => load(false), 60_000);
+    return () => clearInterval(timer);
+  }, [active, load]);
+  return { data, error, busy, refresh: () => load(true), active };
+}
+
+const fillClass = (u: number) => (u >= 1 ? "over" : u >= 0.8 ? "warn" : "");
+const pct = (u: number) => `${Math.min(999, Math.round(u * 100))}%`;
+
+/** The sentence a reader needs before the bars: is anything about to stop runs? */
+function planVerdict(windows: PlanWindow[]): { cls: string; text: string } {
+  const full = windows.find((w) => w.utilization >= 1);
+  if (full) {
+    return { cls: "critical",
+      text: `✖ ${full.label} is at 100% — Anthropic refuses calls and runs on this credential fail until it resets${full.resets_at ? ` ${fmtSoon(full.resets_at)}` : ""}` };
+  }
+  const near = windows.find((w) => w.utilization >= 0.8);
+  if (near) {
+    return { cls: "warn",
+      text: `⚠ ${near.label} is at ${pct(near.utilization)} — runs will start failing at 100%${near.resets_at ? `; it resets ${fmtSoon(near.resets_at)}` : ""}` };
+  }
+  return { cls: "good", text: "✓ headroom on every window" };
+}
+
+/** Full meter: one bar per window, a verdict on top, provenance underneath.
+    Draws nothing for an API-key credential — there is no plan to draw. */
+export function PlanMeter({ credentialId, mode, title = "Claude subscription plan" }: {
+  credentialId: string | null; mode: string | null; title?: string;
+}) {
+  const { data, error, busy, refresh, active } = usePlanUsage(credentialId, mode);
+  if (!active) return null;
+  const refreshButton = (
+    <button type="button" className="linkish" disabled={busy} onClick={refresh}>
+      {busy ? "reading…" : "refresh"}
+    </button>
+  );
+  let body;
+  if (!data && !error) {
+    body = <p className="help" style={{ margin: "4px 0" }}>Reading the plan meter…</p>;
+  } else if (error) {
+    body = <p className="help" style={{ margin: "4px 0" }}>Plan meter not reachable — {error}. {refreshButton}</p>;
+  } else if (data && !data.available) {
+    body = <p className="help" style={{ margin: "4px 0" }}>Plan meter unavailable — {data.reason}. {refreshButton}</p>;
+  } else if (data) {
+    const verdict = planVerdict(data.windows);
+    body = (
+      <>
+        <div className={`plan-verdict ${verdict.cls}`}>{verdict.text}</div>
+        {data.windows.map((w) => (
+          <div className="plan-window" key={w.key}>
+            <div className="plan-row">
+              <span>{w.label}</span>
+              <span className="num">{pct(w.utilization)} used</span>
+            </div>
+            <div className="track">
+              <div className={`fill ${fillClass(w.utilization)}`} style={{ width: `${Math.min(w.utilization, 1) * 100}%` }} />
+            </div>
+            <div className="foot">{w.resets_at ? `resets ${fmtSoon(w.resets_at)}` : " "}</div>
+          </div>
+        ))}
+        <div className="plan-foot">
+          <span className="asof">as of {fmtAgo(data.fetched_at)}</span>
+          {refreshButton}
+        </div>
+      </>
+    );
+  }
+  return (
+    <div className="plan-meter">
+      <div className="plan-head">
+        <span className="label">{title}</span>
+      </div>
+      {body}
+      <p className="help" style={{ marginBottom: 0 }}>
+        Anthropic's own meter for this subscription — the same numbers as <code>/usage</code> in
+        Claude Code. Every project on this credential draws from it. Shown here, not enforced
+        here: the monthly cap is yaaf's separate limit.
+      </p>
+    </div>
+  );
+}
+
+/** One line for a table cell: session and week, with resets underneath. */
+export function PlanMeterCompact({ credentialId, mode }: { credentialId: string; mode: string }) {
+  const { data, error, busy, refresh, active } = usePlanUsage(credentialId, mode);
+  if (!active) return <span className="muted" title="API keys are metered per call, in dollars; there is no plan window to fill.">— metered per call</span>;
+  if (!data && !error) return <span className="help">reading…</span>;
+  if (error || (data && !data.available)) {
+    return (
+      <span className="plan-compact">
+        <span>
+          unavailable{" "}
+          <button type="button" className="linkish" disabled={busy} onClick={refresh}>{busy ? "reading…" : "retry"}</button>
+        </span>
+        <span className="help">{error ?? data?.reason}</span>
+      </span>
+    );
+  }
+  const shown = data!.windows.filter((w) => w.key === "five_hour" || w.key === "seven_day");
+  const short = (w: PlanWindow) => (w.key === "five_hour" ? "session" : "week");
+  const full = shown.find((w) => w.utilization >= 1);
+  return (
+    <span className="plan-compact">
+      <span>
+        {shown.map((w) => (
+          <span key={w.key} title={`${w.label}: ${pct(w.utilization)} used${w.resets_at ? `, resets ${fmtSoon(w.resets_at)}` : ""}`} style={{ marginRight: 10 }}>
+            <span className={`mini-meter ${fillClass(w.utilization)}`}><i style={{ width: `${Math.min(w.utilization, 1) * 100}%` }} /></span>
+            {short(w)} {pct(w.utilization)}
+          </span>
+        ))}
+      </span>
+      {full ? (
+        <span className="plan-verdict critical" style={{ margin: 0 }}>
+          runs on this credential fail until the {short(full)} window resets{full.resets_at ? ` ${fmtSoon(full.resets_at)}` : ""}
+        </span>
+      ) : (
+        <span className="help">
+          {shown.filter((w) => w.resets_at).map((w) => `${short(w)} resets ${fmtSoon(w.resets_at)}`).join(" · ") || " "}
+        </span>
+      )}
+    </span>
+  );
 }

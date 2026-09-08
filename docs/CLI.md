@@ -29,6 +29,7 @@ Every command that takes a project accepts **either a slug or an id**.
 | `yaaf create-llm-credential NAME [--mode api_key\|subscription]` | Create a managed credential; value is prompted. |
 | `yaaf edit-llm-credential ID NAME [--rotate]` | Rename a credential; optionally replace its value for all assigned projects. |
 | `yaaf delete-llm-credential ID` | Delete an unused credential after confirmation. Assigned credentials cannot be deleted. |
+| `yaaf llm-credential-usage ID [--refresh]` | What Anthropic says is left on a subscription credential's plan (session and weekly windows, as `/usage` shows them). Cached for a minute; API keys have no plan meter and say so. |
 | `yaaf settings` | Show the app-wide settings — whether a model credential is installed and how the Slack connection is configured. Values are never printed. |
 | `yaaf set-platform-key [--mode api_key\|subscription]` | Install or rotate the **Founder's** model credential (value prompted). It is never injected into a sandbox and never reaches a project's agents — there is no fallback. |
 | `yaaf set-slack [--bot-token] [--signing-secret] [--app-token] [--chairman U…] [--prefix P] [--visibility private\|public] [--auto-create/--no-auto-create]` | Configure the app-wide Slack connection every project inherits. Token flags prompt for the value. |

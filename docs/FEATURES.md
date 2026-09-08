@@ -178,6 +178,13 @@ Outside Explore mode the root object is not the task, it is the
   Projects select a credential; manual billing values are refused. Assigned
   credentials cannot be deleted. Existing keys migrate without changing their
   encrypted values or losing assignments.
+- **The plan meter.** A subscription credential shows what Anthropic says is
+  left on its plan — the five-hour session window and the weekly windows, the
+  same numbers as `/usage` in Claude Code — on the credential in Settings and
+  on every project paying with it. It is read from the endpoint Claude Code
+  itself uses, which is not a documented API, so it is shown and never
+  enforced: the monthly token cap stays the platform's own rule, and a meter
+  that cannot be read says so in a sentence. API keys have no plan meter.
 - **Two billing modes.** `api_key` meters in USD against a monthly cap;
   `subscription` meters in tokens against a monthly token cap. The dashboard
   shows whichever unit is native to the project.

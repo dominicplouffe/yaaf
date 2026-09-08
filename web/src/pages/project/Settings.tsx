@@ -1,4 +1,4 @@
-import { CredentialPicker } from "../../llmCredentials";
+import { CredentialPicker, PlanMeter } from "../../llmCredentials";
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -1849,7 +1849,8 @@ export default function Settings({
           <button disabled={busy || !billingReady} onClick={testBilling}>Test connection</button>
         </div>
         <p className="help">Changing the assignment applies to new runs. The selected credential also determines whether budgets use USD or tokens.</p>
-
+        <PlanMeter credentialId={dash.billing_secret_id} mode={dash.billing_mode}
+          title={`Plan usage for ${dash.billing_secret_name ?? "this credential"}`} />
       </div>
 
       </Section>

@@ -149,3 +149,132 @@ def test_credential_type_and_role_grants_cannot_change(client):
     for name in ("platform-billing", "github"):
         assert client.post(URL, headers=ADMIN, json={"name": name, "mode": "api_key",
                            "value": "test-credential-value"}).status_code == 422
+
+
+# ── the plan meter ──────────────────────────────────────────────────────────────
+
+
+class _Response:
+    def __init__(self, status_code: int, payload=None, text: str = ""):
+        self.status_code = status_code
+        self._payload = payload
+        self.text = text
+
+    def json(self):
+        if self._payload is None:
+            raise ValueError("not json")
+        return self._payload
+
+
+METER = {
+    "five_hour": {"utilization": 0.21, "resets_at": "2026-09-08T15:22:00Z"},
+    "seven_day": {"utilization": 0.51, "resets_at": 1757395920},
+    "seven_day_overage_included": {"utilization": 0.9},
+    "by_model": [{"scope": {"model": {"display_name": "Fable"}}, "percent": 0.24,
+                  "resets_at": "2026-09-09T02:24:00Z"}],
+    "some_future_field": {"unrelated": True},
+}
+
+
+def test_plan_meter_is_read_with_the_token_and_returns_only_percentages(client, monkeypatch):
+    import httpx
+
+    from yaaf.core import plan_usage
+
+    token = "sk-ant-oat01-plan-meter-test-token"
+    key = create(client, value=token, mode="subscription")
+    calls: list[dict] = []
+
+    def fake_get(url, headers=None, timeout=None, **_):
+        calls.append({"url": url, "headers": headers})
+        return _Response(200, METER)
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    monkeypatch.setattr(plan_usage, "_cache", {})
+
+    reading = client.get(f"{URL}/{key['id']}/usage", headers=ADMIN)
+    assert reading.status_code == 200, reading.text
+    body = reading.json()
+    # The token went to Anthropic, as a bearer with the OAuth beta, and nowhere else.
+    assert calls[0]["url"] == plan_usage.USAGE_URL
+    assert calls[0]["headers"]["Authorization"] == f"Bearer {token}"
+    assert calls[0]["headers"]["anthropic-beta"] == plan_usage.OAUTH_BETA
+    assert token not in reading.text and "sk-ant" not in reading.text
+    assert body["available"] is True and body["cached"] is False
+    windows = {w["key"]: w for w in body["windows"]}
+    assert windows["five_hour"]["utilization"] == 0.21
+    assert windows["five_hour"]["resets_at"] == "2026-09-08T15:22:00Z"
+    # Epoch resets become ISO so the screen has one clock to read.
+    assert windows["seven_day"]["resets_at"].startswith("2025-09-09T")
+    assert windows["by_model:fable"]["label"] == "This week, Fable"
+    assert windows["by_model:fable"]["utilization"] == 0.24
+    # Internal and unknown keys are not drawn under a label nobody chose.
+    assert "seven_day_overage_included" not in windows and "some_future_field" not in windows
+
+    # A minute-long cache: the second read is served without a second call.
+    again = client.get(f"{URL}/{key['id']}/usage", headers=ADMIN).json()
+    assert again["cached"] is True and len(calls) == 1
+    forced = client.get(f"{URL}/{key['id']}/usage?refresh=true", headers=ADMIN).json()
+    assert forced["cached"] is False and len(calls) == 2
+
+    # Rotating the token forgets the old token's meter.
+    assert client.patch(f"{URL}/{key['id']}", headers=ADMIN,
+                        json={"name": "Production", "value": "sk-ant-oat01-rotated"}).status_code == 200
+    client.get(f"{URL}/{key['id']}/usage", headers=ADMIN)
+    assert len(calls) == 3 and calls[2]["headers"]["Authorization"].endswith("rotated")
+
+
+def test_plan_meter_degrades_to_a_sentence_and_never_to_an_error_page(client, monkeypatch):
+    import httpx
+
+    from yaaf.core import plan_usage
+
+    key = create(client, value="sk-ant-oat01-plan-meter-test-token", mode="subscription")
+    monkeypatch.setattr(plan_usage, "_cache", {})
+
+    def read() -> dict:
+        response = client.get(f"{URL}/{key['id']}/usage?refresh=true", headers=ADMIN)
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: _Response(401))
+    assert read()["available"] is False and "rejected" in read()["reason"]
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: _Response(500))
+    assert "500" in read()["reason"]
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: _Response(200, {"nothing": "here"}))
+    assert "format" in read()["reason"]
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: _Response(200, None, "<html>"))
+    assert read()["available"] is False
+
+    def boom(*a, **k):
+        raise httpx.ConnectError("no route")
+
+    monkeypatch.setattr(httpx, "get", boom)
+    assert "ConnectError" in read()["reason"]
+
+
+def test_plan_meter_has_nothing_to_say_about_an_api_key(client, monkeypatch):
+    import httpx
+
+    def never(*a, **k):
+        raise AssertionError("an API key must never be sent to the plan meter")
+
+    monkeypatch.setattr(httpx, "get", never)
+    key = create(client)
+    body = client.get(f"{URL}/{key['id']}/usage", headers=ADMIN).json()
+    assert body["available"] is False and body["mode"] == "api_key"
+    assert "per call" in body["reason"] and body["windows"] == []
+
+
+def test_plan_meter_is_the_administrators_to_read(client):
+    key = create(client, value="sk-ant-oat01-plan-meter-test-token", mode="subscription")
+    project = make_project(client)
+    token, _ = live_token(project["id"], project["ceo_agent_id"])
+    for headers in ({}, bearer(token)):
+        assert client.get(f"{URL}/{key['id']}/usage", headers=headers).status_code == 401
+    assert client.get(f"{URL}/nope/usage", headers=ADMIN).status_code == 404
+    # A service secret is not an LLM credential, and has no meter to read.
+    service = client.post("/admin/secrets", headers=ADMIN, json={
+        "project_id": project["id"], "name": "wordpress", "value": "wp-secret-value",
+        "kind": "service"}).json()
+    assert client.get(f"{URL}/{service['id']}/usage", headers=ADMIN).status_code == 404
