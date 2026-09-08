@@ -189,7 +189,10 @@ store.
 
 Changing the master key strands every secret already stored; leaving it unset
 makes the server refuse to read or write secrets at all, because compose
-substitutes an empty value. Neither is recoverable — back it up.
+substitutes an empty value. Neither is recoverable — back it up. Migrations
+read it too — `0034` decrypts stored billing keys to tell API keys from
+subscription tokens — so run `alembic upgrade` where it is set, which the
+container entrypoints already do.
 
 ---
 
@@ -575,6 +578,34 @@ reads as `none` for any constitution that never mentioned it.
 per-seat override. Re-seeding a role whose effort is spelled anything else now
 returns 422 instead of storing a value that would have killed the run inside
 the sandbox. Roles already in the database are not re-validated.
+
+#### What the managed-credentials release does to projects that already exist
+
+Migration `0034` moves every project's billing key out of the project and
+into the app-wide list of LLM credentials, **without touching its encrypted
+value or its assignment**: a project that paid with a key before the upgrade
+pays with the same key afterwards, and its next run cannot tell the
+difference. Three things are worth knowing:
+
+- **The names are placeholders.** A migrated key is called
+  `Migrated <old name> (<id>)`, because two projects could each have had a key
+  named `anthropic-api-key` and the shared list needs distinct names. Open
+  Settings → LLM credentials once and rename them; the Overview of every
+  project on a credential shows the name.
+- **Its billing mode is read from the project it paid for.** A key no project
+  was attached to is decrypted to tell an API key from a subscription token —
+  which is why the migration needs `YAAF_MASTER_KEY`. A project that had been
+  attached to the Founder's own credential (the old attachment endpoint
+  allowed it) gets a copy as a proper LLM credential, so rotating the
+  Founder's key never again changes what a project pays with.
+- **Two API calls change their answer.** Storing a project secret with
+  `kind: billing` returns 422 and points at Settings; deleting a credential a
+  project is assigned to returns 409 until it is reassigned. `yaaf set-secret
+  --kind billing` is gone with the first; `yaaf create-llm-credential`
+  replaces it.
+
+There is no downgrade: the migration refuses to move shared credentials back
+into projects. Take the dump first, as above.
 
 ### Scaling
 

@@ -94,8 +94,9 @@ step that has not run since the role was added.
 
 1. **+ New project → Start from a setup file**, and pick the `.json`.
 2. The form fills in: shape, goal, teams, constitution, and the org.
-3. **Paste your Anthropic key**, **edit the goal** where it shouts in capitals,
-   and check your email and timezone.
+3. **Pick the LLM credential that pays** (an administrator creates one under
+   Settings → LLM credentials; the file cannot carry a key), **edit the goal**
+   where it shouts in capitals, and check your email and timezone.
 4. Create.
 
 Two things the form owns rather than the file, so glance at them before you

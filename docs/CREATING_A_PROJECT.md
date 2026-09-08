@@ -73,10 +73,13 @@ wants to know. You argue; it revises. When the draft is right, **Review &
 create** drops the whole thing into the form below, where you change anything
 you like, run the fire drill for nothing, and create it.
 
-It needs one thing first: a **platform key**, set once. That is not a project's
-billing key and never becomes one — it pays for product-wide conversations like
-this, and no project's agents ever see it. Every project you create still pays
-its own way.
+It needs one thing first: the **Founder's own credential**, set once under
+Settings. That is not one of the LLM credentials projects pay with and never
+becomes one — it pays for product-wide conversations like this, and no
+project's agents ever see it. Every project you create still pays its own way,
+and the Founder knows it: it reads the list of LLM credentials, names the one
+that pays in its draft when there is only one, and asks you which when there
+are several. It never picks for you.
 
 Two things worth knowing:
 
@@ -296,11 +299,12 @@ a token outright when a server stops needing one.
 ## A note on secrets and who can see them
 
 You are the chairman, and you are the only human on this system. Every stored
-value — service credentials, a data source's address and token, the Slack
-tokens, the billing key, the webhook signing secrets — is masked in the UI
-and one press of the **eye** from being readable, with a copy button and an
-inline edit to rotate it. Debugging a connection shouldn't require a database
-client.
+project value — service credentials, a data source's address and token, the
+Slack tokens, the webhook signing secrets — is masked in the UI and one press
+of the **eye** from being readable, with a copy button and an inline edit to
+rotate it. Debugging a connection shouldn't require a database client. The
+LLM credentials projects pay with live above projects, under app-wide
+Settings, where they can be renamed and rotated but are never shown back.
 
 That is a *display* choice for you, and it changes nothing about the agents.
 A role still receives only the credentials you granted it, still as
@@ -312,7 +316,7 @@ your admin token, and no agent can reach it.
 
 Go to the project's **Overview**. If anything about the setup is wrong or
 missing, a **Setup & health** card sits at the top naming each problem in
-plain English with a link to fix it — a dead billing key, a credential that
+plain English with a link to fix it — a dead or missing billing credential, a credential that
 should be a URL but isn't, a team running an outdated role version. Fix the
 red rows; when the card disappears, the project is properly configured.
 That's the rule to remember: **no card = ready.**

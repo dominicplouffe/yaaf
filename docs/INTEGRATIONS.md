@@ -16,29 +16,56 @@ enter a sandbox at all.
 
 ## Billing — how agents pay for Claude
 
-**Settings → Money.** Required; nothing runs without it.
+Two screens. An administrator creates **LLM credentials** once, under the
+sidebar's **Settings → LLM credentials**; each project is then **assigned**
+one, under its own **Settings → Money**. Required; nothing runs without it.
 
-Two modes, and the credential must match:
+Two kinds of credential, and the kind decides the project's billing mode and
+budget unit — there is no separate switch:
 
-| Mode | Credential | Budget unit |
+| Credential | Value | Budget unit |
 |---|---|---|
-| `api_key` | An Anthropic API key (`sk-ant-api…`) from the console | USD (`monthly_usd_cap`) |
-| `subscription` | An OAuth token (`sk-ant-oat…`) from `claude setup-token` | Tokens (`monthly_token_cap`) |
+| Anthropic API key | `sk-ant-api…` from the console | USD (`monthly_usd_cap`) |
+| Claude subscription token | `sk-ant-oat…` from `claude setup-token` | Tokens (`monthly_token_cap`) |
 
-A mismatched pair is **refused while you're still looking at the screen** —
-otherwise every future run fails with a baffling "Not logged in". The health
-checklist re-checks it, and there's a live billing check button.
+A value of the wrong shape for its kind is **refused while you're still
+looking at the screen** — otherwise every future run fails with a baffling
+"Not logged in". The health checklist re-checks it, and **Test connection**
+proves the assigned credential works now.
+
+What being managed buys you:
+
+- **One value, many projects.** Rotate a credential in Settings and every
+  project assigned to it uses the new value on its next run. Rename it and
+  every Overview follows. A credential a project is assigned to cannot be
+  deleted until the project is reassigned.
+- **No key in a project, ever.** `POST /admin/secrets` refuses `kind: billing`,
+  `yaaf set-secret --kind billing` is gone, a clone keeps the assignment, and a
+  backup carries the credential's *name* and never its value — the form
+  re-selects it on import when this install has one by that name.
+- **Every founding path asks.** The New Project form has a picker, the
+  Founder reads the list and asks you which when there is more than one, and
+  the MCP `create_project` preview lists the choices when none was named.
+  Nobody guesses which credential pays.
+- **The plan meter.** A subscription credential shows what Anthropic says is
+  left on the session and weekly windows — the same numbers as `/usage` in
+  Claude Code — in Settings and on every project paying with it. Every project
+  on the credential draws from the same windows; at 100% Anthropic refuses
+  calls and runs fail until the window resets. It is read from the endpoint
+  Claude Code itself uses, not a documented API, so it is shown and never
+  enforced: the token cap is the platform's own rule. API keys have no plan
+  meter.
 
 > **Terms note:** Anthropic's consumer terms don't permit running fleets on a
 > personal Claude subscription. Subscription mode exists for single-user
 > tinkering; use an API key for anything real.
 
-**Not to be confused with the platform key.** The sidebar's **Settings → Model
-credential** holds a *separate* key that pays for product-wide conversations
-(the Founder, which drafts a project before one exists). It is decrypted
-server-side only and **never reaches a project's agents** — there is no
-inheritance and no fallback. A project with no billing credential of its own
-cannot run, and that is the intended answer.
+**Not to be confused with the Founder's credential.** The sidebar's **Settings
+→ Founder model credential** holds a *separate* key that pays for
+product-wide conversations (the Founder, which drafts a project before one
+exists). It is decrypted server-side only and **never reaches a project's
+agents** — there is no inheritance and no fallback. A project with no
+credential assigned cannot run, and that is the intended answer.
 
 ## Credentials and variables
 
