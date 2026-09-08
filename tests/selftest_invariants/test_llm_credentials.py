@@ -278,3 +278,116 @@ def test_plan_meter_is_the_administrators_to_read(client):
         "project_id": project["id"], "name": "wordpress", "value": "wp-secret-value",
         "kind": "service"}).json()
     assert client.get(f"{URL}/{service['id']}/usage", headers=ADMIN).status_code == 404
+
+
+def test_the_drill_ignores_who_pays(client):
+    """A draft names the credential it will pay with; the fire drill runs in a
+    throwaway database that holds none. Deliberately runs its own drill (~3s):
+    the assertion is on the drill's own 'created' step, not a report."""
+    key = create(client, value="sk-ant-oat-test-placeholder", mode="subscription")
+    make_project(client, start=False)  # seeds the chairman and the roles
+    spec = {"slug": "drill", "name": "Drill", "chairman_email": "chair@example.com",
+            "goal": "Prove the drill survives a draft that names who pays for it.",
+            "ceo_role_slug": "ceo", "ceo_name": "CEO", "billing_secret_id": key["id"],
+            "teams": [{"role_slug": "worker", "name": "A", "employees": ["L"], "lead": "L"}]}
+    report = client.post("/admin/rehearse", headers=ADMIN, json={"spec": spec, "days": 2})
+    assert report.status_code == 200, report.text
+    created = next(s for s in report.json()["walk"] if s["key"] == "created")
+    assert created["ok"], created
+
+
+def test_create_refuses_a_mode_that_contradicts_the_credential(client):
+    """The same pair PATCH refuses must not be swapped silently on create —
+    the CLI passes both flags, and a chairman who asked for token metering
+    would otherwise get dollars without a word."""
+    from tests.conftest import AUTONOMY_PRESETS, seed_role
+
+    sub = create(client, value="sk-ant-oat-test-placeholder", mode="subscription")
+    client.post("/admin/users", json={"email": "chair@example.com", "display_name": "Chair"},
+                headers=ADMIN)
+    seed_role(client, "ceo", is_ceo=True)
+    body = {"slug": "mismatch", "name": "Mismatch", "chairman_email": "chair@example.com",
+            "goal": "Prove a contradictory billing mode is refused at creation.",
+            "ceo_role_slug": "ceo", "ceo_name": "CEO", "teams": [],
+            "constitution": AUTONOMY_PRESETS["supervised"],
+            "billing_secret_id": sub["id"], "billing_mode": "api_key"}
+    refused = client.post("/admin/projects", json=body, headers=ADMIN)
+    assert refused.status_code == 422 and "must match" in refused.json()["detail"]
+    # Omitted, the mode is the credential's.
+    del body["billing_mode"]
+    created = client.post("/admin/projects", json=body, headers=ADMIN)
+    assert created.status_code == 200, created.text
+    with db_session() as session:
+        assert session.get(Project, created.json()["id"]).billing_mode == "subscription"
+    # And with no credential at all, the old default still holds.
+    bare = client.post("/admin/projects", json={**body, "slug": "bare", "billing_secret_id": None},
+                       headers=ADMIN)
+    assert bare.status_code == 200, bare.text
+    with db_session() as session:
+        assert session.get(Project, bare.json()["id"]).billing_mode == "api_key"
+
+
+def test_llm_credential_values_are_never_shown_back(client):
+    """A project's own secrets are the chairman's to read back with the eye.
+    The credential that pays for every project on it is rotated, never read."""
+    key = create(client, value="sk-ant-api03-never-shown")
+    revealed = client.get(f"/admin/secrets/{key['id']}/value", headers=ADMIN)
+    assert revealed.status_code == 422
+    assert "never-shown" not in revealed.text and "value" not in revealed.json()
+    project = make_project(client, start=False)
+    stored = client.post("/admin/secrets", headers=ADMIN, json={
+        "project_id": project["id"], "name": "wordpress", "value": "wp-secret-value",
+        "kind": "service", "role_scopes": []}).json()
+    assert client.get(f"/admin/secrets/{stored['id']}/value",
+                      headers=ADMIN).json()["value"] == "wp-secret-value"
+
+
+def test_a_project_can_detach_its_credential_and_then_it_can_go(client):
+    """The only way a leaked key on a one-credential install can ever be
+    deleted: detach every project, then delete. A dangling id after that is a
+    422 on the next mode change, not a 500."""
+    key = create(client)
+    project = make_project(client, start=False, billing_secret_id=key["id"])
+    assert client.delete(f"{URL}/{key['id']}", headers=ADMIN).status_code == 409
+    detached = client.patch(f"/admin/projects/{project['id']}", headers=ADMIN,
+                            json={"billing_secret_id": ""})
+    assert detached.status_code == 200, detached.text
+    with db_session() as session:
+        row = session.get(Project, project["id"])
+        assert row.billing_secret_id is None and row.billing_mode == "api_key"
+    assert client.delete(f"{URL}/{key['id']}", headers=ADMIN).status_code == 200
+    with db_session() as session:
+        # SQLite does not enforce the FK; a reference left behind must still be a sentence.
+        session.get(Project, project["id"]).billing_secret_id = "secr_gone"
+    dangling = client.patch(f"/admin/projects/{project['id']}", headers=ADMIN,
+                            json={"billing_mode": "subscription"})
+    assert dangling.status_code == 422 and "no longer exists" in dangling.json()["detail"]
+
+
+def test_a_shared_founder_key_splits_by_billing_mode_and_survives_an_unreadable_row(client):
+    from yaaf.core import platform
+
+    tokens = make_project(client, slug="tokens", start=False, billing_mode="subscription")
+    dollars = make_project(client, slug="dollars", start=False, billing_mode="api_key")
+    with db_session() as session:
+        platform.set_credential(session, "founder-test-value")
+        session.flush()
+        original = session.query(Secret).filter_by(name=platform.PLATFORM_BILLING_SECRET).one()
+        for p in (tokens, dollars):
+            session.get(Project, p["id"]).billing_secret_id = original.id
+        # An orphaned legacy key stored under a master key this install no longer has.
+        session.add(Secret(id="legacy-unreadable", project_id=dollars["id"], name="old",
+                           ciphertext="not-a-fernet-token", kind="billing", role_scopes=[]))
+    with db_session() as session:
+        migration = importlib.import_module("migrations.versions.0034_managed_llm_credentials")
+        with Operations.context(MigrationContext.configure(session.connection())):
+            migration.upgrade()
+        session.expire_all()
+        by_project = {p["id"]: session.get(Secret, session.get(Project, p["id"]).billing_secret_id)
+                      for p in (tokens, dollars)}
+        assert by_project[tokens["id"]].llm_mode == "subscription"
+        assert by_project[dollars["id"]].llm_mode == "api_key"
+        assert by_project[tokens["id"]].id != by_project[dollars["id"]].id
+        assert all(row.ciphertext == original.ciphertext for row in by_project.values())
+        unreadable = session.get(Secret, "legacy-unreadable")
+        assert unreadable.llm_mode == "api_key" and unreadable.project_id is None

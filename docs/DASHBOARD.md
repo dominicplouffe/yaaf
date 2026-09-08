@@ -32,8 +32,9 @@ Three things, and none of them belongs to a project.
   session and weekly windows, the same numbers as `/usage` in Claude Code,
   read once a minute and shown as a fact, never enforced. Rename or rotate a
   credential here and every assigned project's next run uses the new value.
-  A credential in use cannot be deleted; reassign its projects first. No
-  value is ever shown back. Projects never store a billing key of their own:
+  A credential in use cannot be deleted; reassign or detach its projects
+  first. No value is ever shown back — the reveal that works for a project's
+  own secrets refuses these. Projects never store a billing key of their own:
   they pick one of these, under their own Settings → Money, on the New
   Project form, or by telling the Founder.
 - **Founder model credential** — the key the **Founder** runs on. Install,
@@ -448,7 +449,9 @@ Data; everything after is occasional.
 - **Money** — which LLM credential this project pays with, picked from the
   ones under app-wide Settings; **Save assignment** applies to the next run and
   **Test connection** proves the credential works now rather than at 9am. The
-  billing mode is the credential's, not a separate switch. For a subscription
+  billing mode is the credential's, not a separate switch. Clearing the pick
+  and saving **detaches** the credential — the project cannot run until one is
+  assigned again, which is how a credential is freed for deletion. For a subscription
   credential the card also shows its plan meter — every project on that
   credential draws from the same windows, and at 100% Anthropic refuses calls
   until the window resets. The budget in force is shown read-only: the numbers

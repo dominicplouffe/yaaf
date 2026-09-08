@@ -1659,10 +1659,16 @@ export default function Settings({
     }
   };
 
+  // An empty pick on a project that has a credential is a detach: the server
+  // takes "" as "none", the project cannot run until another is assigned, and
+  // the credential is free to be deleted. Nothing else on this page can free one.
+  const detaching = !billingCredentialId && !!dash.billing_secret_id;
   async function connectBilling() {
     await act(() => patch(`/admin/projects/${projectId}`, {
       billing_secret_id: billingCredentialId,
-    }), "Billing credential updated. New runs use this credential.");
+    }), detaching
+      ? "Credential detached. Agents cannot run until one is assigned again."
+      : "Billing credential updated. New runs use this credential.");
   }
 
   async function testBilling() {
@@ -1845,10 +1851,10 @@ export default function Settings({
         </p>
         <CredentialPicker value={billingCredentialId} onChange={id => setBillingCredentialId(id)} disabled={busy} />
         <div className="actions">
-          <button className="primary" disabled={busy || !billingCredentialId || billingCredentialId === dash.billing_secret_id} onClick={connectBilling}>Save assignment</button>
+          <button className={detaching ? "danger" : "primary"} disabled={busy || billingCredentialId === (dash.billing_secret_id ?? "")} onClick={connectBilling}>{detaching ? "Detach credential" : "Save assignment"}</button>
           <button disabled={busy || !billingReady} onClick={testBilling}>Test connection</button>
         </div>
-        <p className="help">Changing the assignment applies to new runs. The selected credential also determines whether budgets use USD or tokens.</p>
+        <p className="help">Changing the assignment applies to new runs. The selected credential also determines whether budgets use USD or tokens. Clearing the pick detaches the credential: the project keeps its rules but cannot run until one is assigned, and the credential can then be deleted in Settings.</p>
         <PlanMeter credentialId={dash.billing_secret_id} mode={dash.billing_mode}
           title={`Plan usage for ${dash.billing_secret_name ?? "this credential"}`} />
       </div>

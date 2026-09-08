@@ -19,24 +19,28 @@ def upgrade() -> None:
     bind = op.get_bind()
     # The old attachment API also accepted the Founder's platform secret.
     # Preserve those assignments without making future Founder rotations alter projects.
-    founder = bind.execute(sa.text(
-        "SELECT s.id, p.billing_mode FROM secrets s JOIN projects p "
-        "ON p.billing_secret_id = s.id WHERE s.project_id IS NULL "
-        "AND s.name = 'platform-billing' LIMIT 1"
-    )).mappings().first()
-    if founder:
+    # One copy per billing mode the attached projects were using: a credential
+    # has exactly one mode now, and a project that metered tokens must not wake
+    # up assigned to a copy that says dollars.
+    founders = bind.execute(sa.text(
+        "SELECT DISTINCT s.id AS source, p.billing_mode AS mode FROM secrets s "
+        "JOIN projects p ON p.billing_secret_id = s.id WHERE s.project_id IS NULL "
+        "AND s.name = 'platform-billing'"
+    )).mappings().all()
+    for founder in founders:
         from yaaf.core import ids
 
         credential_id = ids.new_id(ids.SECRET)
+        mode = founder["mode"] or "api_key"
         bind.execute(sa.text(
             "INSERT INTO secrets (id, project_id, name, ciphertext, role_scopes, kind, "
             "created_at, llm_mode) SELECT :id, NULL, :name, ciphertext, '[]', 'billing', "
             "created_at, :mode FROM secrets WHERE id = :source"
         ), {"id": credential_id, "name": f"Migrated shared credential ({credential_id})",
-            "mode": founder["billing_mode"], "source": founder["id"]})
+            "mode": mode, "source": founder["source"]})
         bind.execute(sa.text("UPDATE projects SET billing_secret_id = :id "
-                             "WHERE billing_secret_id = :source"),
-                     {"id": credential_id, "source": founder["id"]})
+                             "WHERE billing_secret_id = :source AND billing_mode = :mode"),
+                     {"id": credential_id, "source": founder["source"], "mode": mode})
     rows = bind.execute(sa.text(
         "SELECT id, project_id, name, ciphertext FROM secrets "
         "WHERE kind = 'billing' AND (project_id IS NOT NULL OR name != 'platform-billing') "
@@ -47,8 +51,16 @@ def upgrade() -> None:
             "SELECT billing_mode FROM projects WHERE billing_secret_id = :id LIMIT 1"
         ), {"id": row["id"]}).scalar()
         if mode is None:
+            # Nobody was paying with it, so the value is the only witness to its
+            # kind. A value this key cannot read is still a credential worth
+            # keeping; it just defaults to the common kind rather than aborting
+            # the whole revision over a guess.
             from yaaf.core.crypto import decrypt
-            mode = "subscription" if decrypt(row["ciphertext"]).startswith("sk-ant-oat") else "api_key"
+            try:
+                plaintext = decrypt(row["ciphertext"])
+            except Exception:
+                plaintext = ""
+            mode = "subscription" if plaintext.startswith("sk-ant-oat") else "api_key"
         bind.execute(sa.text(
             "UPDATE secrets SET project_id = NULL, name = :name, llm_mode = :mode, "
             "role_scopes = '[]' WHERE id = :id"

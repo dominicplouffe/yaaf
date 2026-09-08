@@ -2,9 +2,15 @@
 else does.
 
 There is one human on this system and they hold the master admin token, so a
-value they could read straight out of Postgres is masked in the UI, never
-withheld. What must stay true is the *boundary*: reveal is an `/admin` act with
-an audit row behind it, and no agent principal can reach it or anything like it.
+project value they could read straight out of Postgres is masked in the UI,
+never withheld. What must stay true is the *boundary*: reveal is an `/admin`
+act with an audit row behind it, and no agent principal can reach it or
+anything like it.
+
+The credentials that live *above* projects are the exception, and always were
+for the Slack tokens: an LLM credential pays for every project assigned to it,
+is rotated rather than read, and reveal refuses it — the same answer the
+settings screen gives for a bot token.
 """
 
 from __future__ import annotations
@@ -25,17 +31,19 @@ def _store(client, project_id, name, value="s3cret-value", **extra):
     )
 
 
-def test_chairman_reads_service_and_billing_values(client):
+def test_chairman_reads_service_values_and_the_billing_credential_refuses(client):
     project = make_project(client, start=False)
     wp = _store(client, project["id"], "wp-pass", "hunter2", role_scopes=["worker"]).json()
     billing = _store(client, project["id"], "anthropic-api-key",
                      "sk-ant-api03-not-real", kind="billing").json()
 
-    for secret_id, expected in ((wp["id"], "hunter2"),
-                                (billing["id"], "sk-ant-api03-not-real")):
-        shown = client.get(f"/admin/secrets/{secret_id}/value", headers=ADMIN)
-        assert shown.status_code == 200, shown.text
-        assert shown.json()["value"] == expected
+    shown = client.get(f"/admin/secrets/{wp['id']}/value", headers=ADMIN)
+    assert shown.status_code == 200, shown.text
+    assert shown.json()["value"] == "hunter2"
+    # The credential every project pays with is rotated, never read back.
+    refused = client.get(f"/admin/secrets/{billing['id']}/value", headers=ADMIN)
+    assert refused.status_code == 422
+    assert "sk-ant-api03-not-real" not in refused.text
 
     # The polled list still carries no values — reading one is a separate act.
     listed = client.get(f"/admin/secrets?project_id={project['id']}", headers=ADMIN)

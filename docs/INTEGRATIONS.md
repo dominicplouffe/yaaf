@@ -38,7 +38,8 @@ What being managed buys you:
 - **One value, many projects.** Rotate a credential in Settings and every
   project assigned to it uses the new value on its next run. Rename it and
   every Overview follows. A credential a project is assigned to cannot be
-  deleted until the project is reassigned.
+  deleted until the project is reassigned or detached (clear the pick under
+  the project's Settings → Money).
 - **No key in a project, ever.** `POST /admin/secrets` refuses `kind: billing`,
   `yaaf set-secret --kind billing` is gone, a clone keeps the assignment, and a
   backup carries the credential's *name* and never its value — the form

@@ -215,8 +215,9 @@ yaaf edit-llm-credential secr_… "Production" --rotate # rename, or replace the
 A spec file may carry `billing_secret_id` and is created already assigned.
 `yaaf set-secret --kind billing` is refused: that door closed when credentials
 moved above projects. A credential a project is assigned to cannot be deleted
-until the project is reassigned. Clones keep the assignment; a backup names the
-credential and never carries its value.
+until the project is reassigned or detached (`--billing-secret-id ""`). Clones
+keep the assignment; a backup names the credential and never carries its
+value, and no endpoint or command ever shows an LLM credential's value back.
 
 ## Before you spend anything
 

@@ -489,7 +489,9 @@ class ProjectCreate(BaseModel):
     name: str
     goal: str = Field(min_length=10)
     chairman_email: str
-    billing_mode: str = Field(default="api_key", pattern="^(api_key|subscription)$")
+    # Omitted, the mode is the credential's (api_key with no credential). Given
+    # and contradicting the credential, refused — the same answer PATCH gives.
+    billing_mode: str | None = Field(default=None, pattern="^(api_key|subscription)$")
     # Explore chases a goal with no fixed end; Deliver ships one thing and
     # finishes; Operate is a Deliver that starts again on a rhythm. Outside
     # Explore a task must serve a requirement, and the project starts owing a
@@ -733,6 +735,9 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
     from yaaf.core.llm_credentials import assigned_credential
 
     billing = assigned_credential(session, body.billing_secret_id) if body.billing_secret_id else None
+    if billing is not None and body.billing_mode not in (None, billing.llm_mode):
+        raise HTTPException(status_code=422,
+                            detail="billing mode must match the selected credential")
     chairman = session.execute(
         select(User).where(User.email == body.chairman_email)
     ).scalar_one_or_none()
@@ -791,7 +796,7 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
         name=body.name,
         goal=body.goal,
         chairman_user_id=chairman.id,
-        billing_mode=billing.llm_mode if billing else body.billing_mode,
+        billing_mode=billing.llm_mode if billing else (body.billing_mode or "api_key"),
         billing_secret_id=billing.id if billing else None,
         mode=body.mode,
         controlled_domains=body.controlled_domains,
@@ -1974,6 +1979,9 @@ class ProjectPatch(BaseModel):
     # project rather than constraining it, and needs no written reason.
     goal: str | None = Field(default=None, min_length=10)
     billing_mode: str | None = Field(default=None, pattern="^(api_key|subscription)$")
+    # An empty string detaches: the project keeps its mode and cannot run
+    # until a credential is assigned. It is how a credential is freed for
+    # deletion, and how a leaked one stops paying for anything.
     billing_secret_id: str | None = None
     controlled_domains: list[str] | None = None
     # Merged into the existing integrations (outward wiring only — every
@@ -2088,7 +2096,10 @@ def patch_project(project_id: str, body: ProjectPatch, session: Session = Depend
     if body.billing_mode is not None:
         project.billing_mode = body.billing_mode
         changed["billing_mode"] = body.billing_mode
-    if body.billing_secret_id is not None:
+    if body.billing_secret_id == "":
+        project.billing_secret_id = None
+        changed["billing_secret_id"] = None
+    elif body.billing_secret_id is not None:
         from yaaf.core.crypto import decrypt
         from yaaf.core.llm_credentials import assigned_credential
 
@@ -2107,6 +2118,10 @@ def patch_project(project_id: str, body: ProjectPatch, session: Session = Depend
         from yaaf.core.crypto import decrypt
 
         attached = session.get(Secret, project.billing_secret_id)
+        if attached is None:
+            raise HTTPException(status_code=422,
+                                detail="the attached billing credential no longer exists — "
+                                       "assign another in Settings")
         if attached.llm_mode and project.billing_mode != attached.llm_mode:
             raise HTTPException(status_code=422, detail="billing mode must match the selected credential")
         shape_error = _billing_shape_error(project.billing_mode, decrypt(attached.ciphertext))
@@ -4401,9 +4416,17 @@ def reveal_secret(secret_id: str, session: Session = Depends(db)) -> dict:
     """
     from yaaf.core.crypto import decrypt
 
-    row = session.scalar(select(Secret).where(Secret.id == secret_id).with_for_update())
+    row = session.get(Secret, secret_id)
     if row is None:
         raise HTTPException(status_code=404, detail="unknown secret")
+    if row.llm_mode is not None:
+        # The one value that pays for every project on it. A project secret is
+        # the chairman's to read back; this one is rotated, never read.
+        raise HTTPException(
+            status_code=422,
+            detail="LLM credential values are never shown back — rotate it in Settings "
+                   "if you no longer have it",
+        )
     _audit(session, row.project_id, "secret.reveal", "secret", row.id, {"name": row.name})
     return {"id": row.id, "name": row.name, "value": decrypt(row.ciphertext)}
 

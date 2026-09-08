@@ -596,8 +596,10 @@ difference. Three things are worth knowing:
   was attached to is decrypted to tell an API key from a subscription token —
   which is why the migration needs `YAAF_MASTER_KEY`. A project that had been
   attached to the Founder's own credential (the old attachment endpoint
-  allowed it) gets a copy as a proper LLM credential, so rotating the
-  Founder's key never again changes what a project pays with.
+  allowed it) gets a copy as a proper LLM credential — one copy per billing
+  mode those projects were using — so rotating the Founder's key never again
+  changes what a project pays with. A stored key the master key cannot read
+  is kept and labelled an API key rather than aborting the migration.
 - **Two API calls change their answer.** Storing a project secret with
   `kind: billing` returns 422 and points at Settings; deleting a credential a
   project is assigned to returns 409 until it is reassigned. `yaaf set-secret

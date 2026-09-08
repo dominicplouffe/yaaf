@@ -557,6 +557,12 @@ def _run(client, project_spec, spec_roles, roles_dir, days, usd_per_run,
     body = dict(project_spec)
     body["chairman_email"] = email
     body["slug"] = (body.get("slug") or "rehearsal")[:60]
+    # A drill runs on scripted agents in a throwaway database that holds no
+    # credentials. A draft may name the one it will pay with — the Founder is
+    # told to — and naming it here would be refused, so the drill spends
+    # nothing and asks for nothing.
+    body.pop("billing_secret_id", None)
+    body.pop("billing_secret_name", None)
     # The runtime is the whole point: scripted agents against the real API.
     integrations = dict(body.get("integrations") or {})
     integrations["runtime"] = "mock"
