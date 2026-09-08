@@ -59,6 +59,10 @@ interface FlagsView {
 interface FilesView {
   workspace: { path: string; size: number; modified: string }[];
   artifacts: ArtifactFile[];
+  // The receipts: one platform-written row per published version, with the
+  // hash and the publish time. `artifacts` is the store listing, which is a
+  // different thing — a key with no receipt behind it was never published.
+  published?: { key: string }[];
 }
 
 function fmtSize(bytes: number): string {
@@ -382,16 +386,25 @@ export default function Overview({
 
   // Newest artifact per name — the same deliverable republished by a later run
   // is a version of one thing, not two unrelated files.
-  const latestArtifacts = (() => {
-    const byName = new Map<string, ArtifactFile>();
+  const byName = (() => {
+    const seen = new Map<string, ArtifactFile>();
     for (const a of files?.artifacts ?? []) {
-      const seen = byName.get(a.name);
-      if (!seen || (a.modified ?? "") > (seen.modified ?? "")) byName.set(a.name, a);
+      const held = seen.get(a.name);
+      if (!held || (a.modified ?? "") > (held.modified ?? "")) seen.set(a.name, a);
     }
-    return [...byName.values()]
-      .sort((a, b) => (b.modified ?? "").localeCompare(a.modified ?? ""))
-      .slice(0, 3);
+    return seen;
   })();
+  const latestArtifacts = [...byName.values()]
+    .sort((a, b) => (b.modified ?? "").localeCompare(a.modified ?? ""))
+    .slice(0, 3);
+  // Deduped, because the Deliverables tab counts deduped and the two numbers
+  // sat side by side disagreeing: this card counted every version of every
+  // file and called it "published files", so three deliverables republished
+  // fifty times read as 156 of them.
+  const deliverableCount = byName.size;
+  // Undefined means the field did not arrive, not that nothing was published:
+  // a missing receipts array must not turn every row into an accusation.
+  const receiptKeys = files?.published && new Set(files.published.map((r) => r.key));
 
   // ── needs you ──
   const needs: React.ReactNode[] = [];
@@ -749,20 +762,27 @@ export default function Overview({
           <>
             {latestArtifacts.map((a) => (
               <div className="wrow" key={a.key}>
-                <span className="chip ok">published</span>
+                {receiptKeys && !receiptKeys.has(a.key) ? (
+                  <span className="chip warn">no receipt</span>
+                ) : (
+                  <span className="chip ok">published</span>
+                )}
                 <div className="grow">
                   <div className="tt mono">{a.name}</div>
                   <div className="sb">
                     {fmtSize(a.size)} · {a.modified ? fmtWhen(a.modified) : "—"}
                   </div>
                 </div>
-                <Link to={`/projects/${projectId}/deliverables`}>open →</Link>
+                <Link
+                  to={`/projects/${projectId}/deliverables?open=${encodeURIComponent(a.key)}`}
+                >
+                  open →
+                </Link>
               </div>
             ))}
             <div className="wrow">
               <div className="grow help">
-                {(files?.artifacts ?? []).length} published file
-                {(files?.artifacts ?? []).length === 1 ? "" : "s"} in total.
+                {deliverableCount} deliverable{deliverableCount === 1 ? "" : "s"} in total.
               </div>
               <Link to={`/projects/${projectId}/deliverables`}>all deliverables →</Link>
             </div>

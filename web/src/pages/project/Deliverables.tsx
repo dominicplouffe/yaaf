@@ -1,4 +1,5 @@
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { get, getToken } from "../../api";
 import Markdown from "../../Markdown";
 import { fmtWhen, usePoll } from "../../hooks";
@@ -293,6 +294,7 @@ export default function Deliverables({ projectId }: { projectId: string }) {
   const [showWorking, setShowWorking] = useState(false);
   const [sort, setSort] = useState<{ by: SortKey; desc: boolean }>({ by: "path", desc: false });
   const [page, setPage] = useState(0);
+  const [params, setParams] = useSearchParams();
 
   // The preview opens below a list that can be a screenful long. Without this,
   // pressing Open looks like pressing nothing.
@@ -336,6 +338,21 @@ export default function Deliverables({ projectId }: { projectId: string }) {
 
   const workspace = data?.workspace ?? [];
   const artifacts = data?.artifacts ?? [];
+
+  // "?open=<key>" arrives from the Overview's deliverable card, which knows
+  // exactly which file the chairman pressed and used to throw it away — the
+  // link landed him on this list to find it again himself. The listing is
+  // polled, so this waits for the key to actually be in it rather than
+  // fetching a URL the project may not own; the parameter is consumed either
+  // way, so a reload does not reopen a file he has since closed.
+  const wanted = params.get("open");
+  useEffect(() => {
+    if (!wanted || !data) return;
+    setParams({}, { replace: true });
+    const hit = artifacts.find((a) => a.key === wanted);
+    if (hit) open(artifactUrl(hit.key), hit.name, hit.size);
+    else setPreviewError(`That file is no longer published: ${wanted}`);
+  }, [wanted, data]);
 
   // Ties keep the order the server sent, which is by path — so two files of the
   // same size still land next to their siblings instead of shuffling on every
