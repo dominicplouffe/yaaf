@@ -344,8 +344,7 @@ def test_llm_credential_values_are_never_shown_back(client):
 
 def test_a_project_can_detach_its_credential_and_then_it_can_go(client):
     """The only way a leaked key on a one-credential install can ever be
-    deleted: detach every project, then delete. A dangling id after that is a
-    422 on the next mode change, not a 500."""
+    deleted: detach every project, then delete."""
     key = create(client)
     project = make_project(client, start=False, billing_secret_id=key["id"])
     assert client.delete(f"{URL}/{key['id']}", headers=ADMIN).status_code == 409
@@ -356,8 +355,21 @@ def test_a_project_can_detach_its_credential_and_then_it_can_go(client):
         row = session.get(Project, project["id"])
         assert row.billing_secret_id is None and row.billing_mode == "api_key"
     assert client.delete(f"{URL}/{key['id']}", headers=ADMIN).status_code == 200
+
+
+def test_a_dangling_credential_id_is_a_sentence_not_a_500(client):
+    """Postgres enforces the foreign key, so a project cannot point at a
+    credential that is gone. SQLite installs have no such key, and a reference
+    left behind by a hand edit must still answer with a 422 on the next mode
+    change rather than a traceback. The scenario cannot be built on Postgres
+    at all — which is the guarantee this test is the SQLite half of."""
+    import pytest
+
+    key = create(client)
+    project = make_project(client, start=False, billing_secret_id=key["id"])
     with db_session() as session:
-        # SQLite does not enforce the FK; a reference left behind must still be a sentence.
+        if session.get_bind().dialect.name != "sqlite":
+            pytest.skip("the foreign key makes a dangling credential id impossible here")
         session.get(Project, project["id"]).billing_secret_id = "secr_gone"
     dangling = client.patch(f"/admin/projects/{project['id']}", headers=ADMIN,
                             json={"billing_mode": "subscription"})
