@@ -29,7 +29,6 @@ import {
   spentOf,
 } from "../../ui";
 import Agenda from "../../agenda";
-import { ProjectBriefing } from "../../briefing";
 import { HirePanel, gapsFor, needsOf, useRoleLibrary } from "../../roles";
 import type { ProjectCtx } from "../Project";
 
@@ -615,13 +614,6 @@ export default function Overview({
       )}
 
       <ModeStrip dash={dash} reload={reload} />
-
-      {/* Past, present, future, in that order. The three tenses used to be one
-          — everything on this page described the current instant, and a
-          chairman back from a weekend had no screen that could tell him what
-          the weekend had contained or what the week was going to hold. */}
-      <h2 className="zone">What happened</h2>
-      <ProjectBriefing projectId={projectId} />
 
       {/* Is it working? The question a chairman asks first and the product
           answered nowhere: runs that ended early were a grey aside on a tab

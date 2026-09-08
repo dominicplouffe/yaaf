@@ -94,25 +94,14 @@ are undelegable at every setting, and the **spot-check** exists precisely
 because a CEO may be judging its own closes. Authority is configuration;
 integrity is structure, and the Desk draws that line where the server does.
 
-### Since you were last here
+### What happened while you were away
 
-Above the ranked list, and answering the earlier question: **what happened
-while I was away?** One block per project that moved — scope that settled,
-work that closed, proof the platform verified or refused, what it cost, what
-decided itself in your absence, and what that has left waiting on you. A
-project that did nothing collapses to one line, and still says whether that
-was a quiet week or a dead one.
+The desk is the present tense: it ranks what needs you now. The narrative of a
+window you missed is not on this page — it reads in your inbox each morning
+with `brief_daily_at` set, from `yaaf briefing`, and over MCP. It costs no
+model call either way: it is composed from the record, which is what lets it
+arrive on a project the platform paused for an exhausted budget.
 
-The window is *since you last read this*, not a fixed 24 hours, and its edges
-are printed so you can see what the numbers cover. **Reading never moves the
-mark** — the page polls, and a window that reset on every fetch would always be
-empty. *Mark read* moves it, and moves it to the edge of the window you were
-shown, so anything that landed while the panel sat open survives to the next
-read.
-
-None of it costs a model call: it is composed from the record. That is what
-lets it arrive on a project the platform paused for an exhausted budget, which
-is the morning you most want to hear from it.
 
 **The hero state is an empty desk**, and it proves it rather than asserting
 it: how many projects are working, when something last ran, and when the next
@@ -222,51 +211,15 @@ absence is clutter. See [project shapes](#project-shapes) below.
 
 ## Overview — the state of the project
 
-Read top to bottom it is three tenses: what needs you, what happened, what is
-true now, what happens next.
+Read top to bottom: what needs you, what is true now, what happens next.
 
 - **Needs you** — the decisions the Desk surfaces, scoped to this project. A
   quiet project says "nothing waiting on you here."
-- **What happened** — this project's briefing, on your own read mark. The same
-  panel as the Desk's, minus the project name, with *Mark read* beside it. Its
-  lines come filed under three headings rather than as one list: **Worth your
-  eye** (setbacks worst-first, and anything asking for a decision), **What
-  moved** (what you got), and **The CEO handled this itself**, folded away
-  until you open it.
-
-  **The autonomy dial decides which of the three a line lands in.** Every line
-  names the constitution rule that governs it. A rule still reading `chairman`
-  means you kept that authority and still want the news; a rule reading `ceo`
-  means you handed it over, and the line folds. So the same window that gives a
-  Supervised project ten lines gives an Autonomous one three — handing over
-  authority buys a shorter briefing, which is the only honest thing the dial
-  can mean on this screen.
-
-  Two kinds of line ignore the dial. **Material** ones are yours at every
-  setting, because no authority you could delegate makes them go away: money in
-  or out, the budget, the project stopping, a promise to the outside world
-  breaking, scope being cut, what actually got published, a requirement
-  settling true, and anything only your signature can resolve. **Operations** —
-  run tallies, frozen threads, reviews opening — are yours at no setting. The
-  split inside scope is worth stating outright: an *outcome* is material, its
-  *management* is delegated. A requirement settling true is what you get; a
-  requirement entering scope is how you get it. A line kind nobody has
-  classified is treated as material, because the failure mode of a filter is
-  silence and silence is what this panel exists to prevent.
-
-  When nothing in the window was yours, the headline says so in one sentence —
-  *Nothing needed you — the CEO handled 11 things itself* — and the Desk gives
-  that project a single collapsed row instead of a full block. The Desk splits
-  on what needed you, not on whether the project was busy: an autonomous
-  project can close twenty-six tasks and publish five documents without one
-  line being yours, and under the dial you set that is a success rather than a
-  headline.
-
-  Otherwise the headline names what landed *and* the worst thing that did not;
-  the money is one row below it rather than repeated inside it. Each line is a
-  fact, with the standing explanation of what that kind of fact means printed
-  quieter underneath — it is the same sentence in every briefing, so it should
-  never be the reason a fact is hard to find.
+- **What happened** — not on this screen. The Overview is the present tense;
+  the narrative of a window you missed reads in the morning mail, from
+  `yaaf briefing`, and over MCP. A panel of it sat here and was removed: it
+  restated the Needs-you count directly above it and the calendar directly
+  below it, and a reader doing that arithmetic twice trusts neither copy.
 - **Is it working?** — working now, runs today against the daily ceiling, runs
   that ended early, and spend today.
 - **What happens next** — the calendar. Fourteen days by default (7 or 30 on

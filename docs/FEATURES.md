@@ -280,9 +280,10 @@ four tables in Records by hand.
 per project: scope that settled, work that closed, proof the platform verified
 or refused, deliverables published, what it cost, what decided itself in your
 absence, what the CEO decided on its own authority, what you decided, and what
-that leaves waiting on you. It reads on the Desk (every live project), on each
-project's Overview, from `yaaf briefing`, and — with `brief_daily_at` set — in
-your inbox every morning.
+that leaves waiting on you. It reads from `yaaf briefing`, over MCP, and — with
+`brief_daily_at` set — in your inbox every morning. It is deliberately not a
+panel on the Desk or the Overview: both of those screens are the present tense,
+and a narrative sitting on top of them restated their own counts back at them.
 
 - **Composed from the record at zero tokens.** No run, no wake, no model call.
   Which is why it still arrives on a project the platform paused for an
@@ -297,15 +298,16 @@ your inbox every morning.
   holds them out of pace — a plan gate lifting is not scope landing, and an
   obligation met every cycle by design is not progress.
 - **The window is yours and has visible edges.** "Since you were last here" is
-  a real mark, moved only when you acknowledge the panel — reading it never
-  moves it, so a tab left open overnight does not eat your weekend. A first
-  visit summarises the whole project rather than an empty minute.
+  a real mark, moved only when you say you have read it (`yaaf briefing --seen`,
+  or `lifecycle(verb="briefing_seen")`) — reading never moves it, so nothing
+  eats a window you did not look at. A first read summarises the whole project
+  rather than an empty minute.
 - **Silence says which kind it is.** A project that did nothing still ships its
   pulse: open tasks, runs in flight, when it last ran. Nothing wrong and
   nothing happening are different screens.
 - **Two marks, two meanings.** The daily email's window runs from the last
-  email; the panel's runs from the last time you looked. The mail cannot eat
-  the story the screen was going to tell.
+  email; the read mark runs from the last time you said you had read one. The
+  mail cannot eat the story the next read was going to tell.
 
 **The agenda — what it is going to do next.** A fourteen-day strip on each
 project's Overview (and `yaaf agenda`): the wall-clock wakes, the standing
