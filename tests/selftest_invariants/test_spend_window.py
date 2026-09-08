@@ -369,3 +369,34 @@ def test_the_chairman_can_read_the_window_and_its_history(client):
     assert body["open"] is True
     assert body["spent"] == 12_000_000
     assert len(body["adjustments"]) == 1
+
+
+def test_the_window_closing_takes_its_flag_with_it(client):
+    """The flag is about THIS window overspending, so it dies with the window.
+
+    Nothing resolved it before: `flags.evaluate` never sees this kind, and the
+    only other path to RESOLVED is the chairman acknowledging one. So a raised
+    spend_window sat on his desk permanently — including after he had already
+    done the thing it asked for and raised the ceiling.
+    """
+    project = make_project(client, billing_mode="subscription")
+    _open(client, project, allowance=100_000_000, days=30, checkpoint_hours=999.0)
+    for days_ago in range(4):
+        _spend(project["id"], tokens=20_000_000, days_ago=days_ago)
+    _sweep(project["id"])
+
+    with db_session() as session:
+        live = list(session.execute(
+            select(Flag).where(Flag.kind == "spend_window")).scalars())
+        assert live and live[0].status == FlagStatus.OPEN
+
+    _end_it_now(project["id"], started_days_ago=31)
+    _sweep(project["id"])
+
+    with db_session() as session:
+        window = session.get(SpendWindow, _window_id(project["id"]))
+        assert window.status == SpendWindowStatus.CLOSED
+        closed = list(session.execute(
+            select(Flag).where(Flag.kind == "spend_window")).scalars())
+        assert [f.status for f in closed] == [FlagStatus.RESOLVED]
+        assert "the window closed" in closed[0].resolution

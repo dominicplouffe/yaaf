@@ -36,6 +36,7 @@ from yaaf.core.models import (
     AuditLog,
     Commitment,
     Evidence,
+    Flag,
     Message,
     Requirement,
     Review,
@@ -418,6 +419,36 @@ def audit_decide(principal: Principal, session: Session, arguments: dict) -> dic
                     body=body_class(ok=ok, note=str(arguments.get("reason") or "")),
                     session=session)
     return _record(session, principal, project.id, "audit_decide", arguments, outcome)
+
+
+@register(
+    "flag_ack",
+    scope="steer",
+    description=(
+        "Answer a flag the CEO raised: the platform opened it from arithmetic, the CEO "
+        "brought it to the boardroom with a proposal, and this is you saying you have read "
+        "it and what you think. A flag whose condition was a moment — a missed cycle, a "
+        "month over budget — closes here, because nothing else will ever close it. One "
+        "whose condition is still true stays open under your note: what clears it is the "
+        "arithmetic turning."
+    ),
+    input_schema=_schema(["flag"],
+                         flag={"type": "string", "description": "The flag id"},
+                         reason=REASON_ARG),
+)
+def flag_ack(principal: Principal, session: Session, arguments: dict) -> dict:
+    project = resolve_project(session, principal, required(arguments, "project"))
+    flag = _owned(session, project, Flag, str(arguments.get("flag") or ""), "flag")
+
+    preview = confirm.gate(session, principal, "flag_ack", arguments, {
+        "flag": flag.id, "kind": flag.kind, "project": project.slug})
+    if preview:
+        return preview
+
+    outcome = _call(principal, admin.acknowledge_flag, flag_id=flag.id,
+                    body=admin.FlagAck(note=str(arguments.get("reason") or "")),
+                    session=session)
+    return _record(session, principal, project.id, "flag_ack", arguments, outcome)
 
 
 # ── lifecycle ───────────────────────────────────────────────────────────────────

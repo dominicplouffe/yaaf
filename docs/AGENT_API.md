@@ -143,7 +143,7 @@ run may post for this even when it may not post a status.
 | Endpoint | Body | Notes |
 |---|---|---|
 | `GET /flags` | — | The open flags and whether each has been raised. They also arrive in the context pack every wake, until you say something. |
-| `POST /flags/raise` | `flag_id`, `message_id`, `proposal` | Close a flag **by having told him**. Two steps: post the news in the boardroom, then raise with that `message_id` — the message is the proof, which is why saying it in the boardroom does not close the flag on its own. `proposal` is required: a flag without one is anxiety forwarded to his desk. Closing it dismissively is legitimate and expected — *"the cycle boundary caused it, no action needed"* is this verb working. What is not available is leaving it open while reporting that everything is fine. |
+| `POST /flags/raise` | `flag_id`, `message_id`, `proposal` | Close a flag **by having told him**. Two steps: post the news in the boardroom, then raise with that `message_id` — the message is the proof, which is why saying it in the boardroom does not close the flag on its own. `proposal` is required: a flag without one is anxiety forwarded to his desk. Closing it dismissively is legitimate and expected — *"the cycle boundary caused it, no action needed"* is this verb working. What is not available is leaving it open while reporting that everything is fine. Raising moves it to RAISED, which is where the chairman sees it — what marks it answered is him acknowledging it, and you are told when he does. |
 
 The kinds: `standing_missed`, `deadline_at_risk`, `cycle_missed`, `work_starved`,
 `spend_window`, `budget_overrun`, and two that are about the project rather than

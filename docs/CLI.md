@@ -119,6 +119,7 @@ yaaf stop  my-slug --reason "shipped"
 | `yaaf evidence PROJECT` | External evidence and verification status. |
 | `yaaf hypotheses PROJECT` | Live bets and their kill dates. |
 | `yaaf approvals PROJECT` | Pending approvals. |
+| `yaaf flags PROJECT` | What the platform obliged the CEO to tell you, and whether it has. |
 | `yaaf audit PROJECT [--n 5]` | A random spot-audit sample of recent evidence and completed tasks. |
 
 ## Chairman actions
@@ -130,6 +131,7 @@ yaaf stop  my-slug --reason "shipped"
 | `yaaf extend HYPOTHESIS_ID NEW_KILL_DATE REASON` | Your one-time extension of an expired bet (ISO datetime). |
 | `yaaf unfreeze MESSAGE_ID` | Release a thread the pair circuit breaker froze. |
 | `yaaf audit-evidence EVIDENCE_ID --ok\|--bad [--note …]` | Record your verdict on a piece of evidence. |
+| `yaaf ack-flag FLAG_ID [--note …]` | Answer a flag the CEO raised. A moment closes here; a condition still true stays open under your note. |
 
 Constitution changes go through `yaaf amend` (above) or Settings → **Rules in
 force**. Either way they carry a written reason, an audit entry, and disclosure

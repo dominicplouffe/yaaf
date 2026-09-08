@@ -442,6 +442,10 @@ class NoticeKind(enum.StrEnum):
     # construction: a flag delivered on the next scheduled status is a warning
     # that arrives after the deadline it was about.
     FLAG_OPENED = "flag_opened"
+    # The chairman answered one. Not urgent — nothing is waiting on it — but a
+    # CEO that never learns what came of raising a flag is proposing into a
+    # void, and the next one it raises is written the same way.
+    FLAG_ACKNOWLEDGED = "flag_acknowledged"
     HYPOTHESIS_EXPIRED = "hypothesis_expired"
     BUDGET_WARNING = "budget_warning"
     BUDGET_EXHAUSTED = "budget_exhausted"
@@ -1476,6 +1480,12 @@ class Flag(Base):
     # What the CEO proposed doing about it. Required to raise: the value a CEO
     # adds over a monitoring alert is the sentence after the bad news.
     proposal: Mapped[str | None] = mapped_column(Text)
+    # When the chairman said something back, and what he said. A flag that has
+    # been raised is news he has been given, not news he has read: without this
+    # the raised ones sat on his desk under "needs you" with nothing to press,
+    # and the two kinds nothing auto-resolves sat there permanently.
+    acknowledged_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    acknowledgement: Mapped[str | None] = mapped_column(Text)
     resolution: Mapped[str | None] = mapped_column(Text)
     closed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)

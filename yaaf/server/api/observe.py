@@ -439,6 +439,11 @@ def project_flags(project_id: str, session: Session = Depends(db)) -> dict:
                 "opened_at": f.opened_at.isoformat() if f.opened_at else None,
                 "raised_at": f.raised_at.isoformat() if f.raised_at else None,
                 "proposal": f.proposal,
+                # Raised is news given; acknowledged is news answered. The desk
+                # needs both to tell a decision waiting on him from one he made.
+                "acknowledged_at": (
+                    f.acknowledged_at.isoformat() if f.acknowledged_at else None),
+                "acknowledgement": f.acknowledgement,
             }
             for f in rows
         ],

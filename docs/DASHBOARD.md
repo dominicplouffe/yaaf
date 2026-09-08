@@ -213,8 +213,13 @@ absence is clutter. See [project shapes](#project-shapes) below.
 
 Read top to bottom: what needs you, what is true now, what happens next.
 
-- **Needs you** — the decisions the Desk surfaces, scoped to this project. A
-  quiet project says "nothing waiting on you here."
+- **Needs you** — the decisions the Desk surfaces, scoped to this project, plus
+  the flags your CEO has raised. Every row here has a verb: a flag is answered
+  with **Noted**, optionally with a line the CEO reads. A flag whose condition
+  was a moment — a cycle already missed, a month already over budget — closes
+  when you answer it, because nothing else ever will; one whose condition is
+  still true drops to **Watch** under your note, and clears when the arithmetic
+  turns. A quiet project says "nothing waiting on you here."
 - **What happened** — not on this screen. The Overview is the present tense;
   the narrative of a window you missed reads in the morning mail, from
   `yaaf briefing`, and over MCP. A panel of it sat here and was removed: it
@@ -248,9 +253,10 @@ Read top to bottom: what needs you, what is true now, what happens next.
   resolves, and that therefore never becomes a Desk row: an evidence drought
   (active, or halfway to one), a kill date still ahead, the date your burn rate
   lands on the cap, memory nearing its ceiling, finished work nobody has
-  spot-checked, a flag your CEO has not yet raised in the boardroom, and a day
-  that spent money while nothing outside the project verified anything. Nothing
-  here is waiting on a click from you. It is the answer to "is this going
+  spot-checked, a flag your CEO has not yet raised in the boardroom, a flag you
+  have answered whose condition is still true, and a day that spent money while
+  nothing outside the project verified anything. Nothing here is waiting on a
+  click from you. It is the answer to "is this going
   well?", which is a different question from "what needs me?" — and the Desk
   now asks only the second.
 - **The plan** — live bets, the open board against the queue ceiling, verified

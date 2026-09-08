@@ -23,6 +23,7 @@ import {
   fmtWhenShort,
   hoursSince,
   idleSentence,
+  NoteAction,
   paceDate,
   runHealth,
   Skeleton,
@@ -50,6 +51,9 @@ interface FlagRow {
   opened_at: string | null;
   raised_at: string | null;
   proposal: string | null;
+  /** Raised is news he was given; acknowledged is news he answered. */
+  acknowledged_at: string | null;
+  acknowledgement: string | null;
 }
 interface FlagsView {
   unraised: number;
@@ -366,7 +370,7 @@ export default function Overview({
     () => get<FilesView>(`/observe/projects/${projectId}/files`),
     20000,
   );
-  const { data: flagsView } = usePoll(
+  const { data: flagsView, reload: reloadFlags } = usePoll(
     () => get<FlagsView>(`/observe/projects/${projectId}/flags`),
     8000,
   );
@@ -429,8 +433,12 @@ export default function Overview({
   }
   // A RAISED flag is the CEO having brought you a problem with a proposal —
   // "here is what broke, here are the numbers, here is what I would do, say
-  // the word". That is a decision waiting on you, so it sits with the others.
-  for (const f of (flagsView?.flags ?? []).filter((f) => f.status === "raised")) {
+  // the word". That is a decision waiting on you, so it sits with the others —
+  // and until there was a button here it was the one row on this desk you
+  // could not answer. Pressing "read it" took you to the boardroom and left
+  // the card exactly where it was, forever on the kinds nothing resolves.
+  const rawFlags = flagsView?.flags ?? [];
+  for (const f of rawFlags.filter((f) => f.status === "raised" && !f.acknowledged_at)) {
     needs.push(
       <div className="arow" key={f.id}>
         <span className="chip serious">{f.kind.replaceAll("_", " ")}</span>
@@ -439,8 +447,27 @@ export default function Overview({
           <div className="sb">
             {f.proposal ? `proposes: ${clip(f.proposal)}` : "raised without a proposal"}
           </div>
+          {/* The third thing every row on this desk owes its reader, and the
+              one this card never said: what happens if you do nothing. For a
+              flag the honest answer is "the CEO carries on" — it does not
+              block and it does not expire, which is exactly why it needs an
+              answer rather than a deadline. */}
+          <div className="sb help">
+            The platform opened this from arithmetic and made the CEO bring it to you. Nothing
+            here blocks or expires — it proceeds on its proposal unless you say otherwise.
+          </div>
         </div>
-        <Link to={`/projects/${projectId}/boardroom`}>read it →</Link>
+        <NoteAction
+          label="Noted"
+          className="small primary"
+          placeholder="Anything to say back? — the CEO reads this"
+          confirmLabel="✓ noted"
+          onSubmit={async (note) => {
+            await post(`/admin/flags/${f.id}/ack`, { note });
+            reloadFlags();
+          }}
+        />
+        <Link to={`/projects/${projectId}/boardroom`}>the CEO's case →</Link>
       </div>,
     );
   }
@@ -472,7 +499,7 @@ export default function Overview({
   // written "run ration is the binding constraint" in its own notes and then
   // told its chairman "solid progress". Drawn here, cheerfulness in the
   // boardroom is self-refuting rather than something you have to catch.
-  const unraised = (flagsView?.flags ?? []).filter((f) => f.status === "open");
+  const unraised = rawFlags.filter((f) => f.status === "open");
   for (const f of unraised) {
     watch.push(
       <div className="wrow" key={f.id}>
@@ -486,6 +513,28 @@ export default function Overview({
           </span>
         </div>
         <Link to={`/projects/${projectId}/boardroom`}>ask about it →</Link>
+      </div>,
+    );
+  }
+  // Acknowledged, and still true. A moment closes when you answer it — a
+  // missed cycle cannot un-miss, so your word is the end of it. A state cannot:
+  // the forecast is still negative, and saying so does not turn it. Rather than
+  // let the card vanish as if answering had fixed it, it drops here under your
+  // own note until the arithmetic turns and the platform resolves it.
+  for (const f of rawFlags.filter((f) => f.status === "raised" && f.acknowledged_at)) {
+    watch.push(
+      <div className="wrow" key={f.id}>
+        <span className="badge">noted</span>
+        <div className="grow">
+          {clip(f.summary)}{" "}
+          <span className="help">
+            — still true. You noted this
+            {f.acknowledged_at ? ` ${fmtWhenShort(f.acknowledged_at)}` : ""}
+            {f.acknowledgement ? `: “${clip(f.acknowledgement, 100)}”` : ""}; it clears when the
+            numbers do, not when you answer.
+          </span>
+        </div>
+        <Link to={`/projects/${projectId}/boardroom`}>take it up →</Link>
       </div>,
     );
   }
