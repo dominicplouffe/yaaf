@@ -15,6 +15,9 @@ from yaaf.core.models import AuditLog, Secret
 
 
 def _store(client, project_id, name, value="s3cret-value", **extra):
+    if extra.get("kind") == "billing" and not extra.get("role_scopes"):
+        return client.post("/admin/settings/llm-credentials", headers=ADMIN,
+                           json={"name": name, "mode": "api_key", "value": value})
     return client.post(
         "/admin/secrets",
         json={"project_id": project_id, "name": name, "value": value, **extra},
@@ -120,8 +123,8 @@ def test_delete_refuses_the_credential_the_project_pays_with(client):
                  json={"billing_secret_id": billing["id"]}, headers=ADMIN)
 
     refused = client.delete(f"/admin/secrets/{billing['id']}", headers=ADMIN)
-    assert refused.status_code == 422
-    assert "pays for Claude" in refused.json()["detail"]
+    assert refused.status_code == 409
+    assert "assigned to a project" in refused.json()["detail"]
     with db_session() as session:
         assert session.get(Secret, billing["id"]) is not None
 

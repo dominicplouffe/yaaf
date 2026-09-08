@@ -1,6 +1,7 @@
+import { CredentialPicker } from "../llmCredentials";
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { CrewSummary, get, McpServerEntry, patch, post, ProjectBundle,
+import { CrewSummary, get, McpServerEntry, post, ProjectBundle,
   RehearsalReport, RoleSummary, SlackProvision } from "../api";
 import Drill from "../drill";
 import {
@@ -208,7 +209,7 @@ export default function NewProject() {
   const [chairmanEmail, setChairmanEmail] = useState("");
   const [chairmanName, setChairmanName] = useState("");
   const [billingMode, setBillingMode] = useState("api_key");
-  const [billingKey, setBillingKey] = useState("");
+  const [billingCredentialId, setBillingCredentialId] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [mode, setMode] = useState("explore");
   // Set when a loaded setup file could not answer the shape question itself —
@@ -434,7 +435,7 @@ export default function NewProject() {
       return null;
     }
     if (n === 3) {
-      if (!billingKey.trim() && runtime !== "mock") {
+      if (!billingCredentialId.trim() && runtime !== "mock") {
         return "Without a billing key the project is created but cannot start";
       }
       return null;
@@ -453,7 +454,7 @@ export default function NewProject() {
   // Start needs a model to bill: a real key here, or the mock runtime. A
   // project can always be created without one and connected in Settings —
   // it just cannot START, because its first run would die hunting for a key.
-  const canStartNow = runtime === "mock" || !!billingKey.trim();
+  const canStartNow = runtime === "mock" || !!billingCredentialId.trim();
 
   /** Fill the whole form from a setup bundle.
    *
@@ -494,11 +495,7 @@ export default function NewProject() {
       if (p.deadline && new Date(p.deadline) > new Date()) {
         setExploreDeadline(p.deadline.slice(0, 10));
       }
-      // A full backup carries the billing key too — the one credential the
-      // form holds apart, because it is attached rather than role-granted.
-      const billing = parsed.secrets.find((s) =>
-        p.billing_secret_name ? s.name === p.billing_secret_name : s.kind === "billing");
-      if (billing?.value) setBillingKey(billing.value);
+      setBillingCredentialId("");
       // The file's whole job here is review-and-supply-keys, so land on the
       // step that shows the project it describes rather than the first field
       // of eleven sections it already filled.
@@ -705,6 +702,7 @@ export default function NewProject() {
           goal: goal.trim(),
           chairman_email: chairmanEmail.trim(),
           billing_mode: billingMode,
+          billing_secret_id: billingCredentialId || undefined,
           mode,
           ...(mode === "explore" && exploreDeadline
             ? { deadline: `${exploreDeadline}T23:59:59Z` } : {}),
@@ -877,23 +875,6 @@ export default function NewProject() {
       }>("/admin/projects", body);
       if (created.webhooks) setWebhooks({ projectId: created.id, ...created.webhooks });
       if (created.slack) setSlack(created.slack);
-      // The model key, stored and attached in one motion — without it the
-      // project exists but cannot start (its first run would die keyless).
-      if (billingKey.trim()) {
-        try {
-          const stored = await post<{ id: string }>("/admin/secrets", {
-            project_id: created.id,
-            name: bundle?.project.billing_secret_name || "anthropic-api-key",
-            value: billingKey.trim(),
-            role_scopes: [],
-            kind: "billing",
-          });
-          await patch(`/admin/projects/${created.id}`, { billing_secret_id: stored.id });
-        } catch (err) {
-          alert(`Project created, but attaching the model key failed: ` +
-                `${(err as Error).message}. Connect it in Settings → Billing.`);
-        }
-      }
       try {
         for (const cred of credentials) {
           if (!cred.name.trim() || !cred.value) continue;
@@ -1143,9 +1124,9 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
                 ` ${dataSourceUrls.size === 1 ? "One of them is a data source's" : "Some of them are data sources'"} ` +
                   "address: a full URL, tested before this project starts."}
               {" "}
-              {bundle.values_included && billingKey.trim()
-                ? "The billing key came along too — it is in the Billing card below."
-                : "Billing is connected afterwards in Settings."}
+              {bundle.values_included && billingCredentialId.trim()
+                ? "A managed billing credential is selected."
+                : "Select an administrator-managed credential in the Billing step. Billing values from backups are not imported."}
             </p>
           )}
         </div>
@@ -1410,28 +1391,8 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
 
         {on(3) && <>
         <div className="card" style={{ marginTop: 10 }}>
-          <label className="field">Billing — the key your agents think with</label>
-          <div className="row">
-            <div>
-              <select value={billingMode} onChange={(e) => setBillingMode(e.target.value)}>
-                <option value="api_key">Anthropic API key — budget in USD</option>
-                <option value="subscription">Claude subscription token — budget in tokens</option>
-              </select>
-            </div>
-            <div>
-              <SecretInput
-                value={billingKey}
-                onChange={setBillingKey}
-                placeholder={billingMode === "api_key"
-                  ? "sk-ant-…" : "the OAuth token from `claude setup-token`"}
-              />
-            </div>
-          </div>
-          <p className="help">
-            Stored encrypted, attached as this project's billing credential, never injected
-            into a sandbox. Leave it blank and the project is created but cannot start —
-            connect the key later in Settings.
-          </p>
+          <CredentialPicker value={billingCredentialId} onChange={(id, mode) => { setBillingCredentialId(id); setBillingMode(mode); }} />
+          <p className="help">The selected credential determines the budget unit. Without a credential, the project can be saved as a draft but cannot run models.</p>
           <button type="button" className="small" style={{ marginTop: 4 }}
             onClick={() => setShowAdvanced((v) => !v)}>
             {showAdvanced ? "hide advanced" : "advanced…"}
@@ -1750,7 +1711,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
               <div className="help">Agents cannot run keyless.</div>
             </span>
             <span>
-              {billingKey.trim()
+              {billingCredentialId.trim()
                 ? <span className="badge good">connected above</span>
                 : <span className="badge warn">add it on the previous step, or in Settings</span>}
             </span>

@@ -1466,3 +1466,18 @@ button.rolepick { width: 100%; text-align: left; background: var(--surface-2); }
   text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--muted);
   margin-left: 6px;
 }
+
+/* Keep shared credential management usable on narrow settings screens. */
+.llm-header { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+.llm-header h2 { margin-top: 0; }
+.llm-header > button { flex-shrink: 0; white-space: nowrap; }
+.llm-credentials td { overflow-wrap: anywhere; }
+@media (max-width: 640px) {
+  .llm-header { align-items: stretch; flex-direction: column; gap: 12px; }
+  .llm-credentials table, .llm-credentials tbody { display: block; }
+  .llm-credentials thead { display: none; }
+  .llm-credentials tr { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 16px 0; border-top: 1px solid var(--border, #303030); }
+  .llm-credentials td { display: block; padding: 0; border: 0; }
+  .llm-credentials td:first-child, .llm-credentials .llm-actions { grid-column: 1 / -1; }
+  .llm-credentials td[data-label]::before { content: attr(data-label); display: block; font-size: 11px; color: var(--muted, #999); margin-bottom: 4px; }
+}

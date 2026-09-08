@@ -484,6 +484,7 @@ class TeamSpec(BaseModel):
 
 
 class ProjectCreate(BaseModel):
+    billing_secret_id: str | None = None
     slug: str = Field(pattern="^[a-z0-9-]{2,64}$")
     name: str
     goal: str = Field(min_length=10)
@@ -729,6 +730,9 @@ def _craft_lift(
 
 @router.post("/projects")
 def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
+    from yaaf.core.llm_credentials import assigned_credential
+
+    billing = assigned_credential(session, body.billing_secret_id) if body.billing_secret_id else None
     chairman = session.execute(
         select(User).where(User.email == body.chairman_email)
     ).scalar_one_or_none()
@@ -787,7 +791,8 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
         name=body.name,
         goal=body.goal,
         chairman_user_id=chairman.id,
-        billing_mode=body.billing_mode,
+        billing_mode=billing.llm_mode if billing else body.billing_mode,
+        billing_secret_id=billing.id if billing else None,
         mode=body.mode,
         controlled_domains=body.controlled_domains,
         github_repo=body.github_repo,
@@ -929,9 +934,9 @@ def export_project(project_id: str, include_values: bool = False,
     This is the shape the seed (wipe-survival) machinery stores.
 
     `include_values=true`: the full backup, made at the chairman's explicit
-    request. Every credential is decrypted into the file — service keys, the
-    billing key, Slack tokens, webhook signing keys, OAuth wiring — so a
-    restore recreates the whole project with nothing to re-enter. The file is
+    request. Project service credentials are decrypted into the file, including
+    Slack tokens, webhook signing keys and OAuth wiring. Shared LLM values
+    stay in Settings; a restore must select a managed credential. The file is
     plaintext; the button that produces one says exactly what is inside.
 
     The New Project page accepts either file."""
@@ -1211,7 +1216,6 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
             oauth_token_names.update(
                 n for n in (entry.get("bearer_secret"), oauth.get("refresh_secret")) if n)
     ciphertexts: dict[str, str] = {}
-    secret_ids: dict[str, str] = {}
     for row in session.execute(
         select(Secret).where(Secret.project_id == source.id).order_by(Secret.created_at)
     ).scalars():
@@ -1222,9 +1226,10 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
                       kind=row.kind)
         session.add(copy)
         ciphertexts[row.name] = row.ciphertext
-        secret_ids[row.id] = copy.id
     if source.billing_secret_id:
-        project.billing_secret_id = secret_ids.get(source.billing_secret_id)
+        from yaaf.core.llm_credentials import assigned_credential
+
+        project.billing_secret_id = assigned_credential(session, source.billing_secret_id).id
 
     source_ceo = session.execute(
         select(Agent).where(Agent.project_id == source.id, Agent.kind == AgentKind.CEO)
@@ -2084,24 +2089,26 @@ def patch_project(project_id: str, body: ProjectPatch, session: Session = Depend
         project.billing_mode = body.billing_mode
         changed["billing_mode"] = body.billing_mode
     if body.billing_secret_id is not None:
-        secret = session.get(Secret, body.billing_secret_id)
-        if secret is None or (secret.project_id not in (None, project.id)):
-            raise HTTPException(status_code=422, detail="unknown secret for this project")
-        if secret.kind != "billing":
-            raise HTTPException(
-                status_code=422,
-                detail=f"'{secret.name}' is a service credential, not a billing one — "
-                       "agents cannot pay for Claude with it. Connect a billing "
-                       "credential (kind='billing') instead.",
-            )
-        project.billing_secret_id = body.billing_secret_id
-        changed["billing_secret_id"] = body.billing_secret_id
+        from yaaf.core.crypto import decrypt
+        from yaaf.core.llm_credentials import assigned_credential
+
+        secret = assigned_credential(session, body.billing_secret_id)
+        if body.billing_mode is not None and body.billing_mode != secret.llm_mode:
+            detail = _billing_shape_error(body.billing_mode, decrypt(secret.ciphertext))
+            raise HTTPException(status_code=422,
+                                detail=detail or "billing mode must match the selected credential")
+        project.billing_secret_id = secret.id
+        project.billing_mode = secret.llm_mode
+        changed["billing_secret_id"] = secret.id
+        changed["billing_mode"] = secret.llm_mode
     # Validate the (mode, credential) pair whenever either side moved.
     if (body.billing_mode is not None or body.billing_secret_id is not None) \
             and project.billing_secret_id:
         from yaaf.core.crypto import decrypt
 
         attached = session.get(Secret, project.billing_secret_id)
+        if attached.llm_mode and project.billing_mode != attached.llm_mode:
+            raise HTTPException(status_code=422, detail="billing mode must match the selected credential")
         shape_error = _billing_shape_error(project.billing_mode, decrypt(attached.ciphertext))
         if shape_error:
             raise HTTPException(status_code=422, detail=shape_error)
@@ -4394,7 +4401,7 @@ def reveal_secret(secret_id: str, session: Session = Depends(db)) -> dict:
     """
     from yaaf.core.crypto import decrypt
 
-    row = session.get(Secret, secret_id)
+    row = session.scalar(select(Secret).where(Secret.id == secret_id).with_for_update())
     if row is None:
         raise HTTPException(status_code=404, detail="unknown secret")
     _audit(session, row.project_id, "secret.reveal", "secret", row.id, {"name": row.name})
@@ -4406,17 +4413,14 @@ def delete_secret(secret_id: str, session: Session = Depends(db)) -> dict:
     """Remove a credential outright. Refused for the two kinds that something
     else owns: the credential the project is actively paying with, and a data
     source's address or token (delete the source and both go together)."""
-    row = session.get(Secret, secret_id)
+    row = session.scalar(select(Secret).where(Secret.id == secret_id).with_for_update())
     if row is None:
         raise HTTPException(status_code=404, detail="unknown secret")
-    if row.project_id:
-        project = session.get(Project, row.project_id)
-        if project is not None and project.billing_secret_id == row.id:
-            raise HTTPException(
-                status_code=422,
-                detail=f"'{row.name}' is how this project pays for Claude — connect a "
-                       "different billing credential first, then delete this one",
-            )
+    if session.scalar(select(Project.id).where(Project.billing_secret_id == row.id).limit(1)):
+        raise HTTPException(
+            status_code=409,
+            detail="This credential is assigned to a project. Reassign all projects before deleting it",
+        )
     source = _data_source_owning(session, row.project_id, row.name)
     if source is not None:
         raise HTTPException(
@@ -4555,6 +4559,15 @@ def provision_slack_channels(project_id: str, session: Session = Depends(db)) ->
 def put_secret(body: SecretIn, session: Session = Depends(db)) -> dict:
     from yaaf.core.crypto import encrypt
 
+    if body.kind == "billing" and body.role_scopes:
+        raise HTTPException(status_code=422, detail="billing credentials cannot be granted to roles")
+    if body.kind == "billing":
+        raise HTTPException(
+            status_code=422,
+            detail="A secret's kind is fixed at creation. Manage LLM credentials in Settings, "
+                   "then select one for the project",
+        )
+
     # Most secrets are opaque strings nobody here can judge. A data source's
     # address is the exception: the runner refuses to mount anything that is
     # not a full URL, and that refusal only reaches the chairman inside an
@@ -4584,6 +4597,8 @@ def put_secret(body: SecretIn, session: Session = Depends(db)) -> dict:
         select(Secret).where(Secret.project_id == body.project_id, Secret.name == body.name)
     ).scalar_one_or_none()
     if existing:
+        if existing.llm_mode is not None:
+            raise HTTPException(status_code=422, detail="Manage LLM credentials in Settings")
         if body.kind is not None and body.kind != existing.kind:
             raise HTTPException(
                 status_code=422,

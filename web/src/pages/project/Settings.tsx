@@ -1,3 +1,4 @@
+import { CredentialPicker } from "../../llmCredentials";
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -1569,10 +1570,7 @@ export default function Settings({
   const go = (next: string, tab?: string) =>
     setParams(tab ? { s: next, t: tab } : { s: next }, { replace: true });
 
-  const [billingChoice, setBillingChoice] = useState<"api_key" | "subscription">(
-    dash.billing_mode === "subscription" ? "subscription" : "api_key",
-  );
-  const [credential, setCredential] = useState("");
+  const [billingCredentialId, setBillingCredentialId] = useState(dash.billing_secret_id ?? "");
   const [busy, setBusy] = useState(false);
 
   const [runtime, setRuntime] = useState(String(dash.integrations["runtime"] ?? "agent_sdk"));
@@ -1662,26 +1660,9 @@ export default function Settings({
   };
 
   async function connectBilling() {
-    const name = billingChoice === "subscription" ? "claude-subscription-token" : "anthropic-api-key";
-    await act(async () => {
-      const secret = await post<{ id: string }>("/admin/secrets", {
-        project_id: projectId,
-        name,
-        value: credential.trim(),
-        role_scopes: [],
-        kind: "billing",
-      });
-      await patch(`/admin/projects/${projectId}`, {
-        billing_mode: billingChoice,
-        billing_secret_id: secret.id,
-      });
-      setCredential("");
-      // Preflight immediately: a bad credential should be news now, not after
-      // a night of failed runs.
-      const check = await post<{ ok: boolean; detail: string }>(
-        `/admin/projects/${projectId}/billing_check`, {});
-      if (!check.ok) throw new Error(`connected, but the check failed: ${check.detail}`);
-    }, `Billing connected and verified: ${billingChoice} using "${name}". New runs use it immediately.`);
+    await act(() => patch(`/admin/projects/${projectId}`, {
+      billing_secret_id: billingCredentialId,
+    }), "Billing credential updated. New runs use this credential.");
   }
 
   async function testBilling() {
@@ -1862,112 +1843,13 @@ export default function Settings({
             : `$${Number(dash.constitution["monthly_usd_cap"]).toLocaleString()}`}{" "}
           — the platform pauses the project by itself at 100%.
         </p>
-        <label className="field">To change it, pick a method and paste the credential:</label>
-        <div className="pill-row" style={{ marginBottom: 8 }}>
-          <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
-            <input
-              type="radio"
-              style={{ width: "auto" }}
-              checked={billingChoice === "api_key"}
-              onChange={() => setBillingChoice("api_key")}
-            />
-            Anthropic API key — metered, USD budget
-          </label>
-          <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
-            <input
-              type="radio"
-              style={{ width: "auto" }}
-              checked={billingChoice === "subscription"}
-              onChange={() => setBillingChoice("subscription")}
-            />
-            Claude subscription — token budget
-          </label>
-        </div>
-        <label className="field">
-          {billingChoice === "subscription"
-            ? "Subscription token — run `claude setup-token` in a terminal and paste the result (sk-ant-oat…)"
-            : "API key from console.anthropic.com (sk-ant-api…)"}
-        </label>
-        <SecretInput
-          value={credential}
-          onChange={setCredential}
-          placeholder={billingChoice === "subscription" ? "sk-ant-oat01-…" : "sk-ant-api03-…"}
-        />
+        <CredentialPicker value={billingCredentialId} onChange={id => setBillingCredentialId(id)} disabled={busy} />
         <div className="actions">
-          <button className="primary" disabled={busy || credential.trim().length < 10} onClick={connectBilling}>
-            {busy ? "Connecting…" : "Connect"}
-          </button>
-          <span className="help">
-            Stored encrypted. One click does all of it: store → attach → set mode.
-          </span>
+          <button className="primary" disabled={busy || !billingCredentialId || billingCredentialId === dash.billing_secret_id} onClick={connectBilling}>Save assignment</button>
+          <button disabled={busy || !billingReady} onClick={testBilling}>Test connection</button>
         </div>
-        {billingChoice === "subscription" && (
-          <p className="help">
-            Subscription runs share your personal Claude rate limits and are for personal projects;
-            use an API key for anything beyond that.
-          </p>
-        )}
+        <p className="help">Changing the assignment applies to new runs. The selected credential also determines whether budgets use USD or tokens.</p>
 
-        {secrets.filter((s) => s.kind === "billing").length > 0 && (
-          <>
-            <label className="field">Stored billing credentials for this project</label>
-            <table>
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th style={{ width: "30%" }}>Key</th>
-                  <th>Status</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {/* Billing kind only: service credentials (WordPress passwords,
-                    API keys for other services) can never pay for Claude — the
-                    server refuses them as billing_secret_id. */}
-                {secrets.filter((s) => s.kind === "billing").map((secret) => {
-                  const active = secret.id === dash.billing_secret_id;
-                  return (
-                    <tr key={secret.id}>
-                      <td className="mono">{secret.name}</td>
-                      <td>
-                        <StoredSecret secretId={secret.id} />
-                      </td>
-                      <td>
-                        {active ? (
-                          <span className="badge good">✓ ACTIVE — agents pay with this one</span>
-                        ) : (
-                          <span className="help">stored, not in use</span>
-                        )}
-                      </td>
-                      <td>
-                        {active ? (
-                          <button className="small" disabled={busy} onClick={testBilling}>
-                            test
-                          </button>
-                        ) : (
-                          <button
-                            className="small"
-                            onClick={() =>
-                              act(
-                                () =>
-                                  patch(`/admin/projects/${projectId}`, {
-                                    billing_secret_id: secret.id,
-                                  }),
-                                `Agents now pay with "${secret.name}".`,
-                              )
-                            }
-                          >
-                            switch to this one
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </>
-        )}
       </div>
 
       </Section>
@@ -2044,7 +1926,7 @@ export default function Settings({
         <p className="help" style={{ marginTop: 0 }}>
           A running twin, right here: same teams, same people, same constitution, and the{" "}
           <i>exact</i> role versions this project runs — not whatever the role library has moved
-          on to. Every credential comes across with its value, billing included, so there is
+          on to. Service credentials are copied and the shared LLM credential stays assigned, so there is
           nothing to re-paste; the twin's data sources are tested with its own copies before you
           land on it.
         </p>
@@ -2102,9 +1984,9 @@ export default function Settings({
       <div className="card">
         <p className="help" style={{ marginTop: 0 }}>
           A complete backup, as one JSON file: teams and their schedules, role definitions, the
-          constitution, configuration, data sources — and every credential <i>value</i>, billing
-          key, Slack token and webhook signing key, decrypted. Upload it on the New Project page
-          and the whole form prefills, values included; nothing to re-enter. It holds the keys it
+          constitution, configuration, data sources — and project service credential <i>values</i>,
+          Slack tokens and webhook signing keys, decrypted. Shared LLM values stay in Settings. Upload it on the New Project page
+          and the form prefills. Select an administrator-managed LLM credential for billing. It holds the keys it
           names, so store it the way you store passwords. Duplicating on this install is simpler
           still — use the twin above.
         </p>

@@ -28,6 +28,7 @@ from sqlalchemy import (
     Text,
     TypeDecorator,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -536,7 +537,7 @@ class Project(Base):
     chairman_user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
     # "api_key" | "subscription" — decides the budget's native unit (usd vs tokens)
     billing_mode: Mapped[str] = mapped_column(String(16), default="api_key")
-    billing_secret_id: Mapped[str | None] = mapped_column(String(40))
+    billing_secret_id: Mapped[str | None] = mapped_column(ForeignKey("secrets.id"))
     # Domains/accounts the project controls; evidence from these can never be external.
     controlled_domains: Mapped[list] = mapped_column(JSONVariant, default=list)
     github_repo: Mapped[str | None] = mapped_column(String(255))
@@ -1846,12 +1847,18 @@ class Secret(Base):
     the secrets its role's secret_scopes name, injected per-run."""
 
     __tablename__ = "secrets"
-    __table_args__ = (UniqueConstraint("project_id", "name"),)
+    __table_args__ = (
+        UniqueConstraint("project_id", "name"),
+        Index("uq_llm_credential_name", text("lower(name)"), unique=True,
+              postgresql_where=text("llm_mode IS NOT NULL"),
+              sqlite_where=text("llm_mode IS NOT NULL")),
+    )
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
     project_id: Mapped[str | None] = mapped_column(String(40))  # null => platform-level
     name: Mapped[str] = mapped_column(String(120))
     ciphertext: Mapped[str] = mapped_column(Text)
+    llm_mode: Mapped[str | None] = mapped_column(String(16))
     role_scopes: Mapped[list] = mapped_column(JSONVariant, default=list)  # role slugs
     # "service" (role-granted, injected under its own name) vs "billing"
     # (attached as billing_secret_id, injected into EVERY run as the model

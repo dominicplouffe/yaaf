@@ -969,7 +969,7 @@ export interface ProjectBundle {
     chairman_email?: string | null;
     constitution: Record<string, unknown>;
     integrations: Record<string, unknown>;
-    /** Name of the billing credential in `secrets` (full backups only). */
+    /** Name of the shared billing credential as a hint (full backups only); its value is excluded. */
     billing_secret_name?: string | null;
     ceo_role_slug: string;
     ceo_name: string;

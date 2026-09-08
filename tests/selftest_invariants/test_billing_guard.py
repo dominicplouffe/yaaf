@@ -14,11 +14,7 @@ from yaaf.runner.types import RunJob, RunResult
 
 
 def _billing_secret(client, project_id, name, value):
-    return client.post(
-        "/admin/secrets",
-        json={"project_id": project_id, "name": name, "value": value, "kind": "billing"},
-        headers=ADMIN,
-    ).json()
+    return client.post('/admin/settings/llm-credentials', json={'name': name, 'value': value, 'mode': 'subscription' if value.startswith('sk-ant-oat') else 'api_key'}, headers=ADMIN).json()
 
 
 def test_mode_credential_mismatch_is_refused(client):

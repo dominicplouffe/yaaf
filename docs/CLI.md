@@ -24,7 +24,11 @@ Every command that takes a project accepts **either a slug or an id**.
 | `yaaf seed-crews [DIR] [--only-missing]` | Load every `*.json` in the directory (default `crews/`) into the crew library — the pre-staffed teams the hiring desk offers. Crews are not versioned: one is read at hiring time and copied into the project's own teams, so re-seeding an edited crew can never reach a project that already started. Run it after `seed-roles`. |
 | `yaaf create-user EMAIL NAME` | Create a user. Idempotent by email. |
 | `yaaf create-project SPEC_FILE` | Create a project from a JSON spec (shape below). |
-| `yaaf set-secret NAME [--project P] [--scopes a,b] [--kind service\|billing]` | Store an encrypted secret. **The value is prompted** — never echoed, logged, or left in shell history. Omit `--project` for a platform-level secret. |
+| `yaaf set-secret NAME [--project P] [--scopes a,b] [--kind service]` | Store an encrypted secret. **The value is prompted** — never echoed, logged, or left in shell history. Omit `--project` for a platform-level secret. |
+| `yaaf llm-credentials` | List named LLM credentials and project assignments (no values). |
+| `yaaf create-llm-credential NAME [--mode api_key\|subscription]` | Create a managed credential; value is prompted. |
+| `yaaf edit-llm-credential ID NAME [--rotate]` | Rename a credential; optionally replace its value for all assigned projects. |
+| `yaaf delete-llm-credential ID` | Delete an unused credential after confirmation. Assigned credentials cannot be deleted. |
 | `yaaf settings` | Show the app-wide settings — whether a model credential is installed and how the Slack connection is configured. Values are never printed. |
 | `yaaf set-platform-key [--mode api_key\|subscription]` | Install or rotate the **Founder's** model credential (value prompted). It is never injected into a sandbox and never reaches a project's agents — there is no fallback. |
 | `yaaf set-slack [--bot-token] [--signing-secret] [--app-token] [--chairman U…] [--prefix P] [--visibility private\|public] [--auto-create/--no-auto-create]` | Configure the app-wide Slack connection every project inherits. Token flags prompt for the value. |
@@ -186,7 +190,7 @@ export YAAF_API=http://localhost:8080 YAAF_ADMIN_TOKEN=…
 yaaf seed-roles roles/                                        # once per deployment
 yaaf create-user you@example.com "Your Name"
 yaaf create-project my-spec.json
-yaaf set-secret anthropic --project my-slug --kind billing    # value prompted
+yaaf create-llm-credential "Production"    # value prompted; copy the returned id
 yaaf configure my-slug --billing-secret-id secr_…
 yaaf start my-slug
 
@@ -221,3 +225,5 @@ yaaf agenda my-slug           # and what the next fortnight holds
 Set `brief_daily_at` (Settings → **Rules in force** → Rhythm & reporting, or
 `yaaf amend`) and the same briefing arrives by email every morning without
 anyone typing anything.
+
+Project specs accept `billing_secret_id` from `yaaf llm-credentials`. Billing mode is derived from the selected credential. Manual project billing keys are refused. Existing project keys migrate to named credentials in Settings; names remain editable. Clones share the assignment; project backups exclude shared billing values.

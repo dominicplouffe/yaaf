@@ -275,11 +275,10 @@ def create_project(principal: Principal, session: Session, arguments: dict) -> d
     if preview:
         return preview
 
+    if billing is not None:
+        body["billing_secret_id"] = billing.id
     created = _call(principal, admin.create_project,
                     body=admin.ProjectCreate.model_validate(body), session=session)
-    if billing is not None:
-        _call(principal, admin.patch_project, project_id=created["id"],
-              body=admin.ProjectPatch(billing_secret_id=billing.id), session=session)
     if arguments.get("start"):
         _call(principal, admin.start_project, project_id=created["id"], session=session)
     return _record(session, principal, created["id"], "create_project",
@@ -361,8 +360,11 @@ def _billing_secret(session: Session, name: str | None) -> Secret | None:
     """Resolve a credential by name. The value never travels through here."""
     if not name:
         return None
-    row = session.query(Secret).filter(Secret.name == name).first()
+    row = session.query(Secret).filter(Secret.name == name, Secret.llm_mode.is_not(None)).first()
     if row is None:
+        service = session.query(Secret).filter(Secret.name == name, Secret.kind == "service").first()
+        if service is not None:
+            raise ToolRefusal(f"{name!r} is a service credential, not a billing one.")
         raise ToolRefusal(
             f"no credential named {name!r} exists. Create it in Settings — a value "
             "does not belong in a tool call.")

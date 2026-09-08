@@ -25,10 +25,11 @@ Both stores are the ones that already existed: plain values in
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from yaaf.core import platform
+from yaaf.core.models import Secret
 from yaaf.server.deps import admin_auth, db
 from yaaf.server.slack import provision as slack_provision
 from yaaf.server.slack import settings as slack_settings
@@ -215,3 +216,110 @@ def delete_slack(session: Session = Depends(db)) -> dict:
     return {"removed": removed,
             "note": "Projects with their own Slack tokens are unaffected. Nothing was "
                     "deleted in Slack, and no message was lost — the bus is canonical."}
+
+
+class LlmCredentialIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=120)
+    mode: str = Field(pattern="^(api_key|subscription)$")
+    value: str = Field(min_length=8, max_length=10000)
+
+
+class LlmCredentialPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=120)
+    value: str | None = Field(default=None, min_length=8, max_length=10000)
+
+
+def _llm_summary(session: Session, row: Secret, projects: list | None = None) -> dict:
+    from sqlalchemy import select
+
+    from yaaf.core.models import Project
+
+    if projects is None:
+        projects = session.scalars(select(Project).where(Project.billing_secret_id == row.id)
+                                   .order_by(Project.name)).all()
+    return {"id": row.id, "name": row.name, "mode": row.llm_mode,
+            "created_at": row.created_at,
+            "projects": [{"id": p.id, "name": p.name} for p in projects]}
+
+
+def _save_llm(session: Session, row: Secret, name: str, value: str | None) -> dict:
+    from sqlalchemy import func, select
+    from sqlalchemy.exc import IntegrityError
+
+    from yaaf.core.crypto import encrypt
+    from yaaf.core.models import Secret
+    from yaaf.server.api.admin import _audit
+
+    name = name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="Enter a credential name")
+    if name.lower().startswith("platform-") or name.lower() == "github":
+        raise HTTPException(status_code=422, detail="This name is reserved for a platform connection")
+    duplicate = session.scalar(select(Secret.id).where(
+        Secret.project_id.is_(None), func.lower(Secret.name) == name.lower(), Secret.id != row.id))
+    if duplicate:
+        raise HTTPException(status_code=409, detail="A credential with this name already exists")
+    if value is not None:
+        value = value.strip()
+        if len(value) < 8:
+            raise HTTPException(status_code=422, detail="Enter a credential of at least 8 characters")
+        problem = platform.shape_error(row.llm_mode, value)
+        if problem:
+            raise HTTPException(status_code=422, detail=problem)
+        row.ciphertext = encrypt(value)
+    row.name = name
+    session.add(row)
+    try:
+        session.flush()
+    except IntegrityError as exc:
+        session.rollback()
+        raise HTTPException(status_code=409, detail="A credential with this name already exists") from exc
+    _audit(session, None, "llm_credential.save", "secret", row.id,
+           {"name": name, "rotated": value is not None})
+    return _llm_summary(session, row)
+
+
+@router.get("/llm-credentials")
+def list_llm_credentials(session: Session = Depends(db)) -> list:
+    from sqlalchemy import select
+
+    from yaaf.core.models import Project, Secret
+
+    usage: dict[str, list] = {}
+    for project in session.scalars(select(Project).where(Project.billing_secret_id.is_not(None))
+                                  .order_by(Project.name)):
+        usage.setdefault(project.billing_secret_id, []).append(project)
+    return [_llm_summary(session, row, usage.get(row.id, [])) for row in session.scalars(
+        select(Secret).where(Secret.llm_mode.is_not(None)).order_by(Secret.name))]
+
+
+@router.post("/llm-credentials", status_code=201)
+def create_llm_credential(body: LlmCredentialIn, session: Session = Depends(db)) -> dict:
+    from yaaf.core import ids
+    from yaaf.core.models import Secret
+
+    row = Secret(id=ids.new_id(ids.SECRET), project_id=None, name=body.name,
+                 kind="billing", role_scopes=[], llm_mode=body.mode)
+    return _save_llm(session, row, body.name, body.value)
+
+
+@router.patch("/llm-credentials/{credential_id}")
+def update_llm_credential(credential_id: str, body: LlmCredentialPatch,
+                          session: Session = Depends(db)) -> dict:
+    from yaaf.core.llm_credentials import assigned_credential
+
+    row = assigned_credential(session, credential_id)
+    return _save_llm(session, row, body.name, body.value)
+
+
+@router.delete("/llm-credentials/{credential_id}")
+def delete_llm_credential(credential_id: str, session: Session = Depends(db)) -> dict:
+    from yaaf.core.llm_credentials import assigned_credential
+    from yaaf.server.api.admin import delete_secret
+
+    assigned_credential(session, credential_id)
+    return delete_secret(credential_id, session)

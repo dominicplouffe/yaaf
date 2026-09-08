@@ -12,6 +12,9 @@ from yaaf.server.contextpack import role_version_for
 
 
 def _store(client, project_id, name, **extra):
+    if extra.get("kind") == "billing" and not extra.get("role_scopes"):
+        return client.post("/admin/settings/llm-credentials", headers=ADMIN,
+                           json={"name": name, "mode": "api_key", "value": "s3cret-value"})
     response = client.post(
         "/admin/secrets",
         json={"project_id": project_id, "name": name, "value": "s3cret-value", **extra},
@@ -31,10 +34,10 @@ def test_billing_credentials_refuse_role_grants(client):
 
     # And later, on an existing billing secret:
     billing = _store(client, project["id"], "anthropic-api-key", kind="billing")
-    assert billing.status_code == 200
+    assert billing.status_code == 201
     rescope = client.post(
         "/admin/secrets",
-        json={"project_id": project["id"], "name": "anthropic-api-key",
+        json={"project_id": None, "name": "anthropic-api-key",
               "role_scopes": ["worker"]},
         headers=ADMIN,
     )

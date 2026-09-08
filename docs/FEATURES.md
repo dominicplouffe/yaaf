@@ -173,6 +173,11 @@ Outside Explore mode the root object is not the task, it is the
 - **Every run is metered** — including killed and timed-out ones, cache reads
   and writes, and the resident chat session's per-turn usage. Idle wakes are
   suppressed rather than billed.
+- **Managed LLM credentials.** Administrators create named API keys and subscription
+  tokens in Settings, rename or rotate them, and see all project assignments.
+  Projects select a credential; manual billing values are refused. Assigned
+  credentials cannot be deleted. Existing keys migrate without changing their
+  encrypted values or losing assignments.
 - **Two billing modes.** `api_key` meters in USD against a monthly cap;
   `subscription` meters in tokens against a monthly token cap. The dashboard
   shows whichever unit is native to the project.
@@ -421,12 +426,13 @@ evidence at all about your *project*.
   against it, and the granted roles' sandboxes mount it as real tools.
 - **Project export** downloads the whole project as one JSON file — goal,
   teams and their schedules, constitution, config, data sources, and every
-  credential *value* (billing key, Slack tokens, webhook signing keys
-  included), decrypted at the chairman's request so a restore re-enters
-  nothing. The API's default export (`include_values=false`, what the seed
+  project service credential *value* (Slack tokens and webhook signing keys
+  included), decrypted at the chairman's request. Shared LLM values stay in
+  Settings; restores select a managed credential. The API's default export (`include_values=false`, what the seed
   machinery stores) still strips values and plumbing for cross-install
   sharing. **Project clone** produces a running twin on the same install,
-  credential values and all, optionally aimed at a new goal.
+  with copied service credentials and the same shared LLM assignment, optionally
+  aimed at a new goal.
 
 ## 17. Proving it works
 

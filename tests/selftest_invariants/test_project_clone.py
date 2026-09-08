@@ -48,10 +48,7 @@ def test_credentials_come_across_with_their_values(client):
         "project_id": project["id"], "name": "wordpress",
         "value": "wp-secret-value", "role_scopes": ["worker"], "kind": "service",
     }, headers=ADMIN)
-    client.post("/admin/secrets", json={
-        "project_id": project["id"], "name": "anthropic-api-key",
-        "value": "sk-ant-not-real", "role_scopes": [], "kind": "billing",
-    }, headers=ADMIN)
+    client.post('/admin/settings/llm-credentials', json={'name': 'anthropic-api-key', 'value': 'sk-ant-not-real', 'mode': 'api_key'}, headers=ADMIN)
     client.post(f"/admin/projects/{project['id']}/mcp_servers", json={
         "name": "ppc", "url": "https://data.example.com:3845/mcp",
         "roles": ["worker"], "bearer": "tok-123",
@@ -60,17 +57,16 @@ def test_credentials_come_across_with_their_values(client):
     cloned = _clone(client, project["id"])
     assert cloned.status_code == 200, cloned.text
     twin = cloned.json()
-    assert twin["copied"]["secrets"] == 4
+    assert twin["copied"]["secrets"] == 3
 
     with db_session() as session:
         rows = {s.name: s for s in session.query(Secret)
                 .filter_by(project_id=twin["id"]).all()}
-        assert set(rows) == {"wordpress", "anthropic-api-key", "mcp-ppc-url", "mcp-ppc-token"}
+        assert set(rows) == {"wordpress", "mcp-ppc-url", "mcp-ppc-token"}
         # Values, not just names — and the grants that make them reachable.
         assert decrypt(rows["wordpress"].ciphertext) == "wp-secret-value"
         assert decrypt(rows["mcp-ppc-url"].ciphertext) == "https://data.example.com:3845/mcp"
         assert rows["mcp-ppc-url"].role_scopes == ["worker"]
-        assert rows["anthropic-api-key"].kind == "billing"
         # Separate rows, so rotating one project's key never touches the other.
         source_ids = {s.id for s in session.query(Secret)
                       .filter_by(project_id=project["id"]).all()}

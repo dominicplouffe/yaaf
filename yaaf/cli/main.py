@@ -237,7 +237,7 @@ def set_secret(
     project: str = typer.Option(None, "--project", help="Project id/slug; omit for platform-level"),
     scopes: str = typer.Option("", "--scopes", help="Comma-separated role slugs"),
     kind: str = typer.Option("service", "--kind",
-                             help="service (role-granted) or billing (refuses role grants)"),
+                             help="service; manage model credentials with create-llm-credential"),
 ) -> None:
     """Store an encrypted secret (value prompted, never echoed or logged)."""
     value = typer.prompt("Secret value", hide_input=True)
@@ -258,6 +258,41 @@ def settings() -> None:
     """
     with _client() as client:
         _show(client.get("/admin/settings"))
+
+
+@app.command()
+def llm_credentials() -> None:
+    """List managed LLM credentials and their assigned projects; never values."""
+    with _client() as client:
+        _show(client.get("/admin/settings/llm-credentials"))
+
+
+@app.command()
+def create_llm_credential(name: str, mode: str = typer.Option("api_key", "--mode")) -> None:
+    """Create a named LLM credential in Settings (value prompted)."""
+    value = typer.prompt("Credential value", hide_input=True)
+    with _client() as client:
+        _show(client.post("/admin/settings/llm-credentials",
+                          json={"name": name, "mode": mode, "value": value}))
+
+
+@app.command()
+def edit_llm_credential(credential_id: str, name: str,
+                        rotate: bool = typer.Option(False, "--rotate")) -> None:
+    """Rename a managed credential; optionally prompt for a replacement value."""
+    payload = {"name": name}
+    if rotate:
+        payload["value"] = typer.prompt("Replacement credential value", hide_input=True)
+    with _client() as client:
+        _show(client.patch(f"/admin/settings/llm-credentials/{credential_id}", json=payload))
+
+
+@app.command()
+def delete_llm_credential(credential_id: str) -> None:
+    """Delete an unused managed credential. Assigned credentials are protected."""
+    typer.confirm("Permanently delete this credential?", abort=True)
+    with _client() as client:
+        _show(client.delete(f"/admin/settings/llm-credentials/{credential_id}"))
 
 
 @app.command()
