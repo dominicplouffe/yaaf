@@ -391,3 +391,49 @@ def test_a_shared_founder_key_splits_by_billing_mode_and_survives_an_unreadable_
         assert all(row.ciphertext == original.ciphertext for row in by_project.values())
         unreadable = session.get(Secret, "legacy-unreadable")
         assert unreadable.llm_mode == "api_key" and unreadable.project_id is None
+
+
+def test_one_fetch_serves_every_screen_polling_the_same_credential(client, monkeypatch):
+    """Screens poll on the same minute. When the cache expires they all arrive
+    together; Anthropic is asked once and the rest read the answer."""
+    import threading
+
+    import httpx
+
+    from yaaf.core import plan_usage
+
+    key = create(client, value="sk-ant-oat-test-placeholder", mode="subscription")
+    calls: list[str] = []
+    gate = threading.Barrier(6, timeout=10)
+
+    class Slow:
+        status_code = 200
+
+        def json(self):
+            return {"five_hour": {"utilization": 0.5, "resets_at": 1}}
+
+    def fake_get(url, *a, **k):
+        calls.append(url)
+        return Slow()
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    plan_usage.forget(key["id"])
+    results: list[dict] = []
+
+    def poll():
+        gate.wait()
+        results.append(client.get(f"{URL}/{key['id']}/usage", headers=ADMIN).json())
+
+    threads = [threading.Thread(target=poll) for _ in range(6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=15)
+    assert len(results) == 6 and all(r["available"] for r in results)
+    assert len(calls) == 1, calls
+
+
+def test_unknown_credential_ids_are_404_on_the_settings_screen(client):
+    assert client.patch(f"{URL}/secr_nope", headers=ADMIN, json={"name": "x"}).status_code == 404
+    assert client.delete(f"{URL}/secr_nope", headers=ADMIN).status_code == 404
+    assert client.get(f"{URL}/secr_nope/usage", headers=ADMIN).status_code == 404

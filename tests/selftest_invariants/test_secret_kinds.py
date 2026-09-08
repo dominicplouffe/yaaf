@@ -26,11 +26,12 @@ def _store(client, project_id, name, **extra):
 def test_billing_credentials_refuse_role_grants(client):
     project = make_project(client, start=False)
 
-    # At creation:
+    # At creation — a billing kind cannot even be stored here now, granted or
+    # not; the refusal points at the door that replaced this one.
     refused = _store(client, project["id"], "anthropic-api-key",
                      kind="billing", role_scopes=["worker"])
     assert refused.status_code == 422
-    assert "cannot be granted" in refused.json()["detail"]
+    assert "Manage LLM credentials in Settings" in refused.json()["detail"]
 
     # And later, on an existing billing secret:
     billing = _store(client, project["id"], "anthropic-api-key", kind="billing")

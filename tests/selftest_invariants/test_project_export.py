@@ -129,10 +129,12 @@ def test_solo_bundle_round_trips(client):
 
 
 def test_full_backup_carries_every_value(client):
-    """The chairman's explicit download: nothing held back. Service and
-    billing credentials with their decrypted values, Slack wiring, webhook
+    """The chairman's explicit download: nothing of the project's held back.
+    Service credentials with their decrypted values, Slack wiring, webhook
     signing keys, data-source secrets — all of it in the file, so a restore
-    is a restore rather than an evening of re-pasting."""
+    is a restore rather than an evening of re-pasting. The one value that is
+    not the project's — the LLM credential every project shares — travels by
+    name, and the form re-selects it on import."""
     project = make_project(client, start=False)
     client.post("/admin/secrets", json={
         "project_id": project["id"], "name": "wordpress",

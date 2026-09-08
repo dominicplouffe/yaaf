@@ -47,7 +47,8 @@ What being managed buys you:
 - **Every founding path asks.** The New Project form has a picker, the
   Founder reads the list and asks you which when there is more than one, and
   the MCP `create_project` preview lists the choices when none was named.
-  Nobody guesses which credential pays.
+  The Founder is told not to guess, and both previews show the choice
+  before anything is created.
 - **The plan meter.** A subscription credential shows what Anthropic says is
   left on the session and weekly windows — the same numbers as `/usage` in
   Claude Code — in Settings and on every project paying with it. Every project

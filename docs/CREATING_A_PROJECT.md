@@ -79,7 +79,9 @@ becomes one — it pays for product-wide conversations like this, and no
 project's agents ever see it. Every project you create still pays its own way,
 and the Founder knows it: it reads the list of LLM credentials, names the one
 that pays in its draft when there is only one, and asks you which when there
-are several. It never picks for you.
+are several. That is an instruction to the model, not a rule the server can
+enforce, so the draft panel says which credential it chose — look before you
+click Review.
 
 Two things worth knowing:
 

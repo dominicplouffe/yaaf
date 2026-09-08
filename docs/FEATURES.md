@@ -180,8 +180,9 @@ Outside Explore mode the root object is not the task, it is the
   `kind: billing`), rename and rotation happen in one place for every project
   on the credential, and a credential in use cannot be deleted. Every way of
   founding a project offers the same list: the form's picker, the Founder
-  (which names the only credential when there is one, asks which when there
-  are several, and never guesses), and the MCP `catalog` and `create_project`
+  (which names the only credential when there is one, is told to ask which
+  when there are several, and shows its choice in the draft panel before
+  anything is created), and the MCP `catalog` and `create_project`
   tools, whose preview lists the choices when none was named.
 - **Two billing modes, decided by the credential.** An API key meters in USD
   against a monthly cap; a subscription meters in tokens against a monthly

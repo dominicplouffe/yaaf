@@ -42,14 +42,17 @@ def describe(row: Secret) -> dict:
             "bills": MODE_LABELS.get(row.llm_mode or "", row.llm_mode)}
 
 
-def choices(session: Session) -> list[dict]:
+def choices(session: Session, *, with_plan: bool = False) -> list[dict]:
     """Every credential a project may pay with, as a drafter needs to see them.
 
     Names, modes and how many projects already use each — never a value, and
     never which projects, because the drafter may be a client scoped to one
-    project and the inventory of the rest is not its business. A subscription
-    credential's plan meter rides along when a screen has read it in the last
-    minute; the choice is never worth a network call of its own.
+    project and the inventory of the rest is not its business. With
+    `with_plan`, a subscription credential's plan meter rides along when a
+    screen has read it in the last minute — for the Founder, which drafts in
+    the administrator's own screen; not for an MCP client, which the usage
+    route is withheld from for the same reason as the inventory. The choice is
+    never worth a network call of its own.
     """
     from yaaf.core import plan_usage
 
@@ -63,7 +66,7 @@ def choices(session: Session) -> list[dict]:
     out = []
     for row in rows:
         entry = {**describe(row), "projects_using_it": counts.get(row.id, 0)}
-        plan = plan_usage.cached(row.id)
+        plan = plan_usage.cached(row.id) if with_plan else None
         if plan and plan.get("available"):
             entry["plan"] = [{"window": w["label"], "used_percent": round(w["utilization"] * 100),
                               "resets_at": w["resets_at"]} for w in plan["windows"]]

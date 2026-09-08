@@ -106,7 +106,7 @@ def search_crews(session: Session, *, query: str | None = None) -> dict:
     return {"crews": out, "count": len(out)}
 
 
-def list_credentials(session: Session) -> dict:
+def list_credentials(session: Session, *, with_plan: bool = False) -> dict:
     """What a project can pay Claude with: names and modes, never values.
 
     A draft that names no credential is created unable to start, and a draft
@@ -116,7 +116,7 @@ def list_credentials(session: Session) -> dict:
     """
     from yaaf.core import llm_credentials
 
-    rows = llm_credentials.choices(session)
+    rows = llm_credentials.choices(session, with_plan=with_plan)
     if not rows:
         note = ("None yet. The project can still be drafted and created; it cannot start "
                 "until an administrator adds a credential in Settings and assigns it. "
@@ -290,7 +290,8 @@ def build_server(session: Session, state: dict, env: dict[str, str],
           "which, and do not guess.",
           {})
     async def _list_credentials(args):
-        return await step("list_credentials", lambda: list_credentials(session))
+        return await step("list_credentials",
+                          lambda: list_credentials(session, with_plan=True))
 
     @tool("propose_bundle", "Put a complete project in front of the chairman. This "
           "is your deliverable: it replaces the current draft and is what the review "

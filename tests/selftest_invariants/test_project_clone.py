@@ -67,7 +67,9 @@ def test_credentials_come_across_with_their_values(client):
         assert decrypt(rows["wordpress"].ciphertext) == "wp-secret-value"
         assert decrypt(rows["mcp-ppc-url"].ciphertext) == "https://data.example.com:3845/mcp"
         assert rows["mcp-ppc-url"].role_scopes == ["worker"]
-        # Separate rows, so rotating one project's key never touches the other.
+        # Separate rows for the project's own secrets, so rotating one twin's
+        # service key never touches the other. The LLM credential is the
+        # exception by design: shared and assigned, not copied.
         source_ids = {s.id for s in session.query(Secret)
                       .filter_by(project_id=project["id"]).all()}
         assert source_ids.isdisjoint({s.id for s in rows.values()})

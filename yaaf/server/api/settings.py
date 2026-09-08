@@ -308,21 +308,29 @@ def create_llm_credential(body: LlmCredentialIn, session: Session = Depends(db))
     return _save_llm(session, row, body.name, body.value)
 
 
+def _managed(session: Session, credential_id: str) -> Secret:
+    """The row to edit or delete, locked — or a 404, because on this screen an
+    id that names nothing is a credential somebody else already removed, not
+    a bad choice on a project form."""
+    from yaaf.core.llm_credentials import assigned_credential, resolve
+
+    if resolve(session, credential_id=credential_id) is None:
+        raise HTTPException(status_code=404, detail="unknown LLM credential")
+    return assigned_credential(session, credential_id)
+
+
 @router.patch("/llm-credentials/{credential_id}")
 def update_llm_credential(credential_id: str, body: LlmCredentialPatch,
                           session: Session = Depends(db)) -> dict:
-    from yaaf.core.llm_credentials import assigned_credential
-
-    row = assigned_credential(session, credential_id)
+    row = _managed(session, credential_id)
     return _save_llm(session, row, body.name, body.value)
 
 
 @router.delete("/llm-credentials/{credential_id}")
 def delete_llm_credential(credential_id: str, session: Session = Depends(db)) -> dict:
-    from yaaf.core.llm_credentials import assigned_credential
     from yaaf.server.api.admin import delete_secret
 
-    assigned_credential(session, credential_id)
+    _managed(session, credential_id)
     return delete_secret(credential_id, session)
 
 
@@ -340,14 +348,17 @@ def llm_credential_usage(credential_id: str, refresh: bool = False,
     API keys have no plan meter; the reading for one says so rather than 404,
     because the screen asking is the same screen either way.
     """
-    from sqlalchemy import select
-
     from yaaf.core.crypto import decrypt
+    from yaaf.core.llm_credentials import resolve
 
-    row = session.scalar(select(Secret).where(Secret.id == credential_id,
-                                              Secret.llm_mode.is_not(None)))
+    row = resolve(session, credential_id=credential_id)
     if row is None:
         raise HTTPException(status_code=404, detail="unknown LLM credential")
-    token = decrypt(row.ciphertext) if row.llm_mode == "subscription" else ""
-    return {"credential_id": row.id, "mode": row.llm_mode,
-            **plan_usage.reading(row.id, row.llm_mode, token, refresh=refresh)}
+    credential_id, mode = row.id, row.llm_mode
+    token = decrypt(row.ciphertext) if mode == "subscription" else ""
+    # Everything this needs from the database is in hand. Anthropic may take
+    # eight seconds to answer, and a pooled connection held open for that long
+    # by every polling screen is how an outage over there becomes one here.
+    session.close()
+    return {"credential_id": credential_id, "mode": mode,
+            **plan_usage.reading(credential_id, mode, token, refresh=refresh)}

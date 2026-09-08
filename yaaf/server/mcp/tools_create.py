@@ -263,16 +263,27 @@ def create_project(principal: Principal, session: Session, arguments: dict) -> d
             "this draft is not something the platform will accept:\n- "
             + "\n- ".join(problems))
 
-    billing = _billing_secret(session, arguments.get("billing_secret"))
-    if billing is None and body.get("billing_secret_id"):
+    named = _billing_secret(session, arguments.get("billing_secret"))
+    drafted = None
+    if body.get("billing_secret_id"):
         # A Founder draft names its credential by id; honour it the same way,
         # and refuse an id that names nothing rather than let create 422 on it.
-        billing = llm_credentials.resolve(session, credential_id=str(body["billing_secret_id"]))
-        if billing is None:
+        drafted = llm_credentials.resolve(session, credential_id=str(body["billing_secret_id"]))
+        if drafted is None:
             raise ToolRefusal(
                 f"the spec's billing_secret_id {body['billing_secret_id']!r} is not an "
                 f"LLM credential on this install; {llm_credentials.menu(session)}.")
+    if named is not None and drafted is not None and named.id != drafted.id:
+        # Two answers to "who pays" is no answer. The chairman's choice must be
+        # unambiguous before money is involved, so neither silently wins.
+        raise ToolRefusal(
+            f"`billing_secret` names {named.name!r} but the spec names "
+            f"{drafted.name!r}. Drop one so the choice is the chairman's.")
+    billing = named or drafted
     body = {k: v for k, v in body.items() if k not in ("billing_secret_id", "billing_secret_name")}
+    if billing is not None:
+        body["billing_secret_id"] = billing.id
+        body["billing_secret_name"] = billing.name  # for the summary; the endpoint ignores it
     about = {
         "about_to_create": founder_tools.summarise({"project": body}),
         "chairman": user.email,
@@ -306,8 +317,6 @@ def create_project(principal: Principal, session: Session, arguments: dict) -> d
     if preview:
         return preview
 
-    if billing is not None:
-        body["billing_secret_id"] = billing.id
     created = _call(principal, admin.create_project,
                     body=admin.ProjectCreate.model_validate(body), session=session)
     if arguments.get("start"):

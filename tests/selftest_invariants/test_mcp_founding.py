@@ -368,3 +368,23 @@ def test_a_credential_is_named_in_the_chairmans_own_case_or_by_the_drafts_id(cli
     failed, message = call(client, token, "create_project",
                            {"spec": {**spec, "billing_secret_id": "secr_nope"}})
     assert failed is True and "Max plan" in message
+
+
+def test_two_answers_to_who_pays_is_no_answer(client):
+    make_project(client, slug=SLUG)
+    api = _llm_credential(client, "Production")
+    sub = _llm_credential(client, "Max plan", value="sk-ant-oat01-x", mode="subscription")
+    token = founder(client)["token"]
+    spec = {**GOOD_SPEC, "billing_secret_id": sub["id"]}
+    failed, message = call(client, token, "create_project",
+                           {"spec": spec, "billing_secret": "Production"})
+    assert failed is True and "Production" in message and "Max plan" in message
+    # The same credential named both ways is one answer, and the summary says it.
+    failed, preview = call(client, token, "create_project",
+                           {"spec": spec, "billing_secret": "Max plan"})
+    assert failed is False
+    assert preview["about_to"]["about_to_create"]["pays_with"] == "Max plan"
+    assert preview["about_to"]["billing"]["id"] == sub["id"] != api["id"]
+    # And the catalog an MCP client sees never carries the plan meter.
+    failed, listed = call(client, token, "catalog", {"what": "credentials"})
+    assert failed is False and all("plan" not in c for c in listed["credentials"])

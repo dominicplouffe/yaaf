@@ -182,6 +182,9 @@ export default function NewProject() {
   // instead of asking them to spot it.
   const [search] = useSearchParams();
   const fileCard = useRef<HTMLDivElement | null>(null);
+  // Bumped by every bundle load and every manual pick, so a credential lookup
+  // that started for an earlier bundle cannot land on top of a later choice.
+  const billingPick = useRef(0);
   // A draft handed over by the Founder. It arrives as the same ProjectBundle a
   // setup file carries, so it lands through the same applyBundle path; the
   // thread id rides along so the founding conversation can be handed to the
@@ -504,8 +507,9 @@ export default function NewProject() {
       // from an export. Either is resolved against what exists now; a name
       // that matches nothing leaves the picker empty, and the step says so.
       setBillingCredentialId("");
+      const pick = ++billingPick.current;
       resolveCredential(p.billing_secret_id, p.billing_secret_name).then((found) => {
-        if (found) { setBillingCredentialId(found.id); setBillingMode(found.mode); }
+        if (found && pick === billingPick.current) { setBillingCredentialId(found.id); setBillingMode(found.mode); }
       });
       // The file's whole job here is review-and-supply-keys, so land on the
       // step that shows the project it describes rather than the first field
@@ -1139,7 +1143,9 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
               {" "}
               {billingCredentialId.trim()
                 ? "It also named the credential that pays — selected in the Billing step."
-                : bundle.project.billing_secret_name
+                : bundle.secrets.some((s) => s.kind === "billing" && s.value)
+                  ? "It carries a billing key value from before credentials were managed; that value is not imported. Add it under Settings → LLM credentials, then pick it in the Billing step."
+                  : bundle.project.billing_secret_name
                   ? `It named a credential called "${bundle.project.billing_secret_name}", which this install does not have — pick one in the Billing step.`
                   : "It does not say which credential pays — pick one in the Billing step, or the project is created unable to start."}
             </p>
@@ -1406,7 +1412,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
 
         {on(3) && <>
         <div className="card" style={{ marginTop: 10 }}>
-          <CredentialPicker value={billingCredentialId} onChange={(id, mode) => { setBillingCredentialId(id); setBillingMode(mode); }} />
+          <CredentialPicker value={billingCredentialId} onChange={(id, mode) => { billingPick.current++; setBillingCredentialId(id); setBillingMode(mode); }} />
           <p className="help">The selected credential determines the budget unit. Without a credential, the project can be saved as a draft but cannot run models.</p>
           <button type="button" className="small" style={{ marginTop: 4 }}
             onClick={() => setShowAdvanced((v) => !v)}>

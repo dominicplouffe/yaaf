@@ -4582,8 +4582,8 @@ def provision_slack_channels(project_id: str, session: Session = Depends(db)) ->
 def put_secret(body: SecretIn, session: Session = Depends(db)) -> dict:
     from yaaf.core.crypto import encrypt
 
-    if body.kind == "billing" and body.role_scopes:
-        raise HTTPException(status_code=422, detail="billing credentials cannot be granted to roles")
+    # The kind stays in the model's pattern so this sentence, not a validation
+    # error, answers a chairman who reaches for the old door.
     if body.kind == "billing":
         raise HTTPException(
             status_code=422,
@@ -4628,6 +4628,8 @@ def put_secret(body: SecretIn, session: Session = Depends(db)) -> dict:
                 detail="a secret's kind is fixed at creation — store a new secret instead",
             )
         if existing.kind == "billing" and body.role_scopes:
+            # Reachable only for the Founder's own platform row, which is
+            # kind='billing' without an llm_mode. Still never role-granted.
             raise HTTPException(
                 status_code=422,
                 detail="billing credentials cannot be granted to roles: the billing path "
@@ -4644,13 +4646,7 @@ def put_secret(body: SecretIn, session: Session = Depends(db)) -> dict:
         return {"id": existing.id, "rotated": rotated, "role_scopes": existing.role_scopes}
     if value is None:
         raise HTTPException(status_code=422, detail="a new secret needs a value")
-    kind = body.kind or "service"
-    if kind == "billing" and body.role_scopes:
-        raise HTTPException(
-            status_code=422,
-            detail="billing credentials cannot be granted to roles: the billing path "
-                   "already injects them into every run",
-        )
+    kind = "service"  # the only kind this door creates; billing was refused above
     row = Secret(
         id=ids.new_id(ids.SECRET),
         project_id=body.project_id,

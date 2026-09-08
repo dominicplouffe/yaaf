@@ -48,6 +48,10 @@ WINDOW_LABELS = {
 
 _cache: dict[str, tuple[float, dict]] = {}
 _lock = threading.Lock()
+#: One fetch in flight per credential. Every screen polls on the same minute,
+#: so when the cache expires they all arrive together; the first one asks
+#: Anthropic and the rest wait for its answer instead of asking again.
+_inflight: dict[str, threading.Lock] = {}
 
 
 def _now_iso() -> str:
@@ -159,14 +163,26 @@ def reading(credential_id: str, mode: str | None, token: str, *, refresh: bool =
                 "reason": "API keys are metered per call in dollars, not against a plan — "
                           "the monthly budget below is the meter that applies",
                 "windows": [], "fetched_at": _now_iso(), "cached": False}
-    now = time.monotonic()
+    def usable(hit: tuple[float, dict] | None) -> bool:
+        # A forced refresh always asks again; the gate below means it still
+        # asks one at a time, and a poll that lands while it is asking waits
+        # for that answer instead of starting a second.
+        return hit is not None and not refresh and time.monotonic() - hit[0] < CACHE_TTL_S
+
     with _lock:
         hit = _cache.get(credential_id)
-        if hit and not refresh and now - hit[0] < CACHE_TTL_S:
+        if usable(hit):
             return {**hit[1], "cached": True}
-    fresh = fetch(token)
-    with _lock:
-        _cache[credential_id] = (now, fresh)
+        gate = _inflight.setdefault(credential_id, threading.Lock())
+    with gate:
+        with _lock:
+            hit = _cache.get(credential_id)
+            if usable(hit):
+                return {**hit[1], "cached": True}
+        fresh = fetch(token)
+        with _lock:
+            # Stamped after the fetch, so a slow answer is not already half expired.
+            _cache[credential_id] = (time.monotonic(), fresh)
     return {**fresh, "cached": False}
 
 
