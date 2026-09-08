@@ -1,4 +1,4 @@
-import { CredentialPicker } from "../llmCredentials";
+import { CredentialPicker, resolveCredential } from "../llmCredentials";
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { CrewSummary, get, McpServerEntry, post, ProjectBundle,
@@ -246,6 +246,11 @@ export default function NewProject() {
   const [queueCeiling, setQueueCeiling] = useState(8);
   const [droughtHours, setDroughtHours] = useState(24);
   const [usdCap, setUsdCap] = useState(1000);
+  // The same cap in the subscription unit. Which one binds is decided by the
+  // credential, not the form: a subscription meters tokens and the USD figure
+  // is never consulted, so the form shows and posts whichever one applies.
+  const [tokenCap, setTokenCap] = useState(200_000_000);
+  const tokensMode = billingMode === "subscription";
   const [approvalThreshold, setApprovalThreshold] = useState(250);
   const [requireVerification, setRequireVerification] = useState(false);
   const [reportHours, setReportHours] = useState(1);
@@ -495,7 +500,13 @@ export default function NewProject() {
       if (p.deadline && new Date(p.deadline) > new Date()) {
         setExploreDeadline(p.deadline.slice(0, 10));
       }
+      // A draft or a backup names who pays — by id from the Founder, by name
+      // from an export. Either is resolved against what exists now; a name
+      // that matches nothing leaves the picker empty, and the step says so.
       setBillingCredentialId("");
+      resolveCredential(p.billing_secret_id, p.billing_secret_name).then((found) => {
+        if (found) { setBillingCredentialId(found.id); setBillingMode(found.mode); }
+      });
       // The file's whole job here is review-and-supply-keys, so land on the
       // step that shows the project it describes rather than the first field
       // of eleven sections it already filled.
@@ -546,6 +557,7 @@ export default function NewProject() {
       if (cons.queue_ceiling !== undefined) setQueueCeiling(cons.queue_ceiling);
       if (cons.drought_hours !== undefined) setDroughtHours(cons.drought_hours);
       if (cons.monthly_usd_cap !== undefined) setUsdCap(cons.monthly_usd_cap);
+      if (cons.monthly_token_cap !== undefined) setTokenCap(cons.monthly_token_cap);
       if (cons.approval_threshold_usd !== undefined) {
         setApprovalThreshold(cons.approval_threshold_usd);
       }
@@ -717,6 +729,7 @@ export default function NewProject() {
             queue_ceiling: queueCeiling,
             drought_hours: droughtHours,
             monthly_usd_cap: usdCap,
+            monthly_token_cap: tokenCap,
             approval_threshold_usd: approvalThreshold,
             require_evidence_verification: requireVerification,
             stakes: craft.stakes,
@@ -1124,9 +1137,11 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
                 ` ${dataSourceUrls.size === 1 ? "One of them is a data source's" : "Some of them are data sources'"} ` +
                   "address: a full URL, tested before this project starts."}
               {" "}
-              {bundle.values_included && billingCredentialId.trim()
-                ? "A managed billing credential is selected."
-                : "Select an administrator-managed credential in the Billing step. Billing values from backups are not imported."}
+              {billingCredentialId.trim()
+                ? "It also named the credential that pays — selected in the Billing step."
+                : bundle.project.billing_secret_name
+                  ? `It named a credential called "${bundle.project.billing_secret_name}", which this install does not have — pick one in the Billing step.`
+                  : "It does not say which credential pays — pick one in the Billing step, or the project is created unable to start."}
             </p>
           )}
         </div>
@@ -1512,6 +1527,11 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
                 the question. This box knows what a run has cost it and cannot know
                 what this project's runs will cost. */}
             {(() => {
+              if (tokensMode) {
+                return `Metered in tokens against the selected subscription: the cap is ` +
+                  `${tokenCap.toLocaleString()} tokens a month, and the plan's own session ` +
+                  "and weekly windows apply before it does.";
+              }
               const perRun = usdCap / Math.max(1, queueCeiling * 8);
               const seen = status?.avg_usd_per_run;
               return seen
@@ -1548,8 +1568,18 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
           </div>
           <div className="row">
             <div>
-              <label className="field">Monthly budget cap (USD)</label>
-              <input type="number" min={0} value={usdCap} onChange={(e) => setUsdCap(+e.target.value)} />
+              {tokensMode ? (
+                <>
+                  <label className="field">Monthly budget cap (tokens)</label>
+                  <input type="number" min={0} step={1_000_000} value={tokenCap} onChange={(e) => setTokenCap(+e.target.value)} />
+                  <div className="help">The selected credential is a subscription, so the budget is in tokens.</div>
+                </>
+              ) : (
+                <>
+                  <label className="field">Monthly budget cap (USD)</label>
+                  <input type="number" min={0} value={usdCap} onChange={(e) => setUsdCap(+e.target.value)} />
+                </>
+              )}
             </div>
             <div>
               <label className="field">Approval threshold (USD per spend)</label>
@@ -1690,11 +1720,23 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
           </div>
           <div className="orgline">
             <strong>Cap</strong>
-            <span className="chip">${usdCap}/mo</span>
-            <span className="help">
-              ≈ ${roughMonthly(hiredRoles)}/mo at this staffing — the project pauses
-              itself at the cap
-            </span>
+            {tokensMode ? (
+              <>
+                <span className="chip">{tokenCap.toLocaleString()} tokens/mo</span>
+                <span className="help">
+                  metered against the selected subscription — the project pauses itself at
+                  the cap, and the plan's own windows apply before it
+                </span>
+              </>
+            ) : (
+              <>
+                <span className="chip">${usdCap}/mo</span>
+                <span className="help">
+                  ≈ ${roughMonthly(hiredRoles)}/mo at this staffing — the project pauses
+                  itself at the cap
+                </span>
+              </>
+            )}
           </div>
         </div>
 
@@ -1707,8 +1749,8 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
         <div className="card" style={{ marginBottom: 10 }}>
           <div className="needline">
             <span>
-              <strong>Billing key</strong>
-              <div className="help">Agents cannot run keyless.</div>
+              <strong>Billing credential</strong>
+              <div className="help">Agents cannot run without one.</div>
             </span>
             <span>
               {billingCredentialId.trim()

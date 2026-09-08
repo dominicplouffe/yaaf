@@ -632,8 +632,11 @@ plainly that a machine carried the signature.
 **Three narrowings this scope adds that the HTTP surface does not have.**
 `POST /admin/projects` accepts any `chairman_email`, so the tool overwrites it
 with the token's own user — a model must not create a project chaired by
-somebody else. A billing credential is attached **by name**, never by value, and
-a service credential named in that field is refused. And `grade_goal` runs on
+somebody else. A billing credential is attached **by name**, never by value —
+`catalog` with `what: credentials` lists what exists (names and billing modes,
+never values and never which projects use them), the `create_project` preview
+shows the same list when no name was given, and a name that matches nothing
+is refused with the menu. A service credential named in that field is refused. And `grade_goal` runs on
 the *platform* credential, never a project's, because a project that does not
 exist yet has nothing to charge; with none configured it returns the eight
 element names and points at `yaaf://docs/goal-grammar` rather than refusing.

@@ -177,7 +177,11 @@ Outside Explore mode the root object is not the task, it is the
   tokens in Settings, rename or rotate them, and see all project assignments.
   Projects select a credential; manual billing values are refused. Assigned
   credentials cannot be deleted. Existing keys migrate without changing their
-  encrypted values or losing assignments.
+  encrypted values or losing assignments. Every way of founding a project
+  offers the same list: the New Project form's picker, the Founder (who asks
+  which one when there is more than one, and never guesses), and the MCP
+  `catalog` and `create_project` tools, whose preview shows the choices when
+  none was named.
 - **The plan meter.** A subscription credential shows what Anthropic says is
   left on its plan — the five-hour session window and the weekly windows, the
   same numbers as `/usage` in Claude Code — on the credential in Settings and

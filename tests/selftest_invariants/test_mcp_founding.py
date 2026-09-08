@@ -290,3 +290,81 @@ def test_a_project_prompt_resolves_the_slug_before_the_model_sees_it(client):
     refused = rpc(client, scoped, "prompts/get",
                   {"name": "why-at-risk", "arguments": {"project": "beta"}}).json()
     assert "is reachable by this client" in refused["error"]["message"]
+
+
+def _llm_credential(client, name, value="sk-ant-api03-test-not-real", mode="api_key"):
+    response = client.post("/admin/settings/llm-credentials", headers=ADMIN,
+                           json={"name": name, "mode": mode, "value": value})
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def test_the_catalog_says_what_can_pay_and_never_how(client):
+    make_project(client, slug=SLUG)
+    token = founder(client)["token"]
+    failed, empty = call(client, token, "catalog", {"what": "credentials"})
+    assert failed is False and empty["credentials"] == []
+
+    api = _llm_credential(client, "Production", value="sk-ant-api03-catalog-secret")
+    _llm_credential(client, "Max plan", value="sk-ant-oat01-catalog-secret", mode="subscription")
+    client.patch(f"/admin/projects/{make_project(client, slug='payer')['id']}",
+                 json={"billing_secret_id": api["id"]}, headers=ADMIN)
+    failed, listed = call(client, token, "catalog", {"what": "credentials"})
+    assert failed is False
+    by_name = {c["name"]: c for c in listed["credentials"]}
+    assert by_name["Production"]["mode"] == "api_key"
+    assert by_name["Production"]["projects_using_it"] == 1
+    assert by_name["Max plan"]["mode"] == "subscription"
+    # Names and modes, never values, and never which projects.
+    text = json.dumps(listed)
+    assert "catalog-secret" not in text and "payer" not in text and "Payer" not in text
+
+
+def test_create_without_a_credential_shows_the_choices_instead_of_guessing(client):
+    make_project(client, slug=SLUG)
+    token = founder(client)["token"]
+    failed, preview = call(client, token, "create_project", {"spec": GOOD_SPEC})
+    assert failed is False and preview["confirm_required"] is True
+    assert preview["about_to"]["billing"] is None
+    assert preview["about_to"]["billing_options"] == []
+    assert "cannot start" in preview["about_to"]["billing_note"]
+
+    _llm_credential(client, "Production")
+    _llm_credential(client, "Max plan", value="sk-ant-oat01-x", mode="subscription")
+    failed, preview = call(client, token, "create_project", {"spec": GOOD_SPEC})
+    assert [c["name"] for c in preview["about_to"]["billing_options"]] == ["Max plan", "Production"]
+    assert "Ask the chairman" in preview["about_to"]["billing_note"]
+
+    # A wrong name is refused with the menu, not a dead end.
+    failed, message = call(client, token, "create_project",
+                           {"spec": GOOD_SPEC, "billing_secret": "prod"})
+    assert failed is True and "Production" in message and "Max plan" in message
+
+
+def test_a_credential_is_named_in_the_chairmans_own_case_or_by_the_drafts_id(client):
+    from yaaf.core.db import db_session
+    from yaaf.core.models import Project
+
+    make_project(client, slug=SLUG)
+    sub = _llm_credential(client, "Max plan", value="sk-ant-oat01-x", mode="subscription")
+    token = founder(client)["token"]
+
+    failed, preview = call(client, token, "create_project",
+                           {"spec": GOOD_SPEC, "billing_secret": "max PLAN"})
+    assert failed is False and preview["about_to"]["billing"]["name"] == "Max plan"
+    assert "billing_options" not in preview["about_to"]
+    failed, created = call(client, token, "create_project",
+                           {"spec": GOOD_SPEC, "billing_secret": "max PLAN",
+                            "confirm": preview["confirm"]})
+    assert failed is False, created
+    with db_session() as session:
+        made = session.get(Project, created["id"])
+        assert made.billing_secret_id == sub["id"] and made.billing_mode == "subscription"
+
+    # A Founder draft carries the id; the tool honours it and says which name.
+    spec = {**GOOD_SPEC, "slug": "ppc-audit-2", "billing_secret_id": sub["id"]}
+    failed, preview = call(client, token, "create_project", {"spec": spec})
+    assert failed is False and preview["about_to"]["billing"]["name"] == "Max plan"
+    failed, message = call(client, token, "create_project",
+                           {"spec": {**spec, "billing_secret_id": "secr_nope"}})
+    assert failed is True and "Max plan" in message

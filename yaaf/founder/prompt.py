@@ -61,7 +61,14 @@ After you have proposed, and only then, write a short message that covers:
    A chairman who came through this conversation never sees the card on the
    new-project form that would have explained it, so if your note does not say
    it, nothing does — and the first he learns of the choice is a bill.
-5. **Your open questions** — at most three, and only ones whose answers would
+5. **Which credential pays** — one line. `list_credentials` tells you what
+   this install can bill a project against. With exactly one, the draft names
+   it and your note says so. With several, this is a question worth one of
+   your three: ask, and leave `billing_secret_id` unset until they answer.
+   Never pick one yourself — it is the one field in the draft that spends
+   somebody's money. With none, say the project can be created but cannot
+   start until an administrator adds a credential in Settings.
+6. **Your open questions** — at most three, and only ones whose answers would
    actually change the bundle.
 
 Then let them argue. When they push back, revise the bundle and call

@@ -12,6 +12,16 @@ interface Credential {
 const endpoint = "/admin/settings/llm-credentials";
 const modeLabel = (mode: string) => mode === "subscription" ? "Claude subscription · tokens" : "Anthropic API · USD";
 
+/** The credential a bundle names, if this install has it. By id first (a
+    Founder draft), then by name, case-insensitively (an export's hint). */
+export async function resolveCredential(id?: string | null, name?: string | null): Promise<Credential | null> {
+  if (!id && !name) return null;
+  const rows = await get<Credential[]>(endpoint).catch(() => [] as Credential[]);
+  return rows.find((r) => r.id === id)
+    ?? rows.find((r) => !!name && r.name.toLowerCase() === name.toLowerCase())
+    ?? null;
+}
+
 export function CredentialPicker({ value, onChange, disabled = false }: {
   value: string; onChange: (id: string, mode: string) => void; disabled?: boolean;
 }) {

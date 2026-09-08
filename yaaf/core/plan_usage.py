@@ -170,6 +170,17 @@ def reading(credential_id: str, mode: str | None, token: str, *, refresh: bool =
     return {**fresh, "cached": False}
 
 
+def cached(credential_id: str) -> dict | None:
+    """The last reading if a screen took one in the last minute, else None.
+    For callers — a draft, a tool preview — that want the number if it is
+    lying around and must not spend a network call to get it."""
+    with _lock:
+        hit = _cache.get(credential_id)
+    if hit and time.monotonic() - hit[0] < CACHE_TTL_S:
+        return hit[1]
+    return None
+
+
 def forget(credential_id: str) -> None:
     """Drop a cached reading — after a rotation, the old token's meter is
     nobody's meter."""
