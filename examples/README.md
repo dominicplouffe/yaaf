@@ -121,8 +121,9 @@ export YAAF_API=http://localhost:8080 YAAF_ADMIN_TOKEN=…
 yaaf create-user you@example.com "Your Name"
 yaaf seed seed --chairman you@example.com     # created in draft, never started
 
-# Prompts for the key, never echoes it, and prints the secret's id.
-yaaf set-secret anthropic-api-key --project first-hour --kind billing
+# Prompts for the key, never echoes it, and prints the credential's id.
+# One credential can pay for many projects; create it once, assign it per project.
+yaaf create-llm-credential "Production"
 yaaf configure first-hour --billing-secret-id secr_…   # the id it just printed
 yaaf start first-hour
 ```

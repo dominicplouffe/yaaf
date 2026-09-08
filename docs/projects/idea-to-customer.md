@@ -528,7 +528,7 @@ python3 -c "import json,sys; json.dump(json.load(open(sys.argv[1]))['project'], 
   docs/projects/idea-to-customer.json > /tmp/idea-to-customer.spec.json
 # add "chairman_email" to that file first — create refuses without a known chairman
 yaaf create-project /tmp/idea-to-customer.spec.json
-yaaf set-secret anthropic-api-key --project idea-to-customer --kind billing
+yaaf create-llm-credential "Production"    # value prompted; one credential serves many projects
 yaaf configure idea-to-customer --billing-secret-id secr_…
 yaaf start idea-to-customer
 ```

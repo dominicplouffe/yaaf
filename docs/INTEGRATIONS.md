@@ -49,9 +49,12 @@ A secret has a name, a value (encrypted at rest with `YAAF_MASTER_KEY`), a
 list get it injected, and only for the duration of a run.
 
 - `kind: "service"` — role-grantable. WordPress passwords, API tokens, database
-  URLs.
-- `kind: "billing"` — **refuses role grants entirely.** The Anthropic
-  credential is not something any agent should hold.
+  URLs. This is the only kind a project stores.
+- The Anthropic credential agents pay with is not a project secret at all. It
+  is a **managed LLM credential**, created in Settings (or with
+  `yaaf create-llm-credential`) and *assigned* to projects, and it refuses role
+  grants entirely — no agent should hold it. `yaaf set-secret --kind billing`
+  is refused; see [Managed LLM credentials](FEATURES.md#7-money-that-cant-run-away).
 
 Deleting a secret that a data source depends on is refused, so you can't orphan
 a source by tidying up.
