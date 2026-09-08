@@ -1,4 +1,4 @@
-"""CI gate: is the CEO's *judgment* any good, not just its compliance?
+"""Run by hand: is the CEO's *judgment* any good, not just its compliance?
 
 The golden evals next door grade mechanics — a changed refusal, a lost wake, a
 count that moved. They are byte-stable and free, and they are blind to the
@@ -7,10 +7,16 @@ while quietly losing. `evals/judge.py` reserved `planning_quality` for that
 question and left it `NotImplementedError` for months; this is the gate that
 consumes it.
 
-**This test costs money.** Three model calls per run across its two tests, by the chairman's
-explicit decision (PLAN-01 open question 2, answered 2026-09-06: "every PR,
-accept the cost"). Everything else in `tests/` is $0 in tokens and stays that
-way — if you are adding a test, this is not the file to copy.
+**This test costs money.** Three model calls per run across its two tests.
+It was a CI gate for two days (PLAN-01 open question 2, answered 2026-09-06:
+"every PR, accept the cost") and was retired from CI on 2026-09-08 by the
+chairman's decision: the job had never been given a key, so it was red on
+every PR and counted toward nothing, which is the worst shape a gate can
+have. It stays as the opt-in check it always was locally —
+`pytest -m paid tests/test_planning_quality.py` — and `YAAF_JUDGE_REQUIRED=1`
+still turns a missing key into a failure for whoever wants that. Everything
+else in `tests/` is $0 in tokens and stays that way — if you are adding a
+test, this is not the file to copy.
 
 Two properties keep a paid, non-deterministic gate from becoming a flaky one
 that somebody eventually deletes:
@@ -39,11 +45,10 @@ pytestmark = pytest.mark.paid
 
 SCENARIO = harness.SCENARIOS_DIR / "losing_ceo.yaml"
 
-#: CI sets this. With it set, a judge that cannot be reached FAILS the build
-#: rather than skipping it — otherwise a CI box with no credential turns the
-#: gate off silently, which is the failure mode every optional gate dies of.
-#: Unset (a laptop, a fork's PR) it skips, because there is nothing to grade
-#: with and nothing dishonest about saying so.
+#: Set it yourself to make a judge that cannot be reached FAIL the run rather
+#: than skip it — the setting a CI box would want, so that a missing
+#: credential cannot turn the gate off silently. Unset (a laptop) it skips,
+#: because there is nothing to grade with and nothing dishonest about saying so.
 REQUIRED = os.environ.get("YAAF_JUDGE_REQUIRED") == "1"
 
 #: The driven CEO must beat the timid one by this much on planning quality.
