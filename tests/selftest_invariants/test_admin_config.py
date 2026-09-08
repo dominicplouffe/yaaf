@@ -19,12 +19,7 @@ from yaaf.core.db import db_session
 def test_patch_project_integrations_and_billing(client):
     project = make_project(client, start=False)
 
-    secret = client.post(
-        "/admin/secrets",
-        json={"project_id": project["id"], "name": "anthropic-api-key",
-              "value": "sk-ant-test-not-real", "role_scopes": [], "kind": "billing"},
-        headers=ADMIN,
-    ).json()
+    secret = client.post('/admin/settings/llm-credentials', json={'name': 'anthropic-api-key', 'value': 'sk-ant-test-not-real', 'mode': 'api_key'}, headers=ADMIN).json()
 
     patched = client.patch(
         f"/admin/projects/{project['id']}",

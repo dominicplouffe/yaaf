@@ -73,10 +73,15 @@ wants to know. You argue; it revises. When the draft is right, **Review &
 create** drops the whole thing into the form below, where you change anything
 you like, run the fire drill for nothing, and create it.
 
-It needs one thing first: a **platform key**, set once. That is not a project's
-billing key and never becomes one — it pays for product-wide conversations like
-this, and no project's agents ever see it. Every project you create still pays
-its own way.
+It needs one thing first: the **Founder's own credential**, set once under
+Settings. That is not one of the LLM credentials projects pay with and never
+becomes one — it pays for product-wide conversations like this, and no
+project's agents ever see it. Every project you create still pays its own way,
+and the Founder knows it: it reads the list of LLM credentials, names the one
+that pays in its draft when there is only one, and asks you which when there
+are several. That is an instruction to the model, not a rule the server can
+enforce, so the draft panel says which credential it chose — look before you
+click Review.
 
 Two things worth knowing:
 
@@ -152,12 +157,15 @@ on approvals and boardroom messages, and if the server has SMTP configured
 (`YAAF_SMTP_HOST` in `deploy/.env`) it's also where needs, assists and budget
 alerts get mailed. Remembered for your next project.
 
-**Billing.** Pick the key type — **Anthropic API key** (budget in dollars,
-the normal choice) or a **Claude subscription token** (budget in tokens) —
-and paste the key. It's stored encrypted, attached as the project's billing
-credential, and never enters a sandbox. Leave it blank and the project can be
-created but not started: agents cannot run keyless. (The mock runtime, under
-**advanced…**, is the $0 exception for tire-kicking the platform itself.)
+**Billing.** Pick which **LLM credential** pays — one an administrator
+created under Settings → LLM credentials: an **Anthropic API key** (budget in
+dollars, the normal choice) or a **Claude subscription token** (budget in
+tokens). The credential decides the budget's unit; nothing is pasted here and
+no value ever enters a sandbox. Leave it unselected and the project can be
+created but not started: agents cannot run keyless. A draft from the Founder
+arrives with this already chosen when the Founder asked you, or when there
+was only one credential to choose. (The mock runtime, under **advanced…**, is
+the $0 exception for tire-kicking the platform itself.)
 
 **Who runs it? / How does it run?** Two rows of preset cards. The first is
 the authority dial — who holds the plan, scope, commitment and verdict verbs.
@@ -241,15 +249,16 @@ name, URL, optional token, roles — tested before the project starts. Or add
 them later in Settings (next section).
 
 Leave **"Start immediately"** checked and click **Create project**. (It
-needs the billing key — without one the project is created stopped.)
+needs a credential — without one the project is created stopped.)
 
 ## Step 2 — Connect billing (if you skipped it at creation)
 
-Open your new project → **Settings** → "How agents pay for Claude". Pick
-**Anthropic API key**, paste your key, click **Connect**. One click stores
-it encrypted, attaches it, and *tests it against the live API* — if the key
-is bad, you find out now, not at 9am tomorrow. There's a **test** button
-next to the active credential any time you want to re-check.
+Open your new project → **Settings** → "How agents pay for Claude". Pick a
+credential from the list, click **Save assignment**, then **Test connection**
+— if the key is bad, you find out now, not at 9am tomorrow. No credentials in
+the list? An administrator adds one under Settings → LLM credentials; a
+subscription credential also shows there what Anthropic says is left on its
+plan.
 
 ## Step 3 — Connect the data (if the work needs it)
 
@@ -292,11 +301,12 @@ a token outright when a server stops needing one.
 ## A note on secrets and who can see them
 
 You are the chairman, and you are the only human on this system. Every stored
-value — service credentials, a data source's address and token, the Slack
-tokens, the billing key, the webhook signing secrets — is masked in the UI
-and one press of the **eye** from being readable, with a copy button and an
-inline edit to rotate it. Debugging a connection shouldn't require a database
-client.
+project value — service credentials, a data source's address and token, the
+Slack tokens, the webhook signing secrets — is masked in the UI and one press
+of the **eye** from being readable, with a copy button and an inline edit to
+rotate it. Debugging a connection shouldn't require a database client. The
+LLM credentials projects pay with live above projects, under app-wide
+Settings, where they can be renamed and rotated but are never shown back.
 
 That is a *display* choice for you, and it changes nothing about the agents.
 A role still receives only the credentials you granted it, still as
@@ -308,7 +318,7 @@ your admin token, and no agent can reach it.
 
 Go to the project's **Overview**. If anything about the setup is wrong or
 missing, a **Setup & health** card sits at the top naming each problem in
-plain English with a link to fix it — a dead billing key, a credential that
+plain English with a link to fix it — a dead or missing billing credential, a credential that
 should be a URL but isn't, a team running an outdated role version. Fix the
 red rows; when the card disappears, the project is properly configured.
 That's the rule to remember: **no card = ready.**
@@ -392,10 +402,10 @@ project pauses itself rather than burning money against a wall.
 
 ## Quick reference — the audit project, start to finish
 
-1. New project → goal above → **Deliver** → API key pasted → three one-person
+1. New project → goal above → **Deliver** → credential picked → three one-person
    teams (researcher, engineer, writer) → `ppc` data source + engineer role →
    budget cap → Create.
-2. (Or later: Settings → billing → paste API key → Connect, auto-tested.)
+2. (Or later: Settings → billing → pick a credential → Save assignment → Test.)
 3. (Or later: Settings → Data sources → `ppc` + the MCP URL + engineer
    role → Save, auto-tested.)
 4. Overview → fix anything the health card names → card disappears.

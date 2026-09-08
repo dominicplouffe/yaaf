@@ -185,6 +185,14 @@ WITHHELD = {
     # projects; these routes are *above* every project, so there is no scoping
     # answer that would make one of them safe to hand over. Two of them also
     # carry credential values inbound, and one unwires every project at once.
+    "GET /admin/settings/llm-credentials":
+        "the inventory names other projects' assignments; `catalog` offers the names and "
+        "modes without them.",
+    "POST /admin/settings/llm-credentials": "shared credential values are managed by administrators.",
+    "PATCH /admin/settings/llm-credentials/{credential_id}": "rotates shared credentials across projects.",
+    "DELETE /admin/settings/llm-credentials/{credential_id}": "administrator-owned shared credential lifecycle.",
+    "GET /admin/settings/llm-credentials/{credential_id}/usage":
+        "a subscription's plan meter is the account owner's, not any one project's.",
     "GET /admin/settings":
         "the app-wide configuration screen, above every project a client is scoped to.",
     "PUT /admin/settings/anthropic": "a platform credential value, inbound.",

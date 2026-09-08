@@ -648,7 +648,7 @@ yaaf create-user you@example.com "Your Name"
 yaaf create-project docs/projects/fpl-manager.spec.json     # the JSON from §6
 
 # 3. billing
-yaaf set-secret anthropic --project fpl-manager --kind billing
+yaaf create-llm-credential "Production"    # value prompted; one credential serves many projects
 yaaf configure fpl-manager --billing-secret-id secr_…
 
 # 4. the data gateway (separate terminal, keep it running)

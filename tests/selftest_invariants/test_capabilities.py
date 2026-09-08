@@ -193,12 +193,8 @@ def test_a_platform_boardroom_line_wakes_nobody(client):
 def test_billing_credentials_are_never_delegable(client):
     project = make_project(client, slug="delegate3",
                            constitution={"capability_authority": "ceo"})
-    created = client.post("/admin/secrets",
-                          json={"project_id": project["id"], "name": "model-key",
-                                "value": "sk-ant-xxx", "role_scopes": [],
-                                "kind": "billing"},
-                          headers=ADMIN)
-    assert created.status_code == 200, created.text
+    created = client.post('/admin/settings/llm-credentials', json={'name': 'model-key', 'value': 'sk-ant-xxx', 'mode': 'api_key'}, headers=ADMIN)
+    assert created.status_code == 201, created.text
     # Not on the roster, and not scopable.
     roster = client.get("/agent/credentials", headers=bearer(token(project)))
     assert all(row["name"] != "model-key" for row in roster.json())

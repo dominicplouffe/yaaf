@@ -209,7 +209,7 @@ def data_source(principal: Principal, session: Session, arguments: dict) -> dict
                          value={"type": "string",
                                 "description": "Written encrypted and forgotten. Never read back"},
                          roles={"type": "array", "items": {"type": "string"}},
-                         kind={"type": "string", "enum": ["service", "billing"]}),
+                         kind={"type": "string", "enum": ["service"]}),
 )
 def credential(principal: Principal, session: Session, arguments: dict) -> dict:
     project = resolve_project(session, principal, required(arguments, "project"))

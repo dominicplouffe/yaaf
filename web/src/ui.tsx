@@ -405,13 +405,14 @@ function EyeButton({ shown, onClick, busy }: {
 /** A value the chairman is *typing*: password-typed with an eye, so a mispaste
     is visible before it is saved rather than after an agent run fails on it. */
 export function SecretInput({
-  value, onChange, placeholder, defaultShown = false, disabled, readOnly, autoFocus,
+  value, onChange, placeholder, defaultShown = false, disabled, readOnly, autoFocus, id,
 }: {
   value: string;
   onChange?: (value: string) => void;
   placeholder?: string;
   /** An address is not a password: showing it is how a typo gets seen. */
   defaultShown?: boolean;
+  id?: string;
   disabled?: boolean;
   /** For a value that is already stored and simply needs reading back. */
   readOnly?: boolean;
@@ -421,6 +422,8 @@ export function SecretInput({
   return (
     <div className="secret-field">
       <input
+        id={id}
+        autoComplete="new-password"
         type={shown ? "text" : "password"}
         className={shown && readOnly ? "mono" : undefined}
         value={value}

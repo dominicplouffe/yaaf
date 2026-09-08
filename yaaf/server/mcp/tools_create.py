@@ -28,6 +28,7 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
+from yaaf.core import llm_credentials
 from yaaf.core.constitution import AUTONOMY_PRESETS, default_autonomy, preset_name
 from yaaf.core.models import Secret, User
 from yaaf.founder import tools as founder_tools
@@ -49,12 +50,14 @@ MAX_DRILL_DAYS = 90
     description=(
         "Search the role and crew library — who you can hire, and the pre-built teams. "
         "Roles carry the credentials they will need, which is a fact about hiring one "
-        "rather than something to discover when a run fails."
+        "rather than something to discover when a run fails. `credentials` lists what "
+        "a project can pay Claude with — names and billing modes, never values — so "
+        "you can ask the chairman which one before `create_project`."
     ),
     input_schema={
         "type": "object",
         "properties": {
-            "what": {"type": "string", "enum": ["roles", "crews"]},
+            "what": {"type": "string", "enum": ["roles", "crews", "credentials"]},
             "query": {"type": "string"},
             "category": {"type": "string",
                          "enum": ["leadership", "research", "build", "content",
@@ -66,7 +69,10 @@ MAX_DRILL_DAYS = 90
     },
 )
 def catalog(principal: Principal, session: Session, arguments: dict) -> dict:
-    if (arguments.get("what") or "roles") == "crews":
+    what = arguments.get("what") or "roles"
+    if what == "credentials":
+        payload = founder_tools.list_credentials(session)
+    elif what == "crews":
         payload = founder_tools.search_crews(session, query=arguments.get("query"))
     else:
         payload = founder_tools.search_roles(
@@ -222,8 +228,11 @@ def rehearse(principal: Principal, session: Session, arguments: dict) -> dict:
                      "description": "A ProjectCreate body, or a bundle with one under "
                                     "`project`. chairman_email is ignored — it is you"},
             "billing_secret": {"type": "string",
-                               "description": "Name of an existing platform or project "
-                                              "credential to bill against. Never a value"},
+                               "description": "Name of an LLM credential from `catalog` "
+                                              "(what=credentials) to bill against. Never a "
+                                              "value. Omitted, the preview lists the "
+                                              "choices and the project is created unable "
+                                              "to start until one is assigned"},
             "start": {"type": "boolean", "description": "Start it immediately (default false)"},
             "confirm": {"type": "string", "description": "The token from this tool's preview"},
             "detail": DETAIL_ARG,
@@ -254,8 +263,28 @@ def create_project(principal: Principal, session: Session, arguments: dict) -> d
             "this draft is not something the platform will accept:\n- "
             + "\n- ".join(problems))
 
-    billing = _billing_secret(session, arguments.get("billing_secret"))
-    preview = confirm.gate(session, principal, "create_project", arguments, {
+    named = _billing_secret(session, arguments.get("billing_secret"))
+    drafted = None
+    if body.get("billing_secret_id"):
+        # A Founder draft names its credential by id; honour it the same way,
+        # and refuse an id that names nothing rather than let create 422 on it.
+        drafted = llm_credentials.resolve(session, credential_id=str(body["billing_secret_id"]))
+        if drafted is None:
+            raise ToolRefusal(
+                f"the spec's billing_secret_id {body['billing_secret_id']!r} is not an "
+                f"LLM credential on this install; {llm_credentials.menu(session)}.")
+    if named is not None and drafted is not None and named.id != drafted.id:
+        # Two answers to "who pays" is no answer. The chairman's choice must be
+        # unambiguous before money is involved, so neither silently wins.
+        raise ToolRefusal(
+            f"`billing_secret` names {named.name!r} but the spec names "
+            f"{drafted.name!r}. Drop one so the choice is the chairman's.")
+    billing = named or drafted
+    body = {k: v for k, v in body.items() if k not in ("billing_secret_id", "billing_secret_name")}
+    if billing is not None:
+        body["billing_secret_id"] = billing.id
+        body["billing_secret_name"] = billing.name  # for the summary; the endpoint ignores it
+    about = {
         "about_to_create": founder_tools.summarise({"project": body}),
         "chairman": user.email,
         # Who will hold the plan, scope, date, verdict and credential verbs —
@@ -264,22 +293,32 @@ def create_project(principal: Principal, session: Session, arguments: dict) -> d
         # finding out afterwards that his CEO signs its own dates is a bad way
         # to learn what a default is.
         "authority": _authority_line(body.get("constitution") or {}),
-        "billing": billing.name if billing else None,
+        "billing": llm_credentials.describe(billing) if billing else None,
         "start_immediately": bool(arguments.get("start")),
         "warning": (
             "Creating a project is the point where this stops being free: its "
             "agents wake on a schedule and bill the credential named above. "
             "Rehearse it first if you have not."
         ),
-    })
+    }
+    if billing is None:
+        # The one field in a spec that spends somebody's money is the one a
+        # model must not guess. Show the choices and let the chairman pick.
+        about["billing_options"] = llm_credentials.choices(session)
+        about["billing_note"] = (
+            "No credential named. Ask the chairman which of these should pay, and "
+            "pass its name as `billing_secret`; created without one, the project "
+            "cannot start until a credential is assigned in Settings."
+            if about["billing_options"] else
+            "No LLM credentials exist on this install yet. The project can be "
+            "created, but cannot start until an administrator adds one in Settings "
+            "and assigns it.")
+    preview = confirm.gate(session, principal, "create_project", arguments, about)
     if preview:
         return preview
 
     created = _call(principal, admin.create_project,
                     body=admin.ProjectCreate.model_validate(body), session=session)
-    if billing is not None:
-        _call(principal, admin.patch_project, project_id=created["id"],
-              body=admin.ProjectPatch(billing_secret_id=billing.id), session=session)
     if arguments.get("start"):
         _call(principal, admin.start_project, project_id=created["id"], session=session)
     return _record(session, principal, created["id"], "create_project",
@@ -361,13 +400,14 @@ def _billing_secret(session: Session, name: str | None) -> Secret | None:
     """Resolve a credential by name. The value never travels through here."""
     if not name:
         return None
-    row = session.query(Secret).filter(Secret.name == name).first()
+    row = llm_credentials.resolve(session, name=name)
     if row is None:
+        service = session.query(Secret).filter(Secret.name == name, Secret.kind == "service").first()
+        if service is not None:
+            raise ToolRefusal(
+                f"{name!r} is a service credential, not a billing one. Only an LLM "
+                f"credential can pay for a project's model calls; {llm_credentials.menu(session)}.")
         raise ToolRefusal(
-            f"no credential named {name!r} exists. Create it in Settings — a value "
-            "does not belong in a tool call.")
-    if row.kind != "billing":
-        raise ToolRefusal(
-            f"{name!r} is a service credential, not a billing one. Only a billing "
-            "credential can pay for a project's model calls.")
+            f"no credential named {name!r} exists; {llm_credentials.menu(session)}. "
+            "Create one in Settings — a value does not belong in a tool call.")
     return row

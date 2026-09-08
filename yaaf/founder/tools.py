@@ -35,9 +35,9 @@ FETCH_TIMEOUT_S = 20.0
 SERVER = "founder"
 
 TOOL_NAMES = ("search_roles", "search_crews", "read_source",
-              "grade_goal", "propose_bundle", "rehearse")
+              "grade_goal", "list_credentials", "propose_bundle", "rehearse")
 
-#: What the CLI is allowed to run. Only these six — no Bash, no file writes,
+#: What the CLI is allowed to run. Only these seven — no Bash, no file writes,
 #: no web tools of its own. The Founder drafts a project; it does not act on
 #: the world, and the one tool that touches the outside (`read_source`) reads
 #: and labels what it reads as data.
@@ -104,6 +104,32 @@ def search_crews(session: Session, *, query: str | None = None) -> dict:
         out = [c for c in out
                if needle in c["name"].lower() or needle in (c["outcome"] or "").lower()]
     return {"crews": out, "count": len(out)}
+
+
+def list_credentials(session: Session, *, with_plan: bool = False) -> dict:
+    """What a project can pay Claude with: names and modes, never values.
+
+    A draft that names no credential is created unable to start, and a draft
+    that names the wrong one spends the wrong person's money. Either is worse
+    than a question, which is why this is the one thing the Founder is told to
+    ask about rather than fill in.
+    """
+    from yaaf.core import llm_credentials
+
+    rows = llm_credentials.choices(session, with_plan=with_plan)
+    if not rows:
+        note = ("None yet. The project can still be drafted and created; it cannot start "
+                "until an administrator adds a credential in Settings and assigns it. "
+                "Say so in your cover note.")
+    elif len(rows) == 1:
+        note = (f"Exactly one: put its id in the draft's billing_secret_id and say in your "
+                f"cover note that the project pays with {rows[0]['name']!r}.")
+    else:
+        note = ("More than one. Ask the chairman which should pay — this is a question "
+                "worth one of your three — and leave billing_secret_id unset until they "
+                "answer. Never guess: it is the one field in the draft that spends "
+                "somebody's money.")
+    return {"credentials": rows, "note": note}
 
 
 def read_source(url: str) -> dict:
@@ -257,13 +283,24 @@ def build_server(session: Session, state: dict, env: dict[str, str],
         progress.finish_step(thread_id)
         return ok(grade.to_dict())
 
+    @tool("list_credentials", "What this install can pay a project's model calls "
+          "with — the LLM credentials an administrator stored, by name and billing "
+          "mode, never a value. Call it before you propose: one credential means "
+          "name it in the draft's billing_secret_id; several means ask the chairman "
+          "which, and do not guess.",
+          {})
+    async def _list_credentials(args):
+        return await step("list_credentials",
+                          lambda: list_credentials(session, with_plan=True))
+
     @tool("propose_bundle", "Put a complete project in front of the chairman. This "
           "is your deliverable: it replaces the current draft and is what the review "
           "screen shows. It creates nothing and spends nothing. Send the whole "
           "bundle every time, not a patch. `project` takes the shape POST "
           "/admin/projects accepts: slug, name, goal, mode, ceo_role_slug, ceo_name, "
           "teams, controlled_domains, constitution — only the knobs you can "
-          "justify — and a deadline ONLY when one of two things is true: the "
+          "justify — billing_secret_id from list_credentials when the chairman has "
+          "chosen (or there was only one), and a deadline ONLY when one of two things is true: the "
           "world imposes it (deadline_source {'kind':'external'} with a "
           "citation) or the chairman wants it (deadline_source "
           "{'kind':'chairman'}). Otherwise write no date; scope is the honest "
@@ -288,7 +325,8 @@ def build_server(session: Session, state: dict, env: dict[str, str],
         if not isinstance(project, dict):
             return ok({"error": "project must be an object"})
         bundle = as_bundle(project)
-        problems = validate(bundle) + doctrine_problems(bundle.get("project") or {}, session)
+        problems = (validate(bundle) + billing_problems(bundle["project"], session)
+                    + doctrine_problems(bundle.get("project") or {}, session))
         if problems:
             # Refused rather than stored: a draft the create endpoint would
             # reject is worse than no draft, because the review screen would
@@ -308,7 +346,7 @@ def build_server(session: Session, state: dict, env: dict[str, str],
             session, state.get("draft"), int(args.get("days") or 30)))
 
     built = [_search_roles, _search_crews, _read_source,
-             _grade_goal, _propose_bundle, _rehearse]
+             _grade_goal, _list_credentials, _propose_bundle, _rehearse]
     return FounderTools(
         server=create_sdk_mcp_server(name=SERVER, tools=built),
         handlers={name: fn.handler for name, fn in zip(TOOL_NAMES, built, strict=True)},
@@ -371,6 +409,29 @@ def validate(bundle: dict) -> list[str]:
         return [f"{'.'.join(str(p) for p in err['loc'])}: {err['msg']}"
                 for err in exc.errors()][:10]
     return date_problems(project) + constitution_problems(project.get("constitution") or {})
+
+
+def billing_problems(project: dict, session: Session) -> list[str]:
+    """A draft may name who pays, by id or by name, but only something that
+    exists — and once it does, the draft carries the credential's own name and
+    billing mode, so the review screen and the create endpoint agree with the
+    Founder about which one it is."""
+    from yaaf.core import llm_credentials
+
+    wanted_id = project.get("billing_secret_id")
+    wanted_name = project.get("billing_secret_name")
+    if not wanted_id and not wanted_name:
+        project.pop("billing_secret_id", None)
+        project.pop("billing_secret_name", None)
+        return []
+    row = llm_credentials.resolve(session, credential_id=wanted_id, name=wanted_name)
+    if row is None:
+        return [f"billing_secret_id names no LLM credential on this install; "
+                f"{llm_credentials.menu(session)}. Call list_credentials."]
+    project["billing_secret_id"] = row.id
+    project["billing_secret_name"] = row.name
+    project["billing_mode"] = row.llm_mode
+    return []
 
 
 def doctrine_problems(project: dict, session=None) -> list[str]:
@@ -531,6 +592,7 @@ def summarise(bundle: dict) -> dict:
                    "employees": t.get("employees") or []} for t in teams],
         "headcount": sum(len(t.get("employees") or []) for t in teams),
         "constitution_keys": sorted((project.get("constitution") or {}).keys()),
+        "pays_with": project.get("billing_secret_name") or None,
     }
 
 

@@ -35,10 +35,7 @@ def test_bundle_carries_design_not_plumbing(client):
         "project_id": project["id"], "name": "wordpress",
         "value": "wp-secret-value", "role_scopes": ["worker"], "kind": "service",
     }, headers=ADMIN)
-    client.post("/admin/secrets", json={
-        "project_id": project["id"], "name": "anthropic-api-key",
-        "value": "sk-ant-api-not-real", "role_scopes": [], "kind": "billing",
-    }, headers=ADMIN)
+    client.post('/admin/settings/llm-credentials', json={'name': 'anthropic-api-key', 'value': 'sk-ant-api-not-real', 'mode': 'api_key'}, headers=ADMIN)
     client.post(f"/admin/projects/{project['id']}/webhook_secrets", headers=ADMIN)
     client.patch(f"/admin/projects/{project['id']}", json={
         "integrations": {"slack": {"chairman_slack_user": "U123"},
@@ -132,19 +129,18 @@ def test_solo_bundle_round_trips(client):
 
 
 def test_full_backup_carries_every_value(client):
-    """The chairman's explicit download: nothing held back. Service and
-    billing credentials with their decrypted values, Slack wiring, webhook
+    """The chairman's explicit download: nothing of the project's held back.
+    Service credentials with their decrypted values, Slack wiring, webhook
     signing keys, data-source secrets — all of it in the file, so a restore
-    is a restore rather than an evening of re-pasting."""
+    is a restore rather than an evening of re-pasting. The one value that is
+    not the project's — the LLM credential every project shares — travels by
+    name, and the form re-selects it on import."""
     project = make_project(client, start=False)
     client.post("/admin/secrets", json={
         "project_id": project["id"], "name": "wordpress",
         "value": "wp-secret-value", "role_scopes": ["worker"], "kind": "service",
     }, headers=ADMIN)
-    stored = client.post("/admin/secrets", json={
-        "project_id": project["id"], "name": "anthropic-api-key",
-        "value": "sk-ant-api-not-real", "role_scopes": [], "kind": "billing",
-    }, headers=ADMIN).json()
+    stored = client.post('/admin/settings/llm-credentials', json={'name': 'anthropic-api-key', 'value': 'sk-ant-api-not-real', 'mode': 'api_key'}, headers=ADMIN).json()
     client.patch(f"/admin/projects/{project['id']}", json={
         "billing_secret_id": stored["id"],
     }, headers=ADMIN)
@@ -167,11 +163,11 @@ def test_full_backup_carries_every_value(client):
     values = {s["name"]: s for s in bundle["secrets"]}
     assert values["wordpress"]["value"] == "wp-secret-value"
     assert values["wordpress"]["role_scopes"] == ["worker"]
-    assert values["anthropic-api-key"]["value"] == "sk-ant-api-not-real"
-    assert values["anthropic-api-key"]["kind"] == "billing"
+    # Shared billing values stay in administrator settings, outside project backups.
+    assert "anthropic-api-key" not in values
     assert values["mcp-kb-url"]["value"] == "http://127.0.0.1:9/mcp"
     assert values["mcp-kb-token"]["value"] == "kb-token-value"
-    # The billing attachment travels by name, so the import re-attaches it.
+    # The name is a hint; imports must select an administrator-managed credential.
     assert spec["billing_secret_name"] == "anthropic-api-key"
     # Slack wiring and this project's signing keys travel whole: a restored
     # project keeps attesting the same senders without reconfiguration.

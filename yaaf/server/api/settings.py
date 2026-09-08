@@ -25,10 +25,11 @@ Both stores are the ones that already existed: plain values in
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
-from yaaf.core import platform
+from yaaf.core import plan_usage, platform
+from yaaf.core.models import Secret
 from yaaf.server.deps import admin_auth, db
 from yaaf.server.slack import provision as slack_provision
 from yaaf.server.slack import settings as slack_settings
@@ -215,3 +216,149 @@ def delete_slack(session: Session = Depends(db)) -> dict:
     return {"removed": removed,
             "note": "Projects with their own Slack tokens are unaffected. Nothing was "
                     "deleted in Slack, and no message was lost — the bus is canonical."}
+
+
+class LlmCredentialIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=120)
+    mode: str = Field(pattern="^(api_key|subscription)$")
+    value: str = Field(min_length=8, max_length=10000)
+
+
+class LlmCredentialPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=120)
+    value: str | None = Field(default=None, min_length=8, max_length=10000)
+
+
+def _llm_summary(session: Session, row: Secret, projects: list | None = None) -> dict:
+    from sqlalchemy import select
+
+    from yaaf.core.models import Project
+
+    if projects is None:
+        projects = session.scalars(select(Project).where(Project.billing_secret_id == row.id)
+                                   .order_by(Project.name)).all()
+    return {"id": row.id, "name": row.name, "mode": row.llm_mode,
+            "created_at": row.created_at,
+            "projects": [{"id": p.id, "name": p.name} for p in projects]}
+
+
+def _save_llm(session: Session, row: Secret, name: str, value: str | None) -> dict:
+    from sqlalchemy import func, select
+    from sqlalchemy.exc import IntegrityError
+
+    from yaaf.core.crypto import encrypt
+    from yaaf.core.models import Secret
+    from yaaf.server.api.admin import _audit
+
+    name = name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="Enter a credential name")
+    if name.lower().startswith("platform-") or name.lower() == "github":
+        raise HTTPException(status_code=422, detail="This name is reserved for a platform connection")
+    duplicate = session.scalar(select(Secret.id).where(
+        Secret.project_id.is_(None), func.lower(Secret.name) == name.lower(), Secret.id != row.id))
+    if duplicate:
+        raise HTTPException(status_code=409, detail="A credential with this name already exists")
+    if value is not None:
+        value = value.strip()
+        if len(value) < 8:
+            raise HTTPException(status_code=422, detail="Enter a credential of at least 8 characters")
+        problem = platform.shape_error(row.llm_mode, value)
+        if problem:
+            raise HTTPException(status_code=422, detail=problem)
+        row.ciphertext = encrypt(value)
+        plan_usage.forget(row.id)
+    row.name = name
+    session.add(row)
+    try:
+        session.flush()
+    except IntegrityError as exc:
+        session.rollback()
+        raise HTTPException(status_code=409, detail="A credential with this name already exists") from exc
+    _audit(session, None, "llm_credential.save", "secret", row.id,
+           {"name": name, "rotated": value is not None})
+    return _llm_summary(session, row)
+
+
+@router.get("/llm-credentials")
+def list_llm_credentials(session: Session = Depends(db)) -> list:
+    from sqlalchemy import select
+
+    from yaaf.core.models import Project, Secret
+
+    usage: dict[str, list] = {}
+    for project in session.scalars(select(Project).where(Project.billing_secret_id.is_not(None))
+                                  .order_by(Project.name)):
+        usage.setdefault(project.billing_secret_id, []).append(project)
+    return [_llm_summary(session, row, usage.get(row.id, [])) for row in session.scalars(
+        select(Secret).where(Secret.llm_mode.is_not(None)).order_by(Secret.name))]
+
+
+@router.post("/llm-credentials", status_code=201)
+def create_llm_credential(body: LlmCredentialIn, session: Session = Depends(db)) -> dict:
+    from yaaf.core import ids
+    from yaaf.core.models import Secret
+
+    row = Secret(id=ids.new_id(ids.SECRET), project_id=None, name=body.name,
+                 kind="billing", role_scopes=[], llm_mode=body.mode)
+    return _save_llm(session, row, body.name, body.value)
+
+
+def _managed(session: Session, credential_id: str) -> Secret:
+    """The row to edit or delete, locked — or a 404, because on this screen an
+    id that names nothing is a credential somebody else already removed, not
+    a bad choice on a project form."""
+    from yaaf.core.llm_credentials import assigned_credential, resolve
+
+    if resolve(session, credential_id=credential_id) is None:
+        raise HTTPException(status_code=404, detail="unknown LLM credential")
+    return assigned_credential(session, credential_id)
+
+
+@router.patch("/llm-credentials/{credential_id}")
+def update_llm_credential(credential_id: str, body: LlmCredentialPatch,
+                          session: Session = Depends(db)) -> dict:
+    row = _managed(session, credential_id)
+    return _save_llm(session, row, body.name, body.value)
+
+
+@router.delete("/llm-credentials/{credential_id}")
+def delete_llm_credential(credential_id: str, session: Session = Depends(db)) -> dict:
+    from yaaf.server.api.admin import delete_secret
+
+    _managed(session, credential_id)
+    return delete_secret(credential_id, session)
+
+
+@router.get("/llm-credentials/{credential_id}/usage")
+def llm_credential_usage(credential_id: str, refresh: bool = False,
+                         session: Session = Depends(db)) -> dict:
+    """What Anthropic says is left on the plan behind a subscription credential.
+
+    Read-only and unaudited: this is polled by screens, and the value it reads
+    is the same one the token's owner sees under `/usage`. The token never
+    leaves the server — it is decrypted here, sent to Anthropic, and the
+    response carries only percentages and reset times. `refresh=true` skips
+    the minute-long cache for a reader who just watched a run finish.
+
+    API keys have no plan meter; the reading for one says so rather than 404,
+    because the screen asking is the same screen either way.
+    """
+    from yaaf.core.crypto import decrypt
+    from yaaf.core.llm_credentials import resolve
+
+    row = resolve(session, credential_id=credential_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="unknown LLM credential")
+    credential_id, mode = row.id, row.llm_mode
+    token = decrypt(row.ciphertext) if mode == "subscription" else ""
+    # Everything this needs from the database is in hand. Anthropic may take
+    # eight seconds to answer, and a pooled connection held open for that long
+    # by every polling screen is how an outage over there becomes one here.
+    session.close()
+    return {"credential_id": credential_id, "mode": mode,
+            **plan_usage.reading(credential_id, mode, token, refresh=refresh)}
