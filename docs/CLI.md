@@ -25,10 +25,12 @@ Every command that takes a project accepts **either a slug or an id**.
 | `yaaf create-user EMAIL NAME` | Create a user. Idempotent by email. |
 | `yaaf create-project SPEC_FILE` | Create a project from a JSON spec (shape below). |
 | `yaaf set-secret NAME [--project P] [--scopes a,b] [--kind service]` | Store an encrypted secret. **The value is prompted** — never echoed, logged, or left in shell history. Omit `--project` for a platform-level secret. |
-| `yaaf llm-credentials` | List named LLM credentials and project assignments (no values). |
+| `yaaf llm-credentials [--include-hidden]` | List named LLM credentials and project assignments (no values). Each project says whether it is still live, and the credential says whether any of them are. |
 | `yaaf create-llm-credential NAME [--mode api_key\|subscription]` | Create a managed credential; value is prompted. |
 | `yaaf edit-llm-credential ID NAME [--rotate]` | Rename a credential; optionally replace its value for all assigned projects. |
 | `yaaf delete-llm-credential ID` | Delete an unused credential after confirmation. Assigned credentials cannot be deleted. |
+| `yaaf hide-llm-credentials ID…` | Take credentials off every menu — Settings, the project picker, the Founder's list, an MCP spec — without deleting them. Refused for any credential a live project can still spend on; each id is judged on its own and refusals come back with the reason. |
+| `yaaf unhide-llm-credentials ID…` | Put hidden credentials back on the menus. Refused if another credential has taken the name in the meantime — rename it first. |
 | `yaaf llm-credential-usage ID [--refresh]` | What Anthropic says is left on a subscription credential's plan (session and weekly windows, as `/usage` shows them). Cached for a minute; API keys have no plan meter and say so. |
 | `yaaf settings` | Show the app-wide settings — whether the Founder's credential is installed and how the Slack connection is configured. Values are never printed. |
 | `yaaf set-platform-key [--mode api_key\|subscription]` | Install or rotate the **Founder's** model credential (value prompted). It is never injected into a sandbox and never reaches a project's agents — there is no fallback. |
@@ -209,6 +211,7 @@ assigned one:
 
 ```bash
 yaaf llm-credentials                                  # names, types, assignments; never values
+yaaf hide-llm-credentials secr_… secr_…               # retire the ones nothing is using
 yaaf configure my-slug --billing-secret-id secr_…     # assign; the billing mode follows the credential
 yaaf llm-credential-usage secr_…                      # a subscription's plan meter, as /usage shows it
 yaaf edit-llm-credential secr_… "Production" --rotate # rename, or replace the value for every project on it
@@ -216,7 +219,11 @@ yaaf edit-llm-credential secr_… "Production" --rotate # rename, or replace the
 
 A spec file may carry `billing_secret_id` and is created already assigned.
 `yaaf set-secret --kind billing` is refused: that door closed when credentials
-moved above projects. A credential a project is assigned to cannot be deleted
+moved above projects. Promoting per-project keys left most installs holding one
+credential per historical key, so **hiding** is the tidy-up: a hidden credential
+is off every menu and cannot be assigned, while the finished projects that spent
+through it keep naming what paid for them. It is reversible, and it is refused
+while a live project can still spend. A credential a project is assigned to cannot be deleted
 until the project is reassigned or detached (`--billing-secret-id ""`). Clones
 keep the assignment; a backup names the credential and never carries its
 value, and no endpoint or command ever shows an LLM credential's value back.

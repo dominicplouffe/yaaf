@@ -1729,6 +1729,16 @@ export default function Settings({
             "Set a new one in the twin's Settings.",
         );
       }
+      // The source's credential has since been hidden, so the twin has none.
+      // It cannot run that way, and finding out at the first run is finding
+      // out too late.
+      if (twin.copied.billing_credential_hidden) {
+        alert(
+          `Twin "${twin.slug}" created without a billing credential: the source paid with ` +
+            `"${twin.copied.billing_credential_hidden}", which has since been hidden. ` +
+            "Pick a credential in the twin's Settings → Money before starting it.",
+        );
+      }
       navigate(`/projects/${twin.id}`);
     } catch (e) {
       setError((e as Error).message);

@@ -151,6 +151,154 @@ def test_credential_type_and_role_grants_cannot_change(client):
                            "value": "test-credential-value"}).status_code == 422
 
 
+# ── hiding a credential ─────────────────────────────────────────────────────────
+#
+# The verb exists because lifting per-project keys above projects made every
+# key an install had ever used a permanent, undeletable row on one page. These
+# attack the promise it makes: hidden means *unofferable everywhere*, and it
+# can never be used to make a live project's money unexplainable.
+
+
+def hide(client, *ids, undo=False):
+    return client.post(f"{URL}/{'unhide' if undo else 'hide'}", headers=ADMIN,
+                       json={"ids": list(ids)})
+
+
+def test_hidden_credential_leaves_every_door_and_comes_back(client):
+    from yaaf.core import llm_credentials
+    from yaaf.founder import tools as founder_tools
+
+    keep = create(client, "Keep me")
+    key = create(client, "Retired key")
+    assert hide(client, key["id"]).json()["hidden"] == [{"id": key["id"], "name": "Retired key"}]
+
+    # The list, the picker and the import matcher all read this one route.
+    listed = client.get(URL, headers=ADMIN).json()
+    assert [r["id"] for r in listed] == [keep["id"]]
+    drawer = client.get(f"{URL}?include_hidden=true", headers=ADMIN).json()
+    assert {r["id"] for r in drawer} == {keep["id"], key["id"]}
+    assert next(r for r in drawer if r["id"] == key["id"])["hidden_at"] is not None
+
+    with db_session() as session:
+        # The Founder's menu, the MCP spec's name lookup, and the sentence a
+        # refusal quotes — all of them go through the same two functions.
+        assert [r["id"] for r in llm_credentials.choices(session)] == [keep["id"]]
+        assert llm_credentials.resolve(session, credential_id=key["id"]) is None
+        assert llm_credentials.resolve(session, name="Retired key") is None
+        assert "Retired key" not in llm_credentials.menu(session)
+        # One visible credential means the Founder is told to name it rather
+        # than to ask — which is what an inventory of dead keys was costing.
+        assert "Exactly one" in founder_tools.list_credentials(session)["note"]
+
+    project = make_project(client, start=False)
+    for attempt in (client.patch(f"/admin/projects/{project['id']}", headers=ADMIN,
+                                 json={"billing_secret_id": key["id"]}),
+                    client.post("/admin/projects", headers=ADMIN,
+                                json={"slug": "second", "name": "Second", "goal": "Ship the thing end to end.",
+                                      "chairman_email": "chair@example.com",
+                                      "ceo_role_slug": "ceo", "ceo_name": "CEO",
+                                      "billing_secret_id": key["id"]})):
+        assert attempt.status_code == 422, attempt.text
+        assert "hidden" in attempt.json()["detail"]
+
+    assert hide(client, key["id"], undo=True).json()["restored"][0]["id"] == key["id"]
+    assert client.patch(f"/admin/projects/{project['id']}", headers=ADMIN,
+                        json={"billing_secret_id": key["id"]}).status_code == 200
+
+
+def test_hiding_is_refused_while_a_live_project_can_still_spend(client):
+    key = create(client)
+    project = make_project(client, start=False, billing_secret_id=key["id"])
+    refused = hide(client, key["id"]).json()
+    assert refused["hidden"] == []
+    assert "Acme" in refused["refused"][0]["reason"]
+    with db_session() as session:
+        assert session.get(Secret, key["id"]).hidden_at is None
+
+    # A draft is not running and is still live: it can start tomorrow. Only an
+    # ended project makes the credential history.
+    assert client.post(f"/admin/projects/{project['id']}/stop", headers=ADMIN,
+                       json={"reason": "done"}).status_code == 200
+    assert hide(client, key["id"]).json()["refused"] == []
+    # The receipt survives: the stopped project still names what paid for it,
+    # and the row is still undeletable because of it.
+    drawer = client.get(f"{URL}?include_hidden=true", headers=ADMIN).json()[0]
+    assert drawer["in_use"] is False
+    assert drawer["projects"] == [{"id": project["id"], "name": "Acme", "status": "stopped",
+                                  "live": False}]
+    assert client.delete(f"{URL}/{key['id']}", headers=ADMIN).status_code == 409
+
+
+def test_in_use_counts_only_projects_that_can_still_spend(client):
+    from yaaf.core import llm_credentials
+
+    key = create(client)
+    live = make_project(client, slug="live", start=False, billing_secret_id=key["id"])
+    done = make_project(client, slug="done", start=False, billing_secret_id=key["id"])
+    assert client.post(f"/admin/projects/{done['id']}/stop", headers=ADMIN,
+                       json={"reason": "done"}).status_code == 200
+    row = client.get(URL, headers=ADMIN).json()[0]
+    assert row["in_use"] is True
+    assert {p["id"]: p["live"] for p in row["projects"]} == {live["id"]: True, done["id"]: False}
+    with db_session() as session:
+        assert llm_credentials.choices(session)[0]["projects_using_it"] == 1
+
+
+def test_hiding_releases_the_name_and_restoring_says_who_took_it(client):
+    old = create(client, "Production")
+    assert hide(client, old["id"]).json()["refused"] == []
+    fresh = create(client, "production")  # the name is free the moment nothing shows it
+    refused = hide(client, old["id"], undo=True).json()["refused"][0]
+    assert "rename this one" in refused["reason"]
+    assert client.patch(f"{URL}/{old['id']}", headers=ADMIN,
+                        json={"name": "Production (retired)"}).status_code == 200
+    assert hide(client, old["id"], undo=True).json()["refused"] == []
+    assert {r["name"] for r in client.get(URL, headers=ADMIN).json()} == \
+        {"production", "Production (retired)"}
+    assert fresh["id"] != old["id"]
+
+
+def test_cloning_a_project_whose_credential_was_hidden_starts_unassigned(client):
+    """The twin of a finished project is exactly what gets cloned after a
+    cleanup, and refusing the whole clone over the least interesting field it
+    copies would be the wrong answer."""
+    key = create(client)
+    source = make_project(client, start=False, billing_secret_id=key["id"])
+    assert client.post(f"/admin/projects/{source['id']}/stop", headers=ADMIN,
+                       json={"reason": "done"}).status_code == 200
+    assert hide(client, key["id"]).json()["refused"] == []
+
+    twin = client.post(f"/admin/projects/{source['id']}/clone", headers=ADMIN,
+                       json={"slug": "twin"})
+    assert twin.status_code == 200, twin.text
+    assert twin.json()["copied"]["billing_credential_hidden"] == "Production"
+    with db_session() as session:
+        assert session.get(Project, twin.json()["id"]).billing_secret_id is None
+    # And it says so where the chairman is already looking for reasons a
+    # project cannot run.
+    health = client.get(f"/observe/projects/{twin.json()['id']}/health", headers=ADMIN)
+    billing = next(c for c in health.json()["checks"] if c["key"] == "billing")
+    assert billing["status"] == "fail"
+
+
+def test_bulk_hide_judges_each_row_and_only_admin_may(client):
+    from tests.conftest import bearer, live_token
+
+    spare = create(client, "Spare")
+    busy = create(client, "Busy")
+    project = make_project(client, start=False, billing_secret_id=busy["id"])
+    result = hide(client, spare["id"], busy["id"], "sec_nonexistent").json()
+    # One refusal must not cost the other thirty-nine their cleanup.
+    assert [r["name"] for r in result["hidden"]] == ["Spare"]
+    assert [r["id"] for r in result["refused"]] == [busy["id"], "sec_nonexistent"]
+
+    token, _ = live_token(project["id"], project["ceo_agent_id"])
+    for headers in ({}, bearer(token)):
+        for verb in ("hide", "unhide"):
+            assert client.post(f"{URL}/{verb}", headers=headers,
+                               json={"ids": [spare["id"]]}).status_code == 401
+
+
 # ── the plan meter ──────────────────────────────────────────────────────────────
 
 

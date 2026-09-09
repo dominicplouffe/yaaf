@@ -1,18 +1,21 @@
-import { LlmCredentials } from "../llmCredentials";
-// App-wide settings: the two things that are true above every project.
+// App-wide settings: the three things that are true above every project.
 //
-// The model credential was storable before this screen and not *manageable* —
-// it appeared as a gate on the Founding page when unset and vanished the
-// moment it was set, so there was no way to see what was installed, test it,
-// rotate it or take it away. That is the gap here.
+// Two of them — the Founder's own model credential and the Slack connection —
+// are small, stateful and read once a quarter. The third, the LLM credentials
+// projects pay with, is a working list that on a real install runs to dozens
+// of rows. Stacking all three on one scroll meant the rarely-touched cards sat
+// below a table that was itself the reason nobody scrolled: to change a Slack
+// channel prefix you first travelled past forty credentials.
 //
-// The Slack connection is the other half, and it exists because of how these
-// installs are actually used: one workspace, every project, different
-// channels. Store the tokens once and a project needs nothing but its channel
-// map — which yaaf then creates for you.
+// So the page is a rail, like a project's own Settings, and the rail carries
+// each section's state — which is the answer to "is anything wrong here?"
+// without opening anything. The section lives in the URL, so a link to the
+// credentials list is a link to the credentials list.
 
 import { useCallback, useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { del, get, post, put } from "../api";
+import { LlmCredentials } from "../llmCredentials";
 import { SecretInput } from "../ui";
 
 interface AnthropicSettings {
@@ -32,9 +35,17 @@ interface SlackSettings {
   auto_create_channels: boolean;
 }
 
+interface CredentialCounts {
+  total: number;
+  hidden: number;
+  in_use: number;
+  offerable: number;
+}
+
 interface AppSettings {
   anthropic: AnthropicSettings;
   slack: SlackSettings;
+  llm_credentials: CredentialCounts;
 }
 
 /** One flash line under a card: the answer to the button you just pressed. */
@@ -399,9 +410,42 @@ function SlackCard({
   );
 }
 
+type SectionKey = "credentials" | "founder" | "slack";
+
+const SECTIONS: { key: SectionKey; label: string }[] = [
+  { key: "credentials", label: "LLM credentials" },
+  { key: "founder", label: "Founder" },
+  { key: "slack", label: "Slack" },
+];
+
+/** The state of a section, said in the rail. Three words at most: this is the
+    line that decides whether the section is worth opening, not a summary of
+    what is inside it. */
+function railNote(key: SectionKey, s: AppSettings): { text: string; tone: string } {
+  if (key === "credentials") {
+    const { total, in_use, hidden, offerable } = s.llm_credentials;
+    if (total === 0) return { text: "none yet", tone: "warn" };
+    if (in_use === 0) return { text: `${offerable} offered · none in use`, tone: "warn" };
+    return { text: `${in_use} in use of ${offerable}${hidden ? ` · ${hidden} hidden` : ""}`,
+             tone: "good" };
+  }
+  if (key === "founder") {
+    return s.anthropic.configured
+      ? { text: s.anthropic.model, tone: "good" }
+      : { text: "no key set", tone: "warn" };
+  }
+  return s.slack.bot_token_configured
+    ? { text: s.slack.chairman_slack_user ? "connected · chat in" : "connected · outbound only",
+        tone: "good" }
+    : { text: "not connected", tone: "" };
+}
+
 export default function Settings() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [params, setParams] = useSearchParams();
+  const section = (SECTIONS.find((s) => s.key === params.get("section"))?.key
+    ?? "credentials") as SectionKey;
 
   const reload = useCallback(() => {
     get<AppSettings>("/admin/settings").then(setSettings).catch((e) => setError(e.message));
@@ -415,19 +459,45 @@ export default function Settings() {
       <p className="subtitle">
         What is true above every project. A project&apos;s own rules — its budget, its
         constitution, who it hires — live in that project, because they bind that project.
-        Manage shared credentials and connections here.
+        The credentials and connections every project draws on live here.
       </p>
       {error && <div className="error">{error}</div>}
       {settings === null ? (
         <div className="card muted">Loading…</div>
       ) : (
-        <>
-          <LlmCredentials />
-          <h2>Founder model credential</h2>
-          <ModelCard settings={settings.anthropic} reload={reload} />
-          <h2>Slack connection</h2>
-          <SlackCard settings={settings.slack} reload={reload} />
-        </>
+        <div className="settings-lay">
+          <div className="srail">
+            {SECTIONS.map((item) => {
+              const note = railNote(item.key, settings);
+              return (
+                <button
+                  key={item.key}
+                  className={section === item.key ? "active" : ""}
+                  onClick={() => setParams({ section: item.key }, { replace: true })}
+                >
+                  {item.label}
+                  <span className={`srail-note ${note.tone}`}>{note.text}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div>
+            {section === "credentials" && <LlmCredentials onChanged={reload} />}
+            {section === "founder" && (
+              <>
+                <h2 style={{ marginTop: 0 }}>The Founder&apos;s own model credential</h2>
+                <ModelCard settings={settings.anthropic} reload={reload} />
+              </>
+            )}
+            {section === "slack" && (
+              <>
+                <h2 style={{ marginTop: 0 }}>Slack connection</h2>
+                <SlackCard settings={settings.slack} reload={reload} />
+              </>
+            )}
+          </div>
+        </div>
       )}
     </>
   );

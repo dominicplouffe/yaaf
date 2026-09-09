@@ -1233,10 +1233,24 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
                       kind=row.kind)
         session.add(copy)
         ciphertexts[row.name] = row.ciphertext
+    billing_credential_hidden = None
     if source.billing_secret_id:
-        from yaaf.core.llm_credentials import assigned_credential
+        from yaaf.core.llm_credentials import assigned_credential, resolve
 
-        project.billing_secret_id = assigned_credential(session, source.billing_secret_id).id
+        # A source that ended on a since-hidden credential is exactly the
+        # project somebody clones to start the work again — and a hidden
+        # credential is one the administrator has already decided not to spend
+        # on. Refusing the whole clone over the least interesting field it
+        # copies would be the wrong answer; the twin starts unassigned, says
+        # so, and cannot run until somebody picks a credential, which is the
+        # same state a source with no credential produces.
+        if resolve(session, credential_id=source.billing_secret_id) is None:
+            billing_credential_hidden = session.get(Secret, source.billing_secret_id)
+            billing_credential_hidden = (billing_credential_hidden.name
+                                         if billing_credential_hidden else None)
+        else:
+            project.billing_secret_id = assigned_credential(session,
+                                                            source.billing_secret_id).id
 
     source_ceo = session.execute(
         select(Agent).where(Agent.project_id == source.id, Agent.kind == AgentKind.CEO)
@@ -1338,6 +1352,7 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
             "data_sources": [{"name": e["name"], "check": e["last_check"]} for e in checked],
             "slack_rooms_dropped": slack_rooms_dropped,
             "deadline_dropped": deadline_expired,
+            "billing_credential_hidden": billing_credential_hidden,
         },
     }
 

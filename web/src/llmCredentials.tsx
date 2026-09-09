@@ -1,19 +1,53 @@
-import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
-import { del, get, patch, post } from "./api";
-import { fmtAgo, fmtSoon, SecretInput } from "./ui";
+// What projects pay Claude with, and the screen that keeps that list honest.
+//
+// The list used to be a flat table of every managed credential, ordered by
+// name, with one fact per row: which projects were assigned. That was fine
+// while an administrator created them by hand. It stopped being fine the day
+// credentials moved above projects, because that migration turned every key
+// the install had ever used into a permanent named row — most of them
+// belonging to projects that had already ended, none of them deletable
+// (a project still names what paid for it), all of them offered in every
+// picker.
+//
+// So this screen answers two questions before anything else: *which of these
+// is anything actually using*, and *how do I get the rest out of my way*.
+// "In use" means a project that can still spend — the same line the Desk
+// draws. Hiding is the way out, it is reversible, and it works on the whole
+// selection at once, because at forty rows one-at-a-time is not a cleanup.
 
-interface Credential {
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
+import { del, get, patch, post } from "./api";
+import { ConfirmModal, fmtAgo, fmtSoon, SecretInput } from "./ui";
+
+export interface CredentialProject {
+  id: string;
+  name: string;
+  status: string;
+  /** Can this project still spend? A stopped or completed one cannot. */
+  live: boolean;
+}
+
+export interface Credential {
   id: string;
   name: string;
   mode: string;
-  projects: { id: string; name: string }[];
+  created_at?: string;
+  hidden_at?: string | null;
+  /** True when at least one live project pays with it. The server decides. */
+  in_use?: boolean;
+  projects: CredentialProject[];
 }
+
 const endpoint = "/admin/settings/llm-credentials";
 const modeLabel = (mode: string) => mode === "subscription" ? "Claude subscription · tokens" : "Anthropic API · USD";
+const modeName = (mode: string) => mode === "subscription" ? "Claude subscription" : "Anthropic API key";
+const modeMeter = (mode: string) => mode === "subscription" ? "metered in tokens" : "billed in USD";
 
 /** The credential a bundle names, if this install has it. By id first (a
-    Founder draft), then by name, case-insensitively (an export's hint). */
+    Founder draft), then by name, case-insensitively (an export's hint).
+    Reads the offered list, so a hidden credential resolves to nothing and the
+    import asks the chairman to pick — which is the truthful outcome. */
 export async function resolveCredential(id?: string | null, name?: string | null): Promise<Credential | null> {
   if (!id && !name) return null;
   const rows = await get<Credential[]>(endpoint).catch(() => [] as Credential[]);
@@ -40,76 +74,336 @@ export function CredentialPicker({ value, onChange, disabled = false }: {
       </select>
     </label>
     {error && <p role="alert" className="error">{error} <button type="button" onClick={reload}>Retry</button></p>}
-    <p className="help">{rows?.length === 0 ? "No LLM credentials available. Add one in Settings to enable model runs. " : "Credentials are managed by your administrator. "}
+    <p className="help">{rows?.length === 0 ? "No LLM credentials available. Add one in Settings to enable model runs. " : "Credentials are managed by your administrator. Hidden ones are not offered here. "}
       <Link to="/settings" target="_blank" rel="noreferrer">Manage credentials ↗</Link>{" "}
       <button type="button" className="small" onClick={reload}>Refresh</button>
     </p>
   </div>;
 }
 
-export function LlmCredentials() {
+// ── triage ──────────────────────────────────────────────────────────────────────
+
+type Bucket = "in_use" | "idle" | "unused" | "hidden";
+
+/** The one classification the whole screen sorts, filters and reasons with.
+    Hidden wins over everything: a hidden credential's assignments are history
+    by construction, since hiding is refused while anything live pays with it. */
+function bucketOf(row: Credential): Bucket {
+  if (row.hidden_at) return "hidden";
+  if (row.in_use) return "in_use";
+  return row.projects.length ? "idle" : "unused";
+}
+
+const BUCKETS: { key: Bucket; label: string; blurb: string }[] = [
+  { key: "in_use", label: "In use", blurb: "a live project pays with it" },
+  { key: "idle", label: "Idle", blurb: "only projects that have ended ever used it" },
+  { key: "unused", label: "Unused", blurb: "no project has ever been assigned to it" },
+  { key: "hidden", label: "Hidden", blurb: "off every menu; still here, still reversible" },
+];
+
+const ORDER: Record<Bucket, number> = { in_use: 0, idle: 1, unused: 2, hidden: 3 };
+
+function StateChip({ bucket }: { bucket: Bucket }) {
+  const text = { in_use: "in use", idle: "idle", unused: "unused", hidden: "hidden" }[bucket];
+  return <span className={`chip${bucket === "in_use" ? " accent" : ""}`}>{text}</span>;
+}
+
+/** Which projects, and whether any of them can still spend. The finished ones
+    stay on the row — they are the reason the credential cannot be deleted, and
+    a row that says "idle" without saying *after what* is a dead end. */
+function UsedBy({ row }: { row: Credential }) {
+  if (row.projects.length === 0) return <span className="muted">never assigned</span>;
+  const live = row.projects.filter((p) => p.live);
+  const done = row.projects.filter((p) => !p.live);
+  return <>
+    {live.map((p, i) => <span key={p.id}>{i > 0 && ", "}
+      <Link to={`/projects/${p.id}/settings`}>{p.name}</Link></span>)}
+    {live.length > 0 && done.length > 0 && <br />}
+    {done.length > 0 && <span className="muted">
+      {live.length > 0 ? "also " : ""}
+      {done.slice(0, 3).map((p, i) => <span key={p.id}>{i > 0 && ", "}
+        <Link className="muted" to={`/projects/${p.id}/settings`}>{p.name}</Link> ({p.status})</span>)}
+      {done.length > 3 && `, +${done.length - 3} more`}
+    </span>}
+  </>;
+}
+
+interface BulkResult { hidden?: { name: string }[]; restored?: { name: string }[];
+  refused: { id: string; name: string | null; reason: string }[] }
+
+/** The sentence a bulk action owes: what moved, and why anything did not. */
+function bulkSentence(result: BulkResult, verb: "Hid" | "Restored"): string {
+  const moved = (result.hidden ?? result.restored ?? []).length;
+  const head = moved === 0 ? `Nothing ${verb === "Hid" ? "hidden" : "restored"}.`
+    : `${verb} ${moved} credential${moved === 1 ? "" : "s"}.`;
+  if (result.refused.length === 0) return head;
+  const named = result.refused.slice(0, 2)
+    .map((r) => `${r.name ?? r.id} — ${r.reason}`).join("; ");
+  const rest = result.refused.length > 2 ? `, and ${result.refused.length - 2} more` : "";
+  return `${head} ${result.refused.length} refused: ${named}${rest}.`;
+}
+
+export function LlmCredentials({ onChanged }: { onChanged?: () => void } = {}) {
   const [rows, setRows] = useState<Credential[] | null>(null);
   const [editing, setEditing] = useState<Credential | "new" | null>(null);
   const [name, setName] = useState("");
   const [mode, setMode] = useState("api_key");
   const [value, setValue] = useState("");
   const [search, setSearch] = useState("");
+  // The filter lives in the URL: "the nine I hid" is a thing worth linking to,
+  // and a bulk action that reloads the list must not silently drop you back
+  // into "all" while you are still working through the hidden shelf.
+  const [params, setParams] = useSearchParams();
+  const filter = (BUCKETS.some((b) => b.key === params.get("show"))
+    ? params.get("show") : "all") as Bucket | "all";
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const show = useCallback((next: Bucket | "all") => {
+    const merged = new URLSearchParams(params);
+    if (next === "all") merged.delete("show"); else merged.set("show", next);
+    setParams(merged, { replace: true });
+    setPicked(new Set());
+  }, [params, setParams]);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [removing, setRemoving] = useState<Credential | null>(null);
-  const reload = async () => setRows(await get<Credential[]>(endpoint));
-  useEffect(() => { reload().catch(e => setError(e.message)); }, []);
+  const [hiding, setHiding] = useState<Credential[] | null>(null);
+
+  // One fetch, hidden included: the counts on the filters are only honest if
+  // the screen can see everything it is counting.
+  const reload = useCallback(async () => {
+    setRows(await get<Credential[]>(`${endpoint}?include_hidden=true`));
+  }, []);
+  useEffect(() => { reload().catch(e => setError(e.message)); }, [reload]);
+
+  const counts = useMemo(() => {
+    const out: Record<Bucket, number> = { in_use: 0, idle: 0, unused: 0, hidden: 0 };
+    (rows ?? []).forEach((r) => { out[bucketOf(r)] += 1; });
+    return out;
+  }, [rows]);
+
+  const shown = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    return (rows ?? [])
+      .filter((r) => (filter === "all" ? !r.hidden_at : bucketOf(r) === filter))
+      .filter((r) => !term || r.name.toLowerCase().includes(term)
+        || r.projects.some((p) => p.name.toLowerCase().includes(term)))
+      .sort((a, b) => ORDER[bucketOf(a)] - ORDER[bucketOf(b)] || a.name.localeCompare(b.name));
+  }, [rows, filter, search]);
+
+  // Selection is for one verb at a time: on the hidden shelf it restores, and
+  // everywhere else it hides — and an in-use row can do neither.
+  const restoring = filter === "hidden";
+  const selectable = shown.filter((r) => (restoring ? !!r.hidden_at : !r.in_use));
+  const chosen = selectable.filter((r) => picked.has(r.id));
+  const hideable = (rows ?? []).filter((r) => !r.hidden_at && !r.in_use);
+
   function edit(row: Credential | "new") {
     setEditing(row); setName(row === "new" ? "" : row.name);
     setMode(row === "new" ? "api_key" : row.mode); setValue(""); setError(""); setMessage("");
   }
-  async function save(e: React.FormEvent) {
-    e.preventDefault(); setBusy(true); setError("");
-    try {
-      if (editing === "new") await post(endpoint, { name: name.trim(), mode, value: value.trim() });
-      else if (editing) await patch(`${endpoint}/${editing.id}`, { name: name.trim(), ...(value.trim() ? { value: value.trim() } : {}) });
-      setEditing(null); setValue(""); setMessage("Credential saved. New runs use the updated credential."); await reload();
-    } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
-  }
-  async function remove() {
-    if (!removing) return;
+
+  async function act<T>(fn: () => Promise<T>, done: (result: T) => string) {
     setBusy(true); setError("");
-    try { await del(`${endpoint}/${removing.id}`); setRemoving(null); setMessage("Credential deleted."); await reload(); }
-    catch (e) { setError((e as Error).message); await reload().catch(() => {}); }
-    finally { setBusy(false); }
+    try {
+      setMessage(done(await fn()));
+      await reload();
+    } catch (e) {
+      setError((e as Error).message);
+      await reload().catch(() => {});
+    } finally {
+      setBusy(false);
+      // The page around this list counts credentials in its navigation. A
+      // bulk hide that leaves "2 in use of 15" standing beside a list of six
+      // is the screen disagreeing with itself.
+      onChanged?.();
+    }
   }
-  const filtered = rows?.filter(r => r.name.toLowerCase().includes(search.toLowerCase()));
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    await act(
+      async () => {
+        if (editing === "new") await post(endpoint, { name: name.trim(), mode, value: value.trim() });
+        else if (editing) await patch(`${endpoint}/${editing.id}`,
+          { name: name.trim(), ...(value.trim() ? { value: value.trim() } : {}) });
+        setEditing(null); setValue("");
+      },
+      () => "Credential saved. New runs use the updated credential.");
+  }
+
+  async function move(targets: Credential[], undo: boolean) {
+    const ids = targets.map((r) => r.id);
+    await act(
+      () => post<BulkResult>(`${endpoint}/${undo ? "unhide" : "hide"}`, { ids }),
+      (result) => bulkSentence(result, undo ? "Restored" : "Hid"));
+    setPicked(new Set());
+    setHiding(null);
+  }
+
   return <section className="card llm-credentials" aria-label="LLM credentials">
-    <div className="llm-header"><div><h2>LLM credentials</h2><p className="help">Create named API keys and subscription tokens, then assign them to projects. Values are encrypted at rest.</p></div>
-      <button type="button" className="primary" disabled={busy || editing !== null || removing !== null} onClick={() => edit("new")}>Add credential</button></div>
+    <div className="llm-header">
+      <div>
+        <h2>LLM credentials</h2>
+        <p className="help">What projects pay Claude with. Values are encrypted at rest and
+          never shown back — rotate one rather than reading it. A credential a project ever
+          named cannot be deleted; <b>hide</b> it instead and it leaves every menu without
+          leaving the record.</p>
+      </div>
+      <button type="button" className="primary" disabled={busy || editing !== null}
+              onClick={() => edit("new")}>Add credential</button>
+    </div>
+
     {error && <p className="error" role="alert">{error}</p>}
-    {message && <p role="status">{message}</p>}
-    {editing && <form onSubmit={save} className="card">
-      <h3>{editing === "new" ? "Add credential" : "Edit credential"}</h3>
+    {message && <p className="notice-box" role="status">{message}</p>}
+
+    {editing && <form onSubmit={save} className="card cred-form">
+      <h3>{editing === "new" ? "Add credential" : `Edit “${editing.name}”`}</h3>
       <fieldset disabled={busy} style={{ border: 0, padding: 0 }}>
-        <label className="field">Name<input autoFocus required maxLength={120} value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Production — engineering" /></label>
-        <label className="field">Type<select value={mode} disabled={editing !== "new"} onChange={e => setMode(e.target.value)}><option value="api_key">Anthropic API key</option><option value="subscription">Claude subscription token</option></select></label>
-        <label className="field" htmlFor="llm-credential-value">{editing === "new" ? "Credential value" : "Replace credential value (optional)"}</label>
-        <SecretInput id="llm-credential-value" value={value} onChange={setValue} placeholder={editing === "new" ? "Paste credential" : "Leave blank to keep current value"} />
-        <p className="help">{mode === "subscription" ? "Use the token generated by claude setup-token." : "Use an API key from your Anthropic account."}</p>
-        {editing !== "new" && editing.projects.length > 0 && <p role="note">Replacing this value affects new runs in {editing.projects.length} assigned project(s).</p>}
-        <div className="actions"><button className="primary" disabled={!name.trim() || (editing === "new" && value.trim().length < 8)}>{busy ? "Saving…" : "Save credential"}</button><button type="button" onClick={() => { setEditing(null); setValue(""); }}>Cancel</button></div>
+        <label className="field">Name<input autoFocus required maxLength={120} value={name}
+          onChange={e => setName(e.target.value)} placeholder="e.g. Production — engineering" /></label>
+        <label className="field">Type<select value={mode} disabled={editing !== "new"}
+          onChange={e => setMode(e.target.value)}>
+          <option value="api_key">Anthropic API key</option>
+          <option value="subscription">Claude subscription token</option>
+        </select></label>
+        {editing !== "new" && <p className="help">The type is fixed: it decides how every
+          project on this credential is metered, and changing it under them would rewrite
+          what their budgets mean.</p>}
+        <label className="field" htmlFor="llm-credential-value">
+          {editing === "new" ? "Credential value" : "Replace credential value (optional)"}</label>
+        <SecretInput id="llm-credential-value" value={value} onChange={setValue}
+          placeholder={editing === "new" ? "Paste credential" : "Leave blank to keep current value"} />
+        <p className="help">{mode === "subscription"
+          ? "Use the token generated by claude setup-token — it starts sk-ant-oat."
+          : "Use an API key from your Anthropic account — it starts sk-ant-api."}</p>
+        {editing !== "new" && editing.projects.filter(p => p.live).length > 0 &&
+          <p className="notice-box">Replacing this value changes what{" "}
+            {editing.projects.filter(p => p.live).map(p => p.name).join(", ")} pays with on
+            the next run.</p>}
+        <div className="actions">
+          <button className="primary" disabled={!name.trim() || (editing === "new" && value.trim().length < 8)}>
+            {busy ? "Saving…" : "Save credential"}</button>
+          <button type="button" onClick={() => { setEditing(null); setValue(""); }}>Cancel</button>
+        </div>
       </fieldset>
     </form>}
-    {removing && <div className="card" role="alertdialog" aria-label="Confirm credential deletion">
-      <h3>Delete “{removing.name}”?</h3><p>This permanently removes the stored credential. It cannot be undone.</p>
-      <button className="danger" disabled={busy} onClick={remove}>{busy ? "Deleting…" : "Delete credential"}</button>{" "}<button disabled={busy} onClick={() => setRemoving(null)}>Cancel</button>
-    </div>}
-    {rows === null ? <p role="status">Loading credentials… <button onClick={() => reload().catch(e => setError(e.message))}>Retry</button></p> : rows.length === 0 ? <p>No credentials yet. Add your first credential to connect a project.</p> : <>
-      <label className="field">Search credentials<input type="search" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by name" /></label>
-      <table><thead><tr><th>Name</th><th>Type</th><th>Assigned projects</th><th>Plan usage</th><th>Actions</th></tr></thead><tbody>
-        {filtered?.map(row => <tr key={row.id}><td><strong>{row.name}</strong></td><td data-label="Type">{modeLabel(row.mode)}</td><td data-label="Assigned projects">{row.projects.length ? row.projects.map((p, i) => <span key={p.id}>{i > 0 && ", "}<Link to={`/projects/${p.id}/settings`}>{p.name}</Link></span>) : <span className="muted">Not assigned</span>}</td><td data-label="Plan usage"><PlanMeterCompact credentialId={row.id} mode={row.mode} /></td><td className="llm-actions">
-          <button className="small" disabled={busy || editing !== null || removing !== null} onClick={() => edit(row)} aria-label={`Edit ${row.name}`}>Edit</button>{" "}
-          <button className="small danger" disabled={busy || editing !== null || removing !== null || row.projects.length > 0} title={row.projects.length ? "Reassign all projects before deleting" : `Delete ${row.name}`} onClick={() => { setRemoving(row); setError(""); }} aria-label={`Delete ${row.name}`}>Delete</button>
-          {row.projects.length > 0 && <div className="help">In use · deletion locked</div>}
-        </td></tr>)}
-      </tbody></table>{filtered?.length === 0 && <p>No credentials match your search.</p>}
+
+    {removing && <ConfirmModal title={`Delete “${removing.name}”?`} confirmLabel="Delete credential"
+      danger busy={busy} onCancel={() => setRemoving(null)}
+      onConfirm={() => act(() => del(`${endpoint}/${removing.id}`), () => "Credential deleted.")
+        .then(() => setRemoving(null))}>
+      <p>No project has ever been assigned to this credential, so nothing loses its record
+        when it goes. The stored value is destroyed and cannot be recovered.</p>
+    </ConfirmModal>}
+
+    {hiding && <ConfirmModal title={hiding.length === 1 ? `Hide “${hiding[0].name}”?`
+      : `Hide ${hiding.length} credentials?`} confirmLabel="Hide" busy={busy}
+      onCancel={() => setHiding(null)} onConfirm={() => move(hiding, false)}>
+      <p>They leave this page, the project picker, the Founder&apos;s list and every MCP
+        spec, and none of them can be assigned again while hidden. Nothing is deleted:
+        projects that already ended keep naming what paid for them, and one click under{" "}
+        <b>Hidden</b> puts any of these back.</p>
+      {hiding.length > 1 && <p className="help">{hiding.map((r) => r.name).join(", ")}</p>}
+    </ConfirmModal>}
+
+    {rows === null ? <p role="status">Loading credentials…</p>
+      : rows.length === 0 ? <p className="help">No credentials yet. Add your first one to
+        connect a project.</p> : <>
+
+      <div className="cred-filters" role="group" aria-label="Filter credentials">
+        <button type="button" aria-pressed={filter === "all"}
+          className={`chip${filter === "all" ? " accent" : ""}`}
+          onClick={() => show("all")}>all {rows.length - counts.hidden}</button>
+        {BUCKETS.map((b) => (
+          <button key={b.key} type="button" aria-pressed={filter === b.key}
+            className={`chip${filter === b.key ? " accent" : ""}`} title={b.blurb}
+            disabled={counts[b.key] === 0 && filter !== b.key}
+            onClick={() => show(b.key)}>{b.label.toLowerCase()} {counts[b.key]}</button>
+        ))}
+        <span className="grow" />
+        <input type="search" value={search} aria-label="Search credentials"
+          onChange={e => setSearch(e.target.value)} placeholder="Search name or project" />
+      </div>
+
+      <p className="help cred-blurb">
+        {filter === "all" ? "Everything on the menus. Hidden credentials are on their own shelf."
+          : BUCKETS.find((b) => b.key === filter)?.blurb}
+        {filter === "all" && hideable.length >= 3 && <>
+          {" "}Nothing is using {hideable.length} of them.{" "}
+          <button type="button" className="linkish" disabled={busy}
+            onClick={() => setHiding(hideable)}>Hide all {hideable.length}</button>
+        </>}
+      </p>
+
+      {chosen.length > 0 && <div className="cred-bulk" role="status">
+        <span><b>{chosen.length}</b> selected</span>
+        <button type="button" className="primary" disabled={busy}
+          onClick={() => restoring ? move(chosen, true) : setHiding(chosen)}>
+          {restoring ? "Restore" : "Hide"} {chosen.length}</button>
+        <button type="button" className="small" disabled={busy}
+          onClick={() => setPicked(new Set())}>Clear</button>
+      </div>}
+
+      {shown.length > 0 && <table className="cred-table">
+        <colgroup>
+          <col style={{ width: 30 }} /><col /><col style={{ width: 118 }} />
+          <col style={{ width: 168 }} /><col style={{ width: 152 }} />
+          <col style={{ width: 146 }} />
+        </colgroup>
+        <thead><tr>
+          <th className="pick">{selectable.length > 0 && <input type="checkbox"
+            aria-label={restoring ? "Select every restorable credential"
+              : "Select every hideable credential"}
+            checked={chosen.length > 0 && chosen.length === selectable.length}
+            onChange={e => setPicked(e.target.checked
+              ? new Set(selectable.map((r) => r.id)) : new Set())} />}</th>
+          <th>Name</th><th>Type</th><th>Used by</th><th>Plan usage</th><th>Actions</th>
+        </tr></thead>
+        <tbody>
+          {shown.map(row => {
+            const bucket = bucketOf(row);
+            const canPick = restoring ? !!row.hidden_at : !row.in_use;
+            return <tr key={row.id} className={row.hidden_at ? "is-hidden" : undefined}>
+              <td className="pick">{canPick && <input type="checkbox"
+                aria-label={`Select ${row.name}`} checked={picked.has(row.id)}
+                onChange={e => setPicked(prev => {
+                  const next = new Set(prev);
+                  if (e.target.checked) next.add(row.id); else next.delete(row.id);
+                  return next;
+                })} />}</td>
+              <td><strong>{row.name}</strong> <StateChip bucket={bucket} />
+                {row.hidden_at && <div className="help">hidden {fmtAgo(row.hidden_at)}</div>}</td>
+              <td data-label="Type">{modeName(row.mode)}
+                <div className="help">{modeMeter(row.mode)}</div></td>
+              <td data-label="Used by"><UsedBy row={row} /></td>
+              <td data-label="Plan usage">
+                <PlanMeterCompact credentialId={row.id} mode={row.mode} auto={!!row.in_use} /></td>
+              <td className="llm-actions">
+                {/* Edit is on a hidden row too: restoring one whose name has
+                    since been taken is refused, and renaming it is the way
+                    out — a shelf you cannot rename anything on is a trap. */}
+                <button className="small" disabled={busy || editing !== null}
+                  onClick={() => edit(row)} aria-label={`Edit ${row.name}`}>Edit</button>
+                {row.hidden_at ? <button className="small" disabled={busy}
+                  onClick={() => move([row], true)}>Restore</button>
+                  : <button className="small" disabled={busy || row.in_use}
+                      title={row.in_use
+                        ? "A live project pays with this — reassign or stop it first"
+                        : `Hide ${row.name}`}
+                      onClick={() => setHiding([row])} aria-label={`Hide ${row.name}`}>Hide</button>}
+                {row.projects.length === 0 && <button className="small danger" disabled={busy}
+                  onClick={() => { setRemoving(row); setError(""); }}
+                  aria-label={`Delete ${row.name}`}>Delete</button>}
+              </td>
+            </tr>;
+          })}
+        </tbody>
+      </table>}
+      {shown.length === 0 && <p className="help">
+        {search.trim() ? "No credentials match your search."
+          : filter === "hidden" ? "Nothing is hidden."
+          : "Nothing in this state."}</p>}
     </>}
   </section>;
 }
@@ -236,10 +530,20 @@ export function PlanMeter({ credentialId, mode, title = "Claude subscription pla
   );
 }
 
-/** One line for a table cell: session and week, with resets underneath. */
-export function PlanMeterCompact({ credentialId, mode }: { credentialId: string; mode: string }) {
-  const { data, error, busy, refresh, active } = usePlanUsage(credentialId, mode);
-  if (!active) return <span className="muted" title="API keys are metered per call, in dollars; there is no plan window to fill.">— metered per call</span>;
+/** One line for a table cell: session and week, with resets underneath.
+
+    `auto` decides whether it reads on its own. Every reading is a live call to
+    Anthropic behind a one-minute cache, so a list of forty credentials that
+    all poll is forty upstream calls a minute to answer a question about
+    thirty-eight keys nothing is running on. The rows that can fail a run
+    tonight read themselves; the rest wait to be asked. */
+export function PlanMeterCompact({ credentialId, mode, auto = true }: {
+  credentialId: string; mode: string; auto?: boolean;
+}) {
+  const [armed, setArmed] = useState(auto);
+  const { data, error, busy, refresh, active } = usePlanUsage(armed ? credentialId : null, mode);
+  if (mode !== "subscription") return <span className="muted" title="API keys are metered per call, in dollars; there is no plan window to fill.">— metered per call</span>;
+  if (!active) return <button type="button" className="linkish" onClick={() => setArmed(true)}>read plan</button>;
   if (!data && !error) return <span className="help">reading…</span>;
   if (error || (data && !data.available)) {
     return (

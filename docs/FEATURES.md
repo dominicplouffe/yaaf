@@ -178,7 +178,11 @@ Outside Explore mode the root object is not the task, it is the
   a Claude subscription token — and projects are *assigned* one. A project
   never stores a billing key of its own (`POST /admin/secrets` refuses
   `kind: billing`), rename and rotation happen in one place for every project
-  on the credential, and a credential in use cannot be deleted. Every way of
+  on the credential, and a credential in use cannot be deleted. A credential
+  nothing live is paying with can be **hidden** instead: off every menu, off
+  the Settings list, unassignable, and reversible in one click — while the
+  finished projects that spent through it keep naming what paid for them.
+  Hiding is refused while a live project can still spend on it. Every way of
   founding a project offers the same list: the form's picker, the Founder
   (which names the only credential when there is one, is told to ask which
   when there are several, and shows its choice in the draft panel before

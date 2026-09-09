@@ -3,10 +3,38 @@ from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from yaaf.core.models import Project, Secret
+from yaaf.core.models import Project, ProjectStatus, Secret
 
 MODE_LABELS = {"api_key": "Anthropic API key, billed in USD",
                "subscription": "Claude subscription, metered in tokens"}
+
+#: A project that has ended can neither start again nor spend again, so the
+#: credential it named is history rather than a live dependency. Every
+#: "is anything actually using this?" question in the product asks it this way
+#: — the Desk's `live=true` listing draws the same line.
+TERMINAL = (ProjectStatus.STOPPED, ProjectStatus.COMPLETED)
+
+
+def offerable():
+    """The SELECT behind every menu: managed, shared, and not hidden.
+
+    One query so that hiding cannot be honoured on the Settings page and
+    forgotten on the project picker, the Founder's list or an MCP spec. Every
+    door that lets somebody *choose* a credential goes through here.
+    """
+    return select(Secret).where(Secret.llm_mode.is_not(None), Secret.project_id.is_(None),
+                                Secret.hidden_at.is_(None))
+
+
+def live_project_names(session: Session, credential_id: str) -> list[str]:
+    """Projects still able to spend on this credential, by name.
+
+    Empty is the licence to hide: nothing that can run tomorrow is pointing
+    here, so taking the name off the menus cannot strand a project mid-flight.
+    """
+    return list(session.scalars(
+        select(Project.name).where(Project.billing_secret_id == credential_id,
+                                   Project.status.not_in(TERMINAL)).order_by(Project.name)))
 
 
 def assigned_credential(session: Session, credential_id: str) -> Secret:
@@ -15,6 +43,14 @@ def assigned_credential(session: Session, credential_id: str) -> Secret:
     row = session.scalar(select(Secret).where(Secret.id == credential_id).with_for_update())
     if row is not None and row.kind != "billing":
         raise HTTPException(status_code=422, detail="A service credential cannot be assigned for billing")
+    if row is not None and row.hidden_at is not None:
+        # Its own sentence, because this one is undoable in ten seconds and the
+        # generic refusal would send a chairman hunting for a credential that
+        # is sitting in Settings under "Hidden".
+        raise HTTPException(
+            status_code=422,
+            detail=f"'{row.name}' is hidden and cannot be assigned — un-hide it under "
+                   "Settings → LLM credentials, or pick another")
     if row is None or row.llm_mode is None or row.project_id is not None:
         raise HTTPException(status_code=422, detail="Select an LLM credential configured in Settings")
     return row
@@ -26,9 +62,11 @@ def resolve(session: Session, *, credential_id: str | None = None,
 
     Names match case-insensitively because that is how the unique index sees
     them: two credentials cannot differ only in case, so a chairman who types
-    "production" for "Production" means the one that exists.
+    "production" for "Production" means the one that exists. A hidden
+    credential resolves to nothing at all — the caller then says "no such
+    credential; here is the menu", which is the truthful answer.
     """
-    query = select(Secret).where(Secret.llm_mode.is_not(None), Secret.project_id.is_(None))
+    query = offerable()
     if credential_id:
         return session.scalar(query.where(Secret.id == credential_id))
     if name:
@@ -45,10 +83,13 @@ def describe(row: Secret) -> dict:
 def choices(session: Session, *, with_plan: bool = False) -> list[dict]:
     """Every credential a project may pay with, as a drafter needs to see them.
 
-    Names, modes and how many projects already use each — never a value, and
+    Names, modes and how many *live* projects use each — never a value, and
     never which projects, because the drafter may be a client scoped to one
-    project and the inventory of the rest is not its business. With
-    `with_plan`, a subscription credential's plan meter rides along when a
+    project and the inventory of the rest is not its business. The count is
+    live-only for the same reason the list is hidden-aware: a credential last
+    touched by a project that finished in March is not "in use", and a drafter
+    told otherwise picks the busiest-looking key rather than the right one.
+    With `with_plan`, a subscription credential's plan meter rides along when a
     screen has read it in the last minute — for the Founder, which drafts in
     the administrator's own screen; not for an MCP client, which the usage
     route is withheld from for the same reason as the inventory. The choice is
@@ -58,11 +99,10 @@ def choices(session: Session, *, with_plan: bool = False) -> list[dict]:
 
     counts = dict(session.execute(
         select(Project.billing_secret_id, func.count(Project.id))
-        .where(Project.billing_secret_id.is_not(None)).group_by(Project.billing_secret_id)
+        .where(Project.billing_secret_id.is_not(None),
+               Project.status.not_in(TERMINAL)).group_by(Project.billing_secret_id)
     ).all())
-    rows = session.scalars(
-        select(Secret).where(Secret.llm_mode.is_not(None), Secret.project_id.is_(None))
-        .order_by(Secret.name)).all()
+    rows = session.scalars(offerable().order_by(Secret.name)).all()
     out = []
     for row in rows:
         entry = {**describe(row), "projects_using_it": counts.get(row.id, 0)}

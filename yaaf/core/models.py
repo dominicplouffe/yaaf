@@ -1860,8 +1860,8 @@ class Secret(Base):
     __table_args__ = (
         UniqueConstraint("project_id", "name"),
         Index("uq_llm_credential_name", text("lower(name)"), unique=True,
-              postgresql_where=text("llm_mode IS NOT NULL"),
-              sqlite_where=text("llm_mode IS NOT NULL")),
+              postgresql_where=text("llm_mode IS NOT NULL AND hidden_at IS NULL"),
+              sqlite_where=text("llm_mode IS NOT NULL AND hidden_at IS NULL")),
     )
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
@@ -1877,6 +1877,17 @@ class Secret(Base):
     # password can never become the model credential, or vice versa.
     kind: Mapped[str] = mapped_column(String(16), default="service")
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    # An LLM credential retired from every menu without being destroyed.
+    # Lifting per-project keys above projects made one managed credential per
+    # historical key, so installs woke up choosing from a list mostly made of
+    # keys whose projects had already ended. A hidden credential is off the
+    # Settings list, off the project picker, off the Founder's menu and
+    # unassignable — while the finished projects that spent through it keep
+    # naming what paid for them. Refused while a live project still pays with
+    # it, so hidden can never mean "a running project cannot be explained".
+    # It is also why the name index is partial on this column: a name nothing
+    # can show you is not a name worth reserving.
+    hidden_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
 
 class McpClient(Base):

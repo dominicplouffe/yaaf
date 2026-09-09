@@ -55,7 +55,32 @@ def get_settings(session: Session = Depends(db)) -> dict:
                      "every project pays its own way with its own billing credential."),
         },
         "slack": slack_settings.platform_summary(session),
+        "llm_credentials": _llm_counts(session),
     }
+
+
+def _llm_counts(session: Session) -> dict:
+    """How many credentials exist, and how many of them mean anything.
+
+    On the screen this is navigation rather than data: "12 credentials" and
+    "3 in use, 9 hidden" send an administrator to different places, and the
+    difference between those two numbers is the whole reason hiding exists.
+    """
+    from sqlalchemy import distinct, func, select
+
+    from yaaf.core.llm_credentials import TERMINAL
+    from yaaf.core.models import Project
+
+    managed = Secret.llm_mode.is_not(None), Secret.project_id.is_(None)
+    total = session.scalar(select(func.count(Secret.id)).where(*managed)) or 0
+    hidden = session.scalar(select(func.count(Secret.id))
+                            .where(*managed, Secret.hidden_at.is_not(None))) or 0
+    in_use = session.scalar(
+        select(func.count(distinct(Project.billing_secret_id)))
+        .join(Secret, Secret.id == Project.billing_secret_id)
+        .where(*managed, Secret.hidden_at.is_(None), Project.status.not_in(TERMINAL))) or 0
+    return {"total": int(total), "hidden": int(hidden), "in_use": int(in_use),
+            "offerable": int(total) - int(hidden)}
 
 
 # ── the platform model credential ───────────────────────────────────────────────
@@ -234,16 +259,30 @@ class LlmCredentialPatch(BaseModel):
 
 
 def _llm_summary(session: Session, row: Secret, projects: list | None = None) -> dict:
+    """One credential as the screen needs it: what it is, and what it is *for*.
+
+    "Assigned" was the only fact this used to carry, and after credentials
+    moved above projects it stopped being the interesting one: an install can
+    hold a dozen keys every one of which is assigned, all of them to projects
+    that ended months ago. So each project says whether it can still spend, and
+    the credential says whether any of them can. That single boolean is what
+    the page sorts on, what the delete button reads, and what hiding is refused
+    over — one definition, computed once, rather than three screens each
+    guessing at "in use".
+    """
     from sqlalchemy import select
 
+    from yaaf.core.llm_credentials import TERMINAL
     from yaaf.core.models import Project
 
     if projects is None:
         projects = session.scalars(select(Project).where(Project.billing_secret_id == row.id)
                                    .order_by(Project.name)).all()
+    out = [{"id": p.id, "name": p.name, "status": p.status, "live": p.status not in TERMINAL}
+           for p in projects]
     return {"id": row.id, "name": row.name, "mode": row.llm_mode,
-            "created_at": row.created_at,
-            "projects": [{"id": p.id, "name": p.name} for p in projects]}
+            "created_at": row.created_at, "hidden_at": row.hidden_at,
+            "projects": out, "in_use": any(p["live"] for p in out)}
 
 
 def _save_llm(session: Session, row: Secret, name: str, value: str | None) -> dict:
@@ -259,8 +298,12 @@ def _save_llm(session: Session, row: Secret, name: str, value: str | None) -> di
         raise HTTPException(status_code=422, detail="Enter a credential name")
     if name.lower().startswith("platform-") or name.lower() == "github":
         raise HTTPException(status_code=422, detail="This name is reserved for a platform connection")
+    # A hidden credential holds no name: it is invisible on this page, so
+    # refusing the name it is sitting on would be a refusal pointing at
+    # nothing. The partial unique index draws the line in the same place.
     duplicate = session.scalar(select(Secret.id).where(
-        Secret.project_id.is_(None), func.lower(Secret.name) == name.lower(), Secret.id != row.id))
+        Secret.project_id.is_(None), func.lower(Secret.name) == name.lower(),
+        Secret.hidden_at.is_(None), Secret.id != row.id))
     if duplicate:
         raise HTTPException(status_code=409, detail="A credential with this name already exists")
     if value is not None:
@@ -285,7 +328,15 @@ def _save_llm(session: Session, row: Secret, name: str, value: str | None) -> di
 
 
 @router.get("/llm-credentials")
-def list_llm_credentials(session: Session = Depends(db)) -> list:
+def list_llm_credentials(include_hidden: bool = False, session: Session = Depends(db)) -> list:
+    """Every credential this install can still choose from.
+
+    Hidden ones are absent by default, and that default is what every other
+    caller gets: the project picker, the import matcher and the CLI all read
+    this route. `include_hidden=true` is the Settings page opening the drawer
+    to un-hide or finally delete one — the only screen that has a reason to
+    look at a credential nobody may pick.
+    """
     from sqlalchemy import select
 
     from yaaf.core.models import Project, Secret
@@ -294,8 +345,11 @@ def list_llm_credentials(session: Session = Depends(db)) -> list:
     for project in session.scalars(select(Project).where(Project.billing_secret_id.is_not(None))
                                   .order_by(Project.name)):
         usage.setdefault(project.billing_secret_id, []).append(project)
-    return [_llm_summary(session, row, usage.get(row.id, [])) for row in session.scalars(
-        select(Secret).where(Secret.llm_mode.is_not(None)).order_by(Secret.name))]
+    listing = select(Secret).where(Secret.llm_mode.is_not(None))
+    if not include_hidden:
+        listing = listing.where(Secret.hidden_at.is_(None))
+    return [_llm_summary(session, row, usage.get(row.id, []))
+            for row in session.scalars(listing.order_by(Secret.name))]
 
 
 @router.post("/llm-credentials", status_code=201)
@@ -308,15 +362,31 @@ def create_llm_credential(body: LlmCredentialIn, session: Session = Depends(db))
     return _save_llm(session, row, body.name, body.value)
 
 
-def _managed(session: Session, credential_id: str) -> Secret:
-    """The row to edit or delete, locked — or a 404, because on this screen an
-    id that names nothing is a credential somebody else already removed, not
-    a bad choice on a project form."""
-    from yaaf.core.llm_credentials import assigned_credential, resolve
+def _managed(session: Session, credential_id: str, *, lock: bool = True) -> Secret:
+    """The row to edit, hide or delete, locked — or a 404, because on this
+    screen an id that names nothing is a credential somebody else already
+    removed, not a bad choice on a project form.
 
-    if resolve(session, credential_id=credential_id) is None:
+    Hidden rows come back here. `assigned_credential` refuses them because
+    *assigning* one is the mistake; renaming, un-hiding and deleting one are
+    the only ways out of hidden, and a lookup that could not see it would make
+    hiding a one-way door.
+
+    `lock=False` is for the reader that only wants to look. The plan meter is
+    polled once a minute by every open screen, and a route that write-locks
+    the credential row to answer "how full is the plan" would queue behind —
+    and hold up — the writes that actually change something.
+    """
+    from sqlalchemy import select
+
+    from yaaf.core.models import Secret
+
+    query = select(Secret).where(Secret.id == credential_id)
+    row = session.scalar(query.with_for_update() if lock else query)
+    if row is None or row.llm_mode is None or row.project_id is not None \
+            or row.kind != "billing":
         raise HTTPException(status_code=404, detail="unknown LLM credential")
-    return assigned_credential(session, credential_id)
+    return row
 
 
 @router.patch("/llm-credentials/{credential_id}")
@@ -334,6 +404,96 @@ def delete_llm_credential(credential_id: str, session: Session = Depends(db)) ->
     return delete_secret(credential_id, session)
 
 
+# ── hiding: the answer to an inventory nobody chose ─────────────────────────────
+#
+# Deleting is refused for any credential a project ever named, and that refusal
+# is right — the ledger says "this project paid with X" and a dangling id would
+# make that sentence a lie. But it left no way to tidy up. Lifting per-project
+# keys above projects turned every key an install had ever used into a named,
+# permanent, undeletable row on one page, most of them belonging to projects
+# that finished long ago, and a picker with forty entries is a picker nobody
+# reads.
+#
+# Hiding is the missing verb. It is not deletion and does not pretend to be:
+# the row stays, the receipts stay, the finished projects keep naming what paid
+# for them. What goes away is the *offer* — every menu, the Settings list, the
+# ability to be assigned. And because it is reversible in one click, it is safe
+# to use on forty rows at once, which is the only scale at which this problem
+# actually appears.
+
+
+class HiddenIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ids: list[str] = Field(min_length=1, max_length=500)
+
+
+def _set_hidden(session: Session, ids: list[str], *, hide: bool) -> dict:
+    """Hide or restore many credentials, refusing individually.
+
+    Bulk, and partial. Cleaning up an inherited list means selecting most of it
+    and pressing one button; an all-or-nothing call would fail on the one row
+    a live project still pays with and leave the administrator to bisect
+    thirty-nine others by hand. So each id is judged on its own and the ones
+    that could not move come back with the reason, which the screen shows.
+    """
+    from sqlalchemy import func, select
+
+    from yaaf.core.llm_credentials import live_project_names
+    from yaaf.core.models import Secret, utcnow
+    from yaaf.server.api.admin import _audit
+
+    moved: list[dict] = []
+    refused: list[dict] = []
+    for credential_id in dict.fromkeys(ids):
+        row = session.scalar(select(Secret).where(Secret.id == credential_id).with_for_update())
+        if row is None or row.llm_mode is None or row.project_id is not None:
+            refused.append({"id": credential_id, "name": None,
+                            "reason": "no such LLM credential"})
+            continue
+        if hide and row.hidden_at is None:
+            # The one refusal. A project that can still spend is a project
+            # whose money must stay explainable on the screen that assigns it.
+            live = live_project_names(session, row.id)
+            if live:
+                refused.append({"id": row.id, "name": row.name,
+                                "reason": "still paying for " + ", ".join(live[:3])
+                                          + (f" and {len(live) - 3} more" if len(live) > 3 else "")
+                                          + " — reassign or stop them first"})
+                continue
+        if not hide and row.hidden_at is not None:
+            # Its name was released the moment it was hidden, so somebody may
+            # be standing on it. Say which door to use rather than letting the
+            # unique index refuse the whole batch.
+            taken = session.scalar(select(Secret.name).where(
+                Secret.project_id.is_(None), Secret.hidden_at.is_(None),
+                func.lower(Secret.name) == row.name.lower()))
+            if taken:
+                refused.append({"id": row.id, "name": row.name,
+                                "reason": f"another credential is now called '{taken}' — "
+                                          "rename this one before restoring it"})
+                continue
+        was_hidden = row.hidden_at is not None
+        row.hidden_at = utcnow() if hide else None
+        session.add(row)
+        if was_hidden != hide:
+            _audit(session, None, f"llm_credential.{'hide' if hide else 'unhide'}",
+                   "secret", row.id, {"name": row.name})
+        moved.append({"id": row.id, "name": row.name})
+    session.flush()
+    return {"hidden" if hide else "restored": moved, "refused": refused}
+
+
+@router.post("/llm-credentials/hide")
+def hide_llm_credentials(body: HiddenIn, session: Session = Depends(db)) -> dict:
+    return _set_hidden(session, body.ids, hide=True)
+
+
+@router.post("/llm-credentials/unhide")
+def unhide_llm_credentials(body: HiddenIn, session: Session = Depends(db)) -> dict:
+    return _set_hidden(session, body.ids, hide=False)
+
+
 @router.get("/llm-credentials/{credential_id}/usage")
 def llm_credential_usage(credential_id: str, refresh: bool = False,
                          session: Session = Depends(db)) -> dict:
@@ -349,11 +509,8 @@ def llm_credential_usage(credential_id: str, refresh: bool = False,
     because the screen asking is the same screen either way.
     """
     from yaaf.core.crypto import decrypt
-    from yaaf.core.llm_credentials import resolve
 
-    row = resolve(session, credential_id=credential_id)
-    if row is None:
-        raise HTTPException(status_code=404, detail="unknown LLM credential")
+    row = _managed(session, credential_id, lock=False)
     credential_id, mode = row.id, row.llm_mode
     token = decrypt(row.ciphertext) if mode == "subscription" else ""
     # Everything this needs from the database is in hand. Anthropic may take

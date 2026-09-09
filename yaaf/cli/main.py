@@ -261,10 +261,40 @@ def settings() -> None:
 
 
 @app.command()
-def llm_credentials() -> None:
-    """List managed LLM credentials and their assigned projects; never values."""
+def llm_credentials(
+    include_hidden: bool = typer.Option(False, "--include-hidden",
+                                        help="Also list credentials retired from the menus"),
+) -> None:
+    """List managed LLM credentials and their assigned projects; never values.
+
+    Each project says whether it is still live, and the credential says whether
+    any of them are — a key whose only projects have ended is safe to hide.
+    """
     with _client() as client:
-        _show(client.get("/admin/settings/llm-credentials"))
+        _show(client.get("/admin/settings/llm-credentials",
+                         params={"include_hidden": "true"} if include_hidden else None))
+
+
+@app.command()
+def hide_llm_credentials(credential_ids: list[str]) -> None:
+    """Take credentials off every menu without deleting them.
+
+    Hidden means unofferable: gone from Settings, the project picker, the
+    Founder's list and any MCP spec that names one. The row and its receipts
+    stay, so finished projects still say what paid for them. Refused for any
+    credential a live project can still spend on.
+    """
+    with _client() as client:
+        _show(client.post("/admin/settings/llm-credentials/hide",
+                          json={"ids": list(credential_ids)}))
+
+
+@app.command()
+def unhide_llm_credentials(credential_ids: list[str]) -> None:
+    """Put hidden credentials back on the menus. Refused if the name was taken."""
+    with _client() as client:
+        _show(client.post("/admin/settings/llm-credentials/unhide",
+                          json={"ids": list(credential_ids)}))
 
 
 @app.command()

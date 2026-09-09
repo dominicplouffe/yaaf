@@ -938,5 +938,8 @@ export interface CloneResult {
     /** The source's Explore window had already passed, so the twin starts
         without one rather than being closed at birth. */
     deadline_dropped: boolean;
+    /** The source paid with a credential that has since been hidden, so the
+        twin starts unassigned — the name is here to say which one it was. */
+    billing_credential_hidden: string | null;
   };
 }

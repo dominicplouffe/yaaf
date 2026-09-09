@@ -22,21 +22,40 @@ the intended way to run a project.
 
 ## Settings — what is true above every project
 
-Three things, and none of them belongs to a project.
+Three sections, and none of them belongs to a project.
+
+The page is a rail, one section at a time, and each rail item carries its
+section's state — so "is anything wrong here?" is answered without opening
+anything. The section is in the URL, so a link to the credentials list is a
+link to the credentials list.
 
 - **LLM credentials** — what projects pay Claude with. An administrator adds
   each one once, by name: an **Anthropic API key** (the project's budget is
-  then in dollars) or a **Claude subscription token** (in tokens). The table
-  shows every credential, its type, which projects are assigned to it, and —
-  for a subscription — the **plan meter**: what Anthropic says is left on the
-  session and weekly windows, the same numbers as `/usage` in Claude Code,
-  read once a minute and shown as a fact, never enforced. Rename or rotate a
+  then in dollars) or a **Claude subscription token** (in tokens). Every row
+  is filed by what is actually using it: **in use** (a live project pays with
+  it), **idle** (only projects that have ended ever did), **unused** (no
+  project ever was), and **hidden**. Filter by any of those, search by
+  credential or project name, and — for a subscription in use — read the
+  **plan meter**: what Anthropic says is left on the session and weekly
+  windows, the same numbers as `/usage` in Claude Code, read once a minute and
+  shown as a fact, never enforced. A row nothing is running on reads its meter
+  only when asked, because every reading is a live call.
+- **Hiding a credential** is the answer to a list nobody chose. Promoting
+  per-project keys above projects made one managed credential per historical
+  key, most of them belonging to projects that had already ended, and none of
+  them deletable — a project still names what paid for it. Hiding takes a
+  credential off this page, the project picker, the Founder's list and every
+  MCP spec, and makes it unassignable; the row, the receipts and the finished
+  projects' record of what paid for them all stay. It is one click to undo,
+  works on a whole selection at once ("hide all N that nothing is using"), and
+  is **refused while a live project can still spend on it** — so hidden can
+  never mean a running project's money is unexplained. Rename or rotate a
   credential here and every assigned project's next run uses the new value.
-  A credential in use cannot be deleted; reassign or detach its projects
-  first. No value is ever shown back — the reveal that works for a project's
-  own secrets refuses these. Projects never store a billing key of their own:
-  they pick one of these, under their own Settings → Money, on the New
-  Project form, or by telling the Founder.
+  Deleting is only offered for a credential no project has ever named. No
+  value is ever shown back — the reveal that works for a project's own secrets
+  refuses these. Projects never store a billing key of their own: they pick
+  one of these, under their own Settings → Money, on the New Project form, or
+  by telling the Founder.
 - **Founder model credential** — the key the **Founder** runs on. Install,
   rotate, run a live test against it, remove it, and pick the model it uses.
   It pays for product-wide conversations and **never reaches a project's

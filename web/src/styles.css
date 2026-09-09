@@ -676,6 +676,13 @@ table.csv td {
   font-family: var(--mono); font-size: 10px; letter-spacing: 1.1px; text-transform: uppercase;
   color: var(--muted); padding: 12px 11px 3px;
 }
+/* A rail item that carries its section's state. "Is anything wrong here?" is
+   the question a settings page is opened with, and answering it in the
+   navigation saves opening all three. */
+.srail button:has(.srail-note) { line-height: 1.35; padding: 8px 11px; }
+.srail-note { display: block; font-size: 11px; color: var(--muted); }
+.srail-note.good { color: var(--ink-2); }
+.srail-note.warn { color: var(--warning); }
 @media (max-width: 860px) {
   .settings-lay { grid-template-columns: 1fr; }
   .srail { position: static; flex-direction: row; flex-wrap: wrap; }
@@ -1372,15 +1379,57 @@ button.rolepick { width: 100%; text-align: left; background: var(--surface-2); }
 .llm-header { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
 .llm-header h2 { margin-top: 0; }
 .llm-header > button { flex-shrink: 0; white-space: nowrap; }
-.llm-credentials td { overflow-wrap: anywhere; }
+.llm-credentials td { overflow-wrap: break-word; }
+.llm-credentials .cred-form { background: var(--surface-2); margin: 14px 0; }
+.llm-credentials .cred-form h3 { margin: 0 0 4px; font-size: 14px; }
+
+/* The triage bar. A filter here is a fact about the list, so it wears the same
+   chip the rows do — pressing "idle 12" and reading "idle" on twelve rows is
+   one idea, not two. */
+.cred-filters { display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  margin: 14px 0 6px; }
+.cred-filters button.chip { cursor: pointer; }
+.cred-filters button.chip:hover:not(:disabled) { color: var(--ink); border-color: var(--muted); }
+.cred-filters button.chip:disabled { opacity: 0.4; cursor: default; }
+.cred-filters .grow { flex: 1; min-width: 12px; }
+.cred-filters input[type="search"] { width: auto; min-width: 190px; flex: 0 1 240px; }
+.cred-blurb { margin: 0 0 4px; }
+
+/* Selection bar: only ever on screen while something is selected, so it can
+   afford to be loud about the verb it is about to run. */
+.cred-bulk {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin: 10px 0; padding: 8px 12px; border-radius: var(--radius);
+  background: rgba(57, 135, 229, 0.1); border: 1px solid rgba(57, 135, 229, 0.4);
+}
+.llm-credentials th.pick, .llm-credentials td.pick { padding-right: 0; }
+/* Fixed layout, because six auto-sized columns let the longest cell on the
+   page (a plan-meter error) win the width and squeezed the credential's name
+   to four characters a line. The name gets whatever the other five leave. */
+.cred-table { table-layout: fixed; }
+.cred-table td { padding: 7px 10px; }
+.cred-table .plan-compact { white-space: normal; }
+.cred-table .plan-compact .plan-verdict { white-space: normal; }
+.cred-table strong { display: inline-block; margin-right: 6px; }
+/* The verbs sit on one line. Three small buttons wrapping into a three-row
+   stack was most of the row height on a list whose whole problem is length. */
+.llm-credentials .llm-actions { white-space: nowrap; }
+.llm-credentials .llm-actions button { margin: 0 0 0 4px; }
+.llm-credentials .llm-actions button:first-child { margin-left: 0; }
+.llm-credentials td.pick input, .llm-credentials th.pick input { width: auto; margin: 2px 0 0; }
+/* A hidden row is present, legible and plainly not participating. */
+.llm-credentials tr.is-hidden td:not(.llm-actions) { opacity: 0.62; }
+.llm-credentials td .help { margin: 2px 0 0; }
 @media (max-width: 640px) {
   .llm-header { align-items: stretch; flex-direction: column; gap: 12px; }
   .llm-credentials table, .llm-credentials tbody { display: block; }
   .llm-credentials thead { display: none; }
   .llm-credentials tr { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 16px 0; border-top: 1px solid var(--border, #303030); }
   .llm-credentials td { display: block; padding: 0; border: 0; }
-  .llm-credentials td:first-child, .llm-credentials .llm-actions,
+  .llm-credentials td:first-child, .llm-credentials td:nth-child(2),
+  .llm-credentials .llm-actions,
   .llm-credentials td[data-label="Plan usage"] { grid-column: 1 / -1; }
+  .llm-credentials td.pick { grid-column: 1 / -1; }
   .llm-credentials .plan-compact { white-space: normal; }
   .llm-credentials .plan-compact > span > span { display: inline-block; margin-bottom: 2px; }
   .llm-credentials td[data-label]::before { content: attr(data-label); display: block; font-size: 11px; color: var(--muted, #999); margin-bottom: 4px; }
