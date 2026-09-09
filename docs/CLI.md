@@ -24,8 +24,13 @@ Every command that takes a project accepts **either a slug or an id**.
 | `yaaf seed-crews [DIR] [--only-missing]` | Load every `*.json` in the directory (default `crews/`) into the crew library — the pre-staffed teams the hiring desk offers. Crews are not versioned: one is read at hiring time and copied into the project's own teams, so re-seeding an edited crew can never reach a project that already started. Run it after `seed-roles`. |
 | `yaaf create-user EMAIL NAME` | Create a user. Idempotent by email. |
 | `yaaf create-project SPEC_FILE` | Create a project from a JSON spec (shape below). |
-| `yaaf set-secret NAME [--project P] [--scopes a,b] [--kind service\|billing]` | Store an encrypted secret. **The value is prompted** — never echoed, logged, or left in shell history. Omit `--project` for a platform-level secret. |
-| `yaaf settings` | Show the app-wide settings — whether a model credential is installed and how the Slack connection is configured. Values are never printed. |
+| `yaaf set-secret NAME [--project P] [--scopes a,b] [--kind service]` | Store an encrypted secret. **The value is prompted** — never echoed, logged, or left in shell history. Omit `--project` for a platform-level secret. |
+| `yaaf llm-credentials` | List named LLM credentials and project assignments (no values). |
+| `yaaf create-llm-credential NAME [--mode api_key\|subscription]` | Create a managed credential; value is prompted. |
+| `yaaf edit-llm-credential ID NAME [--rotate]` | Rename a credential; optionally replace its value for all assigned projects. |
+| `yaaf delete-llm-credential ID` | Delete an unused credential after confirmation. Assigned credentials cannot be deleted. |
+| `yaaf llm-credential-usage ID [--refresh]` | What Anthropic says is left on a subscription credential's plan (session and weekly windows, as `/usage` shows them). Cached for a minute; API keys have no plan meter and say so. |
+| `yaaf settings` | Show the app-wide settings — whether the Founder's credential is installed and how the Slack connection is configured. Values are never printed. |
 | `yaaf set-platform-key [--mode api_key\|subscription]` | Install or rotate the **Founder's** model credential (value prompted). It is never injected into a sandbox and never reaches a project's agents — there is no fallback. |
 | `yaaf set-slack [--bot-token] [--signing-secret] [--app-token] [--chairman U…] [--prefix P] [--visibility private\|public] [--auto-create/--no-auto-create]` | Configure the app-wide Slack connection every project inherits. Token flags prompt for the value. |
 | `yaaf slack-channels PROJECT` | Create the Slack rooms this project is missing and print their names. Idempotent — a mapped room is left alone, a name Slack already holds is adopted. |
@@ -188,12 +193,33 @@ export YAAF_API=http://localhost:8080 YAAF_ADMIN_TOKEN=…
 yaaf seed-roles roles/                                        # once per deployment
 yaaf create-user you@example.com "Your Name"
 yaaf create-project my-spec.json
-yaaf set-secret anthropic --project my-slug --kind billing    # value prompted
+yaaf create-llm-credential "Production"    # once; value prompted, id printed
 yaaf configure my-slug --billing-secret-id secr_…
 yaaf start my-slug
 
 yaaf say my-slug "Morning. What's the plan for the week?"
 ```
+
+## Who pays
+
+A project never holds a billing key of its own. An administrator creates each
+**LLM credential** once — `yaaf create-llm-credential NAME` for an API key,
+`--mode subscription` for a Claude subscription token — and projects are
+assigned one:
+
+```bash
+yaaf llm-credentials                                  # names, types, assignments; never values
+yaaf configure my-slug --billing-secret-id secr_…     # assign; the billing mode follows the credential
+yaaf llm-credential-usage secr_…                      # a subscription's plan meter, as /usage shows it
+yaaf edit-llm-credential secr_… "Production" --rotate # rename, or replace the value for every project on it
+```
+
+A spec file may carry `billing_secret_id` and is created already assigned.
+`yaaf set-secret --kind billing` is refused: that door closed when credentials
+moved above projects. A credential a project is assigned to cannot be deleted
+until the project is reassigned or detached (`--billing-secret-id ""`). Clones
+keep the assignment; a backup names the credential and never carries its
+value, and no endpoint or command ever shows an LLM credential's value back.
 
 ## Before you spend anything
 

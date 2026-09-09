@@ -600,7 +600,10 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
 
     secrets = session.execute(
         select(Secret).where(or_(Secret.project_id == project.id,
-                                 Secret.project_id.is_(None)))
+                                 Secret.project_id.is_(None)),
+                             # The LLM credentials live at platform scope too, and
+                             # one named like a data source's secret is not that secret.
+                             Secret.llm_mode.is_(None))
     ).scalars().all()
     secrets_by_name = {s.name: s for s in secrets}
 

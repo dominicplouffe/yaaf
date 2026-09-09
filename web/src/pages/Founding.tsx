@@ -190,6 +190,13 @@ function DraftPanel({ bundle }: { bundle: ProjectBundle | null }) {
       <h4>Goal</h4>
       <pre className="goal-preview">{p.goal}</pre>
 
+      <h4>Who pays</h4>
+      <p className="muted">
+        {p.billing_secret_name
+          ? <>{p.billing_secret_name} — {p.billing_mode === "subscription" ? "a Claude subscription, metered in tokens" : "an Anthropic API key, billed in USD"}</>
+          : "Not chosen yet. The Founder asks when there is more than one credential; you can also pick one on the form."}
+      </p>
+
       <h4>Who it hires</h4>
       <ul>
         {(p.teams ?? []).map((t) => (

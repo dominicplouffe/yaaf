@@ -391,11 +391,11 @@ discovering later.
 
 | Tool | Does | Backing | Confirm? | Status |
 |---|---|---|---|---|
-| `catalog` | Search the role and crew library. | `yaaf/founder/tools.py: search_roles, search_crews` | no | **done** (M4) |
+| `catalog` | Search the role and crew library; with `what: credentials`, list the LLM credentials a project may pay with — names and billing modes, never values. | `yaaf/founder/tools.py: search_roles, search_crews, list_credentials` | no | **done** (M4) |
 | `read_source` | What a candidate data source actually serves. | `yaaf/founder/tools.py: read_source` | no | **done** (M4) |
 | `grade_goal` | Grade a draft goal against [GOAL_GRAMMAR.md](GOAL_GRAMMAR.md) — ten things a goal must contain. | `yaaf/founder/tools.py` | no | **done** (M4) |
 | `rehearse` | The fire drill: simulate the project for N days, create nothing. | `POST /admin/rehearse` | no | **done** (M4) |
-| `create_project` | Create from a validated bundle. | `POST /admin/projects` | yes | **done** (M4) |
+| `create_project` | Create from a validated bundle. `billing_secret` names the credential that pays; omitted, the preview lists the choices so the chairman can pick. | `POST /admin/projects` | yes | **done** (M4) |
 | `clone_project` | Clone an existing one; export a spec. | `POST /admin/projects/{id}/clone`, `GET /export` | yes | **done** (M4) |
 
 The design flow is deliberately *primitives, not a wizard*. The calling model
@@ -441,7 +441,7 @@ and re-fetchable by the client when it needs to refresh:
 - `brief` — the morning standing across every project
 - `why-at-risk <project>` — the commitment, the pace, the waste, the two levers
 - `spot-audit <project>` — pull a sample and walk it
-- `design <one paragraph>` — draft a project: catalog, grade, rehearse, review
+- `design <one paragraph>` — draft a project: catalog, grade, rehearse, ask which credential pays, review
 
 ## Conventions
 
@@ -632,8 +632,11 @@ plainly that a machine carried the signature.
 **Three narrowings this scope adds that the HTTP surface does not have.**
 `POST /admin/projects` accepts any `chairman_email`, so the tool overwrites it
 with the token's own user — a model must not create a project chaired by
-somebody else. A billing credential is attached **by name**, never by value, and
-a service credential named in that field is refused. And `grade_goal` runs on
+somebody else. A billing credential is attached **by name**, never by value —
+`catalog` with `what: credentials` lists what exists (names and billing modes,
+never values and never which projects use them), the `create_project` preview
+shows the same list when no name was given, and a name that matches nothing
+is refused with the menu. A service credential named in that field is refused. And `grade_goal` runs on
 the *platform* credential, never a project's, because a project that does not
 exist yet has nothing to charge; with none configured it returns the eight
 element names and points at `yaaf://docs/goal-grammar` rather than refusing.

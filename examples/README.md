@@ -94,8 +94,9 @@ step that has not run since the role was added.
 
 1. **+ New project → Start from a setup file**, and pick the `.json`.
 2. The form fills in: shape, goal, teams, constitution, and the org.
-3. **Paste your Anthropic key**, **edit the goal** where it shouts in capitals,
-   and check your email and timezone.
+3. **Pick the LLM credential that pays** (an administrator creates one under
+   Settings → LLM credentials; the file cannot carry a key), **edit the goal**
+   where it shouts in capitals, and check your email and timezone.
 4. Create.
 
 Two things the form owns rather than the file, so glance at them before you
@@ -121,8 +122,9 @@ export YAAF_API=http://localhost:8080 YAAF_ADMIN_TOKEN=…
 yaaf create-user you@example.com "Your Name"
 yaaf seed seed --chairman you@example.com     # created in draft, never started
 
-# Prompts for the key, never echoes it, and prints the secret's id.
-yaaf set-secret anthropic-api-key --project first-hour --kind billing
+# Prompts for the key, never echoes it, and prints the credential's id.
+# One credential can pay for many projects; create it once, assign it per project.
+yaaf create-llm-credential "Production"
 yaaf configure first-hour --billing-secret-id secr_…   # the id it just printed
 yaaf start first-hour
 ```

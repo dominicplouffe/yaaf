@@ -1,6 +1,7 @@
+import { CredentialPicker, resolveCredential } from "../llmCredentials";
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { CrewSummary, get, McpServerEntry, patch, post, ProjectBundle,
+import { CrewSummary, get, McpServerEntry, post, ProjectBundle,
   RehearsalReport, RoleSummary, SlackProvision } from "../api";
 import Drill from "../drill";
 import {
@@ -181,6 +182,9 @@ export default function NewProject() {
   // instead of asking them to spot it.
   const [search] = useSearchParams();
   const fileCard = useRef<HTMLDivElement | null>(null);
+  // Bumped by every bundle load and every manual pick, so a credential lookup
+  // that started for an earlier bundle cannot land on top of a later choice.
+  const billingPick = useRef(0);
   // A draft handed over by the Founder. It arrives as the same ProjectBundle a
   // setup file carries, so it lands through the same applyBundle path; the
   // thread id rides along so the founding conversation can be handed to the
@@ -208,7 +212,7 @@ export default function NewProject() {
   const [chairmanEmail, setChairmanEmail] = useState("");
   const [chairmanName, setChairmanName] = useState("");
   const [billingMode, setBillingMode] = useState("api_key");
-  const [billingKey, setBillingKey] = useState("");
+  const [billingCredentialId, setBillingCredentialId] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [mode, setMode] = useState("explore");
   // Set when a loaded setup file could not answer the shape question itself —
@@ -245,6 +249,11 @@ export default function NewProject() {
   const [queueCeiling, setQueueCeiling] = useState(8);
   const [droughtHours, setDroughtHours] = useState(24);
   const [usdCap, setUsdCap] = useState(1000);
+  // The same cap in the subscription unit. Which one binds is decided by the
+  // credential, not the form: a subscription meters tokens and the USD figure
+  // is never consulted, so the form shows and posts whichever one applies.
+  const [tokenCap, setTokenCap] = useState(200_000_000);
+  const tokensMode = billingMode === "subscription";
   const [approvalThreshold, setApprovalThreshold] = useState(250);
   const [requireVerification, setRequireVerification] = useState(false);
   const [reportHours, setReportHours] = useState(1);
@@ -434,7 +443,7 @@ export default function NewProject() {
       return null;
     }
     if (n === 3) {
-      if (!billingKey.trim() && runtime !== "mock") {
+      if (!billingCredentialId.trim() && runtime !== "mock") {
         return "Without a billing key the project is created but cannot start";
       }
       return null;
@@ -453,7 +462,7 @@ export default function NewProject() {
   // Start needs a model to bill: a real key here, or the mock runtime. A
   // project can always be created without one and connected in Settings —
   // it just cannot START, because its first run would die hunting for a key.
-  const canStartNow = runtime === "mock" || !!billingKey.trim();
+  const canStartNow = runtime === "mock" || !!billingCredentialId.trim();
 
   /** Fill the whole form from a setup bundle.
    *
@@ -494,11 +503,14 @@ export default function NewProject() {
       if (p.deadline && new Date(p.deadline) > new Date()) {
         setExploreDeadline(p.deadline.slice(0, 10));
       }
-      // A full backup carries the billing key too — the one credential the
-      // form holds apart, because it is attached rather than role-granted.
-      const billing = parsed.secrets.find((s) =>
-        p.billing_secret_name ? s.name === p.billing_secret_name : s.kind === "billing");
-      if (billing?.value) setBillingKey(billing.value);
+      // A draft or a backup names who pays — by id from the Founder, by name
+      // from an export. Either is resolved against what exists now; a name
+      // that matches nothing leaves the picker empty, and the step says so.
+      setBillingCredentialId("");
+      const pick = ++billingPick.current;
+      resolveCredential(p.billing_secret_id, p.billing_secret_name).then((found) => {
+        if (found && pick === billingPick.current) { setBillingCredentialId(found.id); setBillingMode(found.mode); }
+      });
       // The file's whole job here is review-and-supply-keys, so land on the
       // step that shows the project it describes rather than the first field
       // of eleven sections it already filled.
@@ -549,6 +561,7 @@ export default function NewProject() {
       if (cons.queue_ceiling !== undefined) setQueueCeiling(cons.queue_ceiling);
       if (cons.drought_hours !== undefined) setDroughtHours(cons.drought_hours);
       if (cons.monthly_usd_cap !== undefined) setUsdCap(cons.monthly_usd_cap);
+      if (cons.monthly_token_cap !== undefined) setTokenCap(cons.monthly_token_cap);
       if (cons.approval_threshold_usd !== undefined) {
         setApprovalThreshold(cons.approval_threshold_usd);
       }
@@ -705,6 +718,7 @@ export default function NewProject() {
           goal: goal.trim(),
           chairman_email: chairmanEmail.trim(),
           billing_mode: billingMode,
+          billing_secret_id: billingCredentialId || undefined,
           mode,
           ...(mode === "explore" && exploreDeadline
             ? { deadline: `${exploreDeadline}T23:59:59Z` } : {}),
@@ -719,6 +733,7 @@ export default function NewProject() {
             queue_ceiling: queueCeiling,
             drought_hours: droughtHours,
             monthly_usd_cap: usdCap,
+            monthly_token_cap: tokenCap,
             approval_threshold_usd: approvalThreshold,
             require_evidence_verification: requireVerification,
             stakes: craft.stakes,
@@ -877,23 +892,6 @@ export default function NewProject() {
       }>("/admin/projects", body);
       if (created.webhooks) setWebhooks({ projectId: created.id, ...created.webhooks });
       if (created.slack) setSlack(created.slack);
-      // The model key, stored and attached in one motion — without it the
-      // project exists but cannot start (its first run would die keyless).
-      if (billingKey.trim()) {
-        try {
-          const stored = await post<{ id: string }>("/admin/secrets", {
-            project_id: created.id,
-            name: bundle?.project.billing_secret_name || "anthropic-api-key",
-            value: billingKey.trim(),
-            role_scopes: [],
-            kind: "billing",
-          });
-          await patch(`/admin/projects/${created.id}`, { billing_secret_id: stored.id });
-        } catch (err) {
-          alert(`Project created, but attaching the model key failed: ` +
-                `${(err as Error).message}. Connect it in Settings → Billing.`);
-        }
-      }
       try {
         for (const cred of credentials) {
           if (!cred.name.trim() || !cred.value) continue;
@@ -1143,9 +1141,13 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
                 ` ${dataSourceUrls.size === 1 ? "One of them is a data source's" : "Some of them are data sources'"} ` +
                   "address: a full URL, tested before this project starts."}
               {" "}
-              {bundle.values_included && billingKey.trim()
-                ? "The billing key came along too — it is in the Billing card below."
-                : "Billing is connected afterwards in Settings."}
+              {billingCredentialId.trim()
+                ? "It also named the credential that pays — selected in the Billing step."
+                : bundle.secrets.some((s) => s.kind === "billing" && s.value)
+                  ? "It carries a billing key value from before credentials were managed; that value is not imported. Add it under Settings → LLM credentials, then pick it in the Billing step."
+                  : bundle.project.billing_secret_name
+                  ? `It named a credential called "${bundle.project.billing_secret_name}", which this install does not have — pick one in the Billing step.`
+                  : "It does not say which credential pays — pick one in the Billing step, or the project is created unable to start."}
             </p>
           )}
         </div>
@@ -1410,28 +1412,8 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
 
         {on(3) && <>
         <div className="card" style={{ marginTop: 10 }}>
-          <label className="field">Billing — the key your agents think with</label>
-          <div className="row">
-            <div>
-              <select value={billingMode} onChange={(e) => setBillingMode(e.target.value)}>
-                <option value="api_key">Anthropic API key — budget in USD</option>
-                <option value="subscription">Claude subscription token — budget in tokens</option>
-              </select>
-            </div>
-            <div>
-              <SecretInput
-                value={billingKey}
-                onChange={setBillingKey}
-                placeholder={billingMode === "api_key"
-                  ? "sk-ant-…" : "the OAuth token from `claude setup-token`"}
-              />
-            </div>
-          </div>
-          <p className="help">
-            Stored encrypted, attached as this project's billing credential, never injected
-            into a sandbox. Leave it blank and the project is created but cannot start —
-            connect the key later in Settings.
-          </p>
+          <CredentialPicker value={billingCredentialId} onChange={(id, mode) => { billingPick.current++; setBillingCredentialId(id); setBillingMode(mode); }} />
+          <p className="help">The selected credential determines the budget unit. Without a credential, the project can be saved as a draft but cannot run models.</p>
           <button type="button" className="small" style={{ marginTop: 4 }}
             onClick={() => setShowAdvanced((v) => !v)}>
             {showAdvanced ? "hide advanced" : "advanced…"}
@@ -1551,6 +1533,11 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
                 the question. This box knows what a run has cost it and cannot know
                 what this project's runs will cost. */}
             {(() => {
+              if (tokensMode) {
+                return `Metered in tokens against the selected subscription: the cap is ` +
+                  `${tokenCap.toLocaleString()} tokens a month, and the plan's own session ` +
+                  "and weekly windows apply before it does.";
+              }
               const perRun = usdCap / Math.max(1, queueCeiling * 8);
               const seen = status?.avg_usd_per_run;
               return seen
@@ -1587,8 +1574,18 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
           </div>
           <div className="row">
             <div>
-              <label className="field">Monthly budget cap (USD)</label>
-              <input type="number" min={0} value={usdCap} onChange={(e) => setUsdCap(+e.target.value)} />
+              {tokensMode ? (
+                <>
+                  <label className="field">Monthly budget cap (tokens)</label>
+                  <input type="number" min={0} step={1_000_000} value={tokenCap} onChange={(e) => setTokenCap(+e.target.value)} />
+                  <div className="help">The selected credential is a subscription, so the budget is in tokens.</div>
+                </>
+              ) : (
+                <>
+                  <label className="field">Monthly budget cap (USD)</label>
+                  <input type="number" min={0} value={usdCap} onChange={(e) => setUsdCap(+e.target.value)} />
+                </>
+              )}
             </div>
             <div>
               <label className="field">Approval threshold (USD per spend)</label>
@@ -1729,11 +1726,23 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
           </div>
           <div className="orgline">
             <strong>Cap</strong>
-            <span className="chip">${usdCap}/mo</span>
-            <span className="help">
-              ≈ ${roughMonthly(hiredRoles)}/mo at this staffing — the project pauses
-              itself at the cap
-            </span>
+            {tokensMode ? (
+              <>
+                <span className="chip">{tokenCap.toLocaleString()} tokens/mo</span>
+                <span className="help">
+                  metered against the selected subscription — the project pauses itself at
+                  the cap, and the plan's own windows apply before it
+                </span>
+              </>
+            ) : (
+              <>
+                <span className="chip">${usdCap}/mo</span>
+                <span className="help">
+                  ≈ ${roughMonthly(hiredRoles)}/mo at this staffing — the project pauses
+                  itself at the cap
+                </span>
+              </>
+            )}
           </div>
         </div>
 
@@ -1746,11 +1755,11 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
         <div className="card" style={{ marginBottom: 10 }}>
           <div className="needline">
             <span>
-              <strong>Billing key</strong>
-              <div className="help">Agents cannot run keyless.</div>
+              <strong>Billing credential</strong>
+              <div className="help">Agents cannot run without one.</div>
             </span>
             <span>
-              {billingKey.trim()
+              {billingCredentialId.trim()
                 ? <span className="badge good">connected above</span>
                 : <span className="badge warn">add it on the previous step, or in Settings</span>}
             </span>

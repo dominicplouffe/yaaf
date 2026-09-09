@@ -231,9 +231,12 @@ public hostname and connects through a consent screen instead of a pasted token
 Afterwards: `./update_single_server.sh` to upgrade, `./kill_single_server.sh` to
 stop and keep the data.
 
-> **Billing:** agents pay with an API key you attach per project. Anthropic's
-> consumer terms don't permit running fleets on a personal Claude subscription —
-> subscription mode is for single-user tinkering only.
+> **Billing:** agents pay with an LLM credential you create once under
+> Settings and assign per project — an API key, or a Claude subscription
+> token. Anthropic's consumer terms don't permit running fleets on a personal
+> Claude subscription — subscription mode is for single-user tinkering only,
+> and the dashboard shows what Anthropic says is left on the plan so you can
+> see the wall before a run hits it.
 
 ## What you give up
 

@@ -173,9 +173,30 @@ Outside Explore mode the root object is not the task, it is the
 - **Every run is metered** — including killed and timed-out ones, cache reads
   and writes, and the resident chat session's per-turn usage. Idle wakes are
   suppressed rather than billed.
-- **Two billing modes.** `api_key` meters in USD against a monthly cap;
-  `subscription` meters in tokens against a monthly token cap. The dashboard
-  shows whichever unit is native to the project.
+- **LLM credentials are managed, not pasted.** An administrator creates each
+  credential once, by name, under app-wide Settings — an Anthropic API key or
+  a Claude subscription token — and projects are *assigned* one. A project
+  never stores a billing key of its own (`POST /admin/secrets` refuses
+  `kind: billing`), rename and rotation happen in one place for every project
+  on the credential, and a credential in use cannot be deleted. Every way of
+  founding a project offers the same list: the form's picker, the Founder
+  (which names the only credential when there is one, is told to ask which
+  when there are several, and shows its choice in the draft panel before
+  anything is created), and the MCP `catalog` and `create_project`
+  tools, whose preview lists the choices when none was named.
+- **Two billing modes, decided by the credential.** An API key meters in USD
+  against a monthly cap; a subscription meters in tokens against a monthly
+  token cap. The mode is a property of the credential, so assigning one sets
+  it, and the dashboard shows whichever unit is native to the project.
+- **The plan meter.** A subscription credential shows what Anthropic says is
+  left on its plan — the five-hour session window and the weekly windows, the
+  same numbers as `/usage` in Claude Code — on the credential in Settings and
+  on every project paying with it, with a verdict that says what happens next
+  ("session at 100%, runs fail until it resets in 22 min"). It is read from
+  the endpoint Claude Code itself uses, which is not a documented API, so it
+  is shown and never enforced: the token cap stays the platform's own rule,
+  and a meter that cannot be read says so in a sentence. API keys have no
+  plan meter and say so.
 - **Warn, then stop.** At the warn ratio the CEO is told to cut burn; at 100%
   the project **pauses itself** and you get an email/webhook. Restarting is
   your decision, not the project's.
@@ -231,9 +252,11 @@ Outside Explore mode the root object is not the task, it is the
   removed. Containment is the fresh container, role-scoped secrets, budgets,
   loop brakes and the audit trail — not a domain list.
 - **Secrets are envelope-encrypted** (Fernet), scoped to roles, and injected
-  per-run into the sandbox environment. Agents never see values in chat, and
-  `billing`-kind secrets refuse role grants entirely. Slack and GitHub platform
-  tokens are decrypted server-side only and never enter a sandbox.
+  per-run into the sandbox environment. Agents never see values in chat. The
+  LLM credential a project pays with is not a project secret at all: it lives
+  above projects, is never role-grantable, and reaches a sandbox only as the
+  model credential the billing path injects. Slack and GitHub platform tokens
+  are decrypted server-side only and never enter a sandbox.
 - **Idempotent side effects.** Before any external action (a PR, a deploy, a
   message to an outside system) an agent records it with a stable idempotency
   key. After a crash-and-retry the ledger says the prior attempt completed — so
@@ -423,12 +446,13 @@ evidence at all about your *project*.
   against it, and the granted roles' sandboxes mount it as real tools.
 - **Project export** downloads the whole project as one JSON file — goal,
   teams and their schedules, constitution, config, data sources, and every
-  credential *value* (billing key, Slack tokens, webhook signing keys
-  included), decrypted at the chairman's request so a restore re-enters
-  nothing. The API's default export (`include_values=false`, what the seed
+  project service credential *value* (Slack tokens and webhook signing keys
+  included), decrypted at the chairman's request. Shared LLM values stay in
+  Settings; restores select a managed credential. The API's default export (`include_values=false`, what the seed
   machinery stores) still strips values and plumbing for cross-install
   sharing. **Project clone** produces a running twin on the same install,
-  credential values and all, optionally aimed at a new goal.
+  with copied service credentials and the same shared LLM assignment, optionally
+  aimed at a new goal.
 
 ## 17. Proving it works
 

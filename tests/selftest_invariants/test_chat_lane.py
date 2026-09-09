@@ -231,10 +231,7 @@ def _fake_sandbox(monkeypatch):
 
 
 def _attach_billing(client, project_id: str) -> None:
-    secret = client.post("/admin/secrets",
-                         json={"project_id": project_id, "name": "anthropic-api-key",
-                               "value": "sk-ant-api03-fake", "kind": "billing"},
-                         headers=ADMIN).json()
+    secret = client.post('/admin/settings/llm-credentials', json={'name': 'anthropic-api-key', 'value': 'sk-ant-api03-fake', 'mode': 'api_key'}, headers=ADMIN).json()
     client.patch(f"/admin/projects/{project_id}",
                  json={"billing_mode": "api_key", "billing_secret_id": secret["id"]},
                  headers=ADMIN)

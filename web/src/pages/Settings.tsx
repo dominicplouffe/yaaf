@@ -1,3 +1,4 @@
+import { LlmCredentials } from "../llmCredentials";
 // App-wide settings: the two things that are true above every project.
 //
 // The model credential was storable before this screen and not *manageable* —
@@ -414,14 +415,15 @@ export default function Settings() {
       <p className="subtitle">
         What is true above every project. A project&apos;s own rules — its budget, its
         constitution, who it hires — live in that project, because they bind that project.
-        These two do not: they are this install&apos;s wiring.
+        Manage shared credentials and connections here.
       </p>
       {error && <div className="error">{error}</div>}
       {settings === null ? (
         <div className="card muted">Loading…</div>
       ) : (
         <>
-          <h2>Model credential</h2>
+          <LlmCredentials />
+          <h2>Founder model credential</h2>
           <ModelCard settings={settings.anthropic} reload={reload} />
           <h2>Slack connection</h2>
           <SlackCard settings={settings.slack} reload={reload} />

@@ -331,10 +331,11 @@ def test_the_platform_credential_never_becomes_a_project_secret(client, founder)
 # ── the tool surface ────────────────────────────────────────────────────────────
 
 
-def test_the_founder_gets_six_tools_and_no_way_to_act(client, founder):
+def test_the_founder_gets_seven_tools_and_no_way_to_act(client, founder):
     """The Founder drafts a project; it does not act on the world. Built-in
-    tools are off and only these six are allowed — the restriction is the
-    design, not a default."""
+    tools are off and only these seven are allowed — the restriction is the
+    design, not a default. The seventh reads credential *names*; the value
+    stays where every other value stays."""
     from yaaf.founder import tools
 
     calls = founder()
@@ -342,7 +343,7 @@ def test_the_founder_gets_six_tools_and_no_way_to_act(client, founder):
     opts = calls[0]["opts"]
 
     assert opts.allowed_tools == tools.ALLOWED_TOOLS
-    assert len(tools.ALLOWED_TOOLS) == 6
+    assert len(tools.ALLOWED_TOOLS) == 7
     assert all(name.startswith("mcp__founder__") for name in opts.allowed_tools)
     # No Bash, no file writes, no browsing of its own.
     assert opts.tools == []
@@ -856,3 +857,73 @@ def test_the_plan_adversary_role_attacks_scope_not_output():
     # "Found nothing" has to be a complete deliverable or the role manufactures
     # findings to look useful, which is how institutionalised dissent dies.
     assert "COMPLETE deliverable" in prompt
+
+
+def _llm_credential(client, name, value="sk-ant-api03-test-not-real", mode="api_key"):
+    response = client.post("/admin/settings/llm-credentials", headers=ADMIN,
+                           json={"name": name, "mode": mode, "value": value})
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def test_the_founder_can_see_who_can_pay_but_never_the_value(client, founder):
+    """The one blank the Founder is told to ask about rather than fill in."""
+    calls = founder(tool_calls=[("list_credentials", {})])
+    start(client, "what pays for this?")
+    assert _tool_payload(calls[-1])["credentials"] == []
+    assert "cannot start" in _tool_payload(calls[-1])["note"]
+
+    _llm_credential(client, "Production", value="sk-ant-api03-only-one-here")
+    calls = founder(tool_calls=[("list_credentials", {})])
+    start(client, "and now?")
+    payload = _tool_payload(calls[-1])
+    assert [c["name"] for c in payload["credentials"]] == ["Production"]
+    assert payload["credentials"][0]["mode"] == "api_key"
+    assert "Exactly one" in payload["note"]
+    assert "only-one-here" not in json.dumps(payload)
+
+    _llm_credential(client, "Dominic's Max plan", value="sk-ant-oat01-second", mode="subscription")
+    calls = founder(tool_calls=[("list_credentials", {})])
+    start(client, "and with two?")
+    payload = _tool_payload(calls[-1])
+    assert len(payload["credentials"]) == 2
+    assert "Ask the chairman" in payload["note"] and "Never guess" in payload["note"]
+    assert "sk-ant" not in json.dumps(payload)
+
+
+def test_a_draft_names_who_pays_and_the_form_agrees(client, founder):
+    """By id from the tool, or by name from the chairman — either way the
+    draft ends up carrying the credential's own id, name and billing mode,
+    so the review screen, the form and the create endpoint all mean the same
+    credential. A name that matches nothing is refused, not stored."""
+    from yaaf.core.db import db_session
+    from yaaf.core.models import Project
+
+    sub = _llm_credential(client, "Dominic's Max plan", value="sk-ant-oat01-x", mode="subscription")
+    calls = founder(tool_calls=[("propose_bundle", {"project": {**PROJECT, "billing_secret_id": sub["id"]}})])
+    thread = start(client, "draft it on my subscription")
+    drafted = thread["draft_bundle"]["project"]
+    assert drafted["billing_secret_id"] == sub["id"]
+    assert drafted["billing_secret_name"] == "Dominic's Max plan"
+    assert drafted["billing_mode"] == "subscription"
+    assert _tool_payload(calls[-1])["summary"]["pays_with"] == "Dominic's Max plan"
+
+    # The chairman's own words: the name, in whatever case they typed it.
+    calls = founder(tool_calls=[("propose_bundle", {"project": {**PROJECT, "billing_secret_name": "dominic's max PLAN"}})])
+    start(client, "same again", thread["id"])
+    assert _tool_payload(calls[-1])["ok"] is True
+
+    calls = founder(tool_calls=[("propose_bundle", {"project": {**PROJECT, "billing_secret_id": "secr_nope"}})])
+    start(client, "and on something that does not exist", thread["id"])
+    refused = _tool_payload(calls[-1])
+    assert refused["ok"] is False
+    assert any("list_credentials" in p and "Dominic's Max plan" in p for p in refused["problems"])
+
+    # The draft is the body the form posts: created as-is, the project pays
+    # with what the Founder named and the mode came from the credential.
+    created = client.post("/admin/projects", headers=ADMIN,
+                          json={**drafted, "chairman_email": "chair@example.com"})
+    assert created.status_code == 200, created.text
+    with db_session() as session:
+        made = session.get(Project, created.json()["id"])
+        assert made.billing_secret_id == sub["id"] and made.billing_mode == "subscription"

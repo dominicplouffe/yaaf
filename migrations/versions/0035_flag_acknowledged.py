@@ -10,8 +10,8 @@ The chairman had no verb over a flag at all: the only flag-mutating route was
 the CEO's own `POST /agent/flags/raise`. These two columns are where his answer
 goes.
 
-Revision ID: 0034
-Revises: 0033
+Revision ID: 0035
+Revises: 0034
 """
 
 from __future__ import annotations
@@ -21,8 +21,8 @@ import sqlalchemy as sa
 from yaaf.core.migration_ops import add_column_if_missing
 from yaaf.core.models import UTCDateTime
 
-revision = "0034"
-down_revision = "0033"
+revision = "0035"
+down_revision = "0034"
 branch_labels = None
 depends_on = None
 

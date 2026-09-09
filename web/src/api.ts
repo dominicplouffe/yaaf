@@ -886,7 +886,10 @@ export interface ProjectBundle {
     chairman_email?: string | null;
     constitution: Record<string, unknown>;
     integrations: Record<string, unknown>;
-    /** Name of the billing credential in `secrets` (full backups only). */
+    /** The managed LLM credential the project pays with, by id (a Founder draft
+        carries one) and by name (an export carries the name as a hint; the value
+        never travels). The form resolves either to a real credential on arrival. */
+    billing_secret_id?: string | null;
     billing_secret_name?: string | null;
     ceo_role_slug: string;
     ceo_name: string;

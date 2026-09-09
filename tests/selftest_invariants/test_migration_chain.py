@@ -74,7 +74,7 @@ STAGE_10_COLUMNS = (
 REMOVED_TABLES = (STAGE_1_TABLES + STAGE_5_TABLES + STAGE_6_TABLES
                   + STAGE_7_TABLES + STAGE_8_TABLES + STAGE_10_TABLES)
 REMOVED_COLUMNS = (STAGE_1_COLUMNS + STAGE_8_COLUMNS + STAGE_9_COLUMNS
-                   + STAGE_10_COLUMNS)
+                   + STAGE_10_COLUMNS + (("secrets", "llm_mode"),))
 
 
 def _alembic_config(url: str) -> Config:

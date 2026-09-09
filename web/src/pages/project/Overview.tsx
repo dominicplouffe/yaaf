@@ -30,6 +30,7 @@ import {
   spentOf,
 } from "../../ui";
 import Agenda from "../../agenda";
+import { PlanMeter } from "../../llmCredentials";
 import { HirePanel, gapsFor, needsOf, useRoleLibrary } from "../../roles";
 import type { ProjectCtx } from "../Project";
 
@@ -196,6 +197,7 @@ function BudgetMeter({ ctx }: { ctx: ProjectCtx }) {
               : "⚠ no payment credential connected — real runs will fail (Settings)"}
           </span>
         </div>
+        <PlanMeter credentialId={dash.billing_secret_id} mode={dash.billing_mode} />
       </div>
     </div>
   );

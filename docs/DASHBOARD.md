@@ -15,20 +15,33 @@ the intended way to run a project.
 | **Desk** | The landing page. Everything needing you, across every project. |
 | **Projects** | Your portfolio — one comparable row per project. |
 | **Roles** | The role library, and each role's blast radius. |
-| **Settings** | App-wide: the model credential and the Slack connection every project inherits. |
+| **Settings** | App-wide: the LLM credentials projects pay with, the Founder's own credential, and the Slack connection every project inherits. |
 | **New project** | The creation wizard. |
 
 ---
 
 ## Settings — what is true above every project
 
-Two things, and neither belongs to a project.
+Three things, and none of them belongs to a project.
 
-- **Model credential** — the key the **Founder** runs on. Install, rotate, run
-  a live test against it, remove it, and pick the model it uses. It pays for
-  product-wide conversations and **never reaches a project's agents**: no
-  inheritance, no fallback. Every project pays its own way with its own billing
-  credential, set under that project's Settings → Money.
+- **LLM credentials** — what projects pay Claude with. An administrator adds
+  each one once, by name: an **Anthropic API key** (the project's budget is
+  then in dollars) or a **Claude subscription token** (in tokens). The table
+  shows every credential, its type, which projects are assigned to it, and —
+  for a subscription — the **plan meter**: what Anthropic says is left on the
+  session and weekly windows, the same numbers as `/usage` in Claude Code,
+  read once a minute and shown as a fact, never enforced. Rename or rotate a
+  credential here and every assigned project's next run uses the new value.
+  A credential in use cannot be deleted; reassign or detach its projects
+  first. No value is ever shown back — the reveal that works for a project's
+  own secrets refuses these. Projects never store a billing key of their own:
+  they pick one of these, under their own Settings → Money, on the New
+  Project form, or by telling the Founder.
+- **Founder model credential** — the key the **Founder** runs on. Install,
+  rotate, run a live test against it, remove it, and pick the model it uses.
+  It pays for product-wide conversations and **never reaches a project's
+  agents**: no inheritance, no fallback. It is deliberately not one of the
+  LLM credentials above.
 - **Slack connection** — the bot/signing/app tokens for your Slack workspace,
   your member ID, and the channel naming convention, stored once. Every project
   inherits them, so
@@ -40,9 +53,9 @@ Two things, and neither belongs to a project.
   project can override any field, or switch Slack off for itself, from its own
   Settings → Integrations.
 
-Neither value is ever shown back — the screen says only whether one is
-installed, because a settings page that can display a bot token is one that can
-leak it into a screenshot.
+No value is ever shown back — the screen says only whether one is installed,
+because a settings page that can display a bot token is one that can leak it
+into a screenshot.
 
 ---
 
@@ -149,9 +162,12 @@ Four steps, one per decision that actually needs you:
    (a named job with a team already on it, eleven of them the `examples/`), or
    thirty-two roles by aisle with search, filters, depth and cost, and what each one
    needs before it can work.
-3. **The money and the rules** — the billing key, and the presets that fill the
-   constitution. Every rule the preset wrote stays visible and editable, marked
-   when you change one.
+3. **The money and the rules** — which LLM credential pays (the budget's unit
+   follows it: dollars for an API key, tokens for a subscription), and the
+   presets that fill the constitution. Every rule the preset wrote stays
+   visible and editable, marked when you change one. A draft from the Founder
+   arrives with the credential already chosen when it asked you, or when there
+   was only one.
 4. **Review & create** — the project as it will exist, what it still needs
    before it can start, and **Run a fire drill**: your exact spec run as a
    project on scripted agents, at no cost and creating nothing, reporting
@@ -263,7 +279,10 @@ Read top to bottom: what needs you, what is true now, what happens next.
   proof in the drought window, and the **CEO-judgment metric**: how much of
   what the CEO called progress survived verification.
 - **The money** — spend against the cap in the project's native unit (USD or
-  tokens), plus who is spending it, by team, over 30 days.
+  tokens), plus who is spending it, by team, over 30 days. A project paying
+  with a subscription also shows the credential's plan meter here — the
+  session and weekly windows Anthropic enforces before the cap ever does,
+  with when each resets.
 - **Setup & health** — anything misconfigured, in plain language, with a fix
   link: dead billing, a credential of the wrong shape, an untested data source,
   a team on an outdated role version. **A healthy project collapses this to one
@@ -409,8 +428,15 @@ Data; everything after is occasional.
 
 - **Brief** — the goal the CEO plans from. (Controlled domains — the ones that
   can't count as external evidence — are set when the project is created.)
-- **Money** — billing mode and credential, a live check that the credential
-  actually works, and the budget in force shown read-only. The numbers
+- **Money** — which LLM credential this project pays with, picked from the
+  ones under app-wide Settings; **Save assignment** applies to the next run and
+  **Test connection** proves the credential works now rather than at 9am. The
+  billing mode is the credential's, not a separate switch. Clearing the pick
+  and saving **detaches** the credential — the project cannot run until one is
+  assigned again, which is how a credential is freed for deletion. For a subscription
+  credential the card also shows its plan meter — every project on that
+  credential draws from the same windows, and at 100% Anthropic refuses calls
+  until the window resets. The budget in force is shown read-only: the numbers
   themselves are constitution rules, so the card links to Rules in force rather
   than offering a second editor for them.
 - **Data & credentials** — MCP data sources (one form: name, URL, roles, Save,
@@ -439,9 +465,12 @@ Data; everything after is occasional.
 **Housekeeping**
 
 - **Duplicate & export** — **clone** into a running twin on this install
-  (credentials and all, optionally aimed at a new goal), or **export** a
-  full-backup setup file: the whole design plus every credential value,
-  decrypted. It holds the keys it names — store it like a password.
+  (service credentials copied, the same LLM credential assigned, optionally
+  aimed at a new goal), or **export** a full-backup setup file: the whole
+  design plus every project service credential value, decrypted. The LLM
+  credential travels by name only, and the form re-selects it on import if
+  this install has one by that name. It holds the keys it names — store it
+  like a password.
 - **Advanced** — runtime (`agent_sdk` or `mock`) and the webhook signing
   secrets. The CEO's cadence (`ceo_heartbeat_hours`, `ceo_daily_at`,
   `timezone`) and `max_concurrent_runs` are constitution rules, not config:
