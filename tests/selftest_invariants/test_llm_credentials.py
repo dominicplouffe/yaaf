@@ -362,247 +362,273 @@ METER = {
 }
 
 
-def test_a_throttled_meter_waits_as_long_as_anthropic_asked(client, monkeypatch):
-    """429 says how long to wait, and it is not a minute.
+def sandbox_plan_windows():
+    """`_plan_windows` out of the sandbox entry script.
 
-    The reading that found this asked for 553 seconds while the cache expired
-    every 60, so the server asked nine more times inside the window it had been
-    told to sit out — and the screen said "try again in a minute", which was
-    both wrong and an invitation to press retry through the rate limit.
+    That file is copied into the sandbox image on its own, with no yaaf package
+    beside it, so it reads its run environment at import time and cannot simply
+    be imported here — the same reason `test_data_fetch` reloads it under a
+    fake environment.
+    """
+    import importlib
+    import os
+
+    os.environ.setdefault("YAAF_API_BASE_URL", "http://api:8080")
+    os.environ.setdefault("YAAF_API_TOKEN", "test-token")
+    os.environ.setdefault("YAAF_RUN_ID", "run_test")
+    os.environ.setdefault("YAAF_TOOL_PERMISSIONS", "{}")
+    import yaaf.runner.sandbox_entry as mod
+
+    return importlib.reload(mod)._plan_windows
+
+
+#: A RateLimitEvent exactly as the SDK delivered it on this install. The typed
+#: `utilization` is None — it describes only the window the event fired about —
+#: while every window's real number sits in `raw["unifiedWindows"]`. Reading
+#: the typed field and shipping it would have produced a meter of zeroes.
+LIVE_EVENT_RAW = {
+    "status": "allowed",
+    "resetsAt": 1788901800,
+    "rateLimitType": "five_hour",
+    "overageStatus": "rejected",
+    "isUsingOverage": False,
+    "unifiedWindows": {
+        "five_hour": {"utilization": 0.31, "resetsAt": 1788901800},
+        "seven_day": {"utilization": 0.14, "resetsAt": 1788922800},
+    },
+}
+
+
+class _Info:
+    """Duck-typed stand-in for claude_agent_sdk.RateLimitInfo."""
+
+    def __init__(self, raw, status="allowed", utilization=None):
+        self.raw = raw
+        self.status = status
+        self.utilization = utilization
+
+
+def test_the_meter_is_harvested_from_runs_and_never_asks_anthropic(client, monkeypatch):
+    """The rule that replaced the poller: this endpoint makes no network call.
+
+    It used to read an undocumented endpoint once a minute per credential,
+    which earned a 429 with a Retry-After in tens of minutes and left the meter
+    dark while the credential itself was healthy. The SDK volunteers the same
+    windows on every run, so there is nothing left to ask.
     """
     import httpx
 
     from yaaf.core import plan_usage
+    from yaaf.core.db import db_session
+    _plan_windows = sandbox_plan_windows()
 
-    key = create(client, value="sk-ant-oat01-throttled-token", mode="subscription")
-    calls: list[int] = []
+    def never(*a, **k):
+        raise AssertionError("the plan meter must never call out")
 
-    class _Throttled:
-        status_code = 429
-        headers = {"retry-after": "553"}
-        text = ""
+    monkeypatch.setattr(httpx, "get", never)
+    monkeypatch.setattr(httpx, "post", never)
 
-        def json(self):
-            raise ValueError("not json")
+    token = "sk-ant-oat01-harvested-not-fetched"
+    key = create(client, value=token, mode="subscription")
 
-    def fake_get(url, headers=None, timeout=None, **_):
-        calls.append(1)
-        return _Throttled()
+    # Before any run there is no reading, and that is a sentence, not a 500.
+    empty = client.get(f"{URL}/{key['id']}/usage?refresh=true", headers=ADMIN)
+    assert empty.status_code == 200, empty.text
+    assert empty.json()["available"] is False
+    assert "next agent run" in empty.json()["reason"]
 
-    monkeypatch.setattr(httpx, "get", fake_get)
-    for attr in ("_cache", "_token_of", "_backoff", "_inflight"):
-        monkeypatch.setattr(plan_usage, attr, {})
+    # What the sandbox pulls out of the SDK event, filed as a run would file it.
+    harvested = _plan_windows(_Info(LIVE_EVENT_RAW))
+    assert harvested["status"] == "allowed"
+    assert {w["key"] for w in harvested["windows"]} == {"five_hour", "seven_day"}
+    with db_session() as session:
+        plan_usage.record(session, token, harvested)
 
-    first = client.get(f"{URL}/{key['id']}/usage", headers=ADMIN).json()
-    assert first["available"] is False
-    # The wait is stated, in the units a reader thinks in, and it is honest.
-    assert "about 9 minutes" in first["reason"]
-    assert "try again in a minute" not in first["reason"]
-
-    # Every later poll — and every press of the retry button, which is what a
-    # frustrated reader actually does — is answered from the cache. Asking
-    # again is what keeps a rate limit alive.
-    for _ in range(5):
-        client.get(f"{URL}/{key['id']}/usage", headers=ADMIN)
-        client.get(f"{URL}/{key['id']}/usage?refresh=true", headers=ADMIN)
-    assert len(calls) == 1
-
-    # When the window passes, it asks again by itself.
-    plan_usage._backoff[plan_usage.fingerprint("sk-ant-oat01-throttled-token")] = 0.0
-    plan_usage._cache.clear()
-    client.get(f"{URL}/{key['id']}/usage", headers=ADMIN)
-    assert len(calls) == 2
+    body = client.get(f"{URL}/{key['id']}/usage", headers=ADMIN).json()
+    assert body["available"] is True
+    windows = {w["key"]: w for w in body["windows"]}
+    assert windows["five_hour"]["utilization"] == 0.31
+    assert windows["five_hour"]["label"] == "Current session"
+    # Epoch in, ISO out: one clock for the screen to read.
+    assert windows["five_hour"]["resets_at"].startswith("2026-")
+    assert windows["seven_day"]["utilization"] == 0.14
+    # And the value never rides along with its own meter.
+    assert token not in client.get(f"{URL}/{key['id']}/usage", headers=ADMIN).text
 
 
-def test_retry_after_is_read_however_it_was_sent(monkeypatch):
-    from datetime import UTC, datetime, timedelta
+def test_finishing_a_run_files_the_plan_reading_against_its_credential(client):
+    """The last link: the daemon puts what the run was told where screens read.
 
-    from yaaf.core import plan_usage
-
-    assert plan_usage._retry_after("553") == 553
-    assert plan_usage._retry_after("12.7") == 12
-    # An HTTP-date is the other legal spelling.
-    soon = datetime.now(UTC) + timedelta(seconds=120)
-    assert 100 <= plan_usage._retry_after(
-        soon.strftime("%a, %d %b %Y %H:%M:%S GMT")) <= 130
-    # Missing or unreadable is not a licence to keep asking.
-    assert plan_usage._retry_after(None) == plan_usage.DEFAULT_BACKOFF_S
-    assert plan_usage._retry_after("soon please") == plan_usage.DEFAULT_BACKOFF_S
-    # And a hostile value cannot park the meter for a week.
-    assert plan_usage._retry_after("999999") == plan_usage.MAX_BACKOFF_S
-
-
-def test_rows_arriving_together_on_one_token_ask_once(monkeypatch):
-    """The gate is keyed by token, so a poll that lands mid-fetch waits for
-    that answer rather than starting a second one against the same account.
-
-    Threads and a deliberately slow fetch, because the property only exists
-    under concurrency — sequentially the cache alone would hide the bug.
+    Driven through the real `finalize`, because the value of this whole path is
+    that a screen shows a number nobody fetched — and every earlier attempt at
+    this meter failed on a link that was reasoned about rather than run.
     """
-    import threading
-    import time as time_module
+    from tests.conftest import live_token
+    from yaaf.runner import daemon
+    from yaaf.runner.types import RunJob, RunResult
 
-    from yaaf.core import plan_usage
+    token = "sk-ant-oat01-filed-by-the-daemon"
+    key = create(client, value=token, mode="subscription")
+    project = make_project(client, billing_secret_id=key["id"])
+    assert client.get(f"{URL}/{key['id']}/usage",
+                      headers=ADMIN).json()["available"] is False
 
-    calls: list[str] = []
-    gate = threading.Barrier(4)
+    run_id, _ = live_token(project["id"], project["ceo_agent_id"])
+    job = RunJob(run_id=run_id, project_id=project["id"],
+                 agent_id=project["ceo_agent_id"], kind="agent_run",
+                 trigger={}, task_id=None, attempt=1)
+    daemon.finalize(job, RunResult(ok=True, summary="did a thing", tokens_in=5, tokens_out=7,
+                                   plan={"status": "allowed", "windows": [
+                                       {"key": "five_hour", "utilization": 0.31,
+                                        "resets_at": 1788901800},
+                                       {"key": "seven_day", "utilization": 0.14,
+                                        "resets_at": 1788922800}]}))
 
-    def slow_fetch(token):
-        calls.append(token)
-        time_module.sleep(0.05)
-        return {"available": True, "reason": None, "windows": [],
-                "fetched_at": "2026-09-08T00:00:00Z"}
+    body = client.get(f"{URL}/{key['id']}/usage", headers=ADMIN).json()
+    assert body["available"] is True and body["status"] == "allowed"
+    assert {w["key"]: w["utilization"] for w in body["windows"]} == {
+        "five_hour": 0.31, "seven_day": 0.14}
+    # And the Founder's own menu sees it without a call of its own.
+    from yaaf.core import llm_credentials
+    from yaaf.core.db import db_session
 
-    monkeypatch.setattr(plan_usage, "fetch", slow_fetch)
-    monkeypatch.setattr(plan_usage, "_cache", {})
-    monkeypatch.setattr(plan_usage, "_token_of", {})
-    monkeypatch.setattr(plan_usage, "_inflight", {})
-
-    def poll(credential_id):
-        gate.wait()
-        plan_usage.reading(credential_id, "subscription", "sk-ant-oat01-shared")
-
-    threads = [threading.Thread(target=poll, args=(f"secr_row_{n}",)) for n in range(4)]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
-    assert calls == ["sk-ant-oat01-shared"]
-    # And every one of them got the answer, not just the thread that asked.
-    for n in range(4):
-        assert plan_usage.cached(f"secr_row_{n}") is not None
+    with db_session() as session:
+        choice = llm_credentials.choices(session, with_plan=True)[0]
+        assert choice["plan"][0]["used_percent"] == 31
 
 
-def test_one_subscription_behind_many_credentials_is_read_once(client, monkeypatch):
-    """The rate limit is on the account, so the cache must be on the token.
+def test_a_run_with_no_reading_finishes_exactly_as_before(client):
+    """A meter is never worth a run. A result carrying no plan — the mock
+    runtime, an older SDK, a killed container — must book identically."""
+    from tests.conftest import live_token
+    from yaaf.runner import daemon
+    from yaaf.runner.types import RunJob, RunResult
 
-    Promoting per-project keys made one subscription routinely sit behind
-    several credential rows. Keyed by credential, each row asked Anthropic for
-    the same account's meter every minute, Anthropic answered 429, and every
-    row on that token went unavailable together.
+    key = create(client, value="sk-ant-oat01-no-reading-at-all", mode="subscription")
+    project = make_project(client, billing_secret_id=key["id"])
+    run_id, _ = live_token(project["id"], project["ceo_agent_id"])
+    job = RunJob(run_id=run_id, project_id=project["id"],
+                 agent_id=project["ceo_agent_id"], kind="agent_run",
+                 trigger={}, task_id=None, attempt=1)
+    daemon.finalize(job, RunResult(ok=True, summary="no meter here", tokens_in=3, tokens_out=4))
+    assert client.get(f"{URL}/{key['id']}/usage", headers=ADMIN).json()["available"] is False
+
+
+def test_a_run_carries_the_plan_reading_home(tmp_path, monkeypatch):
+    """The capture half, executed rather than reasoned about.
+
+    Drives the real `sandbox_entry.main()` with a fake SDK stream and asserts
+    the reading reaches `result.json`, which is the only channel out of the
+    sandbox. Everything downstream is ordinary code; this is the part that
+    lives in a container nobody can step through, and the part that was
+    assumed to work in three earlier attempts at this meter.
+
+    Deliberately heavier than its neighbours: it imports the entry script and
+    runs an event loop. It is worth it once.
     """
-    import httpx
+    import asyncio
+    import importlib
+    import json
+    import types
 
+    for key, value in (("YAAF_API_BASE_URL", "http://api:8080"), ("YAAF_API_TOKEN", "t"),
+                       ("YAAF_RUN_ID", "run_test"), ("YAAF_TOOL_PERMISSIONS", "{}")):
+        monkeypatch.setenv(key, value)
+    import yaaf.runner.sandbox_entry as mod
+
+    entry = importlib.reload(mod)
+    staging = tmp_path / "workspace" / ".yaaf"
+    staging.mkdir(parents=True)
+    monkeypatch.setattr(entry, "WORKSPACE", tmp_path / "workspace")
+    monkeypatch.setattr(entry, "STAGING", staging)
+    (staging / "system_prompt-run_test.txt").write_text("be useful")
+    (staging / "context-run_test.json").write_text(json.dumps({"trigger": "test"}))
+
+    class _Event:
+        """A RateLimitEvent as the SDK delivers it — the numbers are in `raw`."""
+
+        rate_limit_info = _Info(LIVE_EVENT_RAW)
+        session_id = "s1"
+
+    async def fake_query(prompt=None, options=None):
+        yield _Event()
+        yield entry.ResultMessage(
+            subtype="success", duration_ms=1, duration_api_ms=1, is_error=False,
+            num_turns=1, session_id="s1", total_cost_usd=0.01,
+            usage={"input_tokens": 5, "output_tokens": 7}, result="done")
+
+    monkeypatch.setattr(entry, "query", fake_query)
+    monkeypatch.setattr(entry, "create_sdk_mcp_server", lambda **kw: types.SimpleNamespace())
+    for name in ("run_tools", "skill_names"):
+        monkeypatch.setattr(entry, name, list)
+    monkeypatch.setattr(entry, "build_hooks", dict)
+    monkeypatch.setattr(entry, "_external_mcp_servers", dict)
+
+    assert asyncio.run(entry.main()) == 0
+    result = json.loads((staging / "result-run_test.json").read_text())
+    # The meter rode home beside the token counts, from the same run.
+    assert result["tokens_in"] == 5 and result["tokens_out"] == 7
+    assert result["plan"]["status"] == "allowed"
+    assert {w["key"]: w["utilization"] for w in result["plan"]["windows"]} == {
+        "five_hour": 0.31, "seven_day": 0.14}
+
+    # And the host reads exactly that field off exactly that file.
+    from yaaf.runner.types import RunResult
+
+    carried = RunResult(ok=True, plan=result["plan"])
+    assert carried.plan["windows"][0]["key"] == "five_hour"
+
+
+def test_one_subscription_behind_many_credentials_shares_one_reading(client):
+    """The reading is filed under the token, so every row on that subscription
+    has it the moment any one of their projects runs — and a different
+    subscription is unaffected."""
     from yaaf.core import plan_usage
+    from yaaf.core.db import db_session
+    _plan_windows = sandbox_plan_windows()
 
-    token = "sk-ant-oat01-one-subscription-many-rows"
+    token = "sk-ant-oat01-one-key-many-rows"
     rows = [create(client, f"Copy {n}", value=token, mode="subscription") for n in range(3)]
-    other = create(client, "A different subscription", mode="subscription",
-                   value="sk-ant-oat01-a-genuinely-different-token")
-    calls: list[str] = []
+    other = create(client, "Different subscription", mode="subscription",
+                   value="sk-ant-oat01-a-key-of-its-own")
 
-    def fake_get(url, headers=None, timeout=None, **_):
-        calls.append(headers["Authorization"])
-        return _Response(200, METER)
-
-    monkeypatch.setattr(httpx, "get", fake_get)
-    monkeypatch.setattr(plan_usage, "_cache", {})
-    monkeypatch.setattr(plan_usage, "_token_of", {})
+    with db_session() as session:
+        plan_usage.record(session, token, _plan_windows(_Info(LIVE_EVENT_RAW)))
 
     for row in rows:
-        answer = client.get(f"{URL}/{row['id']}/usage", headers=ADMIN)
-        assert answer.status_code == 200, answer.text
-        assert answer.json()["available"] is True
-    # Three rows, three screens, one subscription — one question.
-    assert calls == [f"Bearer {token}"]
-    # A different subscription is a different meter and still gets asked.
-    assert client.get(f"{URL}/{other['id']}/usage", headers=ADMIN).status_code == 200
-    assert len(calls) == 2
-
-    # A refresh a human presses is a question they meant to ask, so it still
-    # asks. What must not multiply is rows *arriving together* — which is what
-    # the every-minute poll does, and what the gate is for.
-    before = len(calls)
-    assert client.get(f"{URL}/{rows[0]['id']}/usage?refresh=true", headers=ADMIN).status_code == 200
-    assert len(calls) == before + 1
-
-    # Rotating one row changes only that row's token. The other two still hold
-    # the old one, and their meter is still exactly the reading on file.
-    assert client.patch(f"{URL}/{rows[0]['id']}", headers=ADMIN,
-                        json={"name": "Copy 0", "value": "sk-ant-oat01-rotated-away"}
-                        ).status_code == 200
-    before = len(calls)
-    assert client.get(f"{URL}/{rows[1]['id']}/usage", headers=ADMIN).json()["cached"] is True
-    assert len(calls) == before
-    assert client.get(f"{URL}/{rows[0]['id']}/usage", headers=ADMIN).json()["available"] is True
-    assert calls[-1] == "Bearer sk-ant-oat01-rotated-away"
+        body = client.get(f"{URL}/{row['id']}/usage", headers=ADMIN).json()
+        assert body["available"] is True
+        assert {w["key"]: w["utilization"] for w in body["windows"]}["five_hour"] == 0.31
+    assert client.get(f"{URL}/{other['id']}/usage", headers=ADMIN).json()["available"] is False
 
 
-def test_plan_meter_is_read_with_the_token_and_returns_only_percentages(client, monkeypatch):
-    import httpx
-
+def test_a_reading_the_sdk_cannot_make_numbers_of_never_breaks_a_run(client):
+    """`record` is on the completion path of a finished run. It skips what it
+    cannot read rather than raising, because a meter is not worth a run."""
     from yaaf.core import plan_usage
+    from yaaf.core.db import db_session
+    _plan_windows = sandbox_plan_windows()
 
-    token = "sk-ant-oat01-plan-meter-test-token"
-    key = create(client, value=token, mode="subscription")
-    calls: list[dict] = []
+    # Shapes the SDK could grow into, none of which may raise.
+    assert _plan_windows(_Info({})) is None
+    assert _plan_windows(_Info({"unifiedWindows": []})) is None
+    assert _plan_windows(_Info({"unifiedWindows": {"five_hour": "not a dict"}})) is None
+    assert _plan_windows(_Info({"unifiedWindows": {"x": {"utilization": None}}})) is None
+    # An unknown window still renders, under its own name.
+    grown = _plan_windows(_Info({"unifiedWindows": {"thirty_day": {"utilization": 0.5}}}))
+    assert grown["windows"][0]["key"] == "thirty_day"
 
-    def fake_get(url, headers=None, timeout=None, **_):
-        calls.append({"url": url, "headers": headers})
-        return _Response(200, METER)
-
-    monkeypatch.setattr(httpx, "get", fake_get)
-    monkeypatch.setattr(plan_usage, "_cache", {})
-
-    reading = client.get(f"{URL}/{key['id']}/usage", headers=ADMIN)
-    assert reading.status_code == 200, reading.text
-    body = reading.json()
-    # The token went to Anthropic, as a bearer with the OAuth beta, and nowhere else.
-    assert calls[0]["url"] == plan_usage.USAGE_URL
-    assert calls[0]["headers"]["Authorization"] == f"Bearer {token}"
-    assert calls[0]["headers"]["anthropic-beta"] == plan_usage.OAUTH_BETA
-    assert token not in reading.text and "sk-ant" not in reading.text
-    assert body["available"] is True and body["cached"] is False
-    windows = {w["key"]: w for w in body["windows"]}
-    assert windows["five_hour"]["utilization"] == 0.21
-    assert windows["five_hour"]["resets_at"] == "2026-09-08T15:22:00Z"
-    # Epoch resets become ISO so the screen has one clock to read.
-    assert windows["seven_day"]["resets_at"].startswith("2025-09-09T")
-    assert windows["by_model:fable"]["label"] == "This week, Fable"
-    assert windows["by_model:fable"]["utilization"] == 0.24
-    # Internal and unknown keys are not drawn under a label nobody chose.
-    assert "seven_day_overage_included" not in windows and "some_future_field" not in windows
-
-    # A minute-long cache: the second read is served without a second call.
-    again = client.get(f"{URL}/{key['id']}/usage", headers=ADMIN).json()
-    assert again["cached"] is True and len(calls) == 1
-    forced = client.get(f"{URL}/{key['id']}/usage?refresh=true", headers=ADMIN).json()
-    assert forced["cached"] is False and len(calls) == 2
-
-    # Rotating the token forgets the old token's meter.
-    assert client.patch(f"{URL}/{key['id']}", headers=ADMIN,
-                        json={"name": "Production", "value": "sk-ant-oat01-rotated"}).status_code == 200
-    client.get(f"{URL}/{key['id']}/usage", headers=ADMIN)
-    assert len(calls) == 3 and calls[2]["headers"]["Authorization"].endswith("rotated")
-
-
-def test_plan_meter_degrades_to_a_sentence_and_never_to_an_error_page(client, monkeypatch):
-    import httpx
-
-    from yaaf.core import plan_usage
-
-    key = create(client, value="sk-ant-oat01-plan-meter-test-token", mode="subscription")
-    monkeypatch.setattr(plan_usage, "_cache", {})
-
-    def read() -> dict:
-        response = client.get(f"{URL}/{key['id']}/usage?refresh=true", headers=ADMIN)
-        assert response.status_code == 200, response.text
-        return response.json()
-
-    monkeypatch.setattr(httpx, "get", lambda *a, **k: _Response(401))
-    assert read()["available"] is False and "rejected" in read()["reason"]
-    monkeypatch.setattr(httpx, "get", lambda *a, **k: _Response(500))
-    assert "500" in read()["reason"]
-    monkeypatch.setattr(httpx, "get", lambda *a, **k: _Response(200, {"nothing": "here"}))
-    assert "format" in read()["reason"]
-    monkeypatch.setattr(httpx, "get", lambda *a, **k: _Response(200, None, "<html>"))
-    assert read()["available"] is False
-
-    def boom(*a, **k):
-        raise httpx.ConnectError("no route")
-
-    monkeypatch.setattr(httpx, "get", boom)
-    assert "ConnectError" in read()["reason"]
+    key = create(client, value="sk-ant-oat01-partial-shapes", mode="subscription")
+    with db_session() as session:
+        plan_usage.record(session, "sk-ant-oat01-partial-shapes",
+                          {"windows": [{"key": "five_hour", "utilization": "nonsense"},
+                                       {"key": None, "utilization": 0.2},
+                                       {"key": "seven_day", "utilization": 42}]})
+    body = client.get(f"{URL}/{key['id']}/usage", headers=ADMIN).json()
+    # Only the readable window survives, and a percentage is folded to a share.
+    assert [w["key"] for w in body["windows"]] == ["seven_day"]
+    assert body["windows"][0]["utilization"] == 0.42
+    assert body["windows"][0]["label"] == "This week, all models"
 
 
 def test_plan_meter_has_nothing_to_say_about_an_api_key(client, monkeypatch):
@@ -755,46 +781,6 @@ def test_a_shared_founder_key_splits_by_billing_mode_and_survives_an_unreadable_
         assert all(row.ciphertext == original.ciphertext for row in by_project.values())
         unreadable = session.get(Secret, "legacy-unreadable")
         assert unreadable.llm_mode == "api_key" and unreadable.project_id is None
-
-
-def test_one_fetch_serves_every_screen_polling_the_same_credential(client, monkeypatch):
-    """Screens poll on the same minute. When the cache expires they all arrive
-    together; Anthropic is asked once and the rest read the answer."""
-    import threading
-
-    import httpx
-
-    from yaaf.core import plan_usage
-
-    key = create(client, value="sk-ant-oat-test-placeholder", mode="subscription")
-    calls: list[str] = []
-    gate = threading.Barrier(6, timeout=10)
-
-    class Slow:
-        status_code = 200
-
-        def json(self):
-            return {"five_hour": {"utilization": 0.5, "resets_at": 1}}
-
-    def fake_get(url, *a, **k):
-        calls.append(url)
-        return Slow()
-
-    monkeypatch.setattr(httpx, "get", fake_get)
-    plan_usage.forget(key["id"])
-    results: list[dict] = []
-
-    def poll():
-        gate.wait()
-        results.append(client.get(f"{URL}/{key['id']}/usage", headers=ADMIN).json())
-
-    threads = [threading.Thread(target=poll) for _ in range(6)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join(timeout=15)
-    assert len(results) == 6 and all(r["available"] for r in results)
-    assert len(calls) == 1, calls
 
 
 def test_unknown_credential_ids_are_404_on_the_settings_screen(client):

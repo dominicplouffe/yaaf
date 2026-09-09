@@ -1419,6 +1419,35 @@ def _external_mcp_servers(env: dict[str, str] | None = None) -> dict[str, dict]:
 MOUNT_PROBLEMS: list[str] = []
 
 
+def _plan_windows(info) -> dict | None:
+    """The plan meter out of a RateLimitEvent, in the shape the platform stores.
+
+    The numbers live in `raw["unifiedWindows"]`, not in the typed
+    `utilization` field — that one describes only the single window the event
+    fired about and is routinely None. The raw dict carries every window at
+    once, which is what a meter needs.
+    """
+    raw = getattr(info, "raw", None) or {}
+    windows = raw.get("unifiedWindows")
+    if not isinstance(windows, dict):
+        return None
+    out = []
+    for key, entry in windows.items():
+        if not isinstance(entry, dict):
+            continue
+        share = entry.get("utilization")
+        if share is None:
+            continue
+        try:
+            share = float(share)
+        except (TypeError, ValueError):
+            continue
+        out.append({"key": key, "utilization": share, "resets_at": entry.get("resetsAt")})
+    if not out:
+        return None
+    return {"status": raw.get("status") or getattr(info, "status", None), "windows": out}
+
+
 def _usage_int(usage, key: str) -> int:
     if isinstance(usage, dict):
         return int(usage.get(key, 0) or 0)
@@ -1469,6 +1498,7 @@ async def main() -> int:
     system_prompt = (STAGING / f"system_prompt-{RUN_ID}.txt").read_text()
     context = json.loads((STAGING / f"context-{RUN_ID}.json").read_text())
     trace_path = STAGING / f"trace-{RUN_ID}.jsonl"
+    plan_reading: dict | None = None
     result_path = STAGING / f"result-{RUN_ID}.json"
 
     server = create_sdk_mcp_server(name="yaaf", version="1.0.0", tools=run_tools())
@@ -1525,6 +1555,7 @@ async def main() -> int:
                     "cache_creation_tokens": cache_creation,
                     "cache_read_tokens": cache_read,
                     "trace_path": str(trace_path),
+                    "plan": plan_reading,
                 }
             )
         )
@@ -1577,6 +1608,17 @@ async def main() -> int:
                             if message.usage is not None else 0,
                         }) + "\n")
                     else:
+                        # The SDK tells us the plan meter without being asked:
+                        # a RateLimitEvent carries the same five_hour/seven_day
+                        # windows the /usage screen draws, on the very token
+                        # doing the spending. Duck-typed rather than isinstance
+                        # so an SDK too old to define the class just does not
+                        # match, instead of failing the import for every run.
+                        info = getattr(message, "rate_limit_info", None)
+                        if info is not None:
+                            plan = _plan_windows(info)
+                            if plan:
+                                plan_reading = plan
                         trace.write(json.dumps({"type": type(message).__name__,
                                                 "repr": repr(message)[:2000]}) + "\n")
                     trace.flush()

@@ -89,11 +89,12 @@ def choices(session: Session, *, with_plan: bool = False) -> list[dict]:
     live-only for the same reason the list is hidden-aware: a credential last
     touched by a project that finished in March is not "in use", and a drafter
     told otherwise picks the busiest-looking key rather than the right one.
-    With `with_plan`, a subscription credential's plan meter rides along when a
-    screen has read it in the last minute — for the Founder, which drafts in
-    the administrator's own screen; not for an MCP client, which the usage
-    route is withheld from for the same reason as the inventory. The choice is
-    never worth a network call of its own.
+    With `with_plan`, a subscription credential's last harvested plan meter
+    rides along — for the Founder, which drafts in the administrator's own
+    screen; not for an MCP client, which the usage route is withheld from for
+    the same reason as the inventory. It is a local row read: the meter is
+    collected from the credential's own runs, so this costs nothing and there
+    is no network call for it to be worth avoiding.
     """
     from yaaf.core import plan_usage
 
@@ -106,7 +107,11 @@ def choices(session: Session, *, with_plan: bool = False) -> list[dict]:
     out = []
     for row in rows:
         entry = {**describe(row), "projects_using_it": counts.get(row.id, 0)}
-        plan = plan_usage.cached(row.id) if with_plan else None
+        plan = None
+        if with_plan and row.llm_mode == "subscription":
+            from yaaf.core.crypto import decrypt
+
+            plan = plan_usage.stored(session, decrypt(row.ciphertext))
         if plan and plan.get("available"):
             entry["plan"] = [{"window": w["label"], "used_percent": round(w["utilization"] * 100),
                               "resets_at": w["resets_at"]} for w in plan["windows"]]

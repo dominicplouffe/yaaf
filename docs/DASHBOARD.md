@@ -37,9 +37,10 @@ link to the credentials list.
   project ever was), and **hidden**. Filter by any of those, search by
   credential or project name, and — for a subscription in use — read the
   **plan meter**: what Anthropic says is left on the session and weekly
-  windows, the same numbers as `/usage` in Claude Code, read once a minute and
-  shown as a fact, never enforced. A row nothing is running on reads its meter
-  only when asked, because every reading is a live call.
+  windows, the same numbers as `/usage` in Claude Code, shown as a fact and
+  never enforced. It is harvested from the credential's own agent runs — the
+  SDK reports it on every run — so nothing is polled and nothing can be rate
+  limited; a credential nothing has run on yet says it has no reading yet.
 - **Hiding a credential** is the answer to a list nobody chose. Promoting
   per-project keys above projects made one managed credential per historical
   key, most of them belonging to projects that had already ended, and none of

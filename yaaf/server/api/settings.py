@@ -363,7 +363,9 @@ def _save_llm(session: Session, row: Secret, name: str, value: str | None) -> di
         if problem:
             raise HTTPException(status_code=422, detail=problem)
         row.ciphertext = encrypt(value)
-        plan_usage.forget(row.id)
+        # Nothing to invalidate: a plan reading is filed under the token, not
+        # the credential, so the old token's meter still belongs to whatever
+        # else holds it and this credential simply has none until its next run.
     row.name = name
     session.add(row)
     try:
@@ -552,25 +554,31 @@ def unhide_llm_credentials(body: HiddenIn, session: Session = Depends(db)) -> di
 @router.get("/llm-credentials/{credential_id}/usage")
 def llm_credential_usage(credential_id: str, refresh: bool = False,
                          session: Session = Depends(db)) -> dict:
-    """What Anthropic says is left on the plan behind a subscription credential.
+    """What the plan behind a subscription credential last said was left.
 
-    Read-only and unaudited: this is polled by screens, and the value it reads
-    is the same one the token's owner sees under `/usage`. The token never
-    leaves the server — it is decrypted here, sent to Anthropic, and the
-    response carries only percentages and reset times. `refresh=true` skips
-    the minute-long cache for a reader who just watched a run finish.
+    A local read. Nothing here calls Anthropic: the reading was harvested from
+    the credential's own runs, where the SDK volunteers it, so this route
+    cannot be rate-limited, cannot be slow, and cannot fail because an
+    undocumented endpoint changed. `refresh` is accepted and ignored — there is
+    nothing to re-ask; the number moves when the credential is next used.
 
-    API keys have no plan meter; the reading for one says so rather than 404,
-    because the screen asking is the same screen either way.
+    API keys have no plan meter, and a subscription nothing has run on yet has
+    no reading; both say so rather than 404, because the screen asking is the
+    same screen either way.
     """
     from yaaf.core.crypto import decrypt
 
     row = _managed(session, credential_id, lock=False)
     credential_id, mode = row.id, row.llm_mode
-    token = decrypt(row.ciphertext) if mode == "subscription" else ""
-    # Everything this needs from the database is in hand. Anthropic may take
-    # eight seconds to answer, and a pooled connection held open for that long
-    # by every polling screen is how an outage over there becomes one here.
-    session.close()
-    return {"credential_id": credential_id, "mode": mode,
-            **plan_usage.reading(credential_id, mode, token, refresh=refresh)}
+    if mode != "subscription":
+        return {"credential_id": credential_id, "mode": mode, "available": False,
+                "reason": "API keys are metered per call in dollars, not against a plan — "
+                          "the monthly budget below is the meter that applies",
+                "windows": [], "fetched_at": None, "cached": False}
+    found = plan_usage.stored(session, decrypt(row.ciphertext))
+    if found is None:
+        return {"credential_id": credential_id, "mode": mode, "available": False,
+                "reason": "no reading yet — the plan meter arrives with this credential's "
+                          "next agent run, which is where Anthropic reports it",
+                "windows": [], "fetched_at": None, "cached": False}
+    return {"credential_id": credential_id, "mode": mode, "cached": True, **found}

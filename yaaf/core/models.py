@@ -1890,6 +1890,33 @@ class Secret(Base):
     hidden_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
 
+class PlanReading(Base):
+    """What Anthropic last said was left on a subscription, harvested from runs.
+
+    Not fetched. The Claude Agent SDK emits a `RateLimitEvent` carrying the
+    same `five_hour` / `seven_day` windows the `/usage` screen draws, and every
+    agent run already receives it on the token that is doing the spending —
+    23,817 of them sat unread in our own trace files while a poller next door
+    was being rate-limited asking Anthropic the same question. So the meter is
+    a by-product of work already done: no request, nothing to throttle, and
+    fresher than a poll because it arrives when the number actually moves.
+
+    Keyed by a digest of the token rather than by credential, because one
+    subscription routinely sits behind several credential rows and they all
+    share one meter. Nothing here is a secret: percentages, reset times, and a
+    status word.
+    """
+
+    __tablename__ = "plan_readings"
+
+    token_fingerprint: Mapped[str] = mapped_column(String(64), primary_key=True)
+    #: [{"key", "label", "utilization", "resets_at"}] — already normalized.
+    windows: Mapped[list] = mapped_column(JSONVariant, default=list)
+    #: "allowed" | "allowed_warning" | "rejected" — the CLI's own word for it.
+    status: Mapped[str | None] = mapped_column(String(24))
+    seen_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
 class McpClient(Base):
     """A model client that speaks MCP on the chairman's behalf.
 

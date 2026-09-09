@@ -467,9 +467,13 @@ export interface PlanUsage {
 const usageUrl = (id: string, refresh: boolean) =>
   `${endpoint}/${id}/usage${refresh ? "?refresh=true" : ""}`;
 
-/** Polls a credential's plan reading once a minute (the server caches for the
-    same minute) and hands back a forced refresh for the reader who just
-    watched a run finish. Does nothing for a non-subscription credential. */
+/** Reads a credential's plan meter. One local row read, on mount.
+
+    It used to poll every 60 seconds. There is nothing to poll now: the meter
+    is harvested from the credential's own agent runs rather than fetched from
+    Anthropic, so re-asking the server cannot produce a newer number — only a
+    run can. The refresh button re-reads the row for a reader who just watched
+    one finish. Does nothing for a non-subscription credential. */
 export function usePlanUsage(credentialId: string | null, mode: string | null) {
   const [data, setData] = useState<PlanUsage | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -486,8 +490,6 @@ export function usePlanUsage(credentialId: string | null, mode: string | null) {
   useEffect(() => {
     if (!active) { setData(null); setError(null); return; }
     load(false);
-    const timer = setInterval(() => load(false), 60_000);
-    return () => clearInterval(timer);
   }, [active, load]);
   return { data, error, busy, refresh: () => load(true), active };
 }
@@ -550,7 +552,7 @@ export function PlanMeter({ credentialId, mode, title = "Claude subscription pla
           </div>
         ))}
         <div className="plan-foot">
-          <span className="asof">as of {fmtAgo(data.fetched_at)}</span>
+          <span className="asof">reported by a run {fmtAgo(data.fetched_at)}</span>
           {refreshButton}
         </div>
       </>
@@ -564,8 +566,9 @@ export function PlanMeter({ credentialId, mode, title = "Claude subscription pla
       {body}
       <p className="help" style={{ marginBottom: 0 }}>
         Anthropic's own meter for this subscription — the same numbers as <code>/usage</code> in
-        Claude Code. Every project on this credential draws from it. Shown here, not enforced
-        here: the monthly cap is yaaf's separate limit.
+        Claude Code, reported by the SDK on each agent run rather than polled, so it moves when
+        this credential is used. Every project on it draws from the same windows. Shown here,
+        not enforced here: the monthly cap is yaaf's separate limit.
       </p>
     </div>
   );

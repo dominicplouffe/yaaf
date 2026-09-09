@@ -529,6 +529,22 @@ def finalize(job: RunJob, result: RunResult, was_revoked: bool = False) -> None:
         if run.kind not in NON_WORK_RUN_KINDS and not run.produced:
             run.metered = False
 
+        # The run was told what is left on the plan behind its own credential.
+        # Filing it here is the whole meter: no request to Anthropic, and it
+        # refreshes exactly as often as the credential is actually used.
+        if result.plan and project is not None and project.billing_secret_id:
+            from yaaf.core import plan_usage
+            from yaaf.core.crypto import decrypt
+
+            billing = session.get(Secret, project.billing_secret_id)
+            if billing is not None:
+                try:
+                    plan_usage.record(session, decrypt(billing.ciphertext), result.plan)
+                except Exception:
+                    # A meter is a nicety; a run result is not. Never let the
+                    # reading be the reason a finished run fails to book.
+                    log.exception("could not file the plan reading for run %s", run.id)
+
         if (result.tokens_in or result.tokens_out or result.cache_creation_tokens
                 or result.cache_read_tokens or run.cost_usd):
             session.add(
