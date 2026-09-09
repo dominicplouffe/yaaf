@@ -80,8 +80,11 @@ import {
     are undelegable at every setting — money over the threshold, legal
     ambiguity, a credential the CEO does not hold, and a step only a human can
     take. Nor does it move the spot-check, which exists precisely *because* a
-    CEO judges its own closes. Authority is configuration; integrity is
-    structure, and the desk draws the line in the same place the server does. */
+    CEO judges its own closes — it lives on the project's own Work tab, where
+    the platform's sample chases an answer, and it is not a row here because
+    nothing about it breaks if you never look. Authority is configuration;
+    integrity is structure, and the desk draws the line in the same place the
+    server does. */
 
 type Tier = 1 | 2 | 3;
 
