@@ -196,11 +196,15 @@ Outside Explore mode the root object is not the task, it is the
   left on its plan — the five-hour session window and the weekly windows, the
   same numbers as `/usage` in Claude Code — on the credential in Settings and
   on every project paying with it, with a verdict that says what happens next
-  ("session at 100%, runs fail until it resets in 22 min"). It is read from
-  the endpoint Claude Code itself uses, which is not a documented API, so it
-  is shown and never enforced: the token cap stays the platform's own rule,
-  and a meter that cannot be read says so in a sentence. API keys have no
-  plan meter and say so.
+  ("session at 100%, runs fail until it resets in 22 min"). It is **harvested, never fetched**: the Claude Agent
+  SDK reports these windows to every agent run, on the credential doing the
+  spending, so the platform reads them off its own runs. Nothing polls
+  Anthropic — the poller this replaced earned a `429` with a `Retry-After` of
+  tens of minutes and left the meter dark while the credential was perfectly
+  healthy. The trade is stated on the screen: a credential nothing has run on
+  yet has no reading, and the number carries the time a run last reported it.
+  Shown and never enforced: the token cap stays the platform's own rule. API
+  keys have no plan meter and say so.
 - **Warn, then stop.** At the warn ratio the CEO is told to cut burn; at 100%
   the project **pauses itself** and you get an email/webhook. Restarting is
   your decision, not the project's.

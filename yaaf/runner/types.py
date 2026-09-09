@@ -46,6 +46,10 @@ class RunResult:
     cache_read_tokens: int = 0
     cost_usd: float | None = None
     trace_path: str | None = None
+    #: The plan meter the SDK volunteered during this run, if it did:
+    #: {"status": str, "windows": [{"key", "utilization", "resets_at"}]}.
+    #: Belongs to the billing credential, not to the run.
+    plan: dict | None = None
     # Success checks only:
     check_exit_code: int | None = None
     check_output: str = ""
