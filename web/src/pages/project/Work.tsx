@@ -1,5 +1,5 @@
-import { Fragment, useEffect, useRef, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Fragment, useState } from "react";
+import { Link } from "react-router-dom";
 import { EvidenceRow, get, HypothesisRow, post, TaskRow } from "../../api";
 import { fmtWhen, usePoll } from "../../hooks";
 import {
@@ -68,17 +68,6 @@ function taskBadge(status: string, notBefore?: string | null) {
   return <span className={`badge ${cls}`}>{status}</span>;
 }
 
-function verifyBadge(verification: string) {
-  const cls =
-    verification === "verified" || verification === "not_applicable"
-      ? "good"
-      : verification === "pending"
-        ? "warn"
-        : "critical";
-  const label = verification === "not_applicable" ? "attested/internal" : verification;
-  return <span className={`badge ${cls}`}>{label}</span>;
-}
-
 const FILTERS = [
   { key: "open", label: "Open",
     match: (s: string) => ["ready", "claimed", "checking", "review"].includes(s) },
@@ -86,22 +75,6 @@ const FILTERS = [
   { key: "done", label: "Done", match: (s: string) => s === "done" },
   { key: "killed", label: "Killed", match: (s: string) => s === "killed" },
   { key: "all", label: "All", match: () => true },
-] as const;
-
-const PROOF_FILTERS = [
-  { key: "all", label: "All", match: (_r: EvidenceRow) => true },
-  {
-    key: "attested",
-    label: "Platform-attested",
-    match: (r: EvidenceRow) => r.provenance === "platform_attested",
-  },
-  {
-    key: "claims",
-    label: "Verified claims",
-    match: (r: EvidenceRow) => r.provenance !== "platform_attested" && r.verification === "verified",
-  },
-  { key: "pending", label: "Pending", match: (r: EvidenceRow) => r.verification === "pending" },
-  { key: "failed", label: "Failed checks", match: (r: EvidenceRow) => r.verification === "failed" },
 ] as const;
 
 /** Inline one-time extension: date + reason, recorded and disclosed.
@@ -217,30 +190,20 @@ function AuditSamples({ projectId }: { projectId: string }) {
 
 export default function Work({ ctx }: { ctx: ProjectCtx }) {
   const { projectId, hypotheses } = ctx;
-  // "?audit=1" arrives from the Overview attention row. Landing the chairman
-  // on this page and making him hunt for the section, then press a button, is
-  // two steps too many for something he was already told needed him — so the
-  // link does the scrolling and the dealing.
-  const [params, setParams] = useSearchParams();
-  const auditRef = useRef<HTMLHeadingElement>(null);
   const { data: tasks, error } = usePoll(
     () => get<TaskRow[]>(`/observe/projects/${projectId}/board`),
     6000,
   );
-  const { data: evidence, reload: reloadEvidence } = usePoll(
+  // Evidence still feeds this page, but only as the bet-level tally: "has this
+  // bet been proven?" is the join the page exists for. The rows themselves are
+  // a record and read in Records → Evidence.
+  const { data: evidence } = usePoll(
     () => get<EvidenceRow[]>(`/observe/projects/${projectId}/evidence?limit=500`),
     8000,
   );
   const [filter, setFilter] = useState<(typeof FILTERS)[number]["key"]>("all");
-  const [proofFilter, setProofFilter] = useState<(typeof PROOF_FILTERS)[number]["key"]>("all");
-  const [showAll, setShowAll] = useState(false);
   const [audit, setAudit] = useState<SpotAudit | null>(null);
 
-  async function auditEvidence(id: string, ok: boolean, note: string) {
-    await post(`/admin/evidence/${id}/audit`, { ok, note });
-    reloadEvidence();
-    if (audit) runSpotAudit();
-  }
   async function auditTask(id: string, ok: boolean, note: string) {
     await post(`/admin/tasks/${id}/audit`, { ok, note });
     if (audit) runSpotAudit();
@@ -251,17 +214,6 @@ export default function Work({ ctx }: { ctx: ProjectCtx }) {
   async function runSpotAudit() {
     setAudit(await get<SpotAudit>(`/observe/projects/${projectId}/spot_audit`));
   }
-
-  useEffect(() => {
-    if (params.get("audit") !== "1") return;
-    // Consume the parameter so a later reload doesn't silently re-deal a
-    // different sample under him while he is part-way through this one.
-    setParams({}, { replace: true });
-    runSpotAudit().then(() =>
-      auditRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
-    );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params]);
 
   const all = tasks ?? [];
   const rows = evidence ?? [];
@@ -312,11 +264,6 @@ export default function Work({ ctx }: { ctx: ProjectCtx }) {
   const completed = all.filter((t) => t.status === "done");
   const audited = completed.filter((t) => t.audit_status).length;
   const coveragePct = completed.length > 0 ? Math.round((audited / completed.length) * 100) : null;
-
-  const activeProofFilter = PROOF_FILTERS.find((f) => f.key === proofFilter)!;
-  const matching = rows.filter(activeProofFilter.match);
-  const shown = showAll ? matching : matching.slice(0, 50);
-  const failedCount = rows.filter((r) => r.verification === "failed").length;
 
   function TaskDetails({ task }: { task: TaskRow }) {
     return (
@@ -412,7 +359,7 @@ export default function Work({ ctx }: { ctx: ProjectCtx }) {
           the whole task board, asking the chairman the same question. One
           zone: the platform's samples first because they expire, then the
           draw he asks for himself. */}
-      <h2 className="zone" ref={auditRef}>Check the agents' work</h2>
+      <h2 className="zone">Check the agents' work</h2>
       <AuditSamples projectId={projectId} />
       <div className="arow">
         <div className="grow">
@@ -430,7 +377,7 @@ export default function Work({ ctx }: { ctx: ProjectCtx }) {
             verdict is recorded as you give it.
           </div>
         </div>
-        <button className="primary" onClick={runSpotAudit} disabled={completed.length === 0 && rows.length === 0}>
+        <button className="primary" onClick={runSpotAudit} disabled={completed.length === 0}>
           {audit ? "Reload the list" : "Show me everything to check"}
         </button>
       </div>
@@ -440,52 +387,6 @@ export default function Work({ ctx }: { ctx: ProjectCtx }) {
           records that you looked. Failing needs one line saying why, and the CEO is woken with
           it — that is the only one of the two that changes what the project does next.
         </p>
-      )}
-      {/* Two different objects, two grids. A completed task carries a success
-          test and a claim; a piece of evidence carries only a claim — mixed in
-          one grid the rows never lined up, and half a row sat empty under the
-          short card. */}
-      {audit && audit.evidence.length > 0 && (
-        <>
-        <div className="audit-h">
-          Evidence — {audit.unjudged.evidence} unchecked of {audit.totals.evidence}: does the
-          claim hold up?
-          {audit.evidence.length < audit.totals.evidence && (
-            <span className="dim"> · showing the first {audit.evidence.length}</span>
-          )}
-        </div>
-        <div className="audit-grid">
-          {audit.evidence.map((row) => (
-            <div className="card audit-card" key={row.id}>
-              <div className="pill-row">
-                <span className="badge accent">evidence</span>
-                {verifyBadge(row.verification)}
-              </div>
-              <Block title="what the agent claimed">{row.description}</Block>
-              {row.source_url && (
-                <a href={row.source_url} target="_blank" rel="noreferrer">
-                  source ↗
-                </a>
-              )}
-              <div className="actions">
-                <NoteAction
-                  label="✓ passes audit"
-                  className="small"
-                  placeholder="Note (optional)"
-                  onSubmit={(note) => auditEvidence(row.id, true, note)}
-                />
-                <NoteAction
-                  label="✕ fails"
-                  className="small danger"
-                  placeholder="Why does this fail? — the CEO is told"
-                  requireNote
-                  onSubmit={(note) => auditEvidence(row.id, false, note)}
-                />
-              </div>
-            </div>
-          ))}
-        </div>
-        </>
       )}
       {audit && audit.completed_tasks.length > 0 && (
         <>
@@ -671,124 +572,10 @@ export default function Work({ ctx }: { ctx: ProjectCtx }) {
         <Link to={`/projects/${projectId}/boardroom`}>Boardroom →</Link>
       </p>
 
-      <h2 className="zone">All proof <span className="cnt">{rows.length}</span></h2>
-      <p className="subtitle" style={{ marginBottom: 8 }}>
-        Only verified or platform-attested external evidence counts toward the drought and the
-        external floor. Agent claims are fetched, hashed, and checked by the platform, never taken
-        at their word.
+      <p className="help" style={{ marginTop: 12 }}>
+        Every claim the agents made and what the platform could check about it is the record in{" "}
+        <Link to={`/projects/${projectId}/records/evidence`}>Records → Evidence →</Link>
       </p>
-      {/* Failed proof is not a footnote: the platform fetched what an agent
-          cited and did not find it. That work counted for nothing. */}
-      {failedCount > 0 && failedCount >= rows.length / 4 && (
-        <div className="error">
-          <strong>{failedCount} of {rows.length} pieces of evidence failed verification.</strong>{" "}
-          The platform fetched the source an agent cited and got a 404 or a mismatch. Failed proof
-          counts for nothing — which is why the drought clock keeps running while work looks busy.
-        </div>
-      )}
-      <div className="pills">
-        {PROOF_FILTERS.map((f) => {
-          const count = rows.filter(f.match).length;
-          if (f.key !== "all" && count === 0) return null;
-          return (
-            <button
-              key={f.key}
-              className={proofFilter === f.key ? "active" : ""}
-              onClick={() => setProofFilter(f.key)}
-            >
-              {f.label} {count}
-            </button>
-          );
-        })}
-        <ExportCsv
-          onClick={() =>
-            downloadCsv(
-              "evidence.csv",
-              ["when", "kind", "provenance", "verification", "description", "source_url"],
-              rows.map((r) => [r.at, r.kind, r.provenance, r.verification, r.description, r.source_url]),
-            )
-          }
-        />
-      </div>
-      <table>
-        <thead>
-          <tr>
-            <th>When</th>
-            <th>Proof</th>
-            <th style={{ width: "38%" }}>What happened</th>
-            <th>Source</th>
-            <th>Your audit</th>
-          </tr>
-        </thead>
-        <tbody>
-          {shown.map((row) => (
-            <tr key={row.id}>
-              <td className="mono">{fmtWhen(row.at)}</td>
-              <td>
-                {verifyBadge(row.verification)}
-                <div className="help mono" style={{ marginTop: 2 }}>
-                  {row.provenance.replaceAll("_", " ")} · {row.kind}
-                </div>
-                {row.verifier_notes && (
-                  <details>
-                    <summary className="help">notes</summary>
-                    <pre className="block">{row.verifier_notes}</pre>
-                  </details>
-                )}
-              </td>
-              <td>{row.description}</td>
-              <td>
-                {row.source_url ? (
-                  <a href={row.source_url} target="_blank" rel="noreferrer">
-                    link ↗
-                  </a>
-                ) : (
-                  "—"
-                )}
-              </td>
-              <td>
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  <NoteAction
-                    label="✓"
-                    className="small"
-                    placeholder="Note (optional)"
-                    confirmLabel="✓ passes"
-                    onSubmit={(note) => auditEvidence(row.id, true, note)}
-                  />
-                  <NoteAction
-                    label="✕"
-                    className="small danger"
-                    placeholder="Why does this fail?"
-                    confirmLabel="✕ fails"
-                    requireNote
-                    onSubmit={(note) => auditEvidence(row.id, false, note)}
-                  />
-                </div>
-              </td>
-            </tr>
-          ))}
-          {rows.length === 0 && (
-            <tr>
-              <td colSpan={5} className="help">
-                Nothing recorded yet. Internal work never appears here — only the outside world
-                acting.
-              </td>
-            </tr>
-          )}
-          {rows.length > 0 && shown.length === 0 && (
-            <tr>
-              <td colSpan={5} className="help">Nothing matches this filter.</td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-      {matching.length > shown.length && (
-        <div style={{ marginTop: 8 }}>
-          <button className="small" onClick={() => setShowAll(true)}>
-            show all {matching.length} rows
-          </button>
-        </div>
-      )}
     </>
   );
 }

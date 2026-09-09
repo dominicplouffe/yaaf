@@ -526,3 +526,168 @@ def test_a_missed_standing_obligation_is_flagged(client):
     # last turn went badly makes the outage worse; the flag is what stops it
     # rolling quietly.
     assert FlagKind.CYCLE_MISSED in kinds
+
+
+def _raise_flag(client, project, flag_id: str, proposal: str) -> str:
+    """Put a flag through the CEO's own raise verb, as the CEO."""
+    _, ceo = live_token(project["id"], project["ceo_agent_id"])
+    said = client.post("/agent/messages", json={
+        "channel_id": _channel_id(project["id"], "boardroom"),
+        "body": f"Raising this. {proposal}",
+    }, headers=bearer(ceo))
+    assert said.status_code == 200, said.text
+    raised = client.post("/agent/flags/raise", json={
+        "flag_id": flag_id, "message_id": said.json()["id"], "proposal": proposal,
+    }, headers=bearer(ceo))
+    assert raised.status_code == 200, raised.text
+    return ceo
+
+
+def test_a_ceo_cannot_acknowledge_the_flag_it_raised(client):
+    """The obvious attack, and the reason acknowledgement is on the admin
+    surface: a CEO that could answer its own flag could open, raise and clear
+    the whole obligation without the chairman ever seeing it."""
+    project = make_project(client)
+    _drain()
+    with db_session() as session:
+        proj = session.get(Project, project["id"])
+        flag = flags.open_flag(session, proj, FlagKind.CYCLE_MISSED,
+                               "Cycle 1 closed with scope still open.",
+                               arithmetic={"carried": 2}, subject_id="cycl_ack")
+        session.flush()
+        flag_id = flag.id
+
+    ceo = _raise_flag(client, project, flag_id, "No action needed; cycle 2 closed clean.")
+
+    forged = client.post(f"/admin/flags/{flag_id}/ack", json={"note": "fine by me"},
+                         headers=bearer(ceo))
+    assert forged.status_code in (401, 403), forged.text
+    with db_session() as session:
+        assert session.get(Flag, flag_id).acknowledged_at is None
+
+
+def test_an_unraised_flag_cannot_be_acknowledged_away(client):
+    """A flag the CEO has not brought to the boardroom is its obligation to
+    speak, not the chairman's to dismiss. Clearing it from his desk would let
+    the count of unsaid things be zeroed without anything being said."""
+    project = make_project(client)
+    _drain()
+    with db_session() as session:
+        proj = session.get(Project, project["id"])
+        flag = flags.open_flag(session, proj, FlagKind.WORK_STARVED,
+                               "3 tasks ready and the allowance is spent.",
+                               arithmetic={"claimable_tasks": 3})
+        session.flush()
+        flag_id = flag.id
+
+    refused = client.post(f"/admin/flags/{flag_id}/ack", json={"note": ""}, headers=ADMIN)
+    assert refused.status_code == 409, refused.text
+    assert "raise" in refused.json()["detail"]
+    with db_session() as session:
+        assert session.get(Flag, flag_id).status == FlagStatus.OPEN
+
+
+def test_acknowledging_a_missed_cycle_finally_closes_it(client):
+    """The bug this verb exists for. `_resolve` refuses the historical kinds by
+    design and the raise verb only moves OPEN to RAISED, so before this there
+    was no path in the codebase that ever reached RESOLVED: the card sat on the
+    chairman's desk for the life of the project."""
+    project = make_project(client)
+    _drain()
+    with db_session() as session:
+        proj = session.get(Project, project["id"])
+        flag = flags.open_flag(session, proj, FlagKind.CYCLE_MISSED,
+                               "Cycle 1 closed with two requirements open.",
+                               arithmetic={"carried": 2}, subject_id="cycl_closed")
+        session.flush()
+        flag_id = flag.id
+
+    _raise_flag(client, project, flag_id, "Both landed in cycle 2, which closed clean.")
+
+    done = client.post(f"/admin/flags/{flag_id}/ack",
+                       json={"note": "Read it. Nothing further."}, headers=ADMIN)
+    assert done.status_code == 200, done.text
+    assert done.json()["status"] == FlagStatus.RESOLVED
+
+    with db_session() as session:
+        closed = session.get(Flag, flag_id)
+        assert closed.status == FlagStatus.RESOLVED
+        assert closed.closed_at is not None
+        assert "Nothing further" in closed.resolution
+        assert flags.open_flags(session, project["id"]) == []
+
+    # And it is gone from the desk, which is the whole complaint.
+    seen = client.get(f"/observe/projects/{project['id']}/flags", headers=ADMIN).json()
+    assert seen["flags"] == []
+
+
+def test_acknowledging_a_live_condition_does_not_pretend_it_cleared(client):
+    """The other half, and the reason acknowledgement is not just "resolve".
+
+    A starved board is still starved after you have read about it. Resolving it
+    here would be a lie the next janitor tick corrects by opening a fresh flag
+    and re-obliging the CEO to raise it — so the flag stays live, off the
+    needs-you list, and `evaluate` still owns closing it.
+    """
+    project = make_project(client)
+    _drain()
+    with db_session() as session:
+        proj = session.get(Project, project["id"])
+        flag = flags.open_flag(session, proj, FlagKind.WORK_STARVED,
+                               "3 tasks ready and the allowance is spent.",
+                               arithmetic={"claimable_tasks": 3})
+        session.flush()
+        flag_id = flag.id
+
+    _raise_flag(client, project, flag_id, "Hold the ready tasks; the ration resets at 20:05Z.")
+
+    ack = client.post(f"/admin/flags/{flag_id}/ack",
+                      json={"note": "Agreed, hold them."}, headers=ADMIN)
+    assert ack.status_code == 200, ack.text
+    assert ack.json()["status"] == FlagStatus.RAISED
+
+    with db_session() as session:
+        live = session.get(Flag, flag_id)
+        assert live.status == FlagStatus.RAISED
+        assert live.acknowledged_at is not None
+        assert live.closed_at is None
+        # Re-tripping the same condition must find this row rather than open a
+        # second one — otherwise acknowledging becomes a way to make the CEO
+        # raise the same news every tick.
+        proj = session.get(Project, project["id"])
+        assert flags.open_flag(session, proj, FlagKind.WORK_STARVED,
+                               "3 tasks ready and the allowance is spent.") is None
+
+    seen = client.get(f"/observe/projects/{project['id']}/flags", headers=ADMIN).json()
+    assert len(seen["flags"]) == 1
+    assert seen["flags"][0]["acknowledged_at"]
+    assert seen["flags"][0]["acknowledgement"] == "Agreed, hold them."
+
+
+def test_the_ceo_is_told_what_came_of_the_flag_it_raised(client):
+    """A CEO that never learns what came of raising one is proposing into a
+    void, and writes the next one the same way."""
+    from yaaf.core.models import Notice, NoticeKind
+
+    project = make_project(client)
+    _drain()
+    with db_session() as session:
+        proj = session.get(Project, project["id"])
+        flag = flags.open_flag(session, proj, FlagKind.CYCLE_MISSED,
+                               "Cycle 1 closed with scope still open.",
+                               subject_id="cycl_notice")
+        session.flush()
+        flag_id = flag.id
+
+    _raise_flag(client, project, flag_id,
+                "No action needed — cycle 2 closed with nothing carried.")
+    client.post(f"/admin/flags/{flag_id}/ack",
+                json={"note": "Cut the goal instead."}, headers=ADMIN)
+
+    with db_session() as session:
+        notices = session.execute(
+            select(Notice).where(Notice.project_id == project["id"],
+                                 Notice.kind == NoticeKind.FLAG_ACKNOWLEDGED)
+        ).scalars().all()
+    assert len(notices) == 1
+    assert "Cut the goal instead" in notices[0].body

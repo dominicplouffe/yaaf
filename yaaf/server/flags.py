@@ -44,9 +44,19 @@ from yaaf.server import metrics, policy
 log = logging.getLogger("yaaf.flags")
 
 #: Flags whose condition is a moment rather than a state — a cycle that already
-#: rolled cannot un-roll — so they are never auto-resolved. Only the CEO
-#: raising them closes them.
+#: rolled cannot un-roll, and a month that went over budget stays gone over —
+#: so `evaluate` never resolves them. What closes them is the chairman
+#: answering, which is why `acknowledge` exists: for years the docstring here
+#: said "only the CEO raising them closes them", but raising sets RAISED, and
+#: RAISED is precisely the state his desk drew. Nothing ever closed them.
 HISTORICAL_KINDS = (FlagKind.CYCLE_MISSED, FlagKind.STANDING_MISSED)
+
+#: The moments, for acknowledgement's purposes. `budget_overrun` is not in
+#: HISTORICAL_KINDS because `evaluate` never sees it at all — it is opened from
+#: the janitor's budget sweep against one month's overrun record — but it is
+#: the same shape of news: that month is over, and no arithmetic will ever
+#: un-spend it.
+ACK_CLOSES = (*HISTORICAL_KINDS, FlagKind.BUDGET_OVERRUN)
 
 #: Gates that mean a WALL stopped the work, as opposed to the project having
 #: scheduled its own board shut. `dispatcher.activity_state` names each of
@@ -112,6 +122,33 @@ def open_flag(session: Session, project: Project, kind: str, summary: str,
     return flag
 
 
+def resolve_subject(session: Session, project_id: str, kind: str,
+                    subject_id: str | None, why: str) -> int:
+    """Close every live flag for one condition, whatever kind it is.
+
+    The guard against resolving a historical kind lives in `_resolve`, which is
+    what `evaluate` calls — because there the question is "has the arithmetic
+    turned?", and a missed cycle's arithmetic never turns. A caller that owns
+    the subject's whole lifecycle is answering a different question: a spend
+    window's flag is about that window, and when the window closes there is no
+    condition left to be true.
+    """
+    closed = 0
+    for flag in session.execute(
+        select(Flag).where(
+            Flag.project_id == project_id,
+            Flag.kind == kind,
+            Flag.subject_id == subject_id,
+            Flag.status.in_([FlagStatus.OPEN, FlagStatus.RAISED]),
+        )
+    ).scalars():
+        flag.status = FlagStatus.RESOLVED
+        flag.resolution = why
+        flag.closed_at = utcnow()
+        closed += 1
+    return closed
+
+
 def _resolve(session: Session, project: Project, kind: str,
              subject_id: str | None, why: str) -> None:
     """Close a flag whose condition has cleared.
@@ -122,17 +159,7 @@ def _resolve(session: Session, project: Project, kind: str,
     """
     if kind in HISTORICAL_KINDS:
         return
-    for flag in session.execute(
-        select(Flag).where(
-            Flag.project_id == project.id,
-            Flag.kind == kind,
-            Flag.subject_id == subject_id,
-            Flag.status.in_([FlagStatus.OPEN, FlagStatus.RAISED]),
-        )
-    ).scalars():
-        flag.status = FlagStatus.RESOLVED
-        flag.resolution = why
-        flag.closed_at = utcnow()
+    resolve_subject(session, project.id, kind, subject_id, why)
 
 
 def _last_cycle_results(session: Session, project: Project):
@@ -342,6 +369,35 @@ def evaluate(session: Session, project: Project, cons: ConstitutionDoc) -> int:
                      f"the measurement turned: {board['verdict']}")
 
     return opened
+
+
+def acknowledge(session: Session, project: Project, flag: Flag, note: str) -> Flag:
+    """The chairman answering news the CEO was obliged to bring him.
+
+    Every other row on his desk has a verb. A flag had a link — it took him to
+    the boardroom and left the card exactly where it was, so the one kind of
+    row he could not clear was the one the platform had insisted he be shown.
+
+    Acknowledging always stamps. Whether it also CLOSES depends on what the
+    flag is about, and the difference is not cosmetic:
+
+    A moment (`ACK_CLOSES`) has nothing left to clear, so his answer is the
+    end of it. A state — a forecast still negative, a board still starved —
+    is still true, and resolving it here would be a lie the next janitor tick
+    corrects by opening a fresh one and re-obliging the CEO to raise it. So
+    the state flags stay live and drop to the watch list under his own note:
+    seen, not fixed. What clears them is the arithmetic turning, which is
+    `evaluate`'s job and was always `evaluate`'s job.
+    """
+    flag.acknowledged_at = utcnow()
+    flag.acknowledgement = note.strip() or None
+    if flag.kind in ACK_CLOSES:
+        flag.status = FlagStatus.RESOLVED
+        flag.resolution = f"the chairman answered: {flag.acknowledgement or 'noted'}"
+        flag.closed_at = flag.acknowledged_at
+    log.info("flag %s acknowledged for %s (status %s)",
+             flag.kind, project.slug, flag.status)
+    return flag
 
 
 def open_flags(session: Session, project_id: str) -> list[Flag]:

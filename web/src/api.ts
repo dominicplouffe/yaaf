@@ -715,93 +715,6 @@ export interface RehearsalReport {
   caveat: string;
 }
 
-// ── the briefing: the past tense ───────────────────────────────────────────────
-
-export interface BriefingLine {
-  kind: string;
-  /** The news: the part of this line that is different this window. */
-  text: string;
-  /** The standing explanation of what this kind of line means — identical in
-      every briefing, which is why it is not welded into `text` with an
-      em-dash. Rendered quieter, and read only when a line surprises you. */
-  note: string | null;
-  /** What it means, never how loud to be about it. */
-  tone: "good" | "bad" | "flat";
-  /** Which of the three questions this answers. `attention` is a setback or an
-      ask he still owns, `moved` is what he got, `delegated` is the CEO's own
-      business under the autonomy dial he set — folded away, because a chairman
-      who handed over all five authorities said *deal with it*. */
-  group: "attention" | "moved" | "delegated";
-  /** Whether this line is still his under that dial. `delegated` is the same
-      fact from the panel's side; this is it from the constitution's. */
-  yours: boolean;
-  count: number | null;
-  /** A tab under the project, so a fact can be followed to its evidence. */
-  where: string | null;
-}
-
-export interface Briefing {
-  project_id: string;
-  slug: string;
-  name: string;
-  status: string;
-  since: string;
-  until: string;
-  /** Why the window starts where it does — printed, because a window whose
-      edges you cannot see is one you cannot trust. */
-  window_source: string;
-  window_hours: number;
-  quiet: boolean;
-  headline: string;
-  /** Already in reading order: attention first and worst-first within it, then
-      what moved, then the record. */
-  lines: BriefingLine[];
-  groups: { attention: number; moved: number; delegated: number };
-  /** How many of this window's lines the chairman still owns. The Desk splits
-      on this rather than on `quiet`: "nothing happened" and "nothing happened
-      that is yours" are different sentences, and only the second one scales
-      with the dial. */
-  needs_you: number;
-  /** Which preset the autonomy dial *is*, or null for a dial set rule by rule.
-      Used to explain the fold, never to compute it. */
-  autonomy: string | null;
-  money: { unit: "usd" | "tokens"; window: number; month_to_date: number; cap: number };
-  /** Proof of life for an empty window: nothing wrong and nothing happening
-      are different, and a blank panel cannot tell them apart. */
-  pulse: { last_run_at: string | null; running: number; open_tasks: number };
-  waiting: {
-    approvals: number;
-    soonest_expiry: string | null;
-    plan: number;
-    verdicts: number;
-    commitment: boolean;
-    flags_raised: number;
-    open_reviews: number;
-    total: number;
-  };
-  /** When something happens next — the fifth question, and the one this panel
-      used to leave unanswered. A board that finished everything it knew to
-      queue reads exactly like a stopped one without it, which is how "why are
-      we idle?" and "nothing has been done in 13 hours" ended up being asked of
-      a CEO at model prices. `at` null means nothing is scheduled, and `why`
-      says so in a sentence. Same composer as the email, so they cannot
-      disagree. */
-  next_up: {
-    at: string | null;
-    label: string | null;
-    kind: string | null;
-    why: string | null;
-    live: boolean;
-  } | null;
-}
-
-export interface DeskBriefing {
-  as_of: string;
-  forced_window: string | null;
-  quiet: boolean;
-  projects: Briefing[];
-}
-
 // ── the agenda: the future tense ───────────────────────────────────────────────
 
 export interface AgendaEvent {
@@ -850,6 +763,10 @@ export interface EvidenceRow {
   verifier_notes: string | null;
   /** The task this proves — the link that lets a bet report its own proof. */
   task_id: string | null;
+  /** What that task had to prove, so a claim can be read without the board. */
+  task_title: string | null;
+  /** Whether the verifier stored a copy of what it fetched. */
+  has_snapshot: boolean;
   at: string;
 }
 

@@ -652,6 +652,17 @@ def asks(project: str) -> None:
 
 
 @app.command()
+def flags(project: str) -> None:
+    """What the platform obliged the CEO to tell you, and whether it has.
+
+    `unraised` is the number to read first: news the arithmetic opened and the
+    CEO has not brought to the boardroom yet.
+    """
+    with _client() as client:
+        _show(client.get(f"/observe/projects/{_resolve_project(client, project)}/flags"))
+
+
+@app.command()
 def audit(project: str, n: int = typer.Option(5, "--n")) -> None:
     """A random spot-audit sample of recent evidence and completed tasks."""
     with _client() as client:
@@ -684,6 +695,15 @@ def extend(hypothesis_id: str, new_kill_date: str, reason: str) -> None:
     with _client() as client:
         _show(client.post(f"/admin/hypotheses/{hypothesis_id}/extend",
                           json={"new_kill_date": new_kill_date, "reason": reason}))
+
+
+@app.command()
+def ack_flag(flag_id: str, note: str = typer.Option("", "--note")) -> None:
+    """Answer a flag the CEO raised. A missed cycle or a month over budget
+    closes here — nothing else ever closes those. A condition still true stays
+    open under your note until the arithmetic turns."""
+    with _client() as client:
+        _show(client.post(f"/admin/flags/{flag_id}/ack", json={"note": note}))
 
 
 @app.command()

@@ -32,6 +32,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from yaaf.core.models import (
+    FlagKind,
     LedgerEntry,
     LedgerKind,
     NoticeKind,
@@ -142,10 +143,18 @@ def close(session: Session, window: SpendWindow, reason: str,
     """Stamp the findings and shut it. Idempotent by status."""
     if window.status != SpendWindowStatus.OPEN:
         return
+    from yaaf.server import flags as flag_lib
+
     window.findings = _findings(session, window)
     window.status = status
     window.closed_at = utcnow()
     window.close_reason = reason
+    # The flag is about THIS window overspending, so it dies with the window.
+    # Nothing resolved it before: `evaluate` never sees this kind, so a raised
+    # spend_window sat on the chairman's desk for good — including after he had
+    # answered it by raising the ceiling, which is what the flag asked for.
+    flag_lib.resolve_subject(session, window.project_id, FlagKind.SPEND_WINDOW,
+                             window.id, f"the window closed: {reason}")
     log.info("spend window %s closed for %s: %s",
              window.id, window.project_id, reason)
 

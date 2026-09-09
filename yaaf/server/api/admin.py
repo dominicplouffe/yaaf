@@ -51,6 +51,8 @@ from yaaf.core.models import (
     Crew,
     Cycle,
     Evidence,
+    Flag,
+    FlagStatus,
     Hypothesis,
     HypothesisStatus,
     McpClient,
@@ -3434,6 +3436,53 @@ def audit_task(task_id: str, body: TaskAudit, session: Session = Depends(db)) ->
             "treat that agent's completions as suspect and re-check what depended on this.",
         )
     return {"id": row.id, "audit_status": row.audit_status}
+
+
+class FlagAck(BaseModel):
+    note: str = Field(default="", max_length=4000)
+
+
+@router.post("/flags/{flag_id}/ack")
+def acknowledge_flag(flag_id: str, body: FlagAck, session: Session = Depends(db)) -> dict:
+    """The chairman answering a flag the CEO raised.
+
+    Until this existed the only flag-mutating route on the whole platform was
+    the CEO's own `POST /agent/flags/raise`. The chairman's desk drew every
+    raised flag under "needs you" with nothing to press, and the kinds nothing
+    auto-resolves stayed there for good.
+
+    Only a RAISED flag can be acknowledged. An OPEN one is news the CEO has not
+    brought him yet — the count of those is the whole reason the mechanism is
+    trustworthy, so letting it be cleared from here would let a chairman quietly
+    absolve a CEO of speaking. That is a 409, not a silent no-op.
+    """
+    from yaaf.server import flags as flag_lib
+
+    flag = session.get(Flag, flag_id)
+    if flag is None:
+        raise HTTPException(status_code=404, detail="unknown flag")
+    if flag.status != FlagStatus.RAISED:
+        raise HTTPException(
+            status_code=409,
+            detail=(f"only a raised flag can be acknowledged; this one is {flag.status}. "
+                    "An open flag is the CEO's to raise in the boardroom first."),
+        )
+    project = session.get(Project, flag.project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="unknown project")
+    flag_lib.acknowledge(session, project, flag, body.note)
+    _audit(session, flag.project_id, "flag.ack", "flag", flag.id,
+           {"kind": flag.kind, "status": flag.status})
+    _notice_ceo(
+        session, flag.project_id, NoticeKind.FLAG_ACKNOWLEDGED,
+        f"The chairman answered the {flag.kind.replace('_', ' ')} flag you raised"
+        + (f": {flag.acknowledgement}" if flag.acknowledgement else " and said nothing further.")
+        + (" It is closed." if flag.status == FlagStatus.RESOLVED else
+           " The condition is still true, so the flag stays open — what closes it is the "
+           "arithmetic turning, not this."),
+    )
+    return {"id": flag.id, "status": flag.status,
+            "acknowledged_at": flag.acknowledged_at.isoformat()}
 
 
 class AuditSampleDecision(BaseModel):
