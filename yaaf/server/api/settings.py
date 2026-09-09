@@ -258,7 +258,52 @@ class LlmCredentialPatch(BaseModel):
     value: str | None = Field(default=None, min_length=8, max_length=10000)
 
 
-def _llm_summary(session: Session, row: Secret, projects: list | None = None) -> dict:
+def _token_groups(session: Session) -> dict[str, tuple[str | None, int]]:
+    """Which credentials are holding the *same* token, by digest.
+
+    The migration that promoted per-project keys named each credential after
+    the project variable it came from, and those names lie: a value pasted
+    into a variable called `anthropic-api-key` is still a subscription token
+    if that is what it is, and twelve rows on one install carry exactly that
+    name for one `sk-ant-oat` token. So the name cannot be used to tell two
+    credentials apart, and neither can the type — fourteen rows all correctly
+    say "Claude subscription" because they are all the same subscription.
+
+    What tells them apart is the value, and the value can never be shown. A
+    digest of it can: it identifies without revealing, it is stable across
+    reloads, and it turns "fourteen identical-looking rows" into "one
+    subscription, keep one of these" — which is the only question an
+    administrator is actually trying to answer on this screen.
+
+    Admin-only, and deliberately absent from `llm_credentials.choices`: which
+    of a project's options are secretly the same key is the administrator's
+    inventory question, not a drafter's.
+    """
+    from sqlalchemy import select
+
+    from yaaf.core.crypto import decrypt
+    from yaaf.core.models import Secret
+    from yaaf.core.plan_usage import fingerprint
+
+    digests: dict[str, str | None] = {}
+    for row in session.scalars(select(Secret).where(Secret.llm_mode.is_not(None),
+                                                    Secret.project_id.is_(None))):
+        try:
+            digests[row.id] = fingerprint(decrypt(row.ciphertext))[:8]
+        except Exception:
+            # A value this key cannot read still deserves a row on the screen;
+            # it simply cannot be grouped with anything.
+            digests[row.id] = None
+    sizes: dict[str, int] = {}
+    for digest in digests.values():
+        if digest is not None:
+            sizes[digest] = sizes.get(digest, 0) + 1
+    return {secret_id: (digest, sizes.get(digest or "", 1) if digest else 1)
+            for secret_id, digest in digests.items()}
+
+
+def _llm_summary(session: Session, row: Secret, projects: list | None = None,
+                 groups: dict[str, tuple[str | None, int]] | None = None) -> dict:
     """One credential as the screen needs it: what it is, and what it is *for*.
 
     "Assigned" was the only fact this used to carry, and after credentials
@@ -280,9 +325,13 @@ def _llm_summary(session: Session, row: Secret, projects: list | None = None) ->
                                    .order_by(Project.name)).all()
     out = [{"id": p.id, "name": p.name, "status": p.status, "live": p.status not in TERMINAL}
            for p in projects]
+    if groups is None:
+        groups = _token_groups(session)
+    token, sharing = groups.get(row.id, (None, 1))
     return {"id": row.id, "name": row.name, "mode": row.llm_mode,
             "created_at": row.created_at, "hidden_at": row.hidden_at,
-            "projects": out, "in_use": any(p["live"] for p in out)}
+            "projects": out, "in_use": any(p["live"] for p in out),
+            "token": token, "shares_token_with": max(0, sharing - 1)}
 
 
 def _save_llm(session: Session, row: Secret, name: str, value: str | None) -> dict:
@@ -348,7 +397,11 @@ def list_llm_credentials(include_hidden: bool = False, session: Session = Depend
     listing = select(Secret).where(Secret.llm_mode.is_not(None))
     if not include_hidden:
         listing = listing.where(Secret.hidden_at.is_(None))
-    return [_llm_summary(session, row, usage.get(row.id, []))
+    # Grouped once for the whole listing rather than per row: the digests come
+    # from decrypting every managed credential, which is cheap once and N²
+    # if each row asks for itself.
+    groups = _token_groups(session)
+    return [_llm_summary(session, row, usage.get(row.id, []), groups)
             for row in session.scalars(listing.order_by(Secret.name))]
 
 
@@ -473,10 +526,12 @@ def _set_hidden(session: Session, ids: list[str], *, hide: bool) -> dict:
                                 "reason": f"another credential is now called '{taken}' — "
                                           "rename this one before restoring it"})
                 continue
-        was_hidden = row.hidden_at is not None
-        row.hidden_at = utcnow() if hide else None
-        session.add(row)
-        if was_hidden != hide:
+        if (row.hidden_at is not None) != hide:
+            # Only a row that actually moves is stamped. Re-hiding an already
+            # hidden credential used to reset "hidden 25m ago" to "just now",
+            # which is the one fact that shelf is keeping.
+            row.hidden_at = utcnow() if hide else None
+            session.add(row)
             _audit(session, None, f"llm_credential.{'hide' if hide else 'unhide'}",
                    "secret", row.id, {"name": row.name})
         moved.append({"id": row.id, "name": row.name})

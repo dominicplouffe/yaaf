@@ -36,6 +36,10 @@ export interface Credential {
   hidden_at?: string | null;
   /** True when at least one live project pays with it. The server decides. */
   in_use?: boolean;
+  /** A digest of the value — never the value. Two credentials showing the
+      same one are the same key, whatever their names claim. */
+  token?: string | null;
+  shares_token_with?: number;
   projects: CredentialProject[];
 }
 
@@ -182,19 +186,29 @@ export function LlmCredentials({ onChanged }: { onChanged?: () => void } = {}) {
     return out;
   }, [rows]);
 
+  // Searching a key's digest is asking "which rows are this one key?", and the
+  // honest answer includes the ones already hidden — otherwise "same key as 13
+  // others" shows you nine and the count looks wrong.
+  const term = search.trim().toLowerCase();
+  const grouping = (rows ?? []).some((r) => !!r.token && r.token === term);
+
   const shown = useMemo(() => {
-    const term = search.trim().toLowerCase();
     return (rows ?? [])
-      .filter((r) => (filter === "all" ? !r.hidden_at : bucketOf(r) === filter))
+      .filter((r) => grouping || (filter === "all" ? !r.hidden_at : bucketOf(r) === filter))
       .filter((r) => !term || r.name.toLowerCase().includes(term)
+        || r.token === term
         || r.projects.some((p) => p.name.toLowerCase().includes(term)))
       .sort((a, b) => ORDER[bucketOf(a)] - ORDER[bucketOf(b)] || a.name.localeCompare(b.name));
-  }, [rows, filter, search]);
+  }, [rows, filter, term, grouping]);
 
   // Selection is for one verb at a time: on the hidden shelf it restores, and
   // everywhere else it hides — and an in-use row can do neither.
   const restoring = filter === "hidden";
-  const selectable = shown.filter((r) => (restoring ? !!r.hidden_at : !r.in_use));
+  // Selectable means "this row would actually move". A key group shows hidden
+  // and visible rows together, so "not in use" is no longer enough to mean
+  // hideable.
+  const selectable = shown.filter((r) => (restoring ? !!r.hidden_at
+                                                    : !r.in_use && !r.hidden_at));
   const chosen = selectable.filter((r) => picked.has(r.id));
   const hideable = (rows ?? []).filter((r) => !r.hidden_at && !r.in_use);
 
@@ -327,9 +341,16 @@ export function LlmCredentials({ onChanged }: { onChanged?: () => void } = {}) {
       </div>
 
       <p className="help cred-blurb">
-        {filter === "all" ? "Everything on the menus. Hidden credentials are on their own shelf."
+        {grouping
+          ? `All ${shown.length} credentials holding one key, hidden ones included. They are `
+            + "interchangeable, whatever their names say — keep the clearest and hide the rest."
+          : filter === "all"
+          ? "Everything on the menus. Hidden credentials are on their own shelf."
           : BUCKETS.find((b) => b.key === filter)?.blurb}
-        {filter === "all" && hideable.length >= 3 && <>
+        {/* Not while looking at one key: "hide all 13" there reads as an offer
+            about the twelve rows on screen, and it is not. Inside a group the
+            checkboxes are the right verb — which copy to keep is a choice. */}
+        {filter === "all" && !grouping && !term && hideable.length >= 3 && <>
           {" "}Nothing is using {hideable.length} of them.{" "}
           <button type="button" className="linkish" disabled={busy}
             onClick={() => setHiding(hideable)}>Hide all {hideable.length}</button>
@@ -373,6 +394,18 @@ export function LlmCredentials({ onChanged }: { onChanged?: () => void } = {}) {
                   return next;
                 })} />}</td>
               <td><strong>{row.name}</strong> <StateChip bucket={bucket} />
+                {/* The migration named these after the project variable they
+                    came from, so a row called "anthropic-api-key" can hold a
+                    subscription token and fourteen rows can be one key. The
+                    name cannot tell them apart; this can. */}
+                {!!row.shares_token_with && row.token && (
+                  <div className="help">
+                    same key as {row.shares_token_with} other
+                    {row.shares_token_with === 1 ? "" : "s"} —{" "}
+                    <button type="button" className="linkish"
+                      onClick={() => { show("all"); setSearch(row.token!); }}>show them</button>
+                  </div>
+                )}
                 {row.hidden_at && <div className="help">hidden {fmtAgo(row.hidden_at)}</div>}</td>
               <td data-label="Type">{modeName(row.mode)}
                 <div className="help">{modeMeter(row.mode)}</div></td>

@@ -299,6 +299,44 @@ def test_bulk_hide_judges_each_row_and_only_admin_may(client):
                                json={"ids": [spare["id"]]}).status_code == 401
 
 
+def test_credentials_holding_one_key_say_so_without_showing_it(client):
+    """The name cannot tell two credentials apart; a digest of the value can.
+
+    Promoting per-project keys named each credential after the project
+    variable it came from, so an install ended up with twelve rows called
+    "Migrated anthropic-api-key" that were one `sk-ant-oat` subscription —
+    correctly typed, identically named, and impossible to choose between.
+    """
+    token = "sk-ant-oat01-one-key-behind-many-names"
+    same = [create(client, name, value=token, mode="subscription")
+            for name in ("Migrated anthropic-api-key (a)", "Migrated anthropic-api-key (b)",
+                         "Something else entirely")]
+    alone = create(client, "Its own key", value="sk-ant-oat01-a-key-of-its-own",
+                   mode="subscription")
+
+    rows = {r["id"]: r for r in client.get(URL, headers=ADMIN).json()}
+    digests = {rows[c["id"]]["token"] for c in same}
+    assert len(digests) == 1, "one key, one digest, whatever the rows are called"
+    assert rows[alone["id"]]["token"] not in digests
+    for c in same:
+        assert rows[c["id"]]["shares_token_with"] == 2
+    assert rows[alone["id"]]["shares_token_with"] == 0
+
+    # The digest identifies; it never reveals. Nothing on the wire is the key,
+    # and the digest is not a prefix of it either.
+    body = client.get(URL, headers=ADMIN).text
+    assert token not in body and "sk-ant" not in body
+    digest = digests.pop()
+    assert len(digest) == 8 and digest not in token
+
+    # Hiding one does not change what the others are: the grouping is about
+    # the value, not about what the screen is currently willing to draw.
+    assert hide(client, same[0]["id"]).json()["refused"] == []
+    listed = {r["id"]: r for r in client.get(f"{URL}?include_hidden=true", headers=ADMIN).json()}
+    assert listed[same[1]["id"]]["shares_token_with"] == 2
+    assert listed[same[0]["id"]]["token"] == digest
+
+
 # ── the plan meter ──────────────────────────────────────────────────────────────
 
 
