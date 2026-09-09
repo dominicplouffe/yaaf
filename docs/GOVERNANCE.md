@@ -1,6 +1,6 @@
 # Governance — the constitution, rule by rule
 
-Each project runs under a **constitution**: 59 numbers and switches the agents
+Each project runs under a **constitution**: 60 numbers and switches the agents
 cannot edit, argue with, or talk their way around. Every one is enforced
 server-side in [`yaaf/server/policy.py`](../yaaf/server/policy.py) as an HTTP
 refusal or an automatic state change. The schema itself lives in
@@ -214,6 +214,7 @@ remember is a suggestion. It's a refusal now.
 | `chairman_report_window_local` | none | `"09:00-20:00"`, or blank for any hour. Must not wrap midnight. |
 | `timezone` | `"UTC"` | IANA name, e.g. `America/New_York`. **One zone for the whole rulebook** — the reporting window, the daily CEO wake and every recurring rhythm are read in it. (Was `chairman_report_timezone`, and was also set a second time in project config; one place too many to get wrong.) |
 | `brief_daily_at` | none | `"08:00"` in `timezone`, or blank for none. The daily **briefing** — what happened since the last one, composed by the platform from the record at **zero tokens**. |
+| `mail_max_per_day` | 5 | How many emails **waiting on a decision from you** the platform may send in a rolling 24 hours. Past it the waits are read in the briefing instead. Alarms are never held. 0 = no limit. |
 
 Replying to something you actually said is always allowed and is not a status.
 
@@ -224,6 +225,36 @@ platform writing to you from rows it already holds. No run, no wake, no token
 arrives on the morning the platform paused the project for an exhausted cap.
 Every other letter you get from this system is an alarm, and a correspondent
 who only ever brings bad news is one you stop reading.
+
+`mail_max_per_day` governs the third direction: not what the project may say,
+and not what the platform may compose, but how often either is allowed to
+*interrupt* you. Every notice the platform raises names how much of you it is
+asking for, and only two of the four kinds ever reach your inbox unbidden:
+
+| Kind | Example | Reaches you |
+|---|---|---|
+| **alarm** | the project paused, a promise broken, a billing credential dead | always, uncapped |
+| **action** | an approval to sign, a verdict only you can record, scope to accept | until the daily limit above |
+| **brief** | the daily briefing itself | always |
+| **fyi** | a deliverable published, a cycle closed, a decision the CEO took under authority you gave it | never — it is in the briefing |
+
+The **fyi** row is the one that does the work. It is a third of the notice kinds
+by count and much more than a third by volume, because those are the ones that
+fire per event: every deliverable published, every cycle closed, every audit
+sample drawn, every decision the CEO takes under a dial you set. They are not
+dropped — the webhook still carries every one, the audit log still holds them,
+and the briefing already reports them *batched*. A single briefing window in
+this project's own record held "20 deliverables published" and "the CEO
+exercised 26 decisions": two lines there, and forty-six separate emails before
+this change. The inbox was the only surface in this system with no theory of whose
+news is whose; the briefing has had one since it shipped, and it is the same
+autonomy dial you set. A decision you delegated is not news, and the platform
+should not have been waking you for it.
+
+A held **action** notice loses you the interrupt, never the news. Everything in
+that class is a *wait*, and the briefing renders every open wait live from the
+record in its "waiting on you" section — so the next brief still names it, and
+the audit log records both what was sent and what was held.
 
 ### Runs
 

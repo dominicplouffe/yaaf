@@ -64,7 +64,7 @@ from yaaf.core.models import (
 )
 from yaaf.server import policy, typing_state
 from yaaf.server.deps import RunContext, db, run_auth
-from yaaf.server.notify import chairman_notify
+from yaaf.server.notify import Attention, chairman_notify
 from yaaf.server.policy import Refusal
 from yaaf.server.rows import approval_row
 
@@ -800,18 +800,26 @@ def scope_act(
         "executed": detail,
         "result": result,
         "note": ("Done under the authority the constitution grants you. It is on the "
-                 "record and the chairman has been told — he can reverse any of it, "
-                 "and turning the dial back is one amendment. Spend this authority "
-                 "the way you would want it audited."),
+                 "record and it reaches the chairman in his briefing — he can reverse "
+                 "any of it, and turning the dial back is one amendment. Spend this "
+                 "authority the way you would want it audited."),
     }
 
 
 def _disclose_self_action(session: Session, ctx: RunContext, kind: str,
                           detail: str, reason: str) -> None:
-    """Autonomy is never quiet: every self-exercise is audited and sent to the
-    chairman out-of-band. Self-judged verdicts in particular are disclosed
-    every single time — stronger than sampling, and the reason `ceo_judgment`
-    does not bend 'nothing is quietly trusted'."""
+    """Autonomy is never quiet: every self-exercise is audited and disclosed to
+    the chairman. Self-judged verdicts in particular are disclosed every single
+    time — stronger than sampling, and the reason `ceo_judgment` does not bend
+    'nothing is quietly trusted'.
+
+    Disclosed rather than *mailed*, which is not the same promise and used to be
+    conflated. He set a dial saying the CEO decides this; answering him with an
+    email per decision argues with the setting, and twenty-six of them in a
+    morning is how a chairman starts filtering the sender — at which point the
+    disclosure he actually needs is gone too. So it rides the record and the
+    briefing, which already reports these batched, and the webhook, which is a
+    machine and does not tire."""
     session.add(
         AuditLog(
             id=ids.new_id(ids.AUDIT),
@@ -829,6 +837,7 @@ def _disclose_self_action(session: Session, ctx: RunContext, kind: str,
         f"{detail}\n\nIts reason: {reason}\n\nExercised under the authority dial you "
         "set in the constitution. Everything here is reversible — reopen what was "
         "cut, cut what was accepted — and the dial itself is yours to turn back.",
+        attention=Attention.FYI,
     )
 
 
@@ -1348,6 +1357,7 @@ def propose_commitment(
             "projection recomputes continuously; a slip freezes new scope and emails "
             "you, exactly as if you had signed it yourself. Move or decline it any "
             "time — those buttons never close.",
+            attention=Attention.FYI,
         )
         return {
             "commitment_id": commitment.id,
@@ -1356,8 +1366,9 @@ def propose_commitment(
             "basis": projection["basis"],
             "note": ("Committed. The constitution grants you the signature, so the "
                      "platform's projected date is now the promise — it is frozen, "
-                     "audited, and the chairman has been told. A slip freezes new "
-                     "scope on you the same as on anyone."),
+                     "audited, and it reaches the chairman in his briefing. A slip "
+                     "freezes new scope on you the same as on anyone, and a slip "
+                     "does mail him."),
         }
     return {
         "commitment_id": commitment.id,
@@ -1710,6 +1721,7 @@ def reset_commitment(
         "— the CEO cannot write a date, only adopt the arithmetic's. "
         f"{tally}\n\nExercised under commitment_authority: ceo. Move it yourself, cut "
         "scope, or turn the dial back — those buttons never close.",
+        attention=Attention.FYI,
     )
     # Re-walk the status now, through the same producer the janitor uses, so a
     # freeze lifts (or persists) on the spot rather than on the next tick.
@@ -1778,6 +1790,7 @@ def file_review_narrative(
         body.narrative[:2000]
         + (f"\n\nRecommends: {review.recommended[:1000]}" if review.recommended else "")
         + "\n\nTake the meeting on the Review tab.",
+        attention=Attention.FYI,
     )
     return {"review_number": review.number,
             "note": ("Filed. The chairman decides from here — cut, add, reword, "
@@ -2252,6 +2265,7 @@ def data_write_request(
         f"Approve a change to your {body.source} account?",
         f"{row.title}\n\n{row.body}",
         kind="approval_requested", data={"approval": approval_row(row)},
+        attention=Attention.ACTION,
     )
     return {
         "id": row.id,
@@ -2422,6 +2436,7 @@ def book_spend(
             "Booked rather than refused — the money had already moved, and an "
             "unrecorded spend is worse than an overshot one. Further purchases are "
             "walled; the spend itself is on the ledger and the audit.",
+            attention=Attention.ALARM,
         )
         return {"id": row.id,
                 "warning": (f"Booked, and the month is now over the "
@@ -2560,6 +2575,7 @@ def assist_request(
         "takes from you: the platform hands over security challenges, it never "
         "defeats them.",
         kind="approval_requested", data={"approval": approval_row(approval)},
+        attention=Attention.ACTION,
     )
     notify(session, WAKE_CHANNEL, ctx.project.id)
     return {
@@ -2701,6 +2717,7 @@ def capacity_request(
         f"{body.buys[:300]}",
         kind="approval_requested",
         data={"approval": approval_row(approval)},
+        attention=Attention.ACTION,
     )
     return {
         "approval_id": approval.id,
@@ -2763,6 +2780,7 @@ def need_request(
         "\n".join(detail_lines) + "\n\nFulfill or decline it on the Decisions screen "
         "— fulfilling stores the credential and scopes the roles in one motion.",
         kind="approval_requested", data={"approval": approval_row(approval)},
+        attention=Attention.ACTION,
     )
     notify(session, WAKE_CHANNEL, ctx.project.id)
     return {
@@ -2850,10 +2868,11 @@ def credential_scope(
         f"{name}: {', '.join(was) or '(nobody)'} → {', '.join(scopes) or '(nobody)'}\n"
         f"Its reason: {body.reason}\nExercised under capability_authority: ceo. "
         "Effective on each role's next run; reverse it any time in Settings.",
+        attention=Attention.FYI,
     )
     return {"name": name, "role_scopes": scopes, "was": was,
-            "note": "Effective on each granted role's next run. On the record, and "
-                    "the chairman has been told."}
+            "note": "Effective on each granted role's next run. On the record, and it "
+                    "reaches the chairman in his briefing."}
 
 
 # ── the purchase actuator ───────────────────────────────────────────────────────
@@ -3192,6 +3211,7 @@ def artifact_put(
                               "key": key, "size": len(data),
                               "published_at": row.published_at.isoformat() if row.published_at else None,
                               "satisfies": [r.key for r in satisfied]}},
+        attention=Attention.FYI,
     )
     # The digest is returned at write time so the author can record what it
     # shipped and a later reader can prove the store still holds those bytes.

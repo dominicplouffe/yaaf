@@ -134,6 +134,13 @@ with `brief_daily_at` set, from `yaaf briefing`, and over MCP. It costs no
 model call either way: it is composed from the record, which is what lets it
 arrive on a project the platform paused for an exhausted budget.
 
+The inbox is the same tense as the desk, and for the same reason: it carries
+alarms and the things waiting on a decision from you, capped at
+`mail_max_per_day` for the latter, and nothing else. A notice of something
+already done reaches the webhook and the briefing, never your inbox — so the
+desk and the inbox now agree about what is outstanding instead of the inbox
+also replaying what is not.
+
 
 **The hero state is an empty desk**, and it proves it rather than asserting
 it: how many projects are working, when something last ran, and when the next

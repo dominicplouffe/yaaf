@@ -2899,9 +2899,9 @@ def confirm_directive(
     )
     # Best-effort out-of-band: a change he did not watch happen is exactly the
     # thing he should not have to be watching Slack to catch.
-    from yaaf.server.notify import chairman_notify
+    from yaaf.server.notify import Attention, chairman_notify
 
-    chairman_notify(session, project, title, body)
+    chairman_notify(session, project, title, body, attention=Attention.FYI)
 
 
 def _ago(delta: timedelta) -> str:
