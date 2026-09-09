@@ -362,6 +362,76 @@ METER = {
 }
 
 
+def test_a_throttled_meter_waits_as_long_as_anthropic_asked(client, monkeypatch):
+    """429 says how long to wait, and it is not a minute.
+
+    The reading that found this asked for 553 seconds while the cache expired
+    every 60, so the server asked nine more times inside the window it had been
+    told to sit out — and the screen said "try again in a minute", which was
+    both wrong and an invitation to press retry through the rate limit.
+    """
+    import httpx
+
+    from yaaf.core import plan_usage
+
+    key = create(client, value="sk-ant-oat01-throttled-token", mode="subscription")
+    calls: list[int] = []
+
+    class _Throttled:
+        status_code = 429
+        headers = {"retry-after": "553"}
+        text = ""
+
+        def json(self):
+            raise ValueError("not json")
+
+    def fake_get(url, headers=None, timeout=None, **_):
+        calls.append(1)
+        return _Throttled()
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    for attr in ("_cache", "_token_of", "_backoff", "_inflight"):
+        monkeypatch.setattr(plan_usage, attr, {})
+
+    first = client.get(f"{URL}/{key['id']}/usage", headers=ADMIN).json()
+    assert first["available"] is False
+    # The wait is stated, in the units a reader thinks in, and it is honest.
+    assert "about 9 minutes" in first["reason"]
+    assert "try again in a minute" not in first["reason"]
+
+    # Every later poll — and every press of the retry button, which is what a
+    # frustrated reader actually does — is answered from the cache. Asking
+    # again is what keeps a rate limit alive.
+    for _ in range(5):
+        client.get(f"{URL}/{key['id']}/usage", headers=ADMIN)
+        client.get(f"{URL}/{key['id']}/usage?refresh=true", headers=ADMIN)
+    assert len(calls) == 1
+
+    # When the window passes, it asks again by itself.
+    plan_usage._backoff[plan_usage.fingerprint("sk-ant-oat01-throttled-token")] = 0.0
+    plan_usage._cache.clear()
+    client.get(f"{URL}/{key['id']}/usage", headers=ADMIN)
+    assert len(calls) == 2
+
+
+def test_retry_after_is_read_however_it_was_sent(monkeypatch):
+    from datetime import UTC, datetime, timedelta
+
+    from yaaf.core import plan_usage
+
+    assert plan_usage._retry_after("553") == 553
+    assert plan_usage._retry_after("12.7") == 12
+    # An HTTP-date is the other legal spelling.
+    soon = datetime.now(UTC) + timedelta(seconds=120)
+    assert 100 <= plan_usage._retry_after(
+        soon.strftime("%a, %d %b %Y %H:%M:%S GMT")) <= 130
+    # Missing or unreadable is not a licence to keep asking.
+    assert plan_usage._retry_after(None) == plan_usage.DEFAULT_BACKOFF_S
+    assert plan_usage._retry_after("soon please") == plan_usage.DEFAULT_BACKOFF_S
+    # And a hostile value cannot park the meter for a week.
+    assert plan_usage._retry_after("999999") == plan_usage.MAX_BACKOFF_S
+
+
 def test_rows_arriving_together_on_one_token_ask_once(monkeypatch):
     """The gate is keyed by token, so a poll that lands mid-fetch waits for
     that answer rather than starting a second one against the same account.

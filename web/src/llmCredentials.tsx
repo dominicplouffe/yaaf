@@ -457,6 +457,11 @@ export interface PlanWindow { key: string; label: string; utilization: number; r
 export interface PlanUsage {
   credential_id: string; mode: string; available: boolean; reason: string | null;
   windows: PlanWindow[]; fetched_at: string; cached: boolean;
+  /** Set when Anthropic is rate-limiting the meter and told us how long to
+      wait. While it is set there is no point offering a retry: the server
+      honours the wait and answers from cache, and pressing through a rate
+      limit is what keeps a rate limit alive. */
+  retry_after_s?: number;
 }
 
 const usageUrl = (id: string, refresh: boolean) =>
@@ -523,7 +528,10 @@ export function PlanMeter({ credentialId, mode, title = "Claude subscription pla
   } else if (error) {
     body = <p className="help" style={{ margin: "4px 0" }}>Plan meter not reachable — {error}. {refreshButton}</p>;
   } else if (data && !data.available) {
-    body = <p className="help" style={{ margin: "4px 0" }}>Plan meter unavailable — {data.reason}. {refreshButton}</p>;
+    body = <p className="help" style={{ margin: "4px 0" }}>
+      Plan meter {data.retry_after_s ? "paused" : "unavailable"} — {data.reason}
+      {!data.retry_after_s && <>. {refreshButton}</>}
+    </p>;
   } else if (data) {
     const verdict = planVerdict(data.windows);
     body = (
@@ -579,11 +587,14 @@ export function PlanMeterCompact({ credentialId, mode, auto = true }: {
   if (!active) return <button type="button" className="linkish" onClick={() => setArmed(true)}>read plan</button>;
   if (!data && !error) return <span className="help">reading…</span>;
   if (error || (data && !data.available)) {
+    const waiting = !!data?.retry_after_s;
     return (
       <span className="plan-compact">
         <span>
-          unavailable{" "}
-          <button type="button" className="linkish" disabled={busy} onClick={refresh}>{busy ? "reading…" : "retry"}</button>
+          {waiting ? "paused" : "unavailable"}{" "}
+          {!waiting && (
+            <button type="button" className="linkish" disabled={busy} onClick={refresh}>{busy ? "reading…" : "retry"}</button>
+          )}
         </span>
         <span className="help">{error ?? data?.reason}</span>
       </span>

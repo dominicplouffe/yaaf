@@ -38,6 +38,10 @@ USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 OAUTH_BETA = "oauth-2025-04-20"
 CACHE_TTL_S = 60
 TIMEOUT_S = 8
+#: What to wait when Anthropic throttles us and does not say for how long, and
+#: the longest we will honour if it does. A meter is worth no retry storm.
+DEFAULT_BACKOFF_S = 300
+MAX_BACKOFF_S = 3600
 
 #: The windows worth a bar, in the order a reader wants them: the one that
 #: resets soonest first. Keys not listed here are ignored rather than shown
@@ -68,6 +72,11 @@ WINDOW_LABELS = {
 _cache: dict[str, tuple[float, dict]] = {}
 _lock = threading.Lock()
 _inflight: dict[str, threading.Lock] = {}
+#: When a throttled token may be asked again, by digest. Separate from the
+#: cache because it outlives the reading's own minute and because a *forced*
+#: refresh must respect it too: the retry button, pressed through a rate limit,
+#: is the thing keeping the rate limit alive.
+_backoff: dict[str, float] = {}
 #: Which token a credential was last seen holding, so `cached` can find a
 #: reading without being handed the value (its callers deliberately have none).
 _token_of: dict[str, str] = {}
@@ -154,7 +163,17 @@ def fetch(token: str) -> dict:
         return _unavailable("Anthropic rejected this token — it may be expired or revoked; "
                             "rotate it in Settings")
     if response.status_code == 429:
-        return _unavailable("Anthropic is throttling the meter itself; try again in a minute")
+        # Anthropic usually says how long to wait, and it is not a minute — the
+        # reading that found this asked for 553 seconds. Polling through that
+        # window is what turns a nine-minute pause into a meter that never
+        # comes back, so the wait is carried out of here and honoured.
+        wait = _retry_after(response.headers.get("retry-after"))
+        minutes = max(1, round(wait / 60))
+        return {**_unavailable(
+            f"Anthropic is rate-limiting the usage endpoint — it asked us to wait about "
+            f"{minutes} minute{'' if minutes == 1 else 's'}, so the meter is paused until "
+            f"then. Nothing is wrong with the credential and no run is affected."),
+            "retry_after_s": wait}
     if response.status_code != 200:
         return _unavailable(f"unexpected response from Anthropic ({response.status_code})")
     try:
@@ -169,6 +188,27 @@ def fetch(token: str) -> dict:
                             "may have changed")
     return {"available": True, "reason": None, "windows": windows,
             "fetched_at": _now_iso()}
+
+
+def _retry_after(header: str | None) -> int:
+    """`Retry-After` in seconds, however it was sent, clamped to something sane.
+
+    The header is either a count of seconds or an HTTP-date. A value we cannot
+    read is not a licence to keep asking, so it falls back to the default wait
+    rather than to zero.
+    """
+    if header:
+        try:
+            return max(1, min(MAX_BACKOFF_S, int(float(header))))
+        except ValueError:
+            try:
+                from email.utils import parsedate_to_datetime
+
+                delta = (parsedate_to_datetime(header) - datetime.now(UTC)).total_seconds()
+                return max(1, min(MAX_BACKOFF_S, int(delta)))
+            except Exception:
+                pass
+    return DEFAULT_BACKOFF_S
 
 
 def _unavailable(reason: str) -> dict:
@@ -205,6 +245,12 @@ def reading(credential_id: str, mode: str | None, token: str, *, refresh: bool =
     with _lock:
         _token_of[credential_id] = key
         hit = _cache.get(key)
+        # Checked before `usable`, and so before `refresh` gets a say: when
+        # Anthropic has asked for a wait, nobody on this server gets to ignore
+        # it — not the poll, and not the reader pressing retry.
+        paused = _backoff.get(key)
+        if paused is not None and time.monotonic() < paused and hit is not None:
+            return {**hit[1], "cached": True}
         if usable(hit):
             return {**hit[1], "cached": True}
         gate = _inflight.setdefault(key, threading.Lock())
@@ -217,6 +263,11 @@ def reading(credential_id: str, mode: str | None, token: str, *, refresh: bool =
         with _lock:
             # Stamped after the fetch, so a slow answer is not already half expired.
             _cache[key] = (time.monotonic(), fresh)
+            wait = fresh.get("retry_after_s")
+            if wait:
+                _backoff[key] = time.monotonic() + wait
+            else:
+                _backoff.pop(key, None)
     return {**fresh, "cached": False}
 
 
