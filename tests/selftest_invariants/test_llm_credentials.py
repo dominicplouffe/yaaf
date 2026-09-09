@@ -324,6 +324,102 @@ METER = {
 }
 
 
+def test_rows_arriving_together_on_one_token_ask_once(monkeypatch):
+    """The gate is keyed by token, so a poll that lands mid-fetch waits for
+    that answer rather than starting a second one against the same account.
+
+    Threads and a deliberately slow fetch, because the property only exists
+    under concurrency — sequentially the cache alone would hide the bug.
+    """
+    import threading
+    import time as time_module
+
+    from yaaf.core import plan_usage
+
+    calls: list[str] = []
+    gate = threading.Barrier(4)
+
+    def slow_fetch(token):
+        calls.append(token)
+        time_module.sleep(0.05)
+        return {"available": True, "reason": None, "windows": [],
+                "fetched_at": "2026-09-08T00:00:00Z"}
+
+    monkeypatch.setattr(plan_usage, "fetch", slow_fetch)
+    monkeypatch.setattr(plan_usage, "_cache", {})
+    monkeypatch.setattr(plan_usage, "_token_of", {})
+    monkeypatch.setattr(plan_usage, "_inflight", {})
+
+    def poll(credential_id):
+        gate.wait()
+        plan_usage.reading(credential_id, "subscription", "sk-ant-oat01-shared")
+
+    threads = [threading.Thread(target=poll, args=(f"secr_row_{n}",)) for n in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert calls == ["sk-ant-oat01-shared"]
+    # And every one of them got the answer, not just the thread that asked.
+    for n in range(4):
+        assert plan_usage.cached(f"secr_row_{n}") is not None
+
+
+def test_one_subscription_behind_many_credentials_is_read_once(client, monkeypatch):
+    """The rate limit is on the account, so the cache must be on the token.
+
+    Promoting per-project keys made one subscription routinely sit behind
+    several credential rows. Keyed by credential, each row asked Anthropic for
+    the same account's meter every minute, Anthropic answered 429, and every
+    row on that token went unavailable together.
+    """
+    import httpx
+
+    from yaaf.core import plan_usage
+
+    token = "sk-ant-oat01-one-subscription-many-rows"
+    rows = [create(client, f"Copy {n}", value=token, mode="subscription") for n in range(3)]
+    other = create(client, "A different subscription", mode="subscription",
+                   value="sk-ant-oat01-a-genuinely-different-token")
+    calls: list[str] = []
+
+    def fake_get(url, headers=None, timeout=None, **_):
+        calls.append(headers["Authorization"])
+        return _Response(200, METER)
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    monkeypatch.setattr(plan_usage, "_cache", {})
+    monkeypatch.setattr(plan_usage, "_token_of", {})
+
+    for row in rows:
+        answer = client.get(f"{URL}/{row['id']}/usage", headers=ADMIN)
+        assert answer.status_code == 200, answer.text
+        assert answer.json()["available"] is True
+    # Three rows, three screens, one subscription — one question.
+    assert calls == [f"Bearer {token}"]
+    # A different subscription is a different meter and still gets asked.
+    assert client.get(f"{URL}/{other['id']}/usage", headers=ADMIN).status_code == 200
+    assert len(calls) == 2
+
+    # A refresh a human presses is a question they meant to ask, so it still
+    # asks. What must not multiply is rows *arriving together* — which is what
+    # the every-minute poll does, and what the gate is for.
+    before = len(calls)
+    assert client.get(f"{URL}/{rows[0]['id']}/usage?refresh=true", headers=ADMIN).status_code == 200
+    assert len(calls) == before + 1
+
+    # Rotating one row changes only that row's token. The other two still hold
+    # the old one, and their meter is still exactly the reading on file.
+    assert client.patch(f"{URL}/{rows[0]['id']}", headers=ADMIN,
+                        json={"name": "Copy 0", "value": "sk-ant-oat01-rotated-away"}
+                        ).status_code == 200
+    before = len(calls)
+    assert client.get(f"{URL}/{rows[1]['id']}/usage", headers=ADMIN).json()["cached"] is True
+    assert len(calls) == before
+    assert client.get(f"{URL}/{rows[0]['id']}/usage", headers=ADMIN).json()["available"] is True
+    assert calls[-1] == "Bearer sk-ant-oat01-rotated-away"
+
+
 def test_plan_meter_is_read_with_the_token_and_returns_only_percentages(client, monkeypatch):
     import httpx
 

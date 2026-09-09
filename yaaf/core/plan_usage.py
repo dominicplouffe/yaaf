@@ -14,8 +14,10 @@ Two rules follow from "undocumented":
   is enforced from yaaf's own ledger; this module only reports what Anthropic
   says is left. An endpoint that vanishes takes a number off a screen, not a
   refusal out of the platform.
-- **It is cached and it degrades.** One reading per credential per minute, and
-  every failure is a sentence the screen can show rather than an error page.
+- **It is cached and it degrades.** One reading per *token* per minute — the
+  unit Anthropic rate-limits, which is not the unit this platform stores, since
+  one subscription can sit behind many credential rows — and every failure is a
+  sentence the screen can show rather than an error page.
 
 API keys have no plan meter — each call is billed in dollars — so the reading
 for one says so instead of pretending to measure anything.
@@ -23,6 +25,7 @@ for one says so instead of pretending to measure anything.
 
 from __future__ import annotations
 
+import hashlib
 import threading
 import time
 from datetime import UTC, datetime
@@ -46,12 +49,33 @@ WINDOW_LABELS = {
     "seven_day_sonnet": "This week, Sonnet",
 }
 
+#: Readings, and the one fetch in flight, keyed by **token** rather than by
+#: credential — because that is what Anthropic rate-limits.
+#:
+#: Keying by credential id was right until credentials moved above projects.
+#: That migration made one row per historical key, so a single subscription
+#: routinely sits behind several rows; on the install that found this, 33 rows
+#: were 6 tokens, and the 11 the screen was polling were 4. Each row had its
+#: own cache entry and its own gate, so one subscription was asked two or three
+#: times a minute by what Anthropic sees as one subscriber hammering an
+#: undocumented endpoint. It answered 429 — and because the limit is on the
+#: account, every row sharing that token went unavailable together, which reads
+#: on screen as "the meter is broken" rather than "you asked three times".
+#:
+#: The key is a digest, not the token: this is a process-global dict, and a
+#: dict whose keys are credential values is one traceback away from printing
+#: them.
 _cache: dict[str, tuple[float, dict]] = {}
 _lock = threading.Lock()
-#: One fetch in flight per credential. Every screen polls on the same minute,
-#: so when the cache expires they all arrive together; the first one asks
-#: Anthropic and the rest wait for its answer instead of asking again.
 _inflight: dict[str, threading.Lock] = {}
+#: Which token a credential was last seen holding, so `cached` can find a
+#: reading without being handed the value (its callers deliberately have none).
+_token_of: dict[str, str] = {}
+
+
+def fingerprint(token: str) -> str:
+    """The cache key for a token. One-way, and never returned to a caller."""
+    return hashlib.sha256(token.encode()).hexdigest()
 
 
 def _now_iso() -> str:
@@ -163,42 +187,62 @@ def reading(credential_id: str, mode: str | None, token: str, *, refresh: bool =
                 "reason": "API keys are metered per call in dollars, not against a plan — "
                           "the monthly budget below is the meter that applies",
                 "windows": [], "fetched_at": _now_iso(), "cached": False}
+    key = fingerprint(token)
+    asked_at = time.monotonic()
+
     def usable(hit: tuple[float, dict] | None) -> bool:
-        # A forced refresh always asks again; the gate below means it still
-        # asks one at a time, and a poll that lands while it is asking waits
-        # for that answer instead of starting a second.
-        return hit is not None and not refresh and time.monotonic() - hit[0] < CACHE_TTL_S
+        if hit is None:
+            return False
+        if refresh:
+            # A forced refresh wants a reading newer than the moment it asked
+            # — not necessarily one of its own. Three rows on one subscription
+            # refreshed together used to mean three calls; now the first one
+            # asks and the others accept its answer, which is the same number
+            # they would have got.
+            return hit[0] > asked_at
+        return time.monotonic() - hit[0] < CACHE_TTL_S
 
     with _lock:
-        hit = _cache.get(credential_id)
+        _token_of[credential_id] = key
+        hit = _cache.get(key)
         if usable(hit):
             return {**hit[1], "cached": True}
-        gate = _inflight.setdefault(credential_id, threading.Lock())
+        gate = _inflight.setdefault(key, threading.Lock())
     with gate:
         with _lock:
-            hit = _cache.get(credential_id)
+            hit = _cache.get(key)
             if usable(hit):
                 return {**hit[1], "cached": True}
         fresh = fetch(token)
         with _lock:
             # Stamped after the fetch, so a slow answer is not already half expired.
-            _cache[credential_id] = (time.monotonic(), fresh)
+            _cache[key] = (time.monotonic(), fresh)
     return {**fresh, "cached": False}
 
 
 def cached(credential_id: str) -> dict | None:
     """The last reading if a screen took one in the last minute, else None.
     For callers — a draft, a tool preview — that want the number if it is
-    lying around and must not spend a network call to get it."""
+    lying around and must not spend a network call to get it.
+
+    A credential nobody has read yet has no token on file, so this says None
+    rather than decrypting one to find out: the whole promise of this function
+    is that it costs nothing."""
     with _lock:
-        hit = _cache.get(credential_id)
+        key = _token_of.get(credential_id)
+        hit = _cache.get(key) if key else None
     if hit and time.monotonic() - hit[0] < CACHE_TTL_S:
         return hit[1]
     return None
 
 
 def forget(credential_id: str) -> None:
-    """Drop a cached reading — after a rotation, the old token's meter is
-    nobody's meter."""
+    """After a rotation this credential holds a different token, so forget
+    which one it was and let the next read fingerprint it again.
+
+    The *reading* stays. It is filed under the old token, and any other
+    credential still holding that token still has exactly that meter — a
+    rotation here is not news about somebody else's subscription. An entry
+    nothing points at any more expires on its own within the minute."""
     with _lock:
-        _cache.pop(credential_id, None)
+        _token_of.pop(credential_id, None)
