@@ -209,7 +209,8 @@ class Recorded:
     def __init__(self) -> None:
         self.calls: list[dict] = []
 
-    def __call__(self, session, project, subject, body, *, kind=None, data=None):  # noqa: ARG002
+    def __call__(self, session, project, subject, body, *, attention,
+                 kind=None, data=None):  # noqa: ARG002
         self.calls.append({"subject": subject, "body": body, "kind": kind, "data": data or {}})
 
     def of(self, kind: str) -> list[dict]:

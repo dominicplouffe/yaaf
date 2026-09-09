@@ -20,6 +20,38 @@ That secret is deliberately NOT the `webhook_secret` the inbound connectors use.
 That one authenticates senders TO yaaf; this one authenticates yaaf to a
 receiver. Different directions and different parties, so losing one must not
 hand over the other.
+
+## What earns an email
+
+Every notice used to become an email, which made the inbox the one surface in
+this system with no theory of whose news is whose. The briefing has had one for
+as long as it has existed — `LINE_OWNER` files each line against the autonomy
+dial, so a chairman who set `scope_authority: ceo` reads "the CEO handled this
+itself" instead of a management report. The mail path ignored that setting
+entirely and shouted every delegated decision at him anyway. One briefing
+window in this repo's own record (see `briefing._ordered`) held "20
+deliverables published" and "the CEO exercised 26 decisions" — two lines in the
+brief, and forty-six separate emails in the inbox.
+
+So a notice now names how much of the chairman's attention it is asking for,
+and that is what decides the inbox:
+
+* `Attention.ALARM` — the project stopped, or is about to. Always mails, never
+  capped, because the failure mode of a missed alarm is a project sitting dead
+  for a week.
+* `Attention.ACTION` — the chairman is himself the blocker: something is waiting on
+  a decision only he can make. Mails, but spends against a daily budget.
+* `Attention.BRIEF` — the daily letter. Always mails. It is the digest that makes
+  the alarms legible, and capping the thing that summarises everything else
+  would be exactly backwards.
+* `Attention.FYI` — a record of something the platform or the CEO already did.
+  Never mails. It is not dropped: the webhook still carries it, the boardroom
+  and the audit log still hold it, and the daily brief already reports it in
+  batched form. This is the class that was drowning the inbox.
+
+The webhook is deliberately exempt from all of this. It is a machine receiver
+that routes on `kind`, it is not the party who is drowning, and muting it would
+silently break integrations that are counting on a complete stream.
 """
 
 from __future__ import annotations
@@ -30,22 +62,65 @@ import json
 import logging
 import smtplib
 import urllib.request
+from datetime import timedelta
 from email.message import EmailMessage
+from enum import StrEnum
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from yaaf.core import ids
 from yaaf.core.config import settings
 from yaaf.core.models import (
+    AuditLog,
     Channel,
     ChannelKind,
     Message,
     Project,
     User,
+    utcnow,
 )
 
 log = logging.getLogger("yaaf.notify")
+
+
+class Attention(StrEnum):
+    """How much of the chairman a notice is asking for, which is what decides
+    whether it becomes an email.
+
+    Named rather than boolean because the call site is where the judgement
+    actually lives, and a bare `mail=False` at thirty-five call sites would
+    have told the next reader nothing about why this one is quiet and that one
+    is not.
+    """
+
+    #: The project stopped or is about to. Uncapped.
+    ALARM = "alarm"
+    #: Something is waiting on a decision only the chairman can make. Capped.
+    ACTION = "action"
+    #: The daily letter itself. Uncapped.
+    BRIEF = "brief"
+    #: A record of something already done. Never mails.
+    FYI = "fyi"
+
+
+#: The classes that reach the inbox at all.
+MAILED = frozenset({Attention.ALARM, Attention.ACTION, Attention.BRIEF})
+
+#: The classes that spend against the daily budget. An alarm means the project
+#: is not working; rationing those would be rationing the one message that says
+#: so. The brief is one a day by construction and is where the held-back ones
+#: are read anyway.
+BUDGETED = frozenset({Attention.ACTION})
+
+#: The audit action that records a spend. In the audit log rather than a column
+#: because the budget is a cadence, and this repo already keeps nag cadences
+#: there (`_nagged_within`) — it wants to be readable as a record either way.
+MAIL_SPEND = "chairman.mailed"
+
+#: And the mirror: what the budget held back, so a chairman who wonders why an
+#: inbox went quiet can find the answer rather than infer it.
+MAIL_HELD = "chairman.mail_held"
 
 
 def boardroom_line(session: Session, project_id: str, body: str) -> None:
@@ -72,9 +147,75 @@ def boardroom_line(session: Session, project_id: str, body: str) -> None:
     ))
 
 
+def _mail_budget(session: Session, project: Project) -> int | None:
+    """The project's daily ration of chairman email, or None for unlimited.
+
+    Read from the constitution rather than a module constant because it is a
+    rule about what the platform may do to a human, and every one of those in
+    this system is his to set and his to turn off. Failure to read it is not a
+    licence to flood: an unreadable constitution falls back to the schema
+    default, which is the same number a new project gets.
+    """
+    from yaaf.core.constitution import ConstitutionDoc, effective
+
+    try:
+        limit = effective(session, project.id).mail_max_per_day
+    except LookupError:
+        limit = ConstitutionDoc.model_fields["mail_max_per_day"].default
+    return None if limit <= 0 else limit
+
+
+def _spend_mail_budget(session: Session, project: Project, attention: Attention,
+                       subject: str) -> bool:
+    """Whether this notice may take an inbox slot today, recording either way.
+
+    The window is the rolling 24 hours rather than the calendar day, because a
+    calendar reset is a cliff a busy project walks off at midnight: a chairman
+    who has been chased five times by 23:00 would get five more before he woke
+    up. Rolling means the ration refills the way he actually reads.
+
+    Held is not dropped. The substance of every ACTION notice is a *wait* —
+    scope to accept, a verdict to record, an approval to sign — and the daily
+    brief already renders every one of those live, from state, in its "waiting
+    on you" section. So the chairman loses the interrupt, never the news; the
+    audit row is here so that even the interrupt is recoverable.
+    """
+    if attention not in BUDGETED:
+        return True
+    limit = _mail_budget(session, project)
+    if limit is None:
+        return True
+    spent = session.execute(
+        select(func.count(AuditLog.id)).where(
+            AuditLog.project_id == project.id,
+            AuditLog.action == MAIL_SPEND,
+            AuditLog.at >= utcnow() - timedelta(hours=24),
+        )
+    ).scalar_one()
+    allowed = spent < limit
+    session.add(AuditLog(
+        id=ids.new_id(ids.AUDIT), project_id=project.id, actor="system:notify",
+        action=MAIL_SPEND if allowed else MAIL_HELD, entity="project",
+        entity_id=project.id,
+        detail={"subject": subject[:200], "attention": str(attention), "limit": limit},
+    ))
+    if not allowed:
+        log.info("held chairman mail for %s (%d/day spent): %s",
+                 project.slug, limit, subject)
+    return allowed
+
+
 def chairman_notify(session: Session, project: Project, subject: str, body: str,
-                    *, kind: str | None = None, data: dict | None = None) -> None:
+                    *, attention: Attention, kind: str | None = None,
+                    data: dict | None = None) -> None:
     """Send subject/body to the project's chairman via every configured channel.
+
+    `attention` says how much of the chairman is being asked for (see the module
+    docstring) and therefore whether this becomes an email. It has no default on
+    purpose: the next person to add a notice has to decide which of the four it
+    is, and a default would have let them decide by not thinking about it —
+    which is how the inbox got here. `tests/selftest_invariants/
+    test_chairman_mail.py` refuses a call site that omits it.
 
     Delivery happens on a fire-and-forget thread: SMTP and webhook I/O carry
     15s timeouts each, and several agent request handlers call this with a DB
@@ -82,9 +223,19 @@ def chairman_notify(session: Session, project: Project, subject: str, body: str,
     request worker. Everything the thread needs is resolved from the session
     BEFORE it starts; the thread itself never touches the database."""
     chairman = session.get(User, project.chairman_user_id)
-    log.info("chairman notify [%s] %s: %s", project.slug, subject, body)
+    log.info("chairman notify [%s] (%s) %s: %s", project.slug, attention, subject, body)
     cfg = settings()
-    email = chairman.email if chairman is not None else None
+    # Resolved here, not in the thread — and gated here, not in the thread,
+    # because the budget is a database read and the thread never touches it.
+    #
+    # The ration is only spent by a notice that could actually have interrupted
+    # him. A deployment with no SMTP host, or a project whose chairman has no
+    # address, is not sending anything to ration — charging it would fill the
+    # audit log with mail nobody got and then hold back the first notice that
+    # someone finally configured a mailbox for.
+    address = chairman.email if chairman is not None else None
+    email = (address if cfg.smtp_host and address and attention in MAILED
+             and _spend_mail_budget(session, project, attention, subject) else None)
     slug = project.slug
     # Resolved here, not in the thread: the thread never touches the database.
     integrations = project.integrations or {}

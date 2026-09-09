@@ -336,6 +336,27 @@ and a narrative sitting on top of them restated their own counts back at them.
   email; the read mark runs from the last time you said you had read one. The
   mail cannot eat the story the next read was going to tell.
 
+**The inbox — only what needs you.** Every notice the platform raises names how
+much of you it is asking for, and only two of the four kinds interrupt you: an
+**alarm** (the project paused, a promise broken, a billing credential dead)
+always, and an **action** (an approval to sign, a verdict only you can record,
+scope to accept) up to `mail_max_per_day` in a rolling 24 hours — five by
+default. A **notice of something already done** — a deliverable published, a
+cycle closed, a decision the CEO took under authority you gave it — is never
+mailed at all. It is on the webhook, it is in the audit log, and the briefing
+above already reports it *batched*: one briefing window in this project's own
+record held "20 deliverables published" and "the CEO exercised 26 decisions" —
+two lines there, and forty-six separate emails before this change.
+
+This is the autonomy dial finally reaching the one surface that ignored it. The
+briefing has filed every line against the dial since it shipped — a chairman
+who handed over scope reads "the CEO handled this itself" instead of a
+management report — while the mail path shouted every delegated decision at him
+anyway. A decision you delegated is not news. Holding an **action** notice
+costs you the interrupt and never the news: everything in that class is a
+*wait*, and the brief renders every open wait live in its "waiting on you"
+section. Both what was sent and what was held are on the record.
+
 **The agenda — what it is going to do next.** A fourteen-day strip on each
 project's Overview (and `yaaf agenda`): the wall-clock wakes, the standing
 review, the cycle roll, bet kill dates, approval and spot-check expiries, the

@@ -334,6 +334,43 @@ def test_a_supervised_verdict_is_still_chased(client):
             _desk(client, live=True)["projects"][0]["awaiting_you"]["verdicts"]] == ["R-10"]
 
 
+def test_many_verdicts_are_one_mail_and_still_one_audit_row_each(client, monkeypatch):
+    """Six requirements waiting is six things to rule on and ONE interruption.
+
+    `nag_proposals` learned this already and says so in its own docstring:
+    a planning run moves scope in bulk, and eight emails for eight requirements
+    is how a chairman learns to filter the sender. The verdict nag was the last
+    per-item chase left and the worst of them, because it repeats every day
+    until he rules — six open verdicts meant six emails a morning, forever.
+
+    The per-requirement audit rows stay per requirement: each one enters
+    checking on its own day, and a single shared stamp would let the first one
+    chased silence next week's arrivals for a day.
+    """
+    from yaaf.server import janitor as janitor_module
+
+    sent: list[str] = []
+    monkeypatch.setattr(janitor_module, "chairman_notify",
+                        lambda session, proj, subject, body, **kw:
+                        sent.append(subject) if "verdict" in subject else None)
+
+    project = make_project(client, slug="supervised")
+    with db_session() as session:
+        for n in range(6):
+            session.add(Requirement(
+                id=ids.new_id(ids.REQUIREMENT), project_id=project["id"], key=f"R-2{n}",
+                statement=f"Observable number {n} is published and reachable.",
+                acceptance_test={"type": "observable",
+                                 "target": f"https://example.org/n{n}"},
+                status=RequirementStatus.CHECKING, stage=1, est_runs=4,
+            ))
+    with db_session() as session:
+        janitor_once(session)
+
+    assert sent == ["6 requirements are waiting on your verdict"], sent
+    assert len(_notices(project["id"], "requirement.verdict_nag")) == 6
+
+
 def test_a_project_dashboard_carries_yesterday_as_a_pair(client):
     """The desk stopped drawing "spent money, verified nothing" as a card,
     because it is not a decision the chairman makes — it moved to the project's

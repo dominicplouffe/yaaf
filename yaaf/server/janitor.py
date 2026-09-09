@@ -82,7 +82,7 @@ from yaaf.core.models import (
 )
 from yaaf.server import asks as ask_lib
 from yaaf.server import briefing, metrics, policy
-from yaaf.server.notify import boardroom_line, chairman_notify
+from yaaf.server.notify import Attention, boardroom_line, chairman_notify
 from yaaf.server.rows import approval_row
 from yaaf.server.verifier import verify_pending_evidence
 
@@ -292,6 +292,7 @@ def send_daily_brief(session: Session, project: Project) -> bool:
         session, project,
         f"briefing — {brief['headline'][:100]}",
         briefing.render_text(brief),
+        attention=Attention.BRIEF,
     )
     log.info("sent the daily briefing for %s", project.slug)
     return True
@@ -519,6 +520,7 @@ def check_commitments(session: Session, project: Project, cons: ConstitutionDoc)
             f"Every requirement in scope is true — {len(scope_keys)} requirement(s), "
             f"promised by {commitment.deliver_by:%Y-%m-%d}, finished "
             f"{now:%Y-%m-%d %H:%M} UTC.",
+            attention=Attention.FYI,
         )
     elif status == CommitmentStatus.BREACHED:
         commitment.status_reason = (
@@ -537,6 +539,7 @@ def check_commitments(session: Session, project: Project, cons: ConstitutionDoc)
             f"The promised date {commitment.deliver_by:%Y-%m-%d} has passed with "
             f"{projection['remaining']} requirement(s) still open; {landing}. "
             "New scope is frozen. " + _slip_moves_for_chairman(cons),
+            attention=Attention.ALARM,
         )
     elif status == CommitmentStatus.AT_RISK:
         days = max(1, (projected - commitment.deliver_by).days)
@@ -553,6 +556,7 @@ def check_commitments(session: Session, project: Project, cons: ConstitutionDoc)
             f"The projection now lands about {projected:%Y-%m-%d} against the promised "
             f"{commitment.deliver_by:%Y-%m-%d} ({basis['note']}).{ground}\n\n"
             "New scope is frozen for the CEO. " + _slip_moves_for_chairman(cons),
+            attention=Attention.ACTION,
         )
     else:  # recovered to ACCEPTED
         commitment.status_reason = None
@@ -843,6 +847,7 @@ def roll_cycles(session: Session, project: Project, cons: ConstitutionDoc) -> No
                         "goal": cycle.goal,
                         "opened_at": cycle.opened_at.isoformat() if cycle.opened_at else None,
                         "closed_at": now.isoformat()}},
+        attention=Attention.FYI,
     )
 
     # Two consecutive cycles with nothing made true pause the project: a
@@ -869,6 +874,7 @@ def roll_cycles(session: Session, project: Project, cons: ConstitutionDoc) -> No
                 "nothing made true. The platform paused the project rather than "
                 "billing you for a third. Resume from the project page when you have "
                 "decided what changes — the next cycle opens on resume.",
+                attention=Attention.ALARM,
             )
             log.warning("project %s paused: two skipped cycles", project.slug)
             return
@@ -997,6 +1003,7 @@ def check_explore_deadline(session: Session, project: Project) -> None:
         "Your call, as it always was: stop it, extend the window (set a new date in "
         "Settings), or convert what worked into a Deliver project with real "
         "requirements. The project keeps working until you decide.",
+        attention=Attention.ALARM,
     )
 
 
@@ -1074,7 +1081,7 @@ def check_delivery_ready(session: Session, project: Project) -> None:
         "Nothing will run until you do: a delivered project stops waking for its "
         "own agents' traffic, so it is not spending while it waits."
     )
-    chairman_notify(session, project, "ready to complete", body)
+    chairman_notify(session, project, "ready to complete", body, attention=Attention.ACTION)
     boardroom_line(session, project.id, body)
     _notice_ceo(
         session, project, NoticeKind.DELIVERY_READY,
@@ -1299,6 +1306,7 @@ def open_reviews(session: Session, project: Project, cons: ConstitutionDoc) -> R
         "reword, move the date, raise the budget, and accept the slip; each is "
         "recorded with your reason and shown at the next review beside what it "
         "bought.",
+        attention=Attention.ACTION,
     )
     _notice_ceo(
         session, project, NoticeKind.REVIEW_OPENED,
@@ -1334,6 +1342,7 @@ def nag_reviews(session: Session, project: Project) -> None:
                " (the CEO has not filed its narrative yet)")
             + ". The project keeps working either way — but decisions deferred "
               "are decisions the arithmetic makes for you.",
+            attention=Attention.ACTION,
         )
         review.nag_sent_at = now
     elif review.escalated_at is None and age_hours >= REVIEW_ESCALATE_HOURS:
@@ -1342,6 +1351,7 @@ def nag_reviews(session: Session, project: Project) -> None:
             "This is the second reminder; there will not be a third. Close it with "
             "no decisions if that is the decision — an explicit 'no change' is a "
             "record, an open meeting is a hole.",
+            attention=Attention.ACTION,
         )
         review.escalated_at = now
         session.add(AuditLog(
@@ -1405,6 +1415,7 @@ def draw_audit_samples(session: Session, project: Project, cons: ConstitutionDoc
                 f"Confirm or fail it on the Work screen within "
                 f"{cons.audit_response_hours}h; after that it is recorded as "
                 "'not reviewed' and nothing blocks either way.",
+                attention=Attention.FYI,
             )
     return drawn
 
@@ -1797,6 +1808,7 @@ def nag_approvals(session: Session, project: Project, cons: ConstitutionDoc) -> 
             f"the timeout decision is {cons.approval_timeout_decision.upper()}. "
             f"Decide it in the approvals inbox.\n\n{approval.body[:2000]}",
             kind="approval_expiring", data={"approval": approval_row(approval)},
+            attention=Attention.ACTION,
         )
         approval.nag_sent_at = utcnow()
         nagged += 1
@@ -1829,6 +1841,7 @@ def expire_approvals(session: Session, project: Project, cons: ConstitutionDoc) 
             f"'{approval.title}' expired at {now:%Y-%m-%d %H:%M} UTC without a decision and "
             f"is {'APPROVED' if approve_on_timeout else 'DENIED'} per this constitution.",
             kind="approval_expired", data={"approval": approval_row(approval)},
+            attention=Attention.FYI,
         )
         _notice_agent(
             session, project, approval.requested_by_agent_id, NoticeKind.APPROVAL_EXPIRED,
@@ -1885,6 +1898,7 @@ def nag_asks(session: Session, project: Project) -> int:
             f"Asked {ask.created_at:%Y-%m-%d %H:%M} UTC; it stops waiting at "
             f"{ask.answer_by:%Y-%m-%d %H:%M} UTC.\n\n{ask.body[:2000]}\n\n"
             f"If you say nothing, it will: {ask.default_action}",
+            attention=Attention.ACTION,
         )
         ask.nag_sent_at = now
         nagged += 1
@@ -2175,6 +2189,7 @@ def enforce_budget(session: Session, project: Project, cons: ConstitutionDoc) ->
             "purged. This is the runaway wall rather than the plan — the CEO is "
             "allowed to go over the plan and report, so reaching this means "
             "something else is wrong. Resume from the project page.",
+            attention=Attention.ALARM,
         )
         log.warning("project %s auto-paused: hard stop at %.0f", project.slug, hard_stop)
 
@@ -2487,6 +2502,7 @@ def nag_observable_requirements(
     if policy.ceo_holds(cons, "verdict_policy"):
         return
     cutoff = utcnow() - timedelta(days=1)
+    due, first_for = [], {}
     for req in session.execute(
         select(Requirement).where(Requirement.project_id == project.id,
                                   Requirement.status == RequirementStatus.CHECKING)
@@ -2495,7 +2511,10 @@ def nag_observable_requirements(
             continue
         # The nag's own cadence lives in the audit trail rather than a column:
         # it is the same "told once, then once a day" shape as the completion
-        # receipt, and it wants to be readable as a record either way.
+        # receipt, and it wants to be readable as a record either way. Kept per
+        # requirement even though the mail is now one: each requirement enters
+        # checking on its own day, and a shared stamp would mean the first one
+        # to be chased silenced the next week's arrivals for a day.
         sent = session.execute(
             select(func.count(AuditLog.id)).where(
                 AuditLog.project_id == project.id,
@@ -2505,7 +2524,7 @@ def nag_observable_requirements(
         ).scalar_one()
         if sent:
             continue
-        first = not session.execute(
+        first_for[req.id] = not session.execute(
             select(func.count(AuditLog.id)).where(
                 AuditLog.project_id == project.id,
                 AuditLog.action == "requirement.verdict_nag",
@@ -2514,20 +2533,39 @@ def nag_observable_requirements(
         session.add(AuditLog(
             id=ids.new_id(ids.AUDIT), project_id=project.id, actor="system:janitor",
             action="requirement.verdict_nag", entity="requirement", entity_id=req.id,
-            detail={"key": req.key, "first": first},
+            detail={"key": req.key, "first": first_for[req.id]},
         ))
-        chairman_notify(
-            session, project, f"{req.key} is waiting on your verdict",
-            f"{req.key} — {req.statement}\n\n"
-            "Its acceptance test is one the platform cannot run: "
-            f"{(req.acceptance_test or {}).get('target', 'an observable outcome')}.\n\n"
-            "Nothing downstream of it can start until you rule. Open the Plan tab and "
-            "record met or not met."
-            + ("" if first else "\n\nThis is a repeat — it has been waiting since it "
-                                "entered checking."),
-        )
-        log.info("nagged chairman on observable requirement %s (%s)",
-                 req.key, project.slug)
+        due.append(req)
+    if not due:
+        return
+
+    # One mail for the batch, for the reason `nag_proposals` already gives a
+    # few hundred lines down: a planning run puts requirements into checking in
+    # bulk, and eight emails for eight requirements is how a chairman learns to
+    # filter the sender. The verdict nag was the last per-item one left, and it
+    # was the worst of them — it fires once a day, forever, until he rules.
+    detail = "\n\n".join(
+        f"  {req.key} — {req.statement}\n"
+        f"  test: {(req.acceptance_test or {}).get('target', 'an observable outcome')}"
+        + ("" if first_for[req.id] else "\n  (a repeat — waiting since it entered checking)")
+        for req in due
+    )
+    subject = (f"{due[0].key} is waiting on your verdict" if len(due) == 1
+               else f"{len(due)} requirements are waiting on your verdict")
+    chairman_notify(
+        session, project, subject,
+        f"{_plural_reqs(len(due))} reached an acceptance test the platform cannot "
+        f"run, so the verdict is yours:\n\n{detail}\n\n"
+        "Nothing downstream of them can start until you rule. Open the Plan tab and "
+        "record met or not met.",
+        attention=Attention.ACTION,
+    )
+    log.info("nagged chairman on %d observable requirement(s) (%s)",
+             len(due), project.slug)
+
+
+def _plural_reqs(n: int) -> str:
+    return "One requirement has" if n == 1 else f"{n} requirements have"
 
 
 # Long enough for a planning run to finish proposing. The CEO proposes scope in
@@ -2570,12 +2608,14 @@ def nag_awaiting_chairman(
     """Chase the two waits that had no voice: proposed scope, and a proposed
     delivery date.
 
-    Both were silent in a way that ran exactly backwards. When the dial gives
-    the CEO the signature, the chairman is emailed the moment it signs ("CEO
-    committed to 2026-09-10"). When the chairman holds it — the default — the
+    Both were silent in a way that ran exactly backwards. When the dial gave the
+    CEO the signature, the chairman was emailed the moment it signed ("CEO
+    committed to 2026-09-10"). When the chairman held it — the default — the
     commitment landed as PROPOSED and nothing was sent at all. Proposed scope
-    was never announced under any setting. So yaaf told him when a decision had
-    been taken *for* him, and went quiet when one was waiting *on* him.
+    was never announced under any setting. So yaaf interrupted him when a
+    decision had been taken *for* him, and went quiet when one was waiting *on*
+    him. Both halves are now fixed: these chases exist, and the signing they
+    were the mirror of is an `fyi` that reads in the briefing rather than mail.
 
     Batched per project, because a planning run proposes scope in bulk and
     eight emails for eight requirements is how a chairman learns to filter the
@@ -2613,6 +2653,7 @@ def nag_awaiting_chairman(
                   "of these until you accept them, so the plan they belong to cannot "
                   "start. Open the Plan tab to accept, reword, or decline."
                 + ("" if not ever else "\n\nThis is a repeat — they are still waiting."),
+                attention=Attention.ACTION,
             )
             log.info("nagged chairman on %d proposed requirement(s) (%s)",
                      len(proposed), project.slug)
@@ -2640,6 +2681,7 @@ def nag_awaiting_chairman(
                 "nothing tells you when the date stops holding. Open the Plan tab to "
                 "sign it, or set your own."
                 + ("" if not ever else "\n\nThis is a repeat — it is still unsigned."),
+                attention=Attention.ACTION,
             )
             log.info("nagged chairman on an unsigned commitment (%s)", project.slug)
 
@@ -2705,6 +2747,7 @@ def warn_stall(session: Session, project: Project, cons: ConstitutionDoc) -> Non
         session, project, "the project has gone quiet",
         f"No run has started in {cons.stall_hours:g}h and there is still work open.\n\n"
         f"{brief['headline']} {brief['detail']}",
+        attention=Attention.ALARM,
     )
     log.warning("stall in %s after %sh: %s", project.slug, cons.stall_hours,
                 state["blocked_by"])

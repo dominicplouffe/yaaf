@@ -578,7 +578,7 @@ def _flag_credential_failure(session: Session, project: Project, run: Run) -> No
     from datetime import timedelta
 
     from yaaf.core.models import AuditLog
-    from yaaf.server.notify import chairman_notify
+    from yaaf.server.notify import Attention, chairman_notify
 
     session.add(AuditLog(
         id=ids.new_id(ids.AUDIT), project_id=project.id, actor="runner",
@@ -609,6 +609,7 @@ def _flag_credential_failure(session: Session, project: Project, run: Run) -> No
             "Three consecutive runs failed to authenticate ('Not logged in' / invalid "
             "key). No run can succeed until the credential is fixed. Reconnect billing "
             "in Settings (the 'test' button verifies it), then resume the project.",
+            attention=Attention.ALARM,
         )
         log.warning("project %s auto-paused: credential failures", project.slug)
         return
@@ -633,6 +634,7 @@ def _flag_credential_failure(session: Session, project: Project, run: Run) -> No
             "A run failed with a credential error. If this repeats twice more, the "
             "project will pause itself. Check Settings → billing (the 'test' button "
             "verifies the credential without burning a run).",
+            attention=Attention.FYI,
         )
 
 
@@ -937,7 +939,7 @@ def _block_on_repeated_check_failure(
     """The loop breaker. A task that cannot pass its own success test is not a
     task the claimant can finish by trying harder — it is a question for
     whoever planned it, and on a repeat, for the chairman."""
-    from yaaf.server.notify import chairman_notify
+    from yaaf.server.notify import Attention, chairman_notify
 
     reason = (
         f"Success test failed {task.check_failures} times running (exit "
@@ -997,6 +999,7 @@ def _block_on_repeated_check_failure(
             f"passing it ({', '.join(t.id for t in prior[:5])}). Further tasks carrying "
             f"this check are refused until you intervene.\n\n"
             f"Check: {(task.success_test or {}).get('command', '')[:500]}\n\n{reason}",
+            attention=Attention.ALARM,
         )
 
 

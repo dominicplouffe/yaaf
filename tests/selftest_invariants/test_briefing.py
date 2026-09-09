@@ -278,7 +278,7 @@ def test_the_daily_briefing_fires_once_per_local_day(client, monkeypatch):
     sent: list[tuple[str, str]] = []
     monkeypatch.setattr(
         "yaaf.server.janitor.chairman_notify",
-        lambda session, proj, subject, body: sent.append((subject, body)),
+        lambda session, proj, subject, body, **kw: sent.append((subject, body)),
     )
     assert _fire(project) is True
     assert len(sent) == 1
@@ -302,7 +302,7 @@ def test_the_briefing_reaches_a_project_the_platform_paused(client, monkeypatch)
     sent: list[str] = []
     monkeypatch.setattr(
         "yaaf.server.janitor.chairman_notify",
-        lambda session, proj, subject, body: sent.append(body),
+        lambda session, proj, subject, body, **kw: sent.append(body),
     )
     assert _fire(project) is True
     assert "is paused — budget exhausted" in sent[0]
@@ -319,7 +319,7 @@ def test_a_finished_project_stops_writing(client, monkeypatch):
     sent: list[str] = []
     monkeypatch.setattr(
         "yaaf.server.janitor.chairman_notify",
-        lambda session, proj, subject, body: sent.append(body),
+        lambda session, proj, subject, body, **kw: sent.append(body),
     )
     assert _fire(project) is False
     assert sent == []
@@ -330,7 +330,7 @@ def test_no_time_set_means_no_daily_briefing(client, monkeypatch):
     sent: list[str] = []
     monkeypatch.setattr(
         "yaaf.server.janitor.chairman_notify",
-        lambda session, proj, subject, body: sent.append(body),
+        lambda session, proj, subject, body, **kw: sent.append(body),
     )
     assert _fire(project) is False
     assert sent == []
@@ -349,7 +349,7 @@ def test_the_push_window_is_the_last_push_not_the_last_read(client, monkeypatch)
 
     monkeypatch.setattr(
         "yaaf.server.janitor.chairman_notify",
-        lambda session, proj, subject, body: None,
+        lambda session, proj, subject, body, **kw: None,
     )
     assert _fire(project) is True
 
@@ -378,7 +378,7 @@ def test_the_briefing_is_composed_without_spending_a_run(client, monkeypatch):
     _set_brief_time(client, project, "00:01")
     monkeypatch.setattr(
         "yaaf.server.janitor.chairman_notify",
-        lambda session, proj, subject, body: None,
+        lambda session, proj, subject, body, **kw: None,
     )
     from yaaf.core.models import Run, RunQueue
 
@@ -778,7 +778,7 @@ def test_a_draft_project_never_gets_a_daily_briefing(client, monkeypatch):
     sent: list[str] = []
     monkeypatch.setattr(
         "yaaf.server.janitor.chairman_notify",
-        lambda session, proj, subject, body: sent.append(body),
+        lambda session, proj, subject, body, **kw: sent.append(body),
     )
     assert _fire(project) is False
     assert sent == []

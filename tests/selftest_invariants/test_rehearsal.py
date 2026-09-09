@@ -465,9 +465,9 @@ def test_a_drill_never_delivers_a_notice_to_the_chairman_it_invented(monkeypatch
     raised: list[str] = []
     original = janitor_module.chairman_notify
 
-    def spy(session, project, subject, body):
+    def spy(session, project, subject, body, **kwargs):
         raised.append(subject)
-        return original(session, project, subject, body)
+        return original(session, project, subject, body, **kwargs)
 
     monkeypatch.setattr(janitor_module, "chairman_notify", spy)
 

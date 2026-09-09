@@ -77,7 +77,7 @@ def test_three_credential_failures_pause_the_project(client, monkeypatch):
     project = make_project(client)
     notified: list[str] = []
     monkeypatch.setattr("yaaf.server.notify.chairman_notify",
-                        lambda session, proj, subject, body: notified.append(subject))
+                        lambda session, proj, subject, body, **kw: notified.append(subject))
 
     def fail_once():
         run_id, _ = live_token(project["id"], project["ceo_agent_id"])

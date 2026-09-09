@@ -493,6 +493,21 @@ class ConstitutionDoc(BaseModel):
              "itself, and what is now waiting on you. Composed from the record at zero "
              "tokens, so it arrives on a paused project and a broke one too.")
 
+    # How much of his attention the platform may spend. Every other rule in
+    # this group governs what the *project* may say; this one governs what the
+    # *platform* may, and it needed saying because the platform was the noisier
+    # of the two. It only rations the notices that are waiting on him — an
+    # alarm and this brief are never held, since rationing the message that
+    # says the project stopped is how a project sits dead for a week.
+    mail_max_per_day: int = _rule(
+        5, ge=0, le=100, group="Reporting to you",
+        label="At most this many emails a day",
+        help="Counts only mail waiting on a decision from you, over a rolling 24 hours. "
+             "Past it, the platform stops interrupting and the waits are read in the "
+             "daily briefing instead, which already lists every one of them. Alarms — "
+             "the project paused, a promise broken, a credential dead — are never held. "
+             "0 means no limit.")
+
     # One timezone, read by the reporting window, the daily CEO wake and every
     # recurring rhythm. It used to be set twice — once here and once in project
     # config for the daily wake — which is one place too many to get it wrong.
