@@ -366,11 +366,16 @@ export function LlmCredentials({ onChanged }: { onChanged?: () => void } = {}) {
           onClick={() => setPicked(new Set())}>Clear</button>
       </div>}
 
-      {shown.length > 0 && <table className="cred-table">
+      {shown.length > 0 && <div className="cred-table-wrap"><table className="cred-table">
+        {/* Actions is 212 because that is what its widest row is: Edit,
+            Restore and Delete side by side, with Delete's own gap. Sized to
+            the common two-button row it overflowed the cell — table-layout is
+            fixed, so the buttons hung past the table's edge rather than
+            widening the column. */}
         <colgroup>
           <col style={{ width: 30 }} /><col /><col style={{ width: 118 }} />
           <col style={{ width: 168 }} /><col style={{ width: 152 }} />
-          <col style={{ width: 146 }} />
+          <col style={{ width: 212 }} />
         </colgroup>
         <thead><tr>
           <th className="pick">{selectable.length > 0 && <input type="checkbox"
@@ -432,7 +437,7 @@ export function LlmCredentials({ onChanged }: { onChanged?: () => void } = {}) {
             </tr>;
           })}
         </tbody>
-      </table>}
+      </table></div>}
       {shown.length === 0 && <p className="help">
         {search.trim() ? "No credentials match your search."
           : filter === "hidden" ? "Nothing is hidden."

@@ -665,6 +665,10 @@ table.csv td {
 
 /* ── settings: a rail, because eleven headings is not navigation ── */
 .settings-lay { display: grid; grid-template-columns: 190px 1fr; gap: 24px; margin-top: 4px; }
+/* A grid column is content-sized by default, so one wide table in one section
+   used to stretch the whole settings page past the window instead of scrolling
+   inside its own card. The column stops at its track; the content scrolls. */
+.settings-lay > * { min-width: 0; }
 .srail { display: flex; flex-direction: column; gap: 2px; align-self: start; position: sticky; top: 16px; }
 .srail button {
   text-align: left; background: none; border: 0; border-radius: 6px;
@@ -1412,16 +1416,31 @@ button.rolepick { width: 100%; text-align: left; background: var(--surface-2); }
 .cred-table .plan-compact .plan-verdict { white-space: normal; }
 .cred-table strong { display: inline-block; margin-right: 6px; }
 /* The verbs sit on one line. Three small buttons wrapping into a three-row
-   stack was most of the row height on a list whose whole problem is length. */
+   stack was most of the row height on a list whose whole problem is length.
+   Nowrap only holds if the column is wide enough for the widest set a row can
+   carry — Edit + Restore + Delete, 208px with the gap below. At 146 the third
+   button hung out past the table's right edge, over the page. The Actions col
+   is sized to that set, not to the common two-button case. */
 .llm-credentials .llm-actions { white-space: nowrap; }
 .llm-credentials .llm-actions button { margin: 0 0 0 4px; }
 .llm-credentials .llm-actions button:first-child { margin-left: 0; }
+/* Delete is the one verb here that cannot be undone. It gets its own gap so a
+   fast hand aiming at Restore does not land on it. */
+.llm-credentials .llm-actions button.danger { margin-left: 10px; }
+/* The five sized columns take 680px before the name gets a character, and a
+   name column under ~110px is unreadable. Narrower than the sum, the table
+   used to widen the whole page; now it scrolls inside its own card. */
+.cred-table-wrap { overflow-x: auto; }
+.cred-table { min-width: 790px; }
 .llm-credentials td.pick input, .llm-credentials th.pick input { width: auto; margin: 2px 0 0; }
 /* A hidden row is present, legible and plainly not participating. */
 .llm-credentials tr.is-hidden td:not(.llm-actions) { opacity: 0.62; }
 .llm-credentials td .help { margin: 2px 0 0; }
 @media (max-width: 640px) {
   .llm-header { align-items: stretch; flex-direction: column; gap: 12px; }
+  /* The table is a stack of cards down here; the desktop minimum would only
+     hand it a horizontal scrollbar it has no columns to justify. */
+  .cred-table { min-width: 0; }
   .llm-credentials table, .llm-credentials tbody { display: block; }
   .llm-credentials thead { display: none; }
   .llm-credentials tr { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 16px 0; border-top: 1px solid var(--border, #303030); }
