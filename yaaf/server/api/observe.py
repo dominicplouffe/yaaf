@@ -1381,12 +1381,22 @@ def spend(project_id: str, group_by: str = "model", days: int = 30,
 
 @router.get("/projects/{project_id}/evidence")
 def evidence(project_id: str, limit: int = 100, session: Session = Depends(db)) -> list[dict]:
-    rows = session.execute(
+    rows = list(session.execute(
         select(Evidence)
         .where(Evidence.project_id == project_id)
         .order_by(Evidence.created_at.desc())
         .limit(min(limit, 500))
-    ).scalars()
+    ).scalars())
+    # What each claim was proving, named here rather than joined on the client:
+    # the record screen would otherwise have to pull the whole board to print
+    # one column, and a claim with no test beside it is not a record of
+    # anything.
+    titles = {
+        t.id: t.title
+        for t in session.execute(
+            select(Task).where(Task.id.in_([e.task_id for e in rows if e.task_id]))
+        ).scalars()
+    } if any(e.task_id for e in rows) else {}
     return [
         {
             "id": e.id, "kind": e.kind, "provenance": e.provenance,
@@ -1396,6 +1406,11 @@ def evidence(project_id: str, limit: int = 100, session: Session = Depends(db)) 
             # hypothesis to answer "has this bet been proven?" — a question that
             # otherwise needs the reader to hold the join in their head.
             "task_id": e.task_id,
+            "task_title": titles.get(e.task_id),
+            # Whether `/observe/evidence/{id}/snapshot` has anything to serve.
+            # Without this a reader is offered a link that 404s on every claim
+            # the verifier never fetched, which is most internal ones.
+            "has_snapshot": bool(e.snapshot_path),
             "at": e.created_at.isoformat(),
         }
         for e in rows

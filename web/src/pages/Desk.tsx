@@ -21,9 +21,8 @@ import {
     A row is `yours` when the chairman holds the only lever — an approval that
     auto-denies, a bet only he extends, a thread only he unfreezes, scope only
     he accepts, a date only he signs, a verdict nobody on the project may pass.
-    Everything else — a drought, a kill date, a budget on pace, unaudited work
-    — is the CEO's to resolve, and belongs to the project it happened in, under
-    Overview → Watch. It reaches this page only as the one-line tally at the
+    Everything else — a drought, a kill date, a budget on pace — is the CEO's to
+    resolve, and belongs to the project it happened in, under Overview → Watch. It reaches this page only as the one-line tally at the
     foot, which is a signpost and not a row.
 
     This page used to draw those too, under their own calm heading, on the
@@ -478,26 +477,6 @@ export function buildItems(projects: DeskProject[], reload: () => void): Item[] 
     }
 
     // ── tier 3: nothing breaks; the claim gets weaker ───────────────────
-    if (p.audit.unaudited >= 3) {
-      items.push({
-        key: `${p.id}-audit`, tier: 3, at: NEVER, yours: false, project: p,
-        kind: "spot-check",
-        what: (
-          <>
-            <b>{p.audit.unaudited} finished tasks</b> nobody has checked. The agents marked
-            these done and wrote their own evidence for it.
-          </>
-        ),
-        consequence: (
-          <span className="tick cold">
-            nothing breaks — but nothing independent says the work is real
-          </span>
-        ),
-        actions: (
-          <Link className="act" to={`${to}/work?audit=1`}>Check 5 at random</Link>
-        ),
-      });
-    }
     // Money moved and nothing outside the project confirmed anything. Distinct
     // from the drought, which counts hours rather than dollars — so it is
     // suppressed while a drought row is already speaking for this project.

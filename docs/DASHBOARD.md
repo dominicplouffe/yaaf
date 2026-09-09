@@ -73,8 +73,8 @@ screenful of cards reasonably concluded one of the two was lying.
 
 **What happened to everything else.** It is not gone and it is not silent. Each
 project's **Overview → Watch** holds its own droughts, kill dates, budget pace,
-memory pressure, unaudited work, unraised flags, and days that spent money and
-verified nothing. The desk closes with a single line naming how many such things
+memory pressure, unraised flags, and days that spent money and verified
+nothing. The desk closes with a single line naming how many such things
 are running and in which projects, so you can see they exist without being asked
 to do anything about them.
 
@@ -252,10 +252,10 @@ Read top to bottom: what needs you, what is true now, what happens next.
 - **Watch** — everything on this project that is running down a clock the CEO
   resolves, and that therefore never becomes a Desk row: an evidence drought
   (active, or halfway to one), a kill date still ahead, the date your burn rate
-  lands on the cap, memory nearing its ceiling, finished work nobody has
-  spot-checked, a flag your CEO has not yet raised in the boardroom, a flag you
-  have answered whose condition is still true, and a day that spent money while
-  nothing outside the project verified anything. Nothing here is waiting on a
+  lands on the cap, memory nearing its ceiling, a flag your CEO has not yet
+  raised in the boardroom, a flag you have answered whose condition is still
+  true, and a day that spent money while nothing outside the project verified
+  anything. Nothing here is waiting on a
   click from you. It is the answer to "is this going
   well?", which is a different question from "what needs me?" — and the Desk
   now asks only the second.
@@ -325,11 +325,12 @@ forecast grades. Nothing but the platform ever writes `met`.
   internal or external, and who holds it. Read-only by design: only the CEO
   creates tasks, only leads decompose, and only the platform marks
   command-tested work done. You redirect the plan from the Boardroom.
-- **All proof.** Every piece of external evidence with its verification status
-  — platform-attested, verified claim, or failed check. Only verified or
-  attested evidence counts toward the drought and the external-evidence floor,
-  which is why a busy-looking project can still be in a drought. Snapshots are
-  viewable; both tables export to CSV.
+- **Proof, per bet.** Each bet carries the tally of what it has earned —
+  verified, failed, pending — because "has this bet been proven?" is the join
+  this page exists for. The evidence rows themselves are a record and read in
+  **Records → Evidence**; only verified or attested evidence counts toward the
+  drought and the external-evidence floor, which is why a busy-looking project
+  can still be in a drought.
 
 Bets (hypotheses) with their kill dates live here too: each shows the proof it
 has earned, and you can extend one — once, with a reason — or kill it.
@@ -357,7 +358,7 @@ empty board. A review with nothing on the board is the one you most need.
 
 ## Records — "what happened?"
 
-Four ways of asking the same question, kept out of the daily path:
+Five ways of asking the same question, kept out of the daily path:
 
 | View | Shows |
 |---|---|
@@ -365,6 +366,28 @@ Four ways of asking the same question, kept out of the daily path:
 | **Messages** | Every channel — including the ones you can read but not speak in. |
 | **Memory** | What the project chose to remember, per scope, with its curation history. |
 | **Decisions** | Everything you decided, everything that decided itself (expired approvals, auto-pauses, killed bets, frozen threads), every rule change — and **what the CEO decided** on its own authority. |
+| **Evidence** | Every claim the agents made and what the platform could check about it. |
+
+### Evidence
+
+Newest first, with the platform's verdict on each: platform-attested, a claim
+it fetched and verified, one it fetched and refused, or one nothing could
+check. It opens with that split stated as a sentence, because "how much of what
+this project claims is checkable at all" is the question, and it is arithmetic
+rather than homework. Open a row for the agent's full claim, the verifier's
+notes, the snapshot of what it actually fetched, and the task the claim was
+proving.
+
+**Nothing here has a verdict button**, and that is the point of it being a
+record. It used to sit at the foot of the Work tab under a queue that dealt
+every claim as a card with pass/fail buttons and scored you on how many you had
+got through — a percentage, of an optional job that never finishes. It also
+asked you to re-judge rows the platform had already fetched and decided, writing
+your verdict into the same column the verifier wrote, after which nothing could
+tell "the fetcher confirmed this" from "a person believed it". The things that
+genuinely need you — approvals, asks, and the platform's sampled audit — already
+ask, chase and expire on their own clocks. The one action on an opened row is a
+question, not a verdict: it opens the Boardroom with the claim already quoted.
 
 ### What the CEO decided
 

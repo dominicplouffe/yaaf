@@ -378,8 +378,6 @@ export default function Overview({
 
   const pending = approvals.filter((a) => a.status === "pending");
   const expiredBets = hypotheses.filter((h) => h.status === "expired" && !h.extended_once);
-  const completed = (tasks ?? []).filter((t) => t.status === "done");
-  const unaudited = completed.filter((t) => !t.audit_status).length;
   const blocked = (tasks ?? []).filter((t) => t.status === "blocked");
   const killSoon = hypotheses.filter(
     (h) => h.status === "active" && hoursSince(h.kill_date) > -7 * 24 && hoursSince(h.kill_date) < 0,
@@ -535,20 +533,6 @@ export default function Overview({
           </span>
         </div>
         <Link to={`/projects/${projectId}/boardroom`}>take it up →</Link>
-      </div>,
-    );
-  }
-  if (unaudited >= 3) {
-    watch.push(
-      <div className="wrow" key="audit">
-        <span className="badge">spot-check</span>
-        <div className="grow">
-          <b>{unaudited} finished {unaudited === 1 ? "task" : "tasks"} nobody has checked.</b>{" "}
-          The agents marked these done and wrote their own evidence for it. Two minutes on five
-          of them at random: you see what each task had to prove and what the agent claimed,
-          and you say whether you believe it.
-        </div>
-        <Link to={`/projects/${projectId}/work?audit=1`}>check 5 now →</Link>
       </div>,
     );
   }

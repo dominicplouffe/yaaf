@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import {
   ApprovalRow,
   ChannelRow,
@@ -94,7 +94,13 @@ const MessageBubble = memo(function MessageBubble(
     model call not spent. */
 export default function Boardroom({ projectId, dash }: { projectId: string; dash: Dashboard }) {
   const [channelId, setChannelId] = useState<string | null>(null);
-  const [draft, setDraft] = useState("");
+  // A screen that sends you here to ask about something it is showing hands
+  // over the sentence, already quoting it, for you to edit or throw away.
+  // Router state rather than a query parameter on purpose: the text is long,
+  // and it must not survive a reload and re-fill a box you deliberately
+  // cleared.
+  const handedOver = (useLocation().state as { draft?: string } | null)?.draft;
+  const [draft, setDraft] = useState(handedOver ?? "");
   const [busy, setBusy] = useState(false);
   // The conversation this page holds, oldest first: the live tail merged with
   // whatever older pages the reader has scrolled back to. It only ever grows,

@@ -180,6 +180,32 @@ def test_explore_evidence_stays_taskless_friendly(client):
     assert allowed.status_code == 200, allowed.text
 
 
+def test_the_evidence_record_names_what_each_claim_was_proving(client):
+    """Records -> Evidence prints one column the row itself cannot answer.
+
+    Joining it on the client meant pulling the whole board to render one
+    column, and a claim with no test beside it is not a record of anything. The
+    snapshot flag is here for the same reason: without it the screen offers a
+    link that 404s on every claim the verifier never fetched, which is most
+    internal ones.
+    """
+    project = deliver_project(client)
+    token = ceo_token(project)
+    rid = propose(client, token)["requirement_id"]
+    accept(client, rid, project)
+    task_id = make_task(client, token, project, rid).json()["id"]
+    client.post("/agent/evidence",
+                json={"kind": "internal", "description": "the report now builds",
+                      "task_id": task_id},
+                headers=bearer(token))
+
+    rows = client.get(f"/observe/projects/{project['id']}/evidence", headers=ADMIN).json()
+    mine = [r for r in rows if r["task_id"] == task_id]
+    assert len(mine) == 1
+    assert mine[0]["task_title"], "a claim must say what it was proving"
+    assert mine[0]["has_snapshot"] is False, "nothing was fetched, so there is nothing to show"
+
+
 def test_no_agent_route_can_mint_attested_provenance(client):
     project = make_project(client, slug="attest-try")
     token = ceo_token(project)

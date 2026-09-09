@@ -763,6 +763,10 @@ export interface EvidenceRow {
   verifier_notes: string | null;
   /** The task this proves — the link that lets a bet report its own proof. */
   task_id: string | null;
+  /** What that task had to prove, so a claim can be read without the board. */
+  task_title: string | null;
+  /** Whether the verifier stored a copy of what it fetched. */
+  has_snapshot: boolean;
   at: string;
 }
 
