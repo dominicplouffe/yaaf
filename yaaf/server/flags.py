@@ -108,6 +108,18 @@ def open_flag(session: Session, project: Project, kind: str, summary: str,
         if arithmetic is not None:
             live.arithmetic = arithmetic
         return None
+    if kind in HISTORICAL_KINDS and _already_answered(session, project, kind, subject_id):
+        # A historical condition is a moment, and `acknowledge` says the
+        # chairman's answer is the end of it — but "the end of it" only held
+        # until the next janitor tick, because the dedupe above looks at live
+        # flags and his answer had just made this one resolved. So the card he
+        # had just cleared came straight back, every tick, for a cycle whose
+        # arithmetic can never turn. He could clear it again; the second
+        # attempt was an HTTP 500 (see 0039).
+        #
+        # A state condition is different and still reopens: a forecast that
+        # goes bad again is new news, not the same news twice.
+        return None
     flag = Flag(
         id=ids.new_id(ids.FLAG),
         project_id=project.id,
@@ -120,6 +132,25 @@ def open_flag(session: Session, project: Project, kind: str, summary: str,
     session.add(flag)
     log.info("flag opened for %s: %s", project.slug, kind)
     return flag
+
+
+def _already_answered(session: Session, project: Project, kind: str,
+                      subject_id: str | None) -> bool:
+    """Has this exact piece of historical news already been closed once?
+
+    Only asked for `HISTORICAL_KINDS`, where the subject is a moment that
+    happened — cycle 7 was missed, this obligation failed on that date. Once
+    that has been flagged and closed, flagging it again is telling the chairman
+    something he has already answered.
+    """
+    return session.execute(
+        select(Flag.id).where(
+            Flag.project_id == project.id,
+            Flag.kind == kind,
+            Flag.subject_id == subject_id,
+            Flag.status == FlagStatus.RESOLVED,
+        ).limit(1)
+    ).scalar_one_or_none() is not None
 
 
 def resolve_subject(session: Session, project_id: str, kind: str,
