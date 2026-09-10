@@ -16,7 +16,7 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from yaaf.core import artifacts
-from yaaf.core.constitution import effective
+from yaaf.core.constitution import effective, tempo_for, tempo_name
 from yaaf.core.models import (
     Agent,
     Approval,
@@ -748,6 +748,42 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
                     "time — and a burn-down of work that recurs reads as nearly finished. "
                     "`recurrence: standing` is what that shape is for.",
                     "plan")
+
+        # The tempo and the rhythm disagreeing. `cycle_frequency` is amendable
+        # and the tempo is not derived again afterwards — deliberately: a
+        # platform that silently re-paced a live desk because a rule moved is a
+        # worse failure than the one it fixes. So this is a sentence the
+        # chairman reads and decides on, which is the same posture
+        # `doctrine-drift` above already takes.
+        rules = effective(session, project.id).model_dump()
+        on = tempo_name(rules)
+        if project.mode == ProjectMode.OPERATE:
+            wanted = tempo_for("operate", rules.get("cycle_frequency"))
+            if on is not None and on != wanted:
+                add("tempo-vs-rhythm", "warn",
+                    f"this project rolls a {rules['cycle_frequency']} cycle but thinks on "
+                    f"the '{on}' tempo, which is what a project of a different rhythm "
+                    f"wants — '{wanted}' is the one that matches. Nothing is broken and "
+                    "nothing was changed for you; if the rhythm moved and the pace did "
+                    "not, this is where you would notice.",
+                    "settings")
+
+        # The ceiling and the budget describing different projects. Only where
+        # the box has actually priced runs: `avg_usd_per_run_box` answers None
+        # under five of them, because a fresh install saying nothing is the
+        # honest behaviour and a guess here would be quoted back as arithmetic.
+        per_run = policy.avg_usd_per_run_box(session)
+        if per_run and project.billing_mode == "api_key" and rules["monthly_usd_cap"]:
+            ceiling = rules["runs_per_project_per_day"] * 30 * per_run
+            if ceiling > rules["monthly_usd_cap"]:
+                add("tempo-vs-budget", "warn",
+                    f"{rules['runs_per_project_per_day']} runs a day at the "
+                    f"${per_run:.2f} a run this install has averaged is about "
+                    f"${ceiling:,.0f} a month, against a budget of "
+                    f"${rules['monthly_usd_cap']:,.0f}. The budget is a plan rather than "
+                    "a wall so neither number is wrong, but they describe different "
+                    "projects — one of the two is the one you meant.",
+                    "settings")
 
     # Slack: config present implies its secrets exist.
     slack = integrations.get("slack") or {}

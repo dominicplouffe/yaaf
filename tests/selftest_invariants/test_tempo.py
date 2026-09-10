@@ -31,6 +31,8 @@ The lines these tests hold:
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 import pytest
 
 from tests.conftest import ADMIN, make_project, seed_role
@@ -50,7 +52,9 @@ from yaaf.core.constitution import (
 )
 from yaaf.core.db import db_session
 from yaaf.founder.tools import tempo_problems
-from yaaf.core.models import Project
+from yaaf.server import briefing
+from yaaf.core import ids
+from yaaf.core.models import Project, Run, RunStatus, utcnow
 
 # ── the bundles themselves ──────────────────────────────────────────────────────
 
@@ -356,3 +360,128 @@ def test_the_founder_picks_a_card_never_a_number():
 
     for name, rules in TEMPO_PRESETS.items():
         assert tempo_problems({"mode": "operate", "constitution": dict(rules)}) == [], name
+
+
+# ── noticing afterwards, without rewriting anything ─────────────────────────────
+
+
+def _checks(client, project) -> dict[str, dict]:
+    response = client.get(f"/observe/projects/{project['id']}/health", headers=ADMIN)
+    assert response.status_code == 200, response.text
+    return {c["key"]: c for c in response.json()["checks"]}
+
+
+def test_a_rhythm_that_moves_without_the_pace_is_reported(client):
+    """cycle_frequency is amendable and the tempo is not re-derived afterwards
+    — deliberately: a platform that silently re-paced a live desk because a
+    rule moved is a worse failure than the one it fixes. So the chairman is
+    told and decides, which is the posture `doctrine-drift` already takes."""
+    project = make_project(client, mode="operate",
+                           constitution={"cycle_frequency": "weekly"})
+    assert "tempo-vs-rhythm" not in _checks(client, project)
+
+    assert _amend(client, project, {"cycle_frequency": "hourly"},
+                  reason="This desk turned out to be an order queue.").status_code == 200
+    check = _checks(client, project).get("tempo-vs-rhythm")
+    assert check and check["status"] == "warn"
+    assert "hourly" in check["detail"] and "live" in check["detail"]
+    # Told, never applied: the pace rules are exactly where they were.
+    assert tempo_name(_rules(client, project)) == "few_times_daily"
+
+
+def test_a_hand_tuned_project_is_not_nagged_about_its_rhythm(client):
+    """No card describes it, so there is no card to say it should be on."""
+    project = make_project(client, mode="operate",
+                           constitution={"cycle_frequency": "weekly",
+                                         "runs_per_project_per_day": 37})
+    assert "tempo-vs-rhythm" not in _checks(client, project)
+
+
+def test_a_budget_that_cannot_buy_the_ceiling_is_reported(client):
+    """The FPL desk in this repo's own docs declares $75 a month and 60 runs a
+    day. At the one price this platform has ever measured those are different
+    projects by a factor of about three, and no screen did that arithmetic."""
+    project = make_project(client, mode="explore",
+                           constitution={"monthly_usd_cap": 75.0})
+    # Silent on a box that has never priced a run: `avg_usd_per_run_box`
+    # answers None under five of them rather than guessing.
+    assert "tempo-vs-budget" not in _checks(client, project)
+
+    with db_session() as session:
+        for _ in range(5):
+            session.add(Run(
+                id=ids.new_id(ids.RUN), project_id=project["id"],
+                agent_id=project["ceo_agent_id"], kind="agent_run", trigger={},
+                status=RunStatus.DONE, cost_usd=0.15,
+                started_at=utcnow(), finished_at=utcnow()))
+    check = _checks(client, project).get("tempo-vs-budget")
+    assert check and check["status"] == "warn"
+    assert "$75" in check["detail"]
+
+
+# ── saying where the money went ─────────────────────────────────────────────────
+
+
+def test_the_brief_says_what_the_runs_were_for(client):
+    """A bill is not a lever. The dispatcher classifies every wake at the
+    moment it decides to spend one, and that answer reached a filter on one
+    screen and the spend CLI — never the chairman. So "this is costing too
+    much" had no next question attached to it, and the difference between runs
+    that produced deliverables and runs of agents acknowledging each other is
+    the whole of what to do about it."""
+    project = make_project(client, mode="explore")
+    with db_session() as session:
+        for kind, trigger in (("agent_run", {"reasons": [{"kind": "task"}]}),
+                              ("inbox_run", {"reasons": [{"kind": "messages"}]}),
+                              ("inbox_run", {"reasons": [{"kind": "messages"}]}),
+                              ("agent_run", {"reasons": [{"kind": "heartbeat"}]})):
+            session.add(Run(
+                id=ids.new_id(ids.RUN), project_id=project["id"],
+                agent_id=project["ceo_agent_id"], kind=kind, trigger=trigger,
+                status=RunStatus.DONE, cost_usd=0.15,
+                started_at=utcnow(), finished_at=utcnow()))
+
+    with db_session() as session:
+        brief = briefing.project_briefing(
+            session, session.get(Project, project["id"]),
+            since=utcnow() - timedelta(hours=1))
+    runs = next(line for line in brief["lines"] if line["kind"] == "runs")
+    assert runs["count"] == 4
+    assert "1 work" in runs["note"]
+    assert "2 reading each other" in runs["note"]
+    assert "1 waking up to look around" in runs["note"]
+
+
+def test_the_brief_names_the_tempo_the_project_thinks_on(client):
+    project = make_project(client, mode="operate",
+                           constitution={"cycle_frequency": "weekly"})
+    with db_session() as session:
+        brief = briefing.project_briefing(
+            session, session.get(Project, project["id"]),
+            since=utcnow() - timedelta(hours=1))
+    assert brief["tempo"] == "few_times_daily"
+
+
+def test_the_capacity_forecast_moves_with_the_tempo(client):
+    """The fire drill relaxes the run ceilings — it compresses a fortnight into
+    seconds and has no clock — and computes their real effect on the calendar
+    from the chairman's own numbers instead. So the forecast is where a quiet
+    tempo has to show up, and it is the one place he can see the trade before
+    the project exists rather than three weeks in."""
+    from yaaf.server.capacity import capacity_forecast
+
+    project = make_project(client, mode="explore")
+    with db_session() as session:
+        row = session.get(Project, project["id"])
+        until = utcnow() + timedelta(days=30)
+        fast = capacity_forecast(
+            session, row,
+            ConstitutionDoc.model_validate(
+                {**ConstitutionDoc().model_dump(), **TEMPO_PRESETS["live"]}),
+            until)
+        quiet = capacity_forecast(
+            session, row,
+            ConstitutionDoc.model_validate(
+                {**ConstitutionDoc().model_dump(), **TEMPO_PRESETS["few_times_daily"]}),
+            until)
+    assert quiet["available"] < fast["available"], (quiet, fast)

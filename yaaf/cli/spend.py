@@ -35,6 +35,7 @@ from yaaf.core.models import (
     Team,
 )
 from yaaf.server.contextpack import role_version_for
+from yaaf.server.dispatcher import heartbeat_only
 
 TOKENS_CAVEAT = "input tokens exclude cache tokens for runs recorded before the metering fix"
 NO_DOLLARS = "(subscription — no dollar figure)"
@@ -145,18 +146,6 @@ def _run_model(run, model_by_agent: dict[str, str]) -> tuple[str, bool]:
     if run.agent_id is None:
         return "(no model — platform check)", False
     return model_by_agent.get(run.agent_id, "(unknown)"), True
-
-
-def _heartbeat_only(trigger) -> bool:
-    """True when every wake reason is a heartbeat/daily cadence — the model
-    woke on a timer, not because anything happened."""
-    if not isinstance(trigger, dict):
-        return False
-    reasons = trigger.get("reasons")
-    if not isinstance(reasons, list) or not reasons:
-        return False
-    return all(isinstance(reason, dict) and reason.get("kind") in ("heartbeat", "daily")
-               for reason in reasons)
 
 
 def _resolve(session: Session, ref: str) -> Project:
@@ -297,7 +286,7 @@ def _report(session: Session, project: Project, since: datetime, window: str) ->
         typer.echo("  no failed/reaped/killed/terminated_refusals runs in this window")
 
     # 4. Heartbeat waste: the model woke on a timer, not because anything happened.
-    heartbeat_runs = [run for run in runs if _heartbeat_only(run.trigger)]
+    heartbeat_runs = [run for run in runs if heartbeat_only(run.trigger)]
     _heading("Heartbeat waste (woken only by heartbeat/daily cadences)")
     if heartbeat_runs:
         no_task = _sum_runs([run for run in heartbeat_runs if run.task_id is None])

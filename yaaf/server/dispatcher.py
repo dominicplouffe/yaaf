@@ -237,6 +237,25 @@ def run_kind_for_reasons(reasons: list[dict]) -> str:
     return RunKind.INBOX_RUN
 
 
+def heartbeat_only(trigger) -> bool:
+    """True when every wake reason is a heartbeat or a daily cadence — the
+    model woke on a timer, not because anything happened.
+
+    Sits beside `run_kind_for_reasons` because it answers the sibling question
+    about the same object: that one separates working from reading, this one
+    separates both from waking up to look around. It lived in the spend CLI,
+    which is why the only surface that could tell a chairman what his planning
+    wakes cost was one he had to be at a terminal to read.
+    """
+    if not isinstance(trigger, dict):
+        return False
+    reasons = trigger.get("reasons")
+    if not isinstance(reasons, list) or not reasons:
+        return False
+    return all(isinstance(reason, dict) and reason.get("kind") in ("heartbeat", "daily")
+               for reason in reasons)
+
+
 def daily_runs_used(session: Session, project: Project, since) -> int:
     """Runs created today, queued or historical, that spend the WORK allowance.
 

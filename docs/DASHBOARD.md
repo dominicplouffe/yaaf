@@ -232,12 +232,33 @@ accept scope, sign the date, judge unverifiable closes) or **Autonomous** (the
 CEO does all three and tells you). Both are five ordinary constitution
 switches, editable later. [AUTONOMY.md](AUTONOMY.md) has the detail.
 
-### Run presets
+### Tempo cards
 
-Full send, Balanced, Slow & steady, Show me proof — a bundle of ordinary
-constitution numbers (queue ceiling, drought hours, budget, approval threshold,
-verification, report cadence) that fills the fields below it. Every field stays
-editable, here and later.
+**Live** (~150 runs a day), **Working hours** (~40), **A few times a day**
+(~12) — fourteen ordinary constitution rules deciding how often the project
+wakes: the daily and hourly run ceilings, how often each agent may wake,
+whether agents buy a run just to read each other's messages, how often the CEO
+plans, and how far ahead work may be scheduled. Pre-selected from the project's
+shape; every rule stays editable.
+
+This is the rule that decides the bill. Until it had a card, the only "cheap"
+option on the form was a smaller budget attached to a project that woke exactly
+as often as the most expensive one.
+
+### The bar
+
+Full send, Balanced, Keep it cheap, Show me proof — a bundle of ordinary
+constitution numbers (budget and the wall behind it, drought hours, approval
+threshold, verification, stakes, who reads the work before you do) that fills
+the fields below it. Every field stays editable, here and later.
+
+### Re-picking either one
+
+All three sets of cards appear again in **Settings → Rules in force**, on the
+tab that owns most of their rules. Picking one there stages the whole bundle
+and files it as a single amendment with your written reason, in force from the
+next agent call. A project whose rules were set individually is reported as
+**hand-tuned** rather than rounded to the nearest card.
 
 ---
 

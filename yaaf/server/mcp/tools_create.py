@@ -29,7 +29,15 @@ from __future__ import annotations
 from sqlalchemy.orm import Session
 
 from yaaf.core import llm_credentials
-from yaaf.core.constitution import AUTONOMY_PRESETS, default_autonomy, preset_name
+from yaaf.core.constitution import (
+    AUTONOMY_PRESETS,
+    TEMPO_RULES,
+    ConstitutionDoc,
+    default_autonomy,
+    default_tempo,
+    preset_name,
+    tempo_name,
+)
 from yaaf.core.models import Secret, User
 from yaaf.founder import tools as founder_tools
 from yaaf.server.api import admin
@@ -293,6 +301,13 @@ def create_project(principal: Principal, session: Session, arguments: dict) -> d
         # finding out afterwards that his CEO signs its own dates is a bad way
         # to learn what a default is.
         "authority": _authority_line(body.get("constitution") or {}),
+        # And how often it will wake to use them, for exactly the same reason:
+        # this is the rule that decides the bill, the platform fills it in when
+        # a spec is silent, and the warning below says agents "wake on a
+        # schedule and bill the credential named above" without ever saying how
+        # often. A chairman learning that from an invoice is the bad way.
+        "tempo": _tempo_line(body.get("mode") or "explore",
+                             body.get("constitution") or {}),
         "billing": llm_credentials.describe(billing) if billing else None,
         "start_immediately": bool(arguments.get("start")),
         "warning": (
@@ -326,6 +341,7 @@ def create_project(principal: Principal, session: Session, arguments: dict) -> d
                    {"id": created["id"], "slug": body.get("slug"),
                     "started": bool(arguments.get("start")),
                     "authority": preset_name(created["constitution"]) or "mixed",
+                    "tempo": tempo_name(created["constitution"]) or "hand-tuned",
                     "billing": billing.name if billing else None})
 
 
@@ -375,6 +391,26 @@ def clone_project(principal: Principal, session: Session, arguments: dict) -> di
                                              name=arguments.get("name") or slug.title()),
                    session=session)
     return _record(session, principal, cloned.get("id"), "clone_project", arguments, cloned)
+
+
+def _tempo_line(mode: str, constitution: dict) -> str:
+    """One sentence naming the pace this spec will actually be created at, and
+    whether the spec asked for it or the platform derived it from the mode."""
+    stated = any(rule in constitution for rule in TEMPO_RULES)
+    filled = default_tempo(mode, constitution)
+    name = tempo_name({**ConstitutionDoc().model_dump(), **filled})
+    source = ("as this spec asks" if stated
+              else f"derived from the {str(mode).title()} shape — this spec did not say")
+    if name is None:
+        rules = ", ".join(f"{k}: {constitution[k]}"
+                          for k in TEMPO_RULES if k in constitution)
+        return f"set rule by rule ({source}): {rules}"
+    per_day = filled["runs_per_project_per_day"]
+    inbox = filled["inbox_runs_per_project_per_day"]
+    reading = ("agents never buy a run just to read each other" if not inbox
+               else f"up to {inbox} of those are agents reading each other")
+    return (f"{name} ({source}): up to {per_day} runs a day across every agent, "
+            f"and {reading}.")
 
 
 def _authority_line(constitution: dict) -> str:
