@@ -23,8 +23,7 @@ from sqlalchemy.orm import Session
 from yaaf.core.constitution import (
     TEMPO_PRESETS,
     TEMPO_RULES,
-    ConstitutionDoc,
-    tempo_name,
+    stated_tempo,
 )
 from yaaf.core.models import Crew, Role, RoleVersion, utcnow
 
@@ -529,10 +528,11 @@ def tempo_problems(project: dict) -> list[str]:
             "it costs in runs a day. A project on a weekly rhythm almost never wants the "
             "fastest one."
         ]
-    if tempo_name({**ConstitutionDoc().model_dump(), **constitution}) is None:
+    if stated_tempo(constitution) is None:
         return [
             "constitution: the pace rules you set are not one of the tempo cards "
-            f"({cards}). Copy a card verbatim rather than inventing numbers — a Founder "
+            f"({cards}) — either they differ from every card, or you wrote down only "
+            "some of one. Copy a card verbatim rather than inventing numbers — a Founder "
             "once opened a desk at 12 runs a day against a default of 150, defended it "
             "twice, and the chairman's first act was to raise it. Tuning individual "
             f"brakes is his, in Settings. You set: {', '.join(sorted(named))}."

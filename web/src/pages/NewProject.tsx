@@ -205,7 +205,7 @@ export default function NewProject() {
     stakes: "normal", deliverable_review: "independent_read",
     max_usd_per_run: 2, run_timeout_s: 1800, hard_stop_multiple: 3,
   });
-  // How often the project thinks. Fourteen rules, none of which has ever had a
+  // How often the project thinks. Thirteen rules, none of which has ever had a
   // form field, so the whole bundle rides the card exactly as the craft half
   // does. `queue_ceiling` is the one with a box below, and is kept in step.
   const [tempo, setTempo] = useState("live");
@@ -339,6 +339,11 @@ export default function NewProject() {
     }
   }
 
+  // The pace rules, mirrored from `constitution.TEMPO_RULES`. Read off the
+  // served cards rather than restated, so the two cannot drift: every card
+  // writes exactly this set.
+  const TEMPO_KEYS = Object.keys(status?.presets?.tempo?.[0]?.constitution ?? {});
+
   const barPresets = status?.presets?.bar ?? [];
   const tempoPresets = status?.presets?.tempo ?? [];
   const autonomyPresets = status?.presets?.autonomy ?? [];
@@ -372,9 +377,42 @@ export default function NewProject() {
     const statedBar = presets.bar.find(matches);
     if (statedBar) applyBarPreset(statedBar.value, presets.bar);
     const statedTempo = presets.tempo.find(matches);
-    // A file that names a tempo has answered the question, so the mode no
-    // longer moves it.
     if (statedTempo) applyTempoPreset(statedTempo.value, presets.tempo);
+    // A file that names ANY pace rule has answered the tempo question — the
+    // same mixed-dial rule the server applies in `default_tempo`. Without
+    // this, `applyBundle`'s own `setMode` refires the follow-the-mode effect
+    // with `tempoTouched` still false, and the card it re-derives overwrites
+    // the per-rule merge below: a hand-tuned file asking for 25 runs a day
+    // created at 12, silently, which is the exact overwrite this path exists
+    // to prevent.
+    if (TEMPO_KEYS.some((key) => rules[key] !== undefined)) setTempoTouched(true);
+
+    // Who holds the verbs travels in the file too, and reading it here rather
+    // than in `applyBundle` is what makes the ordering safe: a Founder draft is
+    // applied on mount, before this fetch resolves, so the preset list was
+    // empty and every file read as "says nothing" — which submit then answered
+    // by stamping the default AUTONOMOUS preset over a supervised draft's five
+    // rules, without a word about it.
+    const authority = rules as Record<string, string>;
+    const stated = presets.autonomy.find((preset) =>
+      Object.entries(preset.constitution).every(([k, v]) => authority[k] === v));
+    const named = Object.keys(presets.autonomy[0]?.constitution ?? {})
+      .filter((k) => authority[k] !== undefined);
+    if (stated) {
+      setAutonomy(stated.value);
+      setAutonomyNotice(null);
+    } else if (named.length) {
+      // A mixed group is a real choice somebody made rule by rule in Settings.
+      // Neither button is it, so say which rules the file carries and leave the
+      // selection alone rather than rounding it to a preset.
+      setAutonomyNotice(
+        `This setup file sets ${named.map((k) => `${k}: ${authority[k]}`).join(", ")}, ` +
+        "which is not either preset. Picking one below replaces all five rules — " +
+        "or create it as-is and adjust in Settings → Rules in force.",
+      );
+    } else {
+      setAutonomyNotice(null);
+    }
   }
 
   function applyBarPreset(value: string, cards: PresetCard[] = barPresets) {
@@ -570,32 +608,9 @@ export default function NewProject() {
           .filter((s) => s.kind === "service")
           .map((s) => ({ name: s.name, value: s.value ?? "", grants: s.role_scopes })),
       );
-      // Who holds the verbs travels in the file too, and the submit below
-      // stamps this preset over whatever the file said — so a file exported
-      // from an autonomous project came back supervised, and one exported
-      // from a supervised project could come back autonomous, neither with a
-      // word about it. Same defect as a role slug the picker could not show:
-      // the form dropped the file's answer silently. Read it instead.
-      const authority = p.constitution as Record<string, string>;
-      const stated = autonomyPresets.find((preset) =>
-        Object.entries(preset.constitution).every(([k, v]) => authority[k] === v));
-      const named = Object.keys(autonomyPresets[0]?.constitution ?? {})
-        .filter((k) => authority[k] !== undefined);
-      if (stated) {
-        setAutonomy(stated.value);
-        setAutonomyNotice(null);
-      } else if (named.length) {
-        // A mixed group is a real choice somebody made rule by rule in
-        // Settings. Neither button is it, so say which rules the file carries
-        // and leave the selection alone rather than rounding it to a preset.
-        setAutonomyNotice(
-          `This setup file sets ${named.map((k) => `${k}: ${authority[k]}`).join(", ")}, ` +
-          "which is not either preset. Picking one below replaces all five rules — " +
-          "or create it as-is and adjust in Settings → Rules in force.",
-        );
-      } else {
-        setAutonomyNotice(null);
-      }
+      // Which cards the file IS — the bar, the tempo and the authority group —
+      // read together in `cardsFromBundle`, because all three need the served
+      // preset list and a Founder draft can arrive before it does.
       if (status?.presets) cardsFromBundle(parsed, status.presets);
       else pendingBundle.current = parsed;
 
@@ -1581,12 +1596,12 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
           </div>
           <p className="help" style={{ marginTop: 10 }}>
             {tempoTouched
-              ? "Fourteen rules — the daily and hourly run ceilings, how often each agent "
+              ? "Thirteen rules — the daily and hourly run ceilings, how often each agent "
                 + "may wake, whether agents buy a run just to read each other's messages, "
                 + "how often the CEO plans, and how far ahead work may be scheduled."
               : `Pre-selected from the shape you picked above (${
                   MODES.find((m) => m.value === mode)?.label ?? mode}). Change it here if `
-                + "that is wrong — it is fourteen rules, and every one of them is "
+                + "that is wrong — it is thirteen rules, and every one of them is "
                 + "editable later in Settings → Rules in force."}
           </p>
           <p className="help" style={{ marginTop: 6 }}>
@@ -1594,16 +1609,22 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
                 already uses: this box knows what a run has cost it and cannot
                 know what this project's runs will cost. */}
             {(() => {
-              const perDay = Number(tempoKnobs.runs_per_project_per_day ?? 0);
+              // Both lanes. The inbox ceiling is a SEPARATE additive allowance,
+              // so a Live project's real ceiling is 190 runs a day and not 150
+              // — counting only the work lane understated this by a quarter.
+              const work = Number(tempoKnobs.runs_per_project_per_day ?? 0);
+              const perDay = work + Number(tempoKnobs.inbox_runs_per_project_per_day ?? 0);
               if (!perDay) return null;
               const seen = status?.avg_usd_per_run;
               return seen
-                ? `At ${perDay} runs a day and the $${seen.toFixed(2)} a run this install `
-                  + `has averaged, that is up to $${Math.round(perDay * 30 * seen)
+                ? `At ${perDay} runs a day — ${work} of work plus ${perDay - work} of `
+                  + `reading — and the $${seen.toFixed(2)} a run this install has `
+                  + `averaged, that is up to $${Math.round(perDay * 30 * seen)
                     .toLocaleString()} a month — a ceiling, not a forecast.`
-                : `That is a ceiling of ${(perDay * 30).toLocaleString()} runs a month. `
-                  + "This install has never priced a run, so there is nothing to turn "
-                  + "that into money with yet.";
+                : `That is a ceiling of ${(perDay * 30).toLocaleString()} runs a month, `
+                  + `${work * 30} of work and ${(perDay - work) * 30} of reading. This `
+                  + "install has never priced a run, so there is nothing to turn that "
+                  + "into money with yet.";
             })()}
           </p>
         </div>

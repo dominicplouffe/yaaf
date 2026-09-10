@@ -235,7 +235,7 @@ switches, editable later. [AUTONOMY.md](AUTONOMY.md) has the detail.
 ### Tempo cards
 
 **Live** (~150 runs a day), **Working hours** (~40), **A few times a day**
-(~12) — fourteen ordinary constitution rules deciding how often the project
+(~12) — thirteen ordinary constitution rules deciding how often the project
 wakes: the daily and hourly run ceilings, how often each agent may wake,
 whether agents buy a run just to read each other's messages, how often the CEO
 plans, and how far ahead work may be scheduled. Pre-selected from the project's

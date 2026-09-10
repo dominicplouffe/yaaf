@@ -33,9 +33,11 @@ from yaaf.core.constitution import (
     AUTONOMY_PRESETS,
     TEMPO_RULES,
     ConstitutionDoc,
+    bar_name,
     default_autonomy,
     default_tempo,
     preset_name,
+    stated_tempo,
     tempo_name,
 )
 from yaaf.core.models import Secret, User
@@ -342,6 +344,7 @@ def create_project(principal: Principal, session: Session, arguments: dict) -> d
                     "started": bool(arguments.get("start")),
                     "authority": preset_name(created["constitution"]) or "mixed",
                     "tempo": tempo_name(created["constitution"]) or "hand-tuned",
+                    "bar": bar_name(created["constitution"]) or "hand-tuned",
                     "billing": billing.name if billing else None})
 
 
@@ -396,9 +399,18 @@ def clone_project(principal: Principal, session: Session, arguments: dict) -> di
 def _tempo_line(mode: str, constitution: dict) -> str:
     """One sentence naming the pace this spec will actually be created at, and
     whether the spec asked for it or the platform derived it from the mode."""
+    # Merged over the field defaults, not read raw: `default_tempo` stands the
+    # bundle down as soon as one pace rule is named, so `filled` can be a single
+    # key — and reading a run ceiling out of it raised KeyError and killed this
+    # tool before its own confirm gate.
+    filled = {**ConstitutionDoc().model_dump(), **default_tempo(mode, constitution)}
+    # What the spec CHOSE, which is not what the project ends up equalling:
+    # `live` is the field defaults, so a spec naming `queue_ceiling: 8` and
+    # nothing else produces a live project without anyone picking live.
+    name = stated_tempo(constitution) or (
+        None if any(rule in constitution for rule in TEMPO_RULES)
+        else tempo_name(filled))
     stated = any(rule in constitution for rule in TEMPO_RULES)
-    filled = default_tempo(mode, constitution)
-    name = tempo_name({**ConstitutionDoc().model_dump(), **filled})
     source = ("as this spec asks" if stated
               else f"derived from the {str(mode).title()} shape — this spec did not say")
     if name is None:

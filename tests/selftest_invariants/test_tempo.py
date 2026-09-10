@@ -47,12 +47,14 @@ from yaaf.core.constitution import (
     default_tempo,
     effective,
     preset_cards,
+    stated_tempo,
     tempo_for,
     tempo_name,
     unknown_rules,
 )
 from yaaf.core.db import db_session
 from yaaf.core.models import (
+    Constitution,
     Notice,
     NoticeKind,
     Project,
@@ -556,3 +558,90 @@ def test_a_quiet_project_out_of_runs_is_not_reported_as_stalled(client):
             Notice.project_id == project["id"],
             Notice.kind == NoticeKind.STALLED).all()
     assert not stalled, [n.body for n in stalled]
+
+
+# ── what a spec CHOSE, as against what it happens to equal ──────────────────────
+
+
+def test_a_partial_spec_has_not_chosen_a_card():
+    """`live` is byte-identical to the field defaults, so a spec naming one
+    pace rule at its default value produces a project that genuinely IS live —
+    and `tempo_name` says so, correctly. Nobody chose it. Two callers asked the
+    first question when they meant the second, and both were wrong for it."""
+    assert tempo_name({**ConstitutionDoc().model_dump(), "queue_ceiling": 8}) == "live"
+    assert stated_tempo({"queue_ceiling": 8}) is None
+    for name, rules in TEMPO_PRESETS.items():
+        assert stated_tempo(dict(rules)) == name
+
+
+def test_the_founder_cannot_pass_by_naming_one_rule_at_its_default():
+    """The gap this closes: a weekly Operate spec setting only `queue_ceiling`
+    passed the doctrine check and shipped at 150 runs a day — the exact
+    accident both this check and `default_tempo` exist to prevent.
+    `queue_ceiling` is also the knob DESIGN_DOCTRINE told Founders to set until
+    it moved onto the tempo card, so a real spec will do this."""
+    problems = tempo_problems({"mode": "operate", "constitution": {"queue_ceiling": 8}})
+    assert problems and "not one of the tempo cards" in problems[0]
+
+
+def test_the_mcp_preview_survives_a_partial_tempo():
+    """It raised KeyError and killed `create_project` before its own confirm
+    gate: `default_tempo` stands the bundle down as soon as one rule is named,
+    so the dict it returns can be a single key."""
+    from yaaf.server.mcp.tools_create import _tempo_line
+
+    line = _tempo_line("operate", {"queue_ceiling": 8})
+    assert "set rule by rule" in line and "queue_ceiling: 8" in line
+    assert "few_times_daily" in _tempo_line("operate", {})
+    assert _tempo_line(
+        "operate", dict(TEMPO_PRESETS["few_times_daily"])).startswith("few_times_daily")
+
+
+# ── the health checks, read where the constitution is guarded ───────────────────
+
+
+def test_health_survives_a_project_with_no_constitution(client):
+    """The tempo checks used to read `effective()` unguarded, above the block
+    whose `except LookupError` exists for exactly this — so a project in the
+    one state the `activity` check was written to report 500'd the endpoint
+    instead of reporting it."""
+    project = make_project(client, mode="explore")
+    with db_session() as session:
+        for row in session.query(Constitution).filter(
+                Constitution.project_id == project["id"]).all():
+            session.delete(row)
+    checks = _checks(client, project)
+    assert checks["activity"]["status"] == "fail"
+    assert "no constitution row" in checks["activity"]["detail"]
+
+
+def test_the_budget_warning_counts_both_lanes(client):
+    """The inbox ceiling is a separate additive allowance — `daily_runs_used`
+    excludes those runs from the work total on purpose — so a `live` project's
+    real ceiling is 190 runs a day, not 150. Counting one lane understated the
+    warning by about a quarter."""
+    project = make_project(client, mode="explore",
+                           constitution={"monthly_usd_cap": 75.0})
+    with db_session() as session:
+        for _ in range(5):
+            session.add(Run(
+                id=ids.new_id(ids.RUN), project_id=project["id"],
+                agent_id=project["ceo_agent_id"], kind="agent_run", trigger={},
+                status=RunStatus.DONE, cost_usd=0.15,
+                started_at=utcnow(), finished_at=utcnow()))
+    detail = _checks(client, project)["tempo-vs-budget"]["detail"]
+    assert "190 runs a day" in detail
+    assert "150 of work plus 40 of reading" in detail
+
+
+def test_the_brief_names_both_cards(client):
+    """The footprint question: tempo reported in three places and the bar card
+    in none."""
+    project = make_project(client, mode="operate",
+                           constitution={"cycle_frequency": "weekly"})
+    with db_session() as session:
+        brief = briefing.project_briefing(
+            session, session.get(Project, project["id"]),
+            since=utcnow() - timedelta(hours=1))
+    assert brief["tempo"] == "few_times_daily"
+    assert "bar" in brief

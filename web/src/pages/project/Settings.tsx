@@ -1454,7 +1454,7 @@ function AmendmentSave({
 /** Re-pick a card on a project that is already running.
 
     The rules a card writes have always been editable here, one box at a time —
-    which for the tempo card is fourteen boxes across three tabs, and is the
+    which for the tempo card is thirteen boxes across three tabs, and is the
     "too many levers" problem relocated from the creation form to this page
     rather than solved. Picking a card stages the whole bundle into the same
     dirty-field state a typed edit uses, so the existing save files it as ONE
@@ -2220,7 +2220,7 @@ export default function Settings({
         {activeTheme === "Pace & brakes" && presets && (
           <CardPicker
             title="How often should it think?"
-            help={"Fourteen rules: the daily and hourly run ceilings, how often each agent "
+            help={"Thirteen rules: the daily and hourly run ceilings, how often each agent "
               + "may wake, whether agents buy a run just to read each other's messages, how "
               + "often the CEO plans, and how far ahead work may be scheduled. Getting the "
               + "tempo wrong at creation is the cheapest mistake on this page to fix."}

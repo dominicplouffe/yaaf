@@ -41,6 +41,7 @@ from sqlalchemy.orm import Session
 
 from yaaf.core.constitution import (
     ConstitutionDoc,
+    bar_name,
     effective,
     preset_name,
     tempo_name,
@@ -1242,11 +1243,12 @@ def project_briefing(session: Session, project: Project,
         # sentences, and only the second one scales with the dial.
         "needs_you": sum(1 for line in lines if line["yours"]),
         "autonomy": preset_name(cons.model_dump()),
-        # Which card this project is thinking on, or None for rules set one at
-        # a time. Beside the autonomy dial because it answers the other half of
-        # "what kind of project is this": who holds the verbs, and how often it
-        # wakes to use them.
+        # Which cards this project runs on, or None for rules set one at a
+        # time. Beside the autonomy dial because together they answer "what
+        # kind of project is this": who holds the verbs, how often it wakes to
+        # use them, and what the work is worth.
         "tempo": tempo_name(cons.model_dump()),
+        "bar": bar_name(cons.model_dump()),
         "money": money,
         "pulse": pulse,
         "waiting": waiting,

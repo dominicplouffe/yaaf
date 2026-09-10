@@ -901,6 +901,25 @@ def tempo_name(constitution: dict[str, Any]) -> str | None:
                  if all(constitution.get(key) == value for key, value in rules.items())), None)
 
 
+def stated_tempo(constitution: dict[str, Any]) -> str | None:
+    """The card this constitution NAMES, as against the one it happens to equal.
+
+    `tempo_name` answers "what is this project's pace", and it is right to answer
+    from the whole document. But `live` is byte-identical to the field defaults,
+    so a spec that names one pace rule at its default value — `queue_ceiling: 8`,
+    say — produces a project that genuinely IS live, and `tempo_name` says so.
+    Nobody chose it.
+
+    Two callers need that difference and both got it wrong by asking the first
+    question: the doctrine check that refuses a Founder who did not choose, and
+    the MCP preview line that reports what a spec asked for. A card is chosen
+    only when every rule of it is written down.
+    """
+    if not set(TEMPO_RULES) <= set(constitution):
+        return None
+    return tempo_name(constitution)
+
+
 def default_tempo(mode: str, constitution: dict[str, Any]) -> dict[str, Any]:
     """A creation-time constitution with the tempo filled in if it was silent.
 

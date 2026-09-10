@@ -99,7 +99,7 @@ Also enforced here, and not tunable because they're structural:
 The five authority switches are the dial (docs/AUTONOMY.md): they decide *who
 holds a verb*, never whether the record is honest.
 
-**The same shape governs pace.** Fourteen rules decide how often the project
+**The same shape governs pace.** Thirteen rules decide how often the project
 thinks, and they move together as a *tempo card* — `live` (~150 runs a day),
 `working_hours` (~40) or `few_times_daily` (~12). A project that names none of
 them is stamped with the card its mode implies: Explore and Deliver both end,
