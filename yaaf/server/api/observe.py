@@ -1019,11 +1019,27 @@ def org(project_id: str, session: Session = Depends(db)) -> dict:
         lead = policy.effective_lead(session, team)
         role_version = session.get(RoleVersion, team.role_version_id)
         role = session.get(Role, role_version.role_id) if role_version else None
+        # What the team actually runs, spelled out. The overview offered
+        # "adopt latest role version" while naming neither the role nor the
+        # version pinned, so the one question the card exists to answer —
+        # which charter are these people working from — could only be
+        # answered by opening the role library and guessing. The slug alone
+        # was not enough: it is not what the library shows, and it carries no
+        # version.
+        latest = session.execute(
+            select(RoleVersion).where(RoleVersion.role_id == role.id)
+            .order_by(RoleVersion.version.desc()).limit(1)
+        ).scalar_one() if role else None
         teams.append(
             {
                 "id": team.id,
                 "name": team.name,
                 "role_slug": role.slug if role else None,
+                "role_name": role.name if role else None,
+                "role_version": role_version.version if role_version else None,
+                # The library's newest, so the reader can see "behind" without
+                # cross-referencing the health card.
+                "role_latest_version": latest.version if latest else None,
                 "lead_agent_id": lead.id if lead else None,
                 "agents": [
                     {"id": a.id, "name": a.name, "status": a.status} for a in members
@@ -1038,7 +1054,12 @@ def org(project_id: str, session: Session = Depends(db)) -> dict:
     ceo_version = session.get(RoleVersion, ceo.role_version_id) if ceo else None
     ceo_role = session.get(Role, ceo_version.role_id) if ceo_version else None
     return {"ceo": {"id": ceo.id, "name": ceo.name, "status": ceo.status,
-                    "role_slug": ceo_role.slug if ceo_role else None} if ceo else None,
+                    "role_slug": ceo_role.slug if ceo_role else None,
+                    # Named like a team's, for the same reason. No version:
+                    # only teams can be repinned, and a version number beside
+                    # a seat with no adopt button is a question the product
+                    # cannot answer.
+                    "role_name": ceo_role.name if ceo_role else None} if ceo else None,
             "teams": teams}
 
 

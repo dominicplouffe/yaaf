@@ -780,11 +780,20 @@ export interface HypothesisRow {
 }
 
 export interface OrgView {
-  ceo: { id: string; name: string; status: string; role_slug: string | null } | null;
+  ceo: {
+    id: string; name: string; status: string;
+    role_slug: string | null; role_name: string | null;
+  } | null;
   teams: {
     id: string;
     name: string;
     role_slug: string | null;
+    /** The role as the library names it, and the version this team is pinned
+        to — a team runs the version it was hired under until the chairman
+        adopts a newer one, so both halves are needed to know what it runs. */
+    role_name: string | null;
+    role_version: number | null;
+    role_latest_version: number | null;
     lead_agent_id: string | null;
     agents: { id: string; name: string; status: string }[];
   }[];
