@@ -80,7 +80,7 @@ function fmtSize(bytes: number): string {
     is ambiguous with a broken health check, and the ambiguity costs more than
     the pixels. Failing rows keep their plain-language fixes. */
 function HealthLine({ ctx }: { ctx: ProjectCtx }) {
-  const { projectId, health: data, reloadHealth } = ctx;
+  const { projectId, health: data, reloadHealth, reloadOrg } = ctx;
   const [show, setShow] = useState(false);
   if (!data) return null;
 
@@ -130,6 +130,9 @@ function HealthLine({ ctx }: { ctx: ProjectCtx }) {
               onClick={async () => {
                 await post(`/admin/teams/${check.action!.team_id}/repin`, {});
                 reloadHealth();
+                // The team card below names the pinned version; adopting from
+                // here has to move it too, or the two rows disagree.
+                reloadOrg();
               }}
             >
               adopt latest role version
@@ -878,7 +881,15 @@ export default function Overview({
       {repinMsg && <div className="notice-box">{repinMsg}</div>}
       <div className="list-grid">
         <div className="card">
-          <strong>CEO</strong>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+            <strong>CEO</strong>
+            <div className="spacer" />
+            {org?.ceo?.role_name && (
+              <span className="chip" title={org.ceo.role_slug ?? undefined}>
+                {org.ceo.role_name}
+              </span>
+            )}
+          </div>
           <div style={{ marginTop: 6 }}>
             {org?.ceo ? (
               <span className="badge accent">{org.ceo.name}</span>
@@ -895,9 +906,23 @@ export default function Overview({
           const open = teamTasks.filter(
             (t) => ["ready", "claimed", "checking", "review"].includes(t.status)).length;
           const stuck = teamTasks.filter((t) => t.status === "blocked").length;
+          const behind = team.role_version !== null
+            && team.role_latest_version !== null
+            && team.role_version < team.role_latest_version;
           return (
             <div className="card" key={team.id}>
-              <strong>{team.name}</strong>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+                <strong>{team.name}</strong>
+                <div className="spacer" />
+                {/* Which charter these people work from. A team is a role plus
+                    its people, and the people were the only half on the card. */}
+                {team.role_name && (
+                  <span className="chip" title={team.role_slug ?? undefined}>
+                    {team.role_name} v{team.role_version}
+                  </span>
+                )}
+                {behind && <span className="chip warn">behind</span>}
+              </div>
               <div className="pill-row" style={{ marginTop: 6 }}>
                 {team.agents.map((agent) => (
                   <span key={agent.id} className={`badge ${agent.status === "active" ? "good" : "warn"}`}>
@@ -912,21 +937,27 @@ export default function Overview({
                   : `${open} open${stuck > 0 ? `, ${stuck} blocked` : ""}`}
               </p>
               {/* Teams pin their role version at creation; edited roles apply
-                  only when the chairman explicitly adopts them. */}
-              <div className="actions" style={{ marginTop: 8 }}>
-                <button
-                  className="small"
-                  onClick={async () => {
-                    const result = await post<{ changed: boolean; version: number }>(
-                      `/admin/teams/${team.id}/repin`, {});
-                    setRepinMsg(result.changed
-                      ? `${team.name} now runs role version ${result.version}; effective on the next run.`
-                      : `${team.name} is already on the latest role version (${result.version}).`);
-                  }}
-                >
-                  adopt latest role version
-                </button>
-              </div>
+                  only when the chairman explicitly adopts them. The button is
+                  here only when there is something to adopt — five cards each
+                  offering to move a team to the version it already runs is
+                  five buttons that teach the reader to ignore the row. */}
+              {behind && (
+                <div className="actions" style={{ marginTop: 8 }}>
+                  <button
+                    className="small"
+                    onClick={async () => {
+                      const result = await post<{ changed: boolean; version: number }>(
+                        `/admin/teams/${team.id}/repin`, {});
+                      setRepinMsg(result.changed
+                        ? `${team.name} now runs ${team.role_name ?? team.role_slug} v${result.version}; effective on the next run.`
+                        : `${team.name} is already on the latest role version (v${result.version}).`);
+                      reloadOrg();
+                    }}
+                  >
+                    adopt v{team.role_latest_version}
+                  </button>
+                </div>
+              )}
             </div>
           );
         })}
