@@ -188,6 +188,50 @@ function AuditSamples({ projectId }: { projectId: string }) {
   );
 }
 
+/** Module scope, not inside `Work`. A component declared in a render body
+    is a new type on every render, so React unmounts and rebuilds its DOM —
+    and `<details open>` lives in the DOM, not in React state. Nested, every
+    poll tick (6s) snapped all forty of these shut, the page lost two thirds
+    of its height, and the browser clamped the reader to the bottom of what
+    was left. That was the whole "it scrolls me to the end when I click". */
+function TaskDetails({ task }: { task: TaskRow }) {
+  return (
+    <details>
+      <summary className="help">details</summary>
+      <dl className="kv" style={{ margin: "8px 0" }}>
+        <dt>success test</dt>
+        <dd>
+          {/* pre.block wraps and scrolls; a bare mono cell could not shrink
+              below one long `python3 -c "…"` and pushed the row wide. */}
+          <pre className="block" style={{ margin: 0 }}>
+            [{task.success_test.type}] {task.success_test.command ?? task.success_test.target}
+          </pre>
+        </dd>
+        {task.evidence && (
+          <>
+            <dt>completion evidence</dt>
+            <dd>{task.evidence}</dd>
+          </>
+        )}
+        {task.check_output && (
+          <>
+            <dt>platform check output</dt>
+            <dd>
+              <pre className="block">{task.check_output}</pre>
+            </dd>
+          </>
+        )}
+        {task.audit_status && (
+          <>
+            <dt>your audit</dt>
+            <dd>{task.audit_status}</dd>
+          </>
+        )}
+      </dl>
+    </details>
+  );
+}
+
 export default function Work({ ctx }: { ctx: ProjectCtx }) {
   const { projectId, hypotheses } = ctx;
   const { data: tasks, error } = usePoll(
@@ -264,44 +308,6 @@ export default function Work({ ctx }: { ctx: ProjectCtx }) {
   const completed = all.filter((t) => t.status === "done");
   const audited = completed.filter((t) => t.audit_status).length;
   const coveragePct = completed.length > 0 ? Math.round((audited / completed.length) * 100) : null;
-
-  function TaskDetails({ task }: { task: TaskRow }) {
-    return (
-      <details>
-        <summary className="help">details</summary>
-        <dl className="kv" style={{ margin: "8px 0" }}>
-          <dt>success test</dt>
-          <dd>
-            {/* pre.block wraps and scrolls; a bare mono cell could not shrink
-                below one long `python3 -c "…"` and pushed the row wide. */}
-            <pre className="block" style={{ margin: 0 }}>
-              [{task.success_test.type}] {task.success_test.command ?? task.success_test.target}
-            </pre>
-          </dd>
-          {task.evidence && (
-            <>
-              <dt>completion evidence</dt>
-              <dd>{task.evidence}</dd>
-            </>
-          )}
-          {task.check_output && (
-            <>
-              <dt>platform check output</dt>
-              <dd>
-                <pre className="block">{task.check_output}</pre>
-              </dd>
-            </>
-          )}
-          {task.audit_status && (
-            <>
-              <dt>your audit</dt>
-              <dd>{task.audit_status}</dd>
-            </>
-          )}
-        </dl>
-      </details>
-    );
-  }
 
   function row(task: TaskRow, sub: boolean) {
     return (
