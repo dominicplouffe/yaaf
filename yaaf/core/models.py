@@ -1876,6 +1876,17 @@ class Secret(Base):
     # role grants, billing_secret_id refuses service secrets — a WordPress
     # password can never become the model credential, or vice versa.
     kind: Mapped[str] = mapped_column(String(16), default="service")
+    # Set => this credential IS a file, and this is what it is called on disk.
+    # The granted role's env var then holds the PATH and never the bytes: a
+    # service-account JSON, a PEM key, a kubeconfig is only usable as a file,
+    # and the alternative is an agent writing a private key into a git clone
+    # by hand. NULL => an ordinary string credential, injected as its value.
+    #
+    # Orthogonal to `kind` on purpose. `kind` is the grantability axis; being a
+    # file says nothing about who may hold it. Folding file-ness into `kind`
+    # would turn every existing `kind == "service"` test into a membership
+    # check, which is the change spreading instead of staying put.
+    filename: Mapped[str | None] = mapped_column(String(120))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     # An LLM credential retired from every menu without being destroyed.
     # Lifting per-project keys above projects made one managed credential per

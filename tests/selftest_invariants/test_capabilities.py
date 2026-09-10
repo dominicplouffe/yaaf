@@ -139,7 +139,7 @@ def test_the_ceo_delegates_under_the_dial_and_it_is_never_quiet(client):
     _stored_credential(client, project)
     roster = client.get("/agent/credentials", headers=bearer(token(project)))
     assert roster.status_code == 200
-    assert {"name": "smtp-password", "role_scopes": ["ceo"]} in roster.json()
+    assert {"name": "smtp-password", "role_scopes": ["ceo"], "file": False} in roster.json()
 
     done = client.post("/agent/credentials/smtp-password/scope",
                        headers=bearer(token(project)),

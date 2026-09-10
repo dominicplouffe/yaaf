@@ -19,6 +19,8 @@ confirmation, and the platform's own schema check on the way in.
 
 from __future__ import annotations
 
+import base64
+
 from sqlalchemy.orm import Session
 
 from yaaf.core.models import Team
@@ -201,13 +203,19 @@ def data_source(principal: Principal, session: Session, arguments: dict) -> dict
     description=(
         "Store or re-scope a credential. Values go in and never come back out: no tool "
         "on this surface reads one, at any scope. Omit `value` to change which roles "
-        "get an existing credential without re-pasting it."
+        "get an existing credential without re-pasting it. Set `filename` when the "
+        "credential IS a file — a service-account key, a PEM, a kubeconfig — and "
+        "granted roles receive the path to it rather than its contents."
     ),
     input_schema=_schema([],
                          verb={"type": "string", "enum": ["list", "save"]},
                          name={"type": "string"},
                          value={"type": "string",
                                 "description": "Written encrypted and forgotten. Never read back"},
+                         filename={"type": "string",
+                                   "description": "Makes this a FILE credential, named this "
+                                                  "on disk in the sandbox. Text files only "
+                                                  "here; binary goes through the dashboard"},
                          roles={"type": "array", "items": {"type": "string"}},
                          kind={"type": "string", "enum": ["service"]}),
 )
@@ -223,21 +231,32 @@ def credential(principal: Principal, session: Session, arguments: dict) -> dict:
         }, arguments.get("detail"))
 
     name = required(arguments, "name")
+    filename = arguments.get("filename")
     preview = confirm.gate(session, principal, "credential",
                            {k: v for k, v in arguments.items() if k != "value"}, {
                                "verb": "save", "project": project.slug, "name": name,
                                "roles": arguments.get("roles") or [],
                                "kind": arguments.get("kind") or "service",
+                               "filename": filename,
                                "value_supplied": bool(arguments.get("value")),
                                "note": ("The value is stored encrypted and cannot be read "
-                                        "back through this surface."),
+                                        "back through this surface."
+                                        + (" Granted roles receive the path to the file, "
+                                           "not its contents." if filename else "")),
                            })
     if preview:
         return preview
 
+    # The door takes a file's bytes as base64 so a .p12 can ride the same field
+    # as a Stripe key. Nobody pastes a keystore through a chat client, so this
+    # surface takes the text and does the encoding.
+    value = arguments.get("value")
+    if filename is not None and value is not None:
+        value = base64.b64encode(str(value).encode()).decode()
     outcome = _call(principal, admin.put_secret,
                     body=admin.SecretIn(project_id=project.id, name=name,
-                                        value=arguments.get("value"),
+                                        value=value,
+                                        filename=filename,
                                         role_scopes=arguments.get("roles") or [],
                                         kind=arguments.get("kind")),
                     session=session)

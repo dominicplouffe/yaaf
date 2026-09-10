@@ -13,6 +13,7 @@ cost of producing it is wrong.
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
 import time
@@ -199,9 +200,10 @@ def _materialize(session: Session, queued: RunQueue, project: Project) -> RunJob
     job.billing_env = {**_billing_env(session, project), **role_secrets}
     # Credentials are capabilities: each variable arrives with what it is and
     # how to use it, where the recognizer library knows (docs/AUTONOMY.md).
+    from yaaf.core.naming import announced_credentials
     from yaaf.server.recognizers import credentials_prompt
 
-    job.system_prompt += credentials_prompt(list(role_secrets))
+    job.system_prompt += credentials_prompt(*announced_credentials(role_secrets))
     job.system_prompt += _data_source_prompt(source_specs)
     return job
 
@@ -379,6 +381,12 @@ def _env_var_name(secret_name: str) -> str:
     return env_var_name(secret_name)
 
 
+def _file_cred_carrier(env_name: str) -> str:
+    from yaaf.core.naming import file_cred_carrier
+
+    return file_cred_carrier(env_name)
+
+
 def _role_secret_env(session: Session, project: Project, role_version) -> dict:
     """Secrets whose role_scopes name this agent's role, decrypted and named as
     env vars. The grant lives on the SECRET (chairman-editable, effective on
@@ -409,12 +417,23 @@ def _role_secret_env(session: Session, project: Project, role_version) -> dict:
         if not secret.role_scopes or role.slug not in secret.role_scopes:
             continue
         var = _env_var_name(secret.name)
-        if var in env:
+        if var in env or _file_cred_carrier(var) in env:
             continue  # project-scoped already claimed this name
         try:
-            env[var] = decrypt(secret.ciphertext)
+            value = decrypt(secret.ciphertext)
         except Exception:
             log.warning("could not decrypt secret %s for role scope", secret.id)
+            continue
+        if secret.filename:
+            # The bytes ride under the carrier and never under `var` itself:
+            # the entrypoint writes the file, points `var` at it and drops the
+            # carrier, so what the model can read is a path. Doing it here
+            # instead would mean handing an agent a private key and a note
+            # asking it to save the key somewhere — inside a git clone.
+            env[_file_cred_carrier(var)] = json.dumps(
+                {"filename": secret.filename, "b64": value})
+        else:
+            env[var] = value
     return env
 
 
@@ -426,6 +445,12 @@ def _billing_env(session: Session, project: Project) -> dict:
         return {}
     from yaaf.core.crypto import decrypt
 
+    if secret.filename:
+        # A model credential is a string by definition; only a hand-edited row
+        # could get here. Injecting base64 as ANTHROPIC_API_KEY would fail every
+        # call with "Not logged in", which describes nothing.
+        log.warning("billing secret %s is stored as a file; refusing to inject it", secret.id)
+        return {}
     value = decrypt(secret.ciphertext)
     if project.billing_mode == "subscription":
         return {"CLAUDE_CODE_OAUTH_TOKEN": value}

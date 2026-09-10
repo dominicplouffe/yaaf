@@ -88,6 +88,30 @@ RECOGNIZERS: list[dict] = [
     {"match": ("TELEGRAM",),
      "note": "Telegram bot — httpx against https://api.telegram.org/bot<token>",
      "packages": []},
+    # ── the file-shaped ones ────────────────────────────────────────────────
+    # These match credentials that usually arrive as a FILE. They are ordinary
+    # rules: a rule fires on the variable's name, and says nothing about how
+    # the value got there. What makes a credential a file is `Secret.filename`,
+    # and the sentence about the path comes from `credentials_prompt` below —
+    # so a service-account JSON someone stored as a string still gets the right
+    # library advice, just without the path sentence.
+    {"match": ("SERVICE_ACCOUNT", "GOOGLE", "GCP_"),
+     "note": ("a Google Cloud service account — "
+              "service_account.Credentials.from_service_account_file(path), or set "
+              "GOOGLE_APPLICATION_CREDENTIALS to the path and let the client library "
+              "find it; scope it for the API you are calling"),
+     "packages": ["google-auth", "google-api-python-client"]},
+    {"match": ("KUBECONFIG", "KUBE_"),
+     "note": "a kubeconfig — `KUBECONFIG=$VAR kubectl …`, or the kubernetes package",
+     "packages": []},
+    {"match": ("SSH_KEY", "DEPLOY_KEY", "PRIVATE_KEY", "_PEM"),
+     "note": ("a private key — `ssh -i` it, or point GIT_SSH_COMMAND at it; it is "
+              "already mode 0600, which is what ssh insists on"),
+     "packages": []},
+    {"match": ("CA_BUNDLE", "_CERT", "TRUSTSTORE", "_P12", "_PFX"),
+     "note": ("a certificate file — httpx(verify=path) for a CA bundle, cert=path "
+              "for a client certificate"),
+     "packages": []},
 ]
 
 
@@ -99,23 +123,39 @@ def recognize(env_name: str) -> dict | None:
     return None
 
 
-def credentials_prompt(env_names: list[str]) -> str:
+def credentials_prompt(env_names: list[str], files: dict[str, str] | None = None) -> str:
     """The CREDENTIALS paragraph for a run's system prompt: every granted
     variable, with what it is and how to use it where the platform knows.
-    Returns "" when the role holds nothing."""
+    Returns "" when the role holds nothing.
+
+    `files` names the variables that hold a PATH to a credential file the
+    platform has already written — {env name: filename}. They are described
+    differently, and the difference is the point: the standing instruction
+    below is never to write a credential to a file, and a file credential must
+    not need an exemption from it. It doesn't. The platform did the writing;
+    the agent still only ever reads a path.
+    """
     if not env_names:
         return ""
+    files = files or {}
     lines = ["\n\nCREDENTIALS: these environment variables are set in your sandbox "
              "for your role. Use them for their purpose; never print, log, or write "
              "them to files."]
     packages: list[str] = []
     for name in sorted(env_names):
         rule = recognize(name)
-        if rule is None:
+        note = rule["note"] if rule else ""
+        if name in files:
+            where = (f"the PATH to {files[name]}, a credential file already written "
+                     "for you there — point tooling at the path; do not read it out, "
+                     "copy it, or move it into the workspace")
+            note = f"{where}. It is {note}" if note else where
+        if not note:
             lines.append(f"\n- {name}")
             continue
-        lines.append(f"\n- {name}: {rule['note']}")
-        packages += [p for p in rule["packages"] if p not in packages]
+        lines.append(f"\n- {name}: {note}")
+        if rule:
+            packages += [p for p in rule["packages"] if p not in packages]
     if packages:
         lines.append(
             "\nPackages worth installing before first use (the network is open): "

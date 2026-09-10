@@ -2805,7 +2805,14 @@ def credentials_list(
         select(Secret).where(Secret.project_id == ctx.project.id,
                              Secret.kind == "service").order_by(Secret.name)
     ).scalars()
-    return [{"name": s.name, "role_scopes": s.role_scopes or []} for s in rows]
+    # `file` is not decoration: a CEO answering "do we have Google access?" or
+    # delegating one to a team needs to know the variable will hold a path, or
+    # it will tell a worker to read a credential out of a variable that holds a
+    # file name. The file's own NAME is deliberately not here — this roster
+    # lists credentials the CEO may not itself hold, and a key file is often
+    # named after the account it belongs to. A shape, never a value.
+    return [{"name": s.name, "role_scopes": s.role_scopes or [],
+             "file": bool(s.filename)} for s in rows]
 
 
 class CredentialScope(BaseModel):

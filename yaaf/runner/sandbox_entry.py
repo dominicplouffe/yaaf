@@ -18,6 +18,7 @@ import base64
 import hashlib
 import json
 import os
+import tempfile
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -52,6 +53,130 @@ PERMS = json.loads(os.environ.get("YAAF_TOOL_PERMISSIONS", "{}"))
 
 WORKSPACE = Path("/workspace")
 STAGING = Path("/workspace/.yaaf")
+
+# ── file-shaped credentials ────────────────────────────────────────────────────
+#
+# A service-account JSON, an SSH key, a kubeconfig is only usable as a FILE, and
+# the platform will not hand an agent a private key and ask it to save the key
+# itself: the one writable place an agent thinks of is /workspace, /workspace is
+# a git clone it commits from, and that is how a key gets pushed to a remote.
+#
+# So the runner sends the bytes under a carrier variable and this writes them,
+# here, before the model exists: mode 0600 (ssh refuses a key anyone else can
+# read), outside /workspace so no `git add -A` can reach it, and on a tmpfs that
+# dies with the container. The carrier is then deleted, which is what makes the
+# credential's own variable a path and nothing else — os.environ, `env`, and
+# every subprocess the agent spawns inherit the rewritten environment.
+#
+# What that is NOT: a wall between the agent and its own credential. unsetenv
+# does not rewrite the block the kernel exposes at /proc/self/environ, so the
+# original bytes stay readable there for the life of the container — and the
+# agent could read the 0600 file anyway, since it owns it. That is the design,
+# not a hole in it: the role was granted this credential. What the deletion buys
+# is that the credential's variable means one thing (a path), everywhere, from
+# the first instruction — so nothing downstream has to guess, and nothing that
+# reads $GOOGLE_SA expecting a path gets bytes.
+#
+# Mirrors yaaf/core/naming.py FILE_CRED_PREFIX. This file is copied into the
+# image alone and cannot import the yaaf package; a test asserts the two agree.
+FILE_CRED_PREFIX = "YAAF_FILE_CRED__"
+CREDENTIAL_DIR = Path("/run/yaaf/credentials")
+
+# A credential that could not be written is a capability the role does not have,
+# and the agent must be told in the place it will look — its own run summary —
+# rather than left to discover a path that isn't there. Kept SEPARATE from
+# MOUNT_PROBLEMS because `_data_source_specs` clears that list, and it runs
+# after this.
+CREDENTIAL_PROBLEMS: list[str] = []
+
+
+def _credential_dir() -> Path:
+    """Where a materialized credential lives. `/run/yaaf` is a tmpfs the runner
+    mounts (see sandbox.CREDENTIALS_TMPFS), so the bytes never reach a disk and
+    the whole directory dies with the container. Falls back to a private temp
+    dir when there is no such mount — a dev box without Docker. Either way it is
+    outside /workspace, which is the point: the workspace is a git clone."""
+    try:
+        CREDENTIAL_DIR.mkdir(parents=True, exist_ok=True)
+        CREDENTIAL_DIR.chmod(0o700)
+        return CREDENTIAL_DIR
+    except OSError:
+        return Path(tempfile.mkdtemp(prefix="yaaf-cred-"))
+
+
+def materialize_file_credentials() -> dict[str, str]:
+    """Write each file credential to disk, repoint its variable at the path and
+    drop the carrier. Returns {env name: path} — never the contents.
+
+    Runs at import, before the SDK is built, so every subprocess the agent
+    spawns inherits an environment in which the credential's variable holds a
+    path and the bytes are simply not present. Safe to call twice; the second
+    call finds no carriers."""
+    carriers = [key for key in os.environ if key.startswith(FILE_CRED_PREFIX)]
+    if not carriers:
+        return {}
+    directory = _credential_dir()
+    written: dict[str, str] = {}
+    for carrier in sorted(carriers):
+        name = carrier[len(FILE_CRED_PREFIX):]
+        raw = os.environ.pop(carrier)
+        try:
+            spec = json.loads(raw)
+            body = base64.b64decode(spec["b64"], validate=True)
+            # The name was validated at the door, but it is about to become a
+            # path and the door is a different process on a different machine:
+            # take the basename again so a hand-edited row cannot aim a private
+            # key at /workspace.
+            filename = os.path.basename(str(spec["filename"]).strip())
+        except Exception:
+            CREDENTIAL_PROBLEMS.append(
+                f"credential {name} NOT available: its file could not be read from "
+                "the run's environment")
+            continue
+        if not filename or filename in (".", ".."):
+            CREDENTIAL_PROBLEMS.append(f"credential {name} NOT available: unusable file name")
+            continue
+        # One directory per credential, named for its variable. Two credentials
+        # may legitimately carry the same file name — a chairman with a
+        # production and a staging service account calls both key.json — and
+        # writing them into one directory made the second silently overwrite the
+        # first, so $GOOGLE_SA served the staging key. The variable name is
+        # unique by construction (the runner refuses a second credential on a
+        # name it already claimed), so this cannot collide.
+        holder = directory / name.lower()
+        try:
+            holder.mkdir(parents=True, exist_ok=True)
+            holder.chmod(0o700)
+        except OSError as exc:
+            CREDENTIAL_PROBLEMS.append(
+                f"credential {name} NOT available: {type(exc).__name__} making its directory")
+            continue
+        path = holder / filename
+        try:
+            # 0600 before the bytes, never after: ssh refuses a key that was
+            # ever readable by anyone else, and so should we.
+            handle = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(handle, "wb") as out:
+                out.write(body)
+        except OSError as exc:
+            CREDENTIAL_PROBLEMS.append(
+                f"credential {name} NOT available: {type(exc).__name__} writing its file")
+            continue
+        os.environ[name] = str(path)
+        written[name] = str(path)
+    return written
+
+
+try:
+    FILE_CREDENTIALS = materialize_file_credentials()
+except Exception as _exc:  # pragma: no cover — the entrypoint must still start
+    # Nothing here is worth taking the run down for. A run that dies at import
+    # produces no result.json and no summary, so the chairman sees a container
+    # that exited and no reason; a run that starts without a credential says so
+    # in its summary and does the rest of its work.
+    FILE_CREDENTIALS = {}
+    CREDENTIAL_PROBLEMS.append(
+        f"file credentials NOT available: {type(_exc).__name__} preparing them")
 
 _client = httpx.Client(
     base_url=API,
@@ -1533,7 +1658,7 @@ async def main() -> int:
         "will wake you when there is a reason to."
     )
 
-    summary_parts: list[str] = list(MOUNT_PROBLEMS)
+    summary_parts: list[str] = CREDENTIAL_PROBLEMS + list(MOUNT_PROBLEMS)
     cost_usd = None
     tokens_in = tokens_out = cache_creation = cache_read = 0
     ok = True

@@ -108,7 +108,11 @@ def test_no_agent_route_serves_a_secret_value(client):
     roster = client.get("/agent/credentials", headers=bearer(token))
     assert roster.status_code == 200
     for row in roster.json():
-        assert set(row) == {"name", "role_scopes"}, "the roster must stay value-free"
+        # Still exact, so a field added here has to be argued for. `file` says
+        # the variable will hold a path rather than the credential; the file's
+        # own name is NOT here, because this roster lists credentials the CEO
+        # may not hold and a key file is often named for the account it opens.
+        assert set(row) == {"name", "role_scopes", "file"}, "the roster must stay value-free"
         assert "s3cret-value" not in str(row)
 
 
