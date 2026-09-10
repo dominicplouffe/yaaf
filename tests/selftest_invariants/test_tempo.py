@@ -54,7 +54,16 @@ from yaaf.core.db import db_session
 from yaaf.founder.tools import tempo_problems
 from yaaf.server import briefing
 from yaaf.core import ids
-from yaaf.core.models import Project, Run, RunStatus, utcnow
+from yaaf.core.models import (
+    NoticeKind,
+    Notice,
+    Project,
+    Run,
+    RunStatus,
+    Task,
+    TaskStatus,
+    utcnow,
+)
 
 # ── the bundles themselves ──────────────────────────────────────────────────────
 
@@ -485,3 +494,65 @@ def test_the_capacity_forecast_moves_with_the_tempo(client):
                 {**ConstitutionDoc().model_dump(), **TEMPO_PRESETS["few_times_daily"]}),
             until)
     assert quiet["available"] < fast["available"], (quiet, fast)
+
+
+# ── the hazard that had to be checked rather than assumed ───────────────────────
+
+
+def test_a_quiet_project_out_of_runs_is_not_reported_as_stalled(client):
+    """`stall_hours` is deliberately NOT a tempo rule, and this is why.
+
+    The watchdog tells the chairman when a project with work on its board has
+    started no run for hours. A project that wakes twelve times a day and
+    spends them by lunchtime looks exactly like that — so the obvious move was
+    to loosen `stall_hours` on the quiet cards, and the obvious move would have
+    been a guess dressed up as a bundle. It is not needed: a project held by a
+    ceiling names the moment that ceiling clears, and the watchdog already
+    skips anything with a clearing time attached. What it exists for is silence
+    nobody can explain, and this silence explains itself.
+
+    Deliberately slow: this drives the real janitor over a real board, because
+    the thing under test is the interaction between three subsystems and a
+    mocked one of them would prove nothing.
+    """
+    from yaaf.server import dispatcher, janitor
+
+    project = make_project(client, mode="operate",
+                           constitution={"cycle_frequency": "weekly"})
+    rules = _rules(client, project)
+    assert rules["runs_per_project_per_day"] == 12
+    assert rules["stall_hours"] == 3.0
+
+    with db_session() as session:
+        # Work sitting ready, and the day's whole allowance already spent —
+        # every run of it older than the watchdog's window.
+        session.add(Task(
+            id=ids.new_id(ids.TASK), project_id=project["id"],
+            team_id=project["teams"][0]["id"],
+            created_by_agent_id=project["ceo_agent_id"],
+            title="Read the traffic report", goal="Read it.",
+            success_test={"type": "command", "command": "true"},
+            status=TaskStatus.READY, created_at=utcnow(), updated_at=utcnow()))
+        for _ in range(rules["runs_per_project_per_day"]):
+            session.add(Run(
+                id=ids.new_id(ids.RUN), project_id=project["id"],
+                agent_id=project["ceo_agent_id"], kind="agent_run", trigger={},
+                status=RunStatus.DONE, cost_usd=0.15,
+                created_at=utcnow() - timedelta(hours=5),
+                started_at=utcnow() - timedelta(hours=5),
+                finished_at=utcnow() - timedelta(hours=5)))
+
+    with db_session() as session:
+        row = session.get(Project, project["id"])
+        state = dispatcher.activity_state(session, row, effective(session, row.id))
+        # The project can say why it is quiet and when it stops being quiet,
+        # which is the whole difference between a wait and a stall.
+        assert state["brief"]["clears_at"]
+
+    with db_session() as session:
+        janitor.janitor_once(session)
+    with db_session() as session:
+        stalled = session.query(Notice).filter(
+            Notice.project_id == project["id"],
+            Notice.kind == NoticeKind.STALLED).all()
+    assert not stalled, [n.body for n in stalled]
