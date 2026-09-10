@@ -88,17 +88,21 @@ def read(session: Session, principal: Principal, uri: str) -> dict:
 
 
 def _grammar() -> str:
-    try:
-        return GRAMMAR_PATH.read_text()
-    except OSError:  # pragma: no cover - only if the wheel loses its package data
-        return "GOAL_GRAMMAR.md is not present in this install."
+    from yaaf.founder import doctrine
+
+    return doctrine.text(GRAMMAR_PATH.name)
 
 
 def _doctrine() -> str:
-    try:
-        return DOCTRINE_PATH.read_text()
-    except OSError:  # pragma: no cover - only if the wheel loses its package data
-        return "DESIGN_DOCTRINE.md is not present in this install."
+    """The same text the Founder's prompt carries — cards substituted and all.
+
+    Read through `doctrine.text` rather than off the disk, because half of what
+    this file teaches about the tempo is a set of numbers that lives in code.
+    A reader served the raw markdown is told to copy a card it was never shown.
+    """
+    from yaaf.founder import doctrine
+
+    return doctrine.text(DOCTRINE_PATH.name)
 
 
 def _json(uri: str, payload: dict) -> dict:

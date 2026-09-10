@@ -56,7 +56,8 @@ class FounderModelError(RuntimeError):
     """A model turn failed in a way the chairman needs told about.
 
     Carries `kind` so the API can choose a status code without re-parsing an
-    error string: "auth", "cli_missing", "busy", or "unknown".
+    error string: "auth", "cli_missing", "busy", "stalled", "looping", or
+    "unknown".
     """
 
     def __init__(self, kind: str, message: str):
@@ -212,9 +213,7 @@ async def run(prompt: str, opts, stderr_sink: list[str] | None = None,
                     progress.touch(thread_id)
             elif isinstance(message, ResultMessage):
                 if getattr(message, "is_error", False):
-                    raise FounderModelError(
-                        "unknown",
-                        str(getattr(message, "result", "") or "the model run failed"))
+                    raise _ended_badly(message)
             elif thread_id:
                 progress.touch(thread_id)
     except FounderModelError:
@@ -224,6 +223,36 @@ async def run(prompt: str, opts, stderr_sink: list[str] | None = None,
         log.error("founder model turn failed: %s\nstderr: %s", exc, tail)
         raise _classify(exc, tail) from exc
     return "\n\n".join(said).strip()
+
+
+def _ended_badly(message) -> FounderModelError:
+    """Why the CLI ended the run, when it ended it badly.
+
+    `ResultMessage.result` holds the model's last words, and on a failure
+    subtype there are none — so reading it alone produced "the model run
+    failed", which is the blank answer this module exists to stop, arriving
+    through the one door `_classify` does not guard. The reason was in
+    `subtype` the whole time.
+
+    `error_max_turns` is the one worth its own sentence. It does not mean the
+    model broke; it means the model was refused the same way often enough to
+    run out of turns, which is a bug in whatever kept refusing it. Saying so
+    sends the next person to the refusal rather than to the CLI.
+    """
+    subtype = str(getattr(message, "subtype", "") or "")
+    said = str(getattr(message, "result", "") or "").strip()
+    if subtype == "error_max_turns":
+        turns = getattr(message, "num_turns", None) or MAX_TURNS
+        return FounderModelError(
+            "looping",
+            f"the Founder used all {turns} of its turns without settling on a draft. "
+            "That is a loop rather than slow work — something refused the same draft "
+            "over and over. The conversation is saved.")
+    if said:
+        return FounderModelError("unknown", said[:300])
+    return FounderModelError(
+        "unknown",
+        f"the model run ended in error ({subtype or 'no reason given'}).")
 
 
 async def _watched(stream, thread_id: str):

@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from yaaf.founder import doctrine
+
 GRAMMAR_PATH = Path(__file__).resolve().parent / "GOAL_GRAMMAR.md"
 DOCTRINE_PATH = Path(__file__).resolve().parent / "DESIGN_DOCTRINE.md"
 
@@ -66,7 +68,11 @@ After you have proposed, and only then, write a short message that covers:
    rule that decides the bill, a project nobody mentions it for runs about 150
    times a day, and the chairman coming through this door sees no card at all.
    Runs a day, not dollars — the platform will not quote a price it has not
-   measured, and neither should you.
+   measured, and neither should you. You pick it with `propose_bundle`'s
+   `tempo` argument, which writes the card's rules for you. Never write a pace
+   rule into the constitution yourself: the numbers on those cards were chosen
+   by people who watched projects fail in both directions, and a hand-tuned
+   pace is refused.
 6. **Which credential pays** — one line. `list_credentials` tells you what
    this install can bill a project against. With exactly one, the draft names
    it and your note says so. With several, this is a question worth one of
@@ -104,6 +110,6 @@ directives bind you is the chairman, in this conversation.
 def system_prompt() -> str:
     """The full prompt: who you are, then the doctrine, then the grammar."""
     return (
-        f"{SYSTEM}\n\n---\n\n{DOCTRINE_PATH.read_text()}"
-        f"\n\n---\n\n# The goal grammar\n\n{GRAMMAR_PATH.read_text()}"
+        f"{SYSTEM}\n\n---\n\n{doctrine.text(DOCTRINE_PATH.name)}"
+        f"\n\n---\n\n# The goal grammar\n\n{doctrine.text(GRAMMAR_PATH.name)}"
     )

@@ -107,7 +107,11 @@ def run_turn(session: Session, thread: FoundingThread) -> dict:
     )
     # This thread owns its event loop for the length of the turn. The turn
     # narrates itself into `progress` while it runs, which the page polls.
-    reply = asyncio.run(founder_session.run(_prompt(thread), opts, thread_id=thread.id))
+    try:
+        reply = asyncio.run(
+            founder_session.run(_prompt(thread), opts, thread_id=thread.id))
+    except founder_session.FounderModelError as exc:
+        raise _with_refusal(exc, state) from exc
 
     turns = list(thread.transcript or [])
     if reply:
@@ -118,6 +122,23 @@ def run_turn(session: Session, thread: FoundingThread) -> dict:
     thread.updated_at = utcnow()
     session.flush()
     return {"reply": reply, "draft_bundle": thread.draft_bundle}
+
+
+def _with_refusal(exc, state: dict):
+    """Name what the Founder was stuck on when it ran out of turns.
+
+    A run that burns its turn ceiling burned it on *something*, and the
+    something is almost always one tool refusing the same draft repeatedly.
+    `session.run` cannot know that — it sees a stream of messages, not tool
+    results — but `state` is where `propose_bundle` leaves its last refusal,
+    and it is right here. Without this the chairman is told his project looped
+    and not what it looped on, which is half a blank failure.
+    """
+    refusal = state.get("last_refusal")
+    if getattr(exc, "kind", "") != "looping" or not refusal:
+        return exc
+    return founder_session.FounderModelError(
+        exc.kind, f"{exc} It was stuck on: {'; '.join(refusal)[:500]}")
 
 
 def check_credential(session: Session) -> None:

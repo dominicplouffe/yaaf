@@ -373,6 +373,73 @@ def test_the_founder_picks_a_card_never_a_number():
         assert tempo_problems({"mode": "operate", "constitution": dict(rules)}) == [], name
 
 
+def test_a_refused_draft_is_told_the_one_move_that_fixes_it():
+    """A rule the model has no way to obey is a loop, not a rule.
+
+    This is the bug in the flesh: a real founding run was refused for not
+    copying a card, was never shown one, spent all twenty-four of its turns
+    guessing rule names (`tempo_card`, `max_runs_per_day`, `wakes_per_agent`),
+    went out to the open web looking for the numbers, and died on its turn
+    ceiling. The chairman got "the model run failed". Every refusal here has to
+    name the argument that ends it."""
+    for project in ({"mode": "operate", "constitution": {}},
+                    {"mode": "operate", "constitution": {"runs_per_project_per_day": 12}}):
+        problems = tempo_problems(project)
+        assert problems and "`tempo`" in problems[0], problems
+
+
+@pytest.mark.parametrize("name", list(TEMPO_PRESETS))
+def test_naming_a_card_writes_it(name):
+    """The Founder names a card; the tool writes the thirteen rules. That is
+    the move the new-project form makes when the chairman clicks a card, and
+    the Founder had been told to make it with no way to."""
+    from yaaf.founder.tools import stamp_tempo
+
+    project = {"mode": "operate", "constitution": {"stakes": "normal"}}
+    assert stamp_tempo(project, name) == []
+    assert stated_tempo(project["constitution"]) == name
+    assert project["constitution"]["stakes"] == "normal", "it wrote over the rest"
+    assert tempo_problems(project) == []
+
+
+def test_a_card_beats_a_pace_rule_written_by_hand():
+    """Tuning an individual brake is the chairman's, in Settings, with a
+    written reason. A card that yielded to a guess would put the Founder back
+    to inventing numbers one rule at a time."""
+    from yaaf.founder.tools import stamp_tempo
+
+    project = {"mode": "operate",
+               "constitution": {"runs_per_project_per_day": 3, "stakes": "low"}}
+    stamp_tempo(project, "few_times_daily")
+    assert project["constitution"]["runs_per_project_per_day"] == 12
+
+
+def test_a_card_that_does_not_exist_is_refused_by_name():
+    from yaaf.founder.tools import stamp_tempo
+
+    problems = stamp_tempo({"constitution": {}}, "quiet")
+    assert problems and "`quiet`" in problems[0]
+    for name in TEMPO_PRESETS:
+        assert f"`{name}`" in problems[0]
+
+
+def test_every_card_reaches_both_drafting_doors_whole():
+    """The MCP door writes the constitution by hand, so it needs the rules —
+    and it reads the same doctrine the Founder does. A reader served the raw
+    markdown is told to copy a card it was never shown, which is exactly how
+    this failed: the instruction shipped and the cards did not."""
+    from yaaf.founder import doctrine
+
+    text = doctrine.text("DESIGN_DOCTRINE.md")
+    for name, rules in TEMPO_PRESETS.items():
+        assert f"`{name}`" in text, name
+        for rule, value in rules.items():
+            assert f"`{rule}`" in text, rule
+            # `null` included: a card is chosen only when every rule of it is
+            # written down, and `ceo_daily_at` is genuinely null on `live`.
+            assert (f"`{value}`" if value is not None else "`null`") in text, rule
+
+
 # ── noticing afterwards, without rewriting anything ─────────────────────────────
 
 
