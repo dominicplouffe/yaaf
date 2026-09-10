@@ -715,6 +715,211 @@ def default_autonomy(constitution: dict[str, Any]) -> dict[str, Any]:
     return {**AUTONOMY_PRESETS[DEFAULT_AUTONOMY], **constitution}
 
 
+# The bar, and the tempo, as named bundles — the same move `AUTONOMY_PRESETS`
+# above made, for the same reason. These lived in `web/src/pages/NewProject.tsx`
+# and nowhere else, which meant the Founder could not pick one, the MCP surface
+# could not pick one, a spec file could not name one, no stored constitution
+# could say which one it was, and the chat box — the door most projects are
+# actually created through — had no access to any of them.
+#
+# They are TWO bundles rather than one because they answer two questions that
+# were being asked as one. The card was labelled "How does it run?" and set
+# money and quality; it touched exactly one of the twenty-two rules that govern
+# pace, so "Cheap and patient" and "Full send" woke the project equally often —
+# 150 runs a day, a planning wake every six hours, forty message-only wakes.
+# The chairman picking the cheap card got a smaller number to overshoot, not a
+# quieter project, and there was no way at all to say "do it properly, but
+# rarely".
+
+#: What the work is worth: money, and how good it has to be.
+BAR_RULES = ("stakes", "deliverable_review", "monthly_usd_cap",
+             "hard_stop_multiple", "approval_threshold_usd", "max_usd_per_run",
+             "run_timeout_s", "require_evidence_verification", "drought_hours",
+             "chairman_report_interval_hours")
+
+#: How often the project thinks. Every one of these was previously reachable
+#: only by finding it in Settings, one rule at a time, unaided.
+TEMPO_RULES = ("runs_per_project_per_day", "runs_per_project_per_hour",
+               "wakes_per_agent_per_hour", "inbox_runs_per_project_per_day",
+               "inbox_runs_per_project_per_hour", "max_concurrent_runs",
+               "reserved_governance_runs", "ceo_heartbeat_hours",
+               "ceo_daily_at", "max_task_gate_hours", "pair_breaker_messages",
+               "mail_max_per_day", "queue_ceiling")
+
+BAR_PRESETS: dict[str, dict[str, Any]] = {
+    "full_send": {
+        "chairman_report_interval_hours": 1.0,
+        "stakes": "high", "deliverable_review": "independent_read",
+        "monthly_usd_cap": 5000.0, "hard_stop_multiple": 3.0,
+        "approval_threshold_usd": 1000.0, "max_usd_per_run": 8.0,
+        "run_timeout_s": 3600, "require_evidence_verification": False,
+        "drought_hours": 72,
+    },
+    "balanced": {
+        "chairman_report_interval_hours": 1.0,
+        "stakes": "normal", "deliverable_review": "independent_read",
+        "monthly_usd_cap": 1000.0, "hard_stop_multiple": 3.0,
+        "approval_threshold_usd": 250.0, "max_usd_per_run": 2.0,
+        "run_timeout_s": 1800, "require_evidence_verification": False,
+        "drought_hours": 24,
+    },
+    "frugal": {
+        "chairman_report_interval_hours": 4.0,
+        "stakes": "low", "deliverable_review": "independent_read",
+        "monthly_usd_cap": 200.0,
+        # The one number that moves off the field default. Every card used to
+        # leave this alone, so the cheap card's real wall was 200 x 3 = $600 —
+        # a chairman who asked for the smallest budget on the form got the
+        # third-largest ceiling on the install and was never shown the
+        # arithmetic. A card that says "cheap" should not inherit a wall
+        # written for a card that says "nothing spared".
+        "hard_stop_multiple": 2.0,
+        "approval_threshold_usd": 50.0, "max_usd_per_run": 2.0,
+        "run_timeout_s": 1800, "require_evidence_verification": False,
+        "drought_hours": 48,
+    },
+    "show_me_proof": {
+        "chairman_report_interval_hours": 1.0,
+        "stakes": "normal", "deliverable_review": "independent_read",
+        "monthly_usd_cap": 1000.0, "hard_stop_multiple": 3.0,
+        "approval_threshold_usd": 250.0, "max_usd_per_run": 2.0,
+        "run_timeout_s": 1800, "require_evidence_verification": True,
+        "drought_hours": 24,
+    },
+}
+
+TEMPO_PRESETS: dict[str, dict[str, Any]] = {
+    # Today's field defaults, and deliberately so: a quieter default would have
+    # lowered the daily volume of every project on the install the moment it
+    # shipped, without anyone choosing that for any of them. That is the
+    # reasoning `runs_hard_stop_multiple` already records, and it applies in
+    # both directions.
+    "live": {
+        "runs_per_project_per_day": 150, "runs_per_project_per_hour": 15,
+        "wakes_per_agent_per_hour": 6,
+        "inbox_runs_per_project_per_day": 40,
+        "inbox_runs_per_project_per_hour": 8,
+        "max_concurrent_runs": 3, "reserved_governance_runs": 3,
+        "ceo_heartbeat_hours": 6.0, "ceo_daily_at": None,
+        "max_task_gate_hours": 6, "pair_breaker_messages": 10,
+        "mail_max_per_day": 5,
+        "queue_ceiling": 8,
+    },
+    # Not invented here. These are `docs/projects/idea-to-customer.md`'s
+    # starting numbers, which a chairman wrote by hand, one rule at a time,
+    # with a justification per row — because there was no card. Its own
+    # reasons are worth keeping: 40 a day is "roughly one run every 35
+    # minutes, around the clock"; 6 an hour "stops the day's allowance being
+    # spent by 10am"; 3 wakes an agent is "halved from the default"; and 12/4
+    # on the inbox lane because "reading is real money". `fpl-manager.md`
+    # independently landed within spitting distance of all of it.
+    "working_hours": {
+        "runs_per_project_per_day": 40, "runs_per_project_per_hour": 6,
+        "wakes_per_agent_per_hour": 3,
+        "inbox_runs_per_project_per_day": 12,
+        "inbox_runs_per_project_per_hour": 4,
+        "max_concurrent_runs": 2, "reserved_governance_runs": 3,
+        "ceo_heartbeat_hours": 12.0, "ceo_daily_at": "08:30",
+        "max_task_gate_hours": 12, "pair_breaker_messages": 6,
+        "mail_max_per_day": 3,
+        "queue_ceiling": 5,
+    },
+    # The card that did not exist, and the reason the whole complaint kept
+    # coming back: a project whose scripts are already written and which needs
+    # to wake, look, and write a report. Two rules here are the ones nobody
+    # ever found on their own. `inbox_runs_per_project_per_day: 0` is the
+    # chatter switch — its own help text says agents then read their channels
+    # "on the next wake they were having anyway", so nothing is lost and the
+    # reading rides a run already paid for. And `max_task_gate_hours: 36`,
+    # because the default of 6 refuses a CEO trying to lay work out for
+    # tomorrow morning: set this tempo without it and the project is throttled
+    # AND cannot sequence, which is the shape of a bug rather than a budget.
+    "few_times_daily": {
+        "runs_per_project_per_day": 12, "runs_per_project_per_hour": 3,
+        "wakes_per_agent_per_hour": 2,
+        "inbox_runs_per_project_per_day": 0,
+        "inbox_runs_per_project_per_hour": 0,
+        "max_concurrent_runs": 1, "reserved_governance_runs": 2,
+        "ceo_heartbeat_hours": 24.0, "ceo_daily_at": "09:00",
+        "max_task_gate_hours": 36, "pair_breaker_messages": 4,
+        "mail_max_per_day": 2,
+        "queue_ceiling": 4,
+    },
+}
+
+#: `chairman_report_interval_hours` looks like a tempo rule and is deliberately
+#: not one. It is opt-in by design — 0 means "you never asked for a cadence and
+#: nothing is refused" — and tempo is the one bundle that gets stamped on
+#: silence. Putting it here would have made a project nobody said anything about
+#: start REFUSING its CEO's unprompted statuses, which is the opposite of the
+#: direction that rule was written to protect: it exists because a CEO posted
+#: thirteen statuses in 2h20m, not because one posted too few. It stays on the
+#: bar card, where it only ever arrives by an explicit pick, exactly as the
+#: run card always applied it.
+#:
+#: `stall_hours` is deliberately NOT a tempo rule either. A low-tempo project with work
+#: on its board is throttled rather than silent, and a throttled project names
+#: the moment its ceiling clears (`dispatcher.activity_state` -> `clears_at`),
+#: which the watchdog already skips. Moving it per card would have been a guess
+#: dressed as a bundle.
+
+#: Which tempo a mode means when the chairman said nothing about pace. Explore
+#: and Deliver both end — one against a window, one against a date — so racing
+#: is the correct behaviour and there is no long tail to pay for. Operate is the
+#: one that runs forever, and its own rhythm already says how fast: a project
+#: sweeping an inbox on the hour is live; one that rolls a cycle a week is the
+#: project this whole card exists for.
+TEMPO_FOR_CYCLE = {"hourly": "live", "daily": "working_hours",
+                   "weekly": "few_times_daily", "monthly": "few_times_daily",
+                   "quarterly": "few_times_daily"}
+
+DEFAULT_TEMPO = "live"
+
+
+def tempo_for(mode: str, cycle_frequency: str | None = None) -> str:
+    """The tempo a project of this shape runs at when nobody picked one."""
+    if str(mode) != "operate":
+        return DEFAULT_TEMPO
+    return TEMPO_FOR_CYCLE.get(cycle_frequency or "weekly", "few_times_daily")
+
+
+def bar_name(constitution: dict[str, Any]) -> str | None:
+    """Which bar preset this constitution *is*, or None for a hand-tuned one."""
+    return next((name for name, rules in BAR_PRESETS.items()
+                 if all(constitution.get(key) == value for key, value in rules.items())), None)
+
+
+def tempo_name(constitution: dict[str, Any]) -> str | None:
+    """Which tempo preset this constitution *is*, or None for a hand-tuned one.
+
+    None is the honest answer and callers must show it as such. A chairman who
+    edited four rules by hand is not "on Working hours"; telling him he is, is
+    how he later reads a card blurb as a description of his own project and
+    believes something untrue about what it costs.
+    """
+    return next((name for name, rules in TEMPO_PRESETS.items()
+                 if all(constitution.get(key) == value for key, value in rules.items())), None)
+
+
+def default_tempo(mode: str, constitution: dict[str, Any]) -> dict[str, Any]:
+    """A creation-time constitution with the tempo filled in if it was silent.
+
+    Silent means *none* of the tempo rules named — the same test
+    `default_autonomy` applies, for the same reason. Naming even one is somebody
+    choosing rule by rule, and stamping a bundle over that would overwrite a
+    decision they did write with one they did not.
+
+    `cycle_frequency` is read from the constitution being built rather than
+    passed alongside it, because it *is* one of these rules: an Operate project
+    that says it rolls hourly has already told us how fast it thinks.
+    """
+    if any(rule in constitution for rule in TEMPO_RULES):
+        return dict(constitution)
+    frequency = constitution.get("cycle_frequency",
+                                 ConstitutionDoc.model_fields["cycle_frequency"].default)
+    return {**TEMPO_PRESETS[tempo_for(mode, frequency)], **constitution}
+
+
 def create_initial(session: Session, project_id: str, doc: ConstitutionDoc) -> Constitution:
     row = Constitution(
         id=ids.new_id(ids.CONSTITUTION),
