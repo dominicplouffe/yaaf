@@ -1460,7 +1460,19 @@ class Flag(Base):
         Index("ix_flags_project_status", "project_id", "status"),
         # One live flag per condition. A capacity forecast recomputed every
         # tick must not open a new flag every tick.
-        UniqueConstraint("project_id", "kind", "subject_id", "status"),
+        #
+        # LIVE, and that word is the whole of this index. As a plain unique
+        # constraint it also bound the resolved rows, which are history rather
+        # than a condition — so the second time a subject was flagged, closed,
+        # flagged again and closed again, the close collided with the first
+        # one's row and the write blew up. That is a 500 on the chairman's
+        # "noted" button, and an IntegrityError in the janitor for any forecast
+        # that flickers in and out of feasible. Resolved rows must be free to
+        # accumulate: a cycle can be missed, answered, and missed again.
+        Index("uq_flags_live_condition", "project_id", "kind", "subject_id", "status",
+              unique=True,
+              sqlite_where=text("status <> 'resolved'"),
+              postgresql_where=text("status <> 'resolved'")),
     )
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
