@@ -14,6 +14,7 @@ would be a worse version of it that is harder to argue with.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, NamedTuple
 
 import httpx
@@ -26,6 +27,8 @@ from yaaf.core.constitution import (
     stated_tempo,
 )
 from yaaf.core.models import Crew, Role, RoleVersion, utcnow
+
+log = logging.getLogger("yaaf.founder")
 
 #: How much of a fetched page the model sees. Enough to characterise a site or
 #: a README, small enough that one greedy fetch cannot eat the context window.
@@ -309,8 +312,11 @@ def build_server(session: Session, state: dict, env: dict[str, str],
           "world imposes it (deadline_source {'kind':'external'} with a "
           "citation) or the chairman wants it (deadline_source "
           "{'kind':'chairman'}). Otherwise write no date; scope is the honest "
-          "lever and the median project here finishes inside a day.",
-          {"project": dict, "notes": str})
+          "lever and the median project here finishes inside a day. `tempo` names "
+          "which pace card this project is — `live`, `working_hours` or "
+          "`few_times_daily` — and this tool writes that card's rules into the "
+          "constitution for you. Name the card. Never write pace rules by hand.",
+          {"project": dict, "notes": str, "tempo": str})
     async def _propose_bundle(args):
         progress.start_step(thread_id, progress.LABELS["propose_bundle"])
         try:
@@ -329,15 +335,24 @@ def build_server(session: Session, state: dict, env: dict[str, str],
                 return ok({"error": "project was not valid JSON"})
         if not isinstance(project, dict):
             return ok({"error": "project must be an object"})
+        problems = stamp_tempo(project, args.get("tempo"))
         bundle = as_bundle(project)
-        problems = (validate(bundle) + billing_problems(bundle["project"], session)
-                    + doctrine_problems(bundle.get("project") or {}, session))
+        problems += (validate(bundle) + billing_problems(bundle["project"], session)
+                     + doctrine_problems(bundle.get("project") or {}, session))
         if problems:
             # Refused rather than stored: a draft the create endpoint would
             # reject is worse than no draft, because the review screen would
             # show a project that cannot be built.
+            #
+            # Kept as well as returned. A run that dies on its turn ceiling
+            # died of *something*, and until this was here the something was
+            # only ever in a CLI transcript inside the container: the chairman
+            # got "the model run failed" and the log got nothing at all.
+            state["last_refusal"] = problems
+            log.info("founder draft refused: %s", "; ".join(problems)[:500])
             return ok({"ok": False, "problems": problems,
                        "hint": "fix these and call propose_bundle again"})
+        state.pop("last_refusal", None)
         state["draft"] = bundle
         return ok({"ok": True, "summary": summarise(bundle)})
 
@@ -490,6 +505,38 @@ def stakes_problems(project: dict) -> list[str]:
     ]
 
 
+def stamp_tempo(project: dict, card: str | None) -> list[str]:
+    """Write the named pace card into the draft's constitution.
+
+    The Founder names a card and this writes the rules. That is the move the
+    new-project form already makes when the chairman clicks a card, and it is
+    here because the Founder was told to make it with no way to.
+    `tempo_problems` asked for a card "copied verbatim", and nothing the
+    Founder can read — not its prompt, not the doctrine, not the refusal —
+    ever contained one. A real run spent twenty tool calls guessing at the
+    rule names (`tempo_card`, `max_runs_per_day`, `wakes_per_agent`), then
+    went out to the open web looking for the numbers, then died on its turn
+    ceiling with nothing to show the chairman. An instruction the model has no
+    way to obey is not a rule, it is a loop.
+
+    The card wins over anything hand-written on the same rules. That is the
+    doctrine's own line — tuning an individual brake is the chairman's to do
+    in Settings, with a written reason — and a card that yielded to a guess
+    would put the Founder back to inventing numbers one rule at a time.
+    """
+    if not card:
+        return []
+    cards = ", ".join(f"`{name}`" for name in TEMPO_PRESETS)
+    if card not in TEMPO_PRESETS:
+        return [f"tempo: `{card}` is not a pace card. Pass one of {cards}."]
+    constitution = project.get("constitution")
+    project["constitution"] = {
+        **(constitution if isinstance(constitution, dict) else {}),
+        **TEMPO_PRESETS[card],
+    }
+    return []
+
+
 def tempo_problems(project: dict) -> list[str]:
     """How often the project thinks has to be chosen, and chosen as a CARD.
 
@@ -523,17 +570,18 @@ def tempo_problems(project: dict) -> list[str]:
     if not named:
         return [
             "constitution: choose how often this project thinks, rather than letting it "
-            f"default to about 150 runs a day. Copy one of the tempo cards ({cards}) into "
-            "the constitution verbatim, and say in one line which one you picked and what "
-            "it costs in runs a day. A project on a weekly rhythm almost never wants the "
-            "fastest one."
+            f"default to about 150 runs a day. Pass `tempo` to propose_bundle — one of "
+            f"{cards} — and it writes that card's rules for you. Then say in one line "
+            "which card you picked and what it costs in runs a day. A project on a "
+            "weekly rhythm almost never wants the fastest one."
         ]
     if stated_tempo(constitution) is None:
         return [
             "constitution: the pace rules you set are not one of the tempo cards "
             f"({cards}) — either they differ from every card, or you wrote down only "
-            "some of one. Copy a card verbatim rather than inventing numbers — a Founder "
-            "once opened a desk at 12 runs a day against a default of 150, defended it "
+            "some of one. Do not write pace rules by hand at all: pass `tempo` to "
+            "propose_bundle with the card's name and it writes them. A Founder once "
+            "opened a desk at 12 runs a day against a default of 150, defended it "
             "twice, and the chairman's first act was to raise it. Tuning individual "
             f"brakes is his, in Settings. You set: {', '.join(sorted(named))}."
         ]

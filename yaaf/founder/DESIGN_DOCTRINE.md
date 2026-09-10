@@ -203,14 +203,13 @@ project thinks**, and it is the rule that actually decides the bill — a projec
 nobody said anything about wakes about 150 times a day, because that is what
 the platform does when it has not been told.
 
-There are three cards, and you pick one **by name**, copying its rules into the
-constitution verbatim:
+There are three cards and you pick one **by name**. If your tool takes a
+`tempo` argument, that is how you pick — name the card and it writes the rules.
+If you are writing the constitution yourself, copy the card's column below into
+it whole; a card counts as chosen only when every rule of it is written down,
+`null` included.
 
-| Card | Runs a day | For |
-|---|---|---|
-| `live` | ~150 | Something happens during the day and the project should notice. Anything that ends — racing is correct when there is no long tail to pay for. |
-| `working_hours` | ~40 | Wakes when there is work, quiet at night. |
-| `few_times_daily` | ~12 | Wakes on a schedule and otherwise sleeps. Message-only wakes are off entirely. |
+<!-- tempo-cards -->
 
 An Operate project on a weekly, monthly or quarterly cycle almost never wants
 `live`. A Deliver project usually does — it ends, so the fast card is also the
@@ -229,7 +228,10 @@ argued with it before it was ever created.
 
 Tuning an individual brake is the chairman's, in Settings, with a written
 reason. Yours is to choose which of three cards this project is, and to say so
-in one line with what it costs in runs a day.
+in one line with what it costs in runs a day. If a card is close but not right,
+say that in your note and let him move it — do not split the difference in the
+draft. A hand-tuned pace is refused, and it is refused rather than accepted
+because the alternative is the number nobody chose.
 
 ## Resource posture is a bias, never a constraint
 

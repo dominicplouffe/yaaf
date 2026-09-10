@@ -279,6 +279,84 @@ def test_a_failed_turn_says_why_and_survives_a_refresh(client, founder, kind, me
     assert expect in again["last_error"]
 
 
+def test_a_run_that_burns_its_turn_ceiling_says_so():
+    """"the model run failed" was the whole message a chairman got.
+
+    A `ResultMessage` carrying an error subtype has no `result` — the model
+    never got a last word — so reading `result` produced the blank answer this
+    module exists to stop, arriving through the one door `_classify` does not
+    guard. `error_max_turns` is not the model breaking: it is the model being
+    refused the same way often enough to run out of turns, and saying so sends
+    the next person to the refusal rather than to the CLI."""
+    import types
+
+    from yaaf.founder.session import _ended_badly
+
+    error = _ended_badly(types.SimpleNamespace(
+        subtype="error_max_turns", is_error=True, num_turns=25, result=None))
+    assert error.kind == "looping"
+    assert "25" in str(error) and "loop" in str(error)
+
+    # An error subtype nobody has seen yet still names itself rather than
+    # falling back to the sentence that started all this.
+    other = _ended_badly(types.SimpleNamespace(
+        subtype="error_during_execution", is_error=True, result=None))
+    assert "error_during_execution" in str(other)
+    assert "the model run failed" not in str(other)
+
+
+def test_a_loop_names_what_it_was_refused_for():
+    """Half a blank failure is still a blank failure.
+
+    `session.run` sees a stream of messages, not tool results, so it can say a
+    turn looped but not on what. `propose_bundle` leaves its last refusal in
+    the turn's state for exactly this handover — without it the chairman is
+    told his project looped and the rest has to come from somebody reading a
+    CLI transcript inside a container, which is how this one was diagnosed."""
+    from yaaf.founder import agent
+    from yaaf.founder.session import FounderModelError
+
+    refusal = ["constitution: the pace rules you set are not one of the tempo cards"]
+    looping = FounderModelError("looping", "the Founder used all 25 of its turns.")
+
+    told = agent._with_refusal(looping, {"last_refusal": refusal})
+    assert told.kind == "looping"
+    assert "stuck on" in str(told) and "tempo cards" in str(told)
+
+    # Nothing to add, nothing added — and a failure of another kind is left
+    # alone, because its own sentence already says what happened.
+    assert agent._with_refusal(looping, {}) is looping
+    busy = FounderModelError("busy", "rate limited.")
+    assert agent._with_refusal(busy, {"last_refusal": refusal}) is busy
+
+
+def test_naming_the_tempo_card_is_all_it_takes(client, founder):
+    """The refusal the real run died on, and the one call that answers it.
+
+    An Operate draft with no pace is refused — correctly, it is the rule that
+    decides the bill. What was missing was any way to comply: the same draft
+    with `tempo` named is accepted, and the card's rules are in the bundle the
+    review screen shows."""
+    operate = {**PROJECT, "mode": "operate",
+               "constitution": {"stakes": "normal"},
+               "teams": [{"role_slug": "adversary", "name": "Challenge",
+                          "employees": ["Sam"], "lead": "Sam"}]}
+    seed_role(client, "adversary", category="challenge")
+
+    calls = founder(tool_calls=[
+        ("propose_bundle", {"project": dict(operate)}),
+        ("propose_bundle", {"project": dict(operate), "tempo": "few_times_daily"}),
+    ])
+    thread = start(client, "a daily report on my site, every morning at nine")
+
+    refused, accepted = (_tool_payload(c) for c in calls if "tool" in c)
+    assert refused["ok"] is False
+    assert any("`tempo`" in problem for problem in refused["problems"])
+    assert accepted["ok"] is True, accepted
+    assert thread["draft_bundle"]["project"]["constitution"][
+        "runs_per_project_per_day"] == 12
+
+
 def test_a_missing_cli_names_the_image_that_needs_it():
     from claude_agent_sdk import CLINotFoundError
 
@@ -475,12 +553,15 @@ def test_both_drafting_paths_read_the_same_design_doctrine():
     MCP-drafted project took every default and could never set the dial that
     decides how good the work is. This asserts the doctrine reaches both
     doors, and that neither one is quietly restating it instead."""
+    from yaaf.founder import doctrine as doctrine_text
     from yaaf.founder.prompt import DOCTRINE_PATH, system_prompt
     from yaaf.server.mcp import prompts as mcp_prompts
     from yaaf.server.mcp import resources
 
-    doctrine = DOCTRINE_PATH.read_text()
+    doctrine = doctrine_text.text(DOCTRINE_PATH.name)
     assert doctrine in system_prompt(), "the Founder must read it verbatim"
+    assert doctrine == resources._doctrine(), "the two doors read different text"
+    assert doctrine_text.TEMPO_MARK not in doctrine, "a placeholder reached a reader"
     assert resources.DOCTRINE_PATH == DOCTRINE_PATH, "the MCP surface serves another file"
     assert "yaaf://docs/design-doctrine" in mcp_prompts.TEXT["design"], (
         "the MCP drafting prompt must send its reader to the doctrine")
