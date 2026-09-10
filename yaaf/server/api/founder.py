@@ -71,14 +71,26 @@ def _thread(session: Session, thread_id: str) -> FoundingThread:
     return thread
 
 
-def _render(thread: FoundingThread) -> dict:
+def _render(thread: FoundingThread, running: bool | None = None) -> dict:
     """The thread as the browser needs it.
 
     The stored transcript is already just what each side said — the Founder
     runs through the CLI, which owns the tool calls and the thinking, so none
     of that reaches us to be filtered out here.
+
+    `running` is sampled by the caller when the row was loaded from the
+    database, and it has to be sampled BEFORE the row. The worker commits the
+    reply, the reason and the cleared stamp and only then marks the turn
+    finished — "the order is the point", as `runner._work` says, because *not
+    running* is the signal a poller waits for. A reader that loads the row
+    first and asks the flag second inverts that: a turn finishing in between
+    hands back a pre-completion row with a post-completion flag, which is a
+    finished turn carrying no reply and no reason — the blank failure this
+    whole feature exists to stop. Sampled first, a flag that says finished
+    guarantees the row read after it holds everything the worker wrote.
     """
-    running = progress.is_running(thread.id)
+    if running is None:
+        running = progress.is_running(thread.id)
     return {
         "id": thread.id,
         "title": thread.title,
@@ -217,7 +229,12 @@ def list_threads(session: Session = Depends(db)) -> dict:
 
 @router.get("/threads/{thread_id}")
 def get_thread(thread_id: str, session: Session = Depends(db)) -> dict:
-    return _render(_thread(session, thread_id))
+    # Liveness first, then the row — see `_render`. This is the endpoint the
+    # page polls in a loop, so it is the one that meets a turn ending mid-read.
+    # Liveness first, then the row — see `_render`. This is the endpoint the
+    # page polls in a loop, so it is the one that meets a turn ending mid-read.
+    running = progress.is_running(thread_id)
+    return _render(_thread(session, thread_id), running)
 
 
 class SayIn(BaseModel):

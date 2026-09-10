@@ -10,12 +10,14 @@ in `evals/`, not here.
 from __future__ import annotations
 
 import json
+import threading
 import time
 import types
 
 import pytest
 
 from tests.conftest import ADMIN, seed_role
+from yaaf.founder import progress
 
 PROJECT = {
     "slug": "sell-something",
@@ -50,8 +52,6 @@ def founder(client, monkeypatch):
     response = client.put("/admin/founder/credential",
                           json={"value": API_KEY, "mode": "api_key"}, headers=ADMIN)
     assert response.status_code == 200, response.text
-
-    from yaaf.founder import progress
 
     progress.clear()
 
@@ -927,3 +927,60 @@ def test_a_draft_names_who_pays_and_the_form_agrees(client, founder):
     with db_session() as session:
         made = session.get(Project, created.json()["id"])
         assert made.billing_secret_id == sub["id"] and made.billing_mode == "subscription"
+
+
+def test_a_turn_that_ends_mid_read_is_never_reported_half_finished(client, founder,
+                                                                   monkeypatch):
+    """The poller's own race, forced rather than waited for.
+
+    `runner._work` commits the reply, the reason and the cleared stamp and only
+    then marks the turn finished — "the order is the point", because *not
+    running* is the signal a poller waits for. This endpoint read the row first
+    and asked the liveness flag second, which inverts it: a turn that finishes
+    in between hands back a pre-completion row with a post-completion flag. The
+    page then shows a finished turn carrying no reply and no reason, which is
+    the blank failure the whole feature exists to stop.
+
+    It surfaced as roughly one flaky run in eight across three different tests
+    in this file — `interrupted` true on a turn that plainly was not, and
+    `last_error` None on a turn that had just failed.
+
+    Deliberately slow and deliberately white-box: the window is microseconds
+    wide, so the read is held open until the turn really has finished, which is
+    the only way to make the interleaving a fact rather than a hope.
+    """
+    from yaaf.server.api import founder as founder_api
+
+    release = threading.Event()
+    founder(reply="Done.", blocks_on=release)
+
+    response = client.post("/admin/founder/threads",
+                           json={"message": "design me a project"}, headers=ADMIN)
+    assert response.status_code == 202
+    thread_id = response.json()["id"]
+
+    real_thread = founder_api._thread
+    held: list[str] = []
+
+    def read_then_let_the_turn_finish(session, wanted_id):
+        row = real_thread(session, wanted_id)
+        if not held:
+            held.append(wanted_id)
+            # The row is in hand and still says "a turn is under way". Now let
+            # the turn complete, so the flag flips before this request renders.
+            release.set()
+            for _ in range(200):
+                if not progress.is_running(wanted_id):
+                    break
+                time.sleep(0.05)
+            else:
+                raise AssertionError("the turn never settled")
+        return row
+
+    monkeypatch.setattr(founder_api, "_thread", read_then_let_the_turn_finish)
+    state = client.get(f"/admin/founder/threads/{thread_id}", headers=ADMIN).json()
+
+    assert held, "the read never straddled the turn ending"
+    # Either answer is honest on its own. The pair is not: a turn reported
+    # finished must never come back looking abandoned.
+    assert not (state["running"] is False and state["interrupted"] is True)
