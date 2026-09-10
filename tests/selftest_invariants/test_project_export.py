@@ -65,10 +65,12 @@ def test_bundle_carries_design_not_plumbing(client):
     # limits rather than silently reverting to the defaults.
     assert spec["constitution"]["timezone"] == "America/Toronto"
     # Role definitions travel with their prompts; credential names travel bare.
+    # `file` is the one exception and it is not a name: without it the import
+    # form offers a box to type in for a credential that can only be a file.
     assert {r["slug"] for r in bundle["roles"]} == {"ceo", "worker"}
     assert all(r["system_prompt"] for r in bundle["roles"])
     assert bundle["secrets"] == [{"name": "wordpress", "role_scopes": ["worker"],
-                                  "kind": "service"}]
+                                  "kind": "service", "file": False}]
     # No secret value anywhere in the file, under any key.
     dumped = json.dumps(bundle)
     assert "wp-secret-value" not in dumped

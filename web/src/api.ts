@@ -924,6 +924,10 @@ export interface ProjectBundle {
     name: string;
     role_scopes: string[];
     kind: string;
+    /** True => the credential is a FILE, so the import form must offer a
+        picker rather than a box to type in. The file's own name does not
+        travel — a key file is usually named after the account it opens. */
+    file?: boolean;
     /** Present only in full backups (include_values=true). */
     value?: string;
   }[];

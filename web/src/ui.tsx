@@ -4,7 +4,7 @@
 // primitives the redesign repeats everywhere so the pattern is learned once.
 
 import type React from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Activity, Dashboard, get, post, RunRow, SpendBucket } from "./api";
 
 // ── time ────────────────────────────────────────────────────────────────────────
@@ -441,30 +441,41 @@ export function SecretInput({
 /** A value already *stored*: masked until asked for, then fetched (one press,
     one call, one audit row), copyable, and — when `onRotate` is given —
     editable in place, which is the whole "how do I change this?" answer. */
-export function StoredSecret({ secretId, onRotate, note }: {
+export function StoredSecret({ secretId, onRotate, note, isFile = false }: {
   secretId: string;
   onRotate?: (value: string) => Promise<void>;
   note?: string;
+  /** The credential is a FILE: it reveals as text in a textarea, and rotating
+      it re-encodes. Binary reveals as a size and a sentence, because a
+      screenful of base64 debugs nothing. */
+  isFile?: boolean;
 }) {
   const [value, setValue] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  const [binary, setBinary] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
   async function toggle() {
-    if (value !== null) {
+    if (value !== null || binary !== null) {
       setValue(null);
       setDraft("");
+      setBinary(null);
       setError(null);
       return;
     }
     setBusy(true);
     setError(null);
     try {
-      const got = await get<{ value: string }>(`/admin/secrets/${secretId}/value`);
-      setValue(got.value);
-      setDraft(got.value);
+      const got = await get<{ value: string | null; binary?: boolean; size_bytes?: number }>(
+        `/admin/secrets/${secretId}/value`);
+      if (got.binary) {
+        setBinary(got.size_bytes ?? 0);
+      } else {
+        setValue(got.value ?? "");
+        setDraft(got.value ?? "");
+      }
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -477,13 +488,53 @@ export function StoredSecret({ secretId, onRotate, note }: {
     setBusy(true);
     setError(null);
     try {
-      await onRotate(draft);
+      // The door takes a file credential as base64 of its bytes; what the
+      // chairman edited here is its text.
+      await onRotate(isFile ? btoa(unescape(encodeURIComponent(draft))) : draft);
       setValue(draft);
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setBusy(false);
     }
+  }
+
+  if (binary !== null) {
+    return (
+      <div className="secret-field-stack">
+        <div className="secret-field">
+          <input readOnly value={`${binary.toLocaleString()} bytes, binary`} />
+          <EyeButton shown busy={busy} onClick={toggle} />
+        </div>
+        <div className="help">
+          Not text, so there is nothing readable to show. Store it again to replace it.
+        </div>
+      </div>
+    );
+  }
+
+  if (isFile && value !== null) {
+    return (
+      <div className="secret-field-stack">
+        <textarea
+          className="mono"
+          rows={6}
+          value={draft}
+          readOnly={!onRotate}
+          onChange={(e) => setDraft(e.target.value)}
+        />
+        <div className="actions">
+          <EyeButton shown busy={busy} onClick={toggle} />
+          {onRotate && draft !== value && (
+            <button type="button" className="small primary" disabled={busy} onClick={save}>
+              save
+            </button>
+          )}
+        </div>
+        {error && <div className="help" style={{ color: "var(--critical)" }}>{error}</div>}
+        {note && <div className="help">{note}</div>}
+      </div>
+    );
   }
 
   return (
@@ -522,6 +573,96 @@ export function StoredSecret({ secretId, onRotate, note }: {
       </div>
       {error && <div className="help" style={{ color: "var(--critical)" }}>{error}</div>}
       {note && value !== null && <div className="help">{note}</div>}
+    </div>
+  );
+}
+
+/** What the chairman is about to store: a typed value, or a FILE.
+
+    Two ways in because both genuinely happen. A key file is usually downloaded
+    (a `*-a1b2c3.json` in ~/Downloads), and the picker is the only route by which
+    binary — a .p12, a DER cert — or a load-bearing trailing newline survives at
+    all: a one-line `<input>` strips newlines on paste and cannot hold bytes.
+
+    Reports base64 in both modes when a file is chosen, because that is what the
+    door takes; `filename` is what makes it a file credential at all. */
+export function CredentialValue({
+  value, filename, onChange, placeholder, disabled,
+}: {
+  value: string;
+  /** null => the chairman is typing a string. */
+  filename: string | null;
+  onChange: (next: { value: string; filename: string | null }) => void;
+  placeholder?: string;
+  disabled?: boolean;
+}) {
+  const [size, setSize] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const picker = useRef<HTMLInputElement>(null);
+
+  async function pick(file: File | undefined) {
+    if (!file) return;
+    setError(null);
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      // btoa over a binary string, chunked: String.fromCharCode(...bytes) blows
+      // the argument limit on anything above a few tens of KB.
+      let binary = "";
+      for (let i = 0; i < bytes.length; i += 8192) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
+      }
+      setSize(bytes.length);
+      onChange({ value: btoa(binary), filename: file.name });
+    } catch {
+      setError("the browser could not read that file");
+    }
+  }
+
+  if (filename !== null) {
+    return (
+      <div className="secret-field-stack">
+        <div className="secret-field">
+          <input className="mono" readOnly value={filename} />
+          <button
+            type="button"
+            className="small"
+            disabled={disabled}
+            onClick={() => { setSize(null); onChange({ value: "", filename: null }); }}
+          >
+            remove
+          </button>
+        </div>
+        <div className="help">
+          {size === null ? "A file" : `A file, ${size.toLocaleString()} bytes`} — granted
+          roles receive the <strong>path</strong> to it, never its contents.
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="secret-field-stack">
+      <SecretInput
+        value={value}
+        onChange={(next) => onChange({ value: next, filename: null })}
+        placeholder={placeholder}
+        disabled={disabled}
+      />
+      <input
+        ref={picker}
+        type="file"
+        hidden
+        disabled={disabled}
+        onChange={(e) => pick(e.target.files?.[0])}
+      />
+      <div className="help">
+        <button type="button" className="small" disabled={disabled}
+                onClick={() => picker.current?.click()}>
+          choose a file…
+        </button>{" "}
+        for a credential that IS a file — a service-account key, a PEM, a kubeconfig.
+      </div>
+      {error && <div className="help" style={{ color: "var(--critical)" }}>{error}</div>}
     </div>
   );
 }

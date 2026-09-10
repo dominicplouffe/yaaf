@@ -350,6 +350,9 @@ async def _serve(client: ClaudeSDKClient, channel_id: str, state: dict) -> int |
                 preamble += ("Boardroom conversation so far (you may have replied via "
                              "earlier runs — do not re-answer it):\n"
                              f"{_transcript_block(state['history'])}\n\n")
+            if base.CREDENTIAL_PROBLEMS:
+                preamble += "Credential problems this session:\n" + \
+                    "\n".join(base.CREDENTIAL_PROBLEMS) + "\n\n"
             if base.MOUNT_PROBLEMS:
                 preamble += "Data source problems this session:\n" + \
                     "\n".join(base.MOUNT_PROBLEMS) + "\n\n"

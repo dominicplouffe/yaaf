@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from yaaf.core import ids, platform
+from yaaf.core import credential_files, ids, platform
 from yaaf.core.constitution import (
     GROUP_THEMES,
     THEME_ORDER,
@@ -82,6 +82,7 @@ from yaaf.core.models import (
     VerificationStatus,
     utcnow,
 )
+from yaaf.core.naming import env_var_name, is_reserved
 from yaaf.founder import doctrine
 from yaaf.server import briefing, policy
 from yaaf.server.api.agent import WAKE_CHANNEL
@@ -1021,8 +1022,13 @@ def export_project(project_id: str, include_values: bool = False,
                 for entry in integrations["mcp_servers"]
             ]
         secret_out = [
+            # `filename` rides with the value here, unlike the name-only branch
+            # below: without it a file credential restores as a STRING holding
+            # base64, and nothing downstream would notice — base64 begins with
+            # neither `{` nor `-----BEGIN`, so the file-shaped refusal at the
+            # door cannot catch it either.
             {"name": s.name, "role_scopes": s.role_scopes, "kind": s.kind,
-             "value": decrypt(s.ciphertext)}
+             "filename": s.filename, "value": decrypt(s.ciphertext)}
             for s in session.execute(
                 select(Secret)
                 .where(Secret.project_id == project.id)
@@ -1057,7 +1063,13 @@ def export_project(project_id: str, include_values: bool = False,
         # refresh token" is not a request a human can meet; the import
         # re-connects instead.
         secret_out = [
-            {"name": s.name, "role_scopes": s.role_scopes, "kind": s.kind}
+            # Names still travel bare. `file` is not a name — it is the one bit
+            # the import form cannot work without: it decides whether to offer a
+            # box to type in or a file to pick, and a chairman cannot correctly
+            # fill the wrong one. The file's own name stays behind, because a
+            # key file is often named after the account it belongs to.
+            {"name": s.name, "role_scopes": s.role_scopes, "kind": s.kind,
+             "file": bool(s.filename)}
             for s in session.execute(
                 select(Secret)
                 .where(Secret.project_id == project.id, Secret.kind == "service")
@@ -1230,7 +1242,7 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
             continue
         copy = Secret(id=ids.new_id(ids.SECRET), project_id=project.id, name=row.name,
                       ciphertext=row.ciphertext, role_scopes=list(row.role_scopes or []),
-                      kind=row.kind)
+                      kind=row.kind, filename=row.filename)
         session.add(copy)
         ciphertexts[row.name] = row.ciphertext
     billing_credential_hidden = None
@@ -1509,18 +1521,30 @@ class DataSourceIn(BaseModel):
 
 
 def _upsert_project_secret(session: Session, project_id: str, name: str, value: str,
-                           role_scopes: list[str]) -> Secret:
+                           role_scopes: list[str], filename: str | None = None) -> Secret:
     from yaaf.core.crypto import encrypt
 
     existing = session.execute(
         select(Secret).where(Secret.project_id == project_id, Secret.name == name)
     ).scalar_one_or_none()
     if existing:
+        # Same rule the /secrets door enforces, held here because this is the
+        # OTHER way a credential gets written: fulfilling the same need twice,
+        # once with a file and once without, would leave granted roles reading
+        # a variable whose meaning silently changed under them.
+        if bool(existing.filename) != bool(filename):
+            raise HTTPException(
+                status_code=422,
+                detail=f"a credential's shape is fixed at creation — '{name}' is stored "
+                       f"as {'a file' if existing.filename else 'a string'}; store a new "
+                       "credential under another name instead")
         existing.ciphertext = encrypt(value)
         existing.role_scopes = role_scopes
+        existing.filename = filename or existing.filename
         return existing
     row = Secret(id=ids.new_id(ids.SECRET), project_id=project_id, name=name,
-                 ciphertext=encrypt(value), role_scopes=role_scopes, kind="service")
+                 ciphertext=encrypt(value), role_scopes=role_scopes, kind="service",
+                 filename=filename)
     session.add(row)
     return row
 
@@ -2808,6 +2832,10 @@ class NeedFulfillIn(BaseModel):
     value: str = Field(min_length=1)
     roles: list[str] = Field(min_length=1)
     note: str = Field(default="", max_length=4000)
+    # "I need a Google service account" is one of the needs agents actually
+    # file, and the answer to it is a file. Set this and `value` is base64 of
+    # its bytes; the granted roles get the path. Pass "" to have it named here.
+    filename: str | None = Field(default=None, max_length=120)
 
 
 @router.post("/approvals/{approval_id}/fulfill")
@@ -2834,26 +2862,47 @@ def fulfill_need(
     except policy.Refusal as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     project = _get_project(session, approval.project_id)
-    secret = _upsert_project_secret(
-        session, project.id, body.secret_name, body.value, body.roles)
     # The hint MUST be the runner's own mapping — a second normalization once
     # announced a variable that did not exist.
-    from yaaf.core.naming import env_var_name
-
-    env_var = env_var_name(secret.name)
+    env_var = env_var_name(body.secret_name)
+    if is_reserved(env_var):
+        raise HTTPException(
+            status_code=422,
+            detail=f"'{body.secret_name}' would be injected as {env_var}, and YAAF_* "
+                   "belongs to the platform inside a sandbox. Pick another name")
+    filename = None
+    if body.filename is not None:
+        try:
+            body_bytes = credential_files.decode(body.value)
+            filename = credential_files.check_filename(
+                body.filename.strip()
+                or credential_files.default_filename(env_var, body_bytes))
+        except credential_files.BadCredentialFile as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    elif credential_files.looks_like_a_file(body.value):
+        raise HTTPException(
+            status_code=422,
+            detail=f"'{body.secret_name}' looks like the contents of a file, not a "
+                   "value. Send it as a file credential (set `filename`) and the roles "
+                   "receive the path to it, which is what the tooling expects")
+    secret = _upsert_project_secret(
+        session, project.id, body.secret_name, body.value, body.roles, filename=filename)
+    holds = (f"the environment variable {env_var}, which holds the PATH of a file the "
+             f"platform writes into their sandbox ({filename})" if filename
+             else f"the environment variable {env_var}")
     _apply_decision(
         session, approval, project, True,
         (body.note or "fulfilled") + f" [credential: {secret.name}]",
         notice_body=(f"Your need '{approval.title}' was FULFILLED: the credential "
                      f"'{secret.name}' now reaches roles {', '.join(body.roles)} as "
-                     f"the environment variable {env_var} on their next run."
+                     f"{holds} on their next run."
                      + (f" His note: {body.note}" if body.note else "")),
         audit_detail={"fulfilled": True, "secret_name": secret.name,
-                      "roles": body.roles},
+                      "roles": body.roles, "filename": filename},
     )
     return {"id": approval.id, "status": approval.status,
             "secret_name": secret.name, "env_var_hint": env_var,
-            "roles": body.roles}
+            "filename": secret.filename, "roles": body.roles}
 
 
 class HypothesisExtend(BaseModel):
@@ -4447,6 +4496,12 @@ class SecretIn(BaseModel):
     # grants — they are injected everywhere by the billing path, so a grant
     # would hand agents the raw model credential under a second name.
     kind: str | None = Field(default=None, pattern="^(service|billing)$")
+    # Set => this credential is a FILE and `value` is base64 of its bytes. The
+    # granted role's variable then holds the path the sandbox wrote it to.
+    # Fixed at creation for the same reason `kind` is: a credential that
+    # silently changed shape would break every role already using it. Pass ""
+    # to accept a name derived from the credential's own name.
+    filename: str | None = Field(default=None, max_length=120)
 
 
 @router.get("/secrets")
@@ -4458,7 +4513,7 @@ def list_secrets(project_id: str | None = None, session: Session = Depends(db)) 
         stmt = stmt.where(Secret.project_id == project_id)
     return [
         {"id": s.id, "name": s.name, "project_id": s.project_id,
-         "role_scopes": s.role_scopes, "kind": s.kind}
+         "role_scopes": s.role_scopes, "kind": s.kind, "filename": s.filename}
         for s in session.execute(stmt.order_by(Secret.created_at)).scalars()
     ]
 
@@ -4492,6 +4547,27 @@ def reveal_secret(secret_id: str, session: Session = Depends(db)) -> dict:
                    "if you no longer have it",
         )
     _audit(session, row.project_id, "secret.reveal", "secret", row.id, {"name": row.name})
+    if row.filename:
+        # A file credential is stored as base64. Hand back the text when the
+        # bytes are text — which is nearly always, a key file being JSON or PEM
+        # — because that is the value the chairman recognises. When they are
+        # not, say so: a screenful of base64 debugs nothing, and pretending it
+        # is the credential is worse than admitting the eye cannot help here.
+        try:
+            body = credential_files.decode(decrypt(row.ciphertext))
+        except credential_files.BadCredentialFile:
+            # Only a hand-edited row gets here. Say what is wrong with it rather
+            # than answering a deliberate read with a 500.
+            raise HTTPException(
+                status_code=422,
+                detail=f"'{row.name}' is marked as a file but its stored value is not "
+                       "base64 of one — store it again to repair it") from None
+        try:
+            return {"id": row.id, "name": row.name, "filename": row.filename,
+                    "value": body.decode()}
+        except UnicodeDecodeError:
+            return {"id": row.id, "name": row.name, "filename": row.filename,
+                    "value": None, "binary": True, "size_bytes": len(body)}
     return {"id": row.id, "name": row.name, "value": decrypt(row.ciphertext)}
 
 
@@ -4655,6 +4731,16 @@ def put_secret(body: SecretIn, session: Session = Depends(db)) -> dict:
                    "then select one for the project",
         )
 
+    # The platform owns YAAF_* inside a sandbox, and role credentials are merged
+    # into the run's environment last — so a credential named `yaaf-api-token`
+    # silently replaces the per-run token and the run loses the platform.
+    if is_reserved(env_var_name(body.name)):
+        raise HTTPException(
+            status_code=422,
+            detail=f"'{body.name}' would be injected as {env_var_name(body.name)}, and "
+                   "YAAF_* belongs to the platform inside a sandbox — a credential on one "
+                   "of those names would overwrite the run's own. Pick another name")
+
     # Most secrets are opaque strings nobody here can judge. A data source's
     # address is the exception: the runner refuses to mount anything that is
     # not a full URL, and that refusal only reaches the chairman inside an
@@ -4670,6 +4756,43 @@ def put_secret(body: SecretIn, session: Session = Depends(db)) -> dict:
         )
         value = value.strip()  # a pasted trailing newline breaks the mount too
 
+    existing = session.execute(
+        select(Secret).where(Secret.project_id == body.project_id, Secret.name == body.name)
+    ).scalar_one_or_none()
+    # A file credential and a string one are stored differently (base64 vs the
+    # value), so which one this is has to be settled before anything is
+    # encrypted — and it is settled once, at creation.
+    as_file = body.filename is not None or bool(existing and existing.filename)
+    filename = existing.filename if existing else None
+    if existing and body.filename is not None and not existing.filename:
+        raise HTTPException(
+            status_code=422,
+            detail=f"a credential's shape is fixed at creation — '{body.name}' was stored "
+                   "as a string; store a new file credential instead")
+    if as_file and value is not None:
+        try:
+            decoded = credential_files.decode(value)
+            filename = credential_files.check_filename(
+                (body.filename or "").strip()
+                or filename
+                or credential_files.default_filename(env_var_name(body.name), decoded))
+        except credential_files.BadCredentialFile as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    elif as_file and body.filename:
+        try:
+            filename = credential_files.check_filename(body.filename.strip())
+        except credential_files.BadCredentialFile as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    elif value is not None and source is None and credential_files.looks_like_a_file(value):
+        # The failure this replaces: a service-account JSON stored as a string
+        # arrives as a variable holding JSON where the library expects a path,
+        # and the error the agent reports names a missing file.
+        raise HTTPException(
+            status_code=422,
+            detail=f"'{body.name}' looks like the contents of a file, not a value. Store "
+                   "it as a file credential and agents receive the path to it: "
+                   "`yaaf set-secret --from-file`, or the file picker in Settings")
+
     # Every path that writes role_scopes asks the same question, and this one
     # was not asking it at all: the Settings table offered all thirty-one
     # library roles and stored whichever were ticked, including roles this
@@ -4680,9 +4803,6 @@ def put_secret(body: SecretIn, session: Session = Depends(db)) -> dict:
         except policy.Refusal as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
-    existing = session.execute(
-        select(Secret).where(Secret.project_id == body.project_id, Secret.name == body.name)
-    ).scalar_one_or_none()
     if existing:
         if existing.llm_mode is not None:
             raise HTTPException(status_code=422, detail="Manage LLM credentials in Settings")
@@ -4703,11 +4823,13 @@ def put_secret(body: SecretIn, session: Session = Depends(db)) -> dict:
         rotated = False
         if value is not None:
             existing.ciphertext = encrypt(value)
+            existing.filename = filename  # a rotated file may be named differently
             rotated = True
         existing.role_scopes = body.role_scopes
         _audit(session, body.project_id, "secret.rotate" if rotated else "secret.rescope",
                "secret", existing.id, {"role_scopes": body.role_scopes})
-        return {"id": existing.id, "rotated": rotated, "role_scopes": existing.role_scopes}
+        return {"id": existing.id, "rotated": rotated, "role_scopes": existing.role_scopes,
+                "filename": existing.filename}
     if value is None:
         raise HTTPException(status_code=422, detail="a new secret needs a value")
     kind = "service"  # the only kind this door creates; billing was refused above
@@ -4718,11 +4840,13 @@ def put_secret(body: SecretIn, session: Session = Depends(db)) -> dict:
         ciphertext=encrypt(value),
         role_scopes=body.role_scopes,
         kind=kind,
+        filename=filename,
     )
     session.add(row)
     _audit(session, body.project_id, "secret.create", "secret", row.id,
-           {"role_scopes": body.role_scopes, "kind": kind})
-    return {"id": row.id, "rotated": False, "role_scopes": row.role_scopes, "kind": kind}
+           {"role_scopes": body.role_scopes, "kind": kind, "filename": filename})
+    return {"id": row.id, "rotated": False, "role_scopes": row.role_scopes, "kind": kind,
+            "filename": row.filename}
 
 
 # ── MCP clients ─────────────────────────────────────────────────────────────────

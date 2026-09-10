@@ -244,6 +244,12 @@ will need, add them here: a name, the value, and tick which roles receive
 them. Agents get them as environment variables in their sandboxes and never
 see the values in chat. You can also do this later in Settings.
 
+If the credential *is* a file — a Google service-account key, an SSH key, a
+kubeconfig — press **choose a file…** instead of typing. Granted roles then get
+the **path** to it, which is what the tooling expects; the platform writes the
+file into the sandbox outside the workspace and it goes away with the run. See
+[Credentials that are files](INTEGRATIONS.md#credentials-that-are-files).
+
 **Data sources (optional).** MCP servers can be connected right here too —
 name, URL, optional token, roles — tested before the project starts. Or add
 them later in Settings (next section).
@@ -313,6 +319,11 @@ A role still receives only the credentials you granted it, still as
 environment variables in its own sandbox, and is still told the variable's
 *name* and never its value. The two are different doors: the eye lives behind
 your admin token, and no agent can reach it.
+
+One credential the eye cannot help with: a **binary** file credential — a
+`.p12`, a DER certificate. It says its size and that it is not text, because a
+screenful of base64 debugs nothing. A text one (a service-account JSON, a PEM)
+reveals as its own text and can be edited in place to rotate.
 
 ## Step 4 — Follow the checklist
 

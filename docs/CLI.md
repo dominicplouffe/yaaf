@@ -25,6 +25,7 @@ Every command that takes a project accepts **either a slug or an id**.
 | `yaaf create-user EMAIL NAME` | Create a user. Idempotent by email. |
 | `yaaf create-project SPEC_FILE` | Create a project from a JSON spec (shape below). |
 | `yaaf set-secret NAME [--project P] [--scopes a,b] [--kind service]` | Store an encrypted secret. **The value is prompted** — never echoed, logged, or left in shell history. Omit `--project` for a platform-level secret. |
+| `yaaf set-secret NAME --from-file PATH [--filename NAME]` | Store a credential that **is a file** — a service-account key, a PEM, a kubeconfig. No prompt: a key file is not something anyone retypes. Granted roles receive its *path*, not its contents; `--filename` names it inside the sandbox and defaults to the file's own name. |
 | `yaaf llm-credentials [--include-hidden]` | List named LLM credentials and project assignments (no values). Each project says whether it is still live, and the credential says whether any of them are. |
 | `yaaf create-llm-credential NAME [--mode api_key\|subscription]` | Create a managed credential; value is prompted. |
 | `yaaf edit-llm-credential ID NAME [--rotate]` | Rename a credential; optionally replace its value for all assigned projects. |
