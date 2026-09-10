@@ -1,4 +1,4 @@
-import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { get, getToken } from "../../api";
 import Markdown from "../../Markdown";
@@ -37,12 +37,19 @@ interface FilesView {
   // The receipts: platform-written rows with a real hash, a real publish
   // time, and the requirements each claims to satisfy.
   published?: PublishedRow[];
+  // How many working files the server had to drop to answer at all. A listing
+  // that silently stops at its cap is a listing that lies about the project.
+  workspace_truncated?: number;
 }
 
 function fmtSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function fmtCount(n: number): string {
+  return n.toLocaleString();
 }
 
 async function fetchBytes(url: string): Promise<Blob> {
@@ -62,41 +69,312 @@ function download(blob: Blob, name: string) {
   URL.revokeObjectURL(url);
 }
 
-const PREVIEW_LIMIT = 2 * 1024 * 1024;
+// ── what a file is, which is not the same question as where it was stored ────
 
-const EXT_LABEL: Record<string, string> = {
-  html: "PAGE", htm: "PAGE", md: "DOC", txt: "DOC", csv: "DATA",
-  json: "DATA", pdf: "PDF", png: "IMG", jpg: "IMG", jpeg: "IMG", svg: "IMG",
+/** How to *show* a file. A deliverable a chairman has to parse in his head is
+    not a deliverable: a report is prose, a dataset is a table, a chart is a
+    picture and a config is indented. */
+type Kind =
+  | "html" | "markdown" | "json" | "jsonl" | "csv"
+  | "image" | "pdf" | "text" | "binary";
+
+const EXT_KIND: Record<string, Kind> = {
+  html: "html", htm: "html", xhtml: "html",
+  md: "markdown", markdown: "markdown", mdx: "markdown",
+  json: "json", geojson: "json", ipynb: "json",
+  jsonl: "jsonl", ndjson: "jsonl",
+  csv: "csv", tsv: "csv",
+  png: "image", jpg: "image", jpeg: "image", gif: "image", webp: "image",
+  svg: "image", bmp: "image", ico: "image", avif: "image",
+  pdf: "pdf",
+  zip: "binary", gz: "binary", tgz: "binary", tar: "binary", xz: "binary",
+  "7z": "binary", rar: "binary", xlsx: "binary", xls: "binary", docx: "binary",
+  doc: "binary", pptx: "binary", ppt: "binary", sqlite: "binary", db: "binary",
+  bin: "binary", exe: "binary", dll: "binary", so: "binary", dylib: "binary",
+  woff: "binary", woff2: "binary", ttf: "binary", otf: "binary", mp3: "binary",
+  mp4: "binary", mov: "binary", wav: "binary", ogg: "binary", webm: "binary",
+  parquet: "binary", pkl: "binary", npy: "binary",
+};
+
+/** The browser has to be told what the bytes are before it will draw them —
+    the endpoint hands everything over as octet-stream on purpose. */
+const IMAGE_MIME: Record<string, string> = {
+  png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif",
+  webp: "image/webp", svg: "image/svg+xml", bmp: "image/bmp",
+  ico: "image/x-icon", avif: "image/avif",
+};
+
+/** Colour family for the type badge. Six families, because a reader scanning a
+    thousand rows is looking for "the report" and "the data", not for ".mdx". */
+const FAMILY: Record<Kind, string> = {
+  html: "page", markdown: "doc", json: "data", jsonl: "data", csv: "data",
+  image: "img", pdf: "pdf", text: "txt", binary: "bin",
 };
 
 function extOf(name: string): string {
-  return name.split(".").pop()?.toLowerCase() ?? "";
+  const base = name.split("/").pop() ?? name;
+  if (!base.includes(".")) return "";
+  return base.split(".").pop()!.toLowerCase();
 }
-
-/** How to *show* a file, which is not the same question as what it is. A
-    deliverable a chairman has to parse in his head is not a deliverable: a
-    report is prose, a dataset is a table, and a config is indented. Text was
-    the only answer here, so a published report arrived as its own asterisks. */
-type Kind = "html" | "markdown" | "json" | "csv" | "text";
 
 function kindOf(name: string): Kind {
-  const ext = extOf(name);
-  if (ext === "html" || ext === "htm") return "html";
-  if (ext === "md" || ext === "markdown") return "markdown";
-  if (ext === "json") return "json";
-  if (ext === "csv" || ext === "tsv") return "csv";
-  return "text";
+  return EXT_KIND[extOf(name)] ?? "text";
 }
 
-/** The label on the toggle, in the words of the thing being toggled. "View
-    source" is right for a page and wrong for a table. */
-const SOURCE_LABEL: Record<Kind, [string, string]> = {
+/** The label on the source toggle, in the words of the thing being toggled.
+    "View source" is right for a page and wrong for a table. */
+const SOURCE_LABEL: Partial<Record<Kind, [string, string]>> = {
   html: ["view source", "show the page"],
   markdown: ["view source", "show the document"],
-  json: ["view raw", "show it formatted"],
+  json: ["view raw", "show the tree"],
+  jsonl: ["view raw", "show the records"],
   csv: ["view raw", "show the table"],
-  text: ["", ""],
 };
+
+// ── the rows ────────────────────────────────────────────────────────────────
+
+type State = "published" | "working";
+
+interface Entry {
+  id: string;
+  /** What to call it: the file's own name, never the storage key. */
+  name: string;
+  /** Where it sits, for working files. Published files have no folder — the
+      store's run-keyed path is plumbing, not a place the chairman filed it. */
+  dir: string;
+  size: number;
+  at: string | null;
+  state: State;
+  ext: string;
+  kind: Kind;
+  url: string;
+  key: string | null;
+  runId: string | null;
+  version: number;
+  receipt: PublishedRow | null;
+  /** Earlier publications of the same name, newest first. */
+  older: Entry[];
+  haystack: string;
+}
+
+// ── dates: the organising idea of the whole page ────────────────────────────
+
+const TIME = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" });
+const DAY_NEAR = new Intl.DateTimeFormat(undefined, {
+  weekday: "long", month: "short", day: "numeric",
+});
+const DAY_FAR = new Intl.DateTimeFormat(undefined, {
+  month: "short", day: "numeric", year: "numeric",
+});
+const STAMP = new Intl.DateTimeFormat(undefined, {
+  year: "numeric", month: "short", day: "numeric",
+  hour: "2-digit", minute: "2-digit", second: "2-digit",
+});
+
+/** Local days, not UTC ones. A file written at 6pm in California belongs in
+    *this evening's* folder, and an ISO-prefix comparison would file it under
+    tomorrow. */
+function dayOf(d: Date): string {
+  const m = `${d.getMonth() + 1}`.padStart(2, "0");
+  const day = `${d.getDate()}`.padStart(2, "0");
+  return `${d.getFullYear()}-${m}-${day}`;
+}
+
+function dayKey(iso: string): string {
+  return dayOf(new Date(iso));
+}
+
+function startOfDay(offsetDays = 0): Date {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - offsetDays);
+  return d;
+}
+
+function dayLabel(key: string): string {
+  if (key === "unknown") return "No date";
+  const today = dayOf(startOfDay());
+  const yesterday = dayOf(startOfDay(1));
+  if (key === today) return "Today";
+  if (key === yesterday) return "Yesterday";
+  const when = new Date(`${key}T12:00:00`);
+  const age = (Date.now() - when.getTime()) / 86_400_000;
+  return age < 7 ? DAY_NEAR.format(when) : DAY_FAR.format(when);
+}
+
+// ── previews ────────────────────────────────────────────────────────────────
+
+// Decoded, not downloaded. Past this the file is still previewable — the head
+// of it is — and saying so beats the old behaviour, which was to silently
+// start a download when you pressed Open.
+const TEXT_LIMIT = 2 * 1024 * 1024;
+const LINE_LIMIT = 5000;
+
+/** Text as text: a gutter that scrolls with the body, so a stack trace or a
+    log line can be pointed at by number. Wrapping turns the numbers into
+    lies — a wrapped line takes three rows and the gutter counts one — so the
+    gutter leaves when wrap arrives. */
+function CodeBlock({ text, wrap }: { text: string; wrap: boolean }) {
+  const { body, clipped, lines } = useMemo(() => {
+    const all = text.split("\n");
+    return {
+      body: all.length > LINE_LIMIT ? all.slice(0, LINE_LIMIT).join("\n") : text,
+      clipped: Math.max(all.length - LINE_LIMIT, 0),
+      lines: Math.min(all.length, LINE_LIMIT),
+    };
+  }, [text]);
+  const gutter = useMemo(
+    () => Array.from({ length: lines }, (_, i) => i + 1).join("\n"),
+    [lines],
+  );
+  return (
+    <>
+      <div className={`code${wrap ? " wrap" : ""}`}>
+        {!wrap && <pre className="gutter" aria-hidden="true">{gutter}</pre>}
+        <pre className="codebody">{body}</pre>
+      </div>
+      {clipped > 0 && (
+        <p className="help" style={{ margin: "6px 0 0" }}>
+          First {fmtCount(LINE_LIMIT)} lines · {fmtCount(clipped)} more — Download for the
+          whole file.
+        </p>
+      )}
+    </>
+  );
+}
+
+const JSON_CHILD_LIMIT = 300;
+
+/** A tree, because an agent's JSON is nested and forty screens long, and the
+    question asked of it is nearly always "what is in this one branch". Opens
+    two levels deep: enough to see the shape, not enough to hide it. */
+function JsonNode({ label, value, depth }: { label?: string; value: unknown; depth: number }) {
+  const [open, setOpen] = useState(depth < 2);
+  const [all, setAll] = useState(false);
+
+  if (value === null) return <Leaf label={label} cls="j-null" text="null" />;
+  if (typeof value === "string") return <Leaf label={label} cls="j-str" text={`"${value}"`} />;
+  if (typeof value === "number") return <Leaf label={label} cls="j-num" text={String(value)} />;
+  if (typeof value === "boolean") return <Leaf label={label} cls="j-bool" text={String(value)} />;
+
+  const isArray = Array.isArray(value);
+  const pairs: [string, unknown][] = isArray
+    ? (value as unknown[]).map((v, i) => [String(i), v])
+    : Object.entries(value as Record<string, unknown>);
+  const shown = all ? pairs : pairs.slice(0, JSON_CHILD_LIMIT);
+  const summary = isArray
+    ? `[${pairs.length}]`
+    : `{${pairs.length} ${pairs.length === 1 ? "key" : "keys"}}`;
+
+  return (
+    <div className="j-node">
+      <button className="j-tog" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <span className={`caret${open ? " open" : ""}`} aria-hidden="true">▸</span>
+        {label !== undefined && <span className="j-key">{label}</span>}
+        <span className="j-sum">{summary}</span>
+        {!open && <span className="j-peek">{peek(pairs, isArray)}</span>}
+      </button>
+      {open && (
+        <div className="j-kids">
+          {shown.map(([k, v]) => (
+            <JsonNode key={k} label={k} value={v} depth={depth + 1} />
+          ))}
+          {shown.length < pairs.length && (
+            <button className="linkish" onClick={() => setAll(true)}>
+              show {fmtCount(pairs.length - shown.length)} more
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** What a closed branch is holding, in one line. Without it a log of a
+    thousand records collapses to a thousand identical "{4 keys}" and the
+    reader has to open every one to find the failure. */
+function peek(pairs: [string, unknown][], isArray: boolean): string {
+  const bits = pairs.slice(0, 4).map(([k, v]) => {
+    const value = v === null ? "null"
+      : typeof v === "object" ? (Array.isArray(v) ? "[…]" : "{…}")
+      : typeof v === "string" ? `"${v}"`
+      : String(v);
+    return isArray ? value : `${k}: ${value}`;
+  });
+  const line = bits.join(", ");
+  const clipped = line.length > 76 ? `${line.slice(0, 76)}…` : line;
+  return pairs.length > bits.length ? `${clipped}, …` : clipped;
+}
+
+function Leaf({ label, cls, text }: { label?: string; cls: string; text: string }) {
+  return (
+    <div className="j-leaf">
+      {label !== undefined && <span className="j-key">{label}</span>}
+      <span className={cls}>{text}</span>
+    </div>
+  );
+}
+
+/** Parsing is also the only way to find out the file is broken, and a reader is
+    better served by "this is not valid JSON, here is why" than by a wall that
+    looks fine. */
+function JsonBlock({ text, wrap }: { text: string; wrap: boolean }) {
+  const parsed = useMemo(() => {
+    try {
+      return { value: JSON.parse(text) as unknown, ok: true as const };
+    } catch (e) {
+      return { ok: false as const, why: (e as Error).message };
+    }
+  }, [text]);
+  if (!parsed.ok) {
+    return (
+      <>
+        <p className="help" style={{ margin: "0 0 8px" }}>
+          Not valid JSON ({parsed.why}) — showing the file as written.
+        </p>
+        <CodeBlock text={text} wrap={wrap} />
+      </>
+    );
+  }
+  return (
+    <div className="jsontree">
+      <JsonNode value={parsed.value} depth={0} />
+    </div>
+  );
+}
+
+/** One JSON object per line — how every agent-written event log is shaped.
+    Pretty-printing the file as a whole fails on the second line; reading it as
+    records is the only shape that works. */
+function JsonLines({ text, wrap }: { text: string; wrap: boolean }) {
+  const rows = useMemo(
+    () => text.split("\n").map((l) => l.trim()).filter(Boolean).slice(0, 1000),
+    [text],
+  );
+  const total = useMemo(() => text.split("\n").filter((l) => l.trim()).length, [text]);
+  return (
+    <>
+      <div className="jsontree">
+        {rows.map((line, i) => {
+          let value: unknown;
+          try {
+            value = JSON.parse(line);
+          } catch {
+            return <Leaf key={i} label={String(i + 1)} cls="j-str" text={line} />;
+          }
+          return <JsonNode key={i} label={String(i + 1)} value={value} depth={2} />;
+        })}
+      </div>
+      {total > rows.length && (
+        <p className="help" style={{ margin: "6px 0 0" }}>
+          First {fmtCount(rows.length)} of {fmtCount(total)} records — Download for the whole
+          file.
+        </p>
+      )}
+      {rows.length === 0 && <CodeBlock text={text} wrap={wrap} />}
+    </>
+  );
+}
 
 /** RFC 4180, small enough to own: quoted fields, doubled quotes inside them,
     and delimiters or newlines that appear inside quotes and must not split
@@ -144,59 +422,41 @@ function sniffDelimiter(text: string, name: string): string {
 }
 
 // A browser will render a hundred thousand <td>s if asked, slowly, and then
-// the tab stops answering. The rest of the file is one Download away, which is
-// the honest thing to offer — as long as the cut is stated rather than silent.
-const CSV_ROW_LIMIT = 500;
+// the tab stops answering. Another page of rows is one press away, and the
+// rest of the file is one Download away — as long as the cut is stated.
+const CSV_PAGE = 500;
 
 const NUMERIC = /^-?[$€£]?\s*\d[\d,_ ]*(\.\d+)?\s*%?$/;
-
-function Raw({ text }: { text: string }) {
-  return (
-    <pre className="block" style={{ maxHeight: "60vh", overflow: "auto" }}>{text}</pre>
-  );
-}
-
-/** Indented, not reformatted. Pretty-printing is the whole ask — an agent
-    writes one 40KB line and the browser shows a 40KB line — but parsing is
-    also the only way to find out the file is broken, and a chairman is better
-    served by "this is not valid JSON" than by a wall that looks fine. */
-function JsonBlock({ text }: { text: string }) {
-  const pretty = useMemo(() => {
-    try {
-      return { text: JSON.stringify(JSON.parse(text), null, 2), ok: true };
-    } catch (e) {
-      return { text, ok: false, why: (e as Error).message };
-    }
-  }, [text]);
-  return (
-    <>
-      {!pretty.ok && (
-        <p className="help" style={{ margin: "0 0 8px" }}>
-          Not valid JSON ({pretty.why}) — showing the file as written.
-        </p>
-      )}
-      <Raw text={pretty.text} />
-    </>
-  );
-}
 
 /** A table, with the first row as the header — which is a guess, and the only
     one worth making: a spreadsheet export without a header row is rarer than a
     reader who cannot tell columns apart without one. */
 function CsvTable({ text, name }: { text: string; name: string }) {
-  const { head, body, total, width } = useMemo(() => {
-    const rows = parseDelimited(text, sniffDelimiter(text, name))
+  const [limit, setLimit] = useState(CSV_PAGE);
+  const { head, rows, width, numeric } = useMemo(() => {
+    const parsed = parseDelimited(text, sniffDelimiter(text, name))
       .filter((r) => r.length > 1 || r[0] !== "");
-    const width = rows.reduce((w, r) => Math.max(w, r.length), 0);
-    return {
-      head: rows[0] ?? [],
-      body: rows.slice(1, CSV_ROW_LIMIT + 1),
-      total: Math.max(rows.length - 1, 0),
-      width,
-    };
+    const body = parsed.slice(1);
+    const width = parsed.reduce((w, r) => Math.max(w, r.length), 0);
+    // A column is a number column when its values are, which is a question
+    // about the column and not about the cell: judging each cell alone puts a
+    // blank or a "n/a" back on the left and the column stops lining up.
+    const numeric = Array.from({ length: width }, (_, c) => {
+      let seen = 0;
+      let hits = 0;
+      for (const row of body.slice(0, 50)) {
+        const value = (row[c] ?? "").trim();
+        if (!value) continue;
+        seen += 1;
+        if (NUMERIC.test(value)) hits += 1;
+      }
+      return seen > 0 && hits / seen >= 0.8;
+    });
+    return { head: parsed[0] ?? [], rows: body, width, numeric };
   }, [text, name]);
 
-  if (width === 0) return <Raw text={text} />;
+  if (width === 0) return <CodeBlock text={text} wrap={false} />;
+  const body = rows.slice(0, limit);
   // Ragged rows are normal in exported data. Padding them here keeps every
   // cell under the header it belongs to; without it a short row silently
   // shifts every column after it left.
@@ -205,22 +465,24 @@ function CsvTable({ text, name }: { text: string; name: string }) {
 
   return (
     <>
-      <div className="wbox" style={{ maxHeight: "60vh", overflow: "auto" }}>
+      <div className="wbox scroller">
         <table className="csv">
           <thead>
             <tr>
+              <th className="rownum"></th>
               {cells(head).map((h, i) => (
-                <th key={i}>{h || <span className="dim">col {i + 1}</span>}</th>
+                <th key={i} className={numeric[i] ? "num" : ""}>
+                  {h || <span className="dim">col {i + 1}</span>}
+                </th>
               ))}
             </tr>
           </thead>
           <tbody>
             {body.map((row, r) => (
               <tr key={r}>
+                <td className="rownum">{r + 1}</td>
                 {cells(row).map((cell, c) => (
-                  <td key={c} className={NUMERIC.test(cell.trim()) ? "num mono" : ""}>
-                    {cell}
-                  </td>
+                  <td key={c} className={numeric[c] ? "num mono" : ""}>{cell}</td>
                 ))}
               </tr>
             ))}
@@ -228,28 +490,73 @@ function CsvTable({ text, name }: { text: string; name: string }) {
         </table>
       </div>
       <p className="help" style={{ margin: "6px 0 0" }}>
-        {total > body.length
-          ? `First ${body.length} of ${total} rows · ${width} columns — Download for the whole file.`
-          : `${total} row${total === 1 ? "" : "s"} · ${width} columns`}
+        {rows.length > body.length ? (
+          <>
+            First {fmtCount(body.length)} of {fmtCount(rows.length)} rows · {width} columns{" "}
+            <button className="linkish" onClick={() => setLimit(limit + CSV_PAGE * 4)}>
+              show more
+            </button>
+          </>
+        ) : (
+          `${fmtCount(rows.length)} row${rows.length === 1 ? "" : "s"} · ${width} columns`
+        )}
       </p>
     </>
   );
 }
 
-/** One file, shown as the thing it is. `asSource` is the escape hatch and
-    never the default: a chairman opening a report wants the report. */
+/** What a fetched file turned out to be, once its bytes were in hand. The
+    extension proposes; the first 8KB decides. */
+interface Loaded {
+  entry: Entry;
+  kind: Kind;
+  blob: Blob;
+  text?: string;
+  /** Object URL for the kinds the browser draws itself. */
+  objectUrl?: string;
+  shownBytes?: number;
+}
+
 function PreviewBody(
-  { preview, asSource }: { preview: { name: string; text: string; kind: Kind }; asSource: boolean },
+  { loaded, asSource, wrap }: { loaded: Loaded; asSource: boolean; wrap: boolean },
 ) {
-  const { name, text, kind } = preview;
-  if (asSource || kind === "text") return <Raw text={text} />;
+  const { entry, kind, text, objectUrl } = loaded;
+
+  if (kind === "image") {
+    // An <img> decodes; it does not execute. That is what makes it safe to
+    // show an agent-written .svg here at all, on the origin that holds the
+    // chairman's token — the same file in an <iframe> would run as us.
+    return <ImageView url={objectUrl} name={entry.name} />;
+  }
+  if (kind === "pdf") {
+    // The bytes go to the browser's own PDF viewer, which is a separate
+    // renderer with no reach into this document.
+    return (
+      <object className="pdfview" data={objectUrl} type="application/pdf" aria-label={entry.name}>
+        <p className="help">
+          This browser will not display PDFs inline — Download to read it.
+        </p>
+      </object>
+    );
+  }
+  if (kind === "binary" || text === undefined) {
+    return (
+      <div className="wbox" style={{ padding: 16 }}>
+        <p className="help" style={{ margin: 0 }}>
+          {fmtSize(entry.size)} of binary — there is nothing to read on a screen.
+          Download opens it in whatever wrote it.
+        </p>
+      </div>
+    );
+  }
+  if (asSource || kind === "text") return <CodeBlock text={text} wrap={wrap} />;
   if (kind === "html") {
     // Agent-written HTML runs in an opaque origin: scripts work so the
     // charts render, but it can never reach this app's session.
     return (
       <iframe
         className="preview-frame"
-        title={name}
+        title={entry.name}
         sandbox="allow-scripts"
         srcDoc={text}
       />
@@ -257,87 +564,548 @@ function PreviewBody(
   }
   if (kind === "markdown") {
     return (
-      <div className="wbox doc" style={{ maxHeight: "60vh", overflow: "auto" }}>
+      <div className="wbox doc scroller">
         <Markdown>{text}</Markdown>
       </div>
     );
   }
-  if (kind === "json") return <JsonBlock text={text} />;
-  return <CsvTable text={text} name={name} />;
+  if (kind === "json") return <JsonBlock text={text} wrap={wrap} />;
+  if (kind === "jsonl") return <JsonLines text={text} wrap={wrap} />;
+  return <CsvTable text={text} name={entry.name} />;
 }
 
-// The scratch pad runs to hundreds of files on a busy project, and a list that
-// long is the same as no list: you scroll past what you came for. Twenty-five
-// at a time, ordered by whichever column answers the question you have.
-const WORK_PAGE = 25;
+/** A picture, with its own dimensions once the browser knows them — and an
+    honest failure when the bytes are not the image the name promised. */
+function ImageView({ url, name }: { url?: string; name: string }) {
+  const [note, setNote] = useState<string | null>(null);
+  const [broken, setBroken] = useState(false);
+  if (broken) {
+    return (
+      <div className="wbox" style={{ padding: 16 }}>
+        <p className="help" style={{ margin: 0 }}>
+          This file is named like an image but the browser could not decode it.
+          Download to open it in something that can.
+        </p>
+      </div>
+    );
+  }
+  return (
+    <>
+      <div className="imgview">
+        <img
+          src={url}
+          alt={name}
+          onLoad={(e) =>
+            setNote(`${e.currentTarget.naturalWidth} × ${e.currentTarget.naturalHeight} px`)}
+          onError={() => setBroken(true)}
+        />
+      </div>
+      {note && <p className="help" style={{ margin: "6px 0 0" }}>{note}</p>}
+    </>
+  );
+}
 
-type SortKey = "path" | "size" | "modified";
+/** The file, full-bleed, with the list still behind it — and the arrow keys
+    still walking that list. Reading twenty files used to be twenty round trips
+    through a table you had to find your place in again each time. */
+function Preview({
+  loaded, position, total, busy, onStep, onClose, onDownload,
+}: {
+  loaded: Loaded;
+  position: number;
+  total: number;
+  busy: boolean;
+  onStep: (delta: number) => void;
+  onClose: () => void;
+  onDownload: () => void;
+}) {
+  const [asSource, setAsSource] = useState(false);
+  const [wrap, setWrap] = useState(false);
+  const { entry } = loaded;
+  const toggle = SOURCE_LABEL[loaded.kind];
+  const wrappable = loaded.text !== undefined && (asSource || loaded.kind === "text");
 
-/** Which direction a column should open in. A name is read alphabetically; a
-    size or a time is clicked because you want the biggest or the newest, and
-    starting those at the smallest and oldest costs a second click every time. */
-const FIRST_DESC: Record<SortKey, boolean> = { path: false, size: true, modified: true };
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const el = document.activeElement;
+      const typing = el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement;
+      if (e.key === "Escape") { onClose(); return; }
+      if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key === "ArrowRight" || e.key === "j") { e.preventDefault(); onStep(1); }
+      if (e.key === "ArrowLeft" || e.key === "k") { e.preventDefault(); onStep(-1); }
+    }
+    window.addEventListener("keydown", onKey);
+    // The page behind the reader must not scroll under it.
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = previous;
+    };
+  }, [onClose, onStep]);
 
-/** What the agents published, reframed around what it is rather than where it
-    was stored. A deck a chairman cannot look at is not a deliverable, so HTML
-    renders as itself; the source is a toggle, not the only option. */
+  return (
+    <div className="modal-back" onClick={onClose}>
+      <div
+        className="modal reader"
+        role="dialog"
+        aria-modal="true"
+        aria-label={entry.name}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="reader-head">
+          <span className={`ftype ${FAMILY[entry.kind]}`}>{entry.ext.toUpperCase() || "FILE"}</span>
+          <div className="reader-id">
+            <div className="rt">
+              <span className="fname">{entry.name}</span>
+              {entry.state === "published" ? (
+                <span className="chip accent">published</span>
+              ) : (
+                <span className="chip">working</span>
+              )}
+              {entry.version > 1 && <span className="chip">v{entry.version}</span>}
+            </div>
+            <div className="help">
+              {entry.dir && <span className="mono">{entry.dir} · </span>}
+              {fmtSize(entry.size)} · {entry.at ? STAMP.format(new Date(entry.at)) : "no date"}
+              {entry.runId && ` · run ${entry.runId.slice(-8)}`}
+              {entry.receipt?.satisfies.length
+                ? ` · satisfies ${entry.receipt.satisfies.join(", ")}`
+                : ""}
+              {entry.receipt && (
+                <>
+                  {" · "}
+                  <span className="mono" title={`sha256 ${entry.receipt.sha256}`}>
+                    sha {entry.receipt.sha256.slice(0, 10)}…
+                  </span>
+                </>
+              )}
+            </div>
+          </div>
+          <div className="reader-nav">
+            <button className="small" onClick={() => onStep(-1)} disabled={total < 2}
+                    aria-label="Previous file">‹</button>
+            <span className="mono">{fmtCount(position + 1)} / {fmtCount(total)}</span>
+            <button className="small" onClick={() => onStep(1)} disabled={total < 2}
+                    aria-label="Next file">›</button>
+          </div>
+        </div>
+        <div className="reader-tools">
+          {toggle && loaded.text !== undefined && (
+            <button className="small" onClick={() => setAsSource(!asSource)}>
+              {toggle[asSource ? 1 : 0]}
+            </button>
+          )}
+          {wrappable && (
+            <button className={`small${wrap ? " on" : ""}`} onClick={() => setWrap(!wrap)}>
+              {wrap ? "unwrap lines" : "wrap lines"}
+            </button>
+          )}
+          {busy && <span className="chip">opening…</span>}
+          {loaded.shownBytes !== undefined && (
+            <span className="chip warn">
+              first {fmtSize(loaded.shownBytes)} of {fmtSize(entry.size)}
+            </span>
+          )}
+          <div className="spacer" />
+          <span className="help">← → to walk the list · Esc to close</span>
+          <button className="small" onClick={onDownload}>↓ Download</button>
+          <button className="small" onClick={onClose}>close</button>
+        </div>
+        <div className="reader-body">
+          <PreviewBody loaded={loaded} asSource={asSource} wrap={wrap} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── the browser ─────────────────────────────────────────────────────────────
+
+type SortKey = "name" | "state" | "size" | "at" | "type";
+
+/** Which direction a column should open in. A name or a type is read
+    alphabetically; a size or a time is clicked because you want the biggest or
+    the newest, and starting those at the smallest and oldest costs a second
+    click every time. */
+const FIRST_DESC: Record<SortKey, boolean> = {
+  name: false, state: false, type: false, size: true, at: true,
+};
+
+const WINDOWS = [
+  { key: "today", label: "Today", days: 0 },
+  { key: "7d", label: "7 days", days: 6 },
+  { key: "30d", label: "30 days", days: 29 },
+  { key: "all", label: "All time", days: -1 },
+] as const;
+
+const STATES = [
+  { key: "all", label: "All" },
+  { key: "published", label: "Published" },
+  { key: "working", label: "Working" },
+] as const;
+
+// Even one open folder can hold a thousand rows. Show a screenful of them and
+// let the reader ask for the rest; the count is on the folder either way.
+const ROWS_PER_FOLDER = 150;
+
+/** Show the reader why this row matched. With a thousand files and a
+    two-letter search, "which part of this is the hit" is a real question —
+    and often the answer is the folder, not the name. */
+function marked(text: string, terms: string[]) {
+  if (terms.length === 0) return text;
+  const pattern = new RegExp(`(${terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})`, "gi");
+  return text.split(pattern).map((part, i) =>
+    terms.includes(part.toLowerCase()) ? <mark key={i}>{part}</mark> : part);
+}
+
+interface RowProps {
+  entry: Entry;
+  sub?: boolean;
+  terms: string[];
+  activeId: string | null;
+  openingId: string | null;
+  expanded: Record<string, boolean>;
+  onOpen: (entry: Entry) => void;
+  onSave: (entry: Entry) => void;
+  onToggle: (id: string) => void;
+}
+
+/** One file. Defined here rather than inside the page on purpose: a component
+    declared in a render is a new component *type* every time, so React throws
+    away every row and builds it again — a thousand of them, four times a
+    minute, on a page whose whole job is to be scrolled. */
+function Row(props: RowProps) {
+  const { entry, sub, terms, activeId, openingId, expanded, onOpen, onSave, onToggle } = props;
+  const showing = expanded[entry.id] ?? false;
+  return (
+    <>
+      <div
+        className={`frow${sub ? " sub" : ""}${activeId === entry.id ? " on" : ""}`}
+        onClick={() => onOpen(entry)}
+      >
+        <span className={`ftype ${FAMILY[entry.kind]}`}>{entry.ext.toUpperCase() || "—"}</span>
+        <span className="fname-cell">
+          {/* An earlier version does not need its name said again — it needs
+              the two things the row above it cannot tell you: when it was
+              published, and which run published it. */}
+          <button className="fname" onClick={(e) => { e.stopPropagation(); onOpen(entry); }}>
+            {sub ? (
+              <span className="fdir">
+                v{entry.version} · {entry.at ? fmtWhen(entry.at) : "no date"}
+                {entry.runId && ` · run ${entry.runId.slice(-8)}`}
+              </span>
+            ) : (
+              <>
+                {entry.dir && <span className="fdir">{marked(`${entry.dir}/`, terms)}</span>}
+                {marked(entry.name, terms)}
+              </>
+            )}
+          </button>
+          {entry.receipt?.satisfies.length ? (
+            <span className="chip ok sat" title={`satisfies ${entry.receipt.satisfies.join(", ")}`}>
+              satisfies {entry.receipt.satisfies.length === 1
+                ? entry.receipt.satisfies[0]
+                : `${entry.receipt.satisfies.length} requirements`}
+            </span>
+          ) : null}
+          {entry.older.length > 0 && (
+            <button
+              className="chip vchip"
+              aria-expanded={showing}
+              onClick={(e) => { e.stopPropagation(); onToggle(entry.id); }}
+            >
+              v{entry.version}
+              <span className="vmore"> · {showing ? "hide" : "history"}</span>
+            </button>
+          )}
+          {openingId === entry.id && <span className="help"> opening…</span>}
+        </span>
+        <span className="fstate">
+          {entry.state === "published" ? (
+            <span className="chip accent">published</span>
+          ) : (
+            <span className="chip">working</span>
+          )}
+        </span>
+        <span className="fsize num mono">{fmtSize(entry.size)}</span>
+        <span className="fwhen mono" title={entry.at ? STAMP.format(new Date(entry.at)) : ""}>
+          {entry.at ? TIME.format(new Date(entry.at)) : "—"}
+        </span>
+        <button
+          className="fdl"
+          title={`Download ${entry.name}`}
+          aria-label={`Download ${entry.name}`}
+          onClick={(e) => { e.stopPropagation(); onSave(entry); }}
+        >
+          ↓
+        </button>
+      </div>
+      {showing && entry.older.map((old) => <Row key={old.id} {...props} entry={old} sub />)}
+    </>
+  );
+}
+
+/** Every file the project has, in one list, filed by the day it landed.
+    Published deliverables and the agents' working files differ by a column
+    rather than by a section, because "what did we make today" is one question
+    and answering it used to mean reading two lists with different shapes. */
 export default function Deliverables({ projectId }: { projectId: string }) {
   const { data, error, at } = usePoll(
     () => get<FilesView>(`/observe/projects/${projectId}/files`),
     15000,
   );
-  const [preview, setPreview] =
-    useState<{ name: string; text: string; kind: Kind } | null>(null);
-  const [asSource, setAsSource] = useState(false);
-  const [previewError, setPreviewError] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const [showWorking, setShowWorking] = useState(false);
-  const [sort, setSort] = useState<{ by: SortKey; desc: boolean }>({ by: "path", desc: false });
-  const [page, setPage] = useState(0);
   const [params, setParams] = useSearchParams();
+  const [loaded, setLoaded] = useState<Loaded | null>(null);
+  const [opening, setOpening] = useState<string | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [sort, setSort] = useState<{ by: SortKey; desc: boolean }>({ by: "at", desc: true });
+  const [toggled, setToggled] = useState<Record<string, boolean>>({});
+  const [versionsOf, setVersionsOf] = useState<Record<string, boolean>>({});
+  const [more, setMore] = useState<Record<string, number>>({});
+  const searchRef = useRef<HTMLInputElement>(null);
 
-  // The preview opens below a list that can be a screenful long. Without this,
-  // pressing Open looks like pressing nothing.
-  const previewRef = useRef<HTMLDivElement>(null);
+  const query = params.get("q") ?? "";
+  const state = (STATES.find((s) => s.key === params.get("state"))?.key ?? "all");
+  const type = params.get("type") ?? "";
+  const since = (WINDOWS.find((w) => w.key === params.get("since"))?.key ?? "all");
+
+  function setParam(key: string, value: string, fallback: string) {
+    const next = new URLSearchParams(params);
+    if (value === fallback) next.delete(key);
+    else next.set(key, value);
+    // A filter is a view of the moment, not a place — replacing keeps Back
+    // pointing at the page you came from rather than at your own keystrokes.
+    setParams(next, { replace: true });
+  }
+
+  // "/" is the search box everywhere else on the web; it should be here too —
+  // except while the reader is open, where the keyboard belongs to the file.
   useEffect(() => {
-    if (preview) previewRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }, [preview]);
+    function onKey(e: KeyboardEvent) {
+      if (loaded) return;
+      if (e.key !== "/" || e.metaKey || e.ctrlKey || e.altKey) return;
+      const el = document.activeElement;
+      if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return;
+      e.preventDefault();
+      searchRef.current?.focus();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [loaded]);
 
-  async function open(url: string, name: string, size: number) {
+  // An object URL is a live reference into the tab's memory; a reader who
+  // walks fifty images would otherwise hold all fifty until the tab closed.
+  useEffect(() => {
+    const url = loaded?.objectUrl;
+    return () => { if (url) URL.revokeObjectURL(url); };
+  }, [loaded]);
+
+  const artifactUrl = useCallback(
+    (key: string) =>
+      `/observe/projects/${projectId}/files/content?artifact=${encodeURIComponent(key)}`,
+    [projectId],
+  );
+
+  const entries = useMemo<Entry[]>(() => {
+    const receipts = new Map((data?.published ?? []).map((p) => [p.key, p]));
+    const rows: Entry[] = [];
+
+    // The same name republished by a later run is a new version of one thing.
+    // Listing every run's copy as its own row made five files look like five
+    // deliverables when there were three.
+    const byName = new Map<string, ArtifactFile[]>();
+    for (const a of data?.artifacts ?? []) {
+      byName.set(a.name, [...(byName.get(a.name) ?? []), a]);
+    }
+    for (const [name, all] of byName) {
+      const sorted = [...all].sort((a, b) => (b.modified ?? "").localeCompare(a.modified ?? ""));
+      const make = (a: ArtifactFile, version: number): Entry => ({
+        id: a.key,
+        name,
+        dir: "",
+        size: a.size,
+        at: a.modified,
+        state: "published",
+        ext: extOf(name),
+        kind: kindOf(name),
+        url: artifactUrl(a.key),
+        key: a.key,
+        runId: a.run_id,
+        version,
+        receipt: receipts.get(a.key) ?? null,
+        older: [],
+        haystack: name.toLowerCase(),
+      });
+      const latest = make(sorted[0], sorted.length);
+      latest.older = sorted.slice(1).map((a, i) => make(a, sorted.length - 1 - i));
+      rows.push(latest);
+    }
+
+    for (const f of data?.workspace ?? []) {
+      const name = f.path.split("/").pop() ?? f.path;
+      rows.push({
+        id: `w:${f.path}`,
+        name,
+        dir: f.path.slice(0, Math.max(f.path.length - name.length - 1, 0)),
+        size: f.size,
+        at: f.modified,
+        state: "working",
+        ext: extOf(name),
+        kind: kindOf(name),
+        url: `/observe/projects/${projectId}/files/content?path=${encodeURIComponent(f.path)}`,
+        key: null,
+        runId: null,
+        version: 1,
+        receipt: null,
+        older: [],
+        haystack: f.path.toLowerCase(),
+      });
+    }
+    return rows;
+  }, [data, projectId, artifactUrl]);
+
+  // Every term has to hit, in any order: "sep report" finds
+  // reports/september-summary.md without a syntax to learn.
+  const terms = useMemo(
+    () => query.toLowerCase().split(/\s+/).filter(Boolean),
+    [query],
+  );
+  const floor = useMemo(() => {
+    const w = WINDOWS.find((x) => x.key === since)!;
+    return w.days < 0 ? 0 : startOfDay(w.days).getTime();
+    // `data` is in the deps because "today" has to mean today after midnight
+    // on a screen that has been open since yesterday afternoon.
+  }, [since, data]);
+
+  /** `skip` leaves one filter out, so each filter can count what it *would*
+      show rather than what the others have already hidden. A type dropdown
+      that reads "md (0)" because you are on Published is a broken dropdown. */
+  const passes = useCallback(
+    (e: Entry, skip: "state" | "type" | "" = "") => {
+      if (skip !== "state" && state !== "all" && e.state !== state) return false;
+      if (skip !== "type" && type && e.ext !== type) return false;
+      if (floor && (!e.at || new Date(e.at).getTime() < floor)) return false;
+      return terms.every((t) => e.haystack.includes(t));
+    },
+    [state, type, floor, terms],
+  );
+
+  const stateCounts = useMemo(() => {
+    const counts: Record<string, number> = { all: 0, published: 0, working: 0 };
+    for (const e of entries) {
+      if (!passes(e, "state")) continue;
+      counts.all += 1;
+      counts[e.state] += 1;
+    }
+    return counts;
+  }, [entries, passes]);
+
+  const types = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const e of entries) {
+      if (!passes(e, "type")) continue;
+      counts.set(e.ext, (counts.get(e.ext) ?? 0) + 1);
+    }
+    return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  }, [entries, passes]);
+
+  const groups = useMemo(() => {
+    const dir = sort.desc ? -1 : 1;
+    const hits = entries.filter((e) => passes(e));
+    // Name sorts on the path as shown, folder and all: a list that prints
+    // "research/…" and then sorts on the part after the slash looks broken,
+    // and grouping a folder together is the reason to sort by name at all.
+    // Every column falls back to it, so two files of the same size or the same
+    // minute keep one order instead of trading places on each poll.
+    hits.sort((a, b) => (dir * (
+      sort.by === "size" ? a.size - b.size
+      : sort.by === "at" ? (a.at ?? "").localeCompare(b.at ?? "")
+      : sort.by === "state" ? a.state.localeCompare(b.state)
+      : sort.by === "type" ? a.ext.localeCompare(b.ext)
+      : a.haystack.localeCompare(b.haystack)
+    )) || a.haystack.localeCompare(b.haystack));
+    const folders = new Map<string, Entry[]>();
+    for (const e of hits) {
+      const key = e.at ? dayKey(e.at) : "unknown";
+      folders.set(key, [...(folders.get(key) ?? []), e]);
+    }
+    return [...folders.entries()]
+      .sort((a, b) => (a[0] === "unknown" ? 1 : b[0] === "unknown" ? -1 : b[0].localeCompare(a[0])))
+      .map(([key, items]) => ({
+        key,
+        label: dayLabel(key),
+        items,
+        published: items.filter((e) => e.state === "published").length,
+      }));
+  }, [entries, passes, sort]);
+
+  // The reader walks what the filters found, not what happens to be unfolded —
+  // pressing → into a closed folder is what you meant, every time.
+  const flat = useMemo(() => groups.flatMap((g) => g.items), [groups]);
+
+  const filtering = terms.length > 0 || state !== "all" || type !== "" || since !== "all";
+  const todayKey = dayOf(new Date());
+
+  const openFolder = (key: string, index: number) =>
+    toggled[key] ?? (key === todayKey || filtering || index === 0);
+
+  const openEntry = useCallback(async (entry: Entry) => {
+    setPreviewError(null);
+    setOpening(entry.id);
+    try {
+      const blob = await fetchBytes(entry.url);
+      const buffer = await blob.arrayBuffer();
+      if (entry.kind === "image" || entry.kind === "pdf") {
+        const mime = entry.kind === "pdf" ? "application/pdf" : IMAGE_MIME[entry.ext];
+        setLoaded({
+          entry, kind: entry.kind, blob,
+          objectUrl: URL.createObjectURL(new Blob([buffer], { type: mime })),
+        });
+        return;
+      }
+      // A NUL byte in the head means binary, whatever the extension claimed.
+      const head = new Uint8Array(buffer.slice(0, 8192));
+      if (head.includes(0)) {
+        setLoaded({ entry, kind: "binary", blob });
+        return;
+      }
+      const shown = Math.min(buffer.byteLength, TEXT_LIMIT);
+      setLoaded({
+        entry,
+        kind: entry.kind === "binary" ? "text" : entry.kind,
+        blob,
+        text: new TextDecoder().decode(new Uint8Array(buffer, 0, shown)),
+        shownBytes: shown < buffer.byteLength ? shown : undefined,
+      });
+    } catch (e) {
+      setPreviewError(`${entry.name}: ${(e as Error).message}`);
+      setLoaded(null);
+    } finally {
+      setOpening(null);
+    }
+  }, []);
+
+  async function save(entry: Entry) {
     setPreviewError(null);
     try {
-      const blob = await fetchBytes(url);
-      if (size > PREVIEW_LIMIT) {
-        download(blob, name);
-        return;
-      }
-      const text = await blob.text();
-      // A NUL byte means binary — hand it to the browser instead of the eye.
-      if (text.slice(0, 8192).includes("\u0000")) {
-        download(blob, name);
-        return;
-      }
-      setAsSource(false);
-      setPreview({ name, text, kind: kindOf(name) });
+      download(await fetchBytes(entry.url), entry.name);
     } catch (e) {
-      setPreviewError((e as Error).message);
+      setPreviewError(`${entry.name}: ${(e as Error).message}`);
     }
   }
 
-  async function save(url: string, name: string) {
-    setPreviewError(null);
-    try {
-      download(await fetchBytes(url), name);
-    } catch (e) {
-      setPreviewError((e as Error).message);
-    }
-  }
-
-  const artifactUrl = (key: string) =>
-    `/observe/projects/${projectId}/files/content?artifact=${encodeURIComponent(key)}`;
-
-  const workspace = data?.workspace ?? [];
-  const artifacts = data?.artifacts ?? [];
+  const position = loaded ? flat.findIndex((e) => e.id === loaded.entry.id) : -1;
+  const step = useCallback(
+    (delta: number) => {
+      if (!loaded || flat.length === 0) return;
+      const here = flat.findIndex((e) => e.id === loaded.entry.id);
+      // A file opened from a version list is not in `flat`; step from the top.
+      const next = here < 0 ? 0 : (here + delta + flat.length) % flat.length;
+      openEntry(flat[next]);
+    },
+    [loaded, flat, openEntry],
+  );
 
   // "?open=<key>" arrives from the Overview's deliverable card, which knows
   // exactly which file the chairman pressed and used to throw it away — the
@@ -348,261 +1116,231 @@ export default function Deliverables({ projectId }: { projectId: string }) {
   const wanted = params.get("open");
   useEffect(() => {
     if (!wanted || !data) return;
-    setParams({}, { replace: true });
-    const hit = artifacts.find((a) => a.key === wanted);
-    if (hit) open(artifactUrl(hit.key), hit.name, hit.size);
+    const next = new URLSearchParams(params);
+    next.delete("open");
+    setParams(next, { replace: true });
+    const all = entries.flatMap((e) => [e, ...e.older]);
+    const hit = all.find((e) => e.key === wanted);
+    if (hit) openEntry(hit);
     else setPreviewError(`That file is no longer published: ${wanted}`);
   }, [wanted, data]);
 
-  // Ties keep the order the server sent, which is by path — so two files of the
-  // same size still land next to their siblings instead of shuffling on every
-  // poll. Array.sort is stable, so this costs nothing but the sentence.
-  const sortedWork = useMemo(() => {
-    const dir = sort.desc ? -1 : 1;
-    return [...workspace].sort((a, b) => dir * (
-      sort.by === "size" ? a.size - b.size
-      : sort.by === "modified" ? a.modified.localeCompare(b.modified)
-      : a.path.localeCompare(b.path)
-    ));
-  }, [workspace, sort]);
+  const total = entries.length;
+  const publishedTotal = entries.filter((e) => e.state === "published").length;
+  const todayTotal = entries.filter((e) => e.at && dayKey(e.at) === todayKey).length;
+  const dropped = data?.workspace_truncated ?? 0;
 
-  // Files come and go under a chairman who is sitting on page 6, so the page is
-  // clamped at render rather than trusted. Nobody lands on an empty table.
-  const pages = Math.max(1, Math.ceil(sortedWork.length / WORK_PAGE));
-  const onPage = Math.min(page, pages - 1);
-  const shownWork = sortedWork.slice(onPage * WORK_PAGE, (onPage + 1) * WORK_PAGE);
-
-  function sortWork(by: SortKey) {
-    setSort((s) => (s.by === by ? { by, desc: !s.desc } : { by, desc: FIRST_DESC[by] }));
-    setPage(0);
-  }
-
-  /** A header that is also the control that reorders it. The arrow keeps its
-      width when the column is not the sorted one, so clicking around does not
-      shove the columns sideways. */
-  const sortTh = (by: SortKey, label: string, className = "", style: CSSProperties = {}) => (
-    <th
-      className={`sortable ${className}`.trim()}
-      style={style}
+  const sortBtn = (by: SortKey, label: string, cls: string) => (
+    <button
+      className={`fsort ${cls}${sort.by === by ? " on" : ""}`.trim()}
       aria-sort={sort.by === by ? (sort.desc ? "descending" : "ascending") : "none"}
+      onClick={() =>
+        setSort((s) => (s.by === by ? { by, desc: !s.desc } : { by, desc: FIRST_DESC[by] }))
+      }
     >
-      <button className="sort" onClick={() => sortWork(by)}>
-        {label}
-        <span className={sort.by === by ? "arrow" : "arrow off"} aria-hidden="true">
-          {sort.desc ? "\u25bc" : "\u25b2"}
-        </span>
-      </button>
-    </th>
+      {label}
+      <span className={sort.by === by ? "arrow" : "arrow off"} aria-hidden="true">
+        {sort.desc ? "▼" : "▲"}
+      </span>
+    </button>
   );
-  const receiptByKey = new Map((data?.published ?? []).map((p) => [p.key, p]));
-
-  // The same name republished by a later run is a new version of one thing.
-  // Listing every run's copy as its own row made five files look like five
-  // deliverables when there were three.
-  const versions = new Map<string, ArtifactFile[]>();
-  for (const a of artifacts) {
-    versions.set(a.name, [...(versions.get(a.name) ?? []), a]);
-  }
-  const published = [...versions.entries()]
-    .map(([name, all]) => {
-      const sorted = [...all].sort((a, b) => (b.modified ?? "").localeCompare(a.modified ?? ""));
-      return { name, latest: sorted[0], older: sorted.slice(1) };
-    })
-    .sort((a, b) => (b.latest.modified ?? "").localeCompare(a.latest.modified ?? ""));
 
   return (
     <>
       <p className="subtitle">
-        What the client actually gets. Everything here was explicitly published by a team; the
-        working files below are the agents' scratch pad, kept out of the way.
+        Every file the project has, filed by the day it landed. <b>Published</b> is what the
+        client gets — explicitly published by a team, hashed and receipted. <b>Working</b> is the
+        agents' shared scratch pad, kept in the same list so today is one screen rather than two.
       </p>
       {error && !data && <div className="error">{error}</div>}
       {previewError && <div className="error">{previewError}</div>}
 
-      <h2 className="zone">
-        Published <span className="cnt">{published.length}</span>
-      </h2>
       {!data ? (
-        <Skeleton rows={3} />
-      ) : published.length === 0 ? (
+        <Skeleton rows={6} />
+      ) : total === 0 ? (
         <div className="wbox">
           <div className="wrow">
-            <span className="badge">none yet</span>
+            <span className="badge">nothing yet</span>
             <div className="grow help">
-              Nothing published. A deliverable appears the moment a team publishes one — drafts
-              included, so you can read the work as it takes shape instead of waiting for the end.
+              No files. A deliverable appears the moment a team publishes one — drafts included,
+              so you can read the work as it takes shape instead of waiting for the end.
             </div>
           </div>
         </div>
       ) : (
-        <div className="wbox">
-          {published.map(({ name, latest, older }) => (
-            <div className="deliv" key={name}>
-              <div className="icon">{EXT_LABEL[extOf(name)] ?? (extOf(name).toUpperCase() || "FILE")}</div>
-              <div className="meta">
-                <div className="pill-row" style={{ margin: 0 }}>
-                  <span className="fname">{name}</span>
-                  {older.length > 0 && <span className="chip">v{older.length + 1}</span>}
-                </div>
-                <div className="help" style={{ margin: "5px 0 9px" }}>
-                  {fmtSize(latest.size)} ·{" "}
-                  {latest.modified ? fmtWhen(latest.modified) : "—"}
-                  {latest.run_id && ` · from run ${latest.run_id.slice(-8)}`}
-                  {(() => {
-                    const receipt = receiptByKey.get(latest.key);
-                    if (!receipt) return null;
-                    return (
-                      <>
-                        {receipt.satisfies.length > 0 &&
-                          ` · satisfies ${receipt.satisfies.join(", ")}`}
-                        {" · "}
-                        <span title={`sha256 ${receipt.sha256}`} className="mono">
-                          sha {receipt.sha256.slice(0, 10)}…
-                        </span>
-                      </>
-                    );
-                  })()}
-                </div>
-                <div className="pill-row" style={{ margin: 0 }}>
-                  <button className="small primary" onClick={() => open(artifactUrl(latest.key), name, latest.size)}>
-                    Open
-                  </button>
-                  <button className="small" onClick={() => save(artifactUrl(latest.key), name)}>
-                    Download
-                  </button>
-                  {older.length > 0 && (
-                    <button
-                      className="small"
-                      onClick={() => setExpanded((e) => ({ ...e, [name]: !e[name] }))}
-                    >
-                      {expanded[name]
-                        ? "hide earlier versions"
-                        : `${older.length} earlier version${older.length === 1 ? "" : "s"}`}
-                    </button>
-                  )}
-                </div>
-                {expanded[name] && (
-                  <table style={{ marginTop: 10 }}>
-                    <thead>
-                      <tr>
-                        <th>Published</th>
-                        <th>From run</th>
-                        <th className="num">Size</th>
-                        <th></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {older.map((o) => (
-                        <tr key={o.key}>
-                          <td className="mono">{o.modified ? fmtWhen(o.modified) : "—"}</td>
-                          <td className="mono">{o.run_id ? o.run_id.slice(-8) : "—"}</td>
-                          <td className="num">{fmtSize(o.size)}</td>
-                          <td>
-                            <button className="small" onClick={() => open(artifactUrl(o.key), name, o.size)}>
-                              open
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-              </div>
+        <>
+          <div className="ftools">
+            <div className="fsearch">
+              <input
+                ref={searchRef}
+                type="search"
+                value={query}
+                onChange={(e) => setParam("q", e.target.value, "")}
+                placeholder={`Search ${fmtCount(total)} files — name or folder  ( / )`}
+                aria-label="Search files"
+              />
             </div>
-          ))}
-        </div>
-      )}
+            <div className="viewtog" role="group" aria-label="Published or working">
+              {STATES.map((s) => (
+                <button
+                  key={s.key}
+                  className={state === s.key ? "on" : ""}
+                  aria-pressed={state === s.key}
+                  onClick={() => setParam("state", s.key, "all")}
+                >
+                  {s.label} <span className="n">{fmtCount(stateCounts[s.key])}</span>
+                </button>
+              ))}
+            </div>
+            <select
+              className="ftypepick"
+              value={type}
+              aria-label="File type"
+              onChange={(e) => setParam("type", e.target.value, "")}
+            >
+              <option value="">All types</option>
+              {types.map(([ext, n]) => (
+                <option key={ext} value={ext}>
+                  {ext ? `.${ext}` : "no extension"} · {fmtCount(n)}
+                </option>
+              ))}
+              {/* The chosen type can stop existing — the other filters moved,
+                  or the last file of it was replaced. Keep it in the list
+                  rather than letting the control go blank about its own
+                  state. */}
+              {type && !types.some(([ext]) => ext === type) && (
+                <option value={type}>.{type} · 0</option>
+              )}
+            </select>
+          </div>
 
-      {preview && (
-        <div ref={previewRef} style={{ scrollMarginTop: 12 }}>
-          <h2 className="zone">
-            {preview.name}
-            <div className="spacer" />
-            {preview.kind !== "text" && (
-              <button className="small" onClick={() => setAsSource(!asSource)}>
-                {SOURCE_LABEL[preview.kind][asSource ? 1 : 0]}
+          <div className="pills">
+            {WINDOWS.map((w) => (
+              <button
+                key={w.key}
+                className={since === w.key ? "active" : ""}
+                aria-pressed={since === w.key}
+                onClick={() => setParam("since", w.key, "all")}
+              >
+                {w.label}
+                {w.key === "today" && todayTotal > 0 ? ` ${fmtCount(todayTotal)}` : ""}
+              </button>
+            ))}
+            <span className="help">
+              {fmtCount(flat.length)} of {fmtCount(total)} files ·{" "}
+              {fmtCount(publishedTotal)} published
+            </span>
+            {filtering && (
+              <button
+                className="linkish"
+                onClick={() => setParams(new URLSearchParams(), { replace: true })}
+              >
+                clear filters
               </button>
             )}
-            <button className="small" onClick={() => setPreview(null)}>close</button>
-          </h2>
-          <PreviewBody preview={preview} asSource={asSource} />
-        </div>
-      )}
+          </div>
 
-      <h2 className="zone">
-        Working files <span className="cnt">{workspace.length}</span>
-      </h2>
-      <p className="help" style={{ margin: "0 0 10px" }}>
-        The agents' shared scratch pad — drafts and intermediates, changing as they work. Nothing
-        here is finished.
-      </p>
-      {workspace.length === 0 ? (
-        <p className="help">Nothing yet — agents write here once they start working.</p>
-      ) : !showWorking ? (
-        <button className="small" onClick={() => setShowWorking(true)}>
-          show {workspace.length} working file{workspace.length === 1 ? "" : "s"}
-        </button>
-      ) : (
-        <div className="wbox">
-          <table>
-            <thead>
-              <tr>
-                {sortTh("path", "File", "", { width: "50%" })}
-                {sortTh("size", "Size", "num")}
-                {sortTh("modified", "Changed")}
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {shownWork.map((file) => (
-                <tr key={file.path}>
-                  <td className="mono">{file.path}</td>
-                  <td className="num">{fmtSize(file.size)}</td>
-                  <td className="mono">{fmtWhen(file.modified)}</td>
-                  <td>
-                    <button
-                      className="small"
-                      onClick={() =>
-                        open(
-                          `/observe/projects/${projectId}/files/content?path=${encodeURIComponent(file.path)}`,
-                          file.path.split("/").pop() ?? file.path,
-                          file.size,
-                        )
-                      }
-                    >
-                      open
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {pages > 1 && (
-            <div className="pager">
-              <span>
-                {onPage * WORK_PAGE + 1}–{onPage * WORK_PAGE + shownWork.length} of{" "}
-                {sortedWork.length}
-              </span>
-              <div className="spacer" />
-              <button className="small" disabled={onPage === 0} onClick={() => setPage(onPage - 1)}>
-                prev
-              </button>
-              <span>
-                page {onPage + 1} of {pages}
-              </span>
-              <button
-                className="small"
-                disabled={onPage >= pages - 1}
-                onClick={() => setPage(onPage + 1)}
-              >
-                next
-              </button>
+          {dropped > 0 && (
+            <div className="notice-box">
+              This project has more working files than one screen can hold. Showing the{" "}
+              {fmtCount((data?.workspace ?? []).length)} most recently changed;{" "}
+              {fmtCount(dropped)} older ones are not listed. Published deliverables are all here.
             </div>
           )}
-        </div>
+
+          {flat.length === 0 ? (
+            <div className="wbox">
+              <div className="wrow">
+                <span className="badge">no matches</span>
+                <div className="grow help">
+                  Nothing matches these filters.{" "}
+                  <button
+                    className="linkish"
+                    onClick={() => setParams(new URLSearchParams(), { replace: true })}
+                  >
+                    Clear them
+                  </button>{" "}
+                  to see all {fmtCount(total)} files.
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="wbox fbrowse">
+              <div className="fhead">
+                {sortBtn("type", "Type", "col-type")}
+                {sortBtn("name", "Name", "col-name")}
+                {sortBtn("state", "Status", "col-state")}
+                {sortBtn("size", "Size", "num col-size")}
+                {sortBtn("at", "Time", "col-when")}
+                <span />
+              </div>
+              {groups.map((g, i) => {
+                const open = openFolder(g.key, i);
+                const cap = more[g.key] ?? ROWS_PER_FOLDER;
+                return (
+                  <div className="folder" key={g.key}>
+                    <button
+                      className="fdir-row"
+                      aria-expanded={open}
+                      onClick={() => setToggled({ ...toggled, [g.key]: !open })}
+                    >
+                      <span className={`caret${open ? " open" : ""}`} aria-hidden="true">▸</span>
+                      <span className="fdir-name">{g.label}</span>
+                      <span className="cnt">{fmtCount(g.items.length)}</span>
+                      {g.published > 0 && (
+                        <span className="chip accent">{fmtCount(g.published)} published</span>
+                      )}
+                    </button>
+                    {open && (
+                      <>
+                        {g.items.slice(0, cap).map((e) => (
+                          <Row
+                            key={e.id}
+                            entry={e}
+                            terms={terms}
+                            activeId={loaded?.entry.id ?? null}
+                            openingId={opening}
+                            expanded={versionsOf}
+                            onOpen={openEntry}
+                            onSave={save}
+                            onToggle={(id) =>
+                              setVersionsOf((v) => ({ ...v, [id]: !v[id] }))}
+                          />
+                        ))}
+                        {g.items.length > cap && (
+                          <div className="fmore">
+                            <button
+                              className="linkish"
+                              onClick={() => setMore({ ...more, [g.key]: cap + 500 })}
+                            >
+                              show {fmtCount(g.items.length - cap)} more from {g.label}
+                            </button>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>
       )}
 
       <AsOf at={at} error={error} />
+
+      {loaded && (
+        <Preview
+          key={loaded.entry.id}
+          loaded={loaded}
+          position={position < 0 ? 0 : position}
+          total={flat.length || 1}
+          busy={opening !== null}
+          onStep={step}
+          onClose={() => setLoaded(null)}
+          onDownload={() => download(loaded.blob, loaded.entry.name)}
+        />
+      )}
     </>
   );
 }

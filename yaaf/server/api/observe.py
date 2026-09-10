@@ -1503,6 +1503,9 @@ def memories(project_id: str, session: Session = Depends(db)) -> list[dict]:
 # ── files: the workspace (work in progress) and the artifact store ─────────────
 
 MAX_FILE_LISTING = 2000
+# A tree big enough to hit this is a runaway, not a project; stopping the walk
+# beats holding the request open while an agent's node_modules is enumerated.
+MAX_SCANNED_FILES = 50_000
 MAX_SERVED_BYTES = 20 * 1024 * 1024
 # Platform plumbing, not agent work: staging (tokens, prompts, traces) and git
 # internals never show in the chairman's Files view.
@@ -1521,22 +1524,29 @@ def project_files(project_id: str, session: Session = Depends(db)) -> dict:
     progress — every sandbox mounts it) and the artifact store (finalized
     deliverables, keyed projects/<project>/<run>/<name>)."""
     project = _project(session, project_id)
-    workspace: list[dict] = []
+    found: list[dict] = []
     root = _workspace_root(project)
     if root.is_dir():
-        for path in sorted(root.rglob("*")):
+        for path in root.rglob("*"):
             rel = path.relative_to(root)
             if any(part in _SKIPPED_DIRS for part in rel.parts):
                 continue
             if path.is_symlink() or not path.is_file():
                 continue
             stat = path.stat()
-            workspace.append({
+            found.append({
                 "path": str(rel), "size": stat.st_size,
                 "modified": datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat(),
             })
-            if len(workspace) >= MAX_FILE_LISTING:
+            if len(found) >= MAX_SCANNED_FILES:
                 break
+    # Newest first, then cut. The old walk sorted by path and stopped at the
+    # cap, so a project past it lost whatever sorted last — which is where a
+    # date-stamped file written this morning lands. The screen's first question
+    # is "what changed today"; a listing that answers it by alphabet is worse
+    # than one that admits it is short.
+    found.sort(key=lambda f: f["modified"], reverse=True)
+    workspace = found[:MAX_FILE_LISTING]
     rows = []
     for entry in artifacts.store().list_keys(f"projects/{project.id}/"):
         parts = entry["key"].split("/")
@@ -1560,7 +1570,10 @@ def project_files(project_id: str, session: Session = Depends(db)) -> dict:
             .order_by(Artifact.published_at.desc()).limit(200)
         ).scalars()
     ]
-    return {"workspace": workspace, "artifacts": rows, "published": published}
+    return {"workspace": workspace, "artifacts": rows, "published": published,
+            # What the cap cost, so the screen can say so instead of implying
+            # the project only ever wrote two thousand files.
+            "workspace_truncated": len(found) - len(workspace)}
 
 
 @router.get("/projects/{project_id}/files/content")

@@ -627,17 +627,146 @@ pre.block {
 .bet .empty { padding: 12px 14px; color: var(--muted); font-size: 13px; }
 tr.subtask td:first-child { padding-left: 28px; color: var(--ink-2); }
 
-/* ── deliverables: the thing the project exists to produce ── */
-.deliv { display: flex; gap: 14px; align-items: flex-start;
-  padding: 14px; border-bottom: 1px solid var(--grid); }
-.deliv:last-child { border-bottom: 0; }
-.deliv .meta { flex: 1; min-width: 0; }
-.deliv .fname { font-family: var(--mono); font-size: 13px; font-weight: 500; }
-.deliv .icon {
-  width: 96px; height: 64px; flex: none; border-radius: 6px; border: 1px solid var(--grid);
-  background: var(--surface-2); display: grid; place-items: center;
-  font-family: var(--mono); font-size: 10px; letter-spacing: 1px; color: var(--muted);
+/* ── the file browser: folders by day, one row per file ───────────────────
+   A project that ships a thousand files is a filing problem, not a list
+   problem. The organising fact is the day — "what did we make today" is the
+   question actually asked of this screen — and published-vs-working is a
+   column on the row rather than a section of the page, so today is one screen
+   instead of two. */
+.ftools { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 0 0 10px; }
+.fsearch { flex: 1; min-width: 220px; }
+.viewtog button .n { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.viewtog button.on .n { color: var(--ink-2); }
+.ftypepick { width: auto; padding: 5px 9px; font-size: 12.5px; }
+
+/* Header and rows share one template so the columns cannot drift apart —
+   including across folders, which are separate elements and would otherwise
+   each measure their own widths. */
+.fhead, .frow {
+  display: grid; align-items: center; gap: 10px;
+  grid-template-columns: 46px minmax(0, 1fr) 92px 76px 62px 30px;
+  padding: 0 12px;
 }
+.fhead { border-bottom: 1px solid var(--grid); }
+.fhead > span:last-child { display: block; }
+.fsort {
+  font-family: inherit; font-size: 11px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.8px; color: var(--muted);
+  background: none; border: 0; border-radius: 0; padding: 9px 0;
+  display: flex; align-items: center; gap: 5px; text-align: left;
+}
+.fsort.num { justify-content: flex-end; }
+.fsort:hover { color: var(--ink); border-color: transparent; }
+.fsort.on { color: var(--ink-2); }
+.fsort .arrow { font-size: 8px; color: var(--accent); }
+.fsort .arrow.off { visibility: hidden; }
+
+/* The folder row. It is a button because it opens and closes, and it carries
+   its own census — a closed folder that will not say how much is in it is a
+   folder you have to open to dismiss. */
+.fdir-row {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  background: var(--surface-2); border: 0; border-radius: 0;
+  border-top: 1px solid var(--grid); border-bottom: 1px solid var(--grid);
+  padding: 7px 12px; text-align: left; color: var(--ink-2);
+}
+.fdir-row:hover { background: rgba(255, 255, 255, 0.04); }
+.fdir-row .caret { font-size: 10px; color: var(--muted); transition: transform 0.12s; }
+.fdir-row .caret.open { transform: rotate(90deg); }
+.fdir-row .fdir-name { font-weight: 600; font-size: 13px; color: var(--ink); }
+.fdir-row .cnt {
+  font-family: var(--mono); font-size: 11px; color: var(--muted);
+  background: var(--surface); border: 1px solid var(--grid); border-radius: 999px;
+  padding: 0 8px;
+}
+.fdir-row .chip { text-transform: none; letter-spacing: 0; }
+.folder:first-of-type .fdir-row { border-top: 0; }
+
+.frow { border-bottom: 1px solid var(--grid); cursor: pointer; min-height: 34px; }
+.frow:last-child { border-bottom: 0; }
+.frow:hover { background: rgba(255, 255, 255, 0.03); }
+.frow.on { background: rgba(57, 135, 229, 0.1); }
+/* An earlier version of the same deliverable, filed under the one that
+   replaced it rather than loose in its own day. */
+.frow.sub { padding-left: 34px; background: rgba(255, 255, 255, 0.015); }
+.frow.sub .ftype { visibility: hidden; }
+
+/* Six families, colour-coded, because a reader scanning a thousand rows is
+   looking for "the report" or "the data", not for ".mdx". The letters carry
+   the meaning; the colour only speeds it up. */
+.ftype {
+  font-family: var(--mono); font-size: 9.5px; font-weight: 700; letter-spacing: 0.6px;
+  text-align: center; padding: 3px 0; border-radius: 4px;
+  border: 1px solid var(--grid); background: var(--surface-2); color: var(--muted);
+  overflow: hidden; text-overflow: clip; white-space: nowrap;
+}
+.ftype.doc { color: #8fb8ea; border-color: rgba(57, 135, 229, 0.35); }
+.ftype.page { color: #e59a6f; border-color: rgba(217, 89, 38, 0.35); }
+.ftype.data { color: #7fc47f; border-color: rgba(12, 163, 12, 0.35); }
+.ftype.img { color: #d7b46a; border-color: rgba(250, 178, 25, 0.3); }
+.ftype.pdf { color: #e07d7d; border-color: rgba(208, 59, 59, 0.35); }
+
+.fname-cell { display: flex; align-items: center; gap: 7px; min-width: 0; overflow: hidden; }
+.fname {
+  font-family: var(--mono); font-size: 12.5px; color: var(--ink);
+  background: none; border: 0; border-radius: 0; padding: 0; text-align: left;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+}
+.fname:hover { border-color: transparent; color: var(--accent); }
+.frow .fdir { color: var(--muted); }
+.frow mark { background: rgba(250, 178, 25, 0.22); color: inherit; border-radius: 3px; padding: 0 1px; }
+.frow .chip { text-transform: none; letter-spacing: 0; flex: none; }
+.vchip { cursor: pointer; padding: 1px 8px; }
+.vchip:hover { border-color: var(--muted); }
+@media (max-width: 700px) { .vmore { display: none; } }
+.fstate .chip { font-size: 10px; }
+.fsize, .fwhen { font-size: 11.5px; color: var(--muted); }
+.fwhen { text-align: right; }
+.fdl {
+  background: none; border: 0; border-radius: 4px; padding: 2px 0; color: var(--muted);
+  font-size: 13px; line-height: 1;
+}
+.fdl:hover { color: var(--accent); border-color: transparent; background: var(--surface-2); }
+.fmore { padding: 8px 12px; border-bottom: 1px solid var(--grid); }
+
+/* A phone is where the "did today's report land?" question gets asked. Size
+   and type go first — the name, the state and the time are the answer. */
+@media (max-width: 700px) {
+  .fhead, .frow { grid-template-columns: minmax(0, 1fr) 84px 58px 30px; }
+  .col-type, .col-size, .ftype, .fsize, .fname-cell .sat { display: none; }
+  .frow.sub { padding-left: 22px; }
+}
+
+/* ── the reader: one file, full-bleed, the list still behind it ───────────── */
+.modal.reader {
+  max-width: 1180px; height: calc(100vh - 48px); max-height: none;
+  display: flex; flex-direction: column; gap: 10px; padding: 16px 18px; overflow: hidden;
+}
+.reader-head { display: flex; align-items: flex-start; gap: 12px; }
+.reader-head .ftype { width: 46px; flex: none; padding: 5px 0; }
+.reader-id { flex: 1; min-width: 0; }
+.reader-id .rt { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.reader-id .fname { font-size: 14px; font-weight: 600; white-space: normal; }
+.reader-id .chip { text-transform: none; letter-spacing: 0; }
+.reader-id .help { margin: 3px 0 0; }
+.reader-nav { display: flex; align-items: center; gap: 8px; flex: none; color: var(--muted); }
+.reader-nav .mono { font-size: 11px; }
+.reader-tools {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding-bottom: 10px; border-bottom: 1px solid var(--grid);
+}
+.reader-tools button.small.on { border-color: var(--accent); color: var(--accent); }
+/* The body is the one scroller, so a sticky table header sticks to the top of
+   the reader rather than to the top of a box nobody can see the edges of. */
+.reader-body { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
+.reader-body > *:not(p) { flex: 1 1 auto; min-height: 0; overflow: auto; }
+.reader-body > p { flex: none; }
+.reader-body > .preview-frame { height: auto; }
+@media (max-width: 700px) {
+  .modal.reader { padding: 12px; height: calc(100vh - 24px); }
+  .reader-head { flex-wrap: wrap; }
+}
+
 /* Published HTML renders as itself. Source is a toggle, not the only option. */
 .preview-frame {
   width: 100%; height: 70vh; border: 1px solid var(--border);
@@ -649,7 +778,24 @@ tr.subtask td:first-child { padding-left: 28px; color: var(--ink-2); }
    freezes it at 80 columns however wide the window is. */
 .wbox.doc { padding: 16px 20px; }
 .wbox.doc .markdown p { white-space: normal; }
-.wbox.doc .markdown { max-width: 78ch; }
+.wbox.doc .markdown { max-width: 78ch; margin: 0 auto; }
+
+/* Text with a gutter that scrolls with it: a stack trace or a log line can be
+   pointed at by number. Wrapping makes the numbers lie, so wrap takes the
+   gutter away rather than letting it drift. */
+.code {
+  display: flex; align-items: flex-start; gap: 0;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+}
+.code pre { margin: 0; font-family: var(--mono); font-size: 12px; line-height: 1.55; }
+.code .gutter {
+  position: sticky; left: 0; flex: none; padding: 10px 8px; text-align: right;
+  color: var(--muted); background: var(--surface-2); user-select: none;
+  border-right: 1px solid var(--grid);
+}
+.code .codebody { padding: 10px 12px; white-space: pre; min-width: 0; }
+.code.wrap .codebody { white-space: pre-wrap; word-break: break-word; width: 100%; }
+
 /* Data, so: dense rows, a header that survives scrolling, and no wrapping —
    a cell that wraps turns one row into four and the shape of the table, which
    is the thing being read, disappears. */
@@ -662,6 +808,51 @@ table.csv td {
   padding: 5px 10px; white-space: nowrap; vertical-align: middle;
   max-width: 46ch; overflow: hidden; text-overflow: ellipsis;
 }
+table.csv .rownum {
+  color: var(--muted); font-family: var(--mono); font-size: 11px;
+  text-align: right; width: 1%; background: var(--surface-2);
+}
+
+/* JSON as a tree, because an agent's JSON is nested and forty screens long and
+   the question asked of it is nearly always about one branch. */
+.jsontree {
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+  padding: 10px 12px; font-family: var(--mono); font-size: 12px; line-height: 1.6;
+}
+.j-node { padding-left: 0; }
+.j-kids { padding-left: 16px; border-left: 1px solid var(--grid); margin-left: 4px; }
+.j-tog {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  background: none; border: 0; border-radius: 0; padding: 0; text-align: left;
+  font: inherit; color: var(--ink-2);
+}
+.j-tog:hover { border-color: transparent; background: rgba(255, 255, 255, 0.04); }
+.j-tog .caret { font-size: 9px; color: var(--muted); transition: transform 0.12s; }
+.j-tog .caret.open { transform: rotate(90deg); }
+.j-leaf { display: flex; gap: 6px; padding-left: 15px; }
+.j-key { color: var(--accent); }
+.j-key::after { content: ":"; color: var(--muted); }
+.j-sum { color: var(--muted); }
+/* What a closed branch holds, so a thousand records are not a thousand
+   identical summaries. */
+.j-peek { color: var(--muted); opacity: 0.72; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.j-str { color: #9fd39f; overflow-wrap: anywhere; }
+.j-num { color: #e5b467; }
+.j-bool { color: #e59a6f; }
+.j-null { color: var(--muted); }
+
+/* A picture is a deliverable too. <img> decodes and does not execute, which is
+   what makes an agent-written .svg safe to show on this origin at all. */
+.imgview {
+  display: grid; place-items: center; padding: 12px;
+  background:
+    repeating-conic-gradient(#1f1f1e 0% 25%, #171716 0% 50%) 50% / 18px 18px;
+  border: 1px solid var(--border); border-radius: 6px;
+}
+.imgview img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.pdfview { width: 100%; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--surface-2); padding: 12px; }
 
 /* ── settings: a rail, because eleven headings is not navigation ── */
 .settings-lay { display: grid; grid-template-columns: 190px 1fr; gap: 24px; margin-top: 4px; }

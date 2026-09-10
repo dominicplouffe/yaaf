@@ -462,7 +462,18 @@ evidence at all about your *project*.
   (local disk, or any S3-compatible store — MinIO, R2, AWS).
 - **Working files** — the Files view lists and serves the agents' workspace
   read-only, so you can see work in progress, not just what shipped.
-- **Preview and download** from the Deliverables tab.
+- **One list, filed by day.** The Deliverables tab is a file browser: published
+  deliverables and working files in the same rows, foldered by the day each
+  landed, today's folder open. Published-vs-working, file type and a search
+  across names and folders are filters on that one list, and the filters live
+  in the URL, so a view you found is a link you can send.
+- **Preview reads the file as what it is** — a report as a document, a page as
+  a page, a dataset as a table, JSON as a tree, an image as a picture, a PDF in
+  the browser's viewer, anything else as text with line numbers. The arrow keys
+  walk the filtered list without leaving the reader.
+- **The listing says what it dropped.** Past the per-project cap the newest
+  files are kept, not the alphabetically first, and the screen says how many
+  are not shown.
 
 ## 16. Setup that can't silently fail
 
