@@ -179,9 +179,9 @@ is responsible, because every task carries a start time the CEO chose).
 
 | Endpoint | Body | Notes |
 |---|---|---|
-| `GET /credentials` | — | What this role has been granted: names and what each *is*, never values. |
+| `GET /credentials` | — | What this role has been granted: names and what each *is*, never values. A row marked `file` holds a **path** in its variable — the platform has already written the file. |
 | `POST /credentials/{name}/scope` | `roles` | Re-scope an existing credential across the team — only where `capability_authority` grants it. Never billing, never values. |
-| `POST /needs` | `what`, `why` | "I cannot do this without X." Rides the approval machinery **and** lands as a boardroom line, so the chairman fulfils it in one motion: credential stored, roles scoped, need approved. |
+| `POST /needs` | `what`, `why` | "I cannot do this without X." Rides the approval machinery **and** lands as a boardroom line, so the chairman fulfils it in one motion: credential stored, roles scoped, need approved. The answer may be a **file** (a service-account key, an SSH key), in which case the variable holds its path. |
 | `POST /assists` | `what`, `context` | Hand a captcha, a 2FA prompt, or any human-only step to the chairman. Save session state to the workspace first; his answer rides back verbatim and wakes you. The platform never defeats a security challenge. |
 | `POST /accounts` | `service`, `identity`, `owner` | Record an identity the project created in the world. Record-only, so winding down is a reading rather than an archaeology. |
 | `GET /accounts` | — | What already exists, before you sign up for it again. |

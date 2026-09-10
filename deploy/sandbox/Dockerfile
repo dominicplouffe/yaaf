@@ -50,6 +50,9 @@ RUN printf 'PATH="/opt/venv/bin:$PATH"\nexport PATH\n' > /etc/profile.d/00-venv.
 
 # Non-root: the workspace mount is the only writable surface that matters.
 RUN useradd -m -u 10001 agent
+# File-shaped credentials need no image support: the runner mounts a tmpfs at
+# /run/yaaf (sandbox.CREDENTIALS_TMPFS) and the entry script makes its own 0700
+# directory inside it. Nothing here, on purpose — a key must never be in a layer.
 COPY yaaf/runner/sandbox_entry.py /opt/yaaf/sandbox_entry.py
 COPY yaaf/runner/chat_entry.py /opt/yaaf/chat_entry.py
 USER agent

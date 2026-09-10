@@ -29,7 +29,7 @@ import {
 } from "../../datasource";
 import { fmtWhen, usePoll } from "../../hooks";
 import { RoleGrants } from "../../roles";
-import { ConfirmModal, SecretInput, StoredSecret } from "../../ui";
+import { ConfirmModal, CredentialValue, SecretInput, StoredSecret } from "../../ui";
 
 /** "amazon-audit-v2" → "amazon-audit-v3"; "Acme" → "Acme (clone)". Twins come
     in numbered runs far more often than they come in ones. */
@@ -51,6 +51,8 @@ interface SecretRow {
   project_id: string | null;
   role_scopes: string[];
   kind: "service" | "billing";
+  /** Set => the credential IS a file; its variable holds the path, not the value. */
+  filename: string | null;
 }
 
 /** Config addresses a secret by name (`slack.bot_token_secret`, a data source's
@@ -1021,6 +1023,7 @@ function CredentialsManager({
 }) {
   const [name, setName] = useState("");
   const [value, setValue] = useState("");
+  const [filename, setFilename] = useState<string | null>(null);
   const [grants, setGrants] = useState<string[]>([]);
 
   // Only the credentials the chairman created by hand. The rest are owned by
@@ -1052,14 +1055,16 @@ function CredentialsManager({
           {name.trim() && (
             <div className="help" style={{ marginTop: 4 }}>
               agents will see it as <code>${envVarName(name)}</code>
+              {filename !== null && ", holding the path to the file"}
             </div>
           )}
         </div>
         <div>
           <label className="field">Value</label>
-          <SecretInput
+          <CredentialValue
             value={value}
-            onChange={setValue}
+            filename={filename}
+            onChange={(next) => { setValue(next.value); setFilename(next.filename); }}
             placeholder={name.trim() === "wordpress" ? "username:xxxx xxxx xxxx xxxx" : "the key itself"}
           />
         </div>
@@ -1078,9 +1083,11 @@ function CredentialsManager({
                 value,
                 role_scopes: grants,
                 kind: "service",
+                ...(filename === null ? {} : { filename }),
               });
               setName("");
               setValue("");
+              setFilename(null);
               setGrants([]);
               refreshSecrets();
             }, "Stored. Effective on the very next run of any granted role — no restart needed.")
@@ -1107,14 +1114,20 @@ function CredentialsManager({
                   {secret.name}
                   <div className="help">
                     {secret.role_scopes.length ? `$${envVarName(secret.name)}` : "not injected"}
+                    {secret.filename && ` → ${secret.filename}`}
                   </div>
                 </td>
                 <td>
                   <StoredSecret
                     secretId={secret.id}
+                    // A file rotates as a file: the door takes base64 and the
+                    // shape is fixed at creation, so re-sending the name keeps
+                    // it one. What the eye shows is the decoded text.
+                    isFile={!!secret.filename}
                     onRotate={async (next) => {
                       await post("/admin/secrets", {
                         project_id: projectId, name: secret.name, value: next,
+                        ...(secret.filename ? { filename: secret.filename } : {}),
                       });
                       refreshSecrets();
                     }}

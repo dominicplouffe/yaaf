@@ -28,6 +28,19 @@ CHECK_TIMEOUT_DEFAULT = 300
 # live one's — and the teardown sweep is box-wide by necessity.
 STACK_LABEL = "yaaf.stack"
 
+# Where a file-shaped credential is materialized — sandbox_entry.CREDENTIAL_DIR
+# writes into it. A tmpfs, and outside /workspace, for one reason each: the
+# bytes of a private key never reach a disk, and the workspace is a git clone an
+# agent commits from — a key written there is one `git add -A` away from being
+# pushed to a remote. It dies with the container, so there is no cleanup step
+# for a later change to forget.
+#
+# mode=1777 (sticky, like /tmp) rather than a uid, so the mount does not encode
+# the image's user; the entry script then makes its own 0700 directory inside.
+# Check-command containers get no tmpfs because they get no credentials.
+CREDENTIALS_MOUNT = "/run/yaaf"
+CREDENTIALS_TMPFS = {CREDENTIALS_MOUNT: "rw,noexec,nosuid,size=8m,mode=1777"}
+
 
 def _stack_labels(extra: dict | None = None) -> dict:
     return {STACK_LABEL: settings().stack, **(extra or {})}
@@ -118,6 +131,7 @@ def run_agent_container(
         environment=env,
         labels=_stack_labels(),
         volumes={workspace_dir: {"bind": "/workspace", "mode": "rw"}},
+        tmpfs=CREDENTIALS_TMPFS,
         working_dir="/workspace",
         network=settings().sandbox_network,
         mem_limit=memory,
@@ -217,6 +231,7 @@ def start_chat_container(*, project_id: str, run_id: str, name: str,
         labels=_stack_labels({CHAT_LABEL: project_id, CHAT_RUN_LABEL: run_id}),
         environment=env,
         volumes=volumes,
+        tmpfs=CREDENTIALS_TMPFS,
         working_dir="/workspace",
         network=settings().sandbox_network,
         mem_limit=memory,

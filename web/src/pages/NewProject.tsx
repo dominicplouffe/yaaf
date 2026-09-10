@@ -17,7 +17,7 @@ import {
   sourceReady,
 } from "../datasource";
 import { CeoPicker, HirePanel, needsOf, roughMonthly } from "../roles";
-import { SecretInput } from "../ui";
+import { CredentialValue, SecretInput } from "../ui";
 import type { FounderStatus } from "./StartProject";
 
 interface TeamDraft {
@@ -34,6 +34,8 @@ interface TeamDraft {
 interface CredentialDraft {
   name: string;
   value: string;
+  /** Set => the credential IS a file and `value` is base64 of its bytes. */
+  filename: string | null;
   grants: string[]; // role slugs
 }
 
@@ -529,7 +531,14 @@ export default function NewProject() {
       setCredentials(
         parsed.secrets
           .filter((s) => s.kind === "service")
-          .map((s) => ({ name: s.name, value: s.value ?? "", grants: s.role_scopes })),
+          // A file credential comes back needing a FILE, not a typed value —
+          // carrying the flag is what puts the picker in front of the chairman
+          // instead of a box they cannot correctly fill.
+          // A file credential comes back needing a FILE to be picked. Its own
+          // name did not travel, so "" asks the door to name it — which is the
+          // same answer the door gives anyone who does not supply one.
+          .map((s) => ({ name: s.name, value: s.value ?? "",
+                         filename: s.file ? "" : null, grants: s.role_scopes })),
       );
       // Who holds the verbs travels in the file too, and the submit below
       // stamps this preset over whatever the file said — so a file exported
@@ -901,6 +910,7 @@ export default function NewProject() {
             value: cred.value,
             role_scopes: cred.grants.filter((g) => usedRoleSlugs.includes(g) || g === chosenCeo),
             kind: "service",
+            ...(cred.filename === null ? {} : { filename: cred.filename }),
           });
         }
       } catch (err) {
@@ -1814,6 +1824,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
                 {cred.name.trim() && (
                   <div className="help" style={{ marginTop: 4 }}>
                     injected as <code>${envVarName(cred.name)}</code>
+                    {cred.filename !== null && ", holding the path to the file"}
                   </div>
                 )}
               </div>
@@ -1821,14 +1832,23 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
                 <label className="field">
                   {source ? `Address of data source "${source}"` : "Value"}
                 </label>
-                <SecretInput
-                  // An address is not a password: showing it is how a typo gets
-                  // seen, and it is the one credential the server can judge.
-                  defaultShown={!!source}
-                  value={cred.value}
-                  onChange={(value) => setCredential(i, { value })}
-                  placeholder={source ? "https://host:3845/mcp" : "the key itself"}
-                />
+                {source ? (
+                  <SecretInput
+                    // An address is not a password: showing it is how a typo gets
+                    // seen, and it is the one credential the server can judge.
+                    defaultShown
+                    value={cred.value}
+                    onChange={(value) => setCredential(i, { value })}
+                    placeholder="https://host:3845/mcp"
+                  />
+                ) : (
+                  <CredentialValue
+                    value={cred.value}
+                    filename={cred.filename}
+                    onChange={(next) => setCredential(i, next)}
+                    placeholder="the key itself"
+                  />
+                )}
                 {source && (
                   <div className={badUrl ? "error" : "help"} style={{ marginTop: 4 }}>
                     {badUrl
@@ -1874,7 +1894,8 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
         })}
         <button
           type="button"
-          onClick={() => setCredentials((prev) => [...prev, { name: "", value: "", grants: [] }])}
+          onClick={() =>
+            setCredentials((prev) => [...prev, { name: "", value: "", filename: null, grants: [] }])}
         >
           + Add credential
         </button>

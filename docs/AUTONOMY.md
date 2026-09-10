@@ -198,6 +198,11 @@ meter what it buys.
 - A **recognizer library** means a granted environment variable arrives with
   what it is, how to speak to it, and what to install. Unrecognized
   credentials still inject — recognition is a convenience, never a fence.
+- A credential whose natural form is a **file** — a service-account key, an SSH
+  key, a kubeconfig — is stored as one, and the platform writes it into the
+  sandbox at `0600`, outside the workspace, for the run's lifetime. The variable
+  holds the path. No agent is asked to save key material itself, so the standing
+  rule that a credential is never written to a file stays true for them.
 - The **needs loop**: an agent that lacks a capability files a `need`, which
   rides the approval machinery *and* lands as a boardroom line the Slack
   bridge mirrors. You fulfil it in one motion on the Decisions screen — the

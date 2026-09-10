@@ -98,6 +98,46 @@ yaaf set-secret wordpress-app-password --project my-slug --scopes writer,blog-wr
 # value is prompted, never echoed or logged
 ```
 
+### Credentials that are files
+
+Some credentials are not a value you can type — a Google service-account key, an
+SSH deploy key, a kubeconfig, a `.p12` keystore. Store one with the **choose a
+file** button beside the value box, or:
+
+```bash
+yaaf set-secret google-sa --project my-slug --scopes researcher \
+  --from-file ~/Downloads/my-project-a1b2c3.json
+```
+
+What a granted role then receives is **the path**, not the contents:
+
+```
+GOOGLE_SA=/run/yaaf/credentials/my-project-a1b2c3.json
+```
+
+which is what every library that reads a key file actually wants — pass it to
+`from_service_account_file`, to `ssh -i`, to `KUBECONFIG`. The platform writes
+the file, at mode `0600`, on a tmpfs **outside the workspace**, and it dies with
+the container. That last part is the point rather than a detail: the workspace
+is a git clone agents commit and push from, so a key written there is one
+`git add -A` from being published. No agent is ever asked to save a credential
+itself, and the standing instruction — never write a credential to a file —
+stays true for them.
+
+Two refusals you may meet, both deliberate:
+
+- Pasting a key file's *contents* into the value box is refused, and the message
+  names the fix. Stored as a string it would arrive as a variable holding JSON
+  where the library expects a path, and the error you'd eventually see names a
+  missing file rather than the mistake.
+- Whether a credential is a file is **fixed when you store it**, exactly as
+  `kind` is. Rotating replaces the bytes; changing its shape means storing a new
+  credential, because the old one's meaning is already wired into running roles.
+
+A file credential is an ordinary `service` credential in every other respect: it
+is granted per role, it clones, and an export carries its name and the fact that
+it is a file — never its bytes.
+
 ## Data sources — external MCP servers
 
 **Settings → Data & credentials → Data sources.** One form: **name, URL,

@@ -9,6 +9,7 @@ approval decisions, hypothesis extension, kill switches, spot audits.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 from pathlib import Path
@@ -238,14 +239,33 @@ def set_secret(
     scopes: str = typer.Option("", "--scopes", help="Comma-separated role slugs"),
     kind: str = typer.Option("service", "--kind",
                              help="service; manage model credentials with create-llm-credential"),
+    from_file: Path = typer.Option(
+        None, "--from-file", exists=True, dir_okay=False,
+        help="Store a FILE credential — a service-account key, a PEM, a kubeconfig. "
+             "Granted roles receive its PATH, not its contents"),
+    filename: str = typer.Option(
+        None, "--filename",
+        help="What to call it inside the sandbox; defaults to the file's own name"),
 ) -> None:
-    """Store an encrypted secret (value prompted, never echoed or logged)."""
-    value = typer.prompt("Secret value", hide_input=True)
+    """Store an encrypted secret (value prompted, never echoed or logged).
+
+    With --from-file the value is the file's bytes and the prompt is skipped —
+    a key file is not something anybody retypes, and the hidden prompt cannot
+    carry a newline anyway.
+    """
+    if from_file is None and filename is not None:
+        raise typer.BadParameter("--filename only means something with --from-file")
+    if from_file is None:
+        value = typer.prompt("Secret value", hide_input=True)
+        body: dict = {"value": value}
+    else:
+        body = {"value": base64.b64encode(from_file.read_bytes()).decode(),
+                "filename": filename or from_file.name}
     with _client() as client:
         project_id = _resolve_project(client, project) if project else None
         _show(client.post("/admin/secrets", json={
-            "project_id": project_id, "name": name, "value": value,
-            "role_scopes": [s for s in scopes.split(",") if s], "kind": kind,
+            "project_id": project_id, "name": name,
+            "role_scopes": [s for s in scopes.split(",") if s], "kind": kind, **body,
         }))
 
 
