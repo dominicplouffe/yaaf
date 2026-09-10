@@ -20,6 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from yaaf.core import ids, platform
+from yaaf.core.constitution import preset_cards
 from yaaf.core.db import notify
 from yaaf.core.models import (
     Channel,
@@ -116,6 +117,13 @@ def status(session: Session = Depends(db)) -> dict:
         # knows the second number and cannot know the first. Null on a fresh
         # install, where the honest answer is that it has never priced a run.
         "avg_usd_per_run": policy.avg_usd_per_run_box(session),
+        # The cards, with the rules each one writes. Served rather than
+        # mirrored: the run presets used to live in the new-project screen and
+        # nowhere else, so nothing but that screen could offer one and no
+        # stored constitution could say which one it was. The settings page
+        # reads the same list, which is what lets a chairman re-pick a card on
+        # a project that is already running.
+        "presets": preset_cards(),
     }
 
 
