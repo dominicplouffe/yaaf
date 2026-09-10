@@ -18,12 +18,27 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { get } from "../api";
 
+/** One card on the new-project form: a named bundle of constitution rules,
+    with the words that explain it. Served rather than mirrored — these used to
+    live in NewProject.tsx and nowhere else, so nothing but that screen could
+    offer one and the Settings page could not tell you which one you were on. */
+export interface PresetCard {
+  value: string;
+  label: string;
+  blurb: string;
+  example?: string;
+  /** Tempo cards only: what this costs, in the one unit that maps to money. */
+  headline?: string;
+  constitution: Record<string, unknown>;
+}
+
 export interface FounderStatus {
   credential_configured: boolean;
   billing_mode: string;
   model: string;
   /** What a run has actually cost on this install; null until five are priced. */
   avg_usd_per_run: number | null;
+  presets: { autonomy: PresetCard[]; bar: PresetCard[]; tempo: PresetCard[] };
 }
 
 export default function StartProject() {

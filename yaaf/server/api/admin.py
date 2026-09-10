@@ -30,6 +30,7 @@ from yaaf.core.constitution import (
     ConstitutionDoc,
     create_initial,
     default_autonomy,
+    default_tempo,
     effective,
     effective_version,
     propose_amendment,
@@ -758,15 +759,24 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
     for spec in body.teams:
         _check_team_people(spec)
     # The constitution freezes at creation. Overrides are validated against the
-    # schema; a spec with no opinion about the authority dial is given one
-    # here, so the form, the Founder, the MCP surface, a spec file and the fire
-    # drill all create the same project from the same silence.
+    # schema; a spec with no opinion about the authority dial — or about how
+    # often the project should think — is given one here, so the form, the
+    # Founder, the MCP surface, a spec file and the fire drill all create the
+    # same project from the same silence.
+    #
+    # Tempo derives from the mode, because the mode is the strongest thing the
+    # chairman has already said about the shape of the work and it used to buy
+    # nothing at all: Explore and Deliver both end, so racing is correct, while
+    # an Operate project rolling a cycle a week has told us it does not need to
+    # be awake 150 times a day. Both fillers leave a stated opinion alone —
+    # naming even one rule of a bundle is choosing rule by rule.
     #
     # Built here rather than after the insert because the roster check below is
     # a refusal, and a refusal that fires after rows are written is a rollback
     # waiting to be got wrong.
     doc = ConstitutionDoc.model_validate(
-        {**ConstitutionDoc().model_dump(), **default_autonomy(body.constitution)})
+        {**ConstitutionDoc().model_dump(),
+         **default_tempo(body.mode, default_autonomy(body.constitution))})
     _check_review_seat(session, doc, body.teams, solo=body.solo)
     deadline = body.deadline
     deadline_source = None

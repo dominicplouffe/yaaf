@@ -20,6 +20,11 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from yaaf.core.constitution import (
+    TEMPO_PRESETS,
+    TEMPO_RULES,
+    stated_tempo,
+)
 from yaaf.core.models import Crew, Role, RoleVersion, utcnow
 
 #: How much of a fetched page the model sees. Enough to characterise a site or
@@ -450,7 +455,8 @@ def doctrine_problems(project: dict, session=None) -> list[str]:
     it is held to the doctrine and he is not, which is the whole distinction
     between a contract and a standard.
     """
-    return roster_problems(project, session) + stakes_problems(project)
+    return (roster_problems(project, session) + stakes_problems(project)
+            + tempo_problems(project))
 
 
 def stakes_problems(project: dict) -> list[str]:
@@ -482,6 +488,56 @@ def stakes_problems(project: dict) -> list[str]:
         "model. `normal` is often right — say so on purpose, in one line, with what "
         "it buys and what it costs."
     ]
+
+
+def tempo_problems(project: dict) -> list[str]:
+    """How often the project thinks has to be chosen, and chosen as a CARD.
+
+    The same argument as `stakes` one level over: an unset dial is a decision
+    nobody made and nobody can find later. Until the tempo card existed there
+    was no way to say "do it properly, but rarely" at all — the only cheap
+    option on the form also meant low stakes, so a chairman who wanted research
+    done well and rarely had to choose between an expensive desk and a lazy
+    one. A project that never mentions pace runs at 150 runs a day because
+    nobody said otherwise, which for anything on a weekly rhythm is not a
+    budget, it is an accident.
+
+    A NAMED CARD, not numbers, and this half is the more important one.
+    `DESIGN_DOCTRINE.md` records a Founder that opened a desk at 12 runs a day
+    against a platform default of 150, defended it twice, and was overruled by
+    the chairman the next day — his single intervention being to raise it,
+    because he wanted the work to go faster. The numbers on these cards were
+    chosen by people who watched projects fail in both directions; the
+    Founder's would be chosen from one sentence in a brief. Hand-tuning is the
+    chairman's to do afterwards, in Settings, with a written reason.
+
+    Explore is exempt for the same reason it takes a bare window: it is open
+    scope against a clock, the platform's own answer is the right one, and a
+    question with no decision behind it is friction.
+    """
+    if (project.get("mode") or "").lower() not in ("deliver", "operate"):
+        return []
+    constitution = project.get("constitution") or {}
+    named = [rule for rule in TEMPO_RULES if rule in constitution]
+    cards = ", ".join(f"`{name}`" for name in TEMPO_PRESETS)
+    if not named:
+        return [
+            "constitution: choose how often this project thinks, rather than letting it "
+            f"default to about 150 runs a day. Copy one of the tempo cards ({cards}) into "
+            "the constitution verbatim, and say in one line which one you picked and what "
+            "it costs in runs a day. A project on a weekly rhythm almost never wants the "
+            "fastest one."
+        ]
+    if stated_tempo(constitution) is None:
+        return [
+            "constitution: the pace rules you set are not one of the tempo cards "
+            f"({cards}) — either they differ from every card, or you wrote down only "
+            "some of one. Copy a card verbatim rather than inventing numbers — a Founder "
+            "once opened a desk at 12 runs a day against a default of 150, defended it "
+            "twice, and the chairman's first act was to raise it. Tuning individual "
+            f"brakes is his, in Settings. You set: {', '.join(sorted(named))}."
+        ]
+    return []
 
 
 def roster_problems(project: dict, session=None) -> list[str]:

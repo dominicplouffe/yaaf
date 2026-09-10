@@ -39,7 +39,13 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from yaaf.core.constitution import ConstitutionDoc, effective, preset_name
+from yaaf.core.constitution import (
+    ConstitutionDoc,
+    bar_name,
+    effective,
+    preset_name,
+    tempo_name,
+)
 from yaaf.core.models import (
     Amendment,
     Approval,
@@ -79,6 +85,7 @@ from yaaf.core.models import (
     utcnow,
 )
 from yaaf.server import policy
+from yaaf.server.dispatcher import heartbeat_only
 
 #: A window with no mark falls back to this. Only reached for a member row
 #: that predates the column, since a new one composes from the project start.
@@ -647,9 +654,26 @@ def _run_lines(session: Session, project: Project, since, until) -> list[dict]:
     if not rows:
         return []
     dead = [r for r in rows if r.status in DEAD_STATUSES]
+    # What the runs were FOR. The dispatcher classifies every wake at the
+    # moment it decides to spend one, and the answer was thrown away at the UI
+    # boundary: it reached a run-kind filter on one screen and the spend CLI,
+    # and never the chairman. So "this is costing too much" had no next
+    # question attached to it — a bill is not a lever, and the difference
+    # between forty runs that produced deliverables and forty runs of agents
+    # acknowledging each other's messages is the whole of what to do about it.
+    reading = sum(1 for r in rows if r.kind == RunKind.INBOX_RUN)
+    planning = sum(1 for r in rows
+                   if r.kind != RunKind.INBOX_RUN and heartbeat_only(r.trigger))
+    working = len(rows) - reading - planning
+    split = ", ".join(part for part in (
+        f"{working} work" if working else "",
+        f"{reading} reading each other" if reading else "",
+        f"{planning} waking up to look around" if planning else "",
+    ) if part)
     lines = [_line(
         "runs", f"{len(rows)} {_plural(len(rows), 'run')} in all",
         count=len(rows), where="records/runs",
+        note=split if reading or planning else None,
     )]
     if dead:
         refusals = [r.last_refusal for r in rows if r.last_refusal]
@@ -1219,6 +1243,12 @@ def project_briefing(session: Session, project: Project,
         # sentences, and only the second one scales with the dial.
         "needs_you": sum(1 for line in lines if line["yours"]),
         "autonomy": preset_name(cons.model_dump()),
+        # Which cards this project runs on, or None for rules set one at a
+        # time. Beside the autonomy dial because together they answer "what
+        # kind of project is this": who holds the verbs, how often it wakes to
+        # use them, and what the work is worth.
+        "tempo": tempo_name(cons.model_dump()),
+        "bar": bar_name(cons.model_dump()),
         "money": money,
         "pulse": pulse,
         "waiting": waiting,

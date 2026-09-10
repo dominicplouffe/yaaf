@@ -175,12 +175,29 @@ audited, mailed to you and reversible. Pick **Supervised** if you would rather
 hold those four yourself; it is the same five rules the other way round, and
 either is one amendment away later. (A project created from a spec file or by
 a model client follows the same default — see
-[AUTONOMY.md](AUTONOMY.md#picking-a-level).) The second row sets the
-pace-money-proof numbers:
-**Full send** (fast, cost secondary), **Balanced** (the default), **Slow &
-steady** (small budget, fewer reports), **Show me proof** (evidence counts
-only once the platform verifies it). A preset just fills the Constitution
-fields below — adjust any of them, now or later in Settings.
+[AUTONOMY.md](AUTONOMY.md#picking-a-level).)
+
+**How often should it think?** The rule that decides the bill, and the one
+nothing used to ask about. **Live** (~150 runs a day — something happens during
+the day and the project should notice), **Working hours** (~40 — wakes when
+there is work, quiet at night), **A few times a day** (~12 — wakes on a
+schedule and otherwise sleeps, with agents no longer buying a run just to read
+each other's messages). It is pre-selected from the shape you picked above,
+because Explore and Deliver both end and an Operate project on a weekly rhythm
+does not need to be awake 150 times a day. Change it if that is wrong.
+
+**How good does it have to be, and what may it spend?** A separate question, on
+purpose: these two used to be one card called "How does it run?", and of the
+twenty-two rules that govern pace it set exactly one — so the cheap option was
+a smaller budget attached to a project that woke just as often, and there was
+no way to ask for work done *well* but *rarely*. **Full send** (nothing spared,
+strongest model on the seats that write and check), **Balanced** (the default),
+**Keep it cheap** (small budget, a wall close behind it), **Show me proof**
+(evidence counts only once the platform verifies it).
+
+A card just fills the Constitution fields below — adjust any of them, now or
+later in Settings, where you can also re-pick either card outright and have it
+land as one amendment with your reason on it.
 
 **Controlled domains.** List web properties **you** control — your own
 website, `github:your-account`. Why: agents must prove progress with

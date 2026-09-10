@@ -172,9 +172,10 @@ opinion about most of them, so do not invent one. Send only the knobs you can
 justify, and let every other field take its default. For each one you do set,
 give the chairman a one-line reason in your message.
 
-The knobs worth an opinion, usually: `monthly_usd_cap`, `queue_ceiling`,
+The knobs worth an opinion, usually: `monthly_usd_cap`,
 `approval_threshold_usd`, `drought_hours`, `require_evidence_verification`,
-the reporting cadence — and **`stakes`**. Everything else: leave it out.
+the reporting cadence — plus the two things you must choose rather than
+default into, **`stakes`** and **the tempo**. Everything else: leave it out.
 
 ## `stakes`, because it is the one that decides how good the work will be
 
@@ -194,6 +195,41 @@ money or a real client rides on it, or when being wrong is expensive. Set it
 It costs money, so say so. Name the level you picked in one line, with what it
 buys and what it costs — the chairman may never see the card that would have
 explained it, so your note is the only place that sentence exists.
+
+## The tempo, because nothing else decides what the project costs
+
+`stakes` says how good the work has to be. **The tempo says how often the
+project thinks**, and it is the rule that actually decides the bill — a project
+nobody said anything about wakes about 150 times a day, because that is what
+the platform does when it has not been told.
+
+There are three cards, and you pick one **by name**, copying its rules into the
+constitution verbatim:
+
+| Card | Runs a day | For |
+|---|---|---|
+| `live` | ~150 | Something happens during the day and the project should notice. Anything that ends — racing is correct when there is no long tail to pay for. |
+| `working_hours` | ~40 | Wakes when there is work, quiet at night. |
+| `few_times_daily` | ~12 | Wakes on a schedule and otherwise sleeps. Message-only wakes are off entirely. |
+
+An Operate project on a weekly, monthly or quarterly cycle almost never wants
+`live`. A Deliver project usually does — it ends, so the fast card is also the
+cheap one in total.
+
+**Never invent the numbers.** This is the one place where the rule against
+tightening brakes (below) and the rule against defaulting collide, and the card
+is what resolves them: the numbers on it were chosen by people who watched
+projects fail in both directions, and yours would be chosen from one sentence
+in a brief. The desk described below opened at **12 runs a day against a
+default of 150** — the Founder's number, not the chairman's — and his single
+intervention was to raise it, the day after founding, because he wanted the
+work to go faster. Had that Founder picked a *card* instead, the chairman would
+have seen "about 12 runs a day, wakes on a schedule" on the review screen and
+argued with it before it was ever created.
+
+Tuning an individual brake is the chairman's, in Settings, with a written
+reason. Yours is to choose which of three cards this project is, and to say so
+in one line with what it costs in runs a day.
 
 ## Resource posture is a bias, never a constraint
 

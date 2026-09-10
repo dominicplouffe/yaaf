@@ -16,7 +16,7 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from yaaf.core import artifacts
-from yaaf.core.constitution import effective
+from yaaf.core.constitution import effective, tempo_for, tempo_name
 from yaaf.core.models import (
     Agent,
     Approval,
@@ -828,6 +828,68 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
                 "the project recreating.", "settings")
             live_cons = None
         if live_cons is not None:
+            # Both of these read the constitution, and reading it unguarded is
+            # what the `except LookupError` above exists to prevent: a project
+            # with no constitution row would 500 this endpoint and pre-empt the
+            # one check whose whole job is to report that condition. They run
+            # only on a running project, which is right — a paused project's
+            # pace is not news.
+            rules = live_cons.model_dump()
+            on = tempo_name(rules)
+            # No bar-card equivalent of the rhythm check below, and that is the
+            # answer to the footprint question rather than an omission: the
+            # tempo can disagree with something else the chairman wrote down
+            # (`cycle_frequency`), and the bar cannot — there is nothing on a
+            # project for "how good does this have to be" to contradict. The
+            # bar card reports itself in the brief and in the MCP record, where
+            # the tempo does.
+
+            # The tempo and the rhythm disagreeing. `cycle_frequency` is
+            # amendable and the tempo is not derived again afterwards —
+            # deliberately: a platform that silently re-paced a live desk
+            # because a rule moved is a worse failure than the one it fixes. So
+            # this is a sentence the chairman reads and decides on, the same
+            # posture `doctrine-drift` above already takes.
+            if project.mode == ProjectMode.OPERATE:
+                wanted = tempo_for("operate", rules.get("cycle_frequency"))
+                if on is not None and on != wanted:
+                    add("tempo-vs-rhythm", "warn",
+                        f"this project rolls a {rules['cycle_frequency']} cycle but "
+                        f"thinks on the '{on}' tempo, which is what a project of a "
+                        f"different rhythm wants — '{wanted}' is the one that matches. "
+                        "Nothing is broken and nothing was changed for you; if the "
+                        "rhythm moved and the pace did not, this is where you would "
+                        "notice.",
+                        "settings")
+
+            # The ceiling and the budget describing different projects. Only
+            # where the box has actually priced runs: `avg_usd_per_run_box`
+            # answers None under five of them, because a fresh install saying
+            # nothing is the honest behaviour and a guess here would be quoted
+            # back as arithmetic.
+            per_run = policy.avg_usd_per_run_box(session)
+            if per_run and project.billing_mode == "api_key" and rules["monthly_usd_cap"]:
+                # Both lanes. The inbox ceiling is a SEPARATE additive allowance
+                # — `daily_runs_used` excludes those runs from the work total on
+                # purpose — so a `live` project's real ceiling is 190 a day, not
+                # 150, and counting one lane understated this by a quarter. An
+                # inbox wake measures about a third of a work run, but
+                # `avg_usd_per_run_box` is blended across kinds, so the plain
+                # sum is the honest arithmetic available here.
+                per_day = (rules["runs_per_project_per_day"]
+                           + rules["inbox_runs_per_project_per_day"])
+                ceiling = per_day * 30 * per_run
+                if ceiling > rules["monthly_usd_cap"]:
+                    add("tempo-vs-budget", "warn",
+                        f"{per_day} runs a day — {rules['runs_per_project_per_day']} of "
+                        f"work plus {rules['inbox_runs_per_project_per_day']} of reading "
+                        f"— at the ${per_run:.2f} a run this install has averaged is "
+                        f"about ${ceiling:,.0f} a month, against a budget of "
+                        f"${rules['monthly_usd_cap']:,.0f}. The budget is a plan rather "
+                        "than a wall so neither number is wrong, but they describe "
+                        "different projects — one of the two is the one you meant.",
+                        "settings")
+
             act = activity_state(session, project, live_cons)
             brief = act["brief"]
             # Only the briefs that mean *stopped* are findings. Concurrency and

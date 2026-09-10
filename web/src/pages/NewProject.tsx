@@ -18,7 +18,7 @@ import {
 } from "../datasource";
 import { CeoPicker, HirePanel, needsOf, roughMonthly } from "../roles";
 import { CredentialValue, SecretInput } from "../ui";
-import type { FounderStatus } from "./StartProject";
+import type { FounderStatus, PresetCard } from "./StartProject";
 
 interface TeamDraft {
   role_slug: string;
@@ -59,78 +59,32 @@ const MODES = [
 // nothing but a bundle of five constitution switches — each editable
 // individually later in Settings → Rules in force, changed by amendment.
 // Every preset names all five explicitly so it overrides whatever a loaded
-// setup bundle carried — an empty preset would silently inherit instead.
+// setup bundle carried — an empty preset would silently inherit instead. The
+// rules themselves live in `yaaf/core/constitution.py` and arrive with the
+// other cards on `/admin/founder/status`; this file used to carry a second
+// copy of all five values, free to drift from the ones actually enforced.
 //
 // Autonomous is first and selected by default, and the server agrees: a spec
 // that says nothing about these five is created autonomous (see
 // `constitution.DEFAULT_AUTONOMY`). A project a chairman has not said anything
 // about is one he wants to run, not one he wants to operate by hand.
-const AUTONOMY_PRESETS = [
-  { value: "autonomous", label: "Autonomous",
-    blurb: "The CEO accepts its own plan, signs the platform's projected date, and " +
-      "judges unverifiable closes itself. Every decision is audited and sent to " +
-      "you; all of it is reversible; your buttons never close.",
-    example: "The default. The CEO runs the project; you chair it. Budgets and " +
-      "brakes still bind.",
-    constitution: { plan_authority: "ceo", scope_authority: "ceo",
-      commitment_authority: "ceo", verdict_policy: "ceo_judgment",
-      capability_authority: "ceo" } },
-  { value: "supervised", label: "Supervised",
-    blurb: "You approve scope, sign the date, and judge unverifiable closes. " +
-      "The CEO proposes — and executes any order you give it in the boardroom.",
-    example: "Right for a first project, or real money on the line. It waits for " +
-      "you, so nothing moves while you are away.",
-    constitution: { plan_authority: "chairman", scope_authority: "chairman",
-      commitment_authority: "chairman", verdict_policy: "chairman",
-      capability_authority: "chairman" } },
-] as const;
-
-// How the project runs day to day: pace, money, proof — and, since the bar
-// landed, how finished the work has to be. A preset is nothing but a bundle of
-// ordinary constitution numbers — picking one fills the fields below, every
-// field stays editable here and later in Settings → Rules in force.
-// Deliberately orthogonal to the authority presets above: these never touch
-// who holds the verbs.
+// The two cards that used to be one. They live in `yaaf/core/constitution.py`
+// beside the rules they write and arrive on `/admin/founder/status`, because a
+// preset that exists only in this file is a preset only this file can offer:
+// the Founder could not pick one, the MCP surface could not pick one, a spec
+// file could not name one, and no stored constitution could say which one it
+// was. The Settings page reads the same list, which is what lets a chairman
+// re-pick a card on a project that is already running.
 //
-// Two things here are not arbitrary. "Full send" used to say "as fast as
-// possible", which made the only card a chairman would pick for excellent work
-// the one optimising for the clock — and speed is not this platform's scarce
-// resource, since the median project finishes its whole accepted scope inside
-// a day. Cost being secondary now buys DEPTH. And the cheap card is labelled
-// cheap: it used to say "Slow & steady", which reads as take-your-time-and-do-
-// it-properly, over the settings that produce the least finished work anybody
-// can order here.
+// They split because they were answering two questions as one. The old card
+// was labelled "How does it run?" and set money and quality; of the twenty-two
+// constitution rules that govern pace it touched exactly one, so "Cheap and
+// patient" and "Full send" woke a project equally often. The queue ceiling was
+// doing all the throttling, with no label on it, which is why the cheap card
+// felt like it did something and never did enough.
 //
-// Every card asks for an independent read, because the review is one extra run
-// per deliverable and the expensive part is the model, not the reader. What
-// separates the cards is money, pace, proof and which model the producing
-// seats are hired on.
-const RUN_PRESETS = [
-  { value: "full_send", label: "Full send",
-    blurb: "Nothing spared. The seats that write and check the work run on the " +
-      "strongest model at the deepest reasoning, with the per-run ceiling and " +
-      "timeout raised so a long piece is not cut off mid-thought. Big budget, " +
-      "big queue, hourly reports.",
-    knobs: { queue: 16, drought: 72, cap: 5000, threshold: 1000, verify: false, report: 1,
-             stakes: "high", review: "independent_read", runUsd: 8, runTimeout: 3600 } },
-  { value: "balanced", label: "Balanced",
-    blurb: "Steady pace, a real budget, a report every hour, and the work read " +
-      "by somebody who did not write it. The default for a reason.",
-    knobs: { queue: 8, drought: 24, cap: 1000, threshold: 250, verify: false, report: 1,
-             stakes: "normal", review: "independent_read", runUsd: 2, runTimeout: 1800 } },
-  { value: "frugal", label: "Cheap and patient",
-    blurb: "Small budget, small queue, a report every few hours — still read " +
-      "before it reaches you. Right for a long-running side project. The read " +
-      "costs a run per deliverable, so expect roughly a quarter less throughput " +
-      "for it.",
-    knobs: { queue: 4, drought: 48, cap: 200, threshold: 50, verify: false, report: 4,
-             stakes: "low", review: "independent_read", runUsd: 2, runTimeout: 1800 } },
-  { value: "show_me_proof", label: "Show me proof",
-    blurb: "External validation matters: evidence counts only once the platform " +
-      "verifies it, and a proof drought blocks busywork.",
-    knobs: { queue: 8, drought: 24, cap: 1000, threshold: 250, verify: true, report: 1,
-             stakes: "normal", review: "independent_read", runUsd: 2, runTimeout: 1800 } },
-] as const;
+// Deliberately orthogonal to the authority presets above: neither of these
+// ever touches who holds the verbs.
 
 // Remembered across projects — there is one chairman on this install, and
 // retyping your own email every time was pure friction.
@@ -187,6 +141,13 @@ export default function NewProject() {
   // Bumped by every bundle load and every manual pick, so a credential lookup
   // that started for an earlier bundle cannot land on top of a later choice.
   const billingPick = useRef(0);
+  // Whether a setup file or a Founder draft has already spoken for the cards.
+  // The status call fills the default selections when it lands, and a handover
+  // draft applied on mount would otherwise be silently overwritten by it —
+  // whichever of the two happened to resolve second.
+  const bundleSeen = useRef(false);
+  // A bundle that arrived before the cards did, held until they land.
+  const pendingBundle = useRef<ProjectBundle | null>(null);
   // A draft handed over by the Founder. It arrives as the same ProjectBundle a
   // setup file carries, so it lands through the same applyBundle path; the
   // thread id rides along so the founding conversation can be handed to the
@@ -236,18 +197,26 @@ export default function NewProject() {
   const [credentials, setCredentials] = useState<CredentialDraft[]>([]);
   const [dataSources, setDataSources] = useState<DataSourceDraft[]>([]);
 
-  // Constitution knobs surfaced in the wizard — a run preset fills them,
-  // every one stays editable, and all of them can change later in Settings.
-  const [runPreset, setRunPreset] = useState("balanced");
-  // The craft half of a preset. No form fields of their own — the same choice
+  // Constitution knobs surfaced in the wizard — a card fills them, every one
+  // stays editable, and all of them can change later in Settings.
+  const [barPreset, setBarPreset] = useState("balanced");
+  // The bar's craft half. No form fields of their own — the same choice
   // `max_usd_per_run` has always made here — so they ride the card and are
   // edited in Settings → Rules in force afterwards.
-  const [craft, setCraft] = useState(() => {
-    const k = RUN_PRESETS.find((p) => p.value === "balanced")!.knobs;
-    return { stakes: k.stakes, review: k.review, runUsd: k.runUsd,
-             runTimeout: k.runTimeout } as {
-      stakes: string; review: string; runUsd: number; runTimeout: number };
+  const [craft, setCraft] = useState<Record<string, unknown>>({
+    stakes: "normal", deliverable_review: "independent_read",
+    max_usd_per_run: 2, run_timeout_s: 1800, hard_stop_multiple: 3,
   });
+  // How often the project thinks. Thirteen rules, none of which has ever had a
+  // form field, so the whole bundle rides the card exactly as the craft half
+  // does. `queue_ceiling` is the one with a box below, and is kept in step.
+  const [tempo, setTempo] = useState("live");
+  const [tempoKnobs, setTempoKnobs] = useState<Record<string, unknown>>({});
+  // Whether the chairman has actually answered the tempo question. Until he
+  // has, the card follows the mode — which is the whole point of deriving it:
+  // he told us the shape of the work and that used to buy nothing. The moment
+  // he picks one, it stops moving under him.
+  const [tempoTouched, setTempoTouched] = useState(false);
   const [queueCeiling, setQueueCeiling] = useState(8);
   const [droughtHours, setDroughtHours] = useState(24);
   const [usdCap, setUsdCap] = useState(1000);
@@ -314,7 +283,26 @@ export default function NewProject() {
     // must never take the role list down with it.
     get<CrewSummary[]>("/admin/crews").then(setCrews).catch(() => {});
     // Best-effort: the cost line says so itself when the number is missing.
-    get<FounderStatus>("/admin/founder/status").then(setStatus).catch(() => {});
+    // The cards ride along on the same call — until they land the two preset
+    // rows render empty rather than falling back to a stale copy of the
+    // numbers, which is the drift this endpoint exists to end.
+    get<FounderStatus>("/admin/founder/status").then((found) => {
+      setStatus(found);
+      // The selections the form has always started on, now filled from the
+      // server's own numbers instead of a second copy of them. A file or a
+      // Founder draft that arrived first has already said what it wants, and
+      // `applyBundle` sets `bundleSeen` so nothing here overwrites it.
+      // A draft handed over by the Founder is applied on mount, which can be
+      // before or after this call lands — so whichever arrives second resolves
+      // the cards. Without this the ordering decided whether a draft's tempo
+      // was read at all, and it lost roughly half the time.
+      const waiting = pendingBundle.current;
+      pendingBundle.current = null;
+      if (waiting) return cardsFromBundle(waiting, found.presets);
+      if (bundleSeen.current) return;
+      applyBarPreset("balanced", found.presets.bar);
+      applyTempoPreset(derivedTempo(), found.presets.tempo, false);
+    }).catch(() => {});
     get<RoleSummary[]>("/admin/roles")
       .then((rows) => {
         setRoles(rows);
@@ -353,18 +341,106 @@ export default function NewProject() {
     }
   }
 
-  function applyRunPreset(value: string) {
-    setRunPreset(value);
-    const knobs = RUN_PRESETS.find((p) => p.value === value)?.knobs;
-    if (!knobs) return;
-    setQueueCeiling(knobs.queue);
-    setDroughtHours(knobs.drought);
-    setUsdCap(knobs.cap);
-    setApprovalThreshold(knobs.threshold);
-    setRequireVerification(knobs.verify);
-    setReportHours(knobs.report);
-    setCraft({ stakes: knobs.stakes, review: knobs.review,
-               runUsd: knobs.runUsd, runTimeout: knobs.runTimeout });
+  // The pace rules, mirrored from `constitution.TEMPO_RULES`. Read off the
+  // served cards rather than restated, so the two cannot drift: every card
+  // writes exactly this set.
+  const TEMPO_KEYS = Object.keys(status?.presets?.tempo?.[0]?.constitution ?? {});
+
+  const barPresets = status?.presets?.bar ?? [];
+  const tempoPresets = status?.presets?.tempo ?? [];
+  const autonomyPresets = status?.presets?.autonomy ?? [];
+
+  /** Which tempo this shape of project runs at when nobody has picked one.
+      Mirrors `constitution.tempo_for` on the server, and must keep mirroring
+      it: the form only pre-selects, and the server fills the same silence the
+      same way for the Founder, a spec file and the MCP surface. */
+  function derivedTempo(): string {
+    if (mode !== "operate") return "live";
+    const frequency = String(
+      (bundle?.project.constitution as Record<string, unknown> | undefined)
+        ?.cycle_frequency ?? "weekly");
+    if (frequency === "hourly") return "live";
+    if (frequency === "daily") return "working_hours";
+    return "few_times_daily";
+  }
+
+  /** Which cards a setup file or a Founder draft IS, if it is either.
+
+      Read rather than stamped, for the same reason the authority group is read:
+      a file exported from a quiet project came back at 150 runs a day without a
+      word about it, because the form applied its own selection over the file's
+      rules. A file matching no card keeps whatever is selected and changes
+      nothing — it is hand-tuned, and rounding it to the nearest card is the
+      silent overwrite this whole path exists to avoid. */
+  function cardsFromBundle(parsed: ProjectBundle, presets: FounderStatus["presets"]) {
+    const rules = parsed.project.constitution as Record<string, unknown>;
+    const matches = (card: PresetCard) =>
+      Object.entries(card.constitution).every(([k, v]) => rules[k] === v);
+    const statedBar = presets.bar.find(matches);
+    if (statedBar) applyBarPreset(statedBar.value, presets.bar);
+    const statedTempo = presets.tempo.find(matches);
+    if (statedTempo) applyTempoPreset(statedTempo.value, presets.tempo);
+    // A file that names ANY pace rule has answered the tempo question — the
+    // same mixed-dial rule the server applies in `default_tempo`. Without
+    // this, `applyBundle`'s own `setMode` refires the follow-the-mode effect
+    // with `tempoTouched` still false, and the card it re-derives overwrites
+    // the per-rule merge below: a hand-tuned file asking for 25 runs a day
+    // created at 12, silently, which is the exact overwrite this path exists
+    // to prevent.
+    if (TEMPO_KEYS.some((key) => rules[key] !== undefined)) setTempoTouched(true);
+
+    // Who holds the verbs travels in the file too, and reading it here rather
+    // than in `applyBundle` is what makes the ordering safe: a Founder draft is
+    // applied on mount, before this fetch resolves, so the preset list was
+    // empty and every file read as "says nothing" — which submit then answered
+    // by stamping the default AUTONOMOUS preset over a supervised draft's five
+    // rules, without a word about it.
+    const authority = rules as Record<string, string>;
+    const stated = presets.autonomy.find((preset) =>
+      Object.entries(preset.constitution).every(([k, v]) => authority[k] === v));
+    const named = Object.keys(presets.autonomy[0]?.constitution ?? {})
+      .filter((k) => authority[k] !== undefined);
+    if (stated) {
+      setAutonomy(stated.value);
+      setAutonomyNotice(null);
+    } else if (named.length) {
+      // A mixed group is a real choice somebody made rule by rule in Settings.
+      // Neither button is it, so say which rules the file carries and leave the
+      // selection alone rather than rounding it to a preset.
+      setAutonomyNotice(
+        `This setup file sets ${named.map((k) => `${k}: ${authority[k]}`).join(", ")}, ` +
+        "which is not either preset. Picking one below replaces all five rules — " +
+        "or create it as-is and adjust in Settings → Rules in force.",
+      );
+    } else {
+      setAutonomyNotice(null);
+    }
+  }
+
+  function applyBarPreset(value: string, cards: PresetCard[] = barPresets) {
+    setBarPreset(value);
+    const rules = cards.find((p) => p.value === value)?.constitution;
+    if (!rules) return;
+    setDroughtHours(Number(rules.drought_hours));
+    setUsdCap(Number(rules.monthly_usd_cap));
+    setApprovalThreshold(Number(rules.approval_threshold_usd));
+    setRequireVerification(Boolean(rules.require_evidence_verification));
+    setReportHours(Number(rules.chairman_report_interval_hours));
+    setCraft(rules);
+  }
+
+  /** `touched` is false only for the automatic follow-the-mode call below. */
+  function applyTempoPreset(value: string, cards: PresetCard[] = tempoPresets,
+                            touched = true) {
+    setTempo(value);
+    if (touched) setTempoTouched(true);
+    const rules = cards.find((p) => p.value === value)?.constitution;
+    if (!rules) return;
+    setTempoKnobs(rules);
+    // The one tempo rule with a box of its own further down the form. Left out
+    // of step, the box would keep saying 8 while the project it creates opens
+    // four — and the per-run arithmetic below reads this number.
+    if (rules.queue_ceiling !== undefined) setQueueCeiling(Number(rules.queue_ceiling));
   }
 
   const ceoRole = roles.find((r) => r.is_ceo_role);
@@ -383,7 +459,7 @@ export default function NewProject() {
   // roster asking for a read it has not staffed — so the one case where the
   // chairman most needs telling was the one case he was not told.
   const needsReviewSeat =
-    craft.review === "independent_read" && !solo && !hasReviewSeat;
+    craft.deliverable_review === "independent_read" && !solo && !hasReviewSeat;
 
   function addReviewTeam() {
     // `editor` is the seat written for prose; anything else in the discipline
@@ -477,6 +553,7 @@ export default function NewProject() {
     try {
       const p = parsed.project;
       setBundle(parsed);
+      bundleSeen.current = true;
       setName(p.name);
       setSlug(dedupedSlug(p.slug));
       setGoal(p.goal);
@@ -540,32 +617,12 @@ export default function NewProject() {
           .map((s) => ({ name: s.name, value: s.value ?? "",
                          filename: s.file ? "" : null, grants: s.role_scopes })),
       );
-      // Who holds the verbs travels in the file too, and the submit below
-      // stamps this preset over whatever the file said — so a file exported
-      // from an autonomous project came back supervised, and one exported
-      // from a supervised project could come back autonomous, neither with a
-      // word about it. Same defect as a role slug the picker could not show:
-      // the form dropped the file's answer silently. Read it instead.
-      const authority = p.constitution as Record<string, string>;
-      const stated = AUTONOMY_PRESETS.find((preset) =>
-        Object.entries(preset.constitution).every(([k, v]) => authority[k] === v));
-      const named = Object.keys(AUTONOMY_PRESETS[0].constitution)
-        .filter((k) => authority[k] !== undefined);
-      if (stated) {
-        setAutonomy(stated.value);
-        setAutonomyNotice(null);
-      } else if (named.length) {
-        // A mixed group is a real choice somebody made rule by rule in
-        // Settings. Neither button is it, so say which rules the file carries
-        // and leave the selection alone rather than rounding it to a preset.
-        setAutonomyNotice(
-          `This setup file sets ${named.map((k) => `${k}: ${authority[k]}`).join(", ")}, ` +
-          "which is not either preset. Picking one below replaces all five rules — " +
-          "or create it as-is and adjust in Settings → Rules in force.",
-        );
-      } else {
-        setAutonomyNotice(null);
-      }
+      // Which cards the file IS — the bar, the tempo and the authority group —
+      // read together in `cardsFromBundle`, because all three need the served
+      // preset list and a Founder draft can arrive before it does.
+      if (status?.presets) cardsFromBundle(parsed, status.presets);
+      else pendingBundle.current = parsed;
+
       const cons = p.constitution as Record<string, number>;
       if (cons.queue_ceiling !== undefined) setQueueCeiling(cons.queue_ceiling);
       if (cons.drought_hours !== undefined) setDroughtHours(cons.drought_hours);
@@ -577,18 +634,40 @@ export default function NewProject() {
       // The craft half, when a file or a Founder draft has an opinion about
       // it. Left alone otherwise, so a spec written before these rules existed
       // keeps whatever card is selected rather than being silently downgraded.
-      const craftCons = p.constitution as Record<string, string | number>;
-      setCraft((prev) => ({
-        stakes: (craftCons.stakes as string) ?? prev.stakes,
-        review: (craftCons.deliverable_review as string) ?? prev.review,
-        runUsd: (craftCons.max_usd_per_run as number) ?? prev.runUsd,
-        runTimeout: (craftCons.run_timeout_s as number) ?? prev.runTimeout,
-      }));
+      const craftCons = p.constitution as Record<string, unknown>;
+      setCraft((prev) => {
+        const kept: Record<string, unknown> = { ...prev };
+        for (const key of ["stakes", "deliverable_review", "max_usd_per_run",
+                           "run_timeout_s", "hard_stop_multiple"]) {
+          if (craftCons[key] !== undefined) kept[key] = craftCons[key];
+        }
+        return kept;
+      });
+      // The same treatment for the tempo half: a file's own pace rules win
+      // over the card's, one rule at a time, so a hand-tuned file keeps every
+      // number its author wrote.
+      setTempoKnobs((prev) => {
+        const kept: Record<string, unknown> = { ...prev };
+        for (const key of Object.keys(prev)) {
+          if (craftCons[key] !== undefined) kept[key] = craftCons[key];
+        }
+        return kept;
+      });
     } catch (err) {
       setBundle(null);
       setError((err as Error).message);
     }
   }
+
+  // The mode is the strongest thing the chairman has already said about the
+  // shape of the work, and until now it bought nothing at all. Switching from
+  // Deliver to Operate moves the tempo with it — until he answers the tempo
+  // question himself, at which point his answer stands and this stops firing.
+  useEffect(() => {
+    if (tempoTouched || !tempoPresets.length) return;
+    applyTempoPreset(derivedTempo(), tempoPresets, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, tempoPresets.length, tempoTouched]);
 
   // Once, on arrival. A draft is a proposal to review, so it fills the form
   // and stops there — the chairman still presses Create.
@@ -739,19 +818,21 @@ export default function NewProject() {
             // A setup file carries the source's full rulebook; the knobs and
             // the authority preset below override whatever you edited here.
             ...(bundle?.project.constitution ?? {}),
+            // How often it thinks. Sent explicitly, every time — the server
+            // fills a silent constitution from the mode, and a form that has
+            // shown the chairman a selected card must not then let the server
+            // pick a different one.
+            ...tempoKnobs,
+            // What the work is worth. The craft half has no fields of its own;
+            // the four below do, and are posted from the boxes so an edit
+            // after picking a card is what actually gets created.
+            ...craft,
             queue_ceiling: queueCeiling,
             drought_hours: droughtHours,
             monthly_usd_cap: usdCap,
             monthly_token_cap: tokenCap,
             approval_threshold_usd: approvalThreshold,
             require_evidence_verification: requireVerification,
-            stakes: craft.stakes,
-            deliverable_review: craft.review,
-            // The brakes move with the tier or the card is a lie: a writer on
-            // the strongest model at the deepest reasoning, under a $2 ceiling
-            // and a 30-minute timeout, dies mid-piece.
-            max_usd_per_run: craft.runUsd,
-            run_timeout_s: craft.runTimeout,
             chairman_report_interval_hours: reportHours,
             chairman_report_window_local: reportWindow.trim() || null,
             timezone: timezone.trim() || "UTC",
@@ -760,7 +841,7 @@ export default function NewProject() {
             // overwrite this notice exists to stop. Clicking a preset clears it.
             ...(autonomyNotice
               ? {}
-              : AUTONOMY_PRESETS.find((p) => p.value === autonomy)?.constitution ?? {}),
+              : autonomyPresets.find((p) => p.value === autonomy)?.constitution ?? {}),
           },
           integrations: { ...(bundle?.project.integrations ?? {}), runtime },
           ...(bundle?.project.github_repo ? { github_repo: bundle.project.github_repo } : {}),
@@ -1283,6 +1364,17 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
               {modeNotice}
             </p>
           )}
+          {/* The one answer on this form that cannot be amended afterwards.
+              The Founder is required to argue the shape call for exactly this
+              reason; the form said nothing at all, so a chairman learned it
+              from the Duplicate section weeks later, if ever. */}
+          <p className="help" style={{ marginTop: 10 }}>
+            <b>This one is frozen at creation.</b> It decides whether the project has
+            requirements at all, so it cannot be amended later like the rest of the
+            rules — a project that turns out to be the wrong shape is rebuilt from its
+            setup file rather than converted. Everything else on this form, including
+            how often it runs and what it may spend, you can change whenever you like.
+          </p>
           {mode !== "explore" ? (
             <p className="help" style={{ marginTop: 10 }}>
               This project starts owing a plan: the CEO proposes requirements,
@@ -1446,7 +1538,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
           <label className="field">Who runs it?</label>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
             gap: 10, marginTop: 6 }}>
-            {AUTONOMY_PRESETS.map((p) => (
+            {autonomyPresets.map((p) => (
               <button key={p.value} type="button"
                 onClick={() => { setAutonomy(p.value); setAutonomyNotice(null); }}
                 style={{
@@ -1478,22 +1570,90 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             from the next agent call. Turning the dial up or back is always yours.
           </p>
         </div>
+        {/* How often it thinks. Its own card, and its own question, because
+            for as long as these were one card the answer to "make it cheaper"
+            was a smaller budget attached to a project that woke exactly as
+            often as before. Every number here has always existed; not one of
+            them has ever been asked about at creation. */}
         <div className="card" style={{ marginBottom: 10 }}>
-          <label className="field">How does it run?</label>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+          <label className="field">How often should it think?</label>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
             gap: 10, marginTop: 6 }}>
-            {RUN_PRESETS.map((p) => (
+            {tempoPresets.map((p) => (
               <button key={p.value} type="button"
-                onClick={() => applyRunPreset(p.value)}
+                onClick={() => applyTempoPreset(p.value)}
                 style={{
                   font: "inherit", textAlign: "left", cursor: "pointer",
-                  background: runPreset === p.value ? "rgba(57,135,229,0.07)" : "var(--surface)",
-                  border: runPreset === p.value
+                  background: tempo === p.value ? "rgba(57,135,229,0.07)" : "var(--surface)",
+                  border: tempo === p.value
                     ? "1px solid var(--accent)" : "1px solid var(--border)",
                   borderRadius: 8, padding: "12px 14px",
                 }}>
                 <div style={{ fontWeight: 650, fontSize: 15, color: "var(--ink)" }}>
-                  {runPreset === p.value ? "◉" : "○"} {p.label}
+                  {tempo === p.value ? "◉" : "○"} {p.label}
+                </div>
+                {p.headline && (
+                  <div style={{ fontSize: 12.5, color: "var(--accent)", marginTop: 4,
+                    fontVariantNumeric: "tabular-nums" }}>{p.headline}</div>
+                )}
+                <div style={{ fontSize: 12.5, color: "var(--ink-2)", marginTop: 6 }}>{p.blurb}</div>
+                {p.example && (
+                  <div style={{ fontSize: 12, color: "var(--ink-2)", marginTop: 6,
+                    fontStyle: "italic" }}>{p.example}</div>
+                )}
+              </button>
+            ))}
+          </div>
+          <p className="help" style={{ marginTop: 10 }}>
+            {tempoTouched
+              ? "Thirteen rules — the daily and hourly run ceilings, how often each agent "
+                + "may wake, whether agents buy a run just to read each other's messages, "
+                + "how often the CEO plans, and how far ahead work may be scheduled."
+              : `Pre-selected from the shape you picked above (${
+                  MODES.find((m) => m.value === mode)?.label ?? mode}). Change it here if `
+                + "that is wrong — it is thirteen rules, and every one of them is "
+                + "editable later in Settings → Rules in force."}
+          </p>
+          <p className="help" style={{ marginTop: 6 }}>
+            {/* Runs, not dollars. The break-even inversion the rehearsal report
+                already uses: this box knows what a run has cost it and cannot
+                know what this project's runs will cost. */}
+            {(() => {
+              // Both lanes. The inbox ceiling is a SEPARATE additive allowance,
+              // so a Live project's real ceiling is 190 runs a day and not 150
+              // — counting only the work lane understated this by a quarter.
+              const work = Number(tempoKnobs.runs_per_project_per_day ?? 0);
+              const perDay = work + Number(tempoKnobs.inbox_runs_per_project_per_day ?? 0);
+              if (!perDay) return null;
+              const seen = status?.avg_usd_per_run;
+              return seen
+                ? `At ${perDay} runs a day — ${work} of work plus ${perDay - work} of `
+                  + `reading — and the $${seen.toFixed(2)} a run this install has `
+                  + `averaged, that is up to $${Math.round(perDay * 30 * seen)
+                    .toLocaleString()} a month — a ceiling, not a forecast.`
+                : `That is a ceiling of ${(perDay * 30).toLocaleString()} runs a month, `
+                  + `${work * 30} of work and ${(perDay - work) * 30} of reading. This `
+                  + "install has never priced a run, so there is nothing to turn that "
+                  + "into money with yet.";
+            })()}
+          </p>
+        </div>
+        <div className="card" style={{ marginBottom: 10 }}>
+          <label className="field">How good does it have to be, and what may it spend?</label>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+            gap: 10, marginTop: 6 }}>
+            {barPresets.map((p) => (
+              <button key={p.value} type="button"
+                onClick={() => applyBarPreset(p.value)}
+                style={{
+                  font: "inherit", textAlign: "left", cursor: "pointer",
+                  background: barPreset === p.value ? "rgba(57,135,229,0.07)" : "var(--surface)",
+                  border: barPreset === p.value
+                    ? "1px solid var(--accent)" : "1px solid var(--border)",
+                  borderRadius: 8, padding: "12px 14px",
+                }}>
+                <div style={{ fontWeight: 650, fontSize: 15, color: "var(--ink)" }}>
+                  {barPreset === p.value ? "◉" : "○"} {p.label}
                 </div>
                 <div style={{ fontSize: 12.5, color: "var(--ink-2)", marginTop: 6 }}>{p.blurb}</div>
               </button>
@@ -1521,7 +1681,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
               )}
               {" "}
               <button type="button" className="small" style={{ marginTop: 8 }}
-                onClick={() => setCraft((prev) => ({ ...prev, review: "none" }))}>
+                onClick={() => setCraft((prev) => ({ ...prev, deliverable_review: "none" }))}>
                 turn the read off for this project
               </button>
               {/* The escape has to be IN the form. The card sets this rule and
@@ -1531,12 +1691,14 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             </div>
           )}
           <p className="help" style={{ marginTop: 10 }}>
-            Pace, money, proof and how finished the work has to be — a preset just fills
-            the numbers in the Constitution section below. Adjust any of them there, now
-            or later in Settings. Every preset asks for the work to be read by somebody
-            who did not write it, which means the roster needs a reviewing seat; the
+            Money, proof and how finished the work has to be — a card just fills the
+            numbers in the Constitution section below. Adjust any of them there, now or
+            later in Settings. Every card asks for the work to be read by somebody who
+            did not write it, which means the roster needs a reviewing seat; the
             {" "}<b>Full send</b> card also hires the writing and checking seats on the
             strongest model, and raises the per-run ceiling so a long piece survives.
+            How often the project runs is the card above — these two used to be one, and
+            the pace half of it never actually moved.
           </p>
           <p className="help" style={{ marginTop: 6 }}>
             {/* The rehearsal's own argument, reused: do not invent a price, invert
