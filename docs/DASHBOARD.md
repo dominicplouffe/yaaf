@@ -397,10 +397,31 @@ empty board. A review with nothing on the board is the one you most need.
 
 ## Deliverables — the output
 
-- **Published** — finished artifacts in the artifact store, with preview and
-  download.
-- **Working files** — the agents' workspace, read-only, so you can see work in
-  progress rather than only what shipped.
+One list of every file the project has, filed by the day it landed — because
+"what did we make today" is the question this screen is opened with, and it
+used to be answered by reading two lists with different shapes.
+
+- **Folders by day.** Today first and already open; every other day is a row
+  that carries its own count and how much of it was published. A project with
+  thousands of files is a filing cabinet, not a scroll.
+- **A row per file**, with the type, the name (its folder dimmed in front of
+  it), whether it is **published** or **working**, its size and the time it
+  landed. Published rows carry what the receipt says: the version, the
+  requirements it satisfies, its hash. Earlier versions of the same deliverable
+  fold under the one that replaced it.
+- **Three filters and a search**, all of them in the URL so the view is a link:
+  published or working, file type (the extensions this project actually has,
+  with counts), a date window, and a search over names and folders that
+  highlights what it matched.
+- **The reader** opens the file as the thing it is: a report as a document, a
+  page as a page (sandboxed — agent-written HTML never runs on this origin), a
+  dataset as a table with a header that survives scrolling, JSON as a tree,
+  JSON Lines as records, an image as a picture, a PDF in the browser's own
+  viewer, and anything else as text with line numbers. Source is a toggle, not
+  the only option. **←** and **→** walk the filtered list without leaving it;
+  **Esc** closes; **/** puts you back in the search box.
+- **It never lies about its own edges.** Past the listing cap the newest files
+  are the ones kept, and the screen says how many are not shown.
 
 ## Records — "what happened?"
 
