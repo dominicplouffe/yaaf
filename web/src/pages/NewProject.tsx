@@ -144,6 +144,8 @@ export default function NewProject() {
   // draft applied on mount would otherwise be silently overwritten by it —
   // whichever of the two happened to resolve second.
   const bundleSeen = useRef(false);
+  // A bundle that arrived before the cards did, held until they land.
+  const pendingBundle = useRef<ProjectBundle | null>(null);
   // A draft handed over by the Founder. It arrives as the same ProjectBundle a
   // setup file carries, so it lands through the same applyBundle path; the
   // thread id rides along so the founding conversation can be handed to the
@@ -288,6 +290,13 @@ export default function NewProject() {
       // server's own numbers instead of a second copy of them. A file or a
       // Founder draft that arrived first has already said what it wants, and
       // `applyBundle` sets `bundleSeen` so nothing here overwrites it.
+      // A draft handed over by the Founder is applied on mount, which can be
+      // before or after this call lands — so whichever arrives second resolves
+      // the cards. Without this the ordering decided whether a draft's tempo
+      // was read at all, and it lost roughly half the time.
+      const waiting = pendingBundle.current;
+      pendingBundle.current = null;
+      if (waiting) return cardsFromBundle(waiting, found.presets);
       if (bundleSeen.current) return;
       applyBarPreset("balanced", found.presets.bar);
       applyTempoPreset(derivedTempo(), found.presets.tempo, false);
@@ -346,6 +355,26 @@ export default function NewProject() {
     if (frequency === "hourly") return "live";
     if (frequency === "daily") return "working_hours";
     return "few_times_daily";
+  }
+
+  /** Which cards a setup file or a Founder draft IS, if it is either.
+
+      Read rather than stamped, for the same reason the authority group is read:
+      a file exported from a quiet project came back at 150 runs a day without a
+      word about it, because the form applied its own selection over the file's
+      rules. A file matching no card keeps whatever is selected and changes
+      nothing — it is hand-tuned, and rounding it to the nearest card is the
+      silent overwrite this whole path exists to avoid. */
+  function cardsFromBundle(parsed: ProjectBundle, presets: FounderStatus["presets"]) {
+    const rules = parsed.project.constitution as Record<string, unknown>;
+    const matches = (card: PresetCard) =>
+      Object.entries(card.constitution).every(([k, v]) => rules[k] === v);
+    const statedBar = presets.bar.find(matches);
+    if (statedBar) applyBarPreset(statedBar.value, presets.bar);
+    const statedTempo = presets.tempo.find(matches);
+    // A file that names a tempo has answered the question, so the mode no
+    // longer moves it.
+    if (statedTempo) applyTempoPreset(statedTempo.value, presets.tempo);
   }
 
   function applyBarPreset(value: string, cards: PresetCard[] = barPresets) {
@@ -567,24 +596,8 @@ export default function NewProject() {
       } else {
         setAutonomyNotice(null);
       }
-      // Which cards the file IS, if it is either. Read rather than stamped,
-      // for the same reason the authority group is read above: a file exported
-      // from a quiet project came back at 150 runs a day without a word about
-      // it, because the form applied its own selection over the file's rules.
-      // A file matching no card keeps whatever is selected and changes nothing
-      // — it is hand-tuned, and rounding it to the nearest card is the silent
-      // overwrite this whole path exists to avoid.
-      const rules = p.constitution as Record<string, unknown>;
-      const matches = (card: PresetCard) =>
-        Object.entries(card.constitution).every(([k, v]) => rules[k] === v);
-      const statedBar = barPresets.find(matches);
-      if (statedBar) applyBarPreset(statedBar.value);
-      const statedTempo = tempoPresets.find(matches);
-      if (statedTempo) {
-        // A file that names a tempo has answered the question, so the mode no
-        // longer moves it.
-        applyTempoPreset(statedTempo.value);
-      }
+      if (status?.presets) cardsFromBundle(parsed, status.presets);
+      else pendingBundle.current = parsed;
 
       const cons = p.constitution as Record<string, number>;
       if (cons.queue_ceiling !== undefined) setQueueCeiling(cons.queue_ceiling);
