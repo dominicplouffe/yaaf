@@ -36,6 +36,7 @@ from datetime import timedelta
 import pytest
 
 from tests.conftest import ADMIN, make_project, seed_role
+from yaaf.core import ids
 from yaaf.core.constitution import (
     BAR_PRESETS,
     BAR_RULES,
@@ -51,12 +52,9 @@ from yaaf.core.constitution import (
     unknown_rules,
 )
 from yaaf.core.db import db_session
-from yaaf.founder.tools import tempo_problems
-from yaaf.server import briefing
-from yaaf.core import ids
 from yaaf.core.models import (
-    NoticeKind,
     Notice,
+    NoticeKind,
     Project,
     Run,
     RunStatus,
@@ -64,6 +62,8 @@ from yaaf.core.models import (
     TaskStatus,
     utcnow,
 )
+from yaaf.founder.tools import tempo_problems
+from yaaf.server import briefing
 
 # ── the bundles themselves ──────────────────────────────────────────────────────
 
