@@ -1022,8 +1022,13 @@ def export_project(project_id: str, include_values: bool = False,
                 for entry in integrations["mcp_servers"]
             ]
         secret_out = [
+            # `filename` rides with the value here, unlike the name-only branch
+            # below: without it a file credential restores as a STRING holding
+            # base64, and nothing downstream would notice — base64 begins with
+            # neither `{` nor `-----BEGIN`, so the file-shaped refusal at the
+            # door cannot catch it either.
             {"name": s.name, "role_scopes": s.role_scopes, "kind": s.kind,
-             "value": decrypt(s.ciphertext)}
+             "filename": s.filename, "value": decrypt(s.ciphertext)}
             for s in session.execute(
                 select(Secret)
                 .where(Secret.project_id == project.id)
@@ -4548,7 +4553,15 @@ def reveal_secret(secret_id: str, session: Session = Depends(db)) -> dict:
         # — because that is the value the chairman recognises. When they are
         # not, say so: a screenful of base64 debugs nothing, and pretending it
         # is the credential is worse than admitting the eye cannot help here.
-        body = credential_files.decode(decrypt(row.ciphertext))
+        try:
+            body = credential_files.decode(decrypt(row.ciphertext))
+        except credential_files.BadCredentialFile:
+            # Only a hand-edited row gets here. Say what is wrong with it rather
+            # than answering a deliberate read with a 500.
+            raise HTTPException(
+                status_code=422,
+                detail=f"'{row.name}' is marked as a file but its stored value is not "
+                       "base64 of one — store it again to repair it") from None
         try:
             return {"id": row.id, "name": row.name, "filename": row.filename,
                     "value": body.decode()}

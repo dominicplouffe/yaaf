@@ -277,6 +277,7 @@ def test_the_file_is_written_outside_the_workspace_at_0600(sandbox, monkeypatch)
     # ssh refuses a key anyone else can read, and so does this.
     assert path.stat().st_mode & 0o777 == 0o600
     assert path.parent.stat().st_mode & 0o777 == 0o700
+    assert path.parent.parent == sandbox.CREDENTIAL_DIR
     # The git-clone leak, stated as an assertion rather than a comment.
     assert not path.is_relative_to("/workspace")
     assert path.name == "key.json"
@@ -315,7 +316,7 @@ def test_a_filename_that_escapes_is_reduced_to_its_basename(sandbox, monkeypatch
     written = sandbox.materialize_file_credentials()
 
     path = Path(written["DEPLOY_KEY"])
-    assert path.parent == sandbox.CREDENTIAL_DIR
+    assert path.parent.parent == sandbox.CREDENTIAL_DIR
     assert path.name == "id_rsa"
     assert not path.is_relative_to("/workspace")
 
@@ -396,6 +397,37 @@ def test_export_carries_the_fact_and_never_the_bytes(client):
     assert "gserviceaccount" not in json.dumps(bundle)
 
 
+def test_a_full_backup_carries_the_fact_along_with_the_value(client):
+    """The name-only export carries `file`; the full backup carries the VALUE,
+    and without the filename beside it a file credential restores as a string
+    holding base64 — which nothing downstream can detect, since base64 begins
+    with neither `{` nor `-----BEGIN`."""
+    project = make_project(client, start=False)
+    _store(client, project["id"], "google-sa", SERVICE_ACCOUNT.encode())
+
+    bundle = client.get(f"/admin/projects/{project['id']}/export?include_values=true",
+                        headers=ADMIN).json()
+    row = next(s for s in bundle["secrets"] if s["name"] == "google-sa")
+    assert row["filename"] == "key.json"
+    assert base64.b64decode(row["value"]).decode() == SERVICE_ACCOUNT
+
+
+def test_a_corrupt_file_row_is_refused_with_a_reason_not_a_500(client):
+    """Only a hand-edited row reaches this, but a deliberate read answering with
+    a stack trace tells the chairman nothing about what to do."""
+    from yaaf.core.crypto import encrypt
+    from yaaf.core.models import Secret
+
+    project = make_project(client, start=False)
+    stored = _store(client, project["id"], "google-sa", b"{}").json()
+    with db_session() as session:
+        session.get(Secret, stored["id"]).ciphertext = encrypt("not base64 at all!!")
+
+    answered = client.get(f"/admin/secrets/{stored['id']}/value", headers=ADMIN)
+    assert answered.status_code == 422
+    assert "store it again" in answered.json()["detail"]
+
+
 def test_a_clone_stays_a_file_credential(client):
     """Missing this would silently downgrade the twin's credential to a string,
     and the first run on it would hand an agent base64 where a path belongs."""
@@ -410,3 +442,21 @@ def test_a_clone_stays_a_file_credential(client):
     listed = client.get(f"/admin/secrets?project_id={twin.json()['id']}",
                         headers=ADMIN).json()
     assert next(r for r in listed if r["name"] == "google-sa")["filename"] == "key.json"
+
+
+def test_two_credentials_naming_the_same_file_do_not_collide(sandbox, monkeypatch):
+    """A chairman with a production and a staging service account calls both
+    key.json. Written into one directory the second silently overwrote the
+    first, and $GOOGLE_SA served the staging key — a credential quietly becoming
+    a different credential. Each gets a directory named for its variable, which
+    the runner guarantees is unique."""
+    _carry(monkeypatch, "GOOGLE_SA", b"PROD KEY", "key.json")
+    _carry(monkeypatch, "GOOGLE_SA_STAGING", b"STAGING KEY", "key.json")
+
+    written = sandbox.materialize_file_credentials()
+
+    assert written["GOOGLE_SA"] != written["GOOGLE_SA_STAGING"]
+    assert Path(written["GOOGLE_SA"]).read_bytes() == b"PROD KEY"
+    assert Path(written["GOOGLE_SA_STAGING"]).read_bytes() == b"STAGING KEY"
+    # The file keeps its own name — the extension is why it was given one.
+    assert Path(written["GOOGLE_SA"]).name == "key.json"

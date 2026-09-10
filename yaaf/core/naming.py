@@ -22,8 +22,11 @@ def env_var_name(secret_name: str) -> str:
 # the thing the agent must end up holding is a path and the path does not exist
 # until something inside the container has written the file. The entrypoint
 # writes it, sets the real variable to the path, and deletes the carrier — so
-# the bytes are gone from the environment before the model draws its first
-# breath.
+# the credential's own variable holds a path from the first instruction the
+# model runs, rather than bytes that something downstream has to recognise.
+# (The deletion is about that meaning, not about hiding the credential from the
+# role it was granted to — see sandbox_entry.py for what it does and does not
+# buy.)
 #
 # sandbox_entry.py mirrors this constant rather than importing it: it is copied
 # into the sandbox image alone and must not import the yaaf package. The mirror

@@ -63,11 +63,19 @@ STAGING = Path("/workspace/.yaaf")
 #
 # So the runner sends the bytes under a carrier variable and this writes them,
 # here, before the model exists: mode 0600 (ssh refuses a key anyone else can
-# read), outside /workspace so no `git add -A` can reach it, and in the
-# container's own layer so it dies when the container is removed. The carrier is
-# then deleted from the environment, which is what makes the real variable a
-# path and nothing else — no Bash subprocess, no env_list, no os.environ read
-# ever sees the value.
+# read), outside /workspace so no `git add -A` can reach it, and on a tmpfs that
+# dies with the container. The carrier is then deleted, which is what makes the
+# credential's own variable a path and nothing else — os.environ, `env`, and
+# every subprocess the agent spawns inherit the rewritten environment.
+#
+# What that is NOT: a wall between the agent and its own credential. unsetenv
+# does not rewrite the block the kernel exposes at /proc/self/environ, so the
+# original bytes stay readable there for the life of the container — and the
+# agent could read the 0600 file anyway, since it owns it. That is the design,
+# not a hole in it: the role was granted this credential. What the deletion buys
+# is that the credential's variable means one thing (a path), everywhere, from
+# the first instruction — so nothing downstream has to guess, and nothing that
+# reads $GOOGLE_SA expecting a path gets bytes.
 #
 # Mirrors yaaf/core/naming.py FILE_CRED_PREFIX. This file is copied into the
 # image alone and cannot import the yaaf package; a test asserts the two agree.
@@ -128,7 +136,22 @@ def materialize_file_credentials() -> dict[str, str]:
         if not filename or filename in (".", ".."):
             CREDENTIAL_PROBLEMS.append(f"credential {name} NOT available: unusable file name")
             continue
-        path = directory / filename
+        # One directory per credential, named for its variable. Two credentials
+        # may legitimately carry the same file name — a chairman with a
+        # production and a staging service account calls both key.json — and
+        # writing them into one directory made the second silently overwrite the
+        # first, so $GOOGLE_SA served the staging key. The variable name is
+        # unique by construction (the runner refuses a second credential on a
+        # name it already claimed), so this cannot collide.
+        holder = directory / name.lower()
+        try:
+            holder.mkdir(parents=True, exist_ok=True)
+            holder.chmod(0o700)
+        except OSError as exc:
+            CREDENTIAL_PROBLEMS.append(
+                f"credential {name} NOT available: {type(exc).__name__} making its directory")
+            continue
+        path = holder / filename
         try:
             # 0600 before the bytes, never after: ssh refuses a key that was
             # ever readable by anyone else, and so should we.

@@ -112,7 +112,7 @@ yaaf set-secret google-sa --project my-slug --scopes researcher \
 What a granted role then receives is **the path**, not the contents:
 
 ```
-GOOGLE_SA=/run/yaaf/credentials/my-project-a1b2c3.json
+GOOGLE_SA=/run/yaaf/credentials/google_sa/my-project-a1b2c3.json
 ```
 
 which is what every library that reads a key file actually wants — pass it to
@@ -123,6 +123,17 @@ is a git clone agents commit and push from, so a key written there is one
 `git add -A` from being published. No agent is ever asked to save a credential
 itself, and the standing instruction — never write a credential to a file —
 stays true for them.
+
+Each credential gets its own directory, named for its variable, so a production
+and a staging service account may both be called `key.json` without one
+silently becoming the other.
+
+To be plain about what this is and isn't: **the role you grant it to can read
+the file.** That is what granting means, and it is no different from a role
+holding an API key. What the file shape buys is that the credential is usable
+by the tooling that wants a path, that the platform rather than an agent
+decides where it lives, and that it never lands anywhere — the workspace, a
+disk, a surviving container — that outlives the run or reaches a git remote.
 
 Two refusals you may meet, both deliberate:
 
