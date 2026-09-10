@@ -28,6 +28,7 @@ import {
   sourceReady,
 } from "../../datasource";
 import { fmtWhen, usePoll } from "../../hooks";
+import type { FounderStatus, PresetCard } from "../StartProject";
 import { RoleGrants } from "../../roles";
 import { ConfirmModal, SecretInput, StoredSecret } from "../../ui";
 
@@ -1449,6 +1450,89 @@ function AmendmentSave({
 
 /** Turn the edited strings back into the types the constitution expects, and
     keep only what actually differs from what is in force. */
+
+/** Re-pick a card on a project that is already running.
+
+    The rules a card writes have always been editable here, one box at a time —
+    which for the tempo card is fourteen boxes across three tabs, and is the
+    "too many levers" problem relocated from the creation form to this page
+    rather than solved. Picking a card stages the whole bundle into the same
+    dirty-field state a typed edit uses, so the existing save files it as ONE
+    amendment with one written reason, in force from the next agent call.
+
+    A project whose rules were edited individually is reported as hand-tuned and
+    never rounded to the nearest card. Telling a chairman he is "on Working
+    hours" when he is not is how he later reads a blurb as a description of his
+    own project and believes something untrue about what it costs. */
+function CardPicker({
+  title, help, cards, cons, edits, setEdits,
+}: {
+  title: string;
+  help: string;
+  cards: PresetCard[];
+  cons: Record<string, unknown>;
+  edits: Record<string, string>;
+  setEdits: (fn: (prev: Record<string, string>) => Record<string, string>) => void;
+}) {
+  if (!cards.length) return null;
+  const asEdit = (value: unknown) => String(value ?? "");
+  // What the project IS right now, and what it would be if the staged edits
+  // were saved. The second is what the picker highlights: a chairman who has
+  // just clicked a card should see that card selected, before he saves.
+  const matches = (card: PresetCard, read: (key: string) => unknown) =>
+    Object.entries(card.constitution).every(([k, v]) => asEdit(read(k)) === asEdit(v));
+  const staged = cards.find((c) => matches(c, (k) => (k in edits ? edits[k] : cons[k])));
+  const inForce = cards.find((c) => matches(c, (k) => cons[k]));
+
+  return (
+    <div className="card" style={{ marginBottom: 12 }}>
+      <label className="field">{title}</label>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))",
+        gap: 10, marginTop: 6 }}>
+        {cards.map((card) => (
+          <button key={card.value} type="button"
+            onClick={() => setEdits((prev) => ({
+              ...prev,
+              ...Object.fromEntries(
+                Object.entries(card.constitution).map(([k, v]) => [k, asEdit(v)])),
+            }))}
+            style={{
+              font: "inherit", textAlign: "left", cursor: "pointer",
+              background: staged?.value === card.value
+                ? "rgba(57,135,229,0.07)" : "var(--surface)",
+              border: staged?.value === card.value
+                ? "1px solid var(--accent)" : "1px solid var(--border)",
+              borderRadius: 8, padding: "12px 14px",
+            }}>
+            <div style={{ fontWeight: 650, fontSize: 14.5, color: "var(--ink)" }}>
+              {staged?.value === card.value ? "◉" : "○"} {card.label}
+            </div>
+            {card.headline && (
+              <div style={{ fontSize: 12.5, color: "var(--accent)", marginTop: 4,
+                fontVariantNumeric: "tabular-nums" }}>{card.headline}</div>
+            )}
+            <div style={{ fontSize: 12.5, color: "var(--ink-2)", marginTop: 6 }}>{card.blurb}</div>
+          </button>
+        ))}
+      </div>
+      <p className="help" style={{ marginTop: 10 }}>
+        {inForce
+          ? `In force: ${inForce.label}. `
+          : "In force: hand-tuned — these rules were set individually, so no card "
+            + "describes this project. Picking one replaces all of them. "}
+        {help}
+      </p>
+      {staged && inForce && staged.value !== inForce.value && (
+        <p className="help" style={{ marginTop: 6, color: "var(--warn, var(--ink-2))" }}>
+          Staged, not saved: {Object.keys(staged.constitution).length} rules move from
+          {" "}<b>{inForce.label}</b> to <b>{staged.label}</b>, some of them on other tabs.
+          Give a reason below and save, and it binds from the next agent call.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function changedRules(
   fields: ConstitutionField[],
   edits: Record<string, string>,
@@ -1634,6 +1718,16 @@ export default function Settings({
     () => get<AmendmentRow[]>(`/admin/projects/${projectId}/amendments`),
     10000,
   );
+  // The same cards the new-project form offers, from the same endpoint, so a
+  // card cannot read one way while it is being picked and another way
+  // afterwards. Best-effort: the pickers simply do not render without them,
+  // and every rule underneath stays editable by hand as it always was.
+  const [presets, setPresets] = useState<FounderStatus["presets"] | null>(null);
+  useEffect(() => {
+    get<FounderStatus>("/admin/founder/status")
+      .then((found) => setPresets(found.presets))
+      .catch(() => {});
+  }, []);
 
   // One fetch for the whole page: the billing card, the data sources and the
   // credentials table all need the same list, and the two cards that address a
@@ -2123,6 +2217,31 @@ export default function Settings({
           })}
         </div>
 
+        {activeTheme === "Pace & brakes" && presets && (
+          <CardPicker
+            title="How often should it think?"
+            help={"Fourteen rules: the daily and hourly run ceilings, how often each agent "
+              + "may wake, whether agents buy a run just to read each other's messages, how "
+              + "often the CEO plans, and how far ahead work may be scheduled. Getting the "
+              + "tempo wrong at creation is the cheapest mistake on this page to fix."}
+            cards={presets.tempo} cons={cons} edits={edits} setEdits={setEdits} />
+        )}
+        {activeTheme === "The bar" && presets && (
+          <CardPicker
+            title="How good does it have to be, and what may it spend?"
+            help={"What the work is worth: the budget and the wall behind it, which model "
+              + "the writing and checking seats are hired on, and whether evidence has to "
+              + "be verified before it counts."}
+            cards={presets.bar} cons={cons} edits={edits} setEdits={setEdits} />
+        )}
+        {activeTheme === "Autonomy" && presets && (
+          <CardPicker
+            title="Who holds the verbs?"
+            help={"Five rules deciding who accepts scope, changes the plan, signs the date, "
+              + "judges an unverifiable close, and scopes the credentials. Your routes, "
+              + "your veto and your pause never close either way."}
+            cards={presets.autonomy} cons={cons} edits={edits} setEdits={setEdits} />
+        )}
         {[...new Set(schema.filter((f) => f.theme === activeTheme).map((f) => f.group))]
           .map((group, _i, all) => (
             <div key={group}>
