@@ -49,6 +49,7 @@ from yaaf.core.constitution import (
     unknown_rules,
 )
 from yaaf.core.db import db_session
+from yaaf.founder.tools import tempo_problems
 from yaaf.core.models import Project
 
 # ── the bundles themselves ──────────────────────────────────────────────────────
@@ -324,3 +325,34 @@ def test_the_mode_is_not_re_pickable(client):
                  json={"mode": "operate"}, headers=ADMIN)
     with db_session() as session:
         assert session.get(Project, project["id"]).mode == "explore"
+
+
+# ── what the Founder is held to ─────────────────────────────────────────────────
+
+
+def test_the_founder_must_choose_a_tempo():
+    """The same argument as `stakes` one level over: an unset dial is a
+    decision nobody made and nobody can find later. A project that never
+    mentions pace runs at 150 runs a day because nobody said otherwise."""
+    assert tempo_problems({"mode": "operate", "constitution": {}})
+    assert tempo_problems({"mode": "deliver", "constitution": {}})
+
+
+def test_explore_is_exempt():
+    """Open scope against a clock: the platform's own answer is the right one,
+    and a question with no decision behind it is friction."""
+    assert tempo_problems({"mode": "explore", "constitution": {}}) == []
+
+
+def test_the_founder_picks_a_card_never_a_number():
+    """`DESIGN_DOCTRINE.md` records a Founder that opened a desk at 12 runs a
+    day against a default of 150, defended it twice, and was overruled the next
+    day — the chairman's single intervention being to raise it. The numbers on
+    these cards were chosen by people who watched projects fail in both
+    directions; the Founder's come from one sentence in a brief."""
+    invented = {"mode": "operate", "constitution": {"runs_per_project_per_day": 12}}
+    problems = tempo_problems(invented)
+    assert problems and "not one of the tempo cards" in problems[0]
+
+    for name, rules in TEMPO_PRESETS.items():
+        assert tempo_problems({"mode": "operate", "constitution": dict(rules)}) == [], name
