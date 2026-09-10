@@ -1,6 +1,13 @@
 __pycache__/
 *.pyc
 .venv/
+# Written by `uv run`, which is one convenient way to get the dev extras on
+# this box. This project pins through pyproject.toml and has never carried a
+# lockfile; one appeared here as a side effect of a tool, not a decision, and
+# committing it would pin the whole dependency graph for everybody. If the
+# project ever wants that, it should be a deliberate commit rather than an
+# artifact somebody's shell left behind.
+uv.lock
 *.egg-info/
 # setuptools / `python -m build` output. Sixty-seven files of it were committed
 # once — a stale duplicate of the whole package, still carrying code that had
