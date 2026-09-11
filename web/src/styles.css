@@ -1659,6 +1659,7 @@ button.rolepick { width: 100%; text-align: left; background: var(--surface-2); }
 .plan-window .fill.warn { background: var(--warning); }
 .plan-window .fill.over { background: var(--critical); }
 .plan-window .foot { font-size: 11px; color: var(--muted); }
+.plan-asof { font-family: var(--mono); font-size: 11px; color: var(--muted); }
 .plan-foot { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-top: 2px; }
 .plan-compact { display: inline-flex; flex-direction: column; gap: 2px; font-size: 12px; white-space: nowrap; }
 .plan-compact .help { margin: 0; font-size: 11px; }

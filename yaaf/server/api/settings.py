@@ -556,21 +556,25 @@ def llm_credential_usage(credential_id: str, refresh: bool = False,
                          session: Session = Depends(db)) -> dict:
     """What the plan behind a subscription credential last said was left.
 
-    A local read. Nothing here calls Anthropic: the reading was harvested from
-    the credential's own runs, where the SDK volunteers it, so this route
-    cannot be rate-limited, cannot be slow, and cannot fail because an
-    undocumented endpoint changed. `refresh` is accepted and ignored — there is
-    nothing to re-ask; the number moves when the credential is next used. It is
-    still worth re-reading on a timer, and the screens do: every finished run
-    files a new reading here, and a page opened at nine is otherwise showing
-    nine o'clock at noon.
+    A local row read by default: the reading is written by every agent run on
+    the credential, where the SDK volunteers the windows for free. An ordinary
+    load of the screen makes no request, so it cannot be rate-limited, cannot be
+    slow, and cannot fail because an undocumented endpoint changed.
 
-    API keys have no plan meter, a subscription nothing has run on yet has no
-    reading, and a reading whose windows have all reset since describes a plan
-    that no longer exists; all three say so rather than 404 or draw a bar,
+    `refresh` is the exception, and it is a person pressing a button — the only
+    thing in this platform that asks Anthropic for a meter, and the only way to
+    get one for a credential no run is covering. Floored at one call per token
+    every fifteen seconds and silent while throttled, so pressing it six times
+    is one call; and when it cannot ask, it answers with the stored row rather
+    than an error, because the reader wanted the number, not the provenance.
+
+    API keys have no plan meter, a subscription nothing has reported on yet has
+    no reading, and a reading whose windows have all reset since describes a
+    plan that no longer exists; all three say so rather than 404 or draw a bar,
     because the screen asking is the same screen either way.
     """
     from yaaf.core.crypto import decrypt
+    from yaaf.server import plan_probe
 
     row = _managed(session, credential_id, lock=False)
     credential_id, mode = row.id, row.llm_mode
@@ -579,10 +583,12 @@ def llm_credential_usage(credential_id: str, refresh: bool = False,
                 "reason": "API keys are metered per call in dollars, not against a plan — "
                           "the monthly budget below is the meter that applies",
                 "windows": [], "fetched_at": None, "cached": False}
-    found = plan_usage.stored(session, decrypt(row.ciphertext))
+    token = decrypt(row.ciphertext)
+    asked = plan_probe.refresh(session, token) if refresh else False
+    found = plan_usage.stored(session, token)
     if found is None:
         return {"credential_id": credential_id, "mode": mode, "available": False,
-                "reason": "no reading yet — the plan meter arrives with this credential's "
-                          "next agent run, which is where Anthropic reports it",
+                "reason": "no reading yet — the meter arrives with this credential's "
+                          "next agent run, or now if you press refresh",
                 "windows": [], "fetched_at": None, "cached": False}
-    return {"credential_id": credential_id, "mode": mode, "cached": True, **found}
+    return {"credential_id": credential_id, "mode": mode, "cached": not asked, **found}

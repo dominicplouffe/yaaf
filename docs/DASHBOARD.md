@@ -39,12 +39,14 @@ link to the credentials list.
   **plan meter**: what Anthropic says is left on the session and weekly
   windows, the same numbers as `/usage` in Claude Code, shown as a fact and
   never enforced. It is harvested from the credential's own agent runs — the
-  SDK reports it on every run — so nothing is polled and nothing can be rate
-  limited; a credential nothing has run on yet says it has no reading yet, and
-  a window that has reset since the last run says it rolled over instead of
-  showing the percentage it held while it was open. An open screen re-reads the
-  meter every ten minutes so a tab left open all morning is not still showing
-  the morning; that re-read is one local row, not a call to Anthropic.
+  SDK reports it on every run — and every row carries an **ask** that gets a
+  number for a credential no run is covering, which is the case that matters: a
+  full window is what stops the runs. A window that has reset since it was last
+  reported says it rolled over instead of showing the percentage it held while
+  it was open. An open screen re-reads the meter every ten minutes so a tab left
+  open all morning is not still showing the morning; that re-read is one local
+  row. Asking Anthropic happens only when somebody presses for it, floored at
+  one call per subscription every 15 seconds and silent while throttled.
 - **Hiding a credential** is the answer to a list nobody chose. Promoting
   per-project keys above projects made one managed credential per historical
   key, most of them belonging to projects that had already ended, and none of

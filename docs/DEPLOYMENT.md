@@ -490,7 +490,9 @@ these polling floors, never a replacement for them.
 - `GET /healthz` — process liveness.
 - `GET /observe/projects/{id}/health` — the per-project setup checklist, the
   same one the Overview renders. All green = the UI hides the card.
-- Dispatcher, janitor, and Slack threads log at INFO to the `api` container.
+- Dispatcher, janitor, and Slack threads log at INFO to the `api` container. A
+  plan meter throttled by Anthropic logs one WARNING naming the token digest and
+  how long it is staying quiet; it never retries through a `Retry-After`.
 
 ### Backups
 
