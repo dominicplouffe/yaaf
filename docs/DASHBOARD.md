@@ -39,14 +39,25 @@ link to the credentials list.
   **plan meter**: what Anthropic says is left on the session and weekly
   windows, the same numbers as `/usage` in Claude Code, shown as a fact and
   never enforced. It is harvested from the credential's own agent runs — the
-  SDK reports it on every run — and every row carries an **ask** that gets a
-  number for a credential no run is covering, which is the case that matters: a
+  SDK reports it on every run — and every row carries a **Check now** that gets
+  a number for a credential no run is covering, which is the case that matters: a
   full window is what stops the runs. A window that has reset since it was last
   reported says it rolled over instead of showing the percentage it held while
   it was open. An open screen re-reads the meter every ten minutes so a tab left
   open all morning is not still showing the morning; that re-read is one local
   row. Asking Anthropic happens only when somebody presses for it, floored at
-  one call per subscription every 15 seconds and silent while throttled.
+  one call per subscription every 15 seconds.
+
+  **A press always says what it did**, in a line under the row: the numbers it
+  found, or that it found the same ones, or why it could not ask — a throttle
+  with its wait, or a token Anthropic refused, which offers this credential's
+  own Edit form, because replacing the value is the only thing that fixes it.
+  All of those used to return the stored row with no comment, which on screen is
+  the same as a press that worked. The credential this button exists for is the
+  one whose runs have stopped, and that is usually the one whose token is the
+  problem, so the case most needing a sentence was the case that got none. A
+  press inside the fifteen-second floor is waited out rather than reported, and
+  rows sharing one subscription move together on one press.
 - **Hiding a credential** is the answer to a list nobody chose. Promoting
   per-project keys above projects made one managed credential per historical
   key, most of them belonging to projects that had already ended, and none of

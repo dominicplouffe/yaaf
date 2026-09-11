@@ -28,6 +28,15 @@ What is kept from that lesson, because a button on a URL is still a URL:
 - **A failed probe never costs a reading.** The stored row stays; a probe that
   cannot answer leaves the last answer standing, and `plan_usage.stored` is
   already honest about a window that has rolled over since.
+
+And one thing that was missing. Every restraint above used to be *silent*: a
+press inside the floor, a press during a throttle and a press with an expired
+token all returned the stored row and a 200, which on screen is indistinguishable
+from a press that worked. The credential this exists for — the one whose runs
+have stopped — is usually the one whose token is the problem, so the case that
+most needed a sentence was the case that got none, and the button read as
+broken. Every entry point therefore returns an `Outcome` saying which of the six
+things happened, and waiting is only ever offered where waiting is the remedy.
 """
 
 from __future__ import annotations
@@ -35,6 +44,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -64,8 +74,46 @@ MAX_BACKOFF_S = 3600.0
 _lock = threading.Lock()
 #: fingerprint → monotonic deadline before which this token must not be asked.
 _quiet_until: dict[str, float] = {}
+#: fingerprint → why it went quiet, "throttled" or "rejected". Without this the
+#: second press inside a blackout can only report the *wait*, and a wait is the
+#: wrong sentence for the case that matters: a rejected token is not fixed by
+#: patience, and telling somebody to come back in fourteen minutes for a token
+#: that will be refused again is the run-around this whole change exists to end.
+_quiet_reason: dict[str, str] = {}
 #: fingerprint → monotonic time of the last attempt, for the floor above.
 _last_attempt: dict[str, float] = {}
+
+
+@dataclass(frozen=True)
+class Outcome:
+    """Why a press ended the way it did, and when it may be repeated.
+
+    A bool could only say "a reading was stored", which is the same answer for a
+    token Anthropic rejected, a throttle being honoured, a network that was not
+    there, and a press fifteen seconds after the last one — four different
+    things to the person who pressed, and only one of them means "try again".
+
+    `state` is one of:
+
+    - `fresh` — Anthropic answered and the reading was filed.
+    - `floored` — asked again inside the fifteen-second minimum.
+    - `throttled` — a `429` is being honoured.
+    - `rejected` — Anthropic refused the token; it needs replacing.
+    - `unreachable` — no server was reached.
+    - `unreadable` — an answer with no window this could make a number of.
+
+    `retry_after_s` is seconds until this token may be asked again, when that is
+    knowable: the remainder of the floor, or what Anthropic's `Retry-After`
+    asked for. None when waiting is not the answer — a rejected token needs a
+    new value, not patience.
+    """
+
+    state: str
+    retry_after_s: float | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.state == "fresh"
 
 
 def _percent_scale(values: list[Any]) -> bool:
@@ -182,11 +230,14 @@ def _retry_after(value: str | None) -> float:
         return DEFAULT_BACKOFF_S
 
 
-def probe(token: str) -> dict | None:
-    """One call. The plan reading Anthropic returned, or None with a reason logged.
+def probe(token: str) -> tuple[dict | None, Outcome]:
+    """One call. The plan reading Anthropic returned, and why if it did not.
 
     Never raises: this runs inside a request thread, and a meter is not worth
-    a 500 on the screen that was trying to show it.
+    a 500 on the screen that was trying to show it. It does not follow that the
+    caller learns nothing — every branch below already knows what went wrong,
+    and the `Outcome` is that knowledge reaching the person who pressed instead
+    of only the log.
     """
     digest = plan_usage.fingerprint(token)
     try:
@@ -199,57 +250,117 @@ def probe(token: str) -> dict | None:
         # not a throttle and does not earn one: nothing here retries on its own,
         # so the next attempt is already somebody deciding to press again.
         log.info("plan meter probe could not reach Anthropic (%s)", type(exc).__name__)
-        return None
+        return None, Outcome("unreachable")
 
     if response.status_code == 429:
         wait = _retry_after(response.headers.get("retry-after"))
         with _lock:
             _quiet_until[digest] = time.monotonic() + wait
+            _quiet_reason[digest] = "throttled"
         log.warning("plan meter throttled for token %s; quiet for %ss", digest[:8], round(wait))
-        return None
+        return None, Outcome("throttled", wait)
     if response.status_code >= 400:
         # A real answer, and the wrong one. A revoked or expired token answers
         # this way every time, so it earns the same quiet as a throttle rather
         # than a call per press. It is not silenced for good: rotating the
         # credential is how this gets fixed, and the probe after that has to be
-        # allowed to succeed.
+        # allowed to succeed — `forget` is what the rotation calls.
+        #
+        # No `retry_after_s` on the way out, though the quiet is real: waiting
+        # is not the remedy for a token that will be refused again in fifteen
+        # minutes, and offering a countdown would send the reader away from the
+        # one thing that fixes it.
         with _lock:
             _quiet_until[digest] = time.monotonic() + DEFAULT_BACKOFF_S
+            _quiet_reason[digest] = "rejected"
         log.warning("plan meter probe returned %s for token %s",
                     response.status_code, digest[:8])
-        return None
+        return None, Outcome("rejected")
     try:
         payload = response.json()
     except ValueError:
-        return None
-    return windows_from(payload) if isinstance(payload, dict) else None
+        return None, Outcome("unreadable")
+    if not isinstance(payload, dict):
+        return None, Outcome("unreadable")
+    plan = windows_from(payload)
+    # An answer with no window this can make a number of is not a success with
+    # nothing in it; it is an answer this cannot read, and saying so is what
+    # keeps "checked just now" from appearing over an unchanged meter.
+    return (plan, Outcome("fresh")) if plan else (None, Outcome("unreadable"))
 
 
-def due(token: str) -> bool:
-    """May this token be asked right now? A throttle and the floor are the two
-    reasons it may not, and both are answered from memory rather than the wire."""
+def quiet(token: str) -> tuple[float, str] | None:
+    """Seconds left on this token's blackout and what earned it, or None.
+
+    Separate from the floor because the two are different sentences. The floor
+    is fifteen seconds and worth absorbing in silence; a blackout is minutes,
+    and which kind it is decides whether the reader should wait or act.
+    """
     digest = plan_usage.fingerprint(token)
     now = time.monotonic()
     with _lock:
-        if now < _quiet_until.get(digest, 0.0):
-            return False
-        if now - _last_attempt.get(digest, -1e9) < MIN_INTERVAL_S:
-            return False
-    return True
+        left = _quiet_until.get(digest, 0.0) - now
+        reason = _quiet_reason.get(digest, "throttled")
+    return (left, reason) if left > 0 else None
 
 
-def refresh(session, token: str) -> bool:
-    """Probe this token and file what comes back. True if a reading was stored.
+def wait_for(token: str) -> float:
+    """Seconds until this token may be asked again; 0 when it may be asked now.
+
+    The floor and a throttle are the two reasons it may not, and both are
+    answered from memory rather than the wire. Returned as a number rather than
+    a yes/no because the caller has to tell the reader *how long*: fifteen
+    seconds is a wait worth absorbing silently, and twenty-four minutes is a
+    sentence somebody needs to read.
+    """
+    digest = plan_usage.fingerprint(token)
+    now = time.monotonic()
+    with _lock:
+        quiet = _quiet_until.get(digest, 0.0) - now
+        floor = MIN_INTERVAL_S - (now - _last_attempt.get(digest, -1e9))
+    return max(0.0, quiet, floor)
+
+
+def due(token: str) -> bool:
+    """May this token be asked right now?"""
+    return wait_for(token) <= 0
+
+
+def forget(token: str) -> None:
+    """Drop this token's floor and quiet period.
+
+    Called when a credential's value is replaced. Rotating to a *different*
+    token already clears itself — a new value is a new fingerprint with no
+    history — but re-pasting the same one, which is what somebody does when
+    they believe the stored copy is the problem, would otherwise land inside
+    the fifteen-minute quiet a rejection just earned and look identical to the
+    failure they were trying to fix.
+    """
+    digest = plan_usage.fingerprint(token)
+    with _lock:
+        _quiet_until.pop(digest, None)
+        _quiet_reason.pop(digest, None)
+        _last_attempt.pop(digest, None)
+
+
+def refresh(session, token: str) -> Outcome:
+    """Probe this token and file what comes back. The Outcome says what happened.
 
     The caller's transaction is used and not committed here: the request path
     that calls this is already inside one.
     """
-    if not due(token):
-        return False
+    blackout = quiet(token)
+    if blackout is not None:
+        left, reason = blackout
+        # A rejection carries no countdown on purpose: see `probe`.
+        return Outcome(reason, left if reason == "throttled" else None)
+    waiting = wait_for(token)
+    if waiting > 0:
+        return Outcome("floored", waiting)
     with _lock:
         _last_attempt[plan_usage.fingerprint(token)] = time.monotonic()
-    plan = probe(token)
+    plan, outcome = probe(token)
     if plan is None:
-        return False
+        return outcome
     plan_usage.record(session, token, plan)
-    return True
+    return outcome

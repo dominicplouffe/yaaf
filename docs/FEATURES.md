@@ -200,13 +200,21 @@ Outside Explore mode the root object is not the task, it is the
   request**: the Claude Agent SDK reports these windows to every agent run, on
   the credential doing the spending, so the meter normally costs nothing at all.
   What runs cannot cover — a credential nothing is running on, which is exactly
-  what a full window produces — is a **Refresh** button beside the meter, which
-  asks Anthropic for that one subscription. Nothing asks on a timer: the poller
+  what a full window produces — is a **Check now** button beside the meter,
+  which asks Anthropic for that one subscription. Nothing asks on a timer: the poller
   this replaced ran sixty times an hour *per credential from every open browser
   tab* and earned a `429` for it. The button is floored at one call per
   subscription every 15 seconds and honours any throttle, so leaning on it
   returns the stored number rather than a rate limit. The number carries the
   time it was reported.
+  **Every press says what it did** — the numbers it found, that they had not
+  moved, or why it could not ask. A refused token is named as refused and
+  offered the way to replace it, rather than going quiet for fifteen minutes; a
+  throttle is named with its wait; the fifteen-second floor is waited out rather
+  than reported, because somebody pressing twice wants a number, not a reason
+  they cannot have one. Those outcomes were one silent answer for as long as the
+  button existed, and a button whose every outcome looks the same is a button
+  nobody can trust.
   A window whose reset time has passed reports the rollover rather than the
   percentage it held while it was open — the window at 100% is the one that
   stops the runs, and a stopped run reports nothing, so the number would

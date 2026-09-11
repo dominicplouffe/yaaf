@@ -492,7 +492,10 @@ these polling floors, never a replacement for them.
   same one the Overview renders. All green = the UI hides the card.
 - Dispatcher, janitor, and Slack threads log at INFO to the `api` container. A
   plan meter throttled by Anthropic logs one WARNING naming the token digest and
-  how long it is staying quiet; it never retries through a `Retry-After`.
+  how long it is staying quiet; it never retries through a `Retry-After`. A
+  token Anthropic *refuses* logs the same way with its status code — usually an
+  expired subscription token, and the chairman pressing **Check now** is told so
+  on screen, so the log is corroboration rather than the only notice.
 
 ### Backups
 

@@ -15,7 +15,7 @@
 // draws. Hiding is the way out, it is reversible, and it works on the whole
 // selection at once, because at forty rows one-at-a-time is not a cleanup.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { del, get, patch, post } from "./api";
 import { ConfirmModal, fmtAgo, fmtSoon, SecretInput } from "./ui";
@@ -171,6 +171,16 @@ export function LlmCredentials({ onChanged }: { onChanged?: () => void } = {}) {
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [removing, setRemoving] = useState<Credential | null>(null);
+  // The answer each row's last press produced, drawn full width beneath it.
+  // Not in the cell: that column is 152px and this is a sentence.
+  const [results, setResults] = useState<Record<string, PlanResult | null>>({});
+  const noteResult = useCallback((id: string, r: PlanResult | null) =>
+    setResults((prev) => (prev[id] === r ? prev : { ...prev, [id]: r })), []);
+  // Bumped for a credential whose value was just replaced, to make it check
+  // itself. Somebody who rotated a token did it to fix a dead meter; landing
+  // them back on "no reading yet" and asking for one more press is the run-
+  // around arriving one step later than before.
+  const [recheck, setRecheck] = useState<Record<string, number>>({});
   const [hiding, setHiding] = useState<Credential[] | null>(null);
 
   // One fetch, hidden included: the counts on the filters are only honest if
@@ -236,6 +246,8 @@ export function LlmCredentials({ onChanged }: { onChanged?: () => void } = {}) {
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
+    const rotated = editing !== "new" && editing !== null
+      && editing.mode === "subscription" && !!value.trim() ? editing.id : null;
     await act(
       async () => {
         if (editing === "new") await post(endpoint, { name: name.trim(), mode, value: value.trim() });
@@ -244,6 +256,7 @@ export function LlmCredentials({ onChanged }: { onChanged?: () => void } = {}) {
         setEditing(null); setValue("");
       },
       () => "Credential saved. New runs use the updated credential.");
+    if (rotated) setRecheck((prev) => ({ ...prev, [rotated]: Date.now() }));
   }
 
   async function move(targets: Credential[], undo: boolean) {
@@ -390,7 +403,9 @@ export function LlmCredentials({ onChanged }: { onChanged?: () => void } = {}) {
           {shown.map(row => {
             const bucket = bucketOf(row);
             const canPick = restoring ? !!row.hidden_at : !row.in_use;
-            return <tr key={row.id} className={row.hidden_at ? "is-hidden" : undefined}>
+            const said = results[row.id];
+            return <Fragment key={row.id}>
+              <tr className={row.hidden_at ? "is-hidden" : undefined}>
               <td className="pick">{canPick && <input type="checkbox"
                 aria-label={`Select ${row.name}`} checked={picked.has(row.id)}
                 onChange={e => setPicked(prev => {
@@ -416,7 +431,9 @@ export function LlmCredentials({ onChanged }: { onChanged?: () => void } = {}) {
                 <div className="help">{modeMeter(row.mode)}</div></td>
               <td data-label="Used by"><UsedBy row={row} /></td>
               <td data-label="Plan usage">
-                <PlanMeterCompact credentialId={row.id} mode={row.mode} auto={!!row.in_use} /></td>
+                <PlanMeterCompact credentialId={row.id} mode={row.mode} auto={!!row.in_use}
+                  onRotate={() => edit(row)} checkNonce={recheck[row.id]}
+                  onResult={(r) => noteResult(row.id, r)} /></td>
               <td className="llm-actions">
                 {/* Edit is on a hidden row too: restoring one whose name has
                     since been taken is refused, and renaming it is the way
@@ -434,7 +451,17 @@ export function LlmCredentials({ onChanged }: { onChanged?: () => void } = {}) {
                   onClick={() => { setRemoving(row); setError(""); }}
                   aria-label={`Delete ${row.name}`}>Delete</button>}
               </td>
-            </tr>;
+              </tr>
+              {/* Full width, because the answer is a sentence and the cell that
+                  holds the numbers is not. Sticky inside, because this table
+                  scrolls sideways and the reader who scrolled right to reach
+                  the button is the one being answered. */}
+              {said && <tr className="plan-result">
+                <td colSpan={6}>
+                  <PlanResultLine result={said} onRotate={() => edit(row)} />
+                </td>
+              </tr>}
+            </Fragment>;
           })}
         </tbody>
       </table></div>}
@@ -458,12 +485,21 @@ export function LlmCredentials({ onChanged }: { onChanged?: () => void } = {}) {
 // The numbers arrive on their own: the SDK reports these windows to every agent
 // run on the credential, and the server files them. Nothing on a clock asks for
 // them — the poller that did earned a 429 — so the one gap is a credential
-// nothing is running on, which is exactly what a full window produces. **Refresh**
-// is the door out of that gap, and it is a person's press rather than a timer:
-// it asks Anthropic now, for this one subscription. The screen names when the
-// number was reported, and a window whose reset time has passed is drawn as
+// nothing is running on, which is exactly what a full window produces. **Check
+// now** is the door out of that gap, and it is a person's press rather than a
+// timer: it asks Anthropic now, for this one subscription. The screen names when
+// the number was reported, and a window whose reset time has passed is drawn as
 // rolled over rather than as the percentage it died holding. It is Anthropic's
 // number, not yaaf's: shown, never enforced.
+//
+// And the press answers. Every restraint on that call — the fifteen-second
+// floor, a throttle being honoured, a token Anthropic refused — used to return
+// the stored row and a 200, which on screen is indistinguishable from a press
+// that worked. The credential this exists for is the one whose runs have
+// stopped, and that is usually the one whose token is the problem, so the case
+// that most needed a sentence was the only case that never got one. Below, a
+// press sets a new number or a sentence saying why there is not one, and never
+// nothing.
 
 export interface PlanWindow {
   key: string; label: string; utilization: number; resets_at: string | null;
@@ -473,59 +509,81 @@ export interface PlanWindow {
       as 0%, which is a number nobody reported. */
   expired?: boolean;
 }
+
+/** What a press did, when a press is what produced this answer.
+    Absent on an ordinary screen load, which asked nothing and must not look
+    like a press that worked. */
+export interface Asked {
+  state: "fresh" | "floored" | "throttled" | "rejected" | "unreachable" | "unreadable";
+  /** Seconds until this token may be asked again, when waiting is the remedy.
+      Null on a rejection: a dead token is not fixed by patience, and a
+      countdown there points the reader away from the only thing that works. */
+  retry_after_s: number | null;
+}
+
 export interface PlanUsage {
   credential_id: string; mode: string; available: boolean; reason: string | null;
   windows: PlanWindow[]; fetched_at: string; cached: boolean;
-  /** Set when Anthropic is rate-limiting the meter and told us how long to
-      wait. While it is set there is no point offering a retry: the server
-      honours the wait and answers from cache, and pressing through a rate
-      limit is what keeps a rate limit alive. */
-  retry_after_s?: number;
+  asked?: Asked;
+  /** The subscription this credential's value is, without the value. Several
+      rows routinely hold one subscription and share one meter, so a screen
+      showing them together moves them together on this. */
+  token_digest?: string | null;
+}
+
+/** The answer a press owes the person who pressed. */
+export interface PlanResult {
+  ok: boolean;
+  text: string;
+  /** A rejected token: the row offers the one action that fixes it. */
+  rotate?: boolean;
 }
 
 const usageUrl = (id: string, refresh: boolean) =>
   `${endpoint}/${id}/usage${refresh ? "?refresh=true" : ""}`;
 
-/** How often an open screen re-reads the meter.
+// ── one subscription, several rows ──────────────────────────────────────────────
+//
+// The meter is filed under the token, not the credential, because the migration
+// that lifted keys above projects made one row per historical key and fourteen
+// rows can be one subscription. So a press on one row is an answer about all of
+// them, and a screen that updated only the row that was pressed would leave its
+// siblings insisting on a number the server had already replaced — the screen
+// disagreeing with itself, in the one place built for comparing credentials.
+//
+// Keyed on the digest the answer carries, so nothing has to be threaded through
+// props and the full meter on the project pages joins the same wire for free.
+// The last answer is retained because a press inside the floor can be settled
+// from it instantly rather than waited out.
 
-    It used to be 60 seconds, and every one of those reads was a live call to
-    Anthropic from every open tab — which is what earned the 429. This one is
-    free: it re-reads the local row that finished runs write, so an open tab
-    picks up what has landed since instead of showing nine o'clock at noon. Ten
-    minutes is paced to what it watches — windows five hours and seven days
-    long, where nothing a reader can act on moves faster. Asking Anthropic is
-    never on this timer; that is the refresh button, and only when pressed. */
-const REREAD_MS = 10 * 60_000;
+interface Shared { last: PlanUsage; at: number; subs: Set<(d: PlanUsage) => void> }
+const shared = new Map<string, Shared>();
 
-/** Reads a credential's plan meter: one local row read on mount, and again
-    every ten minutes for as long as the screen is open.
+function subscribe(digest: string | null | undefined, fn: (d: PlanUsage) => void) {
+  if (!digest) return () => {};
+  const entry = shared.get(digest) ?? { last: null as never, at: 0, subs: new Set() };
+  entry.subs.add(fn);
+  shared.set(digest, entry);
+  return () => { entry.subs.delete(fn); };
+}
 
-    A tick may improve the screen and never degrade it. It does not raise the
-    busy flag — the refresh button would blink "reading…" unbidden every ten
-    minutes — and a tick that fails leaves the last good reading standing rather
-    than replacing a real number with an error, which is honest because that
-    number carries the time it was reported. Does nothing for a non-subscription
-    credential. */
-export function usePlanUsage(credentialId: string | null, mode: string | null) {
-  const [data, setData] = useState<PlanUsage | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const active = !!credentialId && mode === "subscription";
-  const load = useCallback((refresh: boolean, quiet = false) => {
-    if (!active || !credentialId) return;
-    if (!quiet) setBusy(true);
-    get<PlanUsage>(usageUrl(credentialId, refresh))
-      .then((d) => { setData(d); setError(null); })
-      .catch((e: Error) => { if (!quiet) setError(e.message); })
-      .finally(() => { if (!quiet) setBusy(false); });
-  }, [active, credentialId]);
-  useEffect(() => {
-    if (!active) { setData(null); setError(null); return; }
-    load(false);
-    const timer = setInterval(() => load(false, true), REREAD_MS);
-    return () => clearInterval(timer);
-  }, [active, load]);
-  return { data, error, busy, refresh: () => load(true), active };
+/** Hand a fresh answer to every other meter on the same subscription. They take
+    the numbers and nothing else: the sentence belongs to the row that was
+    pressed, and three of them from one press is noise. */
+function publish(data: PlanUsage, from: (d: PlanUsage) => void) {
+  const digest = data.token_digest;
+  if (!digest) return;
+  const entry = shared.get(digest) ?? { last: data, at: Date.now(), subs: new Set() };
+  entry.last = data; entry.at = Date.now();
+  shared.set(digest, entry);
+  entry.subs.forEach((fn) => { if (fn !== from) fn(data); });
+}
+
+/** An answer for this subscription newer than the press that was floored, if a
+    sibling's press already fetched one. */
+function freshlyShared(digest: string | null | undefined, since: number): PlanUsage | null {
+  const entry = digest ? shared.get(digest) : undefined;
+  return entry && entry.at >= since ? entry.last : null;
 }
 
 const fillClass = (u: number) => (u >= 1 ? "over" : u >= 0.8 ? "warn" : "");
@@ -559,31 +617,292 @@ function planVerdict(all: PlanWindow[]): { cls: string; text: string } {
   return { cls: "good", text: "✓ headroom on every window" };
 }
 
+/** How often an open screen re-reads the meter.
+
+    It used to be 60 seconds, and every one of those reads was a live call to
+    Anthropic from every open tab — which is what earned the 429. This one is
+    free: it re-reads the local row that finished runs write, so an open tab
+    picks up what has landed since instead of showing nine o'clock at noon. Ten
+    minutes is paced to what it watches — windows five hours and seven days
+    long, where nothing a reader can act on moves faster. Asking Anthropic is
+    never on this timer; that is **Check now**, and only when pressed. */
+const REREAD_MS = 10 * 60_000;
+
+/** How long a success line stays before clearing itself.
+
+    "Checked just now" still sitting there ten minutes later is the same lie as
+    a bar drawn for a window that has reset, and this screen spends a lot of
+    effort not telling that one. A failure is different and stays: a rejected
+    token is a standing condition, not a notification. */
+const RESULT_MS = 30_000;
+
+/** How long a press may run before it admits it is still running. The upstream
+    timeout is ten seconds, and ten seconds of a button that only says
+    "Checking…" is indistinguishable from a hang. */
+const SLOW_MS = 3_000;
+
+/** A wait short enough to sit through rather than report. The floor is fifteen
+    seconds; anything on that scale is absorbed silently, and anything longer is
+    a sentence somebody needs to read. */
+const ABSORB_MS = 20_000;
+
+const shortLabel = (w: PlanWindow) =>
+  w.key === "five_hour" ? "session" : w.key === "seven_day" ? "week" : w.label;
+
+const headline = (d: PlanUsage) => live(d.windows)
+  .filter((w) => w.key === "five_hour" || w.key === "seven_day")
+  .map((w) => `${shortLabel(w)} ${pct(w.utilization)}`);
+
+/** What a successful press actually changed, in the reader's words.
+
+    A check that finds the same numbers is the normal outcome and a real answer:
+    it is the difference between "nothing happened" and "nothing has changed",
+    which is the whole question somebody presses this button to settle. */
+function changeSentence(before: PlanUsage | null, after: PlanUsage): string {
+  const was = new Map((before?.windows ?? []).map((w) => [w.key, w.utilization]));
+  const moved = live(after.windows)
+    .filter((w) => was.has(w.key) && was.get(w.key) !== w.utilization)
+    .map((w) => `${shortLabel(w)} ${pct(was.get(w.key)!)} → ${pct(w.utilization)}`);
+  if (moved.length) return `✓ Checked just now — ${moved.join(", ")}`;
+  const now = headline(after);
+  if (!now.length) return "✓ Checked just now";
+  return was.size
+    ? `✓ Checked just now — unchanged (${now.join(", ")})`
+    : `✓ Checked just now — ${now.join(", ")}`;
+}
+
+/** The sentence a press that could not ask owes the person who pressed.
+
+    The standing reading is its own sentence rather than a second clause: one
+    line carrying two em-dashes is a line nobody finishes reading, and the fact
+    that the old number is still on screen is exactly the part that stops a
+    failed press from looking like a successful one. */
+function refusalSentence(asked: Asked, fetchedAt: string | null): PlanResult {
+  const standing = fetchedAt ? ` Still showing the reading from ${fmtAgo(fetchedAt)}.` : "";
+  const when = (s: number) => fmtSoon(new Date(Date.now() + s * 1000).toISOString());
+  switch (asked.state) {
+    case "rejected":
+      // No countdown, on purpose: waiting fixes nothing here, and offering one
+      // sends the reader away from the only thing that does.
+      return { ok: false, rotate: true,
+        text: `✕ Anthropic rejected this token — it may have expired or been revoked.${standing}` };
+    case "throttled":
+      return { ok: false, text: `⏲ Anthropic is rate-limiting this token — try again ${
+        asked.retry_after_s ? when(asked.retry_after_s) : "shortly"}.${standing}` };
+    case "unreadable":
+      return { ok: false,
+        text: `✕ Anthropic answered with something this could not read.${standing}` };
+    case "unreachable":
+      return { ok: false, text: `✕ Could not reach Anthropic.${standing}` };
+    default:
+      // `floored` reaches here only when absorbing it has already failed once.
+      return { ok: false, text: `Anthropic could not be asked just now.${standing}` };
+  }
+}
+
+/** Reads a credential's plan meter: one local row read on mount, again every ten
+    minutes while the screen is open, and a live call to Anthropic when somebody
+    presses for one.
+
+    A tick may improve the screen and never degrade it. It does not raise the
+    busy flag — the button would blink "Checking…" unbidden every ten minutes —
+    and a tick that fails leaves the last good reading standing rather than
+    replacing a real number with an error, which is honest because that number
+    carries the time it was reported.
+
+    A **press** is the opposite: it always answers. Every path out of it sets a
+    new number or a sentence saying why there is not one, because a press whose
+    outcomes all look identical is a button nobody can trust — which is what
+    this one was for as long as it existed. Does nothing for a non-subscription
+    credential. */
+export function usePlanUsage(credentialId: string | null, mode: string | null) {
+  const [data, setData] = useState<PlanUsage | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [slow, setSlow] = useState(false);
+  const [result, setResult] = useState<PlanResult | null>(null);
+  const active = !!credentialId && mode === "subscription";
+
+  // What a press has to reach after an await, without re-creating the callback
+  // and restarting the ten-minute timer underneath it.
+  const alive = useRef(true);
+  const latest = useRef<PlanUsage | null>(null);
+  const retried = useRef(false);
+  const timers = useRef<number[]>([]);
+  // Which request the screen is currently waiting on. Arming a row fires the
+  // local read and the press within a millisecond of each other, and the local
+  // read answers in eight while the press is still out — so without a ticket
+  // the quick one lowers the busy flag on the slow one, and a ten-second call
+  // sits behind a button that says "Check now" and looks like it did nothing.
+  // Only the newest request may speak for the row.
+  const seq = useRef(0);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+      timers.current.forEach((t) => clearTimeout(t));
+      timers.current = [];
+    };
+  }, []);
+
+  const adopt = useCallback((d: PlanUsage) => {
+    latest.current = d; setData(d); setError(null);
+  }, []);
+
+  // A sibling's press is an answer about this row too. Numbers only: the
+  // sentence belongs to whoever pressed, and three of them is noise.
+  //
+  // Its own last sentence goes with them. "Checked just now — session 16%"
+  // standing over a row that now reads 21% is the screen contradicting itself,
+  // which is the whole thing sharing these readings is here to prevent.
+  const digest = data?.token_digest;
+  useEffect(() => subscribe(digest, (d) => { adopt(d); setResult(null); }),
+            [digest, adopt]);
+
+  const settle = useCallback((ticket: number, r: PlanResult | null) => {
+    if (!alive.current || ticket !== seq.current) return;
+    setBusy(false); setSlow(false); setResult(r);
+    if (r?.ok) {
+      timers.current.push(window.setTimeout(
+        () => { if (alive.current) setResult(null); }, RESULT_MS));
+    }
+  }, []);
+
+  const load = useCallback((refresh: boolean, quiet = false) => {
+    if (!active || !credentialId) return;
+    const pressedAt = Date.now();
+    const before = latest.current;
+    const ticket = ++seq.current;
+    const mine = () => alive.current && ticket === seq.current;
+    if (!quiet) {
+      setBusy(true); setResult(null); setSlow(false);
+      timers.current.push(window.setTimeout(
+        () => { if (mine()) setSlow(true); }, SLOW_MS));
+    }
+    get<PlanUsage>(usageUrl(credentialId, refresh))
+      .then((d) => {
+        if (!alive.current) return;
+        // A reading is always worth taking, whoever asked for it — arming a row
+        // fires the local read and the press together, and refusing the quick
+        // one's data leaves the cell blank for the length of the slow one. The
+        // ticket governs what may *speak* for the row, not what may fill it.
+        adopt(d);
+        if (!mine() || quiet) return;
+        if (!refresh) { settle(ticket, null); return; }
+        const asked = d.asked;
+        if (!asked || asked.state === "fresh") {
+          publish(d, adopt);
+          settle(ticket, { ok: true, text: changeSentence(before, d) });
+          return;
+        }
+        // The floor is fifteen seconds. Sit through it rather than report it:
+        // somebody pressing twice is somebody who wants a number, and "you
+        // pressed six seconds ago" is the run-around in politer words.
+        if (asked.state === "floored" && !retried.current
+            && (asked.retry_after_s ?? 0) * 1000 <= ABSORB_MS) {
+          // A sibling row may already have fetched what this press was floored
+          // behind, in which case there is nothing left to wait for.
+          const ready = freshlyShared(d.token_digest, pressedAt);
+          if (ready) {
+            adopt(ready);
+            settle(ticket, { ok: true, text: changeSentence(before, ready) });
+            return;
+          }
+          retried.current = true;
+          timers.current.push(window.setTimeout(
+            () => { if (mine()) load(true); },
+            (asked.retry_after_s ?? 0) * 1000 + 500));
+          return;  // still busy — the press has not finished, it is waiting
+        }
+        retried.current = false;
+        settle(ticket, refusalSentence(asked, d.fetched_at));
+      })
+      .catch((e: Error) => {
+        if (!mine() || quiet) return;
+        // The reading this could not replace stays on screen; the failure is a
+        // sentence beside it, never a replacement for it.
+        if (!latest.current) setError(e.message);
+        settle(ticket, { ok: false, text: `✕ Could not reach the server — ${e.message}` });
+      });
+  }, [active, credentialId, adopt, settle]);
+
+  useEffect(() => {
+    if (!active) { setData(null); setError(null); setResult(null); return; }
+    load(false);
+    const timer = setInterval(() => load(false, true), REREAD_MS);
+    return () => clearInterval(timer);
+  }, [active, load]);
+
+  return {
+    data, error, busy, slow, result, active,
+    refresh: () => { retried.current = false; load(true); },
+  };
+}
+
+/** The answer a press owes, drawn. Success is transient confirmation and clears
+    itself; a failure is a standing condition and stays until the next press.
+
+    A rejected token always offers the way out, because naming a dead credential
+    and stopping there is the same dead end in a politer voice. On the
+    credentials table that is this row's own Edit form; anywhere else — the
+    project pages, where the credential is not editable — it is the screen that
+    holds it. */
+export function PlanResultLine({ result, onRotate }: {
+  result: PlanResult; onRotate?: () => void;
+}) {
+  return (
+    <span className={`plan-result-line ${result.ok ? "ok" : "bad"}`}
+          role={result.ok ? "status" : "alert"}>
+      {result.text}
+      {result.rotate && <>{" "}
+        {onRotate
+          ? <button type="button" className="linkish" onClick={onRotate}>Rotate it</button>
+          : <Link to="/settings">Rotate it in Settings ↗</Link>}
+      </>}
+    </span>
+  );
+}
+
+/** One button, one name, everywhere. It was three — `ask`, `ask Anthropic` and
+    `refresh` — for one action, which is three things to learn about a control
+    that does one thing. */
+function CheckNow({ busy, slow, onClick, className = "small" }: {
+  busy: boolean; slow: boolean; onClick: () => void; className?: string;
+}) {
+  return (
+    <span className="check-now">
+      <button type="button" className={className} disabled={busy} onClick={onClick}
+              title="Ask Anthropic for this subscription's windows now">
+        {busy && <span className="working-dot" aria-hidden="true" />}
+        {busy ? "Checking…" : "Check now"}
+      </button>
+      {/* Ten seconds of a silent spinner is indistinguishable from a hang. */}
+      {busy && slow && <span className="help">still waiting on Anthropic…</span>}
+    </span>
+  );
+}
+
 /** Full meter: one bar per window, a verdict on top, provenance underneath.
     Draws nothing for an API-key credential — there is no plan to draw. */
-export function PlanMeter({ credentialId, mode, title = "Claude subscription plan" }: {
-  credentialId: string | null; mode: string | null; title?: string;
+export function PlanMeter({ credentialId, mode, title = "Claude subscription plan", onRotate }: {
+  credentialId: string | null; mode: string | null; title?: string; onRotate?: () => void;
 }) {
-  const { data, error, busy, refresh, active } = usePlanUsage(credentialId, mode);
+  const { data, error, busy, slow, result, refresh, active } = usePlanUsage(credentialId, mode);
   if (!active) return null;
-  // The one control on this page that does reach Anthropic. The server floors
-  // it at one call per subscription every fifteen seconds and honours any
-  // throttle, so a reader leaning on it gets the row back, not a rate limit.
-  const refreshButton = (
-    <button type="button" className="linkish" disabled={busy} onClick={refresh}>
-      {busy ? "asking Anthropic…" : "refresh"}
-    </button>
-  );
+  // The one control on this page that reaches Anthropic. The server floors it
+  // at one call per subscription every fifteen seconds and honours any
+  // throttle — and now says which of those happened, so a press that could not
+  // ask no longer looks exactly like one that did.
+  const check = <CheckNow busy={busy} slow={slow} onClick={refresh} className="small" />;
   let body;
   if (!data && !error) {
     body = <p className="help" style={{ margin: "4px 0" }}>Reading the plan meter…</p>;
-  } else if (error) {
-    body = <p className="help" style={{ margin: "4px 0" }}>Plan meter not reachable — {error}. {refreshButton}</p>;
   } else if (data && !data.available) {
     body = <p className="help" style={{ margin: "4px 0" }}>
-      Plan meter {data.retry_after_s ? "paused" : "unavailable"} — {data.reason}
-      {!data.retry_after_s && <>. {refreshButton}</>}
+      Plan meter unavailable — {data.reason}
     </p>;
+  } else if (error) {
+    body = <p className="help" style={{ margin: "4px 0" }}>Plan meter not reachable — {error}.</p>;
   } else if (data) {
     const verdict = planVerdict(data.windows);
     body = (
@@ -605,14 +924,10 @@ export function PlanMeter({ credentialId, mode, title = "Claude subscription pla
             <div className="foot">
               {w.expired
                 ? `reset ${fmtAgo(w.resets_at)} — the next run reports the new window`
-                : w.resets_at ? `resets ${fmtSoon(w.resets_at)}` : " "}
+                : w.resets_at ? `resets ${fmtSoon(w.resets_at)}` : " "}
             </div>
           </div>
         ))}
-        <div className="plan-foot">
-          <span className="asof">reported {fmtAgo(data.fetched_at)}</span>
-          {refreshButton}
-        </div>
       </>
     );
   }
@@ -622,12 +937,19 @@ export function PlanMeter({ credentialId, mode, title = "Claude subscription pla
         <span className="label">{title}</span>
       </div>
       {body}
+      {/* The answer to the press, under the thing it is about. */}
+      {result && <PlanResultLine result={result} onRotate={onRotate} />}
+      <div className="plan-foot">
+        <span className="asof">{data?.fetched_at ? `reported ${fmtAgo(data.fetched_at)}` : "not checked yet"}</span>
+        {check}
+      </div>
       <p className="help" style={{ marginBottom: 0 }}>
         Anthropic's own meter for this subscription — the same numbers as <code>/usage</code> in
         Claude Code. The SDK reports them on every agent run, so the meter moves as this
-        credential is used; <strong>refresh</strong> asks Anthropic directly, which is how to
-        get a number on a credential that has gone quiet. Every project on it draws from the
-        same windows. Shown here, not enforced here: the monthly cap is yaaf's separate limit.
+        credential is used; <strong>Check now</strong> asks Anthropic directly, which is how to
+        get a number on a credential that has gone quiet, and it says what came back either
+        way. Every project on it draws from the same windows. Shown here, not enforced here:
+        the monthly cap is yaaf's separate limit.
       </p>
     </div>
   );
@@ -644,49 +966,81 @@ export function PlanMeter({ credentialId, mode, title = "Claude subscription pla
     two rows that can fail a run tonight. Those read themselves; the rest wait
     to be asked.
 
-    Every row carries its own **ask** all the same, because this table is where
-    a chairman compares credentials and a row whose runs have stopped has no
-    other way to get a number. It is the same floored, throttle-aware call the
-    full meter's refresh makes, and rows sharing one subscription share one
-    answer. */
-export function PlanMeterCompact({ credentialId, mode, auto = true }: {
-  credentialId: string; mode: string; auto?: boolean;
+    Every row carries its own **Check now** all the same, because this table is
+    where a chairman compares credentials and a row whose runs have stopped has
+    no other way to get a number. On an unarmed row it is the only button, and
+    one press does both: arming it would otherwise buy "no reading yet" — a row
+    nothing has run on is precisely a row with nothing filed — and then ask for
+    a second press to do the thing the first one was for. */
+export function PlanMeterCompact({ credentialId, mode, auto = true, onRotate, onResult,
+                                   checkNonce }: {
+  credentialId: string; mode: string; auto?: boolean; checkNonce?: number;
+  onRotate?: () => void; onResult?: (r: PlanResult | null) => void;
 }) {
   const [armed, setArmed] = useState(auto);
-  const { data, error, busy, refresh, active } = usePlanUsage(armed ? credentialId : null, mode);
-  if (mode !== "subscription") return <span className="muted" title="API keys are metered per call, in dollars; there is no plan window to fill.">— metered per call</span>;
-  if (!active) return <button type="button" className="linkish" onClick={() => setArmed(true)}>read plan</button>;
-  if (!data && !error) return <span className="help">reading…</span>;
-  if (error || (data && !data.available)) {
-    const waiting = !!data?.retry_after_s;
-    return (
-      <span className="plan-compact">
-        <span>
-          {waiting ? "paused" : "unavailable"}{" "}
-          {!waiting && (
-            <button type="button" className="linkish" disabled={busy} onClick={refresh}>{busy ? "asking…" : "ask Anthropic"}</button>
-          )}
-        </span>
-        <span className="help">{error ?? data?.reason}</span>
-      </span>
-    );
+  const { data, error, busy, slow, result, refresh, active } =
+    usePlanUsage(armed ? credentialId : null, mode);
+
+  // A press on a row that has not armed has to do both things, and arming is a
+  // state change — `refresh` captured before it still sees an inactive hook and
+  // does nothing, so the first press on an idle row would only arm it and the
+  // reader would have to press again for the thing they pressed for. The press
+  // is remembered and fired once the hook is live.
+  const [pending, setPending] = useState(false);
+  useEffect(() => {
+    if (!pending || !active) return;
+    setPending(false);
+    refresh();
+  }, [pending, active, refresh]);
+  const press = () => { if (armed) refresh(); else { setArmed(true); setPending(true); } };
+
+  // A value that was just replaced checks itself, so the press that fixed the
+  // token is the press that proves it fixed.
+  const asked = useRef(checkNonce);
+  useEffect(() => {
+    if (checkNonce === undefined || checkNonce === asked.current) return;
+    asked.current = checkNonce;
+    if (armed) refresh(); else { setArmed(true); setPending(true); }
+  }, [checkNonce, armed, refresh]);
+
+  // The sentence is lifted to a full-width line under the row: this cell is
+  // 152px wide and already wraps, and "Anthropic rejected this token — it may
+  // have expired" is not a thing to read four words at a time.
+  useEffect(() => { onResult?.(result); }, [result, onResult]);
+
+  if (mode !== "subscription") {
+    return <span className="muted" title="API keys are metered per call, in dollars; there is no plan window to fill.">— metered per call</span>;
   }
-  // Rolled-over windows are dropped rather than dimmed: this is one line in a
-  // table, and the line has room for what is true, not for what stopped being
-  // true. The full meter under the credential says which window reset and when.
-  const shown = live(data!.windows).filter((w) => w.key === "five_hour" || w.key === "seven_day");
-  const short = (w: PlanWindow) => (w.key === "five_hour" ? "session" : "week");
-  const ask = (
-    <button type="button" className="linkish" disabled={busy} onClick={refresh}
-            title="Ask Anthropic for this subscription's windows now">
-      {busy ? "asking…" : "ask"}
-    </button>
-  );
+  // `pending` counts as busy: the press has been made and has not answered yet,
+  // and a button that goes back to "Check now" in between invites a second one.
+  const check = <CheckNow busy={busy || pending} slow={slow} className="small" onClick={press} />;
+  if (!active) {
+    // Never a zero and never an empty bar: nobody has asked yet, and that is a
+    // different thing from a plan with nothing left on it.
+    return <span className="plan-compact"><span className="help">not checked yet</span>
+      <span>{check}</span></span>;
+  }
+  if (!data && !error) {
+    return <span className="plan-compact">
+      <span className="help">reading…</span><span>{check}</span></span>;
+  }
+
+  // A failed press never costs the reading it could not replace. This used to
+  // test `error` first and put an error message where the bars had been, which
+  // is the one thing the design note in `plan_probe` says not to do.
+  const shown = data?.available
+    ? live(data.windows).filter((w) => w.key === "five_hour" || w.key === "seven_day")
+    : [];
   if (!shown.length) {
+    // Short in the cell, whole on hover, and explained at full width by the
+    // line a press leaves under the row. The server's reason is a sentence
+    // written for a reader; four words at a time in a 152px column is not
+    // reading it, and printing it here as well as in the result line says the
+    // same thing twice on one screen.
     return (
       <span className="plan-compact">
-        <span className="help">every window has reset since this was reported</span>
-        <span>{ask}</span>
+        <span className="help" title={data?.reason ?? error ?? undefined}>no reading yet</span>
+        <span>{check}</span>
       </span>
     );
   }
@@ -695,22 +1049,26 @@ export function PlanMeterCompact({ credentialId, mode, auto = true }: {
     <span className="plan-compact">
       <span>
         {shown.map((w) => (
-          <span key={w.key} title={`${w.label}: ${pct(w.utilization)} used${w.resets_at ? `, resets ${fmtSoon(w.resets_at)}` : ""}`} style={{ marginRight: 10 }}>
+          // Label above the bar, not beside it: an 88px track and "session 16%"
+          // are 164px of content in a 152px column, and side by side they
+          // overflowed under the Actions buttons and lost the number.
+          <span className="plan-mini" key={w.key} title={`${w.label}: ${pct(w.utilization)} used${w.resets_at ? `, resets ${fmtSoon(w.resets_at)}` : ""}`}>
+            <span className="plan-mini-label">{shortLabel(w)} <b>{pct(w.utilization)}</b></span>
             <span className={`mini-meter ${fillClass(w.utilization)}`}><i style={{ width: `${Math.min(w.utilization, 1) * 100}%` }} /></span>
-            {short(w)} {pct(w.utilization)}
           </span>
         ))}
       </span>
       {full ? (
         <span className="plan-verdict critical" style={{ margin: 0 }}>
-          runs on this credential fail until the {short(full)} window resets{full.resets_at ? ` ${fmtSoon(full.resets_at)}` : ""}
+          runs on this credential fail until the {shortLabel(full)} window resets{full.resets_at ? ` ${fmtSoon(full.resets_at)}` : ""}
         </span>
       ) : (
         <span className="help">
-          {shown.filter((w) => w.resets_at).map((w) => `${short(w)} resets ${fmtSoon(w.resets_at)}`).join(" · ") || " "}
+          {shown.filter((w) => w.resets_at).map((w) => `${shortLabel(w)} resets ${fmtSoon(w.resets_at)}`).join(" · ") || " "}
         </span>
       )}
-      <span className="plan-asof">reported {fmtAgo(data!.fetched_at)} · {ask}</span>
+      <span className="plan-asof">reported {fmtAgo(data!.fetched_at)}</span>
+      <span>{check}</span>
     </span>
   );
 }

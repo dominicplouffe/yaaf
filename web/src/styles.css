@@ -1642,7 +1642,15 @@ button.rolepick { width: 100%; text-align: left; background: var(--surface-2); }
   .llm-credentials td.pick { grid-column: 1 / -1; }
   .llm-credentials .plan-compact { white-space: normal; }
   .llm-credentials .plan-compact > span > span { display: inline-block; margin-bottom: 2px; }
+  /* …except a window, which is a label over its own bar at every width. Inline
+     here ran "session 16%" and "week 57%" together into one unreadable run. */
+  .llm-credentials .plan-compact .plan-mini { display: block; margin-bottom: 0; }
   .llm-credentials td[data-label]::before { content: attr(data-label); display: block; font-size: 11px; color: var(--muted, #999); margin-bottom: 4px; }
+  /* Down here a row is a two-column card, and the result is one sentence: it
+     takes the whole block and keeps no grid, no header and no sticky offset. */
+  .llm-credentials tr.plan-result { display: block; padding: 0 0 12px; border-top: 0; }
+  .cred-table tr.plan-result td { padding: 0 0 0 8px; }
+  .cred-table tr.plan-result td > * { position: static; max-width: none; }
 }
 
 /* ── plan meter: Anthropic's subscription windows, drawn beside yaaf's own cap ── */
@@ -1663,3 +1671,40 @@ button.rolepick { width: 100%; text-align: left; background: var(--surface-2); }
 .plan-foot { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-top: 2px; }
 .plan-compact { display: inline-flex; flex-direction: column; gap: 2px; font-size: 12px; white-space: nowrap; }
 .plan-compact .help { margin: 0; font-size: 11px; }
+.plan-compact .check-now { margin-top: 4px; }
+/* One window per line, its number over its bar. Side by side, an 88px track
+   plus "session 16%" is 164px of content in a 152px column: it overflowed
+   under the Actions buttons and the percentage — the one number anybody came
+   to this column to read — was the part that got clipped. */
+.plan-compact .plan-mini { display: block; }
+.plan-compact .plan-mini + .plan-mini { margin-top: 5px; }
+.plan-compact .plan-mini-label { display: block; white-space: nowrap; line-height: 1.3; }
+.plan-compact .plan-mini-label b { font-variant-numeric: tabular-nums; }
+.plan-compact .mini-meter { display: block; width: 100%; margin: 2px 0 0; }
+
+/* ── the answer to a press ──────────────────────────────────────────────────────
+   Every outcome of this button used to look the same: a press that worked, one
+   that was floored, one that was throttled and one with a dead token all
+   returned the stored row and redrew the same cell. These draw the difference.
+   Never colour alone — each line carries its own ✓ / ✕ / ⏲ glyph. */
+.plan-result-line { display: inline-block; font-size: 12px; line-height: 1.45; }
+.plan-result-line.ok { color: var(--good); }
+.plan-result-line.bad { color: var(--critical); }
+.plan-result-line button.linkish { font-size: 12px; }
+
+/* The sentence gets the table's full width rather than the 152px cell that
+   holds the numbers, and it is attached to the row it answers: no top border,
+   an accent edge on the left, and the row above keeps its own bottom rule. */
+.cred-table tr.plan-result td {
+  border-top: 0; padding: 0 10px 8px;
+  border-left: 2px solid var(--accent); background: var(--surface-2);
+}
+/* This table scrolls sideways, and the reader who scrolled right to reach the
+   button is the one being answered — so the sentence rides the scroll instead
+   of sitting off-screen at the table's left edge. */
+.cred-table tr.plan-result td > * {
+  position: sticky; left: 10px; max-width: calc(100vw - 120px);
+}
+.check-now { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.check-now button { display: inline-flex; align-items: center; gap: 6px; }
+.check-now .help { margin: 0; font-size: 11px; }
