@@ -348,7 +348,16 @@ def llm_credential_usage(credential_id: str,
     and weekly windows). Reported by every agent run on the credential; without
     `--refresh` this reads that report and costs nothing. API keys have no plan
     meter and say so, and a window that has reset since it was last reported
-    says that rather than showing the number it had when it was still open."""
+    says that rather than showing the number it had when it was still open.
+
+    With `--refresh` the answer carries an `asked` block saying what the request
+    actually did: `fresh` when Anthropic answered, `floored` inside the fifteen
+    second minimum, `throttled` while a 429 is being honoured (with the wait),
+    `rejected` when the token was refused — which is the one to act on, and
+    means replacing the credential's value — and `unreachable` or `unreadable`
+    when the call failed. Every one of those used to return the stored row and
+    say nothing, so a press that could not ask looked exactly like one that
+    did."""
     with _client() as client:
         _show(client.get(f"/admin/settings/llm-credentials/{credential_id}/usage",
                          params={"refresh": "true"} if refresh else None))

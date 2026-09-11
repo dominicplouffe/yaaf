@@ -1108,3 +1108,203 @@ def test_unknown_credential_ids_are_404_on_the_settings_screen(client):
     assert client.patch(f"{URL}/secr_nope", headers=ADMIN, json={"name": "x"}).status_code == 404
     assert client.delete(f"{URL}/secr_nope", headers=ADMIN).status_code == 404
     assert client.get(f"{URL}/secr_nope/usage", headers=ADMIN).status_code == 404
+
+
+# ── what the button says it did ─────────────────────────────────────────────────
+#
+# The restraints above were all correct and all silent. A press inside the
+# floor, a press during a throttle and a press with a dead token each answered
+# `200` with the stored row — the same answer as a press that worked, which on
+# screen is no answer at all. The credential this button exists for is the one
+# whose runs have stopped, and that is usually the one whose token is the
+# problem, so the case most needing a sentence was the case that got none.
+# These pin the sentence rather than the silence.
+
+
+def _forget(token: str) -> None:
+    """Clear everything this token earned — floor and blackout both."""
+    from yaaf.server import plan_probe
+
+    plan_probe.forget(token)
+
+
+def test_a_press_that_worked_says_so(client, monkeypatch):
+    """`asked.state` is the whole point: `cached` could only ever say "you got
+    the stored row", which is also what a throttle and a dead token return."""
+    token = "sk-ant-oat01-this-one-answers"
+    key = create(client, value=token, mode="subscription")
+    fake_usage_endpoint(monkeypatch, _Response(200, usage_payload(session=22.0)))
+
+    body = client.get(f"{URL}/{key['id']}/usage?refresh=true", headers=ADMIN).json()
+    assert body["asked"] == {"state": "fresh", "retry_after_s": None}
+    assert body["cached"] is False
+
+
+def test_a_read_that_did_not_ask_claims_nothing(client, monkeypatch):
+    """No `asked` without `refresh`. An ordinary screen load must not look like
+    a press that succeeded — it is the local row, and it says so by omission."""
+    token = "sk-ant-oat01-nobody-pressed-anything"
+    key = create(client, value=token, mode="subscription")
+    calls = fake_usage_endpoint(monkeypatch, _Response(200, usage_payload(session=5.0)))
+
+    body = client.get(f"{URL}/{key['id']}/usage", headers=ADMIN).json()
+    assert "asked" not in body and body["cached"] is True and calls == []
+
+
+def test_a_floored_press_says_how_long_it_is_floored_for(client, monkeypatch):
+    """Fifteen seconds is a wait worth absorbing rather than reporting, so the
+    number has to reach the screen for the screen to be able to absorb it. A
+    press that only knew "nothing happened" could not tell this from a token
+    that will never answer."""
+    token = "sk-ant-oat01-pressed-twice-in-a-second"
+    key = create(client, value=token, mode="subscription")
+    calls = fake_usage_endpoint(monkeypatch, _Response(200, usage_payload(session=31.0)))
+
+    client.get(f"{URL}/{key['id']}/usage?refresh=true", headers=ADMIN)
+    body = client.get(f"{URL}/{key['id']}/usage?refresh=true", headers=ADMIN).json()
+    assert len(calls) == 1
+    assert body["asked"]["state"] == "floored"
+    assert 0 < body["asked"]["retry_after_s"] <= 15.0
+    # And the number is still there: floored is not an error.
+    assert {w["key"]: w["utilization"] for w in body["windows"]}["five_hour"] == 0.31
+
+
+def test_a_throttled_press_names_the_wait(client, monkeypatch):
+    """A `429` is the one refusal where waiting *is* the remedy, so it is the
+    one that carries a countdown."""
+    token = "sk-ant-oat01-throttled-and-says-so"
+    key = create(client, value=token, mode="subscription")
+    fake_usage_endpoint(monkeypatch, _Response(429, None, {"retry-after": "1800"}))
+
+    body = client.get(f"{URL}/{key['id']}/usage?refresh=true", headers=ADMIN).json()
+    assert body["asked"]["state"] == "throttled"
+    assert body["asked"]["retry_after_s"] == 1800.0
+
+    # And the press after it, inside the blackout, still says "throttled" — not
+    # "floored". Which refusal it is decides whether the reader waits or acts,
+    # so a blackout that forgot its own cause would send them to the wrong one.
+    _clear_floor(token)
+    again = client.get(f"{URL}/{key['id']}/usage?refresh=true", headers=ADMIN).json()
+    assert again["asked"]["state"] == "throttled"
+    assert 0 < again["asked"]["retry_after_s"] <= 1800.0
+
+
+def test_a_rejected_token_is_named_as_rejected_and_offered_no_countdown(client, monkeypatch):
+    """The case the button exists for, and the one it used to handle worst. An
+    expired `sk-ant-oat` token earns a fifteen-minute quiet, so every press for
+    the next fifteen minutes was a silent `200`. It is not a wait — waiting
+    fixes nothing — so it carries no `retry_after_s`, because a countdown here
+    points the reader away from the only thing that works."""
+    token = "sk-ant-oat01-this-token-is-expired"
+    key = create(client, value=token, mode="subscription")
+    fake_usage_endpoint(monkeypatch, _Response(401, None))
+
+    body = client.get(f"{URL}/{key['id']}/usage?refresh=true", headers=ADMIN).json()
+    assert body["asked"] == {"state": "rejected", "retry_after_s": None}
+
+    _clear_floor(token)
+    again = client.get(f"{URL}/{key['id']}/usage?refresh=true", headers=ADMIN).json()
+    assert again["asked"] == {"state": "rejected", "retry_after_s": None}
+
+
+def test_a_rejected_press_is_never_told_to_press_again(client, monkeypatch):
+    """The dead end. A credential with no reading answered "press refresh" — on
+    the press that had just been refused. Somebody following that advice presses
+    the same button forever and is never told their token is dead."""
+    token = "sk-ant-oat01-rejected-and-never-harvested"
+    key = create(client, value=token, mode="subscription")
+    fake_usage_endpoint(monkeypatch, _Response(403, None))
+
+    body = client.get(f"{URL}/{key['id']}/usage?refresh=true", headers=ADMIN).json()
+    assert body["available"] is False
+    assert "refused this token" in body["reason"]
+    assert "Replace the credential's value" in body["reason"]
+    assert "press refresh" not in body["reason"]
+
+
+def test_an_unreachable_press_says_so_without_earning_a_backoff(client, monkeypatch):
+    """No server was reached, so there is nothing to back off from — but the
+    reader still has to be told, or a network outage reads as a working button
+    handing back a stale number."""
+    import httpx
+
+    token = "sk-ant-oat01-no-route-to-host"
+    key = create(client, value=token, mode="subscription")
+    fake_usage_endpoint(monkeypatch, _Response(200, usage_payload(session=12.0)))
+    client.get(f"{URL}/{key['id']}/usage?refresh=true", headers=ADMIN)
+
+    def dead(*a, **k):
+        raise httpx.ConnectError("no route to host")
+
+    monkeypatch.setattr(httpx, "get", dead)
+    _clear_floor(token)
+    body = client.get(f"{URL}/{key['id']}/usage?refresh=true", headers=ADMIN).json()
+    assert body["asked"]["state"] == "unreachable"
+    # The reading it could not replace is still standing.
+    assert {w["key"]: w["utilization"] for w in body["windows"]}["five_hour"] == 0.12
+    # And nothing was quieted, so the next press is allowed to try.
+    _clear_floor(token)
+    fake_usage_endpoint(monkeypatch, _Response(200, usage_payload(session=13.0)))
+    after = client.get(f"{URL}/{key['id']}/usage?refresh=true", headers=ADMIN).json()
+    assert after["asked"]["state"] == "fresh"
+
+
+def test_an_answer_with_no_window_in_it_is_not_a_success(client, monkeypatch):
+    """A payload this cannot make a number of leaves the meter exactly as it
+    was, so reporting `fresh` would put "checked just now" over an unchanged
+    reading — a claim about freshness that nothing backs."""
+    token = "sk-ant-oat01-answers-with-nothing-useful"
+    key = create(client, value=token, mode="subscription")
+    fake_usage_endpoint(monkeypatch, _Response(200, {"nothing": "usable"}))
+
+    body = client.get(f"{URL}/{key['id']}/usage?refresh=true", headers=ADMIN).json()
+    assert body["asked"]["state"] == "unreadable"
+
+
+def test_the_usage_answer_carries_the_same_digest_as_the_list_row(client, monkeypatch):
+    """Several credential rows routinely hold one subscription and share one
+    meter, and a screen showing them together has to move them together. It
+    groups on this digest, so the two surfaces disagreeing would leave rows
+    quietly contradicting each other with no test to catch it — the list
+    truncates the fingerprint and the reading's own key does not."""
+    token = "sk-ant-oat01-one-key-two-rows"
+    first = create(client, name="First", value=token, mode="subscription")
+    second = create(client, name="Second", value=token, mode="subscription")
+    fake_usage_endpoint(monkeypatch, _Response(200, usage_payload(session=7.0)))
+
+    listed = {row["id"]: row for row in client.get(URL, headers=ADMIN).json()}
+    for key in (first, second):
+        body = client.get(f"{URL}/{key['id']}/usage", headers=ADMIN).json()
+        assert body["token_digest"] == listed[key["id"]]["token"]
+    assert listed[first["id"]]["token"] == listed[second["id"]]["token"]
+
+
+def test_an_api_key_carries_no_digest_to_group_on(client):
+    """There is no plan behind an API key, so there is no meter to share."""
+    key = create(client, value="sk-ant-api03-billed-per-call")
+    assert client.get(f"{URL}/{key['id']}/usage", headers=ADMIN).json()["token_digest"] is None
+
+
+def test_replacing_a_credentials_value_clears_its_blackout(client, monkeypatch):
+    """Re-pasting the same token is what you do when you believe the stored copy
+    is the problem. Without this it lands inside the fifteen-minute quiet the
+    rejection just earned, and the button you press to check the fix tells you
+    nothing — which is indistinguishable from the fix not working."""
+    token = "sk-ant-oat01-rotated-back-to-itself"
+    key = create(client, value=token, mode="subscription")
+    calls = fake_usage_endpoint(monkeypatch, _Response(401, None))
+    client.get(f"{URL}/{key['id']}/usage?refresh=true", headers=ADMIN)
+    assert len(calls) == 1
+
+    # Still quiet, as it should be, until the value is touched.
+    _clear_floor(token)
+    client.get(f"{URL}/{key['id']}/usage?refresh=true", headers=ADMIN)
+    assert len(calls) == 1
+
+    client.patch(f"{URL}/{key['id']}", headers=ADMIN,
+                 json={"name": "Production", "value": token})
+    calls[:] = []
+    fake_usage_endpoint(monkeypatch, _Response(200, usage_payload(session=18.0)), calls)
+    body = client.get(f"{URL}/{key['id']}/usage?refresh=true", headers=ADMIN).json()
+    assert len(calls) == 1 and body["asked"]["state"] == "fresh"
+    _forget(token)

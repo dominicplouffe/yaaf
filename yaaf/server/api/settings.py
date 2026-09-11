@@ -366,6 +366,17 @@ def _save_llm(session: Session, row: Secret, name: str, value: str | None) -> di
         # Nothing to invalidate: a plan reading is filed under the token, not
         # the credential, so the old token's meter still belongs to whatever
         # else holds it and this credential simply has none until its next run.
+        #
+        # One thing does have to be cleared. A rejected token is kept quiet for
+        # fifteen minutes so a dead credential cannot earn a call per press, and
+        # somebody who re-pastes the same value — which is what you do when you
+        # believe the stored copy is the problem — would land inside that quiet
+        # and be told nothing, by the button they pressed to check the fix. A
+        # new value is a new fingerprint and clears itself; this is for the
+        # value that is not new.
+        from yaaf.server import plan_probe
+
+        plan_probe.forget(value)
     row.name = name
     session.add(row)
     try:
@@ -551,6 +562,31 @@ def unhide_llm_credentials(body: HiddenIn, session: Session = Depends(db)) -> di
     return _set_hidden(session, body.ids, hide=False)
 
 
+def _no_reading_reason(outcome) -> str:
+    """Why this credential has no meter, said so the reader knows what to do.
+
+    Only one of these sentences is about patience. The rest name something that
+    has to change first, which is the point: the row that reaches this branch is
+    usually a token nothing can spend on, and "press refresh" — the only answer
+    it ever gave — is advice to repeat the press that just failed.
+    """
+    if outcome is None or outcome.state == "floored":
+        return ("no reading yet — the meter arrives with this credential's next "
+                "agent run, or now if you check it")
+    return {
+        "rejected": "Anthropic refused this token when asked just now — it may have "
+                    "expired or been revoked. Replace the credential's value to fix it.",
+        "throttled": "Anthropic is rate-limiting this token, so it could not be asked "
+                     "just now — the meter also arrives with this credential's next "
+                     "agent run",
+        "unreachable": "Anthropic could not be reached just now — the meter also "
+                       "arrives with this credential's next agent run",
+        "unreadable": "Anthropic answered with something this could not read — the "
+                      "meter also arrives with this credential's next agent run",
+    }.get(outcome.state, "no reading yet — the meter arrives with this credential's "
+                         "next agent run, or now if you check it")
+
+
 @router.get("/llm-credentials/{credential_id}/usage")
 def llm_credential_usage(credential_id: str, refresh: bool = False,
                          session: Session = Depends(db)) -> dict:
@@ -563,10 +599,16 @@ def llm_credential_usage(credential_id: str, refresh: bool = False,
 
     `refresh` is the exception, and it is a person pressing a button — the only
     thing in this platform that asks Anthropic for a meter, and the only way to
-    get one for a credential no run is covering. Floored at one call per token
-    every fifteen seconds and silent while throttled, so pressing it six times
-    is one call; and when it cannot ask, it answers with the stored row rather
-    than an error, because the reader wanted the number, not the provenance.
+    get one for a credential no run is covering. It is still floored at one call
+    per token every fifteen seconds and still honours a throttle, and a press
+    that cannot ask still answers with the stored row rather than an error,
+    because the reader wanted the number.
+
+    What it no longer does is keep the reason to itself. `asked` says which of
+    the six things happened, so the screen can tell a press that worked from one
+    that was floored, throttled, or refused outright — those were one answer
+    here for as long as the button existed, and a button whose every outcome
+    looks the same is a button nobody can trust.
 
     API keys have no plan meter, a subscription nothing has reported on yet has
     no reading, and a reading whose windows have all reset since describes a
@@ -574,6 +616,7 @@ def llm_credential_usage(credential_id: str, refresh: bool = False,
     because the screen asking is the same screen either way.
     """
     from yaaf.core.crypto import decrypt
+    from yaaf.core.plan_usage import fingerprint
     from yaaf.server import plan_probe
 
     row = _managed(session, credential_id, lock=False)
@@ -582,13 +625,25 @@ def llm_credential_usage(credential_id: str, refresh: bool = False,
         return {"credential_id": credential_id, "mode": mode, "available": False,
                 "reason": "API keys are metered per call in dollars, not against a plan — "
                           "the monthly budget below is the meter that applies",
-                "windows": [], "fetched_at": None, "cached": False}
+                "windows": [], "fetched_at": None, "cached": False,
+                "token_digest": None}
     token = decrypt(row.ciphertext)
-    asked = plan_probe.refresh(session, token) if refresh else False
+    outcome = plan_probe.refresh(session, token) if refresh else None
     found = plan_usage.stored(session, token)
+    # The same truncated digest `_llm_summary` puts on the list row, so a screen
+    # showing several rows of one subscription can tell that they are one meter
+    # and move them together. A digest, never the value, on an admin-only route.
+    head = {"credential_id": credential_id, "mode": mode,
+            "token_digest": fingerprint(token)[:8],
+            "cached": outcome is None or not outcome.ok}
+    if outcome is not None:
+        head["asked"] = {"state": outcome.state, "retry_after_s": outcome.retry_after_s}
     if found is None:
-        return {"credential_id": credential_id, "mode": mode, "available": False,
-                "reason": "no reading yet — the meter arrives with this credential's "
-                          "next agent run, or now if you press refresh",
-                "windows": [], "fetched_at": None, "cached": False}
-    return {"credential_id": credential_id, "mode": mode, "cached": not asked, **found}
+        # A press that failed must not be answered with "press refresh". That
+        # sentence is true for a credential nobody has asked about yet and a
+        # dead end for the one case it gets read in: somebody pressed, Anthropic
+        # refused the token, and the screen sent them back to the same button.
+        return {**head, "available": False,
+                "reason": _no_reading_reason(outcome),
+                "windows": [], "fetched_at": None}
+    return {**head, **found}
