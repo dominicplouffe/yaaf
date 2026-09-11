@@ -455,10 +455,21 @@ export function LlmCredentials({ onChanged }: { onChanged?: () => void } = {}) {
 // cap says. A chairman whose runs started failing at 3pm deserves to see that
 // the session window is full and clears at 3:22, not a generic credential error.
 //
-// The server reads the meter from the same endpoint Claude Code's `/usage` uses.
-// It is Anthropic's number, not yaaf's: shown, never enforced.
+// The server does not fetch these numbers: the SDK reports them to every agent
+// run on the credential, and the server files and re-reads one local row. So a
+// number here is as new as this credential's last finished run — which is why
+// the screen names when that was, and why a window whose reset time has passed
+// is drawn as rolled over rather than as the percentage it died holding. It is
+// Anthropic's number, not yaaf's: shown, never enforced.
 
-export interface PlanWindow { key: string; label: string; utilization: number; resets_at: string | null }
+export interface PlanWindow {
+  key: string; label: string; utilization: number; resets_at: string | null;
+  /** The window's own reset time has passed, so this percentage measures a
+      window that is over. Not the same as stale: the number was true, and what
+      it was true about is gone. Drawn as a rollover, never as a bar — and never
+      as 0%, which is a number nobody reported. */
+  expired?: boolean;
+}
 export interface PlanUsage {
   credential_id: string; mode: string; available: boolean; reason: string | null;
   windows: PlanWindow[]; fetched_at: string; cached: boolean;
@@ -472,29 +483,45 @@ export interface PlanUsage {
 const usageUrl = (id: string, refresh: boolean) =>
   `${endpoint}/${id}/usage${refresh ? "?refresh=true" : ""}`;
 
-/** Reads a credential's plan meter. One local row read, on mount.
+/** How often an open screen re-reads the meter.
 
-    It used to poll every 60 seconds. There is nothing to poll now: the meter
-    is harvested from the credential's own agent runs rather than fetched from
-    Anthropic, so re-asking the server cannot produce a newer number — only a
-    run can. The refresh button re-reads the row for a reader who just watched
-    one finish. Does nothing for a non-subscription credential. */
+    It used to be 60 seconds, back when each read was a live call to Anthropic
+    — which is what earned the 429 that got the fetching deleted. Re-reading is
+    not what was wrong; asking Anthropic was. What the server answers now is one
+    local row, written by this credential's own finished runs, so a settings tab
+    left open at nine is otherwise still showing nine o'clock at noon while runs
+    file newer numbers underneath it. Ten minutes is paced to what it is
+    watching: these windows are five hours and seven days long, and nothing a
+    reader can act on moves faster than that. */
+const REREAD_MS = 10 * 60_000;
+
+/** Reads a credential's plan meter: one local row read on mount, and again
+    every ten minutes for as long as the screen is open.
+
+    A tick may improve the screen and never degrade it. It does not raise the
+    busy flag — the refresh button would blink "reading…" unbidden every ten
+    minutes — and a tick that fails leaves the last good reading standing rather
+    than replacing a real number with an error, which is honest because that
+    number carries the time it was reported. Does nothing for a non-subscription
+    credential. */
 export function usePlanUsage(credentialId: string | null, mode: string | null) {
   const [data, setData] = useState<PlanUsage | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const active = !!credentialId && mode === "subscription";
-  const load = useCallback((refresh: boolean) => {
+  const load = useCallback((refresh: boolean, quiet = false) => {
     if (!active || !credentialId) return;
-    setBusy(true);
+    if (!quiet) setBusy(true);
     get<PlanUsage>(usageUrl(credentialId, refresh))
       .then((d) => { setData(d); setError(null); })
-      .catch((e: Error) => setError(e.message))
-      .finally(() => setBusy(false));
+      .catch((e: Error) => { if (!quiet) setError(e.message); })
+      .finally(() => { if (!quiet) setBusy(false); });
   }, [active, credentialId]);
   useEffect(() => {
     if (!active) { setData(null); setError(null); return; }
     load(false);
+    const timer = setInterval(() => load(false, true), REREAD_MS);
+    return () => clearInterval(timer);
   }, [active, load]);
   return { data, error, busy, refresh: () => load(true), active };
 }
@@ -502,8 +529,21 @@ export function usePlanUsage(credentialId: string | null, mode: string | null) {
 const fillClass = (u: number) => (u >= 1 ? "over" : u >= 0.8 ? "warn" : "");
 const pct = (u: number) => `${Math.min(999, Math.round(u * 100))}%`;
 
+/** The windows that still describe something. A window past its own reset has
+    turned over, and its percentage belongs to a window that is finished: it may
+    not raise an alarm, cap a verdict, or fill a bar. This is the whole of the
+    bug it fixes — the window at 100% is the one that stops the runs, a stopped
+    run reports nothing, so without this the screen says "runs fail until it
+    resets at 3:22pm" at seven in the evening and never stops saying it. */
+const live = (windows: PlanWindow[]) => windows.filter((w) => !w.expired);
+
 /** The sentence a reader needs before the bars: is anything about to stop runs? */
-function planVerdict(windows: PlanWindow[]): { cls: string; text: string } {
+function planVerdict(all: PlanWindow[]): { cls: string; text: string } {
+  const windows = live(all);
+  // The server answers `available: false` when every window has turned over, so
+  // this is the belt to the server's braces: a verdict is a sentence about
+  // windows, and there is none to make about none of them.
+  if (!windows.length) return { cls: "", text: "every window has reset since a run last reported one" };
   const full = windows.find((w) => w.utilization >= 1);
   if (full) {
     return { cls: "critical",
@@ -548,12 +588,20 @@ export function PlanMeter({ credentialId, mode, title = "Claude subscription pla
           <div className="plan-window" key={w.key}>
             <div className="plan-row">
               <span>{w.label}</span>
-              <span className="num">{pct(w.utilization)} used</span>
+              {/* An empty track and a dash, not 0%: this window did reset, and
+                  how full the new one is is a thing only a run can report. */}
+              <span className="num">{w.expired ? "—" : `${pct(w.utilization)} used`}</span>
             </div>
             <div className="track">
-              <div className={`fill ${fillClass(w.utilization)}`} style={{ width: `${Math.min(w.utilization, 1) * 100}%` }} />
+              {!w.expired && (
+                <div className={`fill ${fillClass(w.utilization)}`} style={{ width: `${Math.min(w.utilization, 1) * 100}%` }} />
+              )}
             </div>
-            <div className="foot">{w.resets_at ? `resets ${fmtSoon(w.resets_at)}` : " "}</div>
+            <div className="foot">
+              {w.expired
+                ? `reset ${fmtAgo(w.resets_at)} — the next run reports the new window`
+                : w.resets_at ? `resets ${fmtSoon(w.resets_at)}` : " "}
+            </div>
           </div>
         ))}
         <div className="plan-foot">
@@ -581,11 +629,14 @@ export function PlanMeter({ credentialId, mode, title = "Claude subscription pla
 
 /** One line for a table cell: session and week, with resets underneath.
 
-    `auto` decides whether it reads on its own. Every reading is a live call to
-    Anthropic behind a one-minute cache, so a list of forty credentials that
-    all poll is forty upstream calls a minute to answer a question about
-    thirty-eight keys nothing is running on. The rows that can fail a run
-    tonight read themselves; the rest wait to be asked. */
+    `auto` decides whether it reads on its own. This was written when every
+    reading was a live call to Anthropic, where forty rows meant forty upstream
+    calls a minute about thirty-eight keys nothing was running on. The reading
+    is a local row now and the arithmetic is gone, but the restraint is kept on
+    a second reason that has not changed: the meter on a credential no project
+    is running is a number nobody came here to read, and forty of them bury the
+    two rows that can fail a run tonight. Those read themselves; the rest wait
+    to be asked. */
 export function PlanMeterCompact({ credentialId, mode, auto = true }: {
   credentialId: string; mode: string; auto?: boolean;
 }) {
@@ -608,8 +659,12 @@ export function PlanMeterCompact({ credentialId, mode, auto = true }: {
       </span>
     );
   }
-  const shown = data!.windows.filter((w) => w.key === "five_hour" || w.key === "seven_day");
+  // Rolled-over windows are dropped rather than dimmed: this is one line in a
+  // table, and the line has room for what is true, not for what stopped being
+  // true. The full meter under the credential says which window reset and when.
+  const shown = live(data!.windows).filter((w) => w.key === "five_hour" || w.key === "seven_day");
   const short = (w: PlanWindow) => (w.key === "five_hour" ? "session" : "week");
+  if (!shown.length) return <span className="help">reset since the last run — the next one reports it</span>;
   const full = shown.find((w) => w.utilization >= 1);
   return (
     <span className="plan-compact">

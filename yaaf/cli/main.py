@@ -340,9 +340,13 @@ def edit_llm_credential(credential_id: str, name: str,
 @app.command()
 def llm_credential_usage(credential_id: str,
                          refresh: bool = typer.Option(False, "--refresh",
-                                                      help="Skip the minute-long cache")) -> None:
+                                                      help="Accepted and ignored: "
+                                                           "nothing is fetched, so "
+                                                           "there is nothing to re-ask")) -> None:
     """What Anthropic says is left on a subscription credential's plan (session
-    and weekly windows). API keys have no plan meter and say so."""
+    and weekly windows). API keys have no plan meter and say so, and a window
+    that has reset since a run last reported it says that rather than showing
+    the number it had when it was still open."""
     with _client() as client:
         _show(client.get(f"/admin/settings/llm-credentials/{credential_id}/usage",
                          params={"refresh": "true"} if refresh else None))

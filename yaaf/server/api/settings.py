@@ -560,11 +560,15 @@ def llm_credential_usage(credential_id: str, refresh: bool = False,
     the credential's own runs, where the SDK volunteers it, so this route
     cannot be rate-limited, cannot be slow, and cannot fail because an
     undocumented endpoint changed. `refresh` is accepted and ignored — there is
-    nothing to re-ask; the number moves when the credential is next used.
+    nothing to re-ask; the number moves when the credential is next used. It is
+    still worth re-reading on a timer, and the screens do: every finished run
+    files a new reading here, and a page opened at nine is otherwise showing
+    nine o'clock at noon.
 
-    API keys have no plan meter, and a subscription nothing has run on yet has
-    no reading; both say so rather than 404, because the screen asking is the
-    same screen either way.
+    API keys have no plan meter, a subscription nothing has run on yet has no
+    reading, and a reading whose windows have all reset since describes a plan
+    that no longer exists; all three say so rather than 404 or draw a bar,
+    because the screen asking is the same screen either way.
     """
     from yaaf.core.crypto import decrypt
 

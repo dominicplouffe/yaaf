@@ -29,9 +29,19 @@ to time out, no undocumented endpoint to break, and the number refreshes
 exactly when it moves — when the credential is actually used.
 
 The cost of that trade, stated plainly: a credential nothing has run on yet has
-no reading, and a quiet credential's reading ages. Both are honest — a meter
-that only moves when you spend cannot go stale in a way that matters — and the
-screen says "as of" rather than implying live.
+no reading, and a quiet credential's reading ages. The screen says "as of"
+rather than implying live.
+
+That trade shipped with a belief attached — "a meter that only moves when you
+spend cannot go stale in a way that matters" — and the belief is wrong in the
+one case the meter exists for. A window at 100% is precisely the window that
+stops the runs, and a stopped run files no reading, so the number freezes at
+full and the screen goes on saying "runs on this credential fail until it
+resets at 3:22pm" at seven in the evening, forever. The reading did not age; it
+outlived the window it describes. So every read here checks each window's own
+`resets_at` against the clock and marks the ones that have turned over: that
+number measured a window which no longer exists, and the honest thing to show
+is the rollover, not a percentage nobody has measured since.
 """
 
 from __future__ import annotations
@@ -90,6 +100,27 @@ def _reset_iso(value: Any) -> str | None:
     return str(value)
 
 
+def _has_turned_over(resets_at: Any, now: datetime) -> bool:
+    """Has this window's clock run out since a run last reported it?
+
+    A window with no reset time never turns over: an unlabelled shape the SDK
+    grew is better shown as it was reported than quietly retired on a guess.
+    So is one whose reset time this cannot read — the value comes back out of a
+    JSON column written by an older shape of this module, and the failure mode
+    of guessing wrong is hiding the bar that is about to stop every run on the
+    credential.
+    """
+    if not isinstance(resets_at, str) or not resets_at:
+        return False
+    try:
+        when = datetime.fromisoformat(resets_at.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return False
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=UTC)
+    return when <= now
+
+
 def record(session, token: str, plan: dict) -> None:
     """File what a run was told about the plan behind its own credential.
 
@@ -130,13 +161,36 @@ def stored(session, token: str) -> dict | None:
 
     A plain row read: no cache, because there is no call to save, and no TTL,
     because a reading nothing has superseded is still the last thing Anthropic
-    said.
+    said — about a window that is still open. A window whose `resets_at` has
+    passed is a different thing entirely, and comes back flagged `expired`: the
+    number is still the last thing Anthropic said, but what it was said about
+    is gone, and a caller that draws it as the current state of the plan is
+    telling its reader the opposite of the truth.
+
+    Nothing is invented in its place. The share of a window that has just
+    turned over is almost certainly near zero and it is emphatically not "0%
+    used" until a run says so, so the flag says the window rolled over and the
+    screens say the same. When every window in a reading has turned over, the
+    reading as a whole no longer describes the plan and the answer is
+    `available: False` — which is what every caller already renders as a
+    sentence rather than a bar, including the credential menu the Founder picks
+    from, where a frozen 100% is an argument against a credential that is in
+    fact wide open.
     """
     from yaaf.core.models import PlanReading
 
     row = session.get(PlanReading, fingerprint(token))
     if row is None or not row.windows:
         return None
-    return {"available": True, "reason": None, "windows": list(row.windows),
-            "status": row.status,
-            "fetched_at": row.seen_at.isoformat() if row.seen_at else _now_iso()}
+    now = datetime.now(UTC)
+    windows = [{**w, "expired": _has_turned_over(w.get("resets_at"), now)}
+               for w in row.windows]
+    answer = {"windows": windows, "status": row.status,
+              "fetched_at": row.seen_at.isoformat() if row.seen_at else _now_iso()}
+    if all(w["expired"] for w in windows):
+        return {"available": False,
+                "reason": "every window in the last reading has reset since a run "
+                          "reported it — the new numbers arrive with this "
+                          "credential's next agent run",
+                **answer}
+    return {"available": True, "reason": None, **answer}
