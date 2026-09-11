@@ -113,8 +113,13 @@ def choices(session: Session, *, with_plan: bool = False) -> list[dict]:
 
             plan = plan_usage.stored(session, decrypt(row.ciphertext))
         if plan and plan.get("available"):
+            # Expired windows are dropped rather than listed: this menu exists
+            # to talk an agent out of a credential that is about to refuse its
+            # run, and a window that reset an hour ago argues against a
+            # credential which is in fact wide open.
             entry["plan"] = [{"window": w["label"], "used_percent": round(w["utilization"] * 100),
-                              "resets_at": w["resets_at"]} for w in plan["windows"]]
+                              "resets_at": w["resets_at"]}
+                             for w in plan["windows"] if not w.get("expired")]
         out.append(entry)
     return out
 

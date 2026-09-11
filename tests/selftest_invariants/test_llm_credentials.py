@@ -399,6 +399,28 @@ LIVE_EVENT_RAW = {
 }
 
 
+def live_event_today() -> dict:
+    """The live event with its clock moved, and nothing else touched.
+
+    A captured payload has one perishable field. These reset times were a few
+    hours ahead of the capture and are now days behind, and a reading whose
+    windows have all reset is — correctly — no longer drawn as the plan, so the
+    calendar would otherwise decide what these tests assert. The whole event is
+    shifted by one offset, which keeps the spacing the live host reported;
+    `LIVE_EVENT_RAW` stays verbatim for the parser, which is what it was
+    captured for.
+    """
+    import copy
+    from datetime import UTC, datetime, timedelta
+
+    raw = copy.deepcopy(LIVE_EVENT_RAW)
+    shift = (datetime.now(UTC) + timedelta(hours=2)).timestamp() - raw["resetsAt"]
+    raw["resetsAt"] += shift
+    for window in raw["unifiedWindows"].values():
+        window["resetsAt"] += shift
+    return raw
+
+
 class _Info:
     """Duck-typed stand-in for claude_agent_sdk.RateLimitInfo."""
 
@@ -438,7 +460,7 @@ def test_the_meter_is_harvested_from_runs_and_never_asks_anthropic(client, monke
     assert "next agent run" in empty.json()["reason"]
 
     # What the sandbox pulls out of the SDK event, filed as a run would file it.
-    harvested = _plan_windows(_Info(LIVE_EVENT_RAW))
+    harvested = _plan_windows(_Info(live_event_today()))
     assert harvested["status"] == "allowed"
     assert {w["key"] for w in harvested["windows"]} == {"five_hour", "seven_day"}
     with db_session() as session:
@@ -449,8 +471,14 @@ def test_the_meter_is_harvested_from_runs_and_never_asks_anthropic(client, monke
     windows = {w["key"]: w for w in body["windows"]}
     assert windows["five_hour"]["utilization"] == 0.31
     assert windows["five_hour"]["label"] == "Current session"
-    # Epoch in, ISO out: one clock for the screen to read.
-    assert windows["five_hour"]["resets_at"].startswith("2026-")
+    # Epoch in, ISO out: one clock for the screen to read, naming the instant
+    # the event named rather than merely a string shaped like a date.
+    from datetime import UTC, datetime
+    said = {w["key"]: w["resets_at"] for w in harvested["windows"]}["five_hour"]
+    assert (datetime.fromisoformat(windows["five_hour"]["resets_at"])
+            == datetime.fromtimestamp(said, tz=UTC))
+    # A window still ahead of the clock is live, and is drawn as a bar.
+    assert windows["five_hour"]["expired"] is False
     assert windows["seven_day"]["utilization"] == 0.14
     # And the value never rides along with its own meter.
     assert token not in client.get(f"{URL}/{key['id']}/usage", headers=ADMIN).text
@@ -477,12 +505,16 @@ def test_finishing_a_run_files_the_plan_reading_against_its_credential(client):
     job = RunJob(run_id=run_id, project_id=project["id"],
                  agent_id=project["ceo_agent_id"], kind="agent_run",
                  trigger={}, task_id=None, attempt=1)
+    # Reset times ahead of the clock, because a reading whose windows have all
+    # reset is deliberately not offered as the plan and this test is about the
+    # filing, not the expiry.
+    ahead = live_event_today()["unifiedWindows"]
     daemon.finalize(job, RunResult(ok=True, summary="did a thing", tokens_in=5, tokens_out=7,
                                    plan={"status": "allowed", "windows": [
                                        {"key": "five_hour", "utilization": 0.31,
-                                        "resets_at": 1788901800},
+                                        "resets_at": ahead["five_hour"]["resetsAt"]},
                                        {"key": "seven_day", "utilization": 0.14,
-                                        "resets_at": 1788922800}]}))
+                                        "resets_at": ahead["seven_day"]["resetsAt"]}]}))
 
     body = client.get(f"{URL}/{key['id']}/usage", headers=ADMIN).json()
     assert body["available"] is True and body["status"] == "allowed"
@@ -512,6 +544,100 @@ def test_a_run_with_no_reading_finishes_exactly_as_before(client):
                  trigger={}, task_id=None, attempt=1)
     daemon.finalize(job, RunResult(ok=True, summary="no meter here", tokens_in=3, tokens_out=4))
     assert client.get(f"{URL}/{key['id']}/usage", headers=ADMIN).json()["available"] is False
+
+
+def test_a_window_past_its_own_reset_stops_claiming_the_credential_is_full(client):
+    """The meter that could never clear itself.
+
+    A window at 100% is exactly the window that stops the runs, and a stopped
+    run reports nothing, so the reading froze at full and the screen went on
+    saying "runs on this credential fail until it resets" long after it had. The
+    reading had not aged; it had outlived the window it measured, and only the
+    clock could tell — which is why the check is on every read rather than on a
+    sweep that would leave the screen wrong until its next tick.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from yaaf.core import llm_credentials, plan_usage
+    from yaaf.core.db import db_session
+
+    token = "sk-ant-oat01-the-session-window-rolled-over"
+    key = create(client, value=token, mode="subscription")
+    now = datetime.now(UTC)
+    with db_session() as session:
+        plan_usage.record(session, token, {"status": "rejected", "windows": [
+            {"key": "five_hour", "utilization": 1.0,
+             "resets_at": (now - timedelta(hours=2)).isoformat()},
+            {"key": "seven_day", "utilization": 0.4,
+             "resets_at": (now + timedelta(days=3)).isoformat()}]})
+
+    body = client.get(f"{URL}/{key['id']}/usage", headers=ADMIN).json()
+    # There is still a plan to show: one of its windows is live.
+    assert body["available"] is True
+    windows = {w["key"]: w for w in body["windows"]}
+    # The spent window keeps its name and its number — a reader wants to know
+    # which window turned over and what it had been — and is marked as
+    # describing a window that no longer exists. Nothing is invented in its
+    # place: "0% used" is a measurement nobody took.
+    assert windows["five_hour"]["expired"] is True
+    assert windows["five_hour"]["utilization"] == 1.0
+    assert windows["seven_day"]["expired"] is False
+
+    # And the menu the Founder picks a credential from offers only the window
+    # that is still open, rather than arguing against a credential that is in
+    # fact wide open.
+    with db_session() as session:
+        choice = next(c for c in llm_credentials.choices(session, with_plan=True)
+                      if c["id"] == key["id"])
+        assert [entry["window"] for entry in choice["plan"]] == ["This week, all models"]
+
+
+def test_a_reading_whose_windows_have_all_reset_is_not_drawn_as_the_plan(client):
+    """When every window has turned over there is no plan left to draw, and the
+    honest answer is the sentence the screen already has for "nothing to show
+    yet" — not a set of bars describing five hours that ended this morning."""
+    from datetime import UTC, datetime, timedelta
+
+    from yaaf.core import llm_credentials, plan_usage
+    from yaaf.core.db import db_session
+
+    token = "sk-ant-oat01-every-window-has-rolled-over"
+    key = create(client, value=token, mode="subscription")
+    gone = (datetime.now(UTC) - timedelta(hours=9)).isoformat()
+    with db_session() as session:
+        plan_usage.record(session, token, {"status": "rejected", "windows": [
+            {"key": "five_hour", "utilization": 1.0, "resets_at": gone},
+            {"key": "seven_day", "utilization": 0.97, "resets_at": gone}]})
+
+    body = client.get(f"{URL}/{key['id']}/usage", headers=ADMIN).json()
+    assert body["available"] is False
+    assert "reset" in body["reason"] and "next agent run" in body["reason"]
+    # The reading is not deleted — it is the last thing Anthropic said, and the
+    # screen names the time it was said — it simply stops standing in for now.
+    assert body["fetched_at"] is not None
+    with db_session() as session:
+        choice = next(c for c in llm_credentials.choices(session, with_plan=True)
+                      if c["id"] == key["id"])
+        assert "plan" not in choice
+
+
+def test_a_window_with_no_reset_time_is_never_retired_on_a_guess(client):
+    """The SDK's shapes are Anthropic's to grow. A window that reports no reset
+    time, or one this cannot parse, is shown as reported: the cost of retiring a
+    live window by mistake is hiding the bar that is about to stop every run."""
+    from yaaf.core import plan_usage
+    from yaaf.core.db import db_session
+
+    token = "sk-ant-oat01-a-window-without-a-clock"
+    key = create(client, value=token, mode="subscription")
+    with db_session() as session:
+        plan_usage.record(session, token, {"status": "allowed", "windows": [
+            {"key": "five_hour", "utilization": 0.6, "resets_at": None},
+            {"key": "seven_day", "utilization": 0.2, "resets_at": "whenever"}]})
+
+    body = client.get(f"{URL}/{key['id']}/usage", headers=ADMIN).json()
+    assert body["available"] is True
+    assert all(w["expired"] is False for w in body["windows"])
 
 
 def test_a_run_carries_the_plan_reading_home(tmp_path, monkeypatch):
@@ -593,7 +719,7 @@ def test_one_subscription_behind_many_credentials_shares_one_reading(client):
                    value="sk-ant-oat01-a-key-of-its-own")
 
     with db_session() as session:
-        plan_usage.record(session, token, _plan_windows(_Info(LIVE_EVENT_RAW)))
+        plan_usage.record(session, token, _plan_windows(_Info(live_event_today())))
 
     for row in rows:
         body = client.get(f"{URL}/{row['id']}/usage", headers=ADMIN).json()

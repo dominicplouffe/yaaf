@@ -59,7 +59,11 @@ What being managed buys you:
   Anthropic — the poller this replaced earned a `429` with a `Retry-After` of
   tens of minutes and left the meter dark while the credential was perfectly
   healthy. The trade is stated on the screen: a credential nothing has run on
-  yet has no reading, and the number carries the time a run last reported it. Shown and never
+  yet has no reading, and the number carries the time a run last reported it.
+  A window whose reset time has passed reports the rollover rather than the
+  percentage it held while it was open — the window at 100% is the one that
+  stops the runs, and a stopped run reports nothing, so the number would
+  otherwise sit at full long after the plan was clear. Shown and never
   enforced: the token cap is the platform's own rule. API keys have no plan
   meter.
 

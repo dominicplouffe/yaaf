@@ -40,7 +40,11 @@ link to the credentials list.
   windows, the same numbers as `/usage` in Claude Code, shown as a fact and
   never enforced. It is harvested from the credential's own agent runs — the
   SDK reports it on every run — so nothing is polled and nothing can be rate
-  limited; a credential nothing has run on yet says it has no reading yet.
+  limited; a credential nothing has run on yet says it has no reading yet, and
+  a window that has reset since the last run says it rolled over instead of
+  showing the percentage it held while it was open. An open screen re-reads the
+  meter every ten minutes so a tab left open all morning is not still showing
+  the morning; that re-read is one local row, not a call to Anthropic.
 - **Hiding a credential** is the answer to a list nobody chose. Promoting
   per-project keys above projects made one managed credential per historical
   key, most of them belonging to projects that had already ended, and none of
