@@ -6,9 +6,9 @@ Usage in claude.ai and under `/usage` in Claude Code. A project on a
 subscription credential spends against exactly those windows, so they are
 worth a screen.
 
-**This module makes no network calls.** It used to. There is no documented API
-for those bars, so it read the undocumented `GET /api/oauth/usage` with the
-stored token, once a minute per credential, forever — and got what anything
+**This module makes no network calls** — it is the store and the reader, and
+what writes it is described below. It used to do the asking itself, once a
+minute per credential from every open browser tab, and got what anything
 polling an interactive endpoint at a hundred times human rate eventually gets:
 `429 rate_limit_error`, with a `Retry-After` measured in tens of minutes. The
 meter stayed dark for hours while the credential itself was perfectly healthy
@@ -28,9 +28,16 @@ against the token, and screens read a local row. Nothing to rate-limit, nothing
 to time out, no undocumented endpoint to break, and the number refreshes
 exactly when it moves — when the credential is actually used.
 
-The cost of that trade, stated plainly: a credential nothing has run on yet has
-no reading, and a quiet credential's reading ages. The screen says "as of"
-rather than implying live.
+The cost of that trade is a credential nothing is running on: it reports
+nothing, so it shows nothing, and the case a chairman most needs this screen
+for is the one where the runs have already stopped. The door out of that is a
+button — `yaaf.server.plan_probe`, one floored, throttle-aware call for one
+subscription, and only when somebody presses for it — which files what it gets
+through `record` below, exactly as a run does. Two writers, one row, one shape.
+Which one last wrote a reading is not a distinction any screen needs to draw:
+both are Anthropic answering about the same account, and the screen says "as
+of" either way. Nothing here runs on a timer, which is the part worth keeping
+from the poller: an install nobody is looking at makes no requests at all.
 
 That trade shipped with a belief attached — "a meter that only moves when you
 spend cannot go stale in a way that matters" — and the belief is wrong in the
@@ -56,6 +63,7 @@ from typing import Any
 WINDOW_LABELS = {
     "five_hour": "Current session",
     "seven_day": "This week, all models",
+    "seven_day_oauth_apps": "This week, API apps",
     "seven_day_opus": "This week, Opus",
     "seven_day_sonnet": "This week, Sonnet",
     "overage": "Overage",
@@ -122,12 +130,13 @@ def _has_turned_over(resets_at: Any, now: datetime) -> bool:
 
 
 def record(session, token: str, plan: dict) -> None:
-    """File what a run was told about the plan behind its own credential.
+    """File what Anthropic said about the plan behind a credential.
 
-    Called on the completion path of every run that carried a reading, so the
-    meter is maintained by the spending itself. Last writer wins: every run on
-    this token is reading the same account, and the latest answer is the only
-    one worth keeping.
+    Called on the completion path of every run that carried a reading — so the
+    meter is maintained by the spending itself — and by the refresh button, for
+    the credentials no run is covering. Last writer wins: every caller is
+    reading the same account, and the latest answer is the only one worth
+    keeping.
 
     Tolerant on purpose. The shape is the SDK's and may grow, so a window this
     cannot make a number of is skipped rather than raised on — a meter is never
@@ -141,9 +150,13 @@ def record(session, token: str, plan: dict) -> None:
         share = _fraction(entry.get("utilization"))
         if not key or share is None:
             continue
-        windows.append({"key": key,
-                        "label": WINDOW_LABELS.get(key, key.replace("_", " ").capitalize()),
-                        "utilization": share,
+        # A caller may name its own window. The SDK's keys are all in the table
+        # above, but a model-scoped allowance arrives from the usage endpoint as
+        # a display name and a period — "Opus 5, this week" — which no lookup
+        # here could have known to write down.
+        label = entry.get("label") or WINDOW_LABELS.get(
+            key, key.replace("_", " ").capitalize())
+        windows.append({"key": key, "label": label, "utilization": share,
                         "resets_at": _reset_iso(entry.get("resets_at"))})
     if not windows:
         return

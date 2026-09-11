@@ -455,12 +455,15 @@ export function LlmCredentials({ onChanged }: { onChanged?: () => void } = {}) {
 // cap says. A chairman whose runs started failing at 3pm deserves to see that
 // the session window is full and clears at 3:22, not a generic credential error.
 //
-// The server does not fetch these numbers: the SDK reports them to every agent
-// run on the credential, and the server files and re-reads one local row. So a
-// number here is as new as this credential's last finished run — which is why
-// the screen names when that was, and why a window whose reset time has passed
-// is drawn as rolled over rather than as the percentage it died holding. It is
-// Anthropic's number, not yaaf's: shown, never enforced.
+// The numbers arrive on their own: the SDK reports these windows to every agent
+// run on the credential, and the server files them. Nothing on a clock asks for
+// them — the poller that did earned a 429 — so the one gap is a credential
+// nothing is running on, which is exactly what a full window produces. **Refresh**
+// is the door out of that gap, and it is a person's press rather than a timer:
+// it asks Anthropic now, for this one subscription. The screen names when the
+// number was reported, and a window whose reset time has passed is drawn as
+// rolled over rather than as the percentage it died holding. It is Anthropic's
+// number, not yaaf's: shown, never enforced.
 
 export interface PlanWindow {
   key: string; label: string; utilization: number; resets_at: string | null;
@@ -485,14 +488,13 @@ const usageUrl = (id: string, refresh: boolean) =>
 
 /** How often an open screen re-reads the meter.
 
-    It used to be 60 seconds, back when each read was a live call to Anthropic
-    — which is what earned the 429 that got the fetching deleted. Re-reading is
-    not what was wrong; asking Anthropic was. What the server answers now is one
-    local row, written by this credential's own finished runs, so a settings tab
-    left open at nine is otherwise still showing nine o'clock at noon while runs
-    file newer numbers underneath it. Ten minutes is paced to what it is
-    watching: these windows are five hours and seven days long, and nothing a
-    reader can act on moves faster than that. */
+    It used to be 60 seconds, and every one of those reads was a live call to
+    Anthropic from every open tab — which is what earned the 429. This one is
+    free: it re-reads the local row that finished runs write, so an open tab
+    picks up what has landed since instead of showing nine o'clock at noon. Ten
+    minutes is paced to what it watches — windows five hours and seven days
+    long, where nothing a reader can act on moves faster. Asking Anthropic is
+    never on this timer; that is the refresh button, and only when pressed. */
 const REREAD_MS = 10 * 60_000;
 
 /** Reads a credential's plan meter: one local row read on mount, and again
@@ -564,9 +566,12 @@ export function PlanMeter({ credentialId, mode, title = "Claude subscription pla
 }) {
   const { data, error, busy, refresh, active } = usePlanUsage(credentialId, mode);
   if (!active) return null;
+  // The one control on this page that does reach Anthropic. The server floors
+  // it at one call per subscription every fifteen seconds and honours any
+  // throttle, so a reader leaning on it gets the row back, not a rate limit.
   const refreshButton = (
     <button type="button" className="linkish" disabled={busy} onClick={refresh}>
-      {busy ? "reading…" : "refresh"}
+      {busy ? "asking Anthropic…" : "refresh"}
     </button>
   );
   let body;
@@ -605,7 +610,7 @@ export function PlanMeter({ credentialId, mode, title = "Claude subscription pla
           </div>
         ))}
         <div className="plan-foot">
-          <span className="asof">reported by a run {fmtAgo(data.fetched_at)}</span>
+          <span className="asof">reported {fmtAgo(data.fetched_at)}</span>
           {refreshButton}
         </div>
       </>
@@ -619,9 +624,10 @@ export function PlanMeter({ credentialId, mode, title = "Claude subscription pla
       {body}
       <p className="help" style={{ marginBottom: 0 }}>
         Anthropic's own meter for this subscription — the same numbers as <code>/usage</code> in
-        Claude Code, reported by the SDK on each agent run rather than polled, so it moves when
-        this credential is used. Every project on it draws from the same windows. Shown here,
-        not enforced here: the monthly cap is yaaf's separate limit.
+        Claude Code. The SDK reports them on every agent run, so the meter moves as this
+        credential is used; <strong>refresh</strong> asks Anthropic directly, which is how to
+        get a number on a credential that has gone quiet. Every project on it draws from the
+        same windows. Shown here, not enforced here: the monthly cap is yaaf's separate limit.
       </p>
     </div>
   );
@@ -636,7 +642,13 @@ export function PlanMeter({ credentialId, mode, title = "Claude subscription pla
     a second reason that has not changed: the meter on a credential no project
     is running is a number nobody came here to read, and forty of them bury the
     two rows that can fail a run tonight. Those read themselves; the rest wait
-    to be asked. */
+    to be asked.
+
+    Every row carries its own **ask** all the same, because this table is where
+    a chairman compares credentials and a row whose runs have stopped has no
+    other way to get a number. It is the same floored, throttle-aware call the
+    full meter's refresh makes, and rows sharing one subscription share one
+    answer. */
 export function PlanMeterCompact({ credentialId, mode, auto = true }: {
   credentialId: string; mode: string; auto?: boolean;
 }) {
@@ -652,7 +664,7 @@ export function PlanMeterCompact({ credentialId, mode, auto = true }: {
         <span>
           {waiting ? "paused" : "unavailable"}{" "}
           {!waiting && (
-            <button type="button" className="linkish" disabled={busy} onClick={refresh}>{busy ? "reading…" : "retry"}</button>
+            <button type="button" className="linkish" disabled={busy} onClick={refresh}>{busy ? "asking…" : "ask Anthropic"}</button>
           )}
         </span>
         <span className="help">{error ?? data?.reason}</span>
@@ -664,7 +676,20 @@ export function PlanMeterCompact({ credentialId, mode, auto = true }: {
   // true. The full meter under the credential says which window reset and when.
   const shown = live(data!.windows).filter((w) => w.key === "five_hour" || w.key === "seven_day");
   const short = (w: PlanWindow) => (w.key === "five_hour" ? "session" : "week");
-  if (!shown.length) return <span className="help">reset since the last run — the next one reports it</span>;
+  const ask = (
+    <button type="button" className="linkish" disabled={busy} onClick={refresh}
+            title="Ask Anthropic for this subscription's windows now">
+      {busy ? "asking…" : "ask"}
+    </button>
+  );
+  if (!shown.length) {
+    return (
+      <span className="plan-compact">
+        <span className="help">every window has reset since this was reported</span>
+        <span>{ask}</span>
+      </span>
+    );
+  }
   const full = shown.find((w) => w.utilization >= 1);
   return (
     <span className="plan-compact">
@@ -685,6 +710,7 @@ export function PlanMeterCompact({ credentialId, mode, auto = true }: {
           {shown.filter((w) => w.resets_at).map((w) => `${short(w)} resets ${fmtSoon(w.resets_at)}`).join(" · ") || " "}
         </span>
       )}
+      <span className="plan-asof">reported {fmtAgo(data!.fetched_at)} · {ask}</span>
     </span>
   );
 }

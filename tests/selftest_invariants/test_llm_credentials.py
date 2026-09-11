@@ -341,10 +341,12 @@ def test_credentials_holding_one_key_say_so_without_showing_it(client):
 
 
 class _Response:
-    def __init__(self, status_code: int, payload=None, text: str = ""):
+    """What `httpx.get` hands back, as much of it as the probe touches."""
+
+    def __init__(self, status_code: int, payload=None, headers=None):
         self.status_code = status_code
         self._payload = payload
-        self.text = text
+        self.headers = headers or {}
 
     def json(self):
         if self._payload is None:
@@ -352,14 +354,41 @@ class _Response:
         return self._payload
 
 
-METER = {
-    "five_hour": {"utilization": 0.21, "resets_at": "2026-09-08T15:22:00Z"},
-    "seven_day": {"utilization": 0.51, "resets_at": 1757395920},
-    "seven_day_overage_included": {"utilization": 0.9},
-    "by_model": [{"scope": {"model": {"display_name": "Fable"}}, "percent": 0.24,
-                  "resets_at": "2026-09-09T02:24:00Z"}],
-    "some_future_field": {"unrelated": True},
-}
+def usage_payload(session=37.0, week=12.0, hours_ahead=3):
+    """A reply from Anthropic's OAuth usage endpoint, in the convention it
+    currently speaks: whole percentages, not fractions.
+
+    Model-scoped allowances ride in `limits` rather than in a flat bucket. The
+    legacy flat keys for them (`seven_day_opus` and friends) come back null, and
+    a reader that takes buckets alone silently drops a window the account is
+    really spending against — so one is always in this payload.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    at = (datetime.now(UTC) + timedelta(hours=hours_ahead)).isoformat()
+    return {
+        "status": "allowed",
+        "five_hour": {"utilization": session, "resets_at": at},
+        "seven_day_oauth_apps": {"utilization": week, "resets_at": at},
+        "seven_day_opus": None,
+        "limits": [{"kind": "weekly_scoped", "percent": 8.0, "resets_at": at,
+                    "scope": {"model": {"display_name": "Opus 5"}}}],
+        "some_future_field": {"unrelated": True},
+    }
+
+
+def fake_usage_endpoint(monkeypatch, response, calls=None):
+    """Stand in for Anthropic, and count what was asked of it."""
+    import httpx
+
+    seen = calls if calls is not None else []
+
+    def fake_get(url, **kwargs):
+        seen.append({"url": url, "headers": kwargs.get("headers") or {}})
+        return response() if callable(response) else response
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    return seen
 
 
 def sandbox_plan_windows():
@@ -430,34 +459,34 @@ class _Info:
         self.utilization = utilization
 
 
-def test_the_meter_is_harvested_from_runs_and_never_asks_anthropic(client, monkeypatch):
-    """The rule that replaced the poller: this endpoint makes no network call.
+def test_reading_the_meter_asks_nothing_of_anthropic(client, monkeypatch):
+    """The rule that replaced the poller, and it still holds for every load of
+    the screen: showing the meter makes no network call.
 
-    It used to read an undocumented endpoint once a minute per credential,
-    which earned a 429 with a Retry-After in tens of minutes and left the meter
-    dark while the credential itself was healthy. The SDK volunteers the same
-    windows on every run, so there is nothing left to ask.
+    The poller read an undocumented endpoint once a minute per credential from
+    every open tab, earned a 429 with a Retry-After in tens of minutes, and left
+    the meter dark while the credential was healthy. Asking came back as one
+    server-side sweep on a ten-minute rhythm (and the refresh button), never as
+    a consequence of somebody opening a page. So the guard here counts calls
+    rather than raising: a probe that swallows its own errors would turn a
+    raising stub into a test that passes for the wrong reason.
     """
-    import httpx
-
     from yaaf.core import plan_usage
     from yaaf.core.db import db_session
     _plan_windows = sandbox_plan_windows()
 
-    def never(*a, **k):
-        raise AssertionError("the plan meter must never call out")
-
-    monkeypatch.setattr(httpx, "get", never)
-    monkeypatch.setattr(httpx, "post", never)
+    calls = fake_usage_endpoint(monkeypatch, _Response(200, usage_payload()))
 
     token = "sk-ant-oat01-harvested-not-fetched"
     key = create(client, value=token, mode="subscription")
 
-    # Before any run there is no reading, and that is a sentence, not a 500.
-    empty = client.get(f"{URL}/{key['id']}/usage?refresh=true", headers=ADMIN)
+    # Before anything has reported there is no reading, and that is a sentence,
+    # not a 500 — and reading it asked nobody.
+    empty = client.get(f"{URL}/{key['id']}/usage", headers=ADMIN)
     assert empty.status_code == 200, empty.text
     assert empty.json()["available"] is False
     assert "next agent run" in empty.json()["reason"]
+    assert calls == []
 
     # What the sandbox pulls out of the SDK event, filed as a run would file it.
     harvested = _plan_windows(_Info(live_event_today()))
@@ -482,6 +511,8 @@ def test_the_meter_is_harvested_from_runs_and_never_asks_anthropic(client, monke
     assert windows["seven_day"]["utilization"] == 0.14
     # And the value never rides along with its own meter.
     assert token not in client.get(f"{URL}/{key['id']}/usage", headers=ADMIN).text
+    # Nothing in any of that was a question for Anthropic.
+    assert calls == []
 
 
 def test_finishing_a_run_files_the_plan_reading_against_its_credential(client):
@@ -544,6 +575,170 @@ def test_a_run_with_no_reading_finishes_exactly_as_before(client):
                  trigger={}, task_id=None, attempt=1)
     daemon.finalize(job, RunResult(ok=True, summary="no meter here", tokens_in=3, tokens_out=4))
     assert client.get(f"{URL}/{key['id']}/usage", headers=ADMIN).json()["available"] is False
+
+
+def _clear_floor(token: str) -> None:
+    """Forget that this token was just asked about.
+
+    The fifteen-second floor lives in module memory and is measured against a
+    monotonic clock, so a test that presses the button twice on purpose has to
+    say so. Only the floor is cleared — a throttle is what several of these
+    tests are asserting and must survive.
+    """
+    from yaaf.core import plan_usage
+    from yaaf.server import plan_probe
+
+    plan_probe._last_attempt.pop(plan_usage.fingerprint(token), None)
+
+
+def test_refresh_gets_a_meter_for_a_credential_no_run_has_covered(client, monkeypatch):
+    """The button, end to end: one press, one call, a screen that can answer for
+    a credential nothing has ever run on.
+
+    This is the gap harvesting cannot close, and it is the case the meter exists
+    for: a full window stops the runs, a stopped run reports nothing, so the
+    credential that most needs a number is the one least able to produce one.
+    Nothing on a clock closes it — a person pressing refresh does.
+    """
+    from yaaf.server import plan_probe
+
+    token = "sk-ant-oat01-nothing-has-ever-run-on-this"
+    key = create(client, value=token, mode="subscription")
+    calls = fake_usage_endpoint(monkeypatch, _Response(200, usage_payload()))
+
+    # Reading the screen asks nothing. Only the press does.
+    assert client.get(f"{URL}/{key['id']}/usage",
+                      headers=ADMIN).json()["available"] is False
+    assert calls == []
+
+    body = client.get(f"{URL}/{key['id']}/usage?refresh=true", headers=ADMIN).json()
+
+    # One call, carrying the bearer and the beta the CLI sends — without that
+    # header an OAuth token is refused — and never the token in the URL.
+    assert len(calls) == 1
+    assert calls[0]["url"] == plan_probe.USAGE_URL
+    assert calls[0]["headers"]["Authorization"] == f"Bearer {token}"
+    assert calls[0]["headers"]["anthropic-beta"] == plan_probe.OAUTH_BETA
+    assert token not in calls[0]["url"]
+
+    assert body["available"] is True and body["cached"] is False
+    windows = {w["key"]: w for w in body["windows"]}
+    # Percentages in, shares out, and the same shape a run would have filed.
+    assert windows["five_hour"]["utilization"] == 0.37
+    assert windows["five_hour"]["label"] == "Current session"
+    assert windows["seven_day_oauth_apps"]["label"] == "This week, API apps"
+    # The model-scoped allowance rides in `limits` and names itself, because no
+    # table here could have known to write "Opus 5" down.
+    scoped = [w for w in body["windows"] if w["label"] == "Opus 5, this week"]
+    assert len(scoped) == 1 and scoped[0]["utilization"] == 0.08
+    # And the value never rides along with its own meter.
+    assert token not in client.get(f"{URL}/{key['id']}/usage", headers=ADMIN).text
+
+
+def test_refreshing_three_rows_on_one_subscription_is_one_call(client, monkeypatch):
+    """The fan-out that earned the 429, refused at the source. Three credential
+    rows on one subscription are one meter, so pressing all three is one
+    question — the floor is per token, not per row and not per tab."""
+    token = "sk-ant-oat01-three-rows-one-subscription"
+    rows = [create(client, f"Row {n}", value=token, mode="subscription") for n in range(3)]
+    calls = fake_usage_endpoint(monkeypatch, _Response(200, usage_payload()))
+
+    for row in rows:
+        assert client.get(f"{URL}/{row['id']}/usage?refresh=true",
+                          headers=ADMIN).json()["available"] is True
+    assert len(calls) == 1
+
+
+def test_an_api_key_never_reaches_the_usage_endpoint(client, monkeypatch):
+    """There is no plan behind an API key, so there is nothing to ask — and the
+    value must not be offered to an endpoint that has no business with it, even
+    by a reader who pressed the button on the wrong row."""
+    calls = fake_usage_endpoint(monkeypatch, _Response(200, usage_payload()))
+    key = create(client, "An API key", value="sk-ant-api03-not-a-plan", mode="api_key")
+
+    body = client.get(f"{URL}/{key['id']}/usage?refresh=true", headers=ADMIN).json()
+    assert body["available"] is False and "metered per call" in body["reason"]
+    assert calls == []
+
+
+def test_a_throttle_is_obeyed_and_costs_nobody_their_last_reading(client, monkeypatch):
+    """What the deleted poller got wrong twice. A 429 means stop asking for as
+    long as Anthropic said — for that token only — and the reading already on
+    the screen stays there, because the alternative is a dark meter on a
+    credential that is perfectly healthy."""
+    token = "sk-ant-oat01-this-one-gets-throttled"
+    key = create(client, value=token, mode="subscription")
+
+    fake_usage_endpoint(monkeypatch, _Response(200, usage_payload(session=44.0)))
+    good = client.get(f"{URL}/{key['id']}/usage?refresh=true", headers=ADMIN).json()
+    assert {w["key"]: w["utilization"] for w in good["windows"]}["five_hour"] == 0.44
+
+    # Past the floor, so the throttle is the only thing in the way.
+    _clear_floor(token)
+    throttled = fake_usage_endpoint(
+        monkeypatch, _Response(429, None, {"retry-after": "1800"}))
+    after = client.get(f"{URL}/{key['id']}/usage?refresh=true", headers=ADMIN).json()
+    assert len(throttled) == 1
+    # The screen is unchanged: a throttle is news about the meter, not about
+    # the plan.
+    assert after["windows"] == good["windows"]
+    # And pressing again does not ask again — that is what a Retry-After is,
+    # and honouring it is the difference between a wait and an outage.
+    _clear_floor(token)
+    client.get(f"{URL}/{key['id']}/usage?refresh=true", headers=ADMIN)
+    assert len(throttled) == 1
+
+
+def test_the_refresh_button_asks_now_but_not_once_per_press(client, monkeypatch):
+    """A button on a URL is still a URL: it is pressed by however many tabs are
+    open. Six presses are one call, which is the whole difference between this
+    and the poller it replaces."""
+    token = "sk-ant-oat01-somebody-pressed-refresh"
+    key = create(client, value=token, mode="subscription")
+    calls = fake_usage_endpoint(monkeypatch, _Response(200, usage_payload(session=61.0)))
+
+    body = client.get(f"{URL}/{key['id']}/usage?refresh=true", headers=ADMIN).json()
+    assert len(calls) == 1
+    assert body["available"] is True and body["cached"] is False
+    assert {w["key"]: w["utilization"] for w in body["windows"]}["five_hour"] == 0.61
+
+    for _ in range(5):
+        again = client.get(f"{URL}/{key['id']}/usage?refresh=true", headers=ADMIN).json()
+    assert len(calls) == 1
+    # Still answered, from the row — the reader wanted the number, not the
+    # provenance.
+    assert again["available"] is True and again["cached"] is True
+
+
+def test_one_percent_is_not_a_full_window(client, monkeypatch):
+    """The trap in this payload. The usage endpoint speaks whole percentages
+    where the SDK speaks fractions, so a lone `1.0` is one percent here and a
+    stopped project there. One payload speaks one convention, so the whole
+    payload settles it rather than each number guessing for itself."""
+    token = "sk-ant-oat01-one-percent-not-one-hundred"
+    key = create(client, value=token, mode="subscription")
+    fake_usage_endpoint(monkeypatch, _Response(200, usage_payload(session=1.0, week=64.0)))
+
+    windows = {w["key"]: w for w in client.get(
+        f"{URL}/{key['id']}/usage?refresh=true", headers=ADMIN).json()["windows"]}
+    assert windows["five_hour"]["utilization"] == 0.01
+    assert windows["seven_day_oauth_apps"]["utilization"] == 0.64
+
+
+def test_a_press_that_cannot_reach_anthropic_changes_nothing(client, monkeypatch):
+    """No route, no DNS, a timeout: no server was reached, so there is nothing
+    to back off from and nothing to report. The screen says what it said."""
+    import httpx
+
+    token = "sk-ant-oat01-the-network-is-down"
+    key = create(client, value=token, mode="subscription")
+
+    def dead(*a, **k):
+        raise httpx.ConnectError("no route to host")
+
+    monkeypatch.setattr(httpx, "get", dead)
+    body = client.get(f"{URL}/{key['id']}/usage?refresh=true", headers=ADMIN).json()
+    assert body["available"] is False and "next agent run" in body["reason"]
 
 
 def test_a_window_past_its_own_reset_stops_claiming_the_credential_is_full(client):

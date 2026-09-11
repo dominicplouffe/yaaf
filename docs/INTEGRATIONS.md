@@ -53,13 +53,17 @@ What being managed buys you:
   left on the session and weekly windows — the same numbers as `/usage` in
   Claude Code — in Settings and on every project paying with it. Every project
   on the credential draws from the same windows; at 100% Anthropic refuses
-  calls and runs fail until the window resets. It is **harvested, never fetched**: the Claude Agent
-  SDK reports these windows to every agent run, on the credential doing the
-  spending, so the platform reads them off its own runs. Nothing polls
-  Anthropic — the poller this replaced earned a `429` with a `Retry-After` of
-  tens of minutes and left the meter dark while the credential was perfectly
-  healthy. The trade is stated on the screen: a credential nothing has run on
-  yet has no reading, and the number carries the time a run last reported it.
+  calls and runs fail until the window resets. It is **harvested first, asked on
+  request**: the Claude Agent SDK reports these windows to every agent run, on
+  the credential doing the spending, so the meter normally costs nothing at all.
+  What runs cannot cover — a credential nothing is running on, which is exactly
+  what a full window produces — is a **Refresh** button beside the meter, which
+  asks Anthropic for that one subscription. Nothing asks on a timer: the poller
+  this replaced ran sixty times an hour *per credential from every open browser
+  tab* and earned a `429` for it. The button is floored at one call per
+  subscription every 15 seconds and honours any throttle, so leaning on it
+  returns the stored number rather than a rate limit. The number carries the
+  time it was reported.
   A window whose reset time has passed reports the rollover rather than the
   percentage it held while it was open — the window at 100% is the one that
   stops the runs, and a stopped run reports nothing, so the number would
