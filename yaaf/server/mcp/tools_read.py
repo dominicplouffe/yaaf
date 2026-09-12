@@ -257,12 +257,15 @@ def plan(principal: Principal, session: Session, arguments: dict) -> dict:
     "spend",
     scope="read",
     description=(
-        "Money against the cap. view: summary (rollup, grouped by model, agent, role or "
-        "wake reason) or ledger (the individual lines)."
+        "Money against the cap. view: summary (a rollup grouped by model, team, agent "
+        "or run kind) or ledger (the individual lines)."
     ),
     input_schema=_schema(
         view={"type": "string", "enum": ["summary", "ledger"]},
-        group_by={"type": "string", "enum": ["model", "agent", "role", "reason"]},
+        # What observe.spend actually accepts. It advertised `role` and
+        # `reason`, which it has never implemented and 400s on, and hid `team`
+        # and `kind`, which it has always served.
+        group_by={"type": "string", "enum": ["model", "team", "agent", "kind"]},
         days={"type": "integer", "description": "Window, default 30"},
         limit={"type": "integer", "description": "ledger only: rows, default 20"},
     ),
@@ -355,10 +358,17 @@ def proof(principal: Principal, session: Session, arguments: dict) -> dict:
     "org",
     scope="read",
     description=(
-        "Who works here: teams, leads, schedules and the board's standing. Pass `agent` "
+        "Who works here: teams, leads, schedules, the board's standing, and what each "
+        "seat actually did — runs, why each one woke, tokens, money, tasks closed. "
+        "`since` takes 'today' (the default), 'yesterday', '7d', a date, or an ISO "
+        "timestamp; 'today' is the calendar day in the project's timezone. Pass `agent` "
         "for one agent's detail — its role, cadence, recent runs and spend."
     ),
-    input_schema=_schema(agent={"type": "string", "description": "Agent id, for one agent"}),
+    input_schema=_schema(
+        agent={"type": "string", "description": "Agent id, for one agent"},
+        since={"type": "string", "description": "Activity window, default today"},
+        until={"type": "string", "description": "End of the window, default now"},
+    ),
 )
 def org(principal: Principal, session: Session, arguments: dict) -> dict:
     row = _project_of(principal, session, arguments)
@@ -370,6 +380,12 @@ def org(principal: Principal, session: Session, arguments: dict) -> dict:
         payload = {
             **_as_dict(_observe(observe.org, project_id=row.id, session=session)),
             "board": _observe(observe.board, project_id=row.id, session=session),
+            # The same producer the CEO reads, so "who spent the runs" has one
+            # answer whichever side of the boardroom asks it.
+            "activity": _as_dict(_observe(
+                observe.project_activity, project_id=row.id,
+                since=arguments.get("since") or "today",
+                until=arguments.get("until"), session=session)),
         }
     return envelope.fit({"project": row.slug, **payload}, arguments.get("detail"))
 

@@ -19,6 +19,7 @@ it: when it stops working, the silence shows.
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -39,7 +40,7 @@ from yaaf.core.models import (
     RequirementStatus,
     utcnow,
 )
-from yaaf.server import metrics, policy
+from yaaf.server import metrics, policy, staffing
 
 log = logging.getLogger("yaaf.flags")
 
@@ -373,6 +374,43 @@ def evaluate(session: Session, project: Project, cons: ConstitutionDoc) -> int:
     else:
         _resolve(session, project, FlagKind.RUN_OVERRUN, day["resets_at"][:10],
                  "the day rolled or the plan was raised")
+
+    # 5c. A seat that is spending and closing nothing. The three above are all
+    #     about the project being STOPPED; this is the opposite failure, where
+    #     everything looks busy and part of the roster is not moving the work.
+    #     Its arithmetic is deliberately not "has not run recently" — a seat
+    #     waiting behind a start time has not run and is not idle, and a flag
+    #     that cried wolf on that would be muted inside a week.
+    #
+    #     Subject is the team, so two idle seats are two pieces of news rather
+    #     than one that overwrites the other. A team with a declared stand-down
+    #     condition is left alone: the CEO already answered this question, and
+    #     the janitor will act on its answer without needing to be told twice.
+    since = utcnow() - timedelta(days=cons.staffing_review_days)
+    idle_now = {seat["team_id"]: seat
+                for seat in staffing.idle_seats(session, project, cons, since)}
+    for team in staffing.running_teams(session, project.id):
+        seat = idle_now.get(team.id)
+        if seat and not team.stand_down_when:
+            who = ", ".join(seat["agents"])
+            if open_flag(
+                session, project, FlagKind.SEAT_IDLE,
+                f"{seat['team']} ({who}) has spent {seat['runs']} runs in "
+                f"{seat['days']} days and closed no work in that time. A seat that is "
+                f"awake is not free: it reads its channels, it buys inbox runs, and it "
+                f"counts as a mover in your capacity forecast. If that role's job is "
+                f"finished, stand it down. If it is not, say what it is waiting for "
+                f"and when that clears — and set a stand_down_when so this answers "
+                f"itself next time.",
+                arithmetic={"team": seat["team"], "role_slug": seat["role_slug"],
+                            "runs": seat["runs"], "tasks_closed": 0,
+                            "window_days": seat["days"]},
+                subject_id=team.id,
+            ):
+                opened += 1
+        else:
+            _resolve(session, project, FlagKind.SEAT_IDLE, team.id,
+                     "the seat closed work, was stood down, or has a condition set")
 
     # 6. The objective is moving away from its target. The only kind here that
     #    is about whether the project is WINNING rather than whether it is

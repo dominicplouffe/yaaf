@@ -391,6 +391,33 @@ def _budget_reset_event(now: datetime, horizon: datetime, tz: ZoneInfo) -> dict 
     )
 
 
+def _staffing_note(session: Session, project: Project) -> str | None:
+    """Which seats have a declared end, and which do not.
+
+    A NOTE and not an event, because a stand-down condition has no date: it
+    fires when a requirement settles, and the settling date is exactly what
+    nobody knows. This file exists to put consequences on a calendar, and an
+    invented date for one of them would be the thing the doctrine warns about —
+    "phases that exist only to spread work across a calendar". So the agenda
+    says which seats are open-ended and leaves the timing to the plan.
+    """
+    from yaaf.server import staffing
+
+    teams = staffing.running_teams(session, project.id)
+    if not teams:
+        return None
+    open_ended = [t.name for t in teams if not t.stand_down_when]
+    if not open_ended:
+        return ("Every team has a declared end; the platform stands each down when its "
+                "condition comes true.")
+    if len(open_ended) == len(teams):
+        return ("No team has a declared end, so every seat runs until somebody stops "
+                "it. Your CEO sets these while planning (`stand_down_when`).")
+    return (f"{', '.join(sorted(open_ended))} "
+            f"{'has' if len(open_ended) == 1 else 'have'} no declared end and will run "
+            "until stopped; the rest stand down on their own.")
+
+
 def project_agenda(session: Session, project: Project,
                    cons: ConstitutionDoc | None = None,
                    days: int = DEFAULT_DAYS) -> dict:
@@ -442,6 +469,9 @@ def project_agenda(session: Session, project: Project,
             notes.append(
                 "Nobody is on a wall-clock wake. The CEO still plans on its heartbeat; "
                 "a daily time is how you get a standup.")
+        staffing_note = _staffing_note(session, project)
+        if staffing_note:
+            notes.append(staffing_note)
 
     events.sort(key=lambda e: e["at"])
     return {

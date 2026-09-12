@@ -151,6 +151,7 @@ export interface Activity {
     | "scheduled"
     | "no_lead"
     | "paused_agents"
+    | "stood_down_agents"
     | "stalled_requirement"
     | "rework_owed"
     | "awaiting_chairman"
@@ -203,7 +204,11 @@ export interface Activity {
         janitor requeues these itself; named here so the quiet has a name. */
     checks_lost: string[];
     leaderless_teams: string[];
+    /** Seats the chairman paused: an intervention, and the fix is to resume. */
     paused_agents: string[];
+    /** Seats whose role finished. Opposite fix — move the work, do not resume
+        somebody whose job is over. */
+    stood_down_agents: string[];
     stalled_requirements: string[];
     rework_owed: string[];
     proposed_requirements: string[];
@@ -795,8 +800,64 @@ export interface OrgView {
     role_version: number | null;
     role_latest_version: number | null;
     lead_agent_id: string | null;
-    agents: { id: string; name: string; status: string }[];
+    /** Derived, never stored: a team is stood down by standing its people
+        down, so "is this team working" is a question about its members. */
+    running: boolean;
+    stood_down_at: string | null;
+    /** When this role's job ends, declared while planning and fired by the
+        platform. `{kind: "requirement_met", keys: [...]}` or
+        `{kind: "stage_cleared", stage: n}`. */
+    stand_down_when: { kind: string; keys?: string[]; stage?: number } | null;
+    agents: {
+      id: string; name: string; status: string; stood_down_reason: string | null;
+    }[];
   }[];
+}
+
+/** What each seat actually did in a window — the work half of the roster.
+
+    The money half already existed as `SpendReport`, and it is what the
+    chairman's Runs tab draws. This is the half a CEO was missing entirely:
+    asked who had spent the day's runs it estimated, and was wrong by half. */
+export interface ActivityView {
+  window: string;
+  since: string;
+  until: string;
+  seats: ActivitySeat[];
+  totals: Omit<ActivitySeat, keyof SeatIdentity | "last_run_at">;
+}
+
+interface SeatIdentity {
+  agent_id: string | null;
+  name: string;
+  kind: string;
+  status: string | null;
+  team_id: string | null;
+  team: string | null;
+  role_slug: string | null;
+}
+
+export interface ActivitySeat extends SeatIdentity {
+  runs: number;
+  /** The subset that spent the daily ration — what the run cap counts. Differs
+      from `runs` by the platform's own checks and the chat lane. */
+  runs_metered: number;
+  runs_by_kind: Record<string, number>;
+  runs_by_outcome: Record<string, number>;
+  /** Why the platform spent each run, in the trigger's own words. A run woken
+      by three notices and a commitment counts under both. */
+  woke_for: Record<string, number>;
+  tokens_in: number;
+  tokens_out: number;
+  cache_creation: number;
+  cache_read: number;
+  usd: number;
+  refusals: number;
+  tasks_claimed: number;
+  tasks_completed: number;
+  tasks_killed: number;
+  holding: number;
+  last_run_at: string | null;
 }
 
 /** One team pinned to (any version of) a role — the edit's blast radius. */

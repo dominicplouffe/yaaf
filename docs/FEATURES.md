@@ -39,6 +39,21 @@ employees and a lead. The CEO is the only agent that plans.
 - **Solo mode** places the CEO as the sole member of the only team, so one
   brain plans *and* executes under byte-identical policy — a legitimate way
   to run yaaf if you just want the guardrails.
+- **The CEO staffs the project.** It hires roles from your library and stands
+  down ones whose job is finished, up to `max_teams`, with no approval
+  round-trip — it is spending inside a budget it already has, and hiring buys
+  no runs (the daily ration and the monthly wall are the project's, not the
+  seat's). Every change lands in your boardroom and on the Overview roster,
+  where you can stand a role down or recall one yourself. Two seats are not the
+  CEO's to remove: its last `challenge` role, and its last reader when the
+  constitution asks for an independent read.
+- **A seat's end date lives in the plan.** While planning, the CEO sets
+  `stand_down_when` on each team — the requirement or the stage after which
+  that role is done — and the platform stands the team down itself when the
+  condition comes true. A team still holding open work is skipped and stood
+  down on the next pass, so a condition can neither orphan a task nor be lost.
+  A seat with no declared end that spends runs and closes nothing for
+  `staffing_review_days` trips a flag the CEO has to answer.
 
 **The hierarchy is the message bus.** Employees speak in their team room; leads
 also in leadership; the CEO in leadership and the boardroom. Cross-team needs

@@ -73,6 +73,8 @@ golden-transcript evals, green on SQLite and Postgres in CI.
 | Evidence verification, webhooks, spot-audit, CEO-judgment metric | Built. |
 | Dashboard — Desk, Overview, Boardroom, Plan, Work, Review, Deliverables, Records, Settings | Built. |
 | Integrations — Slack (Socket Mode), GitHub, MCP data sources, S3, email | Built. |
+| Staffing — the CEO hires and stands roles down; the plan carries each seat's end | Built. Bounded by `max_teams`, a refusal to orphan open work, and a refusal to remove its own last critic. A declared `stand_down_when` is fired by the janitor, not by a reminder. |
+| Attribution — who spent which runs, and on what | Built. One producer behind the chairman's screen, the CLI, the chairman's MCP and the CEO's own reader, so the two sides of the boardroom cannot hold different numbers. |
 
 ## What is next
 

@@ -212,6 +212,12 @@ LINE_OWNER: dict[str, str] = {
     "evidence_failed": "verdict_policy",
     "evidence_pending": "verdict_policy",
     "samples_expired": "verdict_policy",
+    # Who did the work. The CEO staffs the project itself, so a hire or a
+    # stand-down is a decision it made and not one he owes an answer on — but
+    # he is told, because a roster that changed while he was away is the first
+    # thing that makes a brief unreadable.
+    "staffing": OPS,
+    "seats_idle": MATERIAL,
     # How the work got done. His at no setting.
     "runs": OPS,
     "runs_dead": OPS,
@@ -637,6 +643,74 @@ def _money(session: Session, project: Project, cons: ConstitutionDoc,
         "month_to_date": round(float(mtd_usd), 4) if usd_mode else int(mtd_tokens),
         "cap": cons.monthly_usd_cap if usd_mode else cons.monthly_token_cap,
     }
+
+
+def _listed(names: list[str]) -> str:
+    """The dispatcher's own joiner, so a list of teams reads the same in the
+    brief as it does in the idle banner."""
+    from yaaf.server.dispatcher import _listed as joined
+
+    return joined(sorted(set(names)))
+
+
+def _staffing_lines(session: Session, project: Project, cons, since, until) -> list[dict]:
+    """Who joined, who finished, and who is costing without moving anything.
+
+    The roster is the one thing on this page that can change while the chairman
+    is away without any of his decisions being involved — the CEO hires and
+    stands roles down itself. A brief that reported the work and not the people
+    doing it would leave him reading Tuesday's numbers against Monday's
+    assumption about who was on the project.
+    """
+    from yaaf.core.models import AuditLog
+
+    lines: list[dict] = []
+    moves = list(session.execute(
+        select(AuditLog).where(
+            AuditLog.project_id == project.id,
+            AuditLog.action.in_(["team.hire", "team.stand_down", "team.recall"]),
+            AuditLog.at > since,
+            AuditLog.at <= until,
+        ).order_by(AuditLog.at)
+    ).scalars())
+    if moves:
+        named = {
+            "team.hire": [], "team.stand_down": [], "team.recall": [],
+        }
+        for row in moves:
+            named[row.action].append((row.detail or {}).get("team") or "a team")
+        parts = [
+            f"hired {_listed(named['team.hire'])}" if named["team.hire"] else "",
+            f"stood down {_listed(named['team.stand_down'])}"
+            if named["team.stand_down"] else "",
+            f"recalled {_listed(named['team.recall'])}" if named["team.recall"] else "",
+        ]
+        said = ", ".join(part for part in parts if part)
+        lines.append(_line(
+            "staffing", f"The roster changed: {said}",
+            count=len(moves), where="overview",
+            note="Your CEO staffs this project itself, inside the `max_teams` rule. "
+                 "Stand a role down or recall one yourself on the Overview roster.",
+        ))
+
+    # And the seats nobody has decided about. Read from the open flags rather
+    # than recomputed, so the brief and the flag cannot disagree about which
+    # seats are idle.
+    from yaaf.server import flags as flag_lib
+
+    idle = [f for f in flag_lib.open_flags(session, project.id)
+            if f.kind == "seat_idle"]
+    if idle:
+        who = _listed([(f.arithmetic or {}).get("team") or "a team" for f in idle])
+        lines.append(_line(
+            "seats_idle",
+            f"{who} spent runs and closed no work in {cons.staffing_review_days} days",
+            tone="bad", count=len(idle), where="overview",
+            note="A seat that is awake is not free: it reads its channels, buys inbox "
+                 "runs, and counts as a mover in the capacity forecast. Your CEO owes "
+                 "you either a stand-down or a reason.",
+        ))
+    return lines
 
 
 def _run_lines(session: Session, project: Project, since, until) -> list[dict]:
@@ -1209,6 +1283,7 @@ def project_briefing(session: Session, project: Project,
     lines += _your_decisions_lines(session, project, since, until)
     lines += _meeting_lines(session, project, since, until)
     lines += _run_lines(session, project, since, until)
+    lines += _staffing_lines(session, project, cons, since, until)
 
     lines = _triage(lines, cons)
     money = _money(session, project, cons, since, until)

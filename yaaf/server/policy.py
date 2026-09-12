@@ -101,18 +101,38 @@ class Refusal(Exception):
 # ── org derivations ─────────────────────────────────────────────────────────────
 
 
-def team_agents(session: Session, team_id: str) -> list[Agent]:
-    return list(
+def team_agents(session: Session, team_id: str, *, running_only: bool = False) -> list[Agent]:
+    """A team's members. `running_only` drops the ones that cannot be woken.
+
+    The roster view wants everybody — a paused seat is still on this team and
+    the reader has to see it. Anything that asks "who could do this" wants only
+    the seats the dispatcher will actually wake, which is why the flag exists
+    rather than a second query.
+    """
+    members = list(
         session.execute(
             select(Agent).where(Agent.team_id == team_id).order_by(Agent.created_at)
         ).scalars()
     )
+    if running_only:
+        members = [a for a in members if a.status == AgentStatus.ACTIVE]
+    return members
 
 
 def effective_lead(session: Session, team: Team) -> Agent | None:
-    """Explicit lead if set; a sole employee is the de-facto lead. Derived,
-    never stored on the agent row."""
-    members = team_agents(session, team.id)
+    """Explicit lead if set; a sole running employee is the de-facto lead.
+    Derived, never stored on the agent row.
+
+    **Only a running seat can lead.** This used to ignore status entirely, so a
+    team whose only member was paused still reported a lead — and the platform
+    believed it. `_board_reachability` classed the team as led rather than
+    leaderless, `capacity._owner_of` kept charging its tasks to an agent the
+    dispatcher skips, and the one surface that would have said so was looking
+    at the wrong field. A seat that cannot be woken cannot decompose a parent,
+    so naming it lead is a claim the platform then acts on and nobody can
+    satisfy.
+    """
+    members = team_agents(session, team.id, running_only=True)
     if team.lead_agent_id:
         for agent in members:
             if agent.id == team.lead_agent_id:

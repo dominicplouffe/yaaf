@@ -159,7 +159,15 @@ one amendment from being turned back.
 - **Everything is recorded.** Every acceptance, cut, verdict, grant and
   purchase is in the audit log and on the Decisions screen, whoever made it.
 - **Your buttons never close.** Pause, stop, veto, amend, reopen and audit are
-  chairman powers at every autonomy level.
+  chairman powers at every autonomy level — and so are standing a role down and
+  recalling one, on the Overview roster.
+- **The roster is the CEO's at every level, and bounded at every level.** The
+  autonomy dial does not govern staffing: the CEO hires and stands roles down
+  itself whatever it is set to, because hiring buys no runs and cannot raise a
+  wall. What bounds it is arithmetic instead — `max_teams`, a library you
+  curate, a refusal to orphan open work, and a refusal to remove its own last
+  critic. Lower `max_teams` to freeze a roster; raising it is the one staffing
+  decision that reaches your desk, as an ordinary capacity request.
 
 ## Money, in the world
 

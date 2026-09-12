@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import {
+  ActivitySeat,
+  ActivityView,
   get,
   HealthCheck,
   OrgView,
@@ -379,6 +381,14 @@ export default function Overview({
     () => get<FlagsView>(`/observe/projects/${projectId}/flags`),
     8000,
   );
+  // Today, in the project's own timezone — not a rolling 24 hours. The roster
+  // card named the people and said nothing about what any of them had done,
+  // which is the question anyone reading a roster is actually asking.
+  const { data: activity } = usePoll(
+    () => get<ActivityView>(`/observe/projects/${projectId}/activity?since=today`),
+    15000,
+  );
+  const today = new Map((activity?.seats ?? []).map((s) => [s.agent_id, s]));
   const [repinMsg, setRepinMsg] = useState<string | null>(null);
 
   const pending = approvals.filter((a) => a.status === "pending");
@@ -897,6 +907,7 @@ export default function Overview({
               <span className="help">—</span>
             )}
           </div>
+          {org?.ceo && <SeatDay seat={today.get(org.ceo.id)} />}
           <p className="help" style={{ marginBottom: 0 }}>
             The only agent that speaks to you (boardroom) and the only one that creates tasks.
           </p>
@@ -922,20 +933,27 @@ export default function Overview({
                   </span>
                 )}
                 {behind && <span className="chip warn">behind</span>}
+                {!team.running && <span className="chip warn">stood down</span>}
               </div>
-              <div className="pill-row" style={{ marginTop: 6 }}>
-                {team.agents.map((agent) => (
-                  <span key={agent.id} className={`badge ${agent.status === "active" ? "good" : "warn"}`}>
+              {team.agents.map((agent) => (
+                <div key={agent.id} style={{ marginTop: 6 }}>
+                  <span className={`badge ${agent.status === "active" ? "good" : "warn"}`}>
                     {agent.name}
                     {team.lead_agent_id === agent.id ? " (lead)" : ""}
+                    {agent.status !== "active" ? ` · ${agent.status}` : ""}
                   </span>
-                ))}
-              </div>
+                  <SeatDay seat={today.get(agent.id)} />
+                </div>
+              ))}
               <p className="help" style={{ margin: "8px 0 0" }}>
                 {teamTasks.length === 0
                   ? "no work on its board"
                   : `${open} open${stuck > 0 ? `, ${stuck} blocked` : ""}`}
+                {team.stand_down_when && (
+                  <> · stands down when {conditionWords(team.stand_down_when)}</>
+                )}
               </p>
+              <StaffingActions team={team} onDone={reloadOrg} />
               {/* Teams pin their role version at creation; edited roles apply
                   only when the chairman explicitly adopts them. The button is
                   here only when there is something to adopt — five cards each
@@ -966,6 +984,77 @@ export default function Overview({
 
       <AsOf at={asOf} error={error} />
     </>
+  );
+}
+
+/** The staffing controls, which lived only behind an admin curl until now.
+
+    Both verbs take a reason. A roster change without one is unreadable six
+    weeks later, and "we took the designer off after the template shipped" is a
+    sentence somebody has to be able to find. */
+function StaffingActions({ team, onDone }: {
+  team: OrgView["teams"][number];
+  onDone: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const verb = team.running ? "stand_down" : "recall";
+
+  async function go() {
+    const reason = window.prompt(
+      team.running
+        ? `Why is ${team.name}'s job finished? (Its channel, memory and history are kept.)`
+        : `Why is ${team.name} coming back?`);
+    if (!reason || reason.trim().length < 10) {
+      if (reason !== null) setError("Give a reason of at least ten characters.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await post(`/admin/teams/${team.id}/${verb}`, { reason });
+      onDone();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="actions" style={{ marginTop: 8 }}>
+      <button className="small" disabled={busy} onClick={go}>
+        {team.running ? "stand down" : "recall"}
+      </button>
+      {error && <span className="help warn" style={{ marginLeft: 8 }}>{error}</span>}
+    </div>
+  );
+}
+
+/** The condition in the words the boardroom uses, so the card and the message
+    the chairman already read say the same thing. */
+function conditionWords(when: NonNullable<OrgView["teams"][number]["stand_down_when"]>) {
+  return when.kind === "requirement_met"
+    ? `${(when.keys ?? []).join(" and ")} are met`
+    : `every requirement at or below stage ${when.stage} has settled`;
+}
+
+/** One seat's day, under its name.
+
+    Runs first because runs are the rationed thing and the number people argue
+    about; tasks closed second because a seat that spends and closes nothing is
+    the shape worth noticing. Silent when the seat has not run — an empty row
+    under every name on a quiet morning teaches the reader to skip the line. */
+function SeatDay({ seat }: { seat: ActivitySeat | undefined }) {
+  if (!seat || seat.runs === 0) return null;
+  const tokens = seat.tokens_in + seat.tokens_out + seat.cache_creation + seat.cache_read;
+  const parts = [`${seat.runs} run${seat.runs === 1 ? "" : "s"} today`];
+  if (seat.tasks_completed) parts.push(`${seat.tasks_completed} closed`);
+  if (seat.holding) parts.push(`${seat.holding} in hand`);
+  if (tokens) parts.push(`${(tokens / 1e6).toFixed(1)}M tok`);
+  if (seat.usd) parts.push(`$${seat.usd.toFixed(2)}`);
+  return (
+    <div className="help" style={{ fontSize: 12, marginTop: 2 }}>{parts.join(" · ")}</div>
   );
 }
 

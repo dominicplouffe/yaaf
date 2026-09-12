@@ -127,11 +127,19 @@ def test_the_ceo_can_see_every_limit_that_gates_a_run(client):
         # CEO saw "pending: 1", called it a notice count rather than a task, and
         # told the chairman nothing was running. It was an unread message, and
         # it bought a run within the hour.
+        # Still an exact set, not a subset: a block the CEO reasons about
+        # should not grow a member without somebody saying so here.
         assert set(row) == {"name", "kind", "busy", "pending", "pending_detail",
                             "wakes_last_hour", "wake_cap", "wake_slot_frees_at",
-                            "batching_until"}
+                            "batching_until", "today"}
         assert set(row["pending_detail"]) == {"work", "notices", "unread", "heartbeat"}
         assert row["pending"] == sum(row["pending_detail"].values())
+        # `today` is the other half of the same lesson. This block was
+        # availability-only, so a CEO asked "who did today's 15 runs" had
+        # nothing to answer from: it guessed six were its own, had spent
+        # twelve, and said so on the afternoon it was asking for more.
+        assert set(row["today"]) == {"runs", "runs_metered", "tokens", "usd",
+                                     "tasks_completed"}
 
     # The reset and thaw times ride along, so a forecast can name when capacity
     # returns rather than guessing at midnight.
