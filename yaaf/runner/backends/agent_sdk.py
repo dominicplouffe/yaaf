@@ -91,6 +91,7 @@ class AgentSDKBackend:
             "YAAF_MAX_USD": str(job.max_usd or 0),
             "YAAF_TASK_BUDGET": str(job.task_budget_tokens or 0),
             "YAAF_TOOL_PERMISSIONS": json.dumps(job.tool_permissions),
+            "YAAF_AGENT_KIND": job.agent_kind,
             **job.billing_env,
         }
         exit_code, logs = run_agent_container(

@@ -1474,18 +1474,57 @@ ALL_TOOLS = [
 ]
 
 
-def run_tools() -> list:
-    """ALL_TOOLS plus data_fetch when this role actually has a data source, and
-    data_write_request when one of those sources refuses anything.
+#: Tools whose endpoint answers a non-CEO with 403, every time, whatever the
+#: arguments. Sending one to an employee costs its schema on every API call of
+#: every run and buys a refusal.
+#:
+#: **This list is not enforcement and must never become it.** The server-side
+#: 403s are unchanged and remain the only thing that decides who may do what —
+#: an agent that forges a call to a tool it was never offered is refused
+#: exactly as before. Withholding the schema is a cost measure sitting on top
+#: of a wall that does not move. `test_tool_surface.py` holds both halves: it
+#: derives this set by calling every endpoint as an employee over HTTP, fails
+#: if the list disagrees in either direction, and separately proves the
+#: refusals still fire for a tool the agent was not given.
+CEO_ONLY_TOOLS = frozenset({
+    "ask_chairman", "ask_close",
+    "capacity_request", "need_request",
+    "commitment_propose", "commitment_reset",
+    "credential_scope", "credentials_list",
+    "directive_file",
+    "flag_raise",
+    "hire", "recall", "roles_list", "stand_down", "stand_down_when",
+    "hypothesis_add", "hypothesis_kill",
+    "requirement_propose", "requirement_depends_on",
+    "review_narrative",
+    "scope_act",
+})
 
-    Gated for the same reason _builtin_tools() is: an undeclared schema is pure
-    input-token cost on every API call, and a fetch tool for a role with nothing
-    to fetch from is a schema nobody can use. A role whose every source is
-    unrestricted has nothing to ask permission for either."""
+#: What this run is. Defaults to `ceo` so a caller that forgets to set it gets
+#: the full surface: the failure that costs money is withholding a tool an
+#: agent needed, not sending one it did not.
+AGENT_KIND = os.environ.get("YAAF_AGENT_KIND") or "ceo"
+
+
+def run_tools() -> list:
+    """The tools worth sending THIS agent, and no others.
+
+    Gated for the reason _builtin_tools() is: an undeclared schema is pure
+    input-token cost on every API call, and a tool whose endpoint will refuse
+    this agent is a schema nobody can use. That was already true of `data_fetch`
+    for a role with no data source, and was quietly true of twenty-one CEO-only
+    verbs for every employee on the platform — 3,700 tokens a call, half the
+    block, on a prefix where the whole context pack was 4,600.
+
+    Nothing about authority changes here. The server refuses what it always
+    refused; this only stops paying to describe the refusal in advance.
+    """
+    tools = [t for t in ALL_TOOLS
+             if AGENT_KIND == "ceo" or t.name not in CEO_ONLY_TOOLS]
     specs = _data_source_specs()
     if not specs:
-        return list(ALL_TOOLS)
-    tools = [*ALL_TOOLS, t_data_fetch]
+        return tools
+    tools.append(t_data_fetch)
     if any(config.get("tools") is not None for config in specs.values()):
         tools.extend([t_data_write_request, t_data_write_outcome])
     return tools

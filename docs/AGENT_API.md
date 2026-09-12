@@ -64,6 +64,26 @@ more runs. Every figure was already in the database and already on the
 chairman's screen. **Read it before answering any question about who spent
 what. Do not estimate.**
 
+## What an agent is sent
+
+The tool schemas travel on **every** API call inside a run, in the cached
+prefix. Sending a verb the server will refuse is not free and it is not small:
+all 56 tools are ~7,700 tokens, and for an employee — whose entire context pack
+is ~4,600 — that made the tool block the largest single thing the platform sent
+it, with roughly half of it verbs it could only be refused for using.
+
+So an agent is sent the tools its role can actually use: the CEO gets all 56,
+everyone else gets 35. The list lives in `CEO_ONLY_TOOLS`
+(`yaaf/runner/sandbox_entry.py`) and is **derived from the server, not trusted**
+— `tests/selftest_invariants/test_tool_surface.py` calls every endpoint as an
+employee over HTTP and fails if the list disagrees in either direction.
+
+**This is not enforcement and must never become it.** Every 403 below is
+unchanged: an agent that forges a call to a verb it was never offered is
+refused exactly as before, and a test holds that open specifically so the cost
+measure can never quietly turn into the wall. Withholding a schema saves
+money; the server decides authority.
+
 ## Staffing — the roster is the CEO's
 
 | Endpoint | Does |

@@ -21,6 +21,12 @@ class RunJob:
     model: str = "claude-sonnet-5"
     effort: str = "high"
     tool_permissions: dict = field(default_factory=dict)
+    # Which tool SCHEMAS this run is worth sending. Every agent used to receive
+    # all of them — for a plain employee that was 7,700 tokens of schema on
+    # every API call, half of it verbs the server answers with a 403, and more
+    # than the whole context pack beside it. Never enforcement: the 403s are
+    # unchanged and are still the only thing that decides who may do what.
+    agent_kind: str = "ceo"
     timeout_s: int = 1800
     # Hard per-run ceiling handed to the agent SDK. 0 = unbounded.
     max_usd: float = 0.0
