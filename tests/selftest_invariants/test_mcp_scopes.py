@@ -16,7 +16,7 @@ from tests.selftest_invariants.test_mcp_auth import foreign_project, mint, rpc
 #: registry: a test that asks the code what it registered cannot notice a write
 #: tool registered under the wrong scope, which is the mistake worth catching.
 READ_TOOLS = {"whoami", "projects", "desk", "project", "plan", "spend", "work",
-              "proof", "org", "channels", "files", "record"}
+              "proof", "org", "channels", "files", "record", "receipt"}
 #: And every verb `steer` adds on top of them.
 STEER_TOOLS = {"boardroom_say", "approval_decide", "requirement_decide",
                "commitment_decide", "review_decide", "audit_decide", "flag_ack",

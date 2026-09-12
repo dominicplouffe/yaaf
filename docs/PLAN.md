@@ -72,7 +72,7 @@ golden-transcript evals, green on SQLite and Postgres in CI.
 | Sandbox — container per run, scoped secrets, Chromium in the box | Built. |
 | Evidence verification, webhooks, spot-audit, CEO-judgment metric | Built. |
 | Dashboard — Desk, Overview, Boardroom, Plan, Work, Review, Deliverables, Records, Settings | Built. |
-| The chairman's MCP server — 31 tools across four scopes | Built, M0 through M5. Claude gets its own credential, never the admin token; nothing irreversible lands in one call; agent text arrives wrapped and labelled untrusted; no secret is readable at any scope. See [MCP_SERVER.md](MCP_SERVER.md). |
+| The chairman's MCP server — 32 tools across four scopes | Built, M0 through M5. Claude gets its own credential, never the admin token; nothing irreversible lands in one call; agent text arrives wrapped and labelled untrusted; no secret is readable at any scope. See [MCP_SERVER.md](MCP_SERVER.md). |
 | Integrations — Slack (Socket Mode), GitHub, MCP data sources, S3, email | Built. |
 
 ## What is next

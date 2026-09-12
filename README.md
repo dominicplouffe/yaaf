@@ -57,7 +57,7 @@ agents you already have.
 
 yaaf is an **MCP server**, so the client you already use is the front end —
 Claude Code, Claude Desktop or claude.ai, connected once, with your own files,
-repos and email open beside it. Thirty-one tools cover the whole job: the
+repos and email open beside it. Thirty-two tools cover the whole job: the
 cockpit, the plan, the spend, run traces and proof; talking to the CEO;
 approving, cutting, rescheduling, auditing; and setting up teams, data sources
 and rules.

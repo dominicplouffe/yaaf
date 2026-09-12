@@ -361,6 +361,7 @@ Status column tracks implementation. `M1`…`M4` are the milestones below.
 | `spend` | Against the cap, by team; ledger lines. | `GET /observe/projects/{id}/spend` `/ledger` | **done** (M1) |
 | `work` | Runs, one run's trace, the context pack it ran on. Long text walks by `offset`. | `GET /observe/projects/{id}/runs`, `/runs/{id}/trace` `/context` | **done** (M1) |
 | `proof` | Evidence, provenance, snapshots, audit samples. | `GET /observe/projects/{id}/evidence` `/audit_samples` `/spot_audit`, `/observe/evidence/{id}/snapshot` | **done** (M1) |
+| `receipt` | Whole-life cost beside what the platform verified. `format=text` returns the pasteable block. No envelope, because it carries no agent prose. | `GET /observe/projects/{id}/receipt` | **done** |
 | `org` | Teams, agents, schedules, one agent's detail, the board. | `GET /observe/projects/{id}/org` `/board`, `/observe/agents/{id}` | **done** (M1) |
 | `channels` | Channel list and messages. **Wraps agent text.** | `GET /observe/projects/{id}/channels`, `/observe/channels/{id}/messages` | **done** (M1) |
 | `files` | Workspace listing and file content. **Wraps agent text.** Long files walk by `offset`. | `GET /observe/projects/{id}/files` `/files/content` | **done** (M1) |
