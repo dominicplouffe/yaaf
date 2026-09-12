@@ -7,7 +7,16 @@ price of making every capability a firewall ticket. Containment is the fresh
 container, role-scoped secrets, budgets, and the audit trail.
 
 ``sandbox_mode = "subprocess"`` exists for dev machines and CI without Docker.
-It provides NO isolation and is refused unless explicitly configured.
+It provides NO isolation: a task's success test can be a command string an
+*agent* wrote, and in this mode that string runs on the runner host.
+
+On a laptop or in CI that is the whole point of the mode and costs nothing —
+there is no socket and no credential to reach. On a *deployed* runner it is an
+escalation path, because the runner mounts the Docker socket, and socket access
+is root on the box. So the refusal is scoped to the combination that is
+actually dangerous rather than to the mode: agent-authored command + host
+execution + a host that holds the socket. ``allow_host_success_tests`` is the
+operator's way to say they meant it.
 """
 
 from __future__ import annotations
@@ -46,12 +55,40 @@ def _stack_labels(extra: dict | None = None) -> dict:
     return {STACK_LABEL: settings().stack, **(extra or {})}
 
 
+# Subprocess mode is safe on a laptop and dangerous on a deployed runner, and
+# the difference is whether the host has something worth reaching. The socket is
+# the one that matters: docker.sock is root on the box, and the runner mounts it
+# to launch sibling sandboxes. Presence is the signal — a dev box without Docker
+# cannot be in this state, which is exactly the box the mode exists for.
+HOST_ESCALATION_PATHS = ("/var/run/docker.sock",)
+
+
+def _host_holds_the_keys() -> bool:
+    from pathlib import Path
+
+    return any(Path(p).exists() for p in HOST_ESCALATION_PATHS)
+
+
 def run_check_command(command: str, workspace_dir: str, timeout_s: int) -> tuple[int, str]:
     """Run a task's success-test command; return (exit_code, output)."""
     if not command.strip():
         return 1, "empty success-test command"
     mode = getattr(settings(), "sandbox_mode", "docker")
     if mode == "subprocess":
+        if _host_holds_the_keys() and not getattr(settings(), "allow_host_success_tests", False):
+            # Fails rather than silently passing: an unrun test has not been
+            # met, and "met" is the one word the platform will not write on a
+            # guess. A refused check bounces the task back to its claimant with
+            # this text in the check history, so the next run reads why.
+            log.warning("refused a host success test: sandbox_mode=subprocess on a "
+                        "runner that holds %s", ", ".join(HOST_ESCALATION_PATHS))
+            return 126, (
+                "Refused: this success test is an agent-authored command, "
+                "sandbox_mode is 'subprocess', and this runner holds the Docker "
+                "socket — so the command would run as root on the box. Run the "
+                "stack in docker mode (the default), or set "
+                "YAAF_ALLOW_HOST_SUCCESS_TESTS=1 if you meant it."
+            )
         return _subprocess_check(command, workspace_dir, timeout_s)
     return _docker_check(command, workspace_dir, timeout_s)
 

@@ -17,7 +17,7 @@ moment it exists, on the tab its group maps to in `GROUP_THEMES`.
 
 ## Changing a rule
 
-**In the dashboard:** Settings → **Rules in force**. All 56 sit behind seven tabs
+**In the dashboard:** Settings → **Rules in force**. All 62 sit behind seven tabs
 — Money, The bar, Pace & brakes, How work is run, Autonomy, Memory, Rhythm &
 reporting —
 one rule per row, with the group as a subhead. Edit anything on any tab; a tray

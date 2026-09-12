@@ -84,6 +84,31 @@ def _resolve_project(client: httpx.Client, ref: str) -> str:
     raise typer.Exit(1)
 
 
+# ── the receipt ─────────────────────────────────────────────────────────────────
+
+
+@app.command()
+def receipt(
+    project: str = typer.Argument(..., help="project id or slug"),
+    as_json: bool = typer.Option(False, "--json", help="the payload instead of the text"),
+) -> None:
+    """What a project cost, and what the money bought.
+
+    Meant to be pasted somewhere public. The left column is metered spend,
+    including the runs that died; the right column is only what the platform
+    itself wrote — a requirement marked met after it ran the acceptance test,
+    an external claim it fetched and hashed, a close the janitor drew at
+    random. So the interesting number is never the total: it is what the total
+    bought that a cheaper run would not have.
+    """
+    from yaaf.server.receipt import render
+
+    with _client() as client:
+        data = _json_or_die(
+            client.get(f"/observe/projects/{_resolve_project(client, project)}/receipt"))
+    typer.echo(json.dumps(data, indent=2, default=str) if as_json else render(data))
+
+
 # ── setup ───────────────────────────────────────────────────────────────────────
 
 

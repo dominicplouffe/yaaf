@@ -11,7 +11,7 @@ Say this in the Claude window you already have open:
 In one sitting, Claude:
 
 1. **Drafts the crew.** Goal, teams, who's on each, budget, deadline — hiring
-   from a library of 34 job descriptions and 14 pre-built crews rather than
+   from a library of 38 job descriptions and 17 pre-built crews rather than
    inventing people.
 2. **Gets argued with.** The platform grades the draft against the ten things
    a goal has to contain to work — a finish line, who the work has to be right
@@ -32,6 +32,17 @@ That is not a mockup. A six-team research project was designed and launched
 from a Claude window this week, and every write in its audit trail is signed
 `user:… via mcp:Claude`.
 
+**And the part you would find anyway:** this git history is two weeks old — it
+was restarted on 30 August, so the repository is younger than the project, and
+the screenshots above are stamped a week before its first commit. It was built
+fast and in the open with Claude Code, and roughly half the commits are authored
+by it. What that bought is a policy engine with 1,347 tests attacking
+it over HTTP. What it has not bought is a project anyone but me has run for a
+month, or a security review by someone who did not write the thing. Both are
+true at once — [PLAN.md](docs/PLAN.md) says which claims are load-bearing and
+what would falsify them, and [SECURITY.md](SECURITY.md) says what contains an
+agent and what does not.
+
 <img src="docs/screenshots/cockpit-overview.png" alt="The chairman's cockpit: is it working, the deliverable, the plan, spend against the cap broken down by team, the setup health line, and the org roster">
 
 A CEO sets the priorities. Teams of specialists argue with each other. A budget
@@ -46,9 +57,10 @@ agents you already have.
 
 yaaf is an **MCP server**, so the client you already use is the front end —
 Claude Code, Claude Desktop or claude.ai, connected once, with your own files,
-repos and email open beside it. Thirty tools cover the whole job: the cockpit,
-the plan, the spend, run traces and proof; talking to the CEO; approving,
-cutting, rescheduling, auditing; and setting up teams, data sources and rules.
+repos and email open beside it. Thirty-two tools cover the whole job: the
+cockpit, the plan, the spend, run traces and proof; talking to the CEO;
+approving, cutting, rescheduling, auditing; and setting up teams, data sources
+and rules.
 No dashboard needed day to day.
 
 <img src="docs/screenshots/boardroom.png" alt="The Boardroom tab: the chairman asks the CEO how confident it is in the 30th; the CEO answers with the estimate-to-actual ratio, its re-projection, and what would move it">
@@ -79,7 +91,7 @@ Four rules hold at every scope:
 
 ---
 
-## What people actually hand it
+## What it is built to be handed
 
 Every project picks a shape once: **Explore** (chase a goal with no fixed end),
 **Deliver** (ship one thing, then stop), or **Operate** (a Deliver that restarts
@@ -99,7 +111,7 @@ time" is enforced rather than asked for).
 None of these is a prompt you re-run. Every one has to survive weeks, wake up
 without you, and be graded by something that isn't itself.
 
-Eleven more, importable and ready to run, in **[examples/](examples/)**.
+Twelve, importable and ready to run, in **[examples/](examples/)**.
 
 ---
 
@@ -171,9 +183,12 @@ held. Break one and it doesn't get a stern reminder — it gets a 403.
   refusal — plus random samples of "completed" work dealt to you to spot-check,
   because AI reviewers approve nearly everything and you don't.
 
-Each of those is a test, not a paragraph. 913 of them drive the real app over
-HTTP the way an agent would — forged tokens, wrong roles, rephrased requests —
-alongside chaos tests and golden evals that gate every prompt edit.
+Each of those is a test, not a paragraph. 1,347 of them drive the real app over
+HTTP the way an agent would: forged tokens, wrong roles, rephrased requests.
+They are free, offline, and they test **the rules, not the models** — model
+behaviour is held by golden transcripts of a scripted backend plus one opt-in
+paid check. The rules are the part an agent argues with, so the rules are the
+part under attack.
 
 <img src="docs/screenshots/plan-and-promise.png" alt="The Plan tab: the commitment at risk with its two levers, pace and waste, the burn-up against the committed and projected dates, and requirements in stages with dependencies">
 
@@ -264,7 +279,7 @@ it, the governance layer underneath stands on its own.
 |---|---|
 | [MCP server](docs/MCP_SERVER.md) | Chairing from Claude — every tool, every scope |
 | [Creating a project](docs/CREATING_A_PROJECT.md) | Your first project, in plain English |
-| [Examples](examples/) | Eleven projects to import |
+| [Examples](examples/) | Twelve projects to import |
 | [Features](docs/FEATURES.md) | The complete feature reference |
 | [Dashboard](docs/DASHBOARD.md) | Every screen, and what you do there |
 | [Governance](docs/GOVERNANCE.md) | Every rule and its default |
@@ -273,6 +288,7 @@ it, the governance layer underneath stands on its own.
 | [Deployment](docs/DEPLOYMENT.md) | Install, configure, back up, upgrade |
 | [CLI](docs/CLI.md) | Every `yaaf` command |
 | [Agent API](docs/AGENT_API.md) | What agents can do; writing a role |
+| [Security](SECURITY.md) | Trust boundaries, what contains an agent, and the sharp edges |
 | [Plan](docs/PLAN.md) | Where this is going, and what would kill it |
 
 Actively developed, pre-1.0. Apache-2.0 ([LICENSE](LICENSE)). Contributions:

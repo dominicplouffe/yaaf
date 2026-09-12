@@ -59,6 +59,13 @@ class Settings(BaseSettings):
     stack: str = "deploy"
     # "docker" (isolation; default) or "subprocess" (dev/CI only — NO isolation)
     sandbox_mode: str = "docker"
+    # A task's success test can be a command string an *agent* wrote. Under
+    # sandbox_mode="subprocess" that string runs on the runner host, which
+    # mounts the Docker socket — so the platform refuses it unless an operator
+    # says otherwise in so many words. Docker mode ignores this: there the
+    # command runs in a throwaway container with no credentials, which is the
+    # whole point of the mode.
+    allow_host_success_tests: bool = False
     sandbox_image: str = "yaaf-sandbox:latest"
     sandbox_network: str = "yaaf_sandbox"
     workspaces_root: str = "/var/lib/yaaf/workspaces"

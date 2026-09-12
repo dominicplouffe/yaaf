@@ -62,6 +62,7 @@ from yaaf.server import activity, agenda, briefing, metrics, policy, typing_stat
 from yaaf.server import asks as ask_lib
 from yaaf.server.deps import admin_auth, db
 from yaaf.server.dispatcher import activity_state, chat_session_live
+from yaaf.server.receipt import receipt as receipt_projection
 from yaaf.server.rows import approval_row
 from yaaf.server.velocity import commitment_projection, project_velocity, standing_record
 
@@ -1484,6 +1485,21 @@ def project_activity(project_id: str, since: str = "today", until: str | None = 
     except activity.WindowError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {"window": label, **activity.roster_activity(session, project, start, end)}
+@router.get("/projects/{project_id}/receipt")
+def receipt(project_id: str, session: Session = Depends(db)) -> dict:
+    """What this project cost, and what the money bought.
+
+    Every other screen answers "is it working right now". This one answers the
+    question a stranger asks first, and it answers it in two columns so the
+    reader does the division rather than being handed a verdict: metered cost
+    on one side, and on the other only the things no agent can move — a
+    requirement the platform marked met after running its test, evidence the
+    platform fetched and hashed, a close the janitor drew at random.
+
+    Read-only, whole-life, and derived from the same producers the Review tab
+    freezes. Safe to paste somewhere public, which is the point of it.
+    """
+    return receipt_projection(session, _project(session, project_id))
 
 
 @router.get("/projects/{project_id}/evidence")
