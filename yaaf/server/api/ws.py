@@ -33,6 +33,7 @@ from starlette.concurrency import run_in_threadpool
 from yaaf.core.config import settings
 from yaaf.core.db import session_factory
 from yaaf.core.models import (
+    Agent,
     Approval,
     Ask,
     Evidence,
@@ -98,9 +99,22 @@ def _change_stamp(project_id: str) -> dict | None:
             .group_by(Ask.status)
             .all()
         )
+        # A hire adds a row; a stand-down, a recall and a pause all mutate one
+        # in place. The status histogram is what makes the second kind visible
+        # — exactly the case the comment above describes, and the reason runs,
+        # approvals and asks each carry a status-shaped extra. Without it a
+        # roster change reached an open dashboard only if somebody refreshed.
+        agent_statuses = dict(
+            session.query(Agent.status, func.count(Agent.id))
+            .filter(Agent.project_id == project_id)
+            .group_by(Agent.status)
+            .all()
+        )
         return {
             "type": "stamp",
             "project": project_id,
+            "agents": _count_max(session, Agent, Agent.created_at, project_id)
+            + [agent_statuses],
             "messages": _count_max(session, Message, Message.created_at, project_id),
             # updated_at has onupdate, so it also covers status transitions.
             "tasks": _count_max(session, Task, Task.updated_at, project_id),

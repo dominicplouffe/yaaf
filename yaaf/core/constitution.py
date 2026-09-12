@@ -135,6 +135,21 @@ class ConstitutionDoc(BaseModel):
     subtask_ceiling: int = _rule(
         10, ge=1, group="Work discipline", label="Open subtasks per task",
         help="How far a lead may decompose one parent task before it must land something.")
+    # The roster is the CEO's to run, and this is the number it runs it inside.
+    # Hiring buys no runs — the daily ration, the hourly ceiling and the
+    # monthly wall are all project-level — so a bigger roster splits the same
+    # allowance thinner rather than raising it. What it does buy is wake-ups:
+    # every seat reads its channels, and a seat that does nothing still costs
+    # inbox runs. So the ceiling is on seats, and the CEO argues for a higher
+    # one through capacity_request like every other number it cannot set.
+    max_teams: int = _rule(
+        8, ge=1, group="Work discipline", label="Teams the project may run at once",
+        help="Your CEO hires and stands down roles itself, from your role library, up to "
+             "this many teams. It cannot exceed this without asking you.")
+    staffing_review_days: int = _rule(
+        14, ge=1, group="Work discipline", label="Days before an unused seat is flagged",
+        help="A seat that spends runs for this long and closes no work trips a flag your "
+             "CEO has to answer — stand the role down, or say on the record why it stays.")
     external_ratio_min: float = _rule(
         0.5, ge=0, le=1, group="Work discipline", label="Minimum share of outward-facing work",
         help="Fraction of open tasks that must produce evidence from outside the project. "

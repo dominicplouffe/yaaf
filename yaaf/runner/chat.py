@@ -358,6 +358,11 @@ def _prepare_session(session: Session, project: Project, ceo: Agent) -> tuple[di
         "YAAF_MODEL": job.model,
         "YAAF_EFFORT": job.effort,
         "YAAF_TOOL_PERMISSIONS": json.dumps(job.tool_permissions),
+        # Stated rather than left to the default. This lane only ever runs the
+        # CEO (chat._resident_ceo refuses anything else), so the surface is the
+        # same either way today — but a lane that silently relied on the
+        # fallback would hand the full CEO tool set to whoever ran here next.
+        "YAAF_AGENT_KIND": AgentKind.CEO,
         **job.billing_env,
     }
     launch = dict(

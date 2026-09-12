@@ -119,10 +119,11 @@ yaaf stop  my-slug --reason "shipped"
 | `yaaf agenda PROJECT [--days 14]` | **What it is scheduled to do next**: the wall-clock wakes, the standing meeting, the cycle roll, the kill dates, the clocks that decide themselves, and the promised date with the platform's projection beside it. |
 | `yaaf dashboard PROJECT` | The full project dashboard payload. |
 | `yaaf board PROJECT` | The task board. |
-| `yaaf org PROJECT` | Teams, leads, employees, who's awake. |
+| `yaaf org PROJECT` | Teams, leads, employees, who's awake, and which teams have a declared end. |
 | `yaaf channels PROJECT` | Channels and their ids. |
 | `yaaf tail CHANNEL_ID [--limit 30]` | Recent messages, formatted, frozen threads marked. |
 | `yaaf runs PROJECT [--limit 20]` | Recent runs: agent, wake reason, cost, status. |
+| `yaaf activity PROJECT [--since today]` | Who spent the runs: one row a seat, with runs, wake reasons, tokens, money and tasks closed. `--since` takes `today` (the run day, which starts at 00:00 UTC when the ration resets), `yesterday`, `7d`, a date in the project's timezone, or an ISO timestamp. |
 | `yaaf ledger PROJECT` | Spend entries. |
 | `yaaf evidence PROJECT` | External evidence and verification status. |
 | `yaaf hypotheses PROJECT` | Live bets and their kill dates. |

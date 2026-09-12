@@ -28,3 +28,28 @@ def approval_row(a: Approval, *, outcome: dict | None = None) -> dict:
         # What the spent call was observed to do, filed by the agent afterwards.
         "outcome": outcome,
     }
+
+
+def seat_row(agent, *, team=None, role_slug: str | None = None) -> dict:
+    """One rendering of who a seat is, shared by every surface that names one.
+
+    The context pack, the activity rollup, the observe listing and the roster
+    card all describe the same person. They disagreed about it before this
+    existed: the pack's roster carried a name and an id and no `status`, so a
+    CEO could not see from its own context that one of its seats was paused —
+    while `observe.org`, drawing the same roster for the chairman, carried it.
+
+    Activity numbers are spread onto this by the caller that measured them; the
+    identity is here so it cannot drift.
+    """
+    return {
+        "agent_id": agent.id,
+        "name": agent.name,
+        "kind": agent.kind,
+        "status": agent.status,
+        "team_id": agent.team_id,
+        "team": team.name if team is not None else None,
+        # Employees inherit their team's pinned version, so the slug is the
+        # team's; only the CEO carries one of its own.
+        "role_slug": role_slug,
+    }

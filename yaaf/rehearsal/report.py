@@ -173,7 +173,7 @@ def _craft_findings(project_id: str, cons_doc: dict) -> list[str]:
     costs a model call — which is the one thing a $0 drill may not spend. A
     regex over a goal would be a guess wearing a finding's clothes.
     """
-    from sqlalchemy import select
+    from sqlalchemy import func, select
 
     from yaaf.core.db import db_session
     from yaaf.core.models import Agent, AgentKind, Project, Role, RoleVersion, Team
@@ -195,6 +195,9 @@ def _craft_findings(project_id: str, cons_doc: dict) -> list[str]:
         # for a role the library had deliberately placed HIGHER, and it never
         # saw the per-employee overrides that beat the lift outright. The
         # stamps are on the rows; read them.
+        team_count = session.execute(
+            select(func.count(Team.id)).where(Team.project_id == project_id)
+        ).scalar_one()
         lifted = sorted({
             f"{agent.name} ({team_name})" for agent, team_name in session.execute(
                 select(Agent, Team.name)
@@ -226,6 +229,20 @@ def _craft_findings(project_id: str, cons_doc: dict) -> list[str]:
             findings.append(
                 "This bundle asks for an independent read and hires nobody in the "
                 "challenge discipline to give one. Creating it will be refused.")
+
+    # Headcount against the ceiling. Bundle-specific and conditional, like
+    # everything else here: a roster with room says nothing, because the CEO
+    # staffing itself is the normal case and not news. A roster that arrives
+    # full IS news — the CEO cannot answer a gap by hiring, and the first thing
+    # it will have to do is stand something down or come to the chairman.
+    max_teams = cons_doc.get("max_teams")
+    if max_teams and team_count >= max_teams:
+        findings.append(
+            f"This roster hires {team_count} teams and the rule allows {max_teams}, so "
+            "it launches full. Your CEO staffs the project itself, and from the first "
+            "run it has nowhere to hire from — a gap it finds later has to be answered "
+            "by standing another role down or by a capacity request to you. Raise "
+            "`max_teams`, or launch with a seat spare.")
 
     if cons_doc.get("stakes") == "high" and lifted:
         findings.append(

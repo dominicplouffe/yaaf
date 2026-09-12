@@ -84,8 +84,21 @@ class AgentKind(enum.StrEnum):
 
 
 class AgentStatus(enum.StrEnum):
+    """Whether a seat runs, and if not, whose decision that was.
+
+    PAUSED and STOOD_DOWN are identical to the dispatcher and opposite to a
+    reader. A paused seat is an intervention: the chairman reached in, and the
+    fix is to resume it. A stood-down seat has *finished* — its role was needed
+    for the front half of the project and is not needed now, and the right
+    response to seeing one is nothing at all. Told only "not active", the idle
+    brief advised "resume the agent, or reassign the work" about seats whose
+    job was over, which is how a roster that had been managed correctly read as
+    a roster somebody had abandoned.
+    """
+
     ACTIVE = "active"
     PAUSED = "paused"
+    STOOD_DOWN = "stood_down"
 
 
 class ChannelKind(enum.StrEnum):
@@ -212,6 +225,14 @@ class FlagKind(enum.StrEnum):
     # difference between a plan and a cliff. Exactly the shape BUDGET_OVERRUN
     # already has; runs were simply never given it.
     RUN_OVERRUN = "run_overrun"
+    # A seat is awake, reading its channels, spending the project's ration, and
+    # moving nothing. Deliberately not "has not run recently": a seat waiting
+    # behind a start time has not run and is not idle, and a flag that fired on
+    # that would be muted inside a week. This is the opposite and worse shape,
+    # and it had no reader at all — a desk carried two seats that closed no
+    # work for two days and spent 139 million tokens, and the only thing that
+    # noticed was the chairman reading a token bill.
+    SEAT_IDLE = "seat_idle"
 
 
 class FlagStatus(enum.StrEnum):
@@ -480,6 +501,11 @@ class NoticeKind(enum.StrEnum):
     # A team of two or more with nobody named as lead cannot claim its own
     # queue. The platform names the earliest member and says so.
     LEAD_ELECTED = "lead_elected"
+    # A team's declared stand-down condition came true and the platform stood
+    # it down. Not a request and not a warning — the decision was made when the
+    # CEO wrote the condition; this is the receipt, so the next run plans
+    # around a roster it knows has changed under it.
+    SEAT_STOOD_DOWN = "seat_stood_down"
     AUDIT_FAILED = "audit_failed"  # chairman spot-audit failed an evidence row or completion
     # Everything in scope is true and only the chairman's confirmation is left.
     # Not urgent: it can wait out a batching window, because the one thing it
@@ -727,6 +753,18 @@ class Team(Base):
     # Explicit lead for multi-employee teams; a sole employee is the de-facto
     # lead — resolve with policy.effective_lead(), never read this raw.
     lead_agent_id: Mapped[str | None] = mapped_column(String(40))
+    # When this team's job ends, written while planning and evaluated by the
+    # platform — never prose, because the platform has to be able to fire it.
+    # `{"kind": "requirement_met", "keys": ["R-03"]}` or
+    # `{"kind": "stage_cleared", "stage": 2}`.
+    #
+    # A project is front-loaded and then it is not: planning, requirements,
+    # build, validation, then execution. Every roster was hired for the first
+    # half and kept for the second, because the only moment anyone was asked to
+    # think about headcount was the moment before any work existed. This is the
+    # CEO saying, at the one moment it knows, when it will stop needing a seat.
+    stand_down_when: Mapped[dict | None] = mapped_column(JSONVariant)
+    stood_down_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 
@@ -757,6 +795,12 @@ class Agent(Base):
     # every morning, a metrics agent that reports at close. Chairman-set;
     # fires through the same heartbeat dedup and wake-rate brakes as the CEO's.
     daily_at: Mapped[str | None] = mapped_column(String(8))
+    # Why this seat stopped, in the words of whoever stopped it. A stand-down
+    # is a staffing decision and the project has to be able to account for one
+    # later — "we took the designer off after the template shipped" is a
+    # sentence somebody has to be able to read back six weeks on.
+    stood_down_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    stood_down_reason: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 

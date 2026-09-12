@@ -61,6 +61,8 @@ REACHED = {
     "PATCH /admin/projects/{project_id}": "project_configure",
     "POST /admin/projects/{project_id}/teams": "project_configure (add_team)",
     "POST /admin/teams/{team_id}/repin": "project_configure (repin)",
+    "POST /admin/teams/{team_id}/stand_down": "lifecycle (stand_down)",
+    "POST /admin/teams/{team_id}/recall": "lifecycle (recall)",
     "POST /admin/projects/{project_id}/mcp_servers": "data_source (add)",
     "POST /admin/projects/{project_id}/mcp_servers/{name}/check": "data_source (check)",
     "DELETE /admin/projects/{project_id}/mcp_servers/{name}": "data_source (remove)",

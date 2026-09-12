@@ -41,6 +41,7 @@ from yaaf.core.models import (
     Requirement,
     Review,
     Task,
+    Team,
 )
 from yaaf.server.api import admin
 from yaaf.server.mcp import confirm
@@ -455,7 +456,8 @@ def flag_ack(principal: Principal, session: Session, arguments: dict) -> dict:
 
 
 LIFECYCLE_VERBS = ("start", "pause", "stop", "complete", "pause_agent", "resume_agent",
-                   "set_schedule", "unfreeze_thread", "briefing_seen")
+                   "stand_down", "recall", "set_schedule", "unfreeze_thread",
+                   "briefing_seen")
 
 
 @register(
@@ -463,12 +465,19 @@ LIFECYCLE_VERBS = ("start", "pause", "stop", "complete", "pause_agent", "resume_
     scope="steer",
     description=(
         "Run the project's switches: start, pause, stop or complete it, pause or "
-        "resume one agent, set an agent's daily wake, unfreeze a frozen thread, or mark "
-        "a briefing read. Everything but briefing_seen needs a confirmation."
+        "resume one agent, stand a whole team down or recall it, set an agent's daily "
+        "wake, unfreeze a frozen thread, or mark a briefing read. "
+        "stand_down/recall are the STAFFING verbs and take `team`: a role whose job is "
+        "finished stops costing wake-ups, keeps its channel and history, and comes "
+        "back whole. pause_agent is the different thing — an intervention on one "
+        "person, which recall deliberately will not undo. "
+        "Everything but briefing_seen needs a confirmation."
     ),
     input_schema=_schema(["verb"],
                          verb={"type": "string", "enum": list(LIFECYCLE_VERBS)},
                          agent={"type": "string", "description": "Agent id, for agent verbs"},
+                         team={"type": "string",
+                               "description": "Team id, for stand_down and recall"},
                          message={"type": "string", "description": "unfreeze_thread: message id"},
                          daily_at={"type": "string", "description": "set_schedule: HH:MM, or empty"},
                          reason=REASON_ARG),
@@ -483,7 +492,8 @@ def lifecycle(principal: Principal, session: Session, arguments: dict) -> dict:
     if verb != "briefing_seen":
         preview = confirm.gate(session, principal, "lifecycle", arguments, {
             "verb": verb, "project": project.slug, "status_now": project.status,
-            "agent": arguments.get("agent"), "reason": reason})
+            "agent": arguments.get("agent"), "team": arguments.get("team"),
+            "reason": reason})
         if preview:
             return preview
 
@@ -502,6 +512,13 @@ def lifecycle(principal: Principal, session: Session, arguments: dict) -> dict:
         agent = _owned(session, project, Agent, str(arguments.get("agent") or ""), "agent")
         outcome = _call(principal, admin.pause_agent, agent_id=agent.id,
                         body=admin.AgentPause(paused=verb == "pause_agent"), session=session)
+    elif verb in ("stand_down", "recall"):
+        team = _owned(session, project, Team, str(arguments.get("team") or ""), "team")
+        fn = admin.stand_down_team if verb == "stand_down" else admin.recall_team
+        outcome = _call(principal, fn, team_id=team.id,
+                        body=admin.TeamStandDown(
+                            reason=reason or "No reason given by the chairman."),
+                        session=session)
     elif verb == "set_schedule":
         agent = _owned(session, project, Agent, str(arguments.get("agent") or ""), "agent")
         outcome = _call(principal, admin.set_agent_schedule, agent_id=agent.id,

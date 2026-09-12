@@ -81,8 +81,9 @@ from yaaf.core.models import (
     utcnow,
 )
 from yaaf.server import asks as ask_lib
-from yaaf.server import briefing, metrics, policy
+from yaaf.server import briefing, metrics, policy, staffing
 from yaaf.server.notify import Attention, boardroom_line, chairman_notify
+from yaaf.server.policy import Refusal
 from yaaf.server.rows import approval_row
 from yaaf.server.verifier import verify_pending_evidence
 
@@ -172,6 +173,7 @@ def _janitor_project(session: Session, project: Project) -> None:
     release_unreadable_reviews(session, project)
     requeue_lost_checks(session, project)
     elect_missing_leads(session, project)
+    stand_down_due_teams(session, project)
     check_plan(session, project, cons)
     check_finished_requirements(session, project, cons)
     check_stalled_requirements(session, project)
@@ -299,6 +301,56 @@ def send_daily_brief(session: Session, project: Project) -> bool:
 
 
 # ── the plan: does it hold yet? ─────────────────────────────────────────────────
+
+
+def stand_down_due_teams(session: Session, project: Project) -> list[str]:
+    """A team whose declared condition came true stops, and the platform does it.
+
+    Not a nag and not a reminder. The decision was made when the CEO wrote the
+    condition while planning; this is the platform keeping it. A prompt here
+    would be the same thing the platform already does badly everywhere else —
+    an idle seat costs quietly, nothing raises the question, and the reminder
+    loses to whatever else is in the run.
+
+    A team holding work is skipped rather than refused: the condition is still
+    true and will fire on the tick after the board clears, so a stand-down can
+    never orphan a claimed task and can never be lost either.
+    """
+    stood_down = []
+    for team in staffing.running_teams(session, project.id):
+        if not staffing.condition_met(session, project, team.stand_down_when):
+            continue
+        try:
+            staffing.check_stand_down(session, project, team, by_chairman=True)
+        except Refusal:
+            continue
+        outcome = staffing.stand_down(
+            session, project, team,
+            f"Declared stand-down condition met: {_condition_words(team.stand_down_when)}.",
+            actor="janitor")
+        staffing.notify_ceo(
+            session, project,
+            f"{team.name} stood down: the condition you set — "
+            f"{_condition_words(team.stand_down_when)} — is now true. Those seats no "
+            "longer wake and no longer cost. Plan around a roster without them, or "
+            "recall the team if you were wrong about when its job ended.")
+        boardroom_line(
+            session, project.id,
+            f"🚪 STOOD DOWN: {team.name} — the condition your CEO set when it planned "
+            f"({_condition_words(team.stand_down_when)}) came true, so the platform "
+            "stood the role down. Recall it on the Overview roster if you disagree.")
+        stood_down.append(outcome["team"])
+    if stood_down:
+        notify(session, "yaaf_wake", project.id)
+    return stood_down
+
+
+def _condition_words(condition: dict | None) -> str:
+    if not condition:
+        return "no condition"
+    if condition.get("kind") == "requirement_met":
+        return " and ".join(condition.get("keys") or []) + " are met"
+    return f"every requirement at or below stage {condition.get('stage')} has settled"
 
 
 def check_plan(session: Session, project: Project, cons: ConstitutionDoc) -> bool:

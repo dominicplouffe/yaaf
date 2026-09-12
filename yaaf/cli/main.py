@@ -660,6 +660,22 @@ def org(project: str) -> None:
 
 
 @app.command()
+def activity(
+    project: str,
+    since: str = typer.Option("today", "--since",
+                              help="today, yesterday, 7d, 12h, a date, or an ISO timestamp"),
+    until: str = typer.Option(None, "--until"),
+) -> None:
+    """Who spent the runs, and on what — one row a seat."""
+    with _client() as client:
+        params = {"since": since}
+        if until:
+            params["until"] = until
+        _show(client.get(f"/observe/projects/{_resolve_project(client, project)}/activity",
+                         params=params))
+
+
+@app.command()
 def channels(project: str) -> None:
     with _client() as client:
         _show(client.get(f"/observe/projects/{_resolve_project(client, project)}/channels"))

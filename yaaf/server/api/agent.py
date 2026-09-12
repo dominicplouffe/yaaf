@@ -50,6 +50,8 @@ from yaaf.core.models import (
     RequirementStatus,
     Review,
     ReviewStatus,
+    Role,
+    RoleVersion,
     RunKind,
     RunQueue,
     Secret,
@@ -59,10 +61,11 @@ from yaaf.core.models import (
     Suggestion,
     Task,
     TaskStatus,
+    Team,
     VerificationStatus,
     utcnow,
 )
-from yaaf.server import policy, typing_state
+from yaaf.server import activity, policy, typing_state
 from yaaf.server.deps import RunContext, db, run_auth
 from yaaf.server.notify import Attention, chairman_notify
 from yaaf.server.policy import Refusal
@@ -165,6 +168,40 @@ def board(ctx: RunContext = Depends(run_auth), session: Session = Depends(db)) -
     return {
         "open": [_task_view(t) for t in tasks],
         "recently_closed": [_task_view(t) for t in done_recent],
+    }
+
+
+@router.get("/activity")
+def activity_rollup(since: str = "today", until: str | None = None,
+                    ctx: RunContext = Depends(run_auth),
+                    session: Session = Depends(db)) -> dict:
+    """Who spent the runs, and on what.
+
+    Asked "who did those 15 runs today", a CEO with no way to look said
+    "honestly, I can see the totals but not a name-by-name ledger", estimated
+    six of its own, and had spent twelve. Every figure it needed was already in
+    the database and on the chairman's own screen; no route carried it to the
+    one agent being asked. This is that route.
+
+    Scoped the way `/board` is: the CEO reads the project, a lead reads its own
+    team, everyone else reads themselves. Nobody is handed a denominator they
+    cannot account for — the totals narrow with the rows.
+    """
+    cons = effective(session, ctx.project.id)
+    try:
+        start, end, label = activity.resolve_window(cons.timezone, since, until)
+    except activity.WindowError as exc:
+        raise Refusal(str(exc), status_code=422) from exc
+
+    if ctx.agent.kind == AgentKind.CEO:
+        visible = None
+    elif policy.is_lead(session, ctx.agent):
+        visible = [a.id for a in policy.team_agents(session, ctx.agent.team_id)]
+    else:
+        visible = [ctx.agent.id]
+    return {
+        "window": label,
+        **activity.roster_activity(session, ctx.project, start, end, agent_ids=visible),
     }
 
 
@@ -462,6 +499,267 @@ def kill_task(
 
 class SuggestionIn(BaseModel):
     text: str = Field(min_length=10)
+
+
+# ── staffing: the roster is the CEO's to run ────────────────────────────────────
+#
+# A project is front-loaded and then it is not. Planning, requirements, build,
+# validation and quality assurance crowd the first half; the second half is
+# execution and needs a fraction of the seats. Every roster was hired at the one
+# moment nobody could know that — before any work existed — and then kept,
+# because these four verbs did not exist. On the desk that prompted them, two of
+# five seats had done no work for two days and spent 139 million tokens between
+# them, and the CEO watching it could describe the problem in the boardroom and
+# nothing else.
+#
+# No approval round-trip. Hiring buys no runs — the ration and the monthly wall
+# are the project's, not the seat's — so the CEO is spending inside a budget it
+# already has, bounded by `max_teams`, choosing from a library the chairman
+# curates. The chairman hears about every change where he reads; he does not
+# have to answer for it to happen.
+
+
+def _require_ceo(ctx: RunContext, verb: str) -> None:
+    if ctx.agent.kind != AgentKind.CEO:
+        raise Refusal(
+            f"Only the CEO staffs this project. If you think the roster is wrong, "
+            f"say so to the CEO — a suggestion survives your run, and {verb} does not "
+            "belong to a seat deciding about itself.",
+            status_code=403,
+        )
+
+
+@router.get("/roles")
+def role_library(ctx: RunContext = Depends(run_auth),
+                 session: Session = Depends(db)) -> dict:
+    """The roles this install can staff from, and which ones are already here.
+
+    Names, categories and descriptions only — never a system prompt. A role's
+    prompt is the instrument the chairman uses to shape an agent; handing it to
+    an agent that can hire would let a CEO read the charter it is about to be
+    contradicted by and pick the seat least likely to do it.
+    """
+    _require_ceo(ctx, "hiring")
+    from yaaf.server import staffing
+
+    on_roster = {}
+    for team in staffing.running_teams(session, ctx.project.id):
+        slug = staffing.team_role_slug(session, team)
+        if slug:
+            on_roster[slug] = team.name
+    cons = effective(session, ctx.project.id)
+    rows = []
+    for role in session.execute(select(Role).order_by(Role.slug)).scalars():
+        if role.is_ceo_role:
+            continue
+        latest = session.execute(
+            select(RoleVersion).where(RoleVersion.role_id == role.id)
+            .order_by(RoleVersion.version.desc()).limit(1)
+        ).scalar_one_or_none()
+        rows.append({
+            "slug": role.slug, "name": role.name, "category": role.category,
+            "domains": role.domains,
+            "description": latest.description if latest else None,
+            "already_on_roster_as": on_roster.get(role.slug),
+        })
+    return {
+        "roles": rows,
+        "teams_running": len(on_roster),
+        "max_teams": cons.max_teams,
+        "note": (
+            "A role already on the roster can be hired again — a second analyst is a "
+            "choice, not an error — but say why in the reason. `category` is what the "
+            "seat is FOR: challenge seats attack the work rather than produce it, and "
+            "the platform will not let you stand your last one down."
+        ),
+    }
+
+
+class HireIn(BaseModel):
+    role_slug: str = Field(min_length=1, max_length=64)
+    name: str = Field(min_length=2, max_length=120)
+    employees: list[str] = Field(min_length=1, max_length=6)
+    lead: str | None = None
+    reason: str = Field(min_length=20, max_length=4000)
+    stand_down_when: dict | None = None
+
+
+@router.post("/teams")
+def hire(body: HireIn, ctx: RunContext = Depends(run_auth),
+         session: Session = Depends(db)) -> dict:
+    """Hire a role onto this project.
+
+    Rides `admin.add_team`, so a team the CEO hires is hired on exactly the same
+    terms as one the chairman hires: the same role-version pin, the same craft
+    lift at high stakes, the same per-employee checks, the same review-seat
+    rule, its own team channel. One implementation, or the two doors drift and
+    the difference shows up as a team that quietly came back without the model
+    its role asked for.
+    """
+    _require_ceo(ctx, "hiring")
+    from yaaf.server import staffing
+    from yaaf.server.api import admin
+
+    cons = effective(session, ctx.project.id)
+    staffing.check_hire(session, ctx.project, cons)
+    condition = staffing.check_condition(body.stand_down_when) if body.stand_down_when else None
+
+    created = admin.add_team(
+        ctx.project.id,
+        admin.TeamSpec(role_slug=body.role_slug, name=body.name,
+                       employees=body.employees, lead=body.lead),
+        session=session,
+    )
+    team = session.get(Team, created["id"])
+    if condition:
+        team.stand_down_when = condition
+    session.add(AuditLog(
+        id=ids.new_id(ids.AUDIT), project_id=ctx.project.id,
+        actor=f"agent:{ctx.agent.id}", action="team.hire", entity="team",
+        entity_id=team.id,
+        detail={"role_slug": body.role_slug, "team": body.name,
+                "employees": body.employees, "reason": body.reason,
+                "stand_down_when": condition},
+    ))
+    _boardroom_system_line(
+        session, ctx.project.id,
+        f"👤 HIRED: {body.name} ({body.role_slug}) — {body.reason[:400]}\n"
+        + (f"Standing down when {_condition_words(condition)}. "
+           if condition else "No stand-down condition set. ")
+        + "Your CEO staffs this project inside the `max_teams` rule; stand a role "
+          "down yourself on the Overview roster if you disagree.")
+    session.flush()
+    chairman_notify(
+        session, ctx.project, f"The project hired {body.name} ({body.role_slug})",
+        body.reason[:300], kind="staffing", data={"team": created},
+        attention=Attention.FYI,
+    )
+    notify(session, WAKE_CHANNEL, ctx.project.id)
+    return {**created, "stand_down_when": condition,
+            "teams_running": len(staffing.running_teams(session, ctx.project.id)),
+            "max_teams": cons.max_teams}
+
+
+def _condition_words(condition: dict | None) -> str:
+    if not condition:
+        return "no condition"
+    if condition["kind"] == "requirement_met":
+        return " and ".join(condition["keys"]) + " are met"
+    return f"every requirement at or below stage {condition['stage']} has settled"
+
+
+class StandDownIn(BaseModel):
+    reason: str = Field(min_length=20, max_length=4000)
+
+
+@router.post("/teams/{team_id}/stand_down")
+def stand_down_team(team_id: str, body: StandDownIn,
+                    ctx: RunContext = Depends(run_auth),
+                    session: Session = Depends(db)) -> dict:
+    """A role whose job is finished stops costing wake-ups.
+
+    Not a pause. A paused seat is the chairman reaching in and the fix is to
+    resume it; a stood-down seat has finished and the right response is nothing
+    at all. The distinction is the whole reason this is a separate verb — told
+    only "not active", the idle brief advised resuming seats whose job was over.
+    """
+    _require_ceo(ctx, "standing a role down")
+    from yaaf.server import staffing
+
+    team = session.get(Team, team_id)
+    if team is None or team.project_id != ctx.project.id:
+        raise Refusal("unknown team", status_code=404)
+    staffing.check_stand_down(session, ctx.project, team)
+    outcome = staffing.stand_down(session, ctx.project, team, body.reason,
+                                  actor=f"agent:{ctx.agent.id}")
+    _boardroom_system_line(
+        session, ctx.project.id,
+        f"🚪 STOOD DOWN: {team.name} — {body.reason[:400]}\n"
+        "Those seats wake for nothing now and cost nothing. Recall them on the "
+        "Overview roster if you disagree; nothing about their record is lost.")
+    session.flush()
+    chairman_notify(
+        session, ctx.project, f"The project stood down {team.name}",
+        body.reason[:300], kind="staffing", data=outcome, attention=Attention.FYI,
+    )
+    return {**outcome, "note": (
+        "Done. Their work is not reassigned — there was none, or this would have "
+        "been refused. Recall them with the same team id if you were wrong; the "
+        "channel, the memory and the history are all still there.")}
+
+
+@router.post("/teams/{team_id}/recall")
+def recall_team(team_id: str, body: StandDownIn,
+                ctx: RunContext = Depends(run_auth),
+                session: Session = Depends(db)) -> dict:
+    """Bring a role back. Cheaper than hiring a replacement: same channel, same
+    team memory, same history."""
+    _require_ceo(ctx, "recalling a role")
+    from yaaf.server import staffing
+
+    team = session.get(Team, team_id)
+    if team is None or team.project_id != ctx.project.id:
+        raise Refusal("unknown team", status_code=404)
+    cons = effective(session, ctx.project.id)
+    staffing.check_hire(session, ctx.project, cons)
+    outcome = staffing.recall(session, ctx.project, team, body.reason,
+                              actor=f"agent:{ctx.agent.id}")
+    if not outcome["recalled"]:
+        raise Refusal(
+            f"{team.name} has nobody stood down to recall. A seat the chairman "
+            "PAUSED stays paused — that is his intervention, not a staffing "
+            "decision of yours to undo.",
+            status_code=409,
+        )
+    _boardroom_system_line(
+        session, ctx.project.id,
+        f"👤 RECALLED: {team.name} — {body.reason[:400]}")
+    session.flush()
+    notify(session, WAKE_CHANNEL, ctx.project.id)
+    return outcome
+
+
+class StandDownWhenIn(BaseModel):
+    when: dict | None = None
+    reason: str = Field(min_length=10, max_length=4000)
+
+
+@router.post("/teams/{team_id}/stand_down_when")
+def set_stand_down_condition(team_id: str, body: StandDownWhenIn,
+                             ctx: RunContext = Depends(run_auth),
+                             session: Session = Depends(db)) -> dict:
+    """Say now when a seat's job ends, and the platform will do it.
+
+    The one moment a CEO knows which roles are for the front half of the project
+    is while it is writing the plan — and that is the moment it has never been
+    asked. Afterwards nobody revisits it, because nothing ever raises the
+    question and an idle seat costs quietly. So the answer is recorded against
+    the plan's own objects, and the platform stands the team down itself when
+    the condition comes true. Pass `when: null` to clear one.
+    """
+    _require_ceo(ctx, "setting a stand-down condition")
+    from yaaf.server import staffing
+
+    team = session.get(Team, team_id)
+    if team is None or team.project_id != ctx.project.id:
+        raise Refusal("unknown team", status_code=404)
+    condition = staffing.check_condition(body.when) if body.when else None
+    team.stand_down_when = condition
+    session.add(AuditLog(
+        id=ids.new_id(ids.AUDIT), project_id=ctx.project.id,
+        actor=f"agent:{ctx.agent.id}", action="team.stand_down_when",
+        entity="team", entity_id=team.id,
+        detail={"team": team.name, "when": condition, "reason": body.reason},
+    ))
+    return {
+        "team_id": team.id, "team": team.name, "stand_down_when": condition,
+        "note": (
+            f"{team.name} stands down when {_condition_words(condition)}."
+            if condition else
+            f"{team.name} now has no stand-down condition and will run until you "
+            "stop it yourself."
+        ),
+    }
 
 
 @router.post("/suggestions")

@@ -240,6 +240,21 @@ Later, on a running project, **Add a team** opens the same desk — but it opens
 on what your roster is missing rather than on the library: *"Nobody here checks
 the numbers before you see them"*, with the two or three hires that close it.
 
+**You are picking a starting roster, not a permanent one.** Your CEO staffs the
+project itself from here on: it hires roles from the same library and stands
+down ones whose job is finished, up to the `max_teams` rule, without asking
+you. That is deliberate, and it is safe for an unglamorous reason — hiring buys
+no runs. The daily ration and the monthly cap belong to the *project*, so a
+bigger roster spreads the same allowance thinner rather than raising it.
+
+So hire for the front half and let the CEO shrink it. A project is
+front-loaded: requirements, design, build, validation and QA crowd the start,
+and steady execution afterwards needs a fraction of the seats. While it writes
+the plan, the CEO records for each team the requirement or stage after which
+that role is done, and the platform stands the team down when that comes true.
+Every change lands in your boardroom, and the Overview roster carries **stand
+down** and **recall** so you can overrule any of it.
+
 **Constitution.** These are the hard rules the project lives under — spending
 caps, how many tasks can be open at once, how long the CEO can go without
 real evidence before the system pushes back. The defaults are sensible;

@@ -24,6 +24,103 @@ the refusal text is part of the design, not an error string.
 | `GET /context` | The context pack: the constitution in prose, the roster, unread messages, memory usage, chairman state, and the current task. |
 | `GET /board` | The task board this agent can see. |
 | `GET /channels` | The channels it may read and post in. |
+| `GET /activity` | Who spent the runs, and on what. |
+
+### `GET /activity` — the name-by-name ledger
+
+`since` takes `today` (the default), `yesterday`, `7d`, `12h`, a date, or an ISO
+timestamp; `until` closes the window.
+
+**`today` is the RUN DAY — midnight UTC — not a rolling 24 hours and not the
+project's local calendar.** That is the window `runs_per_project_per_day` is
+counted on, and the question this route answers is about a rationed quantity.
+Resolving `today` locally instead puts this breakdown and the ration counter in
+the same context pack on two different clocks: on an America/Toronto project it
+silently drops every run between 00:00 and 04:00 UTC. A bare date (`2026-09-12`)
+*is* a local calendar day — that one is a calendar question with no ration
+attached.
+
+Each seat carries `runs` (everything that happened) and `runs_metered` (what the
+cap counted). The metered figures sum to `situation.runs_today.used`, so the
+split adds up to the total printed above it; they differ by the platform's own
+success checks and the chat lane, neither of which spends the ration.
+
+Per seat: runs split by kind and by outcome, what woke each one, tokens, money,
+tasks claimed and completed, and what it is holding now. Scoped the way `/board`
+is — the CEO reads the project, a lead reads its own team, everyone else reads
+themselves — and the totals narrow with the rows, so nobody is handed a
+denominator they cannot account for.
+
+Runs come from the run log and money from the ledger, joined back through
+`run_id` by the same code the chairman's spend card uses. A run that died before
+booking anything still counts as a run; money whose run row is gone lands under
+`(unattributed)` rather than vanishing.
+
+This route exists because of one exchange. Asked *"we've already done 15 today
+though, who did those 15"*, a CEO said *"honestly, I can see the totals but not a
+name-by-name ledger for today"*, estimated five or six were its own, and had
+spent twelve of seventeen — on the afternoon it was asking for fifty percent
+more runs. Every figure was already in the database and already on the
+chairman's screen. **Read it before answering any question about who spent
+what. Do not estimate.**
+
+## What an agent is sent
+
+The tool schemas travel on **every** API call inside a run, in the cached
+prefix. Sending a verb the server will refuse is not free and it is not small:
+all 56 tools are ~7,700 tokens, and for an employee — whose entire context pack
+is ~4,600 — that made the tool block the largest single thing the platform sent
+it, with roughly half of it verbs it could only be refused for using.
+
+So an agent is sent the tools its role can actually use: the CEO gets all 56,
+everyone else gets 35. The list lives in `CEO_ONLY_TOOLS`
+(`yaaf/runner/sandbox_entry.py`) and is **derived from the server, not trusted**
+— `tests/selftest_invariants/test_tool_surface.py` calls every endpoint as an
+employee over HTTP and fails if the list disagrees in either direction.
+
+**This is not enforcement and must never become it.** Every 403 below is
+unchanged: an agent that forges a call to a verb it was never offered is
+refused exactly as before, and a test holds that open specifically so the cost
+measure can never quietly turn into the wall. Withholding a schema saves
+money; the server decides authority.
+
+## Staffing — the roster is the CEO's
+
+| Endpoint | Does |
+|---|---|
+| `GET /roles` | The library to hire from: slug, name, category, description, and which roles are already here. Never a system prompt. |
+| `POST /teams` | Hire a role. Rides `admin.add_team`, so a team the CEO hires is hired on exactly the same terms as one the chairman hires. |
+| `POST /teams/{id}/stand_down` | Stop a role whose job is finished. |
+| `POST /teams/{id}/recall` | Bring it back, with its channel, memory and history. |
+| `POST /teams/{id}/stand_down_when` | Declare when its job ends, for the platform to fire. |
+
+All five are CEO-only (403 otherwise) and all five need a written reason. There
+is no approval round-trip: hiring buys no runs — `runs_per_project_per_day`,
+`runs_per_project_per_hour` and the monthly caps are all **project**-level, so a
+bigger roster spreads the same allowance thinner rather than raising it. What
+bounds the CEO is arithmetic instead:
+
+- `max_teams` refuses the hire above the ceiling, and names `capacity_request`
+  as the way to argue for a bigger one.
+- A team **holding open work** cannot be stood down. The platform used to
+  report orphaned work after the fact (`blocked_by: paused_agents`); refusing
+  up front means a stand-down cannot reach that state at all.
+- The **last `challenge` seat** and the **last reader** under
+  `deliverable_review: independent_read` are not the CEO's to remove. It wrote
+  the plan those seats exist to attack. The chairman can still stand either
+  down.
+
+**Stand-down is not pause.** They are identical to the dispatcher and opposite
+to a reader: a paused seat is the chairman reaching in and the fix is to resume
+it; a stood-down seat has *finished* and the right response is nothing. `recall`
+deliberately will not return a paused seat.
+
+`stand_down_when` takes `{"kind": "requirement_met", "keys": ["R-03"]}` or
+`{"kind": "stage_cleared", "stage": 2}` — structured, because the platform has
+to be able to fire it. A date or a sentence is refused: it would leave the seat
+running forever while looking like it had an end. The janitor stands the team
+down when the condition comes true; a team still holding work is skipped and
+caught on the next pass, so a condition can neither orphan a task nor be lost.
 
 ## The plan
 

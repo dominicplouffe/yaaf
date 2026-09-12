@@ -55,6 +55,11 @@ from yaaf.server import dispatcher
 GATES = {
     "daily_runs", "pacing", "governance_reserve", "concurrency", "agents_busy",
     "wake_ceiling", "coalescing", "scheduled", "no_lead", "paused_agents",
+    # The other half of "not active", and it needed its own rung because the
+    # fix is the opposite one. `paused_agents` says go resume somebody;
+    # a stood-down seat FINISHED, so resuming it is advice to undo a correct
+    # decision, and the work has to move instead.
+    "stood_down_agents",
     "stalled_requirement", "rework_owed", "awaiting_chairman", "awaiting_ceo",
     "blocked_tasks", "checks_lost", "checking",
     # Everyone holding anything is holding only unread mail and the reading
@@ -126,6 +131,7 @@ def _synthetic(gate: str | None) -> dict:
                   "checking": 1, "reviewing": 1,
                   "checks_lost": ["Shortlist the models"],
                   "leaderless_teams": ["Alpha"], "paused_agents": ["Mike"],
+                  "stood_down_agents": ["Rae"],
                   "stalled_requirements": ["R-02"],
                   "rework_owed": ["R-06"],
                   "proposed_requirements": ["R-03"],

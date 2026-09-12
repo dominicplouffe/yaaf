@@ -353,7 +353,15 @@ Read top to bottom: what needs you, what is true now, what happens next.
   a team on an outdated role version. **A healthy project collapses this to one
   green line.**
 - **The project** — the org roster: teams, leads, employees, who's awake, and
-  each team's open work.
+  each team's open work. Each seat carries its own day under its name — runs,
+  tasks closed, what it is holding, tokens and money — so "who is actually
+  doing the work here" is a glance rather than a query. The same numbers reach
+  the CEO, from the same producer, so you and it cannot be reading different
+  answers to the same question. Each team carries **stand down** / **recall**,
+  which is how you overrule a staffing call — your CEO hires and stands roles
+  down itself, and this is the same verb on your side of the desk. A team that
+  declared when its job ends says so on the card; the platform stops it when
+  that comes true.
 
 ## Boardroom — talk to your CEO
 

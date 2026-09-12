@@ -598,9 +598,20 @@ def _board_reachability(session: Session, project: Project, cons: ConstitutionDo
         if team is not None and policy.effective_lead(session, team) is None:
             leaderless.append(team.name or team_id)
 
-    # Work owned by an agent the chairman paused. The dispatcher skips those
-    # agents entirely, so their queue leaves no trace in any counter.
+    # Work owned by an agent that will never be woken for it. The dispatcher
+    # skips those agents entirely, so their queue leaves no trace in any
+    # counter.
+    #
+    # Split by WHY the seat stopped, because the two have opposite fixes. A
+    # paused seat is the chairman reaching in, and the answer is to resume it.
+    # A stood-down seat has finished, and telling anybody to resume it is
+    # advice to undo a decision that was correct — reassigning the work is the
+    # only sane move. A stand-down is refused while a team holds work, so this
+    # arm should be unreachable through that door; it is here because the
+    # platform must still describe a state it can reach another way (work
+    # assigned to a seat after it stopped, an import, a clone).
     parked: list[str] = []
+    finished: list[str] = []
     for agent in session.execute(
         select(Agent).where(Agent.project_id == project.id,
                            Agent.status != AgentStatus.ACTIVE)
@@ -615,7 +626,8 @@ def _board_reachability(session: Session, project: Project, cons: ConstitutionDo
             )
         ).scalar_one()
         if holds:
-            parked.append(agent.name)
+            (finished if agent.status == AgentStatus.STOOD_DOWN
+             else parked).append(agent.name)
 
     blocked = session.execute(
         select(func.count(Task.id)).where(Task.project_id == project.id,
@@ -708,6 +720,8 @@ def _board_reachability(session: Session, project: Project, cons: ConstitutionDo
         unreachable = "no_lead"
     elif parked:
         unreachable = "paused_agents"
+    elif finished:
+        unreachable = "stood_down_agents"
     elif stalled:
         unreachable = "stalled_requirement"
     elif rework:
@@ -739,6 +753,7 @@ def _board_reachability(session: Session, project: Project, cons: ConstitutionDo
         "checks_lost": checks_lost,
         "leaderless_teams": sorted(leaderless),
         "paused_agents": sorted(parked),
+        "stood_down_agents": sorted(finished),
         "stalled_requirements": sorted(stalled),
         "rework_owed": sorted(rework),
         "proposed_requirements": sorted(proposed),
@@ -927,6 +942,17 @@ def _activity_brief(state: dict) -> dict:
             f"{who} is paused and holds the work.",
             "A paused agent is skipped by the dispatcher entirely, so its tasks wake "
             "nobody and show in no counter. Resume the agent, or reassign the work.")
+
+    if gate == "stood_down_agents":
+        who = _listed(board["stood_down_agents"])
+        return brief(
+            "serious", "stood-down seat",
+            f"{who} holds the open work and has been stood down",
+            f"{who} has been stood down and holds the work.",
+            "That role's job was declared finished, so the dispatcher never wakes it "
+            "and its tasks show in no counter. Do not resume it to clear this — "
+            "reassign the work to a team that is running, or kill it. Recall the role "
+            "only if standing it down was the mistake.")
 
     if gate == "stalled_requirement":
         keys = _listed(board["stalled_requirements"])

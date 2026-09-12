@@ -2024,6 +2024,60 @@ def repin_team(team_id: str, session: Session = Depends(db)) -> dict:
     return {"team_id": team.id, "changed": True, "version": latest.version}
 
 
+class TeamStandDown(BaseModel):
+    reason: str = Field(min_length=10, max_length=4000)
+
+
+@router.post("/teams/{team_id}/stand_down")
+def stand_down_team(team_id: str, body: TeamStandDown,
+                    session: Session = Depends(db)) -> dict:
+    """Stop a role whose job is finished.
+
+    The chairman's door to the same verb the CEO has, and it lifts the two
+    rules that exist to stop a CEO removing its own contradiction — the last
+    challenge seat and the last reader. Those are rules about an agent deciding
+    about itself, not rules about the roster, so they do not bind the person
+    who owns one. The work rule still applies to both: orphaning a claimed task
+    is the same mess whoever causes it.
+    """
+    from yaaf.server import staffing
+
+    team = session.get(Team, team_id)
+    if team is None:
+        raise HTTPException(status_code=404, detail="unknown team")
+    project = _get_project(session, team.project_id)
+    staffing.check_stand_down(session, project, team, by_chairman=True)
+    outcome = staffing.stand_down(session, project, team, body.reason,
+                                  actor=f"user:{project.chairman_user_id}")
+    staffing.notify_ceo(
+        session, project,
+        f"The chairman stood down {team.name}: {body.reason[:400]} Plan around a "
+        "roster that no longer has that seat; do not task it.")
+    notify(session, WAKE_CHANNEL, project.id)
+    return outcome
+
+
+@router.post("/teams/{team_id}/recall")
+def recall_team(team_id: str, body: TeamStandDown,
+                session: Session = Depends(db)) -> dict:
+    """Bring a stood-down role back. A seat the chairman PAUSED stays paused —
+    recall answers a staffing decision, not an intervention."""
+    from yaaf.server import staffing
+
+    team = session.get(Team, team_id)
+    if team is None:
+        raise HTTPException(status_code=404, detail="unknown team")
+    project = _get_project(session, team.project_id)
+    outcome = staffing.recall(session, project, team, body.reason,
+                              actor=f"user:{project.chairman_user_id}")
+    staffing.notify_ceo(
+        session, project,
+        f"The chairman recalled {team.name}: {body.reason[:400]} That seat is "
+        "working again and can be tasked.")
+    notify(session, WAKE_CHANNEL, project.id)
+    return outcome
+
+
 class ProjectPatch(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
     # The chairman's mandate, not a constitutional rule: it redirects the

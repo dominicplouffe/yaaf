@@ -361,7 +361,7 @@ Status column tracks implementation. `M1`…`M4` are the milestones below.
 | `spend` | Against the cap, by team; ledger lines. | `GET /observe/projects/{id}/spend` `/ledger` | **done** (M1) |
 | `work` | Runs, one run's trace, the context pack it ran on. Long text walks by `offset`. | `GET /observe/projects/{id}/runs`, `/runs/{id}/trace` `/context` | **done** (M1) |
 | `proof` | Evidence, provenance, snapshots, audit samples. | `GET /observe/projects/{id}/evidence` `/audit_samples` `/spot_audit`, `/observe/evidence/{id}/snapshot` | **done** (M1) |
-| `org` | Teams, agents, schedules, one agent's detail, the board. | `GET /observe/projects/{id}/org` `/board`, `/observe/agents/{id}` | **done** (M1) |
+| `org` | Teams, agents, schedules, one agent's detail, the board — and what each seat actually did in a window (`since`: `today`, `yesterday`, `7d`, a date). | `GET /observe/projects/{id}/org` `/board` `/activity`, `/observe/agents/{id}` | **done** (M1) |
 | `channels` | Channel list and messages. **Wraps agent text.** | `GET /observe/projects/{id}/channels`, `/observe/channels/{id}/messages` | **done** (M1) |
 | `files` | Workspace listing and file content. **Wraps agent text.** Long files walk by `offset`. | `GET /observe/projects/{id}/files` `/files/content` | **done** (M1) |
 | `record` | The judgement record. `view`: `decisions` \| `reviews` \| `cycles` \| `hypotheses` \| `suggestions` \| `memories` \| `approvals`. | `GET /observe/projects/{id}/ceo_decisions` and siblings | **done** (M1) |
@@ -376,7 +376,7 @@ Status column tracks implementation. `M1`…`M4` are the milestones below.
 | `commitment_decide` | `verb`: `accept` \| `decline` \| `move`. | `POST /admin/commitments/{id}/…` | yes | **done** (M3) |
 | `review_decide` | `verb`: `lever` \| `close`. | `POST /admin/reviews/{id}/lever` `/close` | yes | **done** (M3) |
 | `audit_decide` | Open a spot audit, judge a sample, audit an evidence row or task. | `POST /admin/audit_samples/{id}/decide`, `/admin/evidence/{id}/audit`, `/admin/tasks/{id}/audit` | yes | **done** (M3) |
-| `lifecycle` | `verb`: `start` \| `pause` \| `stop` \| `complete` \| `pause_agent` \| `set_schedule` \| `unfreeze_thread` \| `briefing_seen`. | `POST /admin/projects/{id}/start` and siblings | yes, except `briefing_seen` | **done** (M3) |
+| `lifecycle` | `verb`: `start` \| `pause` \| `stop` \| `complete` \| `pause_agent` \| `resume_agent` \| `stand_down` \| `recall` \| `set_schedule` \| `unfreeze_thread` \| `briefing_seen`. `stand_down`/`recall` take `team` and are the staffing verbs — a role whose job is finished stops costing wake-ups and comes back whole. `pause_agent` is the different thing: an intervention on one person, which `recall` deliberately will not undo. | `POST /admin/projects/{id}/start` and siblings | yes, except `briefing_seen` | **done** (M3) |
 
 `requirement_decide` with `verb: verdict` is the single most dangerous call on
 this surface — it is the platform writing "met" on something a script could not

@@ -19,6 +19,7 @@ from yaaf.core import artifacts
 from yaaf.core.constitution import effective, tempo_for, tempo_name
 from yaaf.core.models import (
     Agent,
+    AgentStatus,
     Approval,
     ApprovalStatus,
     Artifact,
@@ -57,7 +58,7 @@ from yaaf.core.models import (
     VerificationStatus,
     utcnow,
 )
-from yaaf.server import agenda, briefing, metrics, policy, typing_state
+from yaaf.server import activity, agenda, briefing, metrics, policy, typing_state
 from yaaf.server import asks as ask_lib
 from yaaf.server.deps import admin_auth, db
 from yaaf.server.dispatcher import activity_state, chat_session_live
@@ -1103,8 +1104,18 @@ def org(project_id: str, session: Session = Depends(db)) -> dict:
                 # cross-referencing the health card.
                 "role_latest_version": latest.version if latest else None,
                 "lead_agent_id": lead.id if lead else None,
+                # The staffing half of the card. `running` is derived rather
+                # than stored: a team is stood down by standing its people
+                # down, so "is this team working" is always a question about
+                # its members.
+                "running": any(a.status == AgentStatus.ACTIVE for a in members),
+                "stood_down_at": team.stood_down_at.isoformat()
+                if team.stood_down_at else None,
+                "stand_down_when": team.stand_down_when,
                 "agents": [
-                    {"id": a.id, "name": a.name, "status": a.status} for a in members
+                    {"id": a.id, "name": a.name, "status": a.status,
+                     "stood_down_reason": a.stood_down_reason}
+                    for a in members
                 ],
             }
         )
@@ -1404,21 +1415,10 @@ def spend(project_id: str, group_by: str = "model", days: int = 30,
             )
         ).scalars()
     )
-    run_ids = {e.run_id for e in entries if e.run_id}
-    runs = {
-        r.id: r
-        for r in session.execute(select(Run).where(Run.id.in_(run_ids))).scalars()
-    } if run_ids else {}
-    agent_ids = {r.agent_id for r in runs.values() if r.agent_id}
-    agents = {
-        a.id: a
-        for a in session.execute(select(Agent).where(Agent.id.in_(agent_ids))).scalars()
-    } if agent_ids else {}
-    team_ids = {a.team_id for a in agents.values() if a.team_id}
-    team_names = {
-        t.id: t.name
-        for t in session.execute(select(Team).where(Team.id.in_(team_ids))).scalars()
-    } if team_ids else {}
+    # The same join the CEO's activity rollup performs, so the chairman's card
+    # and the CEO's answer can never resolve a run to a different seat.
+    runs, agents, team_names = activity.attribution_index(
+        session, {e.run_id for e in entries if e.run_id})
 
     def key_label(run: Run | None) -> tuple[str, str]:
         if run is None:
@@ -1463,6 +1463,27 @@ def spend(project_id: str, group_by: str = "model", days: int = 30,
     )
     return {"group_by": group_by, "days": days, "window": window,
             "since": since.isoformat(), "rows": out}
+
+
+@router.get("/projects/{project_id}/activity")
+def project_activity(project_id: str, since: str = "today", until: str | None = None,
+                     session: Session = Depends(db)) -> dict:
+    """Who did the work, in a window the caller names.
+
+    The chairman already had the money half of this at `/spend?group_by=agent`.
+    This is the work half — runs, why each one woke, what it produced — and it
+    exists in the first place so the CEO can read the same rows as its chairman
+    rather than estimating them. Same producer, so the two screens agree.
+    """
+    project = session.get(Project, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="unknown project")
+    cons = effective(session, project.id)
+    try:
+        start, end, label = activity.resolve_window(cons.timezone, since, until)
+    except activity.WindowError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"window": label, **activity.roster_activity(session, project, start, end)}
 
 
 @router.get("/projects/{project_id}/evidence")

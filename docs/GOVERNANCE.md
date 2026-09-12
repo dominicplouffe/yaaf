@@ -1,6 +1,6 @@
 # Governance — the constitution, rule by rule
 
-Each project runs under a **constitution**: 60 numbers and switches the agents
+Each project runs under a **constitution**: 62 numbers and switches the agents
 cannot edit, argue with, or talk their way around. Every one is enforced
 server-side in [`yaaf/server/policy.py`](../yaaf/server/policy.py) as an HTTP
 refusal or an automatic state change. The schema itself lives in
@@ -58,6 +58,8 @@ that cites your message. Everything else is chairman-only.
 |---|---|---|
 | `queue_ceiling` | 8 | Top-level tasks open at once. At the cap, task creation is **409** — finish or kill something. |
 | `subtask_ceiling` | 10 | Open subtasks under one parent. At the cap, **409**. |
+| `max_teams` | 8 | Teams the project may run at once. Your CEO hires and stands roles down itself, from your role library, inside this number; the hire that would exceed it is **409**, and it is told to argue for a bigger roster with `capacity_request` rather than work around the cap. Hiring buys no runs — the daily ration and the monthly wall are project-level — so a bigger roster splits the same allowance thinner. What it does buy is wake-ups, which is why the ceiling is here at all. |
+| `staffing_review_days` | 14 | Days a seat may spend runs while closing no work before the platform opens a `seat_idle` flag. The CEO must answer it: stand the role down, or say on the record why it stays. |
 | `external_ratio_min` | 0.5 | Minimum share of open tasks that must produce outside evidence. An add that would break it is **409**. |
 | `external_ratio_applies_from` | 3 | Board size before that ratio is checked at all. |
 | `min_success_test_len` | 15 | Characters. A shorter command or observable isn't falsifiable, so the task is refused. |

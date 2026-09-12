@@ -195,6 +195,7 @@ def _materialize(session: Session, queued: RunQueue, project: Project) -> RunJob
     run.model = job.model
     run.effort = job.effort
     job.tool_permissions = dict(role_version.tool_permissions) if role_version else {}
+    job.agent_kind = agent.kind
     source_specs = _merge_project_data_sources(session, project, role_version, job)
     role_secrets = _role_secret_env(session, project, role_version)
     job.billing_env = {**_billing_env(session, project), **role_secrets}

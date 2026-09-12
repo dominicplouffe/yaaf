@@ -618,6 +618,103 @@ async def t_flag_raise(args):
     return _text(_call("POST", "/agent/flags/raise", dict(args)))
 
 
+@tool(
+    "roles_list",
+    "CEO only. The role library you may hire from — slug, name, category and what the "
+    "role is for, plus which roles are already on your roster and how many teams you "
+    "may run. Read it before hiring: the seat you want may already be here under a "
+    "different team name.",
+    {},
+)
+async def t_roles_list(args):
+    return _text(_call("GET", "/agent/roles"))
+
+
+@tool(
+    "hire",
+    "CEO only. Put a role on this project — yours to decide, no approval needed. "
+    "`role_slug` comes from roles_list, `employees` are the names these people will "
+    "work under, `reason` says what work this seat is for. Optionally set "
+    "stand_down_when now, in the same shape stand_down_when takes. "
+    "Hiring does not buy you runs: the daily ration and the monthly wall belong to the "
+    "PROJECT, so another seat spreads the same allowance thinner and adds wake-ups of "
+    "its own. Hire because work needs doing that nobody here can do, never because a "
+    "seat would be nice to have.",
+    {"role_slug": str, "name": str, "employees": list, "lead": str, "reason": str,
+     "stand_down_when": dict},
+)
+async def t_hire(args):
+    payload = {k: v for k, v in args.items() if v not in (None, "", [], {})}
+    return _text(_call("POST", "/agent/teams", payload))
+
+
+@tool(
+    "stand_down",
+    "CEO only. Stop a role whose job is finished — yours to decide, no approval "
+    "needed. Its seats stop waking, stop reading, and stop costing; the team's "
+    "channel, memory and history all stay. THIS IS NOT A PAUSE and it is not a "
+    "punishment: it is the normal end of a role that was needed for the front half of "
+    "a project. An idle seat is not free — it wakes to read its channels and it counts "
+    "as a mover in your capacity forecast. Refused if the team is holding open work "
+    "(finish it, kill it or move it first) and refused for your last challenge seat, "
+    "which is not yours to remove.",
+    {"team_id": str, "reason": str},
+)
+async def t_stand_down(args):
+    return _text(_call("POST", f"/agent/teams/{args['team_id']}/stand_down",
+                       {"reason": args["reason"]}))
+
+
+@tool(
+    "recall",
+    "CEO only. Bring a stood-down role back, with its channel, memory and history "
+    "intact — cheaper and better than hiring a replacement. A seat the CHAIRMAN paused "
+    "is not yours to recall.",
+    {"team_id": str, "reason": str},
+)
+async def t_recall(args):
+    return _text(_call("POST", f"/agent/teams/{args['team_id']}/recall",
+                       {"reason": args["reason"]}))
+
+
+@tool(
+    "stand_down_when",
+    "CEO only. Say NOW when a team's job will end, and the platform will stand it down "
+    "itself when that comes true. Two shapes: "
+    "{\"kind\": \"requirement_met\", \"keys\": [\"R-03\"]} stops the seat once "
+    "those requirements are all settled, and "
+    "{\"kind\": \"stage_cleared\", \"stage\": 2} stops it once every requirement "
+    "at or below that stage has settled. "
+    "SET THIS FOR EVERY TEAM WHILE YOU ARE WRITING THE PLAN. Writing the plan is the "
+    "one moment you know which roles are for the front half of this project — the "
+    "requirements gathering, the build, the validation — and it is the moment nobody "
+    "has ever asked you. Afterwards nothing raises the question and an idle seat costs "
+    "quietly. Pass when: null to clear one.",
+    {"team_id": str, "when": dict, "reason": str},
+)
+async def t_stand_down_when(args):
+    return _text(_call("POST", f"/agent/teams/{args['team_id']}/stand_down_when",
+                       {"when": args.get("when"), "reason": args["reason"]}))
+
+
+@tool(
+    "roster_activity",
+    "Who spent the runs, and on what. `since` takes 'today' (the default), "
+    "'yesterday', '7d', '12h', a date like 2026-09-12, or an ISO timestamp; "
+    "'today' means today in the project's timezone, not a rolling 24 hours. "
+    "Per seat you get runs split by kind and by outcome, what woke each one, "
+    "tokens, money, tasks claimed and completed, and what they are holding now. "
+    "READ THIS BEFORE YOU ANSWER ANY QUESTION ABOUT WHO SPENT WHAT. Do not "
+    "estimate from what you remember doing: the last CEO asked 'who did today's "
+    "15 runs' guessed six of them were its own and had spent twelve, while "
+    "asking for a bigger ration on the strength of the guess.",
+    {"since": str, "until": str},
+)
+async def t_roster_activity(args):
+    params = {k: v for k, v in args.items() if v}
+    return _text(_call("GET", "/agent/activity", params=params))
+
+
 @tool("flags_list", "The flags open on this project and whether each has been raised.", {})
 async def t_flags_list(args):
     return _text(_call("GET", "/agent/flags"))
@@ -1365,7 +1462,8 @@ ALL_TOOLS = [
     t_memory_tool,
     t_evidence_add, t_review_narrative, t_commitment_propose, t_commitment_reset,
     t_scope_act,
-    t_flag_raise, t_flags_list,
+    t_flag_raise, t_flags_list, t_roster_activity,
+    t_roles_list, t_hire, t_stand_down, t_recall, t_stand_down_when,
     t_hypothesis_add, t_hypothesis_kill, t_decision_add,
     t_approval_request, t_approvals_list, t_spend_book,
     t_capacity_request, t_need_request, t_credentials_list, t_credential_scope,
@@ -1376,18 +1474,57 @@ ALL_TOOLS = [
 ]
 
 
-def run_tools() -> list:
-    """ALL_TOOLS plus data_fetch when this role actually has a data source, and
-    data_write_request when one of those sources refuses anything.
+#: Tools whose endpoint answers a non-CEO with 403, every time, whatever the
+#: arguments. Sending one to an employee costs its schema on every API call of
+#: every run and buys a refusal.
+#:
+#: **This list is not enforcement and must never become it.** The server-side
+#: 403s are unchanged and remain the only thing that decides who may do what —
+#: an agent that forges a call to a tool it was never offered is refused
+#: exactly as before. Withholding the schema is a cost measure sitting on top
+#: of a wall that does not move. `test_tool_surface.py` holds both halves: it
+#: derives this set by calling every endpoint as an employee over HTTP, fails
+#: if the list disagrees in either direction, and separately proves the
+#: refusals still fire for a tool the agent was not given.
+CEO_ONLY_TOOLS = frozenset({
+    "ask_chairman", "ask_close",
+    "capacity_request", "need_request",
+    "commitment_propose", "commitment_reset",
+    "credential_scope", "credentials_list",
+    "directive_file",
+    "flag_raise",
+    "hire", "recall", "roles_list", "stand_down", "stand_down_when",
+    "hypothesis_add", "hypothesis_kill",
+    "requirement_propose", "requirement_depends_on",
+    "review_narrative",
+    "scope_act",
+})
 
-    Gated for the same reason _builtin_tools() is: an undeclared schema is pure
-    input-token cost on every API call, and a fetch tool for a role with nothing
-    to fetch from is a schema nobody can use. A role whose every source is
-    unrestricted has nothing to ask permission for either."""
+#: What this run is. Defaults to `ceo` so a caller that forgets to set it gets
+#: the full surface: the failure that costs money is withholding a tool an
+#: agent needed, not sending one it did not.
+AGENT_KIND = os.environ.get("YAAF_AGENT_KIND") or "ceo"
+
+
+def run_tools() -> list:
+    """The tools worth sending THIS agent, and no others.
+
+    Gated for the reason _builtin_tools() is: an undeclared schema is pure
+    input-token cost on every API call, and a tool whose endpoint will refuse
+    this agent is a schema nobody can use. That was already true of `data_fetch`
+    for a role with no data source, and was quietly true of twenty-one CEO-only
+    verbs for every employee on the platform — 3,700 tokens a call, half the
+    block, on a prefix where the whole context pack was 4,600.
+
+    Nothing about authority changes here. The server refuses what it always
+    refused; this only stops paying to describe the refusal in advance.
+    """
+    tools = [t for t in ALL_TOOLS
+             if AGENT_KIND == "ceo" or t.name not in CEO_ONLY_TOOLS]
     specs = _data_source_specs()
     if not specs:
-        return list(ALL_TOOLS)
-    tools = [*ALL_TOOLS, t_data_fetch]
+        return tools
+    tools.append(t_data_fetch)
     if any(config.get("tools") is not None for config in specs.values()):
         tools.extend([t_data_write_request, t_data_write_outcome])
     return tools
