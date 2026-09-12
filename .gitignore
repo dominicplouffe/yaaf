@@ -47,3 +47,7 @@ local/
 
 # pytest-testmon's coverage map for change-scoped local runs
 .testmondata
+
+# Stray output from running the website toolchain in this checkout by mistake.
+.astro/
+dist/

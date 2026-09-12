@@ -58,7 +58,7 @@ The chairman may extend a kill date once, in writing, with the reason recorded
 
 ## What exists
 
-The platform is built and tested: 626 offline tests, including chaos tests and
+The platform is built and tested: 1,358 offline tests, including chaos tests and
 golden-transcript evals, green on SQLite and Postgres in CI.
 
 | Layer | State |
@@ -72,6 +72,7 @@ golden-transcript evals, green on SQLite and Postgres in CI.
 | Sandbox — container per run, scoped secrets, Chromium in the box | Built. |
 | Evidence verification, webhooks, spot-audit, CEO-judgment metric | Built. |
 | Dashboard — Desk, Overview, Boardroom, Plan, Work, Review, Deliverables, Records, Settings | Built. |
+| The chairman's MCP server — 32 tools across four scopes | Built, M0 through M5. Claude gets its own credential, never the admin token; nothing irreversible lands in one call; agent text arrives wrapped and labelled untrusted; no secret is readable at any scope. See [MCP_SERVER.md](MCP_SERVER.md). |
 | Integrations — Slack (Socket Mode), GitHub, MCP data sources, S3, email | Built. |
 
 ## What is next
@@ -81,11 +82,11 @@ golden-transcript evals, green on SQLite and Postgres in CI.
 2. **Keep the solo path first-class.** Whatever the org layer turns out to be
    worth, a single agent under the same governance has to stay a real way to
    run yaaf — it is the control the first question is judged against.
-3. **A chairman's MCP server.** yaaf consumes MCP today and exposes nothing.
-   Reading a project from a model client is most of the value and carries
-   almost no risk; the writes are the interesting part, because handing a model
-   the chairman's signature is exactly what the rest of this design refuses.
-   Designed and tracked in [MCP_SERVER.md](MCP_SERVER.md), unbuilt.
+3. **Prove the MCP server against claude.ai.** The surface is built and the
+   local clients work. The one line that cannot be ticked from a laptop is a
+   real connection from claude.ai through the consent screen, against a public
+   deployment — which is also the first time the security model is tested by
+   someone who did not write it. Tracked in [MCP_SERVER.md](MCP_SERVER.md).
 
 ## Deliberately not built
 

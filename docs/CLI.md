@@ -129,6 +129,7 @@ yaaf stop  my-slug --reason "shipped"
 | `yaaf approvals PROJECT` | Pending approvals. |
 | `yaaf flags PROJECT` | What the platform obliged the CEO to tell you, and whether it has. |
 | `yaaf audit PROJECT [--n 5]` | A random spot-audit sample of recent evidence and completed tasks. |
+| `yaaf receipt PROJECT [--json]` | **What it cost, and what the money bought.** Metered spend including the runs that died, beside only what the platform itself wrote: requirements it marked met after running their tests, external claims it fetched and hashed, closes it drew at random. Carries no agent-written text, so it is safe to paste in public. |
 
 ## Chairman actions
 

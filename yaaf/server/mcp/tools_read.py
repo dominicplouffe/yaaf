@@ -281,6 +281,33 @@ def spend(principal: Principal, session: Session, arguments: dict) -> dict:
 
 
 @register(
+    "receipt",
+    scope="read",
+    description=(
+        "What a project cost and what the money bought, whole-life, in two halves: "
+        "metered spend including the runs that died, and beside it only what the "
+        "platform itself wrote — requirements it marked met after running their "
+        "acceptance tests, external claims it fetched and hashed, closes it drew at "
+        "random for a human to check. Use it to answer 'is this worth running', and "
+        "quote the right half rather than the total: the left half is a price, the "
+        "right half is the evidence. Safe to share; it carries no agent-written text."
+    ),
+    input_schema=_schema(
+        format={"type": "string", "enum": ["data", "text"],
+                "description": "text returns the pasteable block; default data"},
+    ),
+)
+def receipt(principal: Principal, session: Session, arguments: dict) -> dict:
+    from yaaf.server.receipt import render
+
+    row = _project_of(principal, session, arguments)
+    data = _observe(observe.receipt, project_id=row.id, session=session)
+    if (arguments.get("format") or "data") == "text":
+        return {"project": row.slug, "receipt": render(data)}
+    return envelope.fit({"project": row.slug, **data}, arguments.get("detail"))
+
+
+@register(
     "work",
     scope="read",
     description=(

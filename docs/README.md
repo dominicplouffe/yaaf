@@ -7,7 +7,7 @@ Start here if you're new; skim the table if you're not.
 | Doc | What it covers |
 |---|---|
 | [CREATING_A_PROJECT.md](CREATING_A_PROJECT.md) | **Start here.** Your first project in plain English: picking a shape, writing a goal the CEO can plan from, accepting the plan, connecting billing, credentials, and data sources. |
-| [../examples/](../examples/) | **Eleven projects to import and run**, split by the question a skeptic asks: two you could do in a Claude session (so you learn the loop) and nine that name the specific thing which breaks without the platform. Each needs nothing but your API key, bar one free-GitHub exception. |
+| [../examples/](../examples/) | **Twelve projects to import and run**, split by the question a skeptic asks: two you could do in a Claude session (so you learn the loop) and ten that name the specific thing which breaks without the platform. Each needs nothing but your API key, bar one free-GitHub exception. |
 | [DEPLOYMENT.md](DEPLOYMENT.md) | Install and run it: one script for a real deployment, a checkout for working on yaaf, every environment variable, backups, upgrades, scaling. |
 
 ## Using it
@@ -16,7 +16,7 @@ Start here if you're new; skim the table if you're not.
 |---|---|
 | [FEATURES.md](FEATURES.md) | The complete feature reference, grouped by the failure it prevents. |
 | [DASHBOARD.md](DASHBOARD.md) | Every screen and what you do there — Desk, Projects, Roles, and each project tab. |
-| [GOVERNANCE.md](GOVERNANCE.md) | The constitution: all 52 rules, their defaults, what each refuses, and how to change one. |
+| [GOVERNANCE.md](GOVERNANCE.md) | The constitution: all 60 rules, their defaults, what each refuses, and how to change one. |
 | [AUTONOMY.md](AUTONOMY.md) | How much the CEO decides without you — the five authority switches, and what never moves at any setting. |
 | [INTEGRATIONS.md](INTEGRATIONS.md) | Billing, credentials, MCP data sources, Slack, GitHub, webhooks, notifications, artifact storage. |
 
@@ -26,7 +26,7 @@ Start here if you're new; skim the table if you're not.
 |---|---|
 | [CLI.md](CLI.md) | Every `yaaf` command, the project spec shape, and a full provisioning script. |
 | [AGENT_API.md](AGENT_API.md) | The API your agents act through, and how to write a role that uses it well. |
-| [MCP_SERVER.md](MCP_SERVER.md) | **Proposed, not built.** yaaf as an MCP server: chairing your projects and founding new ones from a model client, and the security model that makes writes safe. |
+| [MCP_SERVER.md](MCP_SERVER.md) | **Built — M0 through M5.** yaaf as an MCP server: chairing your projects and founding new ones from a model client, every tool and scope, and the security model that makes writes safe. |
 
 ## Background
 

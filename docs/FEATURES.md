@@ -317,6 +317,18 @@ decision, and configuration change. The dashboard surfaces it as:
 - **Audit log** — including every refusal, so a refusal storm names the wall:
   which agent, which rule, and what to say instead.
 
+**And one page that adds it up.** `yaaf receipt PROJECT` prints the project's
+whole life in two columns: metered spend on the left, including the runs that
+died, and on the right only what the platform itself wrote — requirements it
+marked met after running their acceptance tests, external claims it fetched and
+hashed, closes it drew at random for you to check. The interesting number is
+never the total. It is what the total bought that a cheaper run would not have.
+
+The receipt carries no agent-written text — counts and enum values only — which
+is what makes it safe to paste somewhere public, and is asserted by a test
+rather than by this sentence. Also on the MCP surface as `receipt`, and over
+HTTP as `GET /observe/projects/{id}/receipt`.
+
 ## 12. Three tenses, not one
 
 Every screen used to be in the present. The Desk said what needs you *now*, the
