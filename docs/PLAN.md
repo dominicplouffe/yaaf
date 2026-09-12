@@ -58,7 +58,7 @@ The chairman may extend a kill date once, in writing, with the reason recorded
 
 ## What exists
 
-The platform is built and tested: 1,351 offline tests, including chaos tests and
+The platform is built and tested: 1,358 offline tests, including chaos tests and
 golden-transcript evals, green on SQLite and Postgres in CI.
 
 | Layer | State |

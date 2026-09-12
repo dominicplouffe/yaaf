@@ -11,6 +11,7 @@ Two principals exist in M1:
 
 from __future__ import annotations
 
+import hmac
 from collections.abc import Iterator
 from dataclasses import dataclass
 
@@ -52,7 +53,10 @@ def admin_auth(
     credentials: HTTPAuthorizationCredentials | None = Depends(admin_bearer),
 ) -> str:
     token = _bearer(credentials)
-    if token != settings().admin_token:
+    # Constant-time: this is the unscoped master credential, and `!=` on a
+    # str leaks a prefix length through timing. api/ws.py has always claimed
+    # this function compared that way; for a while it did not.
+    if not hmac.compare_digest(token.encode(), settings().admin_token.encode()):
         raise HTTPException(status_code=401, detail="bad admin token")
     return "admin"
 

@@ -32,6 +32,15 @@ That is not a mockup. A six-team research project was designed and launched
 from a Claude window this week, and every write in its audit trail is signed
 `user:… via mcp:Claude`.
 
+**And the part you would find anyway:** this repository is two weeks old. It was
+built fast and in the open with Claude Code, and roughly half its commits are
+authored by it. What that bought is a policy engine with 1,347 tests attacking
+it over HTTP. What it has not bought is a project anyone but me has run for a
+month, or a security review by someone who did not write the thing. Both are
+true at once — [PLAN.md](docs/PLAN.md) says which claims are load-bearing and
+what would falsify them, and [SECURITY.md](SECURITY.md) says what contains an
+agent and what does not.
+
 <img src="docs/screenshots/cockpit-overview.png" alt="The chairman's cockpit: is it working, the deliverable, the plan, spend against the cap broken down by team, the setup health line, and the org roster">
 
 A CEO sets the priorities. Teams of specialists argue with each other. A budget
@@ -80,7 +89,7 @@ Four rules hold at every scope:
 
 ---
 
-## What people actually hand it
+## What it is built to be handed
 
 Every project picks a shape once: **Explore** (chase a goal with no fixed end),
 **Deliver** (ship one thing, then stop), or **Operate** (a Deliver that restarts
@@ -172,9 +181,12 @@ held. Break one and it doesn't get a stern reminder — it gets a 403.
   refusal — plus random samples of "completed" work dealt to you to spot-check,
   because AI reviewers approve nearly everything and you don't.
 
-Each of those is a test, not a paragraph. 1,340 of them drive the real app over
-HTTP the way an agent would — forged tokens, wrong roles, rephrased requests —
-alongside chaos tests and golden evals that gate every prompt edit.
+Each of those is a test, not a paragraph. 1,347 of them drive the real app over
+HTTP the way an agent would: forged tokens, wrong roles, rephrased requests.
+They are free, offline, and they test **the rules, not the models** — model
+behaviour is held by golden transcripts of a scripted backend plus one opt-in
+paid check. The rules are the part an agent argues with, so the rules are the
+part under attack.
 
 <img src="docs/screenshots/plan-and-promise.png" alt="The Plan tab: the commitment at risk with its two levers, pace and waste, the burn-up against the committed and projected dates, and requirements in stages with dependencies">
 
@@ -274,6 +286,7 @@ it, the governance layer underneath stands on its own.
 | [Deployment](docs/DEPLOYMENT.md) | Install, configure, back up, upgrade |
 | [CLI](docs/CLI.md) | Every `yaaf` command |
 | [Agent API](docs/AGENT_API.md) | What agents can do; writing a role |
+| [Security](SECURITY.md) | Trust boundaries, what contains an agent, and the sharp edges |
 | [Plan](docs/PLAN.md) | Where this is going, and what would kill it |
 
 Actively developed, pre-1.0. Apache-2.0 ([LICENSE](LICENSE)). Contributions:

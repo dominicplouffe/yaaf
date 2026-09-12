@@ -1634,7 +1634,13 @@ async def main() -> int:
         mcp_servers={"yaaf": server, **_external_mcp_servers()},
         tools=_builtin_tools(),
         allowed_tools=_allowed_tools(),
-        permission_mode="bypassPermissions",  # containment is the sandbox + proxy + API
+        # The agent is not asked for consent it cannot give: nothing here is
+        # interactive. Containment is the fresh container, the role-scoped
+        # credential set, the metered budget and the audited API — NOT the
+        # network. There is no egress proxy; the per-role allowlist was removed
+        # deliberately (docs/PLAN.md) and SECURITY.md states what follows from
+        # that. An earlier version of this comment still named the proxy.
+        permission_mode="bypassPermissions",
         cwd="/workspace",
         setting_sources=[],
         max_turns=100,
