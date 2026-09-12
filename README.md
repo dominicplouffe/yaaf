@@ -32,9 +32,11 @@ That is not a mockup. A six-team research project was designed and launched
 from a Claude window this week, and every write in its audit trail is signed
 `user:… via mcp:Claude`.
 
-**And the part you would find anyway:** this repository is two weeks old. It was
-built fast and in the open with Claude Code, and roughly half its commits are
-authored by it. What that bought is a policy engine with 1,347 tests attacking
+**And the part you would find anyway:** this git history is two weeks old — it
+was restarted on 30 August, so the repository is younger than the project, and
+the screenshots above are stamped a week before its first commit. It was built
+fast and in the open with Claude Code, and roughly half the commits are authored
+by it. What that bought is a policy engine with 1,347 tests attacking
 it over HTTP. What it has not bought is a project anyone but me has run for a
 month, or a security review by someone who did not write the thing. Both are
 true at once — [PLAN.md](docs/PLAN.md) says which claims are load-bearing and
