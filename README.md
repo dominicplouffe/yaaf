@@ -11,7 +11,7 @@ Say this in the Claude window you already have open:
 In one sitting, Claude:
 
 1. **Drafts the crew.** Goal, teams, who's on each, budget, deadline — hiring
-   from a library of 34 job descriptions and 14 pre-built crews rather than
+   from a library of 38 job descriptions and 17 pre-built crews rather than
    inventing people.
 2. **Gets argued with.** The platform grades the draft against the ten things
    a goal has to contain to work — a finish line, who the work has to be right
@@ -46,9 +46,10 @@ agents you already have.
 
 yaaf is an **MCP server**, so the client you already use is the front end —
 Claude Code, Claude Desktop or claude.ai, connected once, with your own files,
-repos and email open beside it. Thirty tools cover the whole job: the cockpit,
-the plan, the spend, run traces and proof; talking to the CEO; approving,
-cutting, rescheduling, auditing; and setting up teams, data sources and rules.
+repos and email open beside it. Thirty-one tools cover the whole job: the
+cockpit, the plan, the spend, run traces and proof; talking to the CEO;
+approving, cutting, rescheduling, auditing; and setting up teams, data sources
+and rules.
 No dashboard needed day to day.
 
 <img src="docs/screenshots/boardroom.png" alt="The Boardroom tab: the chairman asks the CEO how confident it is in the 30th; the CEO answers with the estimate-to-actual ratio, its re-projection, and what would move it">
@@ -99,7 +100,7 @@ time" is enforced rather than asked for).
 None of these is a prompt you re-run. Every one has to survive weeks, wake up
 without you, and be graded by something that isn't itself.
 
-Eleven more, importable and ready to run, in **[examples/](examples/)**.
+Twelve, importable and ready to run, in **[examples/](examples/)**.
 
 ---
 
@@ -171,7 +172,7 @@ held. Break one and it doesn't get a stern reminder — it gets a 403.
   refusal — plus random samples of "completed" work dealt to you to spot-check,
   because AI reviewers approve nearly everything and you don't.
 
-Each of those is a test, not a paragraph. 913 of them drive the real app over
+Each of those is a test, not a paragraph. 1,340 of them drive the real app over
 HTTP the way an agent would — forged tokens, wrong roles, rephrased requests —
 alongside chaos tests and golden evals that gate every prompt edit.
 
@@ -264,7 +265,7 @@ it, the governance layer underneath stands on its own.
 |---|---|
 | [MCP server](docs/MCP_SERVER.md) | Chairing from Claude — every tool, every scope |
 | [Creating a project](docs/CREATING_A_PROJECT.md) | Your first project, in plain English |
-| [Examples](examples/) | Eleven projects to import |
+| [Examples](examples/) | Twelve projects to import |
 | [Features](docs/FEATURES.md) | The complete feature reference |
 | [Dashboard](docs/DASHBOARD.md) | Every screen, and what you do there |
 | [Governance](docs/GOVERNANCE.md) | Every rule and its default |

@@ -2,8 +2,8 @@
 
 ## Running tests — pick the smallest tier that answers the question
 
-The suite is ~790 integration tests that drive the real app over HTTP against a
-real database. That is deliberate (see CONTRIBUTING house rule #1) and it means
+The suite is ~1,350 integration tests that drive the real app over HTTP against
+a real database. That is deliberate (see CONTRIBUTING house rule #1) and it means
 the full run costs about a minute. A minute is cheap once. It is not cheap after
 every edit, and running it after every edit is the single biggest drag on how
 fast this project moves.
@@ -36,7 +36,7 @@ enforces the first three mechanically, because in this repo a rule is a refusal
 rather than a comment:
 
 1. **Never call `create_app()` in a test.** Use the `client` fixture. The app is
-   built once per worker; building it per test cost ~28ms × 790 ≈ 22 seconds.
+   built once per worker; building it per test cost ~28ms × 1,350 ≈ 38 seconds.
 2. **Never build the schema in a test** (`create_all`, `reset_for_tests`). The
    `client` fixture hands you an empty database; the schema is a session cost.
 3. **Never run a fire drill for a report you only read.** Use the `report`
