@@ -707,7 +707,15 @@ async def t_stand_down_when(args):
     "READ THIS BEFORE YOU ANSWER ANY QUESTION ABOUT WHO SPENT WHAT. Do not "
     "estimate from what you remember doing: the last CEO asked 'who did today's "
     "15 runs' guessed six of them were its own and had spent twelve, while "
-    "asking for a bigger ration on the strength of the guess.",
+    "asking for a bigger ration on the strength of the guess. "
+    "`died_of` is why the dead runs died — the cause in words, the tokens it "
+    "cost, and `produced_work_first`, the number of them that had already "
+    "claimed a task or filed work before they were cut. NEVER read a dead run "
+    "as an idle one without checking that number: a CEO reported eleven runs "
+    "that 'died without finishing anything' and moved to stand the seat down; "
+    "seven of the eleven had filed work, every task that seat touched "
+    "completed on a retry, and the real fault was a ceiling cutting it off "
+    "mid-task. Fix the cause before you blame the seat.",
     {"since": str, "until": str},
 )
 async def t_roster_activity(args):

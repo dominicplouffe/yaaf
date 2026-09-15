@@ -25,6 +25,15 @@ Because of that split a seat can show runs with no money (every row died
 unbooked) and the project can show money with no seat (`unattributed` — the run
 row is gone, but the money was still spent). Both are reported rather than
 reconciled away.
+
+`died_of` is the same answer asked one level down. Outcomes alone told a CEO
+that eleven of a seat's runs had "failed", which is not a thing anyone can act
+on: it reported eleven runs that "died without finishing anything" and moved to
+stand the seat down. Seven of the eleven had filed work before a per-run
+ceiling cut them off mid-task. So each death is reported with the cause the
+platform already wrote (`deaths.py`) and with how many of them produced
+something first — because "died" and "bought nothing" are two claims, and only
+the first one was ever checked.
 """
 
 from __future__ import annotations
@@ -50,6 +59,7 @@ from yaaf.core.models import (
     Team,
     utcnow,
 )
+from yaaf.server import deaths
 from yaaf.server.dispatcher import UNMETERED_RUN_KINDS
 from yaaf.server.rows import seat_row
 
@@ -187,6 +197,17 @@ def _pseudo_seat(name: str, kind: str) -> dict:
             "team_id": None, "team": None, "role_slug": None}
 
 
+def _zero_death() -> dict:
+    """One cause's share of a seat's deaths. `runs` counts runs that STARTED in
+    the window; `tokens` is ledger money that LANDED in it, which is the same
+    split the rest of this module makes and refuses to reconcile — so a cause
+    can show tokens with no runs when a run that began before the window died
+    inside it. `produced_work_first` is the one that stops a reader concluding
+    a dead run was an empty one: it counts deaths that had already claimed a
+    task, written a file or filed work before they were cut."""
+    return {"runs": 0, "tokens": 0, "produced_work_first": 0}
+
+
 def _zero_seat() -> dict:
     return {
         "runs": 0,
@@ -199,6 +220,11 @@ def _zero_seat() -> dict:
         "runs_metered": 0,
         "runs_by_kind": {},
         "runs_by_outcome": {},
+        # Why the dead ones died, keyed by cause in plain words. `runs_by_outcome`
+        # says "failed"; a CEO cannot act on "failed", and reading it as "did
+        # nothing" is how a seat that shipped five tasks in a night got proposed
+        # for stand-down. See `deaths.py`.
+        "died_of": {},
         "woke_for": {},
         "tokens_in": 0,
         "tokens_out": 0,
@@ -288,6 +314,12 @@ def roster_activity(
             seat["runs_metered"] += 1
         seat["runs_by_kind"][run.kind] = seat["runs_by_kind"].get(run.kind, 0) + 1
         seat["runs_by_outcome"][run.status] = seat["runs_by_outcome"].get(run.status, 0) + 1
+        if run.status in deaths.DEAD_STATUSES:
+            died = seat["died_of"].setdefault(
+                deaths.cause_of(run.status, run.summary), _zero_death())
+            died["runs"] += 1
+            if run.produced:
+                died["produced_work_first"] += 1
         seat["refusals"] += run.refusal_count or 0
         for kind in _woke_for(run.trigger):
             seat["woke_for"][kind] = seat["woke_for"].get(kind, 0) + 1
@@ -322,6 +354,15 @@ def roster_activity(
         seat["cache_creation"] += entry.cache_creation_tokens
         seat["cache_read"] += entry.cache_read_tokens
         seat["usd"] += entry.usd or 0.0
+        # What the deaths cost, taken from the ledger like every other token in
+        # this payload. Summing `runs.tokens_*` instead would be a second
+        # definition of tokens in the same answer — the thing this module's
+        # split exists to avoid.
+        if run is not None and run.status in deaths.DEAD_STATUSES:
+            died = seat["died_of"].setdefault(
+                deaths.cause_of(run.status, run.summary), _zero_death())
+            died["tokens"] += (entry.tokens_in + entry.tokens_out
+                               + entry.cache_creation_tokens + entry.cache_read_tokens)
 
     _count_tasks(session, project, start, end, seats)
 
@@ -357,6 +398,10 @@ def roster_activity(
         for key in ("runs_by_kind", "runs_by_outcome", "woke_for"):
             for name, n in row[key].items():
                 totals[key][name] = totals[key].get(name, 0) + n
+        for cause, bucket in row["died_of"].items():
+            into = totals["died_of"].setdefault(cause, _zero_death())
+            for key in ("runs", "tokens", "produced_work_first"):
+                into[key] += bucket[key]
     totals.pop("last_run_at", None)
 
     return {

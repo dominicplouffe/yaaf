@@ -213,3 +213,171 @@ def test_a_bare_date_is_still_a_calendar_day_in_the_projects_timezone(client):
     _, ceo_token = live_token(project["id"], project["ceo_agent_id"])
     payload = _activity(client, ceo_token, since="2026-09-12", until="2026-09-13")
     assert payload["since"].endswith("04:00:00+00:00"), payload["since"]
+
+
+# ── why the dead ones died ──────────────────────────────────────────────────────
+#
+# The second half of the same failure. `runs_by_outcome` told a CEO eleven of a
+# seat's twenty-one runs had "failed" and nothing more, so it reported eleven
+# runs that "died without finishing anything" and moved to stand the seat down.
+# Seven of the eleven had filed work before they were cut at the per-run dollar
+# ceiling; all five tasks that seat touched that night completed on a retry.
+# The cause was on `runs.summary` the whole time, where the chairman could read
+# it and the seat paying for it could not.
+
+#: Summaries copied from real dead runs on this deployment. A recognizer tested
+#: only against strings its author invented recognizes its author.
+LIVE_SUMMARIES = [
+    ("[sandbox_entry error: ResultError('Claude Code returned an error result: "
+     "Reached maximum budget ($2) (exit code: 1)')]", "per-run spend ceiling ($2)"),
+    ("I'll start by claiming the task and reading the code. [sandbox_entry error: "
+     "ResultError('Claude Code returned an error result: Reached maximum budget "
+     "($1.25) (exit code: 1)')]", "per-run spend ceiling ($1.25)"),
+    ("You've hit your org's monthly spend limit · ask your admin to raise it",
+     "upstream of this project"),
+    ("chat session container lost or mismatched; supervisor restarts it exit=137 "
+     "oom=False error='' started=2026-09-14T00:00:00Z", "boardroom chat session"),
+    ("sandbox exited 137 without a result file; tail:\nexit=137 oom=true error=''",
+     "out of memory"),
+    ("[killed mid-run, exit 124; usage recovered from checkpoint]", "run_timeout_s"),
+    ("API Error: 529 Overloaded. This is a server-side issue", "overloaded"),
+    ("Not logged in · Please run /login", "credential was rejected"),
+]
+
+
+def _dead(session, project_id: str, agent_id: str, summary: str | None, *,
+          status: str = RunStatus.FAILED, produced: int = 0) -> str:
+    run = Run(id=ids.new_id(ids.RUN), project_id=project_id, agent_id=agent_id,
+              kind="agent_run", trigger={"type": "test"}, status=status,
+              summary=summary, produced=produced,
+              created_at=utcnow(), started_at=utcnow())
+    session.add(run)
+    return run.id
+
+
+def _cause(seat: dict, contains: str) -> dict:
+    for cause, bucket in seat["died_of"].items():
+        if contains in cause:
+            return bucket
+    raise AssertionError(f"no cause containing {contains!r} in {list(seat['died_of'])}")
+
+
+def test_every_cause_this_deployment_has_actually_produced_is_recognised():
+    """Pure arithmetic over strings the platform wrote itself, so it is cheap
+    enough to hold every shape rather than one."""
+    from yaaf.server import deaths
+
+    for summary, expected in LIVE_SUMMARIES:
+        cause = deaths.cause_of(RunStatus.FAILED, summary)
+        assert expected in cause, f"{summary[:60]!r} -> {cause!r}"
+        assert cause != deaths.UNRECORDED
+
+
+def test_a_cause_nobody_wrote_down_says_so_rather_than_guessing():
+    """A hedged cause is worse than none: it gets acted on. The janitor reaps a
+    stale lease and records nothing about why, which is several hundred of the
+    deaths on this deployment, and the honest report of that is that the
+    platform cannot answer it yet."""
+    from yaaf.server import deaths
+
+    assert "cannot answer" in deaths.cause_of(RunStatus.REAPED, None)
+    assert deaths.cause_of(RunStatus.FAILED, "I'll start by reading the board.") == (
+        deaths.UNRECORDED)
+
+
+def test_the_ceo_is_told_what_killed_a_run_and_which_lever_moves_it(client):
+    """"Failed" is not a thing a CEO can act on. The cause has to name the
+    setting, or the next decision is about the seat instead of the ceiling."""
+    project = make_project(client)
+    ceo_id = project["ceo_agent_id"]
+    _, ceo_token = live_token(project["id"], ceo_id)
+    with db_session() as session:
+        _dead(session, project["id"], ceo_id,
+              "[sandbox_entry error: ResultError('Claude Code returned an error "
+              "result: Reached maximum budget ($2) (exit code: 1)')]")
+
+    bucket = _cause(_seat(_activity(client, ceo_token), "CEO"),
+                    "per-run spend ceiling ($2)")
+    assert bucket["runs"] == 1
+    cause = next(iter(_seat(_activity(client, ceo_token), "CEO")["died_of"]))
+    assert "max_usd_per_run" in cause
+
+
+def test_a_dead_run_that_filed_work_first_is_not_reported_as_an_empty_one(client):
+    """The fact that flips the conclusion. Cut at the ceiling after claiming a
+    task and filing work is a seat being interrupted; the CEO that could only
+    see "failed" read it as a seat doing nothing and proposed removing it."""
+    project = make_project(client)
+    ceo_id = project["ceo_agent_id"]
+    lead_id = agent_by_name(project, "Lead")
+    _, ceo_token = live_token(project["id"], ceo_id)
+    budget = ("[sandbox_entry error: ResultError('Claude Code returned an error "
+              "result: Reached maximum budget ($2) (exit code: 1)')]")
+    with db_session() as session:
+        _dead(session, project["id"], lead_id, budget, produced=3)
+        _dead(session, project["id"], lead_id, budget, produced=0)
+
+    bucket = _cause(_seat(_activity(client, ceo_token), "Lead"), "per-run spend ceiling")
+    assert bucket["runs"] == 2
+    assert bucket["produced_work_first"] == 1
+
+
+def test_what_the_deaths_cost_is_the_ledgers_number_not_the_run_rows(client):
+    """Same discipline as every other token in this payload. A chat session
+    books a ledger row per turn, so summing `runs.tokens_*` for the dead ones
+    would put two token counts in one answer that could not both be true."""
+    project = make_project(client)
+    ceo_id = project["ceo_agent_id"]
+    _, ceo_token = live_token(project["id"], ceo_id)
+    with db_session() as session:
+        run_id = _dead(session, project["id"], ceo_id,
+                       "sandbox exited 137 without a result file; tail:\nexit=137 "
+                       "oom=true error=''")
+        _spend(session, project["id"], run_id, usd=0.4, tokens_in=9000, tokens_out=500)
+
+    seat = _seat(_activity(client, ceo_token), "CEO")
+    assert _cause(seat, "out of memory")["tokens"] == 9500
+    assert seat["tokens_in"] + seat["tokens_out"] == 9500
+
+
+def test_the_causes_fold_into_the_totals_so_the_desk_adds_up(client):
+    """A CEO asking "where did the night go" is asking about the desk, not one
+    seat. The per-seat split has to sum to something it can put in a sentence."""
+    project = make_project(client)
+    ceo_id = project["ceo_agent_id"]
+    _, ceo_token = live_token(project["id"], ceo_id)
+    budget = ("[sandbox_entry error: ResultError('Claude Code returned an error "
+              "result: Reached maximum budget ($2) (exit code: 1)')]")
+    with db_session() as session:
+        _dead(session, project["id"], ceo_id, budget, produced=1)
+        _dead(session, project["id"], agent_by_name(project, "Lead"), budget, produced=2)
+        _dead(session, project["id"], agent_by_name(project, "Emp2"), None,
+              status=RunStatus.REAPED)
+
+    totals = _activity(client, ceo_token)["totals"]
+    assert _cause(totals, "per-run spend ceiling")["runs"] == 2
+    assert _cause(totals, "per-run spend ceiling")["produced_work_first"] == 2
+    assert _cause(totals, "cannot answer")["runs"] == 1
+
+
+def test_a_seat_that_lost_nothing_carries_no_causes(client):
+    """The block is empty rather than absent, and absent rather than noisy: a
+    healthy seat should cost nothing to read past."""
+    project = make_project(client)
+    _, ceo_token = live_token(project["id"], project["ceo_agent_id"])
+
+    assert _seat(_activity(client, ceo_token), "CEO")["died_of"] == {}
+
+
+def test_the_refusal_cap_beats_the_mechanism_its_death_was_dressed_in():
+    """A run cut off for refusals dies the way any revoked run dies — killed
+    mid-run, exit 137 — and one CEO narrated its own end as "this run's token
+    was revoked". Both describe what happened to it. Neither is why, and the
+    status is the only thing on the row that knows."""
+    from yaaf.server import deaths
+
+    for summary in ("[killed mid-run, exit 137; usage recovered from checkpoint]",
+                    "This run's token was revoked after hitting the refusal cap "
+                    "(5 refused task_create calls)"):
+        cause = deaths.cause_of(RunStatus.TERMINATED_REFUSALS, summary)
+        assert "refusal_cap_per_run" in cause
