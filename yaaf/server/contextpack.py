@@ -306,14 +306,42 @@ WORKSPACE_CHAT = (
 #: ask for the words; a deliverable is the thing that was asked for. The two
 #: halves are stated separately now because they are different instructions,
 #: and only the first one was ever complained about.
+#:
+#: The message half then failed on its own terms, quietly, for months. "Short
+#: sentences" and "a longer one is not a better one" were both here, the role
+#: library said "a few sentences" on top of them, and over fourteen days the
+#: median leadership message was 1,661 characters and the median team-room
+#: message 2,013 — call it 250 words, fifteen sentences, with the mean sitting
+#: almost exactly on the median. That shape is the tell: a right-skewed spread
+#: with plenty of one-liners is what "say what you need" produces, and a tight
+#: cluster is what writing to a remembered format produces. The boardroom,
+#: which is the one channel with a specific instruction attached to it
+#: (`chat.CHAT_ADDENDUM`), ran at 651.
+#:
+#: So the length rule is a NUMBER now, and it names the thing that was actually
+#: filling the space — agents narrating work the board already records. What a
+#: qualitative brevity rule reliably buys is agreement without compliance.
+#:
+#: The cost is paid twice, which is why this is worth a number rather than an
+#: adjective: a channel message is written once and then carried into the
+#: context pack of every recipient on every wake, up to `UNREAD_PER_CHANNEL`
+#: of them at `UNREAD_BODY_CHARS` each. Long-form content belongs in a file,
+#: which is fetched once by the one agent that needs it. Same reason the pack
+#: itself is a lease and not a library.
 HOUSE_STYLE = (
-    "HOW YOU WRITE, IN MESSAGES AND CHAT: plain English, short sentences. One "
-    "idea per sentence, the short word over the long one, the answer first. No "
-    "preamble restating the question, no summary of what you are about to say, "
-    "no closing paragraph that says it again. No headings, bullets or bold on a "
-    "few sentences of prose. No jargon where an ordinary word exists. A message "
-    "is time the chairman pays for and did not ask for, so a longer one is not "
-    "a better one — cut anything that would not change what he does next. "
+    "HOW YOU WRITE, IN MESSAGES AND CHAT: plain English, short sentences. "
+    "THREE SENTENCES IS THE SIZE OF A MESSAGE — a ceiling, not an average. The "
+    "answer first, one idea per sentence, no preamble, no closing paragraph "
+    "that says it again, no headings or bullets on a few sentences of prose, "
+    "no jargon where an ordinary word exists. Do not narrate what you did, how "
+    "you decided, or what you plan next — the board, the task and your memory "
+    "hold all of it already. Anything that genuinely needs more room is a file "
+    "or a task, and you send the one sentence pointing at it: a message is "
+    "re-read by every recipient on every wake, a file is read once by whoever "
+    "needs it. A message is time the chairman pays for and did not ask for, so "
+    "a longer one is not a better one — cut anything that would not change "
+    "what he does next. None of this licenses leaving out the number, the "
+    "problem or the proposal: say less, never less of what matters. "
     "HOW YOU WRITE THE DELIVERABLE ITSELF: the plain-English rule holds — short "
     "words, no jargon, no throat-clearing — but the length rule does not, "
     "because the deliverable is the thing that was asked for rather than an "

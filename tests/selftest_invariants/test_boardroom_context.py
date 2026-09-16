@@ -252,6 +252,48 @@ def test_every_agent_is_told_to_write_in_plain_short_english(client):
             f"{who}: a format the chairman asked for must still win")
 
 
+def test_the_length_rule_is_a_number_and_stops_at_the_deliverable(client):
+    """"Short sentences" and "a longer one is not a better one" were both in
+    this prompt, and the role library said "a few sentences" on top of them,
+    while the median leadership message ran 1,661 characters and the median
+    team-room message 2,013. A qualitative brevity rule buys agreement without
+    compliance, so the rule carries a number — and the number has to stop at
+    the same line the old length rule stops at, or it is the instruction that
+    produced thin blog posts with a digit attached.
+    """
+    from yaaf.core.models import Agent as AgentRow
+    from yaaf.server.contextpack import build_system_prompt
+
+    project = make_project(client)
+    with db_session() as session:
+        row = session.get(Project, project["id"])
+        ceo = session.get(AgentRow, project["ceo_agent_id"])
+        employee = session.get(AgentRow, agent_by_name(project, "Emp2"))
+        prompts = {
+            "ceo run": build_system_prompt(session, ceo, row),
+            "ceo chat": build_system_prompt(session, ceo, row, lane="chat"),
+            "employee": build_system_prompt(session, employee, row),
+        }
+
+    for who, prompt in prompts.items():
+        message_half, _, deliverable_half = prompt.partition(
+            "HOW YOU WRITE THE DELIVERABLE ITSELF:")
+        assert "THREE SENTENCES" in message_half, who
+        assert "THREE SENTENCES" not in deliverable_half.split("THE CONSTITUTION")[0], (
+            f"{who}: the count must not follow the rule into the deliverable")
+
+        # The thing that was actually filling the space. Naming it is the half
+        # of this rule that a word count alone never bought.
+        assert "narrate what you did" in message_half, who
+        assert "file or a task" in message_half, (
+            f"{who}: long-form content needs somewhere to go, or the count just "
+            "gets ignored")
+
+        # A count is a licence to omit unless it says otherwise, and the seat
+        # that goes quiet about a number is the failure this platform is for.
+        assert "never less of what matters" in message_half, who
+
+
 def test_notices_finally_reach_the_agent_the_chairman_talks_to(client):
     """Notices are consumed inside the context pack, and the chat lane never
     built one — so "your run was reaped" and "budget exhausted" could never

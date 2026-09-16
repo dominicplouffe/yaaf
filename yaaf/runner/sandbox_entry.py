@@ -376,7 +376,12 @@ async def t_messages_read(args):
 
 @tool(
     "message_post",
-    "Post to one of your channels. Boardroom: CEO<->chairman. Leadership: CEO+leads. "
+    "Post to one of your channels. THREE SENTENCES. Lead with the answer or the ask, "
+    "add the number that carries it, stop — no narration of what you did or decided, "
+    "which the board and your memory already hold. Anything that genuinely needs more "
+    "room goes in a file or a task, and you post the line that points at it: this body "
+    "is re-read by every recipient on every wake, a file is read once by whoever needs "
+    "it. Boardroom: CEO<->chairman. Leadership: CEO+leads. "
     "Team room: your team. Use thread_id to reply in a thread. An unprompted boardroom "
     "status is refused between the chairman's cadence slots (see the `chairman` block in "
     "your context); set override to 'blocker', 'budget' or 'approval' only when it truly "
@@ -521,7 +526,10 @@ async def t_memory_search(args):
 @tool(
     "memory_add",
     "Write ONE durable fact/lesson/preference/contact that will still be true next month. "
-    "Not a diary. scope: 'project' (CEO only) or 'team'.",
+    "Not a diary, and not a write-up: two or three sentences, because every memory you "
+    "add is re-read by everyone who searches this scope for as long as it stands. If it "
+    "needs more room than that it is a document — put it in a file and record the fact "
+    "that the file exists. scope: 'project' (CEO only) or 'team'.",
     {"scope": str, "kind": str, "subject": str, "body": str},
 )
 async def t_memory_add(args):
@@ -1806,7 +1814,14 @@ async def main() -> int:
         f"```json\n{json.dumps(context, indent=2, default=str)}\n```\n\n"
         "Do ONE unit of work — answer what needs answering, work your claimed task, or plan "
         "— using the yaaf tools. Record anything durable in memory. Then stop; the platform "
-        "will wake you when there is a reason to."
+        "will wake you when there is a reason to.\n\n"
+        "WORK QUIETLY. Prose you write between tool calls goes nowhere: it is not a "
+        "message, not the deliverable, and no other run ever reads it. Do not announce "
+        "what you are about to do, restate what a tool just returned, or narrate your "
+        "reasoning as you go. Finish with ONE short paragraph — what you did, and "
+        "anything the next run needs to know. That paragraph is the only prose here "
+        "worth writing: it is what the chairman sees on the Runs page when something "
+        "has gone wrong, and it is the whole of what this run leaves behind in words."
     )
 
     summary_parts: list[str] = CREDENTIAL_PROBLEMS + list(MOUNT_PROBLEMS)
