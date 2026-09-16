@@ -995,6 +995,11 @@ async def t_side_effect_finish(args):
     "artifact_put",
     "Persist a finished deliverable (report, dataset, document) to the platform's "
     "artifact store — the shipped, versioned record the platform serves and audits. "
+    "A written deliverable opens with the answer and its number, then gives what the "
+    "reader needs to ACT. Method, provenance, input hashes, funnels, rejects and "
+    "per-column reasoning are the working, not the deliverable — ship those as their "
+    "own files and cite them in one line. Before you ship, delete every section that "
+    "would change nothing the reader does. "
     "Your /workspace is NOT ephemeral: it persists with the project across runs and is "
     "shared by every agent on it, which makes it the right home for working state and "
     "cached data pulls; ship an artifact when the work is FINISHED. "

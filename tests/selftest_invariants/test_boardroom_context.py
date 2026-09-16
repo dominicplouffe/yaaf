@@ -293,6 +293,21 @@ def test_the_length_rule_is_a_number_and_stops_at_the_deliverable(client):
         # that goes quiet about a number is the failure this platform is for.
         assert "never less of what matters" in message_half, who
 
+        # The deliverable is exempt from the COUNT and from nothing else. The
+        # first cut of this exempted it from length altogether and left a test
+        # that only ever pointed one way — "would a reader have to go and find
+        # out something it should have told them" fails on every omission and
+        # passes on every addition. Documents came back at 12,000 characters
+        # with a two-sentence answer buried in provenance tables. So the
+        # deliverable carries a ceiling of its own, and a test that can be
+        # failed by writing MORE.
+        assert "could be deleted without changing" in deliverable_half, (
+            f"{who}: without a test that a section can be too many, the depth "
+            "rule is a ratchet")
+        assert "are the working" in deliverable_half, (
+            f"{who}: method and provenance need somewhere to go, or the ceiling "
+            "just deletes the audit trail")
+
 
 def test_notices_finally_reach_the_agent_the_chairman_talks_to(client):
     """Notices are consumed inside the context pack, and the chat lane never
