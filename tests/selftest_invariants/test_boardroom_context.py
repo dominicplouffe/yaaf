@@ -293,20 +293,21 @@ def test_the_length_rule_is_a_number_and_stops_at_the_deliverable(client):
         # that goes quiet about a number is the failure this platform is for.
         assert "never less of what matters" in message_half, who
 
-        # The deliverable is exempt from the COUNT and from nothing else. The
-        # first cut of this exempted it from length altogether and left a test
-        # that only ever pointed one way — "would a reader have to go and find
-        # out something it should have told them" fails on every omission and
-        # passes on every addition. Documents came back at 12,000 characters
-        # with a two-sentence answer buried in provenance tables. So the
-        # deliverable carries a ceiling of its own, and a test that can be
-        # failed by writing MORE.
-        assert "could be deleted without changing" in deliverable_half, (
-            f"{who}: without a test that a section can be too many, the depth "
-            "rule is a ratchet")
-        assert "are the working" in deliverable_half, (
-            f"{who}: method and provenance need somewhere to go, or the ceiling "
-            "just deletes the audit trail")
+        # A PUBLISHED FILE IS EXEMPT, and the chairman has said so twice. I
+        # once put a ceiling on it — open with the answer, move the method and
+        # provenance to sibling files — and that is the same instinct that made
+        # the blog posts thin, one level up: a file is how he gets what he is
+        # paying for, and he will decide what he needs in it. The count stops
+        # at the channel.
+        assert "no ceiling on this page reaches it" in deliverable_half, who
+        assert "THREE SENTENCES" not in deliverable_half, (
+            f"{who}: the count must not follow the rule into a published file")
+
+        # The route the count would otherwise be dodged by: paste the document
+        # into the room instead. A 9,990-character memo reached the boardroom
+        # that way with the three-sentence rule already live.
+        assert "paste a document" in message_half, (
+            f"{who}: without this, a deliverable becomes a chat message")
 
 
 def test_notices_finally_reach_the_agent_the_chairman_talks_to(client):
