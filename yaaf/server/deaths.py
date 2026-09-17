@@ -81,6 +81,10 @@ CAUSES: list[tuple[tuple[str, ...], str]] = [
     (("api error: 529", "overloaded"),
      "the model provider was overloaded — transient, and the run is worth "
      "retrying as-is"),
+    (("chat session wedged",),
+     "the boardroom chat session stopped calling the platform at all while its "
+     "container stayed up — wedged mid-turn, usually on a network connection "
+     "that never completed, and restarted once the silence gave it away"),
     (("chat session container lost or mismatched",),
      "the boardroom chat session lost its container and the supervisor "
      "restarted it — talk-lane plumbing, not work"),

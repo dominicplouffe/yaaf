@@ -254,7 +254,9 @@ def test_supervisor_lifecycle(client, monkeypatch):
         first_beat = run.heartbeat_at
         run_id = run.id
 
-    # Second tick: adopt, don't restart; the tick is the heartbeat.
+    # Second tick: adopt, don't restart. The tick no longer WRITES the
+    # heartbeat — the session stamps that through its own requests — so what
+    # this pins is that a fresh session is left alone and not rebuilt.
     chat.chat_supervisor_once()
     assert state["started"] == [project["id"]]
     with db_session() as session:
@@ -737,3 +739,91 @@ def test_socket_mode_trusts_exactly_one_human():
     assert chairman_text(cfg, envelope(subtype="message_changed")) is None  # an edit
     assert chairman_text(cfg, envelope(text="  ")) is None            # empty
     assert chairman_text(cfg, {"type": "hello"}) is None              # non-event
+
+
+def test_a_wedged_chat_session_is_restarted_rather_than_adopted_forever(
+        client, monkeypatch):
+    """A container that is UP is not a container that is WORKING.
+
+    The live failure, 2026-09-17: a session hung mid-turn on an outbound TCP
+    handshake that never completed. The container stayed up, so the supervisor
+    adopted it and stamped the heartbeat itself on every tick — for twenty
+    minutes the run row read RUNNING with a heartbeat from the current second
+    while nothing in that container was reading anything. The chairman sent two
+    messages and then "hello?!", and because the fresh heartbeat also told
+    `chat_session_live` the lane was healthy, the fallback work-run wakes that
+    would have answered him the slow way never fired either. It took a human
+    noticing.
+
+    So the supervisor asks the session's own traffic instead. Silence long
+    enough that it cannot be a slow turn is the same evidence as an exited
+    container, and takes the same path.
+    """
+    from yaaf.runner import chat
+
+    state = _fake_sandbox(monkeypatch)
+    project = make_project(client)
+    _attach_billing(client, project["id"])
+
+    chat.chat_supervisor_once()
+    with db_session() as session:
+        run_id = session.query(Run).filter_by(kind="chat_session",
+                                              status=RunStatus.RUNNING).one().id
+
+    # Still inside the window: busy is not broken, and restarting a live turn
+    # costs the chairman the answer he is waiting for.
+    with db_session() as session:
+        session.get(Run, run_id).heartbeat_at = utcnow() - timedelta(
+            seconds=chat.CHAT_SILENCE_S / 2)
+    chat.chat_supervisor_once()
+    assert state["stopped"] == []
+    with db_session() as session:
+        assert session.get(Run, run_id).status == RunStatus.RUNNING
+
+    # Past it, with the container still running: wedged.
+    with db_session() as session:
+        session.get(Run, run_id).heartbeat_at = utcnow() - timedelta(
+            seconds=chat.CHAT_SILENCE_S + 30)
+    chat.chat_supervisor_once()
+
+    assert state["stopped"] == [project["id"]]
+    with db_session() as session:
+        dead = session.get(Run, run_id)
+        assert dead.status == RunStatus.FAILED
+        # Named as itself, not as the exited-container case it is not: the
+        # summary is what the Runs page and `deaths.cause_of` read.
+        assert "wedged" in (dead.summary or ""), dead.summary
+    assert len(state["started"]) == 2, "a wedged session must be replaced"
+
+
+def test_a_chat_session_stamps_its_own_heartbeat_by_calling_the_api(client):
+    """The signal the supervisor now reads. A resident session polls the
+    boardroom every couple of seconds while idle and refreshes typing on every
+    streamed message while busy; both authenticate, so its own traffic is
+    continuous proof of life and needs no extra endpoint to carry it."""
+    project = make_project(client)
+    run_id, token = live_token(project["id"], _ceo_id(project), kind="chat_session")
+    _stale(run_id)
+    with db_session() as session:
+        before = session.get(Run, run_id).heartbeat_at
+
+    assert client.get("/agent/context", headers=bearer(token)).status_code == 200
+
+    with db_session() as session:
+        assert session.get(Run, run_id).heartbeat_at > before
+
+
+def test_a_work_run_does_not_stamp_a_chat_heartbeat(client):
+    """Scoped to the chat lane. Work runs are leased, heartbeated and reaped by
+    the daemon on its own schedule, and a request-driven heartbeat would let a
+    chatty run outlive the lease the janitor is there to reclaim."""
+    project = make_project(client)
+    run_id, token = live_token(project["id"], _ceo_id(project))
+    _stale(run_id)
+    with db_session() as session:
+        before = session.get(Run, run_id).heartbeat_at
+
+    assert client.get("/agent/context", headers=bearer(token)).status_code == 200
+
+    with db_session() as session:
+        assert session.get(Run, run_id).heartbeat_at == before

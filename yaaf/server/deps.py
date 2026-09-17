@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 
 from yaaf.core.config import settings
 from yaaf.core.db import session_factory
-from yaaf.core.models import Agent, Project, Run, RunStatus
+from yaaf.core.models import Agent, Project, Run, RunKind, RunStatus, utcnow
 from yaaf.core.tokens import hash_token
 
 # Declared security schemes give Swagger UI its global Authorize button.
@@ -95,6 +95,17 @@ def run_auth(
     project = session.get(Project, run.project_id)
     # Exception handler uses this to count refusals against the right run.
     request.state.run_id = run.id
+    # The chat lane's proof of life. A resident session polls every couple of
+    # seconds while idle and refreshes the typing flag on every streamed
+    # message while busy, so its OWN traffic is the only honest evidence that
+    # it is working. The supervisor used to stamp this itself on each tick,
+    # which only ever proved a container existed: one sat wedged on a TCP
+    # handshake that never completed for twenty minutes, reporting a heartbeat
+    # from the current second, while the chairman typed "hello?!" into a room
+    # nothing was reading. Cheap enough to do unconditionally — the row is
+    # already loaded and already in this transaction.
+    if run.kind == RunKind.CHAT_SESSION:
+        run.heartbeat_at = utcnow()
     _count_production(request, run)
     return RunContext(run=run, agent=agent, project=project)
 

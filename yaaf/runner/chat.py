@@ -64,6 +64,18 @@ CHAT_TICK_S = 5.0
 RESTART_WINDOW = timedelta(minutes=10)
 MAX_STARTS_IN_WINDOW = 3
 
+#: How long a resident session may make no API call at all before the
+#: supervisor calls it wedged rather than busy.
+#:
+#: A healthy session is never silent for long: it polls the boardroom every
+#: couple of seconds while idle, and refreshes the typing flag on every
+#: streamed assistant message while a turn is running. Both go through
+#: `run_auth`, which stamps the heartbeat. So the one legitimate silence is the
+#: gap before a model's first token, and this is set well past it — restarting
+#: a live turn costs the chairman the answer he is waiting for, which is the
+#: same failure as leaving it wedged, only faster.
+CHAT_SILENCE_S = 300.0
+
 CHAT_ADDENDUM = """
 
 CHAT SESSION: You are in a live boardroom conversation with the chairman.
@@ -202,10 +214,24 @@ def _supervise_project(session: Session, project: Project) -> tuple[dict | None,
         # run died (deploy-time reap race) is a zombie polling with a dead
         # token, and adopting it mutes the boardroom entirely: the run row
         # heartbeat suppresses the fallback wakes while nobody actually reads.
+        stalled = False
         if running_ids == {live_run.id}:
-            live_run.heartbeat_at = utcnow()  # the supervisor tick is the lease heartbeat
-            return None, None
-        if running_ids:
+            # The container is up. Whether it is WORKING is a different
+            # question, and this tick cannot see it from out here — so the
+            # supervisor reads the heartbeat the session stamps through its own
+            # requests instead of writing one itself. Writing it here was the
+            # bug: it proved a container existed and was taken as proof that it
+            # was reading, so a session wedged mid-turn looked perfectly
+            # healthy for as long as it stayed wedged, and `chat_session_live`
+            # went on suppressing the fallback wakes that would have answered
+            # the chairman the slow way.
+            alive_at = live_run.heartbeat_at or live_run.started_at or live_run.created_at
+            if (utcnow() - alive_at).total_seconds() <= CHAT_SILENCE_S:
+                return None, None
+            stalled = True
+            log.warning("chat session for %s has made no call in %.0fs; restarting",
+                        project.slug, CHAT_SILENCE_S)
+        elif running_ids:
             log.warning("chat container mismatch for %s (have %s, want %s); rebuilding",
                         project.slug, running_ids, live_run.id)
         # Unconditionally, even when nothing is RUNNING: the usual case is a
@@ -217,12 +243,15 @@ def _supervise_project(session: Session, project: Project) -> tuple[dict | None,
         # each gap silently converts the chairman's own boardroom messages into
         # full-price CEO work runs (see dispatcher.chat_session_live).
         logs = sandbox.stop_chat_container(project.id)
-        why = ("chat session container lost or mismatched; supervisor restarts it"
-               + ("\n" + logs[-2000:] if logs else "\n(no container logs available)"))
+        why = ((f"chat session wedged: no API call in {CHAT_SILENCE_S:.0f}s; "
+                "supervisor restarts it") if stalled else
+               "chat session container lost or mismatched; supervisor restarts it")
+        why += ("\n" + logs[-2000:] if logs else "\n(no container logs available)")
         live_run.status = RunStatus.FAILED
         live_run.finished_at = utcnow()
         live_run.summary = why[:4000]
-        say_session_broke(session, project, "its container stopped")
+        say_session_broke(session, project,
+                          "it stopped responding" if stalled else "its container stopped")
         log.warning("chat session for %s lost its container; restarting. Last logs:\n%s",
                     project.slug, logs[-2000:] or "(none)")
     elif running_ids:
