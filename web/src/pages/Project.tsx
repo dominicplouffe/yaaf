@@ -8,6 +8,7 @@ import {
   HealthCheck,
   HypothesisRow,
   OrgView,
+  PlanView,
   post,
   ProjectHealth,
 } from "../api";
@@ -23,37 +24,41 @@ import {
   fmtUnit,
   statusBrief,
 } from "../ui";
+import { Badge, Btn, IconBtn, PageHead, TeamStrip, Term, Vital, VitalsBar } from "../ui/kit";
+import { deliveryVerdict, roster, waitingOnYou, working } from "../ui/project";
 import Overview from "./project/Overview";
-import Plan from "./project/Plan";
+import Progress from "./project/Progress";
 import Boardroom from "./project/Boardroom";
-import Work from "./project/Work";
 import Deliverables from "./project/Deliverables";
 import Records from "./project/Records";
-import Review from "./project/Review";
 import Settings from "./project/Settings";
 
-// Two groups, not one list of ten. Left is the daily job in the order it gets
-// done — triage, talk, the work, the output. Right is what you open when
-// something looks wrong or needs configuring, and it reads quieter because it is.
+// Five, where there were eight. Plan, Work and Review each answered the same
+// question — will this land, and is any of it real — and a reader had to hold
+// the join between them in their head: a requirement here, the task serving it
+// there, the evidence settling it somewhere else. They are one tab with three
+// lenses now. Review folded in with them because a review is a moment on the
+// plan rather than a place, and a tab that is empty most of the month teaches
+// people to stop opening it. Settings left the row entirely: configuration is
+// something you go and do, not somewhere you live.
 const TABS = [
   ["", "Overview"],
   ["boardroom", "Boardroom"],
-  ["plan", "Plan"],
-  ["work", "Work"],
-  ["review", "Review"],
+  ["progress", "Progress"],
   ["deliverables", "Deliverables"],
 ] as const;
 
-const UTILITY_TABS = [
-  ["records", "Records"],
-  ["settings", "Settings"],
-] as const;
+const UTILITY_TABS = [["records", "Records"]] as const;
 
 /** Everything a project tab needs, polled once in the shell. Before this, four
     tabs each polled /org on their own schedule and disagreed with each other. */
 export interface ProjectCtx {
   projectId: string;
   dash: Dashboard;
+  /** Polled by the shell, not by the tabs. The header needs the commitment to
+      say whether delivery is at risk, and Progress needs all of it \u2014 two polls
+      on two clocks is two answers to one question. */
+  plan: PlanView | null;
   approvals: ApprovalRow[];
   asks: AskRow[];
   hypotheses: HypothesisRow[];
@@ -63,6 +68,7 @@ export interface ProjectCtx {
   reloadApprovals: () => void;
   reloadOrg: () => void;
   reloadHealth: () => void;
+  reloadPlan: () => void;
 }
 
 /** Pause wants a recorded reason; stop is terminal and requires typing the
@@ -187,93 +193,144 @@ function setupBadge(dash: Dashboard, health: ProjectHealth | null) {
   );
 }
 
-/** One strip of facts that are true on every tab: is it alive, is anyone
-    working, what has it cost, is it configured — plus the two lifecycle acts. */
-function ProjectBar({
+/** The frame every tab of a project sits in.
+
+    Three things, in this order, and they do not move between tabs: who this
+    project is, the four numbers that say whether it is well, and the people
+    doing the work. The strip it replaces crammed four unaligned micro-columns
+    into a header and ended in two unlabelled glyph buttons, one of which was a
+    bare red square that stops a project for good. */
+function ProjectFrame({
   dash,
   health,
+  plan,
+  org,
+  approvals,
+  asks,
   onPause,
   onStop,
   onStart,
 }: {
   dash: Dashboard;
   health: ProjectHealth | null;
+  plan: PlanView | null;
+  org: OrgView | null;
+  approvals: ApprovalRow[];
+  asks: AskRow[];
   onPause: () => void;
   onStop: () => void;
   onStart: () => void;
 }) {
   const [brief, setBrief] = useState(false);
   const { unit, spent, cap, warnRatio, frac } = budgetOf(dash);
-  const meterCls = frac >= 1 ? "over" : frac >= warnRatio ? "warn" : "";
+  const verdict = deliveryVerdict(dash, plan);
+  const need = waitingOnYou(dash, approvals, asks, plan);
+  const people = roster(org);
+  const awake = working(people);
+
+  const vitals: Vital[] = [
+    { label: "Delivery", value: verdict.label, sub: verdict.sub, tone: verdict.tone },
+    {
+      label: "Spent this month",
+      value: fmtUnit(spent, unit),
+      sub: `of the ${fmtUnit(cap, unit)} you capped it at`,
+      tone: frac >= 1 ? "critical" : frac >= warnRatio ? "warn" : undefined,
+    },
+    {
+      label: "Waiting on you",
+      value: need.count,
+      sub: need.count === 0
+        ? "nothing needs a decision from you"
+        : need.soonest
+          ? `the soonest decides itself ${fmtLeft(need.soonest).replace(" left", "")} from now`
+          : "nothing else will decide these",
+      tone: need.count === 0 ? undefined : "serious",
+    },
+    {
+      label: "Working right now",
+      value: awake,
+      sub: awake === 0
+        ? dash.runs.queued > 0
+          ? `nobody yet \u2014 ${dash.runs.queued} queued to start`
+          : "nobody is working on this at the moment"
+        : `of ${people.length} ${people.length === 1 ? "person" : "people"}${dash.runs.queued > 0 ? ` \u00b7 ${dash.runs.queued} more queued` : ""}`,
+    },
+  ];
 
   return (
     <>
-      <div className="pbar">
-        <div className="id">
-          <div className="t">
-            <h1>{dash.name}</h1>
+      <PageHead
+        crumbs={
+          <>
+            <NavLink to="/projects">Projects</NavLink>
+            <span>/</span>
+            <span>{dash.name}</span>
+          </>
+        }
+        title={dash.name}
+        badge={
+          <>
             {statusBadge(dash.status)}
-            {dash.drought_active && <span className="badge serious">☂ evidence drought</span>}
-          </div>
-          <div className="kicker">
+            {dash.drought_active && (
+              <Badge tone="serious">
+                <Term means="Nothing outside this project has verified any of its claims for longer than your rules allow. Work carries on; the clock is a warning that none of it has been checked by anything but the team that did it.">
+                  no outside proof lately
+                </Term>
+              </Badge>
+            )}
+            {setupBadge(dash, health)}
+          </>
+        }
+        lede={
+          <>
             {goalLead(dash.goal)}{" "}
-            <button onClick={() => setBrief(!brief)} aria-expanded={brief}>
-              {brief ? "hide the brief" : "the full brief ▾"}
+            <button
+              className="linkish"
+              onClick={() => setBrief(!brief)}
+              aria-expanded={brief}
+              style={{ minHeight: 0, padding: 0, border: 0, background: "none", font: "inherit" }}
+            >
+              {brief ? "hide the brief" : "read the brief"}
             </button>
-          </div>
-        </div>
-
-        <div className="vitals">
-          <div className="vital">
-            <span className="l">Working</span>
-            <span className="v">
-              {dash.runs.running > 0 ? (
-                <>
-                  <span className="working-dot" aria-hidden="true" />
-                  {dash.runs.running} agent{dash.runs.running === 1 ? "" : "s"}
-                </>
-              ) : (
-                <span className="help">idle{dash.runs.queued > 0 ? ` · ${dash.runs.queued} queued` : ""}</span>
-              )}
-            </span>
-          </div>
-
-          <div className="vital">
-            <span className="l">This month</span>
-            <span className="v">
-              {fmtUnit(spent, unit)} <span className="help">/ {fmtUnit(cap, unit)}</span>
-              <span className={`mini-meter ${meterCls}`}>
-                <i style={{ width: `${Math.min(frac, 1) * 100}%` }} />
-              </span>
-            </span>
-          </div>
-
-          <div className="vital">
-            <span className="l">Setup</span>
-            <span className="v">{setupBadge(dash, health)}</span>
-          </div>
-
-          <div className="vital">
-            <span className="l">&nbsp;</span>
-            <span className="v">
-              {dash.status !== "running" && dash.status !== "stopped" && (
-                <button className="small primary" onClick={onStart}>▶ start</button>
-              )}
-              {dash.status === "running" && (
-                <button className="small" onClick={onPause} title="Pause this project">⏸</button>
-              )}
-              {dash.status !== "stopped" && (
-                <button className="small danger" onClick={onStop} title="Stop this project">■</button>
-              )}
-            </span>
-          </div>
-        </div>
-      </div>
+          </>
+        }
+        actions={
+          <>
+            {dash.status !== "running" && dash.status !== "stopped" && (
+              <Btn kind="primary" icon="play" onClick={onStart}>Start</Btn>
+            )}
+            {dash.status === "running" && (
+              <Btn icon="pause" onClick={onPause}>Pause</Btn>
+            )}
+            {dash.status !== "stopped" && (
+              <Btn kind="danger" icon="stop" onClick={onStop}>Stop</Btn>
+            )}
+            <NavLink to={`/projects/${dash.id}/settings`} aria-label="Project settings" title="Project settings">
+              <IconBtn icon="gear" label="Project settings" />
+            </NavLink>
+          </>
+        }
+      />
 
       {brief && (
         <div className="briefbox">
-          <strong style={{ color: "var(--ink)" }}>The brief every agent reads</strong>
+          <strong style={{ color: "var(--ink)" }}>The brief every one of them works from</strong>
           <p style={{ whiteSpace: "pre-wrap", margin: "6px 0 0" }}>{dash.goal}</p>
+        </div>
+      )}
+
+      <VitalsBar vitals={vitals} />
+
+      {people.length > 0 && (
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--s3)", margin: "var(--s4) 0 0", flexWrap: "wrap" }}>
+          <span style={{ fontSize: "var(--t-micro)", color: "var(--muted)" }}>Your team</span>
+          <TeamStrip
+            people={people.slice(0, 8)}
+            note={people.length > 8 ? `and ${people.length - 8} more` : undefined}
+          />
+          <NavLink to={`/projects/${dash.id}`} style={{ fontSize: "var(--t-small)", fontWeight: 600 }}>
+            See the org chart
+          </NavLink>
         </div>
       )}
     </>
@@ -510,6 +567,10 @@ export default function ProjectPage() {
     () => get<ProjectHealth>(`/observe/projects/${projectId}/health`),
     10000,
   );
+  const { data: plan, reload: reloadPlan } = usePoll(
+    () => get<PlanView>(`/observe/projects/${projectId}/plan`),
+    8000,
+  );
 
   const [confirming, setConfirming] = useState<"pause" | "stop" | null>(null);
 
@@ -527,10 +588,12 @@ export default function ProjectPage() {
     hypotheses: hypotheses ?? [],
     org,
     health,
+    plan,
     reload,
     reloadApprovals,
     reloadOrg,
     reloadHealth,
+    reloadPlan,
   };
 
   const tabClass = ({ isActive }: { isActive: boolean }) => "tab" + (isActive ? " active" : "");
@@ -539,9 +602,13 @@ export default function ProjectPage() {
 
   return (
     <>
-      <ProjectBar
+      <ProjectFrame
         dash={dash}
         health={health}
+        plan={plan}
+        org={org}
+        approvals={ctx.approvals}
+        asks={ctx.asks}
         onStart={async () => {
           await post(`/admin/projects/${projectId}/start`);
           reload();
@@ -584,10 +651,10 @@ export default function ProjectPage() {
       )}
 
       <nav className="tabs">
-        {/* Explore has no plan by design, so it gets no Plan tab — a tab that
-            only ever explains its own absence is clutter, not honesty. */}
-        {TABS.filter(([path]) => path !== "plan" || dash.mode !== "explore")
-          .map(([path, label]) => (
+        {/* Explore keeps Progress. It has no requirements by design, but it
+            very much has work and proof, and those are two of the three lenses
+            \u2014 the tab drops the one that does not apply rather than vanishing. */}
+        {TABS.map(([path, label]) => (
           <NavLink
             key={path}
             to={path === "" ? `/projects/${projectId}` : `/projects/${projectId}/${path}`}
@@ -609,18 +676,19 @@ export default function ProjectPage() {
       <Routes>
         <Route index element={<Overview ctx={ctx} asOf={at} error={error} />} />
         <Route path="boardroom" element={<Boardroom projectId={projectId} dash={dash} />} />
-        <Route path="plan" element={<Plan ctx={ctx} />} />
-        <Route path="work" element={<Work ctx={ctx} />} />
-        <Route path="review" element={<Review ctx={ctx} />} />
+        <Route path="progress/*" element={<Progress ctx={ctx} />} />
         <Route path="deliverables" element={<Deliverables projectId={projectId} />} />
         <Route path="records/*" element={<Records ctx={ctx} />} />
         <Route path="settings" element={<Settings projectId={projectId} dash={dash} org={org} reload={reload} />} />
 
         {/* Old bookmarks and links from outside the app. Every tab that moved
             keeps working; nobody has to relearn a URL they had written down. */}
-        <Route path="board" element={<Navigate to={`/projects/${projectId}/work`} replace />} />
-        <Route path="tasks" element={<Navigate to={`/projects/${projectId}/work`} replace />} />
-        <Route path="evidence" element={<Navigate to={`/projects/${projectId}/work`} replace />} />
+        <Route path="plan" element={<Navigate to={`/projects/${projectId}/progress`} replace />} />
+        <Route path="work" element={<Navigate to={`/projects/${projectId}/progress/board`} replace />} />
+        <Route path="review" element={<Navigate to={`/projects/${projectId}/progress/review`} replace />} />
+        <Route path="board" element={<Navigate to={`/projects/${projectId}/progress/board`} replace />} />
+        <Route path="tasks" element={<Navigate to={`/projects/${projectId}/progress/board`} replace />} />
+        <Route path="evidence" element={<Navigate to={`/projects/${projectId}/progress/proof`} replace />} />
         <Route path="files" element={<Navigate to={`/projects/${projectId}/deliverables`} replace />} />
         <Route path="approvals" element={<Navigate to={`/projects/${projectId}/records/decisions`} replace />} />
         <Route path="runs" element={<Navigate to={`/projects/${projectId}/records/runs`} replace />} />

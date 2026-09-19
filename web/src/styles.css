@@ -202,7 +202,12 @@ code, .mono { font-family: var(--mono); font-size: 0.92em; }
 .navlink.active { background: var(--surface-2); color: var(--ink); font-weight: 600; }
 .nav-section { margin: var(--s4) 10px var(--s1); font-size: var(--t-micro);
   font-weight: 600; color: var(--muted); }
-.sidebar .foot { margin-top: auto; padding: 10px; font-size: var(--t-micro); color: var(--muted); }
+.sidebar .foot {
+  margin-top: auto; padding: 10px 2px 2px; font-size: var(--t-micro); color: var(--muted);
+  display: flex; flex-direction: column; gap: var(--s1);
+}
+.sidebar .foot .linkish { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); }
+.sidebar .foot .linkish:hover { color: var(--ink); }
 
 /* A fixed 1200px column left the right third of a wide screen empty while the
    tables inside it wrapped. The cap is wide enough to keep prose readable and
@@ -1682,9 +1687,11 @@ button.rolepick { width: 100%; text-align: left; background: var(--surface-2); }
    more words than a sidebar link can hold — so it gets a screen, and the
    sidebar goes back to being four places and one verb. */
 .navnew {
-  display: block; margin: 0 2px 10px; padding: 7px 10px; border-radius: 6px;
+  display: flex; align-items: center; justify-content: center; gap: 7px;
+  margin: 0 2px var(--s3); min-height: 38px; padding: 0 12px;
+  border-radius: var(--radius-sm);
   background: var(--accent); border: 1px solid var(--accent); color: var(--on-accent);
-  font-weight: 600; text-align: center;
+  font-weight: 600;
 }
 .navnew:hover { filter: brightness(1.1); text-decoration: none; }
 

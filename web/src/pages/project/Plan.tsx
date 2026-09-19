@@ -1,5 +1,12 @@
 import { useMemo, useState } from "react";
-import { get, post } from "../../api";
+import {
+  get,
+  post,
+  PlanBurnup,
+  PlanCommitment,
+  PlanRequirement,
+  PlanView,
+} from "../../api";
 import { usePoll } from "../../hooks";
 import { AsOf, ConfirmModal, NoteAction, Skeleton } from "../../ui";
 import type { ProjectCtx } from "../Project";
@@ -9,111 +16,6 @@ import type { ProjectCtx } from "../Project";
     the stage board answers "when will I have it", the dependency graph answers
     "what is blocking what". The critical path arrives computed from the
     server, from the same arithmetic the refusals quote. */
-
-interface PlanTask {
-  id: string;
-  title: string;
-  status: string;
-  holder: string | null;
-  failed_checks: number;
-}
-
-interface PlanRequirement {
-  id: string;
-  key: string;
-  statement: string;
-  status: string;
-  stage: number;
-  test_kind: string | null;
-  acceptance_test: {
-    type?: string; command?: string; target?: string;
-    direction?: string; target_value?: number;
-  };
-  /** Present only for a `metric` requirement: what the platform has actually
-      read, and which way it is going. Null for every other kind. */
-  measurement: {
-    value: number | null; target: number; direction: string | null;
-    trend: number[]; verdict: string; measured_at: string | null;
-    error: string | null;
-  } | null;
-  est_runs: number | null;
-  spent: { runs: number; usd: number };
-  failure_load: number;
-  depends_on: string[];
-  tasks: PlanTask[];
-  met_at: string | null;
-  cut_reason: string | null;
-  check_output: string | null;
-  chairman_verdict: string | null;
-}
-
-interface PlanCommitment {
-  id: string;
-  status: string;
-  deliver_by: string;
-  projected_done_at: string | null;
-  projection_basis: string | null;
-  accepted_at: string | null;
-  constitution_version: number | null;
-  scope_snapshot: string[];
-  status_reason: string | null;
-  note: string | null;
-  met_at: string | null;
-}
-
-interface PlanBurnup {
-  scope_total: number;
-  met_points: { at: string; count: number }[];
-}
-
-interface PlanView {
-  mode: string;
-  planless: boolean;
-  commitment?: PlanCommitment | null;
-  burnup?: PlanBurnup | null;
-  plan?: {
-    status: string | null;
-    holds: boolean;
-    outstanding: string[];
-    arithmetic: {
-      requirements: number;
-      estimated_runs: number;
-      multiplier: number;
-      adjusted_runs: number;
-      days_at_the_daily_cap: number | null;
-      affordable: boolean;
-      budget: { known: boolean; runs?: number; usd_remaining?: number;
-        usd_per_run?: number; why?: string };
-    };
-    planning_spend: { runs: number; usd: number } | null;
-  };
-  open_stage?: number;
-  critical_path?: { keys: string[]; adjusted_runs: number; multiplier?: number };
-  velocity?: {
-    met_3w: number;
-    per_week_3w: number;
-    met_12w: number;
-    per_week_12w: number;
-    remaining: number;
-    weeks_left_at_pace: number | null;
-    runs_3w: { total: number; dead: number; failure_share: number;
-      attributed_share: number; usd: number;
-      work: number; inbox: number; noop: number;
-      inbox_share: number; noop_share: number };
-    worst_failure: { key: string; failure_load: number; statement: string } | null;
-  };
-  /** What an Operate project has instead of a burndown: a burndown of work
-      that recurs is a flat line, and the shape that carries the information is
-      which obligation slipped, and in which turn. */
-  standing?: {
-    key: string;
-    statement: string;
-    met: number;
-    judged: number;
-    status_now: string;
-  }[];
-  requirements?: PlanRequirement[];
-}
 
 function statusBadge(status: string) {
   const cls =

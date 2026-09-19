@@ -1017,3 +1017,158 @@ export interface CloneResult {
     billing_credential_hidden: string | null;
   };
 }
+
+// ── the plan: scope, sequence and the promise ───────────────────────────
+
+export interface PlanTask {
+  id: string;
+  title: string;
+  status: string;
+  holder: string | null;
+  failed_checks: number;
+}
+
+export interface PlanRequirement {
+  id: string;
+  key: string;
+  statement: string;
+  status: string;
+  stage: number;
+  test_kind: string | null;
+  acceptance_test: {
+    type?: string; command?: string; target?: string;
+    direction?: string; target_value?: number;
+  };
+  /** Present only for a `metric` requirement: what the platform has actually
+      read, and which way it is going. Null for every other kind. */
+  measurement: {
+    value: number | null; target: number; direction: string | null;
+    trend: number[]; verdict: string; measured_at: string | null;
+    error: string | null;
+  } | null;
+  est_runs: number | null;
+  spent: { runs: number; usd: number };
+  failure_load: number;
+  depends_on: string[];
+  tasks: PlanTask[];
+  met_at: string | null;
+  cut_reason: string | null;
+  check_output: string | null;
+  chairman_verdict: string | null;
+}
+
+export interface PlanCommitment {
+  id: string;
+  status: string;
+  deliver_by: string;
+  projected_done_at: string | null;
+  projection_basis: string | null;
+  accepted_at: string | null;
+  constitution_version: number | null;
+  scope_snapshot: string[];
+  status_reason: string | null;
+  note: string | null;
+  met_at: string | null;
+}
+
+export interface PlanBurnup {
+  scope_total: number;
+  met_points: { at: string; count: number }[];
+}
+
+export interface PlanView {
+  mode: string;
+  planless: boolean;
+  commitment?: PlanCommitment | null;
+  burnup?: PlanBurnup | null;
+  plan?: {
+    status: string | null;
+    holds: boolean;
+    outstanding: string[];
+    arithmetic: {
+      requirements: number;
+      estimated_runs: number;
+      multiplier: number;
+      adjusted_runs: number;
+      days_at_the_daily_cap: number | null;
+      affordable: boolean;
+      budget: { known: boolean; runs?: number; usd_remaining?: number;
+        usd_per_run?: number; why?: string };
+    };
+    planning_spend: { runs: number; usd: number } | null;
+  };
+  open_stage?: number;
+  critical_path?: { keys: string[]; adjusted_runs: number; multiplier?: number };
+  velocity?: {
+    met_3w: number;
+    per_week_3w: number;
+    met_12w: number;
+    per_week_12w: number;
+    remaining: number;
+    weeks_left_at_pace: number | null;
+    runs_3w: { total: number; dead: number; failure_share: number;
+      attributed_share: number; usd: number;
+      work: number; inbox: number; noop: number;
+      inbox_share: number; noop_share: number };
+    worst_failure: { key: string; failure_load: number; statement: string } | null;
+  };
+  /** What an Operate project has instead of a burndown: a burndown of work
+      that recurs is a flat line, and the shape that carries the information is
+      which obligation slipped, and in which turn. */
+  standing?: {
+    key: string;
+    statement: string;
+    met: number;
+    judged: number;
+    status_now: string;
+  }[];
+  requirements?: PlanRequirement[];
+}
+
+// ── the standing review ──────────────────────────────────────────
+
+export interface ReviewNumbers {
+  as_of: string;
+  goal: string;
+  velocity: {
+    per_week_3w: number; per_week_12w: number; remaining: number;
+    weeks_left_at_pace: number | null;
+    runs_3w: { total: number; dead: number; failure_share: number };
+    worst_failure: { key: string; failure_load: number } | null;
+  };
+  commitment: {
+    status: string; deliver_by: string;
+    projected_done_at: string | null; basis: string | null;
+  } | null;
+  budget: { unit: string; spent_mtd: number; cap: number };
+  scope: { open: number; proposed: number; met: number; cut: number;
+    met_since_last_review: number };
+  hypotheses: { statement: string; kill_date: string; status: string }[];
+  audit_coverage: { considered: number; sampled: number; failed: number;
+    expired_unreviewed: number };
+  prior?: {
+    number: number;
+    decisions: Decision[];
+    bought: { met_since: number; pace_then: number | null; pace_now: number };
+  };
+}
+
+export interface Decision { kind: string; reason: string; detail: string; at: string }
+
+
+
+export interface ReviewRow {
+  id: string;
+  number: number;
+  status: string;
+  scheduled_for: string;
+  opened_at: string;
+  numbers: ReviewNumbers;
+  narrative: string | null;
+  recommended: string | null;
+  narrative_filed_at: string | null;
+  decisions: Decision[];
+  closed_at: string | null;
+}
+
+export interface ReviewsView { open: ReviewRow | null; history: ReviewRow[] }
