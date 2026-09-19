@@ -442,7 +442,7 @@ export default function Overview({
 }) {
   const { projectId, dash, approvals, hypotheses, org, reload, reloadApprovals, reloadOrg } = ctx;
   const { data: tasks } = usePoll(
-    () => get<TaskRow[]>(`/observe/projects/${projectId}/board`),
+    () => get<TaskRow[]>(`/observe/projects/${projectId}/progress/board`),
     10000,
   );
   const { data: runs } = usePoll(
@@ -568,7 +568,7 @@ export default function Overview({
           <div className="tt">“{clip(h.statement)}” hit its kill date {fmtWhenShort(h.kill_date)}</div>
           <div className="sb">you hold the one extension — or let it stand and the CEO pivots</div>
         </div>
-        <Link to={`/projects/${projectId}/work`}>decide →</Link>
+        <Link to={`/projects/${projectId}/progress/board`}>decide →</Link>
       </div>,
     );
   }
@@ -662,7 +662,7 @@ export default function Overview({
             No verified external evidence in {windowH}h — the platform is refusing new internal
             work until proof lands.
           </div>
-          <Link to={`/projects/${projectId}/work`}>see the proof →</Link>
+          <Link to={`/projects/${projectId}/progress/board`}>see the proof →</Link>
         </div>,
       );
     } else if (applies && dash.last_countable_evidence_at) {
@@ -676,7 +676,7 @@ export default function Overview({
               No verified external evidence for {Math.floor(elapsed)} hours — at {windowH}h, new
               internal work gets refused until proof lands.
             </div>
-            <Link to={`/projects/${projectId}/work`}>see the proof →</Link>
+            <Link to={`/projects/${projectId}/progress/board`}>see the proof →</Link>
           </div>,
         );
       }
@@ -698,7 +698,7 @@ export default function Overview({
             and nothing verified by anyone outside the project. The work may be real — but
             only the agents say so.
           </div>
-          <Link to={`/projects/${projectId}/work`}>see what it bought →</Link>
+          <Link to={`/projects/${projectId}/progress/board`}>see what it bought →</Link>
         </div>,
       );
     }
@@ -707,7 +707,7 @@ export default function Overview({
         <div className="wrow" key={h.id}>
           <span className="badge warn">kill date {fmtLeft(h.kill_date).replace(" left", "")}</span>
           <div className="grow">“{clip(h.statement)}” — {fmtWhenShort(h.kill_date)}</div>
-          <Link to={`/projects/${projectId}/work`}>see the bet →</Link>
+          <Link to={`/projects/${projectId}/progress/board`}>see the bet →</Link>
         </div>,
       );
     }

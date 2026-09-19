@@ -260,7 +260,7 @@ export function buildItems(projects: DeskProject[], reload: () => void): Item[] 
         consequence: (
           <span className="tick">the CEO pivots — you hold the one extension</span>
         ),
-        actions: <Link className="act pri" to={`${to}/work`}>Decide</Link>,
+        actions: <Link className="act pri" to={`${to}/progress/board`}>Decide</Link>,
       });
     }
     if (p.frozen_threads > 0) {
@@ -296,7 +296,7 @@ export function buildItems(projects: DeskProject[], reload: () => void): Item[] 
             it stays frozen — the CEO cannot mark it met, and neither can anyone there
           </span>
         ),
-        actions: <Link className="act pri" to={`${to}/plan`}>Judge it</Link>,
+        actions: <Link className="act pri" to={`${to}/progress`}>Judge it</Link>,
       });
     }
     if (w.plan > 0) {
@@ -313,7 +313,7 @@ export function buildItems(projects: DeskProject[], reload: () => void): Item[] 
             proposed scope is not scope — no work can be built against it
           </span>
         ),
-        actions: <Link className="act pri" to={`${to}/plan`}>Review the plan</Link>,
+        actions: <Link className="act pri" to={`${to}/progress`}>Review the plan</Link>,
       });
     }
     if (w.commitment) {
@@ -332,7 +332,7 @@ export function buildItems(projects: DeskProject[], reload: () => void): Item[] 
             the project keeps working, but it is promising nothing until you sign
           </span>
         ),
-        actions: <Link className="act pri" to={`${to}/plan`}>Sign or move it</Link>,
+        actions: <Link className="act pri" to={`${to}/progress`}>Sign or move it</Link>,
       });
     }
 
@@ -351,7 +351,7 @@ export function buildItems(projects: DeskProject[], reload: () => void): Item[] 
         ),
         consequence: (
           <>
-            <span className="tick hot">auto-denied {fmtSoon(a.expires_at)}</span>
+            <span className="tick hot">it is denied {fmtSoon(a.expires_at)}</span>
             <span className="dim">· silence is a decision here</span>
           </>
         ),
@@ -390,7 +390,7 @@ export function buildItems(projects: DeskProject[], reload: () => void): Item[] 
             <span className="dim">· then its tasks block and the CEO re-plans</span>
           </>
         ),
-        actions: <Link className="act lnk" to={`${to}/work`}>see the bet →</Link>,
+        actions: <Link className="act lnk" to={`${to}/progress/board`}>see the bet →</Link>,
       });
     }
 
@@ -414,7 +414,7 @@ export function buildItems(projects: DeskProject[], reload: () => void): Item[] 
             happening now — new internal work is being refused until proof lands
           </span>
         ),
-        actions: <Link className="act pri" to={`${to}/work`}>See the proof</Link>,
+        actions: <Link className="act pri" to={`${to}/progress/board`}>See the proof</Link>,
       });
     } else if (droughtShown && d.last_countable_at) {
       const startsAt = new Date(d.last_countable_at).getTime() + d.window_hours * 3_600_000;
@@ -432,7 +432,7 @@ export function buildItems(projects: DeskProject[], reload: () => void): Item[] 
             the platform starts refusing internal work {fmtSoon(new Date(startsAt).toISOString())}
           </span>
         ),
-        actions: <Link className="act lnk" to={`${to}/work`}>see the proof →</Link>,
+        actions: <Link className="act lnk" to={`${to}/progress/board`}>see the proof →</Link>,
       });
     }
 
@@ -501,7 +501,7 @@ export function buildItems(projects: DeskProject[], reload: () => void): Item[] 
             nothing breaks — the work may be real, but only the agents say so
           </span>
         ),
-        actions: <Link className="act lnk" to={`${to}/work`}>see what it bought →</Link>,
+        actions: <Link className="act lnk" to={`${to}/progress/board`}>see what it bought →</Link>,
       });
     }
   }

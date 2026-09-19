@@ -579,3 +579,33 @@ export function ThemeToggle() {
     </div>
   );
 }
+
+/* ── the words the database uses, and the words a person would ──────────── */
+
+/** Statuses arrive from the API as the column values they are — `in_progress`,
+ *  `stood_down`, `ready`, `met`. Drawn straight into a badge they read as
+ *  somebody's schema, which is exactly what they are. Anything not listed here
+ *  falls through with its underscores turned into spaces, so a status added
+ *  later is untidy rather than broken. */
+const PLAIN: Record<string, string> = {
+  // a project
+  running: "Running", paused: "Paused", stopped: "Stopped",
+  completed: "Delivered", draft: "Not started yet",
+  // a piece of work
+  ready: "Ready to start", claimed: "Being worked on", checking: "Being checked",
+  review: "Waiting for review", done: "Done", blocked: "Stuck", killed: "Dropped",
+  // something that has to become true
+  proposed: "Waiting for you", accepted: "In the plan", in_progress: "In progress",
+  met: "Proven true", cut: "Dropped from the plan", pending: "Not started",
+  // a decision
+  approved: "You approved it", denied: "You denied it", expired: "Ran out of time",
+  // a person
+  active: "Ready", stood_down: "Stood down", idle: "Idle",
+  // evidence
+  verified: "Checked and held", failed: "Check failed", attested: "Confirmed by the platform",
+  unverifiable: "Nothing could check it",
+};
+
+export function plainStatus(status: string): string {
+  return PLAIN[status] ?? status.replace(/_/g, " ");
+}

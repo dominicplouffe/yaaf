@@ -1,4 +1,5 @@
 import { CredentialPicker, PlanMeter } from "../../llmCredentials";
+import { plainStatus } from "../../ui/kit";
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -64,7 +65,7 @@ function secretByName(secrets: SecretRow[], name: string | null | undefined) {
 
 function amendmentBadge(status: AmendmentRow["status"]) {
   const cls = status === "applied" ? "good" : status === "pending" ? "warn" : "";
-  return <span className={`badge ${cls}`}>{status}</span>;
+  return <span className={`badge ${cls}`}>{plainStatus(status)}</span>;
 }
 
 function hoursUntil(iso: string): number {

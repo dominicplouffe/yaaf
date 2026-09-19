@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { plainStatus } from "../ui/kit";
 import { Link, useSearchParams } from "react-router-dom";
 import { DeskProject, DeskView, get } from "../api";
 import { usePoll } from "../hooks";
@@ -14,7 +15,7 @@ export function statusBadge(status: string) {
         : status === "stopped"
           ? "critical"
           : "accent";
-  return <span className={`badge ${cls}`}>{status}</span>;
+  return <span className={`badge ${cls}`}>{plainStatus(status)}</span>;
 }
 
 /** A project nobody can act on again. Terminal projects are the archive: they
@@ -483,7 +484,7 @@ function ProjectCard({ p }: { p: DeskProject }) {
       <div style={{ display: "flex", gap: 16, marginTop: 10, fontSize: 12.5 }}>
         <Link to={`/projects/${p.id}`}>Overview →</Link>
         <Link to={`/projects/${p.id}/boardroom`}>Boardroom →</Link>
-        <Link to={`/projects/${p.id}/work`}>Work →</Link>
+        <Link to={`/projects/${p.id}/progress/board`}>Work →</Link>
         <Link to={`/projects/${p.id}/settings`}>Settings →</Link>
       </div>
     </div>

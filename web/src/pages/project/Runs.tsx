@@ -398,12 +398,12 @@ export default function Runs({ projectId, dash }: { projectId: string; dash: Das
           {(runs ?? []).map((run) => (
             <Fragment key={run.id}>
               <tr>
-                <td className="mono">{fmtWhen(run.started_at)}</td>
+                <td>{fmtWhen(run.started_at)}</td>
                 <td>
                   {run.agent_name ?? <span className="help">—</span>}
                   {run.team_name && <div className="help">{run.team_name}</div>}
                 </td>
-                <td className="mono">{kindText(run.kind)}</td>
+                <td>{kindText(run.kind)}</td>
                 <td>
                   {runBadge(run.status)}
                   <ResidentNote run={run} />
@@ -411,7 +411,7 @@ export default function Runs({ projectId, dash }: { projectId: string; dash: Das
                     <div className="help">{run.refusals} refusal(s)</div>
                   )}
                 </td>
-                <td className="mono">{triggerText(run.trigger)}</td>
+                <td>{triggerText(run.trigger)}</td>
                 <td className="num">{run.tokens_out.toLocaleString()}</td>
                 <td className="num">{fmtUsd(run.cost_usd)}</td>
                 <td>

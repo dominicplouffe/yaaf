@@ -8,8 +8,8 @@ import {
   PlanView,
 } from "../../api";
 import { usePoll } from "../../hooks";
-import { AsOf, ConfirmModal, NoteAction, Skeleton } from "../../ui";
-import { ChartHead } from "../../ui/kit";
+import { AsOf, ConfirmModal, ExportCsv, NoteAction, Skeleton, downloadCsv } from "../../ui";
+import { ChartHead, plainStatus } from "../../ui/kit";
 import type { ProjectCtx } from "../Project";
 
 /** The visual plan the chairman asked for — twice — before it was twice
@@ -26,8 +26,7 @@ function statusBadge(status: string) {
     : status === "in_progress" ? "accent"
     : status === "proposed" ? "serious"
     : "";
-  const label = status === "in_progress" ? "in progress" : status;
-  return <span className={`badge ${cls}`}>{label}</span>;
+  return <span className={`badge ${cls}`}>{plainStatus(status)}</span>;
 }
 
 const SETTLED = new Set(["met", "cut"]);
@@ -304,7 +303,7 @@ function RequirementCard({ r, onCritical, onDone }: {
                 {r.tasks.map((t) => (
                   <tr key={t.id}>
                     <td style={{ width: "60%" }}>{t.title}</td>
-                    <td><span className="badge">{t.status}</span></td>
+                    <td><span className="badge">{plainStatus(t.status)}</span></td>
                     <td>{t.holder ?? "—"}</td>
                     <td>{t.failed_checks > 0 ? `${t.failed_checks} failed checks` : ""}</td>
                   </tr>
@@ -743,7 +742,7 @@ function CycleHistory({ projectId }: { projectId: string }) {
 export default function Plan({ ctx }: { ctx: ProjectCtx }) {
   const { projectId } = ctx;
   const { data, at, error, reload } = usePoll<PlanView>(
-    () => get<PlanView>(`/observe/projects/${projectId}/plan`),
+    () => get<PlanView>(`/observe/projects/${projectId}/progress`),
     8000,
   );
   const [view, setView] = useState<"stages" | "graph">("stages");
@@ -953,10 +952,35 @@ export default function Plan({ ctx }: { ctx: ProjectCtx }) {
         </div>
         {critical.length > 1 && (
           <span className="help">
-            critical path {critical.join(" → ")} · ~{data.critical_path!.adjusted_runs} runs
+            The longest chain runs {critical.join(" → ")} — about{" "}
+            {data.critical_path!.adjusted_runs} jobs, and nothing shortens the project until
+            it does.
           </span>
         )}
         <span className="sp" style={{ flex: 1 }} />
+        {reqs.length > 0 && (
+          <ExportCsv
+            onClick={() =>
+              downloadCsv(
+                "the-plan.csv",
+                ["Order", "What has to be true", "State", "Stage", "Jobs used",
+                 "Jobs estimated", "Spent (USD)", "Failed checks", "Waits for", "Settled"],
+                reqs.map((r) => [
+                  r.key,
+                  r.statement,
+                  plainStatus(r.status),
+                  r.stage,
+                  r.spent.runs,
+                  r.est_runs ?? "",
+                  r.spent.usd.toFixed(2),
+                  r.failure_load,
+                  r.depends_on.join(" "),
+                  r.met_at ?? "",
+                ]),
+              )
+            }
+          />
+        )}
         <AsOf at={at} error={error} />
       </div>
 

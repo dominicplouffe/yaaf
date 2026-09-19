@@ -1256,7 +1256,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
               />
             </div>
             <div>
-              <label className="field">Slug — picked for you from the name</label>
+              <label className="field">Short name — picked for you</label>
               <input
                 value={slug}
                 onChange={(e) => { setSlug(e.target.value); setSlugEdited(true); }}
@@ -1264,7 +1264,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
                 required
               />
               <div className="help" style={{ marginTop: 4 }}>
-                a-z, 0-9, dashes. Deduped against existing projects; edit it if you care.
+                Lower case, numbers and dashes. It appears in this project’s web address. We make it unique for you; change it if you would rather.
               </div>
             </div>
           </div>
@@ -1285,8 +1285,8 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
           </div>
           <p className="help" style={{ marginTop: 4 }}>
             Your identity on approvals and boardroom messages — remembered for the next
-            project. If SMTP is configured on the server (<code>YAAF_SMTP_HOST</code> in{" "}
-            <code>deploy/.env</code>), needs, assists and budget alerts also email you here;
+            project. If email is set up on this install, the things waiting on you and any
+            budget alarm also reach you here;
             without it, nothing is sent and this is identity only.
           </p>
         </div>

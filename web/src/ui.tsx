@@ -4,6 +4,7 @@
 // primitives the redesign repeats everywhere so the pattern is learned once.
 
 import type React from "react";
+import { Icon } from "./ui/Icon";
 import { useEffect, useRef, useState } from "react";
 import { Activity, Dashboard, get, post, RunRow, SpendBucket } from "./api";
 
@@ -21,8 +22,10 @@ export function hoursSince(iso: string): number {
 export function fmtLeft(iso: string): string {
   const h = hoursUntil(iso);
   if (h <= 0) return "expired";
-  if (h < 48) return `${Math.max(1, Math.round(h))}h left`;
-  return `${Math.round(h / 24)}d left`;
+  const hours = Math.max(1, Math.round(h));
+  if (h < 48) return `${hours} hour${hours === 1 ? "" : "s"} left`;
+  const days = Math.round(h / 24);
+  return `${days} day${days === 1 ? "" : "s"} left`;
 }
 
 /** "in 12 min" / "in under a minute" / "any moment now" — a minute-scale
@@ -35,7 +38,11 @@ export function fmtSoon(iso: string | null): string {
   if (m <= 0) return "any moment now";
   if (m < 1) return "in under a minute";
   if (m < 90) return `in ${Math.round(m)} min`;
-  return `in ${Math.round(m / 60)}h`;
+  const h = Math.round(m / 60);
+  // "in 168h" is a number the reader has to convert before it means anything.
+  if (h < 48) return `in ${h} hour${h === 1 ? "" : "s"}`;
+  const d = Math.round(h / 24);
+  return `in ${d} day${d === 1 ? "" : "s"}`;
 }
 
 /** "2m ago" / "3h ago" / "5d ago" for scanning; pair with fmtWhen for the record. */
@@ -788,10 +795,11 @@ export function downloadCsv(
   URL.revokeObjectURL(url);
 }
 
-export function ExportCsv({ onClick }: { onClick: () => void }) {
+export function ExportCsv({ onClick, label }: { onClick: () => void; label?: string }) {
   return (
     <button className="small" style={{ marginLeft: "auto" }} onClick={onClick}>
-      ↓ export CSV
+      <Icon name="download" size={13} strokeWidth={2} />
+      {label ?? "Export"}
     </button>
   );
 }

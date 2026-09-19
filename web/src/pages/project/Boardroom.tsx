@@ -580,7 +580,7 @@ export default function Boardroom({ projectId, dash, org }: {
                   <div style={{ marginTop: 3 }}>{killChip(h.kill_date, h.status)}</div>
                 </div>
               ))}
-              <Link to={`/projects/${projectId}/evidence`} style={{ fontSize: 12 }}>
+              <Link to={`/projects/${projectId}/progress/proof`} style={{ fontSize: 12 }}>
                 all bets &amp; evidence →
               </Link>
             </div>

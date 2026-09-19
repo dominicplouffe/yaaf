@@ -3,7 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { get, getToken } from "../../api";
 import Markdown from "../../Markdown";
 import { fmtWhen, usePoll } from "../../hooks";
-import { AsOf, Skeleton } from "../../ui";
+import { AsOf, ExportCsv, Skeleton, downloadCsv } from "../../ui";
 
 interface WorkspaceFile {
   path: string;
@@ -1230,6 +1230,27 @@ export default function Deliverables({ projectId }: { projectId: string }) {
               {fmtCount(flat.length)} of {fmtCount(total)} files ·{" "}
               {fmtCount(publishedTotal)} published
             </span>
+            {/* What this reader does with a list is take it away. Export was
+                built one table at a time, which is why the record screens had
+                it and the one holding the work did not. */}
+            {flat.length > 0 && (
+              <ExportCsv
+                onClick={() =>
+                  downloadCsv(
+                    "deliverables.csv",
+                    ["File", "Folder", "State", "Type", "Size (bytes)", "Landed"],
+                    flat.map((e) => [
+                      e.name,
+                      e.dir,
+                      e.state === "published" ? "Published" : "Still being worked on",
+                      e.ext ? `.${e.ext}` : "",
+                      e.size,
+                      e.at ?? "",
+                    ]),
+                  )
+                }
+              />
+            )}
             {filtering && (
               <button
                 className="linkish"

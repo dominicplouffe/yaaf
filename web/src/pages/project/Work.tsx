@@ -1,4 +1,5 @@
 import { Fragment, useState } from "react";
+import { plainStatus } from "../../ui/kit";
 import { Link } from "react-router-dom";
 import { EvidenceRow, get, HypothesisRow, post, TaskRow } from "../../api";
 import { fmtWhen, usePoll } from "../../hooks";
@@ -65,7 +66,7 @@ function taskBadge(status: string, notBefore?: string | null) {
           : status === "checking"
             ? "warn"
             : "accent";
-  return <span className={`badge ${cls}`}>{status}</span>;
+  return <span className={`badge ${cls}`}>{plainStatus(status)}</span>;
 }
 
 const FILTERS = [
@@ -235,14 +236,14 @@ function TaskDetails({ task }: { task: TaskRow }) {
 export default function Work({ ctx }: { ctx: ProjectCtx }) {
   const { projectId, hypotheses } = ctx;
   const { data: tasks, error } = usePoll(
-    () => get<TaskRow[]>(`/observe/projects/${projectId}/board`),
+    () => get<TaskRow[]>(`/observe/projects/${projectId}/progress/board`),
     6000,
   );
   // Evidence still feeds this page, but only as the bet-level tally: "has this
   // bet been proven?" is the join the page exists for. The rows themselves are
   // a record and read in Records → Evidence.
   const { data: evidence } = usePoll(
-    () => get<EvidenceRow[]>(`/observe/projects/${projectId}/evidence?limit=500`),
+    () => get<EvidenceRow[]>(`/observe/projects/${projectId}/progress/proof?limit=500`),
     8000,
   );
   const [filter, setFilter] = useState<(typeof FILTERS)[number]["key"]>("all");
