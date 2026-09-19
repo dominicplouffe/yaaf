@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { get, MemoryRow, MemoryScopeUsage } from "../../api";
 import { fmtWhen, usePoll } from "../../hooks";
-import { AsOf } from "../../ui";
+import { AsOf, ExportCsv, downloadCsv } from "../../ui";
 import type { ProjectCtx } from "../Project";
 
 function kindBadge(kind: string) {
@@ -52,7 +52,7 @@ function MemoryList({ rows }: { rows: MemoryRow[] }) {
             <td>
               <Body text={memory.body} />
             </td>
-            <td className="mono">{fmtWhen(memory.at)}</td>
+            <td>{fmtWhen(memory.at)}</td>
           </tr>
         ))}
       </tbody>
@@ -124,6 +124,20 @@ export default function Memory({ projectId, ctx }: { projectId: string; ctx: Pro
         consider worth keeping. Nothing is ever deleted or auto-evicted — folded entries stay
         readable to the agents, they just stop taking up a slot.
       </p>
+
+      {rows.length > 0 && (
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "var(--s2)" }}>
+          <ExportCsv
+            onClick={() =>
+              downloadCsv(
+                "what-the-project-remembers.csv",
+                ["Kind", "Scope", "Team", "Subject", "What is remembered", "Since"],
+                rows.map((m) => [m.kind, m.scope, m.team_id ?? "", m.subject, m.body, m.at]),
+              )
+            }
+          />
+        </div>
+      )}
 
       {kinds.length > 1 && (
         <div className="pills">

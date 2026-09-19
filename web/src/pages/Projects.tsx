@@ -426,7 +426,7 @@ function BudgetBit({ p }: { p: DeskProject }) {
       <span className={`mini-meter ${meterCls}`}>
         <i style={{ width: `${Math.min(frac, 1) * 100}%` }} />
       </span>
-      <span className="mono" style={{ fontSize: 11 }}>
+      <span className="mono">
         {fmtUnit(p.budget.spent, p.budget.unit)}/{fmtUnit(p.budget.cap, p.budget.unit)}
       </span>
     </span>

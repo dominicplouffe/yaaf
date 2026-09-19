@@ -409,13 +409,14 @@ export default function Boardroom({ projectId, dash, org }: {
           {!dash.chat_live && dash.runs.running > 0 ? (
             <div className="notice-box working">
               <span className="working-dot" aria-hidden="true" />
-              The CEO is working — {dash.runs.running === 1 ? "a run is" : `${dash.runs.running} runs are`} in
-              flight. Replies land here when its run finishes; first planning runs take a few minutes.
+              {ceoFirst} is working on{" "}
+              {dash.runs.running === 1 ? "something" : `${dash.runs.running} things`} right now. The
+              reply lands here when they finish; the first one takes a few minutes.
             </div>
           ) : !dash.chat_live && dash.runs.queued > 0 ? (
             <div className="notice-box working">
               <span className="working-dot" aria-hidden="true" />
-              The CEO is waking up — a run is queued to start.
+              {ceoFirst} is waking up — the reply starts in a moment.
             </div>
           ) : null}
           <div className="chat-wrap">
@@ -481,7 +482,7 @@ export default function Boardroom({ projectId, dash, org }: {
           {ceoRun && !typing?.typing && (
             <div className="presence">
               <span className="working-dot" aria-hidden="true" />
-              The CEO is in a run now — a reply lands here when it finishes.
+              {ceoFirst} is working — a reply lands here when they are done.
             </div>
           )}
           <div className="composer">
@@ -510,10 +511,10 @@ export default function Boardroom({ projectId, dash, org }: {
                 <span className="badge">idle</span>
               )}
               <div className="help" style={{ marginTop: 6 }}>
-                today: {todayUsd > 0
+                spent today: {todayUsd > 0
                   ? `$${todayUsd.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
                   : `${fmtUnit(todayTokens, "tokens")} tokens`}{" "}
-                across {todayRuns.length} run{todayRuns.length === 1 ? "" : "s"}
+                across {todayRuns.length} piece{todayRuns.length === 1 ? "" : "s"} of work
               </div>
               {lastRefusal && (
                 <div className="help" style={{ marginTop: 8 }}>

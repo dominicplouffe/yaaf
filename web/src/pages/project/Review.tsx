@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Decision, get, post, ReviewNumbers, ReviewRow, ReviewsView } from "../../api";
 import { fmtWhen, usePoll } from "../../hooks";
-import { AsOf, NoteAction, Skeleton } from "../../ui";
+import { AsOf, ExportCsv, NoteAction, Skeleton, downloadCsv } from "../../ui";
 import type { ProjectCtx } from "../Project";
 
 
@@ -169,11 +169,11 @@ function NumbersTiles({ n }: { n: ReviewNumbers }) {
   return (
     <div className="tiles" style={{ margin: "12px 0" }}>
       <div className="tile">
-        <div className="label">Pace</div>
-        <div className="value">{n.velocity.per_week_3w}<small> /wk</small></div>
-        <div className="sub">{n.velocity.remaining} open
+        <div className="label">Requirements settled</div>
+        <div className="value">{n.velocity.per_week_3w}<small> a week</small></div>
+        <div className="sub">{n.velocity.remaining} still open
           {n.velocity.weeks_left_at_pace != null
-            ? ` — ~${n.velocity.weeks_left_at_pace} wks at pace` : ""}</div>
+            ? ` — about ${n.velocity.weeks_left_at_pace} weeks at this rate` : ""}</div>
       </div>
       <div className="tile">
         <div className="label">Met since last</div>
@@ -331,7 +331,33 @@ export default function Review({ ctx }: { ctx: ProjectCtx }) {
 
       {data.history.length > 0 && (
         <>
-          <h2>Past reviews</h2>
+          <div style={{ display: "flex", alignItems: "baseline", gap: "var(--s3)" }}>
+            <h2 style={{ flex: 1 }}>Past reviews</h2>
+            {/* What you decided, and what it bought — the one record a
+                chairman is most likely to want outside this screen. */}
+            <ExportCsv
+              onClick={() =>
+                downloadCsv(
+                  "reviews.csv",
+                  ["Review", "Opened", "Closed", "Settled since the last one",
+                   "Settling per week", "Still open", "What you decided", "Why"],
+                  data.history.flatMap((r) => {
+                    const facts = [
+                      r.number,
+                      r.opened_at,
+                      r.closed_at ?? "",
+                      r.numbers.scope.met_since_last_review,
+                      r.numbers.velocity.per_week_3w,
+                      r.numbers.velocity.remaining,
+                    ];
+                    return r.decisions.length === 0
+                      ? [[...facts, "no changes", ""]]
+                      : r.decisions.map((d) => [...facts, `${d.kind}: ${d.detail}`, d.reason]);
+                  }),
+                )
+              }
+            />
+          </div>
           {data.history.map((r) => (
             <div className="card" key={r.id} style={{ padding: "10px 14px", marginBottom: 8 }}>
               <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
