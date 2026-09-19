@@ -74,7 +74,7 @@ const PAGE = 50;
 
 export default function Evidence({ projectId }: { projectId: string }) {
   const { data, error } = usePoll(
-    () => get<EvidenceRow[]>(`/observe/projects/${projectId}/progress/proof?limit=500`),
+    () => get<EvidenceRow[]>(`/observe/projects/${projectId}/evidence?limit=500`),
     15000,
   );
   const [filter, setFilter] = useState<(typeof PROOF_FILTERS)[number]["key"]>("all");

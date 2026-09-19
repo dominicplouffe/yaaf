@@ -442,7 +442,7 @@ export default function Overview({
 }) {
   const { projectId, dash, approvals, hypotheses, org, reload, reloadApprovals, reloadOrg } = ctx;
   const { data: tasks } = usePoll(
-    () => get<TaskRow[]>(`/observe/projects/${projectId}/progress/board`),
+    () => get<TaskRow[]>(`/observe/projects/${projectId}/board`),
     10000,
   );
   const { data: runs } = usePoll(

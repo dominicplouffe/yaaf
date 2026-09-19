@@ -8,7 +8,7 @@ import {
   PlanView,
 } from "../../api";
 import { usePoll } from "../../hooks";
-import { AsOf, ConfirmModal, ExportCsv, NoteAction, Skeleton, downloadCsv } from "../../ui";
+import { AsOf, ConfirmModal, ExportCsv, NoteAction, Skeleton, clip, downloadCsv } from "../../ui";
 import { ChartHead, plainStatus } from "../../ui/kit";
 import type { ProjectCtx } from "../Project";
 
@@ -132,7 +132,7 @@ function Levers({ r, onDone }: { r: PlanRequirement; onDone: () => void }) {
           }}
         />
         <NoteAction
-          label="Cut…"
+          label="Drop it"
           className="small danger"
           placeholder="Why this is out — the CEO reads it and re-plans"
           confirmLabel="✂ Cut"
@@ -165,7 +165,7 @@ function Levers({ r, onDone }: { r: PlanRequirement; onDone: () => void }) {
   if (!SETTLED.has(r.status)) {
     return (
       <NoteAction
-        label="Cut…"
+        label="Drop it"
         className="small danger"
         placeholder="Why this is out of scope — the CEO reads it and re-plans"
         confirmLabel="✂ Cut"
@@ -235,8 +235,10 @@ function MetricVerdict({ m }: { m: NonNullable<PlanRequirement["measurement"]> }
 
 /** One requirement, in full: the statement is the headline, the test is one
     click away, and the numbers are the same ones the refusals quote. */
-function RequirementCard({ r, onCritical, onDone }: {
+function RequirementCard({ r, onCritical, onDone, names }: {
   r: PlanRequirement; onCritical: boolean; onDone: () => void;
+  /** Key → statement, so a dependency can be named rather than referenced. */
+  names: Map<string, string>;
 }) {
   const [open, setOpen] = useState(false);
   const over = r.est_runs != null && r.spent.runs > r.est_runs && !SETTLED.has(r.status);
@@ -247,7 +249,8 @@ function RequirementCard({ r, onCritical, onDone }: {
       borderLeft: onCritical ? "3px solid var(--accent)" : undefined,
     }}>
       <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
-        <span className="chip">{r.key}</span>
+        <span className="chip" title={`Requirement ${r.key}`}
+          style={{ color: "var(--muted)", fontWeight: 500 }}>{r.key}</span>
         <button className="linklike" style={{ flex: 1, minWidth: 220, textAlign: "left",
           background: "none", border: "none", padding: 0, font: "inherit",
           color: "var(--ink)", cursor: "pointer" }}
@@ -258,16 +261,30 @@ function RequirementCard({ r, onCritical, onDone }: {
         {r.failure_load > 0 && (
           <span className="badge serious">{r.failure_load} failures</span>
         )}
-        <span className="chip" title="runs spent / estimated"
-          style={over ? { color: "var(--serious)" } : undefined}>
-          {r.spent.runs}{r.est_runs != null ? `/${r.est_runs}` : ""} runs
+        <span
+          className="chip"
+          title={
+            r.est_runs != null
+              ? `${r.spent.runs} of the ${r.est_runs} jobs estimated for this`
+              : `${r.spent.runs} jobs so far; nobody estimated this one`
+          }
+          style={over ? { color: "var(--serious)" } : undefined}
+        >
+          {r.spent.runs}{r.est_runs != null ? ` of ${r.est_runs}` : ""} jobs
         </span>
         {r.spent.usd > 0 && <span className="chip">${r.spent.usd.toFixed(2)}</span>}
         <Levers r={r} onDone={onDone} />
       </div>
       {r.depends_on.length > 0 && !SETTLED.has(r.status) && (
         <div style={{ marginTop: 4, fontSize: 12, color: "var(--muted)" }}>
-          waits for {r.depends_on.join(", ")}
+          Waits for{" "}
+          {r.depends_on
+            .map((k, i) => (
+              <span key={k} title={`Requirement ${k}`}>
+                {i > 0 ? ", " : ""}
+                {clip(names.get(k) ?? k, 60)}
+              </span>
+            ))}
         </div>
       )}
       {/* Not behind the fold. What you said when you sent it back is the
@@ -742,7 +759,7 @@ function CycleHistory({ projectId }: { projectId: string }) {
 export default function Plan({ ctx }: { ctx: ProjectCtx }) {
   const { projectId } = ctx;
   const { data, at, error, reload } = usePoll<PlanView>(
-    () => get<PlanView>(`/observe/projects/${projectId}/progress`),
+    () => get<PlanView>(`/observe/projects/${projectId}/plan`),
     8000,
   );
   const [view, setView] = useState<"stages" | "graph">("stages");
@@ -765,6 +782,7 @@ export default function Plan({ ctx }: { ctx: ProjectCtx }) {
   const plan = data.plan!;
   const reqs = data.requirements ?? [];
   const critical = data.critical_path?.keys ?? [];
+  const reqNames = new Map(reqs.map((r) => [r.key, r.statement]));
   const sums = plan.arithmetic;
   const stages = [...new Set(reqs.map((r) => r.stage))].sort((a, b) => a - b);
   const commitment = data.commitment ?? null;
@@ -821,42 +839,43 @@ export default function Plan({ ctx }: { ctx: ProjectCtx }) {
             <div className="sub">requirements in the plan</div>
           </div>
           <div className="tile">
-            <div className="label">Estimated</div>
+            <div className="label">Work it should take</div>
             <div className="value">{sums.adjusted_runs}</div>
             <div className="sub">
-              runs{sums.multiplier > 1 ? ` (×${sums.multiplier} — this CEO runs over)` : ""}
+              jobs{sums.multiplier > 1 ? ` — padded ×${sums.multiplier}, because this CEO has been running over` : ""}
             </div>
           </div>
           {sums.days_at_the_daily_cap != null && (
             <div className="tile">
-              <div className="label">At the daily cap</div>
+              <div className="label">If nothing went wrong</div>
               <div className="value">{sums.days_at_the_daily_cap}<small> days</small></div>
-              <div className="sub">if every run went to plan</div>
+              <div className="sub">days, at the most work you allow in one day</div>
             </div>
           )}
           {data.velocity && (
             <div className="tile">
-              <div className="label">Pace</div>
-              <div className="value">{data.velocity.per_week_3w}<small> /wk</small></div>
+              <div className="label">Requirements settled</div>
+              <div className="value">{data.velocity.per_week_3w}<small> a week</small></div>
               <div className="sub">
                 {data.velocity.weeks_left_at_pace != null
-                  ? `${data.velocity.remaining} left — ~${data.velocity.weeks_left_at_pace} weeks at this pace`
+                  ? `${data.velocity.remaining} still open — about ${data.velocity.weeks_left_at_pace} weeks at this rate`
                   : data.velocity.met_3w === 0
-                    ? "nothing met in 3 weeks yet"
-                    : `${data.velocity.remaining} requirements left`}
+                    ? "none settled in the last three weeks"
+                    : `${data.velocity.remaining} still open`}
               </div>
             </div>
           )}
           {data.velocity && data.velocity.runs_3w.total > 0 && (
             <div className="tile">
-              <div className="label">Waste</div>
+              <div className="label">Spend that bought nothing</div>
               <div className="value">
                 {Math.round(data.velocity.runs_3w.failure_share * 100)}<small>%</small>
               </div>
               <div className="sub">
-                {data.velocity.runs_3w.dead} of {data.velocity.runs_3w.total} runs died
+                {data.velocity.runs_3w.dead} of {data.velocity.runs_3w.total} jobs ended with
+                nothing to show
                 {data.velocity.worst_failure
-                  ? ` — ${data.velocity.worst_failure.key} worst at ${data.velocity.worst_failure.failure_load}`
+                  ? ` — worst on "${clip(data.velocity.worst_failure.statement, 44)}"`
                   : ""}
               </div>
             </div>
@@ -893,7 +912,7 @@ export default function Plan({ ctx }: { ctx: ProjectCtx }) {
             </div>
           ) : (
             <div className="tile">
-              <div className="label">Budget check</div>
+              <div className="label">What the rest of the budget buys</div>
               <div className="value">—</div>
               <div className="sub">{sums.budget.why}</div>
             </div>
@@ -915,7 +934,7 @@ export default function Plan({ ctx }: { ctx: ProjectCtx }) {
                   {r.met}/{r.judged}
                 </span>
                 <div className="grow">
-                  <b className="mono">{r.key}</b> {r.statement}
+                  <b title={`Requirement ${r.key}`}>{clip(r.statement, 90)}</b>
                   <div className="help">
                     {r.judged === 0
                       ? "no cycle has closed on it yet"
@@ -1004,7 +1023,7 @@ export default function Plan({ ctx }: { ctx: ProjectCtx }) {
             </h2>
             <div style={{ marginTop: 8 }}>
               {reqs.filter((r) => r.stage === stage).map((r) => (
-                <RequirementCard key={r.id} r={r}
+                <RequirementCard key={r.id} r={r} names={reqNames}
                   onCritical={critical.includes(r.key)} onDone={reload} />
               ))}
             </div>

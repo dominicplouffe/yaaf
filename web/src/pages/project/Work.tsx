@@ -72,10 +72,10 @@ function taskBadge(status: string, notBefore?: string | null) {
 const FILTERS = [
   { key: "open", label: "Open",
     match: (s: string) => ["ready", "claimed", "checking", "review"].includes(s) },
-  { key: "blocked", label: "Blocked", match: (s: string) => s === "blocked" },
+  { key: "blocked", label: "Stuck", match: (s: string) => s === "blocked" },
   { key: "done", label: "Done", match: (s: string) => s === "done" },
-  { key: "killed", label: "Killed", match: (s: string) => s === "killed" },
-  { key: "all", label: "All", match: () => true },
+  { key: "killed", label: "Dropped", match: (s: string) => s === "killed" },
+  { key: "all", label: "Everything", match: () => true },
 ] as const;
 
 /** Inline one-time extension: date + reason, recorded and disclosed.
@@ -236,14 +236,14 @@ function TaskDetails({ task }: { task: TaskRow }) {
 export default function Work({ ctx }: { ctx: ProjectCtx }) {
   const { projectId, hypotheses } = ctx;
   const { data: tasks, error } = usePoll(
-    () => get<TaskRow[]>(`/observe/projects/${projectId}/progress/board`),
+    () => get<TaskRow[]>(`/observe/projects/${projectId}/board`),
     6000,
   );
   // Evidence still feeds this page, but only as the bet-level tally: "has this
   // bet been proven?" is the join the page exists for. The rows themselves are
   // a record and read in Records → Evidence.
   const { data: evidence } = usePoll(
-    () => get<EvidenceRow[]>(`/observe/projects/${projectId}/progress/proof?limit=500`),
+    () => get<EvidenceRow[]>(`/observe/projects/${projectId}/evidence?limit=500`),
     8000,
   );
   const [filter, setFilter] = useState<(typeof FILTERS)[number]["key"]>("all");
