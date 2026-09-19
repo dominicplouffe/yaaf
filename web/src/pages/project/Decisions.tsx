@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { plainStatus } from "../../ui/kit";
 import { Link } from "react-router-dom";
 import { AmendmentRow, ApprovalRow, AskRow, CeoDecisionRow, get, post } from "../../api";
 import { fmtUsd, fmtWhen, usePoll } from "../../hooks";
@@ -35,7 +36,7 @@ function outcomeBadge(a: ApprovalRow) {
 
 function amendmentBadge(status: AmendmentRow["status"]) {
   const cls = status === "applied" ? "good" : status === "cancelled" ? "critical" : "warn";
-  return <span className={`badge ${cls}`}>{status}</span>;
+  return <span className={`badge ${cls}`}>{plainStatus(status)}</span>;
 }
 
 /** One decision, with the whole case laid out: what was asked, why it is
@@ -105,7 +106,7 @@ function DecisionCard({
         )}
         <div className="spacer" />
         <span className={`clock ${clockClass(approval.expires_at)}`}>
-          {fmtLeft(approval.expires_at)} → auto-deny
+          Denies itself in {fmtLeft(approval.expires_at).replace(" left", "")}
         </span>
       </div>
       <h3 style={{ margin: "10px 0 8px", fontSize: 15 }}>{approval.title}</h3>

@@ -10,6 +10,8 @@ import StartProject from "./pages/StartProject";
 import ProjectPage from "./pages/Project";
 import Roles from "./pages/Roles";
 import Settings from "./pages/Settings";
+import { Icon } from "./ui/Icon";
+import { ThemeToggle } from "./ui/kit";
 
 /** The count beside Desk in the sidebar. Only the rows a decision is actually
     waiting on (Desk's `needsYou`, not its tier) — because a badge that counts
@@ -32,11 +34,20 @@ function DeskCount() {
   return n > 0 ? <span className="n">{n}</span> : null;
 }
 
+const NAV = [
+  { to: "/desk", label: "Your desk", icon: "inbox" as const, badge: true },
+  { to: "/projects", label: "Projects", icon: "folder" as const, badge: false },
+  // The role library is where you go to see who you can put on a project.
+  // Calling it a library described our filing system; this describes the job.
+  { to: "/roles", label: "People you can hire", icon: "users" as const, badge: false },
+  { to: "/settings", label: "Settings", icon: "sliders" as const, badge: false },
+];
+
 function Shell({ children }: { children: React.ReactNode }) {
   return (
     <div className="shell">
       <nav className="sidebar">
-        <div className="brand">
+        <div className="brand" title={`Build ${__BUILD_TIME__}`}>
           y<span>aa</span>f
         </div>
         {/* The one create affordance, and the only verb in a list of places.
@@ -44,33 +55,39 @@ function Shell({ children }: { children: React.ReactNode }) {
             our two implementations — sitting among the four destinations and
             pushing them down. Which of the two you want is a question with a
             screen of its own now; this is the door to it. */}
-        <Link to="/projects/new" className="navnew">+ New project</Link>
-        <NavLink to="/desk" className={({ isActive }) => "navlink" + (isActive ? " active" : "")}>
-          Desk
-          <DeskCount />
-        </NavLink>
-        <NavLink to="/projects" className={({ isActive }) => "navlink" + (isActive ? " active" : "")}>
-          Projects
-        </NavLink>
-        <NavLink to="/roles" className={({ isActive }) => "navlink" + (isActive ? " active" : "")}>
-          Role library
-        </NavLink>
-        <NavLink to="/settings" className={({ isActive }) => "navlink" + (isActive ? " active" : "")}>
-          Settings
-        </NavLink>
-        <div className="foot">
-          ui build {__BUILD_TIME__}
-          <br />
-          <a href="/docs" target="_blank" rel="noreferrer">
-            API docs ↗
-          </a>{" "}
-          ·{" "}
-          <a
-            href="#/login"
-            onClick={() => localStorage.removeItem("yaaf_admin_token")}
+        <Link to="/projects/new" className="navnew">
+          <Icon name="plus" size={15} strokeWidth={2.3} />
+          New project
+        </Link>
+        {NAV.map((n) => (
+          <NavLink
+            key={n.to}
+            to={n.to}
+            className={({ isActive }) => "navlink" + (isActive ? " active" : "")}
           >
-            log out
-          </a>
+            <Icon name={n.icon} size={17} />
+            <span style={{ flex: 1 }}>{n.label}</span>
+            {n.badge ? <DeskCount /> : null}
+          </NavLink>
+        ))}
+        <div className="foot">
+          <ThemeToggle />
+          {/* What used to sit here: the UI's build timestamp and a link to the
+              API docs. Neither is something the person running a project has
+              any use for, and both told them they were looking at somebody's
+              internal tool. The build stamp still exists, on the brand's
+              tooltip, where support can ask for it. */}
+          <button
+            className="linkish"
+            style={{ marginTop: "var(--s3)", padding: 0, border: 0, background: "none", minHeight: 0 }}
+            onClick={() => {
+              localStorage.removeItem("yaaf_admin_token");
+              window.location.hash = "#/login";
+            }}
+          >
+            <Icon name="logout" size={14} />
+            Sign out
+          </button>
         </div>
       </nav>
       <main className="main">{children}</main>

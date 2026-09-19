@@ -1,4 +1,5 @@
 import { CredentialPicker, PlanMeter } from "../../llmCredentials";
+import { plainStatus } from "../../ui/kit";
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -64,7 +65,7 @@ function secretByName(secrets: SecretRow[], name: string | null | undefined) {
 
 function amendmentBadge(status: AmendmentRow["status"]) {
   const cls = status === "applied" ? "good" : status === "pending" ? "warn" : "";
-  return <span className={`badge ${cls}`}>{status}</span>;
+  return <span className={`badge ${cls}`}>{plainStatus(status)}</span>;
 }
 
 function hoursUntil(iso: string): number {
@@ -1509,10 +1510,11 @@ function CardPicker({
               ...Object.fromEntries(
                 Object.entries(card.constitution).map(([k, v]) => [k, asEdit(v)])),
             }))}
+            className="textblock"
             style={{
               font: "inherit", textAlign: "left", cursor: "pointer",
               background: staged?.value === card.value
-                ? "rgba(57,135,229,0.07)" : "var(--surface)",
+                ? "rgba(var(--accent-rgb), 0.09)" : "var(--surface)",
               border: staged?.value === card.value
                 ? "1px solid var(--accent)" : "1px solid var(--border)",
               borderRadius: 8, padding: "12px 14px",
@@ -1894,7 +1896,7 @@ export default function Settings({
       {error && <div className="error">{error}</div>}
 
       {billingReady && runtimeNow === "agent_sdk" ? (
-        <div className="notice-box" style={{ borderColor: "var(--good)", background: "rgba(12,163,12,0.08)" }}>
+        <div className="notice-box" style={{ borderColor: "var(--good)", background: "rgba(var(--good-rgb), 0.1)" }}>
           ✓ <strong>Nothing needs doing on this page.</strong> Your agents are real Claude agents,
           and when they call Claude they pay with{" "}
           <strong>

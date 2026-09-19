@@ -3,7 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import { get, getToken } from "../../api";
 import Markdown from "../../Markdown";
 import { fmtWhen, usePoll } from "../../hooks";
-import { AsOf, Skeleton } from "../../ui";
+import { AsOf, ExportCsv, Skeleton, downloadCsv } from "../../ui";
 
 interface WorkspaceFile {
   path: string;
@@ -482,7 +482,7 @@ function CsvTable({ text, name }: { text: string; name: string }) {
               <tr key={r}>
                 <td className="rownum">{r + 1}</td>
                 {cells(row).map((cell, c) => (
-                  <td key={c} className={numeric[c] ? "num mono" : ""}>{cell}</td>
+                  <td key={c} className={numeric[c] ? "num" : ""}>{cell}</td>
                 ))}
               </tr>
             ))}
@@ -685,7 +685,7 @@ function Preview({
           <div className="reader-nav">
             <button className="small" onClick={() => onStep(-1)} disabled={total < 2}
                     aria-label="Previous file">‹</button>
-            <span className="mono">{fmtCount(position + 1)} / {fmtCount(total)}</span>
+            <span>{fmtCount(position + 1)} of {fmtCount(total)}</span>
             <button className="small" onClick={() => onStep(1)} disabled={total < 2}
                     aria-label="Next file">›</button>
           </div>
@@ -828,8 +828,8 @@ function Row(props: RowProps) {
             <span className="chip">working</span>
           )}
         </span>
-        <span className="fsize num mono">{fmtSize(entry.size)}</span>
-        <span className="fwhen mono" title={entry.at ? STAMP.format(new Date(entry.at)) : ""}>
+        <span className="fsize num">{fmtSize(entry.size)}</span>
+        <span className="fwhen" title={entry.at ? STAMP.format(new Date(entry.at)) : ""}>
           {entry.at ? TIME.format(new Date(entry.at)) : "—"}
         </span>
         <button
@@ -1230,6 +1230,27 @@ export default function Deliverables({ projectId }: { projectId: string }) {
               {fmtCount(flat.length)} of {fmtCount(total)} files ·{" "}
               {fmtCount(publishedTotal)} published
             </span>
+            {/* What this reader does with a list is take it away. Export was
+                built one table at a time, which is why the record screens had
+                it and the one holding the work did not. */}
+            {flat.length > 0 && (
+              <ExportCsv
+                onClick={() =>
+                  downloadCsv(
+                    "deliverables.csv",
+                    ["File", "Folder", "State", "Type", "Size (bytes)", "Landed"],
+                    flat.map((e) => [
+                      e.name,
+                      e.dir,
+                      e.state === "published" ? "Published" : "Still being worked on",
+                      e.ext ? `.${e.ext}` : "",
+                      e.size,
+                      e.at ?? "",
+                    ]),
+                  )
+                }
+              />
+            )}
             {filtering && (
               <button
                 className="linkish"

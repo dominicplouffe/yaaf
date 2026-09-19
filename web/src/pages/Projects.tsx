@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { plainStatus } from "../ui/kit";
 import { Link, useSearchParams } from "react-router-dom";
 import { DeskProject, DeskView, get } from "../api";
 import { usePoll } from "../hooks";
@@ -14,7 +15,7 @@ export function statusBadge(status: string) {
         : status === "stopped"
           ? "critical"
           : "accent";
-  return <span className={`badge ${cls}`}>{status}</span>;
+  return <span className={`badge ${cls}`}>{plainStatus(status)}</span>;
 }
 
 /** A project nobody can act on again. Terminal projects are the archive: they
@@ -425,7 +426,7 @@ function BudgetBit({ p }: { p: DeskProject }) {
       <span className={`mini-meter ${meterCls}`}>
         <i style={{ width: `${Math.min(frac, 1) * 100}%` }} />
       </span>
-      <span className="mono" style={{ fontSize: 11 }}>
+      <span className="mono">
         {fmtUnit(p.budget.spent, p.budget.unit)}/{fmtUnit(p.budget.cap, p.budget.unit)}
       </span>
     </span>
@@ -474,7 +475,7 @@ function ProjectCard({ p }: { p: DeskProject }) {
           <b>{p.evidence_7d}</b> evidence · 7d
         </span>
         <span>
-          <b>{p.open_tasks}/{p.queue_ceiling}</b> open tasks
+          <b>{p.open_tasks}</b> of {p.queue_ceiling} jobs open
         </span>
         <BudgetBit p={p} />
         <span className="help">active {fmtAgo(p.last_run_at)}</span>
@@ -483,7 +484,7 @@ function ProjectCard({ p }: { p: DeskProject }) {
       <div style={{ display: "flex", gap: 16, marginTop: 10, fontSize: 12.5 }}>
         <Link to={`/projects/${p.id}`}>Overview →</Link>
         <Link to={`/projects/${p.id}/boardroom`}>Boardroom →</Link>
-        <Link to={`/projects/${p.id}/work`}>Work →</Link>
+        <Link to={`/projects/${p.id}/progress/board`}>Work →</Link>
         <Link to={`/projects/${p.id}/settings`}>Settings →</Link>
       </div>
     </div>

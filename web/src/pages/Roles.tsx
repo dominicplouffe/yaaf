@@ -271,7 +271,7 @@ export default function Roles() {
                     project{projects === 1 ? "" : "s"}
                     {behind > 0 && (
                       <>
-                        {" "}· <span className="chip warn" style={{ fontSize: 9.5 }}>{behind} on older versions</span>
+                        {" "}· <span className="chip warn">{behind} on older versions</span>
                       </>
                     )}
                   </>
@@ -485,7 +485,7 @@ export default function Roles() {
                       <td className="num">
                         v{u.pinned_version}
                         {u.pinned_version < editing.version && (
-                          <span className="chip warn" style={{ marginLeft: 6, fontSize: 9.5 }}>behind</span>
+                          <span className="chip warn" style={{ marginLeft: 6 }}>behind</span>
                         )}
                       </td>
                     </tr>

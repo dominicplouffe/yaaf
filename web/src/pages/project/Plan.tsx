@@ -1,7 +1,15 @@
 import { useMemo, useState } from "react";
-import { get, post } from "../../api";
+import {
+  get,
+  post,
+  PlanBurnup,
+  PlanCommitment,
+  PlanRequirement,
+  PlanView,
+} from "../../api";
 import { usePoll } from "../../hooks";
-import { AsOf, ConfirmModal, NoteAction, Skeleton } from "../../ui";
+import { AsOf, ConfirmModal, ExportCsv, NoteAction, Skeleton, clip, downloadCsv } from "../../ui";
+import { ChartHead, plainStatus } from "../../ui/kit";
 import type { ProjectCtx } from "../Project";
 
 /** The visual plan the chairman asked for — twice — before it was twice
@@ -9,111 +17,6 @@ import type { ProjectCtx } from "../Project";
     the stage board answers "when will I have it", the dependency graph answers
     "what is blocking what". The critical path arrives computed from the
     server, from the same arithmetic the refusals quote. */
-
-interface PlanTask {
-  id: string;
-  title: string;
-  status: string;
-  holder: string | null;
-  failed_checks: number;
-}
-
-interface PlanRequirement {
-  id: string;
-  key: string;
-  statement: string;
-  status: string;
-  stage: number;
-  test_kind: string | null;
-  acceptance_test: {
-    type?: string; command?: string; target?: string;
-    direction?: string; target_value?: number;
-  };
-  /** Present only for a `metric` requirement: what the platform has actually
-      read, and which way it is going. Null for every other kind. */
-  measurement: {
-    value: number | null; target: number; direction: string | null;
-    trend: number[]; verdict: string; measured_at: string | null;
-    error: string | null;
-  } | null;
-  est_runs: number | null;
-  spent: { runs: number; usd: number };
-  failure_load: number;
-  depends_on: string[];
-  tasks: PlanTask[];
-  met_at: string | null;
-  cut_reason: string | null;
-  check_output: string | null;
-  chairman_verdict: string | null;
-}
-
-interface PlanCommitment {
-  id: string;
-  status: string;
-  deliver_by: string;
-  projected_done_at: string | null;
-  projection_basis: string | null;
-  accepted_at: string | null;
-  constitution_version: number | null;
-  scope_snapshot: string[];
-  status_reason: string | null;
-  note: string | null;
-  met_at: string | null;
-}
-
-interface PlanBurnup {
-  scope_total: number;
-  met_points: { at: string; count: number }[];
-}
-
-interface PlanView {
-  mode: string;
-  planless: boolean;
-  commitment?: PlanCommitment | null;
-  burnup?: PlanBurnup | null;
-  plan?: {
-    status: string | null;
-    holds: boolean;
-    outstanding: string[];
-    arithmetic: {
-      requirements: number;
-      estimated_runs: number;
-      multiplier: number;
-      adjusted_runs: number;
-      days_at_the_daily_cap: number | null;
-      affordable: boolean;
-      budget: { known: boolean; runs?: number; usd_remaining?: number;
-        usd_per_run?: number; why?: string };
-    };
-    planning_spend: { runs: number; usd: number } | null;
-  };
-  open_stage?: number;
-  critical_path?: { keys: string[]; adjusted_runs: number; multiplier?: number };
-  velocity?: {
-    met_3w: number;
-    per_week_3w: number;
-    met_12w: number;
-    per_week_12w: number;
-    remaining: number;
-    weeks_left_at_pace: number | null;
-    runs_3w: { total: number; dead: number; failure_share: number;
-      attributed_share: number; usd: number;
-      work: number; inbox: number; noop: number;
-      inbox_share: number; noop_share: number };
-    worst_failure: { key: string; failure_load: number; statement: string } | null;
-  };
-  /** What an Operate project has instead of a burndown: a burndown of work
-      that recurs is a flat line, and the shape that carries the information is
-      which obligation slipped, and in which turn. */
-  standing?: {
-    key: string;
-    statement: string;
-    met: number;
-    judged: number;
-    status_now: string;
-  }[];
-  requirements?: PlanRequirement[];
-}
 
 function statusBadge(status: string) {
   const cls =
@@ -123,8 +26,7 @@ function statusBadge(status: string) {
     : status === "in_progress" ? "accent"
     : status === "proposed" ? "serious"
     : "";
-  const label = status === "in_progress" ? "in progress" : status;
-  return <span className={`badge ${cls}`}>{label}</span>;
+  return <span className={`badge ${cls}`}>{plainStatus(status)}</span>;
 }
 
 const SETTLED = new Set(["met", "cut"]);
@@ -230,7 +132,7 @@ function Levers({ r, onDone }: { r: PlanRequirement; onDone: () => void }) {
           }}
         />
         <NoteAction
-          label="Cut…"
+          label="Drop it"
           className="small danger"
           placeholder="Why this is out — the CEO reads it and re-plans"
           confirmLabel="✂ Cut"
@@ -263,7 +165,7 @@ function Levers({ r, onDone }: { r: PlanRequirement; onDone: () => void }) {
   if (!SETTLED.has(r.status)) {
     return (
       <NoteAction
-        label="Cut…"
+        label="Drop it"
         className="small danger"
         placeholder="Why this is out of scope — the CEO reads it and re-plans"
         confirmLabel="✂ Cut"
@@ -311,9 +213,9 @@ function testLine(r: PlanRequirement): string {
     6,698,328 against 500,000" says the whole thing. */
 function MetricVerdict({ m }: { m: NonNullable<PlanRequirement["measurement"]> }) {
   const tone: Record<string, string> = {
-    losing: "var(--bad, #b4342b)",
-    gaining: "var(--good, #2e7d32)",
-    met: "var(--good, #2e7d32)",
+    losing: "var(--bad, var(--critical))",
+    gaining: "var(--good, var(--good))",
+    met: "var(--good, var(--good))",
   };
   return (
     <div style={{ marginTop: 6, fontSize: 12 }}>
@@ -333,8 +235,10 @@ function MetricVerdict({ m }: { m: NonNullable<PlanRequirement["measurement"]> }
 
 /** One requirement, in full: the statement is the headline, the test is one
     click away, and the numbers are the same ones the refusals quote. */
-function RequirementCard({ r, onCritical, onDone }: {
+function RequirementCard({ r, onCritical, onDone, names }: {
   r: PlanRequirement; onCritical: boolean; onDone: () => void;
+  /** Key → statement, so a dependency can be named rather than referenced. */
+  names: Map<string, string>;
 }) {
   const [open, setOpen] = useState(false);
   const over = r.est_runs != null && r.spent.runs > r.est_runs && !SETTLED.has(r.status);
@@ -345,7 +249,8 @@ function RequirementCard({ r, onCritical, onDone }: {
       borderLeft: onCritical ? "3px solid var(--accent)" : undefined,
     }}>
       <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
-        <span className="chip">{r.key}</span>
+        <span className="chip" title={`Requirement ${r.key}`}
+          style={{ color: "var(--muted)", fontWeight: 500 }}>{r.key}</span>
         <button className="linklike" style={{ flex: 1, minWidth: 220, textAlign: "left",
           background: "none", border: "none", padding: 0, font: "inherit",
           color: "var(--ink)", cursor: "pointer" }}
@@ -356,16 +261,30 @@ function RequirementCard({ r, onCritical, onDone }: {
         {r.failure_load > 0 && (
           <span className="badge serious">{r.failure_load} failures</span>
         )}
-        <span className="chip" title="runs spent / estimated"
-          style={over ? { color: "var(--serious)" } : undefined}>
-          {r.spent.runs}{r.est_runs != null ? `/${r.est_runs}` : ""} runs
+        <span
+          className="chip"
+          title={
+            r.est_runs != null
+              ? `${r.spent.runs} of the ${r.est_runs} jobs estimated for this`
+              : `${r.spent.runs} jobs so far; nobody estimated this one`
+          }
+          style={over ? { color: "var(--serious)" } : undefined}
+        >
+          {r.spent.runs}{r.est_runs != null ? ` of ${r.est_runs}` : ""} jobs
         </span>
         {r.spent.usd > 0 && <span className="chip">${r.spent.usd.toFixed(2)}</span>}
         <Levers r={r} onDone={onDone} />
       </div>
       {r.depends_on.length > 0 && !SETTLED.has(r.status) && (
         <div style={{ marginTop: 4, fontSize: 12, color: "var(--muted)" }}>
-          waits for {r.depends_on.join(", ")}
+          Waits for{" "}
+          {r.depends_on
+            .map((k, i) => (
+              <span key={k} title={`Requirement ${k}`}>
+                {i > 0 ? ", " : ""}
+                {clip(names.get(k) ?? k, 60)}
+              </span>
+            ))}
         </div>
       )}
       {/* Not behind the fold. What you said when you sent it back is the
@@ -401,7 +320,7 @@ function RequirementCard({ r, onCritical, onDone }: {
                 {r.tasks.map((t) => (
                   <tr key={t.id}>
                     <td style={{ width: "60%" }}>{t.title}</td>
-                    <td><span className="badge">{t.status}</span></td>
+                    <td><span className="badge">{plainStatus(t.status)}</span></td>
                     <td>{t.holder ?? "—"}</td>
                     <td>{t.failed_checks > 0 ? `${t.failed_checks} failed checks` : ""}</td>
                   </tr>
@@ -511,8 +430,38 @@ function SlippingCommitment({ c, onDone }: { c: PlanCommitment; onDone: () => vo
 /** The burn-up: what has become true, against the promise and the projection.
     Server data only — the two markers are the commitment (his) and the
     projection (the platform's), which is the whole conversation. */
+/** Is the work going to be finished by the date you signed?
+ *
+ * The chart that was here drew two lines and told you nothing you could read
+ * off it: no y-axis, so a point had no value; no gridlines, so no point had a
+ * neighbour; and three labels placed at their own x with no regard for each
+ * other or for the edge of the picture — which is how a shipped screenshot
+ * came to say "projected Oc", clipped mid-word at the frame.
+ *
+ * It states its question, its window and its unit; every mark is inside the
+ * frame; and where two dates land close enough to collide they are drawn as
+ * one label rather than two on top of each other. */
+
+const CW = 760, CH = 268, CL = 46, CR = 18, CT = 20, CB = 56;
+
+/** Keeps a label inside the frame and points it away from the wall it is
+    nearest, which is the whole of the fix for the clipped axis label. */
+function labelAt(px: number): { x: number; anchor: "start" | "middle" | "end" } {
+  if (px < CL + 34) return { x: CL, anchor: "start" };
+  if (px > CW - CR - 34) return { x: CW - CR, anchor: "end" };
+  return { x: px, anchor: "middle" };
+}
+
+function yTicks(scope: number): number[] {
+  if (scope <= 6) return Array.from({ length: scope + 1 }, (_, i) => i);
+  const step = Math.ceil(scope / 4);
+  const out: number[] = [];
+  for (let v = 0; v <= scope; v += step) out.push(v);
+  if (out[out.length - 1] !== scope) out.push(scope);
+  return out;
+}
+
 function Burnup({ c, burnup }: { c: PlanCommitment; burnup: PlanBurnup }) {
-  const W = 720, H = 170, L = 36, R = 12, T = 14, B = 26;
   const now = Date.now();
   const points = burnup.met_points.map((p) => ({ t: new Date(p.at).getTime(), n: p.count }));
   const start = Math.min(
@@ -521,13 +470,14 @@ function Burnup({ c, burnup }: { c: PlanCommitment; burnup: PlanBurnup }) {
   );
   const deliverBy = new Date(c.deliver_by).getTime();
   const projected = c.projected_done_at ? new Date(c.projected_done_at).getTime() : null;
-  const end = Math.max(deliverBy, projected ?? 0, now) + (deliverBy - start) * 0.06 + 1;
-  const yMax = Math.max(burnup.scope_total, 1);
-  const x = (t: number) => L + ((t - start) / (end - start)) * (W - L - R);
-  const y = (n: number) => H - B - (n / yMax) * (H - T - B);
+  const end = Math.max(deliverBy, projected ?? 0, now) + (Math.max(deliverBy - start, 1)) * 0.08;
+  const scope = Math.max(burnup.scope_total, 1);
+  const x = (t: number) => CL + ((t - start) / (end - start)) * (CW - CL - CR);
+  const y = (n: number) => CH - CB - (n / scope) * (CH - CT - CB);
+  const settled = points.length ? points[points.length - 1].n : 0;
+  const late = projected !== null && projected > deliverBy;
+  const projColour = late ? "var(--serious)" : "var(--good)";
 
-  // The line of record: met counts, stepped. Then the platform's dashed reach
-  // from where the work stands now to where it is projected to land.
   let line = `M ${x(start)} ${y(0)}`;
   let lastN = 0;
   for (const p of points) {
@@ -536,57 +486,97 @@ function Burnup({ c, burnup }: { c: PlanCommitment; burnup: PlanBurnup }) {
   }
   line += ` L ${x(Math.min(now, end))} ${y(lastN)}`;
 
+  // Two dates within a label's width of each other are one label, not two
+  // drawn on top of each other.
+  // Close enough to collide, or landing on the same day: either way it is one
+  // label. Two marks reading "Sep 20" at opposite ends of the frame is a
+  // chart arguing with itself over a difference of hours.
+  const together =
+    projected !== null &&
+    (Math.abs(x(projected) - x(deliverBy)) < 86 ||
+      fmtDay(new Date(projected).toISOString()) === fmtDay(c.deliver_by));
+  const marks: { at: number; top: string; bottom: string; colour: string; weight: number }[] = [];
+  marks.push({ at: now, top: fmtDay(new Date(now).toISOString()), bottom: "today",
+    colour: "var(--muted)", weight: 1 });
+  if (together) {
+    marks.push({
+      at: deliverBy, top: fmtDay(c.deliver_by),
+      bottom: projected === null ? "you promised" : late ? "promised, and expected" : "promised, and on course",
+      colour: late ? "var(--serious)" : "var(--ink-2)", weight: 1.5,
+    });
+  } else {
+    marks.push({ at: deliverBy, top: fmtDay(c.deliver_by), bottom: "you promised",
+      colour: c.status === "breached" ? "var(--critical)" : "var(--ink-2)", weight: 1.5 });
+    if (projected !== null) {
+      marks.push({ at: projected, top: fmtDay(new Date(projected).toISOString()),
+        bottom: late ? "now expected" : "on course for", colour: projColour, weight: 1.5 });
+    }
+  }
+
   return (
-    <div className="card" style={{ padding: "14px 18px", marginBottom: 14 }}>
-      <div style={{ display: "flex", gap: 12, alignItems: "baseline", flexWrap: "wrap" }}>
-        <b style={{ fontSize: 13 }}>Burn-up</b>
-        <span className="help">
-          {lastN} of {burnup.scope_total} true · committed {fmtDay(c.deliver_by)}
-          {projected ? ` · projected ${fmtDay(new Date(projected).toISOString())}` : ""}
-          {c.projection_basis ? ` — ${c.projection_basis}` : ""}
-        </span>
-      </div>
-      <div style={{ overflowX: "auto" }}>
-        <svg viewBox={`0 0 ${W} ${H}`} style={{ display: "block", width: "100%", minWidth: 520 }}>
-          {/* scope line */}
-          <line x1={L} y1={y(yMax)} x2={W - R} y2={y(yMax)}
-            stroke="var(--border)" strokeDasharray="2 3" />
-          <text x={L} y={y(yMax) - 4} fontSize={10} fill="var(--muted)">
-            scope · {burnup.scope_total}
-          </text>
-          <line x1={L} y1={y(0)} x2={W - R} y2={y(0)} stroke="var(--border)" />
-          {/* the two markers: his date, and the platform's */}
-          <line x1={x(deliverBy)} y1={T} x2={x(deliverBy)} y2={H - B}
-            stroke={c.status === "breached" ? "var(--critical)" : "var(--ink-2)"}
-            strokeWidth={1.4} />
-          <text x={x(deliverBy)} y={H - B + 14} fontSize={10} textAnchor="middle"
-            fill={c.status === "breached" ? "var(--critical)" : "var(--ink-2)"}>
-            committed {fmtDay(c.deliver_by)}
-          </text>
-          {projected && Math.abs(x(projected) - x(deliverBy)) > 40 && (
-            <text x={x(projected)} y={T + 9} fontSize={10} textAnchor="middle"
-              fill={projected > deliverBy ? "var(--serious)" : "var(--good)"}>
-              projected {fmtDay(new Date(projected).toISOString())}
-            </text>
-          )}
-          {projected && (
-            <line x1={x(projected)} y1={T} x2={x(projected)} y2={H - B}
-              stroke={projected > deliverBy ? "var(--serious)" : "var(--good)"}
-              strokeDasharray="4 3" strokeWidth={1.4} />
-          )}
-          {/* projection reach: from where the work stands to where it lands */}
-          {projected && lastN < yMax && (
-            <line x1={x(Math.min(now, end))} y1={y(lastN)} x2={x(projected)} y2={y(yMax)}
-              stroke={projected > deliverBy ? "var(--serious)" : "var(--good)"}
-              strokeDasharray="3 4" strokeWidth={1.2} />
-          )}
-          {/* the record */}
-          <path d={line} fill="none" stroke="var(--accent)" strokeWidth={2} />
-          {points.map((p) => (
-            <circle key={p.t} cx={x(p.t)} cy={y(p.n)} r={2.6} fill="var(--accent)" />
-          ))}
-        </svg>
-      </div>
+    <div className="card" style={{ marginBottom: "var(--s4)" }}>
+      <ChartHead
+        question="Will the work be finished by the date you signed?"
+        meta={`Requirements settled, against all ${scope} in the plan · ${fmtDay(new Date(start).toISOString())} to ${fmtDay(new Date(end).toISOString())}`}
+        legend={
+          <>
+            <span><i />Settled so far</span>
+            {projected !== null && lastN < scope && (
+              <span><i className="dash" style={{ borderTopColor: projColour }} />If the pace holds</span>
+            )}
+          </>
+        }
+      />
+      <svg
+        viewBox={`0 0 ${CW} ${CH}`}
+        style={{ display: "block", width: "100%" }}
+        role="img"
+        aria-label={`${settled} of ${scope} requirements are settled. You promised ${fmtDay(c.deliver_by)}${projected !== null ? `; the platform projects ${fmtDay(new Date(projected).toISOString())}` : ""}.`}
+      >
+        {yTicks(scope).map((v) => (
+          <g key={v}>
+            <line x1={CL} y1={y(v)} x2={CW - CR} y2={y(v)}
+              stroke={v === 0 ? "var(--border-strong)" : "var(--border)"} strokeWidth={1} />
+            <text x={CL - 10} y={y(v) + 4} fontSize={12} textAnchor="end" fill="var(--muted)">{v}</text>
+          </g>
+        ))}
+        <text x={CL} y={y(scope) - 8} fontSize={12} fill="var(--muted)">
+          all {scope} settled
+        </text>
+
+        {marks.map((m) => {
+          const px = Math.max(CL, Math.min(x(m.at), CW - CR));
+          const lbl = labelAt(px);
+          return (
+            <g key={m.bottom}>
+              <line x1={px} y1={CT} x2={px} y2={CH - CB} stroke={m.colour}
+                strokeWidth={m.weight}
+                strokeDasharray={m.bottom.includes("expected") ? "5 4" : undefined} />
+              <text x={lbl.x} y={CH - CB + 20} fontSize={12} fontWeight={600}
+                textAnchor={lbl.anchor} fill={m.colour}>{m.top}</text>
+              <text x={lbl.x} y={CH - CB + 36} fontSize={12}
+                textAnchor={lbl.anchor} fill="var(--muted)">{m.bottom}</text>
+            </g>
+          );
+        })}
+
+        {projected !== null && lastN < scope && (
+          <line x1={x(Math.min(now, end))} y1={y(lastN)}
+            x2={Math.min(x(projected), CW - CR)} y2={y(scope)}
+            stroke={projColour} strokeDasharray="6 5" strokeWidth={2} strokeLinecap="round" />
+        )}
+        <path d={line} fill="none" stroke="var(--accent)" strokeWidth={2.5}
+          strokeLinecap="round" strokeLinejoin="round" />
+        {points.map((p) => (
+          <circle key={p.t} cx={x(p.t)} cy={y(p.n)} r={4.5}
+            fill="var(--accent)" stroke="var(--surface)" strokeWidth={2} />
+        ))}
+      </svg>
+      {c.projection_basis && (
+        <p className="help" style={{ margin: 0, borderTop: "1px solid var(--border)", paddingTop: "var(--s3)" }}>
+          The dashed line is arithmetic, not a promise anybody made — {c.projection_basis}
+        </p>
+      )}
     </div>
   );
 }
@@ -792,6 +782,7 @@ export default function Plan({ ctx }: { ctx: ProjectCtx }) {
   const plan = data.plan!;
   const reqs = data.requirements ?? [];
   const critical = data.critical_path?.keys ?? [];
+  const reqNames = new Map(reqs.map((r) => [r.key, r.statement]));
   const sums = plan.arithmetic;
   const stages = [...new Set(reqs.map((r) => r.stage))].sort((a, b) => a - b);
   const commitment = data.commitment ?? null;
@@ -848,42 +839,43 @@ export default function Plan({ ctx }: { ctx: ProjectCtx }) {
             <div className="sub">requirements in the plan</div>
           </div>
           <div className="tile">
-            <div className="label">Estimated</div>
+            <div className="label">Work it should take</div>
             <div className="value">{sums.adjusted_runs}</div>
             <div className="sub">
-              runs{sums.multiplier > 1 ? ` (×${sums.multiplier} — this CEO runs over)` : ""}
+              jobs{sums.multiplier > 1 ? ` — padded ×${sums.multiplier}, because this CEO has been running over` : ""}
             </div>
           </div>
           {sums.days_at_the_daily_cap != null && (
             <div className="tile">
-              <div className="label">At the daily cap</div>
+              <div className="label">If nothing went wrong</div>
               <div className="value">{sums.days_at_the_daily_cap}<small> days</small></div>
-              <div className="sub">if every run went to plan</div>
+              <div className="sub">days, at the most work you allow in one day</div>
             </div>
           )}
           {data.velocity && (
             <div className="tile">
-              <div className="label">Pace</div>
-              <div className="value">{data.velocity.per_week_3w}<small> /wk</small></div>
+              <div className="label">Requirements settled</div>
+              <div className="value">{data.velocity.per_week_3w}<small> a week</small></div>
               <div className="sub">
                 {data.velocity.weeks_left_at_pace != null
-                  ? `${data.velocity.remaining} left — ~${data.velocity.weeks_left_at_pace} weeks at this pace`
+                  ? `${data.velocity.remaining} still open — about ${data.velocity.weeks_left_at_pace} weeks at this rate`
                   : data.velocity.met_3w === 0
-                    ? "nothing met in 3 weeks yet"
-                    : `${data.velocity.remaining} requirements left`}
+                    ? "none settled in the last three weeks"
+                    : `${data.velocity.remaining} still open`}
               </div>
             </div>
           )}
           {data.velocity && data.velocity.runs_3w.total > 0 && (
             <div className="tile">
-              <div className="label">Waste</div>
+              <div className="label">Spend that bought nothing</div>
               <div className="value">
                 {Math.round(data.velocity.runs_3w.failure_share * 100)}<small>%</small>
               </div>
               <div className="sub">
-                {data.velocity.runs_3w.dead} of {data.velocity.runs_3w.total} runs died
+                {data.velocity.runs_3w.dead} of {data.velocity.runs_3w.total} jobs ended with
+                nothing to show
                 {data.velocity.worst_failure
-                  ? ` — ${data.velocity.worst_failure.key} worst at ${data.velocity.worst_failure.failure_load}`
+                  ? ` — worst on "${clip(data.velocity.worst_failure.statement, 44)}"`
                   : ""}
               </div>
             </div>
@@ -920,7 +912,7 @@ export default function Plan({ ctx }: { ctx: ProjectCtx }) {
             </div>
           ) : (
             <div className="tile">
-              <div className="label">Budget check</div>
+              <div className="label">What the rest of the budget buys</div>
               <div className="value">—</div>
               <div className="sub">{sums.budget.why}</div>
             </div>
@@ -942,7 +934,7 @@ export default function Plan({ ctx }: { ctx: ProjectCtx }) {
                   {r.met}/{r.judged}
                 </span>
                 <div className="grow">
-                  <b className="mono">{r.key}</b> {r.statement}
+                  <b title={`Requirement ${r.key}`}>{clip(r.statement, 90)}</b>
                   <div className="help">
                     {r.judged === 0
                       ? "no cycle has closed on it yet"
@@ -979,10 +971,35 @@ export default function Plan({ ctx }: { ctx: ProjectCtx }) {
         </div>
         {critical.length > 1 && (
           <span className="help">
-            critical path {critical.join(" → ")} · ~{data.critical_path!.adjusted_runs} runs
+            The longest chain runs {critical.join(" → ")} — about{" "}
+            {data.critical_path!.adjusted_runs} jobs, and nothing shortens the project until
+            it does.
           </span>
         )}
         <span className="sp" style={{ flex: 1 }} />
+        {reqs.length > 0 && (
+          <ExportCsv
+            onClick={() =>
+              downloadCsv(
+                "the-plan.csv",
+                ["Order", "What has to be true", "State", "Stage", "Jobs used",
+                 "Jobs estimated", "Spent (USD)", "Failed checks", "Waits for", "Settled"],
+                reqs.map((r) => [
+                  r.key,
+                  r.statement,
+                  plainStatus(r.status),
+                  r.stage,
+                  r.spent.runs,
+                  r.est_runs ?? "",
+                  r.spent.usd.toFixed(2),
+                  r.failure_load,
+                  r.depends_on.join(" "),
+                  r.met_at ?? "",
+                ]),
+              )
+            }
+          />
+        )}
         <AsOf at={at} error={error} />
       </div>
 
@@ -1006,7 +1023,7 @@ export default function Plan({ ctx }: { ctx: ProjectCtx }) {
             </h2>
             <div style={{ marginTop: 8 }}>
               {reqs.filter((r) => r.stage === stage).map((r) => (
-                <RequirementCard key={r.id} r={r}
+                <RequirementCard key={r.id} r={r} names={reqNames}
                   onCritical={critical.includes(r.key)} onDone={reload} />
               ))}
             </div>

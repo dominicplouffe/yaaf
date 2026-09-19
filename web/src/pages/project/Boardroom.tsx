@@ -7,6 +7,7 @@ import {
   get,
   HypothesisRow,
   MessageRow,
+  OrgView,
   post,
   RunRow,
 } from "../../api";
@@ -22,6 +23,7 @@ import {
   SEND_HINT,
   sendOnEnter,
 } from "../../ui";
+import { Avatar } from "../../ui/kit";
 
 /** What the poll re-fetches, and what one scroll back up costs. The tail is
     deliberately small: it is re-fetched every two seconds for as long as the
@@ -73,16 +75,24 @@ function dayLabel(iso: string): string {
     an object here and the memo turns off silently: the room re-renders (and
     re-parses its markdown) every two seconds and on every keystroke in the
     composer, which is the state this page was rescued from. */
+/** A message from a person, with that person's face on it. It used to be an
+    unlabelled dark box over the word "CEO" — which is a job title, not
+    somebody you are talking to. */
 const MessageBubble = memo(function MessageBubble(
-  { body, at, mine }: { body: string; at: string; mine: boolean },
+  { body, at, mine, who, team }: {
+    body: string; at: string; mine: boolean; who: string; team: string | null;
+  },
 ) {
   return (
-    <div className={"msg" + (mine ? " me" : "")}>
-      <div className="who">{mine ? "You (chairman)" : "CEO"}</div>
-      <div className="body">
-        <Markdown>{body}</Markdown>
+    <div className={"msgrow" + (mine ? " me" : "")}>
+      {!mine && <Avatar name={who} team={team} />}
+      <div className={"msg" + (mine ? " me" : "")}>
+        <div className="who">{mine ? "You" : who}</div>
+        <div className="body">
+          <Markdown>{body}</Markdown>
+        </div>
+        <div className="when">{fmtWhen(at)}</div>
       </div>
-      <div className="when">{fmtWhen(at)}</div>
     </div>
   );
 });
@@ -92,7 +102,14 @@ const MessageBubble = memo(function MessageBubble(
     bets on the table. It adds no new speaking channel, so the asymmetry
     survives intact — and every "what are you up to?" it answers is a paid
     model call not spent. */
-export default function Boardroom({ projectId, dash }: { projectId: string; dash: Dashboard }) {
+export default function Boardroom({ projectId, dash, org }: {
+  projectId: string;
+  dash: Dashboard;
+  org: OrgView | null;
+}) {
+  const ceoName = org?.ceo?.name ?? "your CEO";
+  const ceoFirst = ceoName.split(" ")[0];
+  const ceoTitle = org?.ceo?.role_name ?? "Chief Executive";
   const [channelId, setChannelId] = useState<string | null>(null);
   // A screen that sends you here to ask about something it is showing hands
   // over the sentence, already quoting it, for you to edit or throw away.
@@ -365,24 +382,41 @@ export default function Boardroom({ projectId, dash }: { projectId: string; dash
   return (
     <>
       <p className="subtitle">
-        Your only speaking channel. Don't ask questions the CEO is authorized to decide —
-        give direction, and decide approvals.
+        Your only speaking channel. Don't ask {ceoFirst} to decide things they already hold —
+        give direction, and settle the things only you can.
       </p>
       <div className="board-flex">
         <div className="board-chat">
+          <div className="chat-id">
+            <Avatar name={ceoName} team="leadership" size="lg" />
+            <div className="ci">
+              <b>{ceoName}</b>
+              <span>
+                {ceoTitle} — runs this project, and is the one person here you speak to
+              </span>
+            </div>
+            {dash.chat_live ? (
+              <span className="badge good">replies in seconds</span>
+            ) : dash.runs.running > 0 ? (
+              <span className="badge accent">working</span>
+            ) : (
+              <span className="badge">idle</span>
+            )}
+          </div>
           {/* With a live chat session the boardroom IS a chat: the typing dots
               below carry presence. The wait-explainer banners only matter in
               fallback mode, when replies ride the run queue. */}
           {!dash.chat_live && dash.runs.running > 0 ? (
             <div className="notice-box working">
               <span className="working-dot" aria-hidden="true" />
-              The CEO is working — {dash.runs.running === 1 ? "a run is" : `${dash.runs.running} runs are`} in
-              flight. Replies land here when its run finishes; first planning runs take a few minutes.
+              {ceoFirst} is working on{" "}
+              {dash.runs.running === 1 ? "something" : `${dash.runs.running} things`} right now. The
+              reply lands here when they finish; the first one takes a few minutes.
             </div>
           ) : !dash.chat_live && dash.runs.queued > 0 ? (
             <div className="notice-box working">
               <span className="working-dot" aria-hidden="true" />
-              The CEO is waking up — a run is queued to start.
+              {ceoFirst} is waking up — the reply starts in a moment.
             </div>
           ) : null}
           <div className="chat-wrap">
@@ -411,7 +445,14 @@ export default function Boardroom({ projectId, dash }: { projectId: string; dash
                   <span>{row.label}</span>
                 </div>
               ) : (
-                <MessageBubble key={row.key} body={row.body} at={row.at} mine={row.mine} />
+                <MessageBubble
+                  key={row.key}
+                  body={row.body}
+                  at={row.at}
+                  mine={row.mine}
+                  who={ceoName}
+                  team="leadership"
+                />
               ),
             )}
             {tail && loaded.length === 0 && (
@@ -441,13 +482,13 @@ export default function Boardroom({ projectId, dash }: { projectId: string; dash
           {ceoRun && !typing?.typing && (
             <div className="presence">
               <span className="working-dot" aria-hidden="true" />
-              The CEO is in a run now — a reply lands here when it finishes.
+              {ceoFirst} is working — a reply lands here when they are done.
             </div>
           )}
           <div className="composer">
             <textarea
               value={draft}
-              placeholder="Speak as chairman…"
+              placeholder={`Tell ${ceoFirst} what you want changed…`}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={sendOnEnter(send, { disabled: busy || !draft.trim() })}
             />
@@ -460,7 +501,7 @@ export default function Boardroom({ projectId, dash }: { projectId: string; dash
 
         <div className="rail">
           <div className="card">
-            <div className="h">The CEO right now</div>
+            <div className="h">{ceoFirst} today</div>
             <div style={{ fontSize: 13 }}>
               {ceoRun ? (
                 <span className="badge accent">in a run</span>
@@ -470,10 +511,10 @@ export default function Boardroom({ projectId, dash }: { projectId: string; dash
                 <span className="badge">idle</span>
               )}
               <div className="help" style={{ marginTop: 6 }}>
-                today: {todayUsd > 0
+                spent today: {todayUsd > 0
                   ? `$${todayUsd.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
                   : `${fmtUnit(todayTokens, "tokens")} tokens`}{" "}
-                across {todayRuns.length} run{todayRuns.length === 1 ? "" : "s"}
+                across {todayRuns.length} piece{todayRuns.length === 1 ? "" : "s"} of work
               </div>
               {lastRefusal && (
                 <div className="help" style={{ marginTop: 8 }}>
@@ -518,7 +559,7 @@ export default function Boardroom({ projectId, dash }: { projectId: string; dash
                     {a.amount_usd !== null && <span className="mono"> — ${a.amount_usd.toLocaleString()}</span>}
                   </div>
                   <div className={`clock ${clockClass(a.expires_at)}`} style={{ margin: "3px 0 6px" }}>
-                    {fmtLeft(a.expires_at).replace(" left", "")} → auto-deny
+                    Denies itself in {fmtLeft(a.expires_at).replace(" left", "")}
                   </div>
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                     <DecideButtons approvalId={a.id} onDone={reloadApprovals} />
@@ -540,7 +581,7 @@ export default function Boardroom({ projectId, dash }: { projectId: string; dash
                   <div style={{ marginTop: 3 }}>{killChip(h.kill_date, h.status)}</div>
                 </div>
               ))}
-              <Link to={`/projects/${projectId}/evidence`} style={{ fontSize: 12 }}>
+              <Link to={`/projects/${projectId}/progress/proof`} style={{ fontSize: 12 }}>
                 all bets &amp; evidence →
               </Link>
             </div>

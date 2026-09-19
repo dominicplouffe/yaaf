@@ -1,4 +1,5 @@
 import { Fragment, useState } from "react";
+import { plainStatus } from "../../ui/kit";
 import { Link } from "react-router-dom";
 import { EvidenceRow, get, HypothesisRow, post, TaskRow } from "../../api";
 import { fmtWhen, usePoll } from "../../hooks";
@@ -65,16 +66,16 @@ function taskBadge(status: string, notBefore?: string | null) {
           : status === "checking"
             ? "warn"
             : "accent";
-  return <span className={`badge ${cls}`}>{status}</span>;
+  return <span className={`badge ${cls}`}>{plainStatus(status)}</span>;
 }
 
 const FILTERS = [
   { key: "open", label: "Open",
     match: (s: string) => ["ready", "claimed", "checking", "review"].includes(s) },
-  { key: "blocked", label: "Blocked", match: (s: string) => s === "blocked" },
+  { key: "blocked", label: "Stuck", match: (s: string) => s === "blocked" },
   { key: "done", label: "Done", match: (s: string) => s === "done" },
-  { key: "killed", label: "Killed", match: (s: string) => s === "killed" },
-  { key: "all", label: "All", match: () => true },
+  { key: "killed", label: "Dropped", match: (s: string) => s === "killed" },
+  { key: "all", label: "Everything", match: () => true },
 ] as const;
 
 /** Inline one-time extension: date + reason, recorded and disclosed.
@@ -568,7 +569,7 @@ export default function Work({ ctx }: { ctx: ProjectCtx }) {
       {tasks && visible.length === 0 && groups.length === 0 && (
         <p className="help">
           {all.length === 0
-            ? "No tasks yet — the CEO plans on its heartbeat, or immediately after you speak in the boardroom."
+            ? "No work yet — your CEO plans on its own schedule, or right after you speak to it in the boardroom."
             : "Nothing matches this filter."}
         </p>
       )}

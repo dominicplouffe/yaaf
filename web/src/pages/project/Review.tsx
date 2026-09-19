@@ -1,58 +1,9 @@
 import { useState } from "react";
-import { get, post } from "../../api";
+import { Decision, get, post, ReviewNumbers, ReviewRow, ReviewsView } from "../../api";
 import { fmtWhen, usePoll } from "../../hooks";
-import { AsOf, NoteAction, Skeleton } from "../../ui";
+import { AsOf, ExportCsv, NoteAction, Skeleton, downloadCsv } from "../../ui";
 import type { ProjectCtx } from "../Project";
 
-/** The standing status meeting. The janitor opened it with zero tokens and
-    froze the numbers; the CEO filed (or owes) its variance narrative; the six
-    levers below act through the same mechanisms they would anywhere else and
-    are recorded here with the chairman's reason — shown at the next review
-    beside what they bought. */
-
-interface ReviewNumbers {
-  as_of: string;
-  goal: string;
-  velocity: {
-    per_week_3w: number; per_week_12w: number; remaining: number;
-    weeks_left_at_pace: number | null;
-    runs_3w: { total: number; dead: number; failure_share: number };
-    worst_failure: { key: string; failure_load: number } | null;
-  };
-  commitment: {
-    status: string; deliver_by: string;
-    projected_done_at: string | null; basis: string | null;
-  } | null;
-  budget: { unit: string; spent_mtd: number; cap: number };
-  scope: { open: number; proposed: number; met: number; cut: number;
-    met_since_last_review: number };
-  hypotheses: { statement: string; kill_date: string; status: string }[];
-  audit_coverage: { considered: number; sampled: number; failed: number;
-    expired_unreviewed: number };
-  prior?: {
-    number: number;
-    decisions: Decision[];
-    bought: { met_since: number; pace_then: number | null; pace_now: number };
-  };
-}
-
-interface Decision { kind: string; reason: string; detail: string; at: string }
-
-interface ReviewRow {
-  id: string;
-  number: number;
-  status: string;
-  scheduled_for: string;
-  opened_at: string;
-  numbers: ReviewNumbers;
-  narrative: string | null;
-  recommended: string | null;
-  narrative_filed_at: string | null;
-  decisions: Decision[];
-  closed_at: string | null;
-}
-
-interface ReviewsView { open: ReviewRow | null; history: ReviewRow[] }
 
 interface RequirementOption { id: string; key: string; statement: string; status: string }
 
@@ -66,10 +17,19 @@ const LEVER_LABELS: Record<string, string> = {
 };
 
 function field(style: object = {}) {
-  return { font: "inherit", fontSize: 13, padding: "4px 8px",
+  return { font: "inherit", fontSize: "var(--t-small)", padding: "6px 10px",
     background: "var(--surface)", color: "var(--ink)",
-    border: "1px solid var(--border)", borderRadius: 5, ...style };
+    border: "1px solid var(--border-strong)", borderRadius: "var(--radius-sm)", ...style };
 }
+
+
+/** The standing status meeting. The janitor opened it with zero tokens and
+    froze the numbers; the CEO filed (or owes) its variance narrative; the six
+    levers below act through the same mechanisms they would anywhere else and
+    are recorded here with the chairman's reason — shown at the next review
+    beside what they bought. */
+
+
 
 /** One lever, one small form. Every form ends in the same two things — a
     reason and a button — because the reason IS the record. */
@@ -209,11 +169,11 @@ function NumbersTiles({ n }: { n: ReviewNumbers }) {
   return (
     <div className="tiles" style={{ margin: "12px 0" }}>
       <div className="tile">
-        <div className="label">Pace</div>
-        <div className="value">{n.velocity.per_week_3w}<small> /wk</small></div>
-        <div className="sub">{n.velocity.remaining} open
+        <div className="label">Requirements settled</div>
+        <div className="value">{n.velocity.per_week_3w}<small> a week</small></div>
+        <div className="sub">{n.velocity.remaining} still open
           {n.velocity.weeks_left_at_pace != null
-            ? ` — ~${n.velocity.weeks_left_at_pace} wks at pace` : ""}</div>
+            ? ` — about ${n.velocity.weeks_left_at_pace} weeks at this rate` : ""}</div>
       </div>
       <div className="tile">
         <div className="label">Met since last</div>
@@ -287,7 +247,7 @@ export default function Review({ ctx }: { ctx: ProjectCtx }) {
       {!open ? (
         <div className="card" style={{ maxWidth: 640 }}>
           <p className="help" style={{ margin: 0 }}>
-            No review is open. The janitor opens one on the constitution's cadence
+            No review is open. The platform opens one on the schedule you set
             (Settings → Rules in force → “Days between status reviews”) — with zero
             tokens, whatever the board or the budget looks like — and emails you when
             it does.
@@ -371,7 +331,33 @@ export default function Review({ ctx }: { ctx: ProjectCtx }) {
 
       {data.history.length > 0 && (
         <>
-          <h2>Past reviews</h2>
+          <div style={{ display: "flex", alignItems: "baseline", gap: "var(--s3)" }}>
+            <h2 style={{ flex: 1 }}>Past reviews</h2>
+            {/* What you decided, and what it bought — the one record a
+                chairman is most likely to want outside this screen. */}
+            <ExportCsv
+              onClick={() =>
+                downloadCsv(
+                  "reviews.csv",
+                  ["Review", "Opened", "Closed", "Settled since the last one",
+                   "Settling per week", "Still open", "What you decided", "Why"],
+                  data.history.flatMap((r) => {
+                    const facts = [
+                      r.number,
+                      r.opened_at,
+                      r.closed_at ?? "",
+                      r.numbers.scope.met_since_last_review,
+                      r.numbers.velocity.per_week_3w,
+                      r.numbers.velocity.remaining,
+                    ];
+                    return r.decisions.length === 0
+                      ? [[...facts, "no changes", ""]]
+                      : r.decisions.map((d) => [...facts, `${d.kind}: ${d.detail}`, d.reason]);
+                  }),
+                )
+              }
+            />
+          </div>
           {data.history.map((r) => (
             <div className="card" key={r.id} style={{ padding: "10px 14px", marginBottom: 8 }}>
               <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>

@@ -110,7 +110,7 @@ export default function Evidence({ projectId }: { projectId: string }) {
         Only verified or platform-attested external evidence counts toward the drought and the
         external floor — agent claims are fetched, hashed and checked by the platform, never
         taken at their word. Read-only: nothing here is waiting on you, and the platform's own
-        sampled audit is on the <Link to={`/projects/${projectId}/work`}>Work tab</Link>.
+        sampled audit is on the <Link to={`/projects/${projectId}/progress/board`}>Work tab</Link>.
       </p>
       <Coverage rows={rows} />
       {/* Failed proof is not a footnote: the platform fetched what an agent
@@ -162,10 +162,10 @@ export default function Evidence({ projectId }: { projectId: string }) {
         <tbody>
           {shown.map((row) => (
             <tr key={row.id}>
-              <td className="mono">{fmtWhen(row.at)}</td>
+              <td>{fmtWhen(row.at)}</td>
               <td>
                 {verifyBadge(row.verification)}
-                <div className="help mono" style={{ marginTop: 2 }}>
+                <div className="help" style={{ marginTop: 2 }}>
                   {row.provenance.replaceAll("_", " ")} · {row.kind}
                 </div>
               </td>
