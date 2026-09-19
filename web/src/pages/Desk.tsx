@@ -345,7 +345,7 @@ export function buildItems(projects: DeskProject[], reload: () => void): Item[] 
           <>
             {a.title}
             {a.amount_usd !== null && (
-              <> — <b className="mono">${a.amount_usd.toLocaleString()}</b></>
+              <> — <b>${a.amount_usd.toLocaleString()}</b></>
             )}
           </>
         ),

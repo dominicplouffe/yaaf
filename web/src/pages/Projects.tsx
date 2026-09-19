@@ -474,7 +474,7 @@ function ProjectCard({ p }: { p: DeskProject }) {
           <b>{p.evidence_7d}</b> evidence · 7d
         </span>
         <span>
-          <b>{p.open_tasks}/{p.queue_ceiling}</b> open tasks
+          <b>{p.open_tasks}</b> of {p.queue_ceiling} jobs open
         </span>
         <BudgetBit p={p} />
         <span className="help">active {fmtAgo(p.last_run_at)}</span>

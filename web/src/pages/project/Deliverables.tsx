@@ -482,7 +482,7 @@ function CsvTable({ text, name }: { text: string; name: string }) {
               <tr key={r}>
                 <td className="rownum">{r + 1}</td>
                 {cells(row).map((cell, c) => (
-                  <td key={c} className={numeric[c] ? "num mono" : ""}>{cell}</td>
+                  <td key={c} className={numeric[c] ? "num" : ""}>{cell}</td>
                 ))}
               </tr>
             ))}
@@ -685,7 +685,7 @@ function Preview({
           <div className="reader-nav">
             <button className="small" onClick={() => onStep(-1)} disabled={total < 2}
                     aria-label="Previous file">‹</button>
-            <span className="mono">{fmtCount(position + 1)} / {fmtCount(total)}</span>
+            <span>{fmtCount(position + 1)} of {fmtCount(total)}</span>
             <button className="small" onClick={() => onStep(1)} disabled={total < 2}
                     aria-label="Next file">›</button>
           </div>
@@ -828,8 +828,8 @@ function Row(props: RowProps) {
             <span className="chip">working</span>
           )}
         </span>
-        <span className="fsize num mono">{fmtSize(entry.size)}</span>
-        <span className="fwhen mono" title={entry.at ? STAMP.format(new Date(entry.at)) : ""}>
+        <span className="fsize num">{fmtSize(entry.size)}</span>
+        <span className="fwhen" title={entry.at ? STAMP.format(new Date(entry.at)) : ""}>
           {entry.at ? TIME.format(new Date(entry.at)) : "—"}
         </span>
         <button

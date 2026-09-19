@@ -139,11 +139,20 @@ def test_the_planning_heartbeat_says_when_it_is_skipped(client):
 
 
 def test_nobody_on_a_clock_is_said_out_loud(client):
-    """An absence a chairman can read beats a strip that is simply bare."""
+    """An absence a chairman can read beats a strip that is simply bare.
+
+    The rule is that the blank explains itself, not that it explains itself in
+    any particular words — so this matches on what the sentence has to tell
+    the reader (that nothing wakes at a set time, and what to do about it)
+    rather than on the phrase "wall-clock wake", which was our word for it and
+    never theirs.
+    """
     project = make_project(client, slug="noclock")
     payload = agenda(client, project)
     assert not any(r["kind"] in ("ceo_daily", "agent_daily") for r in payload["rhythms"])
-    assert any("wall-clock wake" in note for note in payload["notes"])
+    note = next((n for n in payload["notes"] if "fixed time of day" in n), None)
+    assert note is not None, payload["notes"]
+    assert "daily time" in note, note
 
 
 # ── dated events ────────────────────────────────────────────────────────────────

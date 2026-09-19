@@ -9,6 +9,7 @@ import {
 } from "../../api";
 import { usePoll } from "../../hooks";
 import { AsOf, ConfirmModal, NoteAction, Skeleton } from "../../ui";
+import { ChartHead } from "../../ui/kit";
 import type { ProjectCtx } from "../Project";
 
 /** The visual plan the chairman asked for — twice — before it was twice
@@ -213,9 +214,9 @@ function testLine(r: PlanRequirement): string {
     6,698,328 against 500,000" says the whole thing. */
 function MetricVerdict({ m }: { m: NonNullable<PlanRequirement["measurement"]> }) {
   const tone: Record<string, string> = {
-    losing: "var(--bad, #b4342b)",
-    gaining: "var(--good, #2e7d32)",
-    met: "var(--good, #2e7d32)",
+    losing: "var(--bad, var(--critical))",
+    gaining: "var(--good, var(--good))",
+    met: "var(--good, var(--good))",
   };
   return (
     <div style={{ marginTop: 6, fontSize: 12 }}>
@@ -413,8 +414,38 @@ function SlippingCommitment({ c, onDone }: { c: PlanCommitment; onDone: () => vo
 /** The burn-up: what has become true, against the promise and the projection.
     Server data only — the two markers are the commitment (his) and the
     projection (the platform's), which is the whole conversation. */
+/** Is the work going to be finished by the date you signed?
+ *
+ * The chart that was here drew two lines and told you nothing you could read
+ * off it: no y-axis, so a point had no value; no gridlines, so no point had a
+ * neighbour; and three labels placed at their own x with no regard for each
+ * other or for the edge of the picture — which is how a shipped screenshot
+ * came to say "projected Oc", clipped mid-word at the frame.
+ *
+ * It states its question, its window and its unit; every mark is inside the
+ * frame; and where two dates land close enough to collide they are drawn as
+ * one label rather than two on top of each other. */
+
+const CW = 760, CH = 268, CL = 46, CR = 18, CT = 20, CB = 56;
+
+/** Keeps a label inside the frame and points it away from the wall it is
+    nearest, which is the whole of the fix for the clipped axis label. */
+function labelAt(px: number): { x: number; anchor: "start" | "middle" | "end" } {
+  if (px < CL + 34) return { x: CL, anchor: "start" };
+  if (px > CW - CR - 34) return { x: CW - CR, anchor: "end" };
+  return { x: px, anchor: "middle" };
+}
+
+function yTicks(scope: number): number[] {
+  if (scope <= 6) return Array.from({ length: scope + 1 }, (_, i) => i);
+  const step = Math.ceil(scope / 4);
+  const out: number[] = [];
+  for (let v = 0; v <= scope; v += step) out.push(v);
+  if (out[out.length - 1] !== scope) out.push(scope);
+  return out;
+}
+
 function Burnup({ c, burnup }: { c: PlanCommitment; burnup: PlanBurnup }) {
-  const W = 720, H = 170, L = 36, R = 12, T = 14, B = 26;
   const now = Date.now();
   const points = burnup.met_points.map((p) => ({ t: new Date(p.at).getTime(), n: p.count }));
   const start = Math.min(
@@ -423,13 +454,14 @@ function Burnup({ c, burnup }: { c: PlanCommitment; burnup: PlanBurnup }) {
   );
   const deliverBy = new Date(c.deliver_by).getTime();
   const projected = c.projected_done_at ? new Date(c.projected_done_at).getTime() : null;
-  const end = Math.max(deliverBy, projected ?? 0, now) + (deliverBy - start) * 0.06 + 1;
-  const yMax = Math.max(burnup.scope_total, 1);
-  const x = (t: number) => L + ((t - start) / (end - start)) * (W - L - R);
-  const y = (n: number) => H - B - (n / yMax) * (H - T - B);
+  const end = Math.max(deliverBy, projected ?? 0, now) + (Math.max(deliverBy - start, 1)) * 0.08;
+  const scope = Math.max(burnup.scope_total, 1);
+  const x = (t: number) => CL + ((t - start) / (end - start)) * (CW - CL - CR);
+  const y = (n: number) => CH - CB - (n / scope) * (CH - CT - CB);
+  const settled = points.length ? points[points.length - 1].n : 0;
+  const late = projected !== null && projected > deliverBy;
+  const projColour = late ? "var(--serious)" : "var(--good)";
 
-  // The line of record: met counts, stepped. Then the platform's dashed reach
-  // from where the work stands now to where it is projected to land.
   let line = `M ${x(start)} ${y(0)}`;
   let lastN = 0;
   for (const p of points) {
@@ -438,57 +470,97 @@ function Burnup({ c, burnup }: { c: PlanCommitment; burnup: PlanBurnup }) {
   }
   line += ` L ${x(Math.min(now, end))} ${y(lastN)}`;
 
+  // Two dates within a label's width of each other are one label, not two
+  // drawn on top of each other.
+  // Close enough to collide, or landing on the same day: either way it is one
+  // label. Two marks reading "Sep 20" at opposite ends of the frame is a
+  // chart arguing with itself over a difference of hours.
+  const together =
+    projected !== null &&
+    (Math.abs(x(projected) - x(deliverBy)) < 86 ||
+      fmtDay(new Date(projected).toISOString()) === fmtDay(c.deliver_by));
+  const marks: { at: number; top: string; bottom: string; colour: string; weight: number }[] = [];
+  marks.push({ at: now, top: fmtDay(new Date(now).toISOString()), bottom: "today",
+    colour: "var(--muted)", weight: 1 });
+  if (together) {
+    marks.push({
+      at: deliverBy, top: fmtDay(c.deliver_by),
+      bottom: projected === null ? "you promised" : late ? "promised, and expected" : "promised, and on course",
+      colour: late ? "var(--serious)" : "var(--ink-2)", weight: 1.5,
+    });
+  } else {
+    marks.push({ at: deliverBy, top: fmtDay(c.deliver_by), bottom: "you promised",
+      colour: c.status === "breached" ? "var(--critical)" : "var(--ink-2)", weight: 1.5 });
+    if (projected !== null) {
+      marks.push({ at: projected, top: fmtDay(new Date(projected).toISOString()),
+        bottom: late ? "now expected" : "on course for", colour: projColour, weight: 1.5 });
+    }
+  }
+
   return (
-    <div className="card" style={{ padding: "14px 18px", marginBottom: 14 }}>
-      <div style={{ display: "flex", gap: 12, alignItems: "baseline", flexWrap: "wrap" }}>
-        <b style={{ fontSize: 13 }}>Burn-up</b>
-        <span className="help">
-          {lastN} of {burnup.scope_total} true · committed {fmtDay(c.deliver_by)}
-          {projected ? ` · projected ${fmtDay(new Date(projected).toISOString())}` : ""}
-          {c.projection_basis ? ` — ${c.projection_basis}` : ""}
-        </span>
-      </div>
-      <div style={{ overflowX: "auto" }}>
-        <svg viewBox={`0 0 ${W} ${H}`} style={{ display: "block", width: "100%", minWidth: 520 }}>
-          {/* scope line */}
-          <line x1={L} y1={y(yMax)} x2={W - R} y2={y(yMax)}
-            stroke="var(--border)" strokeDasharray="2 3" />
-          <text x={L} y={y(yMax) - 4} fontSize={10} fill="var(--muted)">
-            scope · {burnup.scope_total}
-          </text>
-          <line x1={L} y1={y(0)} x2={W - R} y2={y(0)} stroke="var(--border)" />
-          {/* the two markers: his date, and the platform's */}
-          <line x1={x(deliverBy)} y1={T} x2={x(deliverBy)} y2={H - B}
-            stroke={c.status === "breached" ? "var(--critical)" : "var(--ink-2)"}
-            strokeWidth={1.4} />
-          <text x={x(deliverBy)} y={H - B + 14} fontSize={10} textAnchor="middle"
-            fill={c.status === "breached" ? "var(--critical)" : "var(--ink-2)"}>
-            committed {fmtDay(c.deliver_by)}
-          </text>
-          {projected && Math.abs(x(projected) - x(deliverBy)) > 40 && (
-            <text x={x(projected)} y={T + 9} fontSize={10} textAnchor="middle"
-              fill={projected > deliverBy ? "var(--serious)" : "var(--good)"}>
-              projected {fmtDay(new Date(projected).toISOString())}
-            </text>
-          )}
-          {projected && (
-            <line x1={x(projected)} y1={T} x2={x(projected)} y2={H - B}
-              stroke={projected > deliverBy ? "var(--serious)" : "var(--good)"}
-              strokeDasharray="4 3" strokeWidth={1.4} />
-          )}
-          {/* projection reach: from where the work stands to where it lands */}
-          {projected && lastN < yMax && (
-            <line x1={x(Math.min(now, end))} y1={y(lastN)} x2={x(projected)} y2={y(yMax)}
-              stroke={projected > deliverBy ? "var(--serious)" : "var(--good)"}
-              strokeDasharray="3 4" strokeWidth={1.2} />
-          )}
-          {/* the record */}
-          <path d={line} fill="none" stroke="var(--accent)" strokeWidth={2} />
-          {points.map((p) => (
-            <circle key={p.t} cx={x(p.t)} cy={y(p.n)} r={2.6} fill="var(--accent)" />
-          ))}
-        </svg>
-      </div>
+    <div className="card" style={{ marginBottom: "var(--s4)" }}>
+      <ChartHead
+        question="Will the work be finished by the date you signed?"
+        meta={`Requirements settled, against all ${scope} in the plan · ${fmtDay(new Date(start).toISOString())} to ${fmtDay(new Date(end).toISOString())}`}
+        legend={
+          <>
+            <span><i />Settled so far</span>
+            {projected !== null && lastN < scope && (
+              <span><i className="dash" style={{ borderTopColor: projColour }} />If the pace holds</span>
+            )}
+          </>
+        }
+      />
+      <svg
+        viewBox={`0 0 ${CW} ${CH}`}
+        style={{ display: "block", width: "100%" }}
+        role="img"
+        aria-label={`${settled} of ${scope} requirements are settled. You promised ${fmtDay(c.deliver_by)}${projected !== null ? `; the platform projects ${fmtDay(new Date(projected).toISOString())}` : ""}.`}
+      >
+        {yTicks(scope).map((v) => (
+          <g key={v}>
+            <line x1={CL} y1={y(v)} x2={CW - CR} y2={y(v)}
+              stroke={v === 0 ? "var(--border-strong)" : "var(--border)"} strokeWidth={1} />
+            <text x={CL - 10} y={y(v) + 4} fontSize={12} textAnchor="end" fill="var(--muted)">{v}</text>
+          </g>
+        ))}
+        <text x={CL} y={y(scope) - 8} fontSize={12} fill="var(--muted)">
+          all {scope} settled
+        </text>
+
+        {marks.map((m) => {
+          const px = Math.max(CL, Math.min(x(m.at), CW - CR));
+          const lbl = labelAt(px);
+          return (
+            <g key={m.bottom}>
+              <line x1={px} y1={CT} x2={px} y2={CH - CB} stroke={m.colour}
+                strokeWidth={m.weight}
+                strokeDasharray={m.bottom.includes("expected") ? "5 4" : undefined} />
+              <text x={lbl.x} y={CH - CB + 20} fontSize={12} fontWeight={600}
+                textAnchor={lbl.anchor} fill={m.colour}>{m.top}</text>
+              <text x={lbl.x} y={CH - CB + 36} fontSize={12}
+                textAnchor={lbl.anchor} fill="var(--muted)">{m.bottom}</text>
+            </g>
+          );
+        })}
+
+        {projected !== null && lastN < scope && (
+          <line x1={x(Math.min(now, end))} y1={y(lastN)}
+            x2={Math.min(x(projected), CW - CR)} y2={y(scope)}
+            stroke={projColour} strokeDasharray="6 5" strokeWidth={2} strokeLinecap="round" />
+        )}
+        <path d={line} fill="none" stroke="var(--accent)" strokeWidth={2.5}
+          strokeLinecap="round" strokeLinejoin="round" />
+        {points.map((p) => (
+          <circle key={p.t} cx={x(p.t)} cy={y(p.n)} r={4.5}
+            fill="var(--accent)" stroke="var(--surface)" strokeWidth={2} />
+        ))}
+      </svg>
+      {c.projection_basis && (
+        <p className="help" style={{ margin: 0, borderTop: "1px solid var(--border)", paddingTop: "var(--s3)" }}>
+          The dashed line is arithmetic, not a promise anybody made — {c.projection_basis}
+        </p>
+      )}
     </div>
   );
 }

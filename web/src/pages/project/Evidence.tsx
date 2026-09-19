@@ -162,10 +162,10 @@ export default function Evidence({ projectId }: { projectId: string }) {
         <tbody>
           {shown.map((row) => (
             <tr key={row.id}>
-              <td className="mono">{fmtWhen(row.at)}</td>
+              <td>{fmtWhen(row.at)}</td>
               <td>
                 {verifyBadge(row.verification)}
-                <div className="help mono" style={{ marginTop: 2 }}>
+                <div className="help" style={{ marginTop: 2 }}>
                   {row.provenance.replaceAll("_", " ")} · {row.kind}
                 </div>
               </td>

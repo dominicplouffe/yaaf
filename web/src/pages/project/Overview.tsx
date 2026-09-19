@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import {
   ActivitySeat,
   ActivityView,
+  Dashboard,
   get,
   HealthCheck,
   OrgView,
@@ -26,11 +27,14 @@ import {
   hoursSince,
   idleSentence,
   NoteAction,
+  downloadCsv,
   paceDate,
   runHealth,
   Skeleton,
   spentOf,
 } from "../../ui";
+import { BarChart, ChartHead, EmptyState, Person, Term, Verdict } from "../../ui/kit";
+import { deliveryVerdict, fmtDate } from "../../ui/project";
 import Agenda from "../../agenda";
 import { PlanMeter } from "../../llmCredentials";
 import { HirePanel, gapsFor, needsOf, useRoleLibrary } from "../../roles";
@@ -216,7 +220,7 @@ function BudgetMeter({ ctx }: { ctx: ProjectCtx }) {
     nothing otherwise — a reader who catches a card contradicting itself is
     right to stop believing the rest of the page. */
 function SpendByTeam({ projectId, usdMode }: { projectId: string; usdMode: boolean }) {
-  const { data } = usePoll(
+  const { data, at } = usePoll(
     () => get<SpendReport>(`/observe/projects/${projectId}/spend?group_by=team&window=month`),
     30000,
   );
@@ -224,34 +228,106 @@ function SpendByTeam({ projectId, usdMode }: { projectId: string; usdMode: boole
   const spent = (r: SpendBucket) => spentOf(r, usdMode);
   const rows = [...(data?.rows ?? [])].sort((a, b) => spent(b) - spent(a));
   if (rows.length === 0) return null;
-  const max = Math.max(...rows.map(spent), 1e-9);
   const total = rows.reduce((sum, r) => sum + spent(r), 0);
   const top = rows[0];
   const rest = total - spent(top);
+  const month = new Date().toLocaleDateString(undefined, { month: "long", year: "numeric" });
 
   return (
-    <div style={{ marginTop: 22 }}>
-      <div className="fs-h">Who is spending it — this month</div>
-      <div className="hbars">
-        {rows.map((row, i) => (
-          <div className="hbar" key={row.key}>
-            <span>{row.label}</span>
-            <span className="track">
-              <i className={i === 0 ? "hi" : ""} style={{ width: `${Math.max((spent(row) / max) * 100, 0.8)}%` }} />
-            </span>
-            <span className="v">
-              {fmtUnit(spent(row), unit)} · {row.runs} run
-              {row.runs === 1 ? "" : "s"}
-            </span>
-          </div>
-        ))}
-      </div>
+    <div className="card" style={{ marginTop: "var(--s5)" }}>
+      {/* A chart states its own question, its window, its unit and the moment
+          it was true. This reader keeps their own records and will check. */}
+      <ChartHead
+        question={`Where did this month's ${fmtUnit(total, unit)} go?`}
+        meta={`By team · ${month} · ${unit === "usd" ? "US dollars" : "tokens"}${at ? ` · as of ${at.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}` : ""}`}
+        onExport={() =>
+          downloadCsv(
+            "spend-by-team.csv",
+            ["Team", unit === "usd" ? "Spent (USD)" : "Spent (tokens)", "Share", "Pieces of work"],
+            rows.map((r) => [
+              r.label,
+              spent(r),
+              `${Math.round((spent(r) / (total || 1)) * 100)}%`,
+              r.runs,
+            ]),
+          )
+        }
+      />
+      <BarChart
+        bars={rows.map((r) => ({
+          label: r.label,
+          value: spent(r),
+          display: fmtUnit(spent(r), unit),
+          team: r.label,
+        }))}
+        total={fmtUnit(total, unit)}
+        unit={fmtUnit(Math.max(...rows.map(spent)), unit)}
+      />
       {rows.length > 1 && spent(top) > rest && (
-        <p className="help" style={{ margin: "10px 0 0" }}>
-          {top.label} costs more than everyone else combined — worth knowing before you raise the cap.
+        <p className="help" style={{ margin: "var(--s3) 0 0" }}>
+          {top.label} costs more than the other {rows.length - 1} put together — worth knowing
+          before you raise the cap.
         </p>
       )}
     </div>
+  );
+}
+
+/** The paragraph under the verdict: the arithmetic behind the sentence, so a
+    reader who keeps their own records can check it rather than take it.
+    Everything here is a number the platform already computed — the point is
+    that it is said in one place, in a sentence, instead of being spread over
+    six tiles the reader has to assemble themselves. */
+function verdictBody(
+  dash: Dashboard,
+  ctx: ProjectCtx,
+  daysLate: number | null,
+  waiting: number,
+) {
+  const v = ctx.plan?.velocity;
+  const c = ctx.plan?.commitment;
+  const settled = ctx.plan?.burnup
+    ? ctx.plan.burnup.scope_total - (v?.remaining ?? 0)
+    : null;
+
+  if (daysLate !== null && c?.projected_done_at) {
+    return (
+      <>
+        {v && v.per_week_3w > 0 ? (
+          <>
+            Your team is settling requirements at <b>{v.per_week_3w.toFixed(2)} a week</b>. At that
+            speed the <b>{v.remaining}</b> still open finish around{" "}
+            <b>{fmtDate(c.projected_done_at)}</b> — {daysLate} day{daysLate === 1 ? "" : "s"} past
+            the date you signed.{" "}
+          </>
+        ) : (
+          <>
+            The work still open looks like finishing around <b>{fmtDate(c.projected_done_at)}</b>,
+            which is {daysLate} day{daysLate === 1 ? "" : "s"} past the date you signed.{" "}
+          </>
+        )}
+        Nothing new goes into the plan until you choose, and the work already under way carries on
+        either way.
+      </>
+    );
+  }
+
+  if (dash.status === "paused" || dash.status === "stopped") {
+    return <>{dash.status_reason ?? "No reason was recorded."}</>;
+  }
+
+  return (
+    <>
+      {settled !== null && ctx.plan?.burnup ? (
+        <>
+          <b>{settled}</b> of <b>{ctx.plan.burnup.scope_total}</b> requirements are settled
+          {v && v.per_week_3w > 0 ? <>, at {v.per_week_3w.toFixed(2)} a week</> : null}.{" "}
+        </>
+      ) : null}
+      {waiting === 0
+        ? "Nothing is waiting on a decision from you."
+        : `${waiting} thing${waiting === 1 ? "" : "s"} below need${waiting === 1 ? "s" : ""} a decision from you.`}
+    </>
   );
 }
 
@@ -437,7 +513,7 @@ export default function Overview({
           <div className="sb">the CEO's full case is one click away</div>
         </div>
         <span className={`clock ${clockClass(a.expires_at)}`}>
-          {fmtLeft(a.expires_at).replace(" left", "")} → auto-deny
+          Denies itself in {fmtLeft(a.expires_at).replace(" left", "")}
         </span>
         <DecideButtons approvalId={a.id} onDone={reloadApprovals} />
         <Link to={`/projects/${projectId}/records/decisions`}>context →</Link>
@@ -663,16 +739,94 @@ export default function Overview({
   const runningRuns = (runs ?? []).filter((r) => r.status === "running");
   const soonestApproval = pending.length > 0 ? pending.reduce((a, b) => (a.expires_at < b.expires_at ? a : b)) : null;
 
+  const verdict = deliveryVerdict(dash, ctx.plan);
+
   return (
     <>
+      {/* The answer, before the evidence for it. This page used to open with a
+          list and leave the reader to work out whether any of it was bad. */}
+      <div style={{ marginTop: "var(--s5)" }}>
+        <Verdict
+          tone={verdict.tone === "good" ? undefined : verdict.tone}
+          headline={verdict.headline}
+          actions={
+            verdict.daysLate !== null ? (
+              <>
+                <Link to={`/projects/${projectId}/progress`}>
+                  <button className="primary">Drop something from the plan</button>
+                </Link>
+                <Link to={`/projects/${projectId}/progress`}>
+                  <button>Move the delivery date</button>
+                </Link>
+              </>
+            ) : undefined
+          }
+        >
+          <p>{verdictBody(dash, ctx, verdict.daysLate, needs.length)}</p>
+        </Verdict>
+      </div>
+
       {needs.length > 0 ? (
         <>
-          <h2 className="zone hot" style={{ marginTop: 6 }}>Needs you <span className="cnt">{needs.length}</span></h2>
+          <h2 className="zone hot">Waiting on you <span className="cnt">{needs.length}</span></h2>
           <div className="arows">{needs}</div>
         </>
       ) : (
-        <p className="help" style={{ margin: "10px 0 0" }}>Nothing waiting on you here.</p>
+        <div style={{ marginTop: "var(--s5)" }}>
+          {/* Proves it is quiet rather than asserting it. "Nothing waiting on
+              you" over a screen that cannot say whether anything is running is
+              the sentence that teaches people to stop believing the screen. */}
+          <EmptyState good title="Nothing is waiting on you here.">
+            {dash.runs.running > 0
+              ? `${dash.runs.running} ${dash.runs.running === 1 ? "person is" : "people are"} working on this right now.`
+              : dash.runs.queued > 0
+                ? `${dash.runs.queued} ${dash.runs.queued === 1 ? "piece" : "pieces"} of work are queued to start.`
+                : "Nobody is working on it at this moment — the calendar below says when the next thing wakes up."}
+          </EmptyState>
+        </div>
       )}
+
+      <h2 className="zone">What you are paying for</h2>
+      <div className="wbox">
+        {latestArtifacts.length === 0 ? (
+          <div className="wrow">
+            <span className="badge">none yet</span>
+            <div className="grow help">
+              Nothing published. Deliverables appear here the moment a team publishes one — drafts
+              included, so you can read the work as it takes shape.
+            </div>
+          </div>
+        ) : (
+          <>
+            {latestArtifacts.map((a) => (
+              <div className="wrow" key={a.key}>
+                {receiptKeys && !receiptKeys.has(a.key) ? (
+                  <span className="chip warn">no receipt</span>
+                ) : (
+                  <span className="chip ok">published</span>
+                )}
+                <div className="grow">
+                  <div className="tt mono">{a.name}</div>
+                  <div className="sb">
+                    {fmtSize(a.size)} · {a.modified ? fmtWhen(a.modified) : "—"}
+                  </div>
+                </div>
+                <Link
+                  to={`/projects/${projectId}/deliverables?open=${encodeURIComponent(a.key)}`}
+                >
+                  open →
+                </Link>
+              </div>
+            ))}
+            <div className="wrow">
+              <div className="grow help">
+                {deliverableCount} deliverable{deliverableCount === 1 ? "" : "s"} in total.
+              </div>
+              <Link to={`/projects/${projectId}/deliverables`}>all deliverables →</Link>
+            </div>
+          </>
+        )}
+      </div>
 
       <ModeStrip dash={dash} reload={reload} />
 
@@ -689,12 +843,12 @@ export default function Overview({
                 different clocks will disagree, and a reader who spots two
                 numbers for one fact stops trusting both. */}
             <div className="tile">
-              <div className="label">Working now</div>
+              <div className="label">Working right now</div>
               <div className="value">{dash.runs.running}</div>
               <div className="sub">
                 {dash.runs.running === 0
                   ? dash.runs.queued > 0
-                    ? `${dash.runs.queued} queued to start`
+                    ? `${dash.runs.queued} waiting to start`
                     : // A paused or stopped project is not idle, it is off. The
                       // brief above the tabs carries the reason; repeating a
                       // cap here would explain the wrong wall.
@@ -725,7 +879,7 @@ export default function Overview({
                   : ""
               }`}
             >
-              <div className="label">Runs today</div>
+              <div className="label">Jobs run today</div>
               <div className="value">
                 {dash.activity.daily_runs.used}
                 <span className="mono" style={{ fontSize: "0.6em", opacity: 0.7 }}>
@@ -745,13 +899,13 @@ export default function Overview({
               </div>
             </div>
             <div className={`tile${health.ratio >= 0.2 ? " alert" : ""}`}>
-              <div className="label">Ended early</div>
+              <div className="label">Stopped part-way</div>
               <div className="value">{health.early.length}</div>
               <div className="sub">
                 {health.todays.length === 0
                   ? "—"
                   : health.faults.length === 0
-                    ? "none faulted — stopped on purpose"
+                    ? "none broke — those were stopped on purpose"
                     : `${Math.round(health.ratio * 100)}% of what you paid for`}
               </div>
             </div>
@@ -796,48 +950,6 @@ export default function Overview({
       <h2 className="zone">What happens next</h2>
       <Agenda projectId={projectId} />
 
-      <h2 className="zone">Your deliverable</h2>
-      <div className="wbox">
-        {latestArtifacts.length === 0 ? (
-          <div className="wrow">
-            <span className="badge">none yet</span>
-            <div className="grow help">
-              Nothing published. Deliverables appear here the moment a team publishes one — drafts
-              included, so you can read the work as it takes shape.
-            </div>
-          </div>
-        ) : (
-          <>
-            {latestArtifacts.map((a) => (
-              <div className="wrow" key={a.key}>
-                {receiptKeys && !receiptKeys.has(a.key) ? (
-                  <span className="chip warn">no receipt</span>
-                ) : (
-                  <span className="chip ok">published</span>
-                )}
-                <div className="grow">
-                  <div className="tt mono">{a.name}</div>
-                  <div className="sb">
-                    {fmtSize(a.size)} · {a.modified ? fmtWhen(a.modified) : "—"}
-                  </div>
-                </div>
-                <Link
-                  to={`/projects/${projectId}/deliverables?open=${encodeURIComponent(a.key)}`}
-                >
-                  open →
-                </Link>
-              </div>
-            ))}
-            <div className="wrow">
-              <div className="grow help">
-                {deliverableCount} deliverable{deliverableCount === 1 ? "" : "s"} in total.
-              </div>
-              <Link to={`/projects/${projectId}/deliverables`}>all deliverables →</Link>
-            </div>
-          </>
-        )}
-      </div>
-
       {watch.length > 0 && (
         <>
           <h2 className="zone">Watch <span className="cnt">{watch.length}</span></h2>
@@ -848,28 +960,32 @@ export default function Overview({
       <h2 className="zone">The plan</h2>
       <div className="wbox">
         <div className="wrow">
-          <span className="badge accent">{hypotheses.filter((h) => h.status === "active").length} live bets</span>
+          <span className="badge accent">
+            {hypotheses.filter((h) => h.status === "active").length}{" "}
+            <Term means="A hunch the team is acting on, with a date attached. If nothing outside the project has proved it by then, it is dropped rather than quietly carried.">
+              live bets
+            </Term>
+          </span>
           <div className="grow">
-            {dash.open_tasks} open task{dash.open_tasks === 1 ? "" : "s"} of {dash.queue_ceiling}{" "}
-            ceiling
+            {dash.open_tasks} of {dash.queue_ceiling} jobs open at once
             {blocked.length > 0 && <> · <span className="chip serious">{blocked.length} blocked</span></>}
             {" · "}
-            {dash.external_evidence_in_window} verified external proof
-            {dash.external_evidence_in_window === 1 ? "" : "s"} in the last{" "}
-            {String(dash.constitution["drought_hours"] ?? 24)}h
+            {dash.external_evidence_in_window} claim
+            {dash.external_evidence_in_window === 1 ? "" : "s"} checked against the outside world in
+            the last {String(dash.constitution["drought_hours"] ?? 24)} hours
           </div>
-          <Link to={`/projects/${projectId}/work`}>the work →</Link>
+          <Link to={`/projects/${projectId}/progress/board`}>see the work →</Link>
         </div>
         <div className="wrow">
           <span className="badge">
-            CEO judgment{" "}
+            How often the CEO is right{" "}
             {dash.ceo_judgment.conversion === null
               ? "—"
               : `${Math.round(dash.ceo_judgment.conversion * 100)}%`}
           </span>
           <div className="grow help">
             {dash.ceo_judgment.tasks_with_verified_external} of {dash.ceo_judgment.tasks_created}{" "}
-            bets the CEO placed ever produced real-world proof.
+            bets it has placed ever produced proof from outside the project.
           </div>
           {soonestApproval && (
             <span className={`clock ${clockClass(soonestApproval.expires_at)}`}>
@@ -887,7 +1003,7 @@ export default function Overview({
 
       <HealthLine ctx={ctx} />
 
-      <h2 className="zone">The project</h2>
+      <h2 className="zone">Who is on this</h2>
       {repinMsg && <div className="notice-box">{repinMsg}</div>}
       <div className="list-grid">
         <div className="card">
@@ -900,14 +1016,18 @@ export default function Overview({
               </span>
             )}
           </div>
-          <div style={{ marginTop: 6 }}>
-            {org?.ceo ? (
-              <span className="badge accent">{org.ceo.name}</span>
-            ) : (
-              <span className="help">—</span>
-            )}
-          </div>
-          {org?.ceo && <SeatDay seat={today.get(org.ceo.id)} />}
+          {org?.ceo ? (
+            <div className="seatrow">
+              <Person
+                name={org.ceo.name}
+                role={org.ceo.status === "running" ? "working now" : "ready"}
+                team="leadership"
+              />
+              <SeatDay seat={today.get(org.ceo.id)} />
+            </div>
+          ) : (
+            <span className="help">—</span>
+          )}
           <p className="help" style={{ marginBottom: 0 }}>
             The only agent that speaks to you (boardroom) and the only one that creates tasks.
           </p>
@@ -935,13 +1055,23 @@ export default function Overview({
                 {behind && <span className="chip warn">behind</span>}
                 {!team.running && <span className="chip warn">stood down</span>}
               </div>
+              {/* A person, not a status chip with a surname in it. This card
+                  is the closest thing the product has to the org chart you
+                  hired, and it rendered its people as coloured pills. */}
               {team.agents.map((agent) => (
-                <div key={agent.id} style={{ marginTop: 6 }}>
-                  <span className={`badge ${agent.status === "active" ? "good" : "warn"}`}>
-                    {agent.name}
-                    {team.lead_agent_id === agent.id ? " (lead)" : ""}
-                    {agent.status !== "active" ? ` · ${agent.status}` : ""}
-                  </span>
+                <div className="seatrow" key={agent.id}>
+                  <Person
+                    name={agent.name}
+                    team={team.name}
+                    role={[
+                      team.lead_agent_id === agent.id ? "lead" : null,
+                      agent.status === "running"
+                        ? "working now"
+                        : agent.status === "active"
+                          ? "ready"
+                          : agent.status,
+                    ].filter(Boolean).join(" · ")}
+                  />
                   <SeatDay seat={today.get(agent.id)} />
                 </div>
               ))}

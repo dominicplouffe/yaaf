@@ -105,7 +105,7 @@ function DecisionCard({
         )}
         <div className="spacer" />
         <span className={`clock ${clockClass(approval.expires_at)}`}>
-          {fmtLeft(approval.expires_at)} → auto-deny
+          Denies itself in {fmtLeft(approval.expires_at).replace(" left", "")}
         </span>
       </div>
       <h3 style={{ margin: "10px 0 8px", fontSize: 15 }}>{approval.title}</h3>

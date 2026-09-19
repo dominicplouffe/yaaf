@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Navigate, NavLink, Route, Routes, useParams } from "react-router-dom";
+import { Navigate, NavLink, Route, Routes, useLocation, useParams } from "react-router-dom";
 import {
   ApprovalRow,
   AskRow,
@@ -56,7 +56,7 @@ export interface ProjectCtx {
   projectId: string;
   dash: Dashboard;
   /** Polled by the shell, not by the tabs. The header needs the commitment to
-      say whether delivery is at risk, and Progress needs all of it \u2014 two polls
+      say whether delivery is at risk, and Progress needs all of it — two polls
       on two clocks is two answers to one question. */
   plan: PlanView | null;
   approvals: ApprovalRow[];
@@ -251,9 +251,9 @@ function ProjectFrame({
       value: awake,
       sub: awake === 0
         ? dash.runs.queued > 0
-          ? `nobody yet \u2014 ${dash.runs.queued} queued to start`
+          ? `nobody yet — ${dash.runs.queued} queued to start`
           : "nobody is working on this at the moment"
-        : `of ${people.length} ${people.length === 1 ? "person" : "people"}${dash.runs.queued > 0 ? ` \u00b7 ${dash.runs.queued} more queued` : ""}`,
+        : `of ${people.length} ${people.length === 1 ? "person" : "people"}${dash.runs.queued > 0 ? ` · ${dash.runs.queued} more queued` : ""}`,
     },
   ];
 
@@ -409,7 +409,7 @@ function ActionStrip({
           <div>
             <strong>{clip(a.title, 90)}</strong>
             {a.amount_usd !== null && a.amount_usd > 0 && (
-              <span className="mono"> — ${a.amount_usd.toLocaleString()}</span>
+              <span> — ${a.amount_usd.toLocaleString()}</span>
             )}
           </div>
           <div className="sb">
@@ -536,6 +536,7 @@ function StatusBriefBox({ dash, projectId }: { dash: Dashboard; projectId: strin
 
 export default function ProjectPage() {
   const { projectId = "" } = useParams();
+  const location = useLocation();
   const { data: dash, error, at, reload } = usePoll(
     () => get<Dashboard>(`/observe/projects/${projectId}`),
     6000,
@@ -573,6 +574,7 @@ export default function ProjectPage() {
   );
 
   const [confirming, setConfirming] = useState<"pause" | "stop" | null>(null);
+  const onOverview = location.pathname.replace(/\/$/, "") === `/projects/${projectId}`;
 
   // A failed poll must not blank the page. The last good numbers stay on screen
   // with their timestamp; the banner says they've stopped refreshing.
@@ -617,16 +619,22 @@ export default function ProjectPage() {
         onStop={() => setConfirming("stop")}
       />
 
-      <ActionStrip
-        projectId={projectId}
-        dash={dash}
-        approvals={ctx.approvals}
-        hypotheses={ctx.hypotheses}
-        onDecided={() => {
-          reloadApprovals();
-          reload();
-        }}
-      />
+      {/* Everywhere except Overview, which lists these in full a few hundred
+          pixels below. The strip exists so a decision that expires on its own
+          is visible from the tab you happen to be on — not so it is visible
+          twice on the one tab that already leads with it. */}
+      {!onOverview && (
+        <ActionStrip
+          projectId={projectId}
+          dash={dash}
+          approvals={ctx.approvals}
+          hypotheses={ctx.hypotheses}
+          onDecided={() => {
+            reloadApprovals();
+            reload();
+          }}
+        />
+      )}
 
       {confirming && (
         <LifecycleConfirm
@@ -653,7 +661,7 @@ export default function ProjectPage() {
       <nav className="tabs">
         {/* Explore keeps Progress. It has no requirements by design, but it
             very much has work and proof, and those are two of the three lenses
-            \u2014 the tab drops the one that does not apply rather than vanishing. */}
+            — the tab drops the one that does not apply rather than vanishing. */}
         {TABS.map(([path, label]) => (
           <NavLink
             key={path}
@@ -675,7 +683,7 @@ export default function ProjectPage() {
 
       <Routes>
         <Route index element={<Overview ctx={ctx} asOf={at} error={error} />} />
-        <Route path="boardroom" element={<Boardroom projectId={projectId} dash={dash} />} />
+        <Route path="boardroom" element={<Boardroom projectId={projectId} dash={dash} org={org} />} />
         <Route path="progress/*" element={<Progress ctx={ctx} />} />
         <Route path="deliverables" element={<Deliverables projectId={projectId} />} />
         <Route path="records/*" element={<Records ctx={ctx} />} />

@@ -25,7 +25,7 @@ function Walk({ report }: { report: RehearsalReport }) {
             {step.na ? "not in this project's shape" : step.detail}
           </span>
           {step.tick !== null && !step.na && (
-            <span className="dt mono">beat {step.tick}</span>
+            <span className="dt">beat {step.tick}</span>
           )}
         </li>
       ))}

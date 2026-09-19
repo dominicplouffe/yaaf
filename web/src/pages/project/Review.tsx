@@ -247,7 +247,7 @@ export default function Review({ ctx }: { ctx: ProjectCtx }) {
       {!open ? (
         <div className="card" style={{ maxWidth: 640 }}>
           <p className="help" style={{ margin: 0 }}>
-            No review is open. The janitor opens one on the constitution's cadence
+            No review is open. The platform opens one on the schedule you set
             (Settings → Rules in force → “Days between status reviews”) — with zero
             tokens, whatever the board or the budget looks like — and emails you when
             it does.

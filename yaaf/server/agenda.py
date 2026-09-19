@@ -241,8 +241,8 @@ def _review_event(session: Session, project: Project, cons: ConstitutionDoc,
         number = latest.number + 1
     return _event(
         due, "review", f"Review #{number}", tz,
-        detail=("opened by the janitor with zero tokens, whatever the budget and "
-                "whatever is on the board"),
+        detail=("opens by itself, costs nothing to run, and happens whether or not "
+                "there is anything on the board"),
         tone="meeting", where="review",
     ), None
 
@@ -411,8 +411,9 @@ def _staffing_note(session: Session, project: Project) -> str | None:
         return ("Every team has a declared end; the platform stands each down when its "
                 "condition comes true.")
     if len(open_ended) == len(teams):
-        return ("No team has a declared end, so every seat runs until somebody stops "
-                "it. Your CEO sets these while planning (`stand_down_when`).")
+        return ("No team has been given an end, so everyone keeps working until "
+                "somebody stands them down. Your CEO can set an end for a team "
+                "when it plans.")
     return (f"{', '.join(sorted(open_ended))} "
             f"{'has' if len(open_ended) == 1 else 'have'} no declared end and will run "
             "until stopped; the rest stand down on their own.")
@@ -467,8 +468,9 @@ def project_agenda(session: Session, project: Project,
             events.append(reset)
         if not cons.ceo_daily_at and not any(r["kind"] == "agent_daily" for r in rhythms):
             notes.append(
-                "Nobody is on a wall-clock wake. The CEO still plans on its heartbeat; "
-                "a daily time is how you get a standup.")
+                "Nobody wakes at a fixed time of day. Your CEO still plans on its "
+                "own schedule — setting a daily time is how you get a morning "
+                "standup.")
         staffing_note = _staffing_note(session, project)
         if staffing_note:
             notes.append(staffing_note)

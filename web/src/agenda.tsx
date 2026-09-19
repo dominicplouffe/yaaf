@@ -205,7 +205,7 @@ export default function Agenda({ projectId }: { projectId: string }) {
           {data.events.map((event, i) => (
             <div className="wrow" key={`${event.kind}-${i}`}>
               <span className={`adot ${event.tone}`} aria-hidden="true" />
-              <span className="aday-lbl mono">{dayLabel(event.day)}</span>
+              <span className="aday-lbl">{dayLabel(event.day)}</span>
               <div className="grow">
                 <div className="tt">{event.label}</div>
                 {event.detail && <div className="sb">{event.detail}</div>}

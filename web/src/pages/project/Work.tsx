@@ -568,7 +568,7 @@ export default function Work({ ctx }: { ctx: ProjectCtx }) {
       {tasks && visible.length === 0 && groups.length === 0 && (
         <p className="help">
           {all.length === 0
-            ? "No tasks yet — the CEO plans on its heartbeat, or immediately after you speak in the boardroom."
+            ? "No work yet — your CEO plans on its own schedule, or right after you speak to it in the boardroom."
             : "Nothing matches this filter."}
         </p>
       )}

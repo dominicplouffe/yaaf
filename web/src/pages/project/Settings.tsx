@@ -1509,10 +1509,11 @@ function CardPicker({
               ...Object.fromEntries(
                 Object.entries(card.constitution).map(([k, v]) => [k, asEdit(v)])),
             }))}
+            className="textblock"
             style={{
               font: "inherit", textAlign: "left", cursor: "pointer",
               background: staged?.value === card.value
-                ? "rgba(57,135,229,0.07)" : "var(--surface)",
+                ? "rgba(var(--accent-rgb), 0.09)" : "var(--surface)",
               border: staged?.value === card.value
                 ? "1px solid var(--accent)" : "1px solid var(--border)",
               borderRadius: 8, padding: "12px 14px",
@@ -1894,7 +1895,7 @@ export default function Settings({
       {error && <div className="error">{error}</div>}
 
       {billingReady && runtimeNow === "agent_sdk" ? (
-        <div className="notice-box" style={{ borderColor: "var(--good)", background: "rgba(12,163,12,0.08)" }}>
+        <div className="notice-box" style={{ borderColor: "var(--good)", background: "rgba(var(--good-rgb), 0.1)" }}>
           ✓ <strong>Nothing needs doing on this page.</strong> Your agents are real Claude agents,
           and when they call Claude they pay with{" "}
           <strong>

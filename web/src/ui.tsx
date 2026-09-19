@@ -744,20 +744,20 @@ export function DecideButtons({ approvalId, onDone }: { approvalId: string; onDo
   return (
     <>
       <NoteAction
-        label="Approve…"
+        label="Approve"
         className="small primary"
         placeholder="Note (optional) — the CEO reads it"
-        confirmLabel="✓ Approve"
+        confirmLabel="Approve"
         onSubmit={async (note) => {
           await post(`/admin/approvals/${approvalId}/decide`, { approve: true, note });
           onDone();
         }}
       />
       <NoteAction
-        label="Deny…"
+        label="Deny"
         className="small danger"
         placeholder="Why? — the CEO reads this and replans"
-        confirmLabel="✕ Deny"
+        confirmLabel="Deny"
         requireNote
         onSubmit={async (note) => {
           await post(`/admin/approvals/${approvalId}/decide`, { approve: false, note });

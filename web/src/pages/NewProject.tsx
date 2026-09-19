@@ -1341,9 +1341,10 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             {MODES.map((m) => (
               <button key={m.value} type="button"
                 onClick={() => { setMode(m.value); setModeNotice(null); }}
+                className="textblock"
                 style={{
                   font: "inherit", textAlign: "left", cursor: "pointer",
-                  background: mode === m.value ? "rgba(57,135,229,0.07)" : "var(--surface)",
+                  background: mode === m.value ? "rgba(var(--accent-rgb), 0.09)" : "var(--surface)",
                   border: mode === m.value
                     ? "1px solid var(--accent)" : "1px solid var(--border)",
                   borderRadius: 8, padding: "12px 14px",
@@ -1541,9 +1542,10 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             {autonomyPresets.map((p) => (
               <button key={p.value} type="button"
                 onClick={() => { setAutonomy(p.value); setAutonomyNotice(null); }}
+                className="textblock"
                 style={{
                   font: "inherit", textAlign: "left", cursor: "pointer",
-                  background: autonomy === p.value ? "rgba(57,135,229,0.07)" : "var(--surface)",
+                  background: autonomy === p.value ? "rgba(var(--accent-rgb), 0.09)" : "var(--surface)",
                   border: autonomy === p.value
                     ? "1px solid var(--accent)" : "1px solid var(--border)",
                   borderRadius: 8, padding: "12px 14px",
@@ -1582,9 +1584,10 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             {tempoPresets.map((p) => (
               <button key={p.value} type="button"
                 onClick={() => applyTempoPreset(p.value)}
+                className="textblock"
                 style={{
                   font: "inherit", textAlign: "left", cursor: "pointer",
-                  background: tempo === p.value ? "rgba(57,135,229,0.07)" : "var(--surface)",
+                  background: tempo === p.value ? "rgba(var(--accent-rgb), 0.09)" : "var(--surface)",
                   border: tempo === p.value
                     ? "1px solid var(--accent)" : "1px solid var(--border)",
                   borderRadius: 8, padding: "12px 14px",
@@ -1645,9 +1648,10 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             {barPresets.map((p) => (
               <button key={p.value} type="button"
                 onClick={() => applyBarPreset(p.value)}
+                className="textblock"
                 style={{
                   font: "inherit", textAlign: "left", cursor: "pointer",
-                  background: barPreset === p.value ? "rgba(57,135,229,0.07)" : "var(--surface)",
+                  background: barPreset === p.value ? "rgba(var(--accent-rgb), 0.09)" : "var(--surface)",
                   border: barPreset === p.value
                     ? "1px solid var(--accent)" : "1px solid var(--border)",
                   borderRadius: 8, padding: "12px 14px",
@@ -1662,7 +1666,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
           {needsReviewSeat && (
             <div style={{ marginTop: 10, padding: "10px 12px", borderRadius: 8,
               border: "1px solid var(--warn, var(--border))",
-              background: "rgba(229,158,57,0.07)", fontSize: 13 }}>
+              background: "rgba(var(--warning-rgb), 0.09)", fontSize: 13 }}>
               This preset asks for the work to be read by somebody who did not write it,
               and no team on your roster does that — so the only reader of a deliverable
               before you would be the agent that wrote it. Creating it will be refused.

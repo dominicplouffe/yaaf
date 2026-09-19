@@ -56,7 +56,7 @@ function ResidentNote({ run }: { run: RunRow }) {
       {!beat
         ? "resident · no heartbeat yet"
         : stale
-          ? `resident · last heartbeat ${fmtAgo(beat)} — the janitor reaps it`
+          ? `still open · last sign of life ${fmtAgo(beat)} — the platform closes it if that stops`
           : `resident · alive, heartbeat ${fmtAgo(beat)}`}
     </div>
   );
@@ -332,7 +332,7 @@ export default function Runs({ projectId, dash }: { projectId: string; dash: Das
       {/* Patterns become sentences: the platform knows these share a cause —
           and names the wall, so "give direction" means something to type. */}
       {storms.length >= 3 && (
-        <div className="arow" style={{ borderColor: "rgba(236,131,90,.4)", marginBottom: 14 }}>
+        <div className="arow" style={{ borderColor: "rgba(var(--serious-rgb), 0.4)", marginBottom: 14 }}>
           <span className="badge serious">pattern</span>
           <div className="grow">
             <div className="tt">
