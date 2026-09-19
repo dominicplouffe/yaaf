@@ -7,6 +7,8 @@ call, and so the first place the chairmanship gate either holds or does not.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -112,8 +114,31 @@ def _observe(fn, **kwargs):
         raise ToolRefusal(str(exc.detail)) from None
 
 
+#: The most of one workspace file this surface will decode. `observe` no longer
+#: caps what it serves — it streams, so the chairman can download a 124MB render
+#: from his browser — but a model reading a file through MCP still wants a
+#: bounded amount of text, and this is the bound that used to live on the
+#: endpoint for everyone.
+MCP_FILE_READ_BYTES = 20 * 1024 * 1024
+
+
 def _text_of(response) -> str:
-    """observe hands raw artifacts back as responses; MCP wants their text."""
+    """observe hands raw artifacts back as responses; MCP wants their text.
+
+    A workspace file now STREAMS off disk, so its response carries a path and
+    no body. `getattr(response, "body", response)` found no body, fell back to
+    the response object, and `str()` of it is a repr — a 46KB document arrived
+    as 59 characters of `<FileResponse object at 0x...>`, with no error
+    anywhere. The fallback is the hazard: it cannot fail, so it cannot tell you
+    it is wrong.
+    """
+    path = getattr(response, "path", None)
+    if path is not None:
+        # Bounded at the read, not after it: slicing `read_bytes()` would pull
+        # the whole render into memory first, which is the thing streaming was
+        # introduced to stop.
+        with Path(path).open("rb") as handle:
+            return handle.read(MCP_FILE_READ_BYTES).decode("utf-8", "replace")
     body = getattr(response, "body", response)
     return body.decode("utf-8", "replace") if isinstance(body, bytes) else str(body)
 

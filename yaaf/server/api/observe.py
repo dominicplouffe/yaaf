@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Response
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
@@ -1626,7 +1626,6 @@ MAX_FILE_LISTING = 2000
 # A tree big enough to hit this is a runaway, not a project; stopping the walk
 # beats holding the request open while an agent's node_modules is enumerated.
 MAX_SCANNED_FILES = 50_000
-MAX_SERVED_BYTES = 20 * 1024 * 1024
 # Platform plumbing, not agent work: staging (tokens, prompts, traces) and git
 # internals never show in the chairman's Files view.
 _SKIPPED_DIRS = {".git", ".yaaf"}
@@ -1696,6 +1695,18 @@ def project_files(project_id: str, session: Session = Depends(db)) -> dict:
             "workspace_truncated": len(found) - len(workspace)}
 
 
+def _as_download(body: bytes | Path, name: str) -> Response:
+    """Bytes in hand, or a path to stream — either way, a download and never a
+    page. `Content-Disposition: attachment` plus `application/octet-stream` is
+    what keeps agent-written HTML from rendering on this origin, where the
+    chairman's admin token lives; both halves are set here so neither can be
+    forgotten by one of the two branches."""
+    headers = {"Content-Disposition": f'attachment; filename="{name.replace(chr(34), "")}"'}
+    if isinstance(body, Path):
+        return FileResponse(body, media_type="application/octet-stream", headers=headers)
+    return Response(content=body, media_type="application/octet-stream", headers=headers)
+
+
 @router.get("/projects/{project_id}/files/content")
 def project_file_content(
     project_id: str, path: str = "", artifact: str = "",
@@ -1719,24 +1730,27 @@ def project_file_content(
             data = artifacts.store().get_bytes(artifact)
         except (FileNotFoundError, ValueError):
             raise HTTPException(status_code=404, detail="no such artifact") from None
-        name = artifact.rsplit("/", 1)[-1]
-    else:
-        root = _workspace_root(project).resolve()
-        target = (root / path).resolve()
-        if (not target.is_relative_to(root)
-                or any(part in _SKIPPED_DIRS for part in Path(path).parts)):
-            raise HTTPException(status_code=404, detail="no such file")
-        if not target.is_file():
-            raise HTTPException(status_code=404, detail="no such file")
-        if target.stat().st_size > MAX_SERVED_BYTES:
-            raise HTTPException(status_code=413, detail="file exceeds the 20MB serving limit")
-        data = target.read_bytes()
-        name = target.name
-    safe_name = name.replace('"', "")
-    return Response(
-        content=data, media_type="application/octet-stream",
-        headers={"Content-Disposition": f'attachment; filename="{safe_name}"'},
-    )
+        # Buffered, and safely so: `artifact_put` refuses anything over 5 MB,
+        # so nothing in the store is big enough to be worth streaming. The
+        # workspace below has no such ceiling — it is where agents actually
+        # work, and a render lands there at its real size.
+        return _as_download(data, artifact.rsplit("/", 1)[-1])
+
+    root = _workspace_root(project).resolve()
+    target = (root / path).resolve()
+    if (not target.is_relative_to(root)
+            or any(part in _SKIPPED_DIRS for part in Path(path).parts)):
+        raise HTTPException(status_code=404, detail="no such file")
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail="no such file")
+    # Streamed off disk rather than read into memory. This replaces a 20 MB
+    # ceiling that answered 413, which was never a policy about what the
+    # chairman may download — it was the size at which `read_bytes()` on a
+    # request thread stopped being survivable, and the number was load-bearing
+    # for the server rather than for him. It made the video desk's own output
+    # unreachable from the page that lists it: its cuts are 40-124 MB each, so
+    # every real render 413'd while the notes beside them downloaded fine.
+    return _as_download(target, target.name)
 
 
 @router.get("/projects/{project_id}/suggestions")

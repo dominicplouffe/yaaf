@@ -107,3 +107,50 @@ def test_listing_cuts_the_oldest_and_says_so(client, monkeypatch):
     listing = client.get(f"/observe/projects/{project['id']}/files", headers=ADMIN).json()
     assert [f["path"] for f in listing["workspace"]] == ["a.md", "b.md", "c.md"]
     assert listing["workspace_truncated"] == 2
+
+
+def test_a_render_too_big_to_buffer_still_downloads(client):
+    """The video desk could not fetch its own work.
+
+    Every workspace file was read into memory on the request thread, so a 20 MB
+    ceiling stood in front of the endpoint and answered 413 above it. That
+    number was a fact about the server, not a decision about what the chairman
+    may have: his cuts are 40-124 MB each, so the page listed every render and
+    served none of them, while the notes beside them downloaded fine. Streaming
+    off disk removes the reason for the ceiling, so the ceiling goes.
+
+    Deliberately slow-ish: it writes a file past the old limit, because a test
+    that stays under it would pass against the bug it is here to catch.
+    """
+    project = make_project(client, start=False)
+    root = _workspace("acme")
+    (root / "renders").mkdir(exist_ok=True)
+    big = root / "renders" / "c09.mov"
+    big.write_bytes(b"\0" * (24 * 1024 * 1024))
+
+    served = client.get(
+        f"/observe/projects/{project['id']}/files/content",
+        params={"path": "renders/c09.mov"}, headers=ADMIN)
+
+    assert served.status_code == 200, served.text
+    assert len(served.content) == 24 * 1024 * 1024
+    # Streaming must not cost the property the buffered path was protecting.
+    assert served.headers["content-type"].startswith("application/octet-stream")
+    assert "attachment" in served.headers["content-disposition"]
+    assert "c09.mov" in served.headers["content-disposition"]
+
+
+def test_a_streamed_download_cannot_escape_the_workspace_either(client):
+    """The traversal guards run before the response type is chosen, so the new
+    path is covered by them — asserted rather than assumed, because a refactor
+    that returns early is exactly how a check gets stepped over."""
+    project = make_project(client, start=False)
+    _workspace("acme")
+    outside = Path(settings().workspaces_root) / "elsewhere.mov"
+    outside.write_bytes(b"\0" * 1024)
+
+    for evil in ("../elsewhere.mov", "../../etc/passwd", ".git/config"):
+        response = client.get(
+            f"/observe/projects/{project['id']}/files/content",
+            params={"path": evil}, headers=ADMIN)
+        assert response.status_code == 404, f"{evil!r} must not be served"
