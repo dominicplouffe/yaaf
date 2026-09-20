@@ -19,6 +19,16 @@ work is the app's own Python, so they parallelise almost linearly — about four
 minutes serial, about a minute on four cores. Drop it when you want a readable
 failure from one test.
 
+**If you have Docker installed, the suite sets one thing for you**, and it is
+worth knowing why. A task's success test can be a command an agent wrote, so
+the platform refuses to run one on a host holding the Docker socket — which is
+every box with Docker up, including a GitHub runner. `tests/conftest.py` sets
+`YAAF_ALLOW_HOST_SUCCESS_TESTS=1` for itself, next to the `subprocess` sandbox
+mode it already declares, so seven command-check tests do not fail purely
+because of what is installed on your laptop. Export the variable as `0` if you
+want to watch the refusal fire; `tests/selftest_invariants/test_host_success_tests.py`
+proves it fires either way, from its own stubs.
+
 ### Run the smallest tier that answers your question
 
 The full suite costs about a minute. That is cheap once and expensive after
