@@ -13,6 +13,14 @@ import os
 import tempfile
 
 os.environ.setdefault("YAAF_SANDBOX_MODE", "subprocess")
+# The other half of the line above, and it has to be said out loud. A success
+# test can be a command an *agent* wrote, so the platform refuses to run one on
+# a host holding the Docker socket unless somebody states they meant it — right
+# on a deployed runner, where that socket is root on the box; wrong here, where
+# the agent is a fixture and the host is a throwaway. Saying only the first
+# half is what made the suite pass on a laptop without Docker and fail on one
+# with it: same commit, same command, and nothing on screen to say why.
+os.environ.setdefault("YAAF_ALLOW_HOST_SUCCESS_TESTS", "1")
 os.environ.setdefault("YAAF_ADMIN_TOKEN", "test-admin-token")
 os.environ.setdefault("YAAF_MASTER_KEY", "kkP1p6Rt0DZ2rWv1w5Zq3o8y6bT4uY9cQ1eS7gJ0aXk=")
 os.environ.setdefault("YAAF_WORKSPACES_ROOT", tempfile.mkdtemp(prefix="yaaf-test-ws-"))

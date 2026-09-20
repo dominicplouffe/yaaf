@@ -45,6 +45,7 @@ def _bootstrap_env() -> None:
     """Replicate tests/conftest.py: this must land before any yaaf import
     resolves settings. All setdefault, so under pytest the conftest wins."""
     os.environ.setdefault("YAAF_SANDBOX_MODE", "subprocess")
+    os.environ.setdefault("YAAF_ALLOW_HOST_SUCCESS_TESTS", "1")
     os.environ.setdefault("YAAF_ADMIN_TOKEN", "eval-admin-token")
     os.environ.setdefault("YAAF_MASTER_KEY", "kkP1p6Rt0DZ2rWv1w5Zq3o8y6bT4uY9cQ1eS7gJ0aXk=")
     os.environ.setdefault("YAAF_WORKSPACES_ROOT", tempfile.mkdtemp(prefix="yaaf-eval-ws-"))

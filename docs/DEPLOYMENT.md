@@ -456,6 +456,7 @@ in env vars. See [GOVERNANCE.md](GOVERNANCE.md).
 |---|---|---|
 | `YAAF_WORKER_NAME` | `worker-1` | Identifies this runner in leases |
 | `YAAF_SANDBOX_MODE` | `docker` | `docker` (isolation) or `subprocess` (dev/CI only — **no isolation**) |
+| `YAAF_ALLOW_HOST_SUCCESS_TESTS` | `false` | Under `subprocess` mode only, lets an agent-authored success test run on a host that holds the Docker socket. **Leave it off on a deployed runner** — there the socket is root on the box. The test suite sets it for itself. |
 | `YAAF_SANDBOX_IMAGE` | `yaaf-sandbox:latest` | |
 | `YAAF_SANDBOX_NETWORK` | `yaaf_sandbox` | |
 | `YAAF_WORKSPACES_ROOT` | `/var/lib/yaaf/workspaces` | Host path must equal container path |
