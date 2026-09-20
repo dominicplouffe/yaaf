@@ -268,7 +268,9 @@ def project(principal: Principal, session: Session, arguments: dict) -> dict:
     description=(
         "The plan and the promise: requirements by stage with their dependencies and "
         "acceptance tests, the burn-up, the committed date and whether the projection "
-        "still clears it. This is the answer to 'why is this at risk'."
+        "still clears it. This is the answer to 'why is this at risk'. The projection "
+        "names what it stands on — a measured pace, or the plan's own arithmetic when "
+        "too little has settled to have measured one."
     ),
     input_schema=_schema(),
 )

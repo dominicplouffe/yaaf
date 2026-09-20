@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Decision, get, post, ReviewNumbers, ReviewRow, ReviewsView } from "../../api";
 import { fmtWhen, usePoll } from "../../hooks";
 import { AsOf, ExportCsv, NoteAction, Skeleton, downloadCsv } from "../../ui";
+import { fmtDate, fullyAutonomous } from "../../ui/project";
 import type { ProjectCtx } from "../Project";
 
 
@@ -14,6 +15,18 @@ const LEVER_LABELS: Record<string, string> = {
   move_date: "Move the date",
   raise_budget: "Raise the budget",
   accept_slip: "Accept the slip",
+};
+
+/** A commitment's state in the words the rest of the product uses for it.
+    `deliveryVerdict` is the authority on this wording; these are the same
+    phrases so the meeting and the strip above it cannot appear to describe
+    two different problems. */
+const COMMITMENT_PLAIN: Record<string, string> = {
+  proposed: "Unsigned",
+  accepted: "On track",
+  at_risk: "At risk",
+  breached: "Date passed",
+  met: "Delivered",
 };
 
 function field(style: object = {}) {
@@ -155,7 +168,11 @@ function DecisionList({ decisions }: { decisions: Decision[] }) {
       <tbody>
         {decisions.map((d, i) => (
           <tr key={i}>
-            <td style={{ whiteSpace: "nowrap" }}><span className="chip">{d.kind}</span></td>
+            {/* The same words the button that does it wears. `raise_budget`
+                is the wire's name for the lever, not the reader's. */}
+            <td style={{ whiteSpace: "nowrap" }}>
+              <span className="chip">{LEVER_LABELS[d.kind] ?? d.kind.replaceAll("_", " ")}</span>
+            </td>
             <td>{d.detail}</td>
             <td className="help">{d.reason}</td>
           </tr>
@@ -170,10 +187,22 @@ function NumbersTiles({ n }: { n: ReviewNumbers }) {
     <div className="tiles" style={{ margin: "12px 0" }}>
       <div className="tile">
         <div className="label">Requirements settled</div>
-        <div className="value">{n.velocity.per_week_3w}<small> a week</small></div>
+        {/* Same rule as the Plan tile: a rate is a measurement or it is a
+            dash. A review that opens with "0 a week" about a project too new
+            to have a pace starts the meeting on a false premise.
+
+            Falling back to the rate itself when the snapshot predates the
+            flag, rather than to "unknown": an older meeting that recorded a
+            real pace should keep showing it. */}
+        <div className="value">
+          {(n.velocity.pace_known ?? n.velocity.per_week_3w > 0)
+            ? <>{n.velocity.per_week_3w}<small> a week</small></> : "—"}
+        </div>
         <div className="sub">{n.velocity.remaining} still open
-          {n.velocity.weeks_left_at_pace != null
-            ? ` — about ${n.velocity.weeks_left_at_pace} weeks at this rate` : ""}</div>
+          {(n.velocity.pace_known ?? n.velocity.per_week_3w > 0)
+            ? (n.velocity.weeks_left_at_pace != null
+                ? ` — about ${n.velocity.weeks_left_at_pace} weeks at this rate` : "")
+            : " — too little has settled to call this a pace"}</div>
       </div>
       <div className="tile">
         <div className="label">Met since last</div>
@@ -184,11 +213,19 @@ function NumbersTiles({ n }: { n: ReviewNumbers }) {
       {n.commitment && (
         <div className="tile">
           <div className="label">Commitment</div>
-          <div className="value" style={{ fontSize: 18 }}>{n.commitment.status}</div>
+          {/* One state, one name. The strip at the top of every tab calls this
+              "Date passed"; this tile called the same fact "breached", which
+              leaves a reader deciding whether they are two problems. */}
+          <div className="value" style={{ fontSize: 18 }}>
+            {COMMITMENT_PLAIN[n.commitment.status] ?? n.commitment.status}
+          </div>
           <div className="sub">
-            promised {n.commitment.deliver_by.slice(0, 10)}
+            {/* The same words for a date as every other screen. `2026-09-13`
+                beside "Sep 13" on the strip two inches above is the reader
+                doing a format conversion to check they are the same day. */}
+            promised {fmtDate(n.commitment.deliver_by)}
             {n.commitment.projected_done_at
-              ? ` · projected ${n.commitment.projected_done_at.slice(0, 10)}` : ""}
+              ? ` · now ${fmtDate(n.commitment.projected_done_at)}` : ""}
           </div>
         </div>
       )}
@@ -232,14 +269,21 @@ export default function Review({ ctx }: { ctx: ProjectCtx }) {
   if (!data) return <Skeleton rows={5} />;
   const open = data.open;
   const unit = ctx.dash.billing_mode === "subscription" ? "tokens" : "USD";
+  // Whether anything on this screen is the chairman's to do. Under a dial that
+  // handed scope, dates and verdicts to the CEO, a page headed "you decide"
+  // above six lever buttons is describing somebody else's job.
+  const selfRunning = fullyAutonomous(ctx.dash);
 
   return (
     <div>
       <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 8 }}>
         <p className="subtitle" style={{ margin: 0, flex: 1 }}>
-          The standing meeting: the platform brings the numbers, the CEO explains the
-          variance, you decide. Every lever is recorded with your reason and shown at
-          the next review beside what it bought.
+          {selfRunning
+            ? "Your CEO's standing report. You left the decisions to it, so nothing here is "
+              + "waiting on you — read it, say anything you want said back, and close it."
+            : "The standing meeting: the platform brings the numbers, the CEO explains the "
+              + "variance, you decide. Every lever is recorded with your reason and shown at "
+              + "the next review beside what it bought."}
         </p>
         <AsOf at={at} error={error} />
       </div>
@@ -285,13 +329,26 @@ export default function Review({ ctx }: { ctx: ProjectCtx }) {
             </div>
           )}
 
+          {/* The recommendation first, the reasoning behind a fold.
+              These two arrived the other way round: six paragraphs of a CEO
+              explaining itself, with the one line saying what it wanted to do
+              in small grey type underneath. A reader looking for "what do you
+              want from me" had to read all of it to find out the answer was
+              "nothing". */}
           <div style={{ marginBottom: 12 }}>
-            <b style={{ fontSize: 13 }}>The CEO's variance narrative</b>
-            {open.narrative ? (
+            <b style={{ fontSize: 13 }}>What your CEO says it will do</b>
+            {open.narrative || open.recommended ? (
               <>
-                <p style={{ whiteSpace: "pre-wrap", marginTop: 6 }}>{open.narrative}</p>
-                {open.recommended && (
-                  <p className="help">Recommends: {open.recommended}</p>
+                <p style={{ marginTop: 6, whiteSpace: "pre-wrap" }}>
+                  {open.recommended || "It filed an explanation but recommended nothing."}
+                </p>
+                {open.narrative && (
+                  <details style={{ marginTop: 6 }}>
+                    <summary className="help" style={{ cursor: "pointer" }}>
+                      Why, in its own words — {open.narrative.length.toLocaleString()} characters
+                    </summary>
+                    <p style={{ whiteSpace: "pre-wrap", marginTop: 6 }}>{open.narrative}</p>
+                  </details>
                 )}
               </>
             ) : (
@@ -309,7 +366,21 @@ export default function Review({ ctx }: { ctx: ProjectCtx }) {
             </div>
           )}
 
-          <b style={{ fontSize: 13 }}>Your levers</b>
+          {/* Said out loud because the buttons look like a to-do list and are
+              not one. Pressing one opens a form; using it files a decision
+              into "Decided this review" above and leaves the meeting open,
+              because the meeting ends when you close it and not before. A row
+              of buttons where nothing visibly resolves is a row of buttons a
+              reader concludes is broken. */}
+          <b style={{ fontSize: 13 }}>Change something — optional</b>
+          <p className="help" style={{ margin: "4px 0 0" }}>
+            {selfRunning
+              ? "You do not have to use any of these: your CEO already holds these decisions. "
+              : "Use one only if you want to change the plan. "}
+            Anything you do lands under “Decided this review” above and stays there; the meeting
+            itself ends when you press <b>Close the review</b>, and closing with no changes is
+            itself a recorded decision.
+          </p>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
             {Object.entries(LEVER_LABELS).map(([kind, label]) => (
               <button key={kind}

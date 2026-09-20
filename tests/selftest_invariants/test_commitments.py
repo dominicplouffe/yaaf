@@ -23,7 +23,15 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from tests.conftest import ADMIN, agent_by_name, amend, bearer, live_token, make_project
+from tests.conftest import (
+    ADMIN,
+    agent_by_name,
+    amend,
+    backdate_project,
+    bearer,
+    live_token,
+    make_project,
+)
 from tests.selftest_invariants.test_requirements import (
     accept,
     ceo_token,
@@ -215,13 +223,30 @@ def test_new_scope_is_refused_past_a_breached_commitment(client):
 
 
 def test_at_risk_freezes_scope_and_recovery_unfreezes_it(client):
-    project, token, rids, proposed = committed_project(client, scope=3)
+    """The rule under test is the freeze: past the promise, new scope is
+    refused with the arithmetic showing, and moving the date lifts it.
+
+    The *setup* moved when the projection got a sample floor. It used to reach
+    at-risk on one met requirement — a "measured pace of 0.33/week" that was a
+    single observation wearing a decimal point, and the exact arithmetic the
+    floor exists to refuse. Reaching a freeze that way is no longer possible,
+    and should not be: a promise frozen on the strength of one data point is
+    the platform manufacturing the lateness it is warning about.
+
+    So the project is now old enough to have a pace and has met enough to have
+    measured one, and every assertion about the freeze itself is unchanged.
+    """
+    project, token, rids, proposed = committed_project(client, scope=6)
+    # Two weeks of history, so a weekly rate is a measurement rather than a
+    # division by a window the project has not lived through.
+    backdate_project(project["id"], hours=14 * 24)
     chairman_accept(client, proposed["commitment_id"],
                     deliver_by=utcnow() + timedelta(days=2))
 
-    # One met, two open: measured pace ≈ 0.33/week, so the projection lands
-    # ~6 weeks out against a 2-day promise.
+    # Two met over a fortnight is 1.0/week; four still open therefore land about
+    # four weeks out, against a two-day promise.
     fabricate_met(project["id"], rids[0])
+    fabricate_met(project["id"], rids[1])
     run_commitment_check(project)
     with db_session() as session:
         row = session.get(Commitment, proposed["commitment_id"])
@@ -237,7 +262,7 @@ def test_at_risk_freezes_scope_and_recovery_unfreezes_it(client):
     assert refused.status_code == 409
     error = refused.json()["error"]
     assert "does not hold" in error
-    assert "0.33/week" in error, "the refusal must show its arithmetic"
+    assert "1.0/week" in error, "the refusal must show its arithmetic"
 
     # The chairman moves the date past the projection; the freeze lifts on the
     # spot — through the same producer the janitor uses, not a hand edit.

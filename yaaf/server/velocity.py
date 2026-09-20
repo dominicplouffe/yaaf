@@ -43,6 +43,31 @@ from yaaf.server import policy
 SHORT_WINDOW_DAYS = 21
 LONG_WINDOW_DAYS = 84
 
+#: Below this many met requirements there is no measured pace, only one
+#: observation wearing a decimal point.
+#:
+#: `policy.py` already guards its weaker numbers this way — MIN_PRICED_RUNS
+#: before it will average a cost, MIN_SETTLED_FOR_BIAS before it will trust an
+#: estimate multiplier — and the number with no floor at all was the one that
+#: freezes a project's scope and mails the chairman that his date is at risk.
+#: A single requirement landing produced "0.33/week" and, from it, a confident
+#: calendar date six weeks out.
+#:
+#: Two, matching MIN_SETTLED_FOR_BIAS, on the same reasoning it was written
+#: with: two is not a trend, but it is the point where one lucky or unlucky
+#: week stops being the entire dataset. Three was the alternative and would
+#: leave a five-requirement project with no measured date until it was most of
+#: the way done — a long silence bought for little, since what actually broke
+#: here was extrapolating from one.
+#:
+#: Under the floor the projection falls through to the plan's own arithmetic,
+#: which already says out loud that it is a best case rather than a measurement.
+MIN_MET_FOR_PACE = 2
+
+#: A weekly rate needs a week. Under one, `met ÷ elapsed` is a rate with an
+#: enormous error bar and no way to show it, so no weekly pace is stated.
+MIN_DAYS_FOR_A_WEEKLY_RATE = 7
+
 #: Runs that went wrong. TERMINATED_REFUSALS is deliberately NOT here.
 #:
 #: A run that hit the refusal cap did not fail; it asked for things the rules
@@ -65,53 +90,65 @@ DEAD_STATUSES = (RunStatus.FAILED, RunStatus.REAPED, RunStatus.KILLED)
 PROBE_STATUSES = (RunStatus.TERMINATED_REFUSALS,)
 
 
-def _met_count(session: Session, project_id: str, since) -> int:
-    """MET transitions in the window that represent scope actually landing.
+def countable_scope(session: Session, project_id: str) -> list[Requirement]:
+    """The requirements whose landing means the deliverable moved.
 
-    Two exclusions, both about not inflating the denominator of a promise.
+    ONE definition, because the pace and the burn-up used to hold two. The
+    chart's line counted every MET event bar R-00; the pace behind the chart's
+    own forecast dropped standing and metric requirements as well. Two
+    datasets, one picture, and a dashed projection drawn from numbers the solid
+    line beside it did not agree with.
+
+    Three exclusions, each already argued for somewhere in this file:
 
     R-00 is the plan gate lifting, not scope landing, and counting it would
     gift every project one free unit of pace in its first week.
+    `policy.scope_requirements` drops it, and is cycle-scoped for Operate — so
+    a numerator taken from here matches the `remaining` denominator, which has
+    always come from the same place.
 
-    Standing requirements are excluded for a sharper reason. They are met
-    again every cycle by design — the memo, the sweep, the routing check — so
-    an Operate project owing three of them weekly would post three met-events a
-    week forever. Fed to `commitment_projection`, that pace divides the
-    remaining scope into an ever-nearer delivery date, and the platform would
-    promise the chairman a date its own rhythm had manufactured. Whether a
-    standing obligation is being honoured is a real question with a real
-    answer — "met in 23 of the last 24 cycles" — and it lives in
-    RequirementCycleResult, where it cannot be mistaken for progress.
+    Standing requirements are met again every cycle by design — the memo, the
+    sweep, the routing check — so an Operate project owing three of them
+    weekly would post three met-events a week forever. Fed to
+    `commitment_projection`, that pace divides the remaining scope into an
+    ever-nearer delivery date, and the platform would promise the chairman a
+    date its own rhythm had manufactured. Whether a standing obligation is
+    honoured is a real question with a real answer — "met in 23 of the last 24
+    cycles" — and it lives in RequirementCycleResult, where it cannot be
+    mistaken for progress.
+
+    Metric requirements go for the reason `project_velocity` subtracts them
+    from `remaining`: a season-long rank target landing would have made the
+    remaining MEMOS look faster.
+
+    Proposed and cut are out because they are not in force — the same cut
+    `policy.commitment_scope_keys` makes, so a burn-up built from this can
+    never climb above the total built from that.
     """
     from yaaf.server import metrics as metrics_mod
 
-    plan = policy.plan_requirement(session, project_id)
-    excluded = [
-        r.id for r in session.execute(
-            select(Requirement).where(Requirement.project_id == project_id)
-        ).scalars()
-        # Standing, for the reason above. And metric requirements, because
-        # `project_velocity` subtracts them from `remaining` — counting a
-        # settled one here would raise the pace on a denominator that
-        # deliberately excludes it, and `commitment_projection` divides one by
-        # the other to promise the chairman a date. A season-long rank target
-        # landing would have made the remaining MEMOS look faster.
-        if r.recurrence == Recurrence.STANDING
-        or metrics_mod.is_metric(r.acceptance_test)
+    return [
+        r
+        for r in policy.scope_requirements(session, project_id)
+        if r.status not in (RequirementStatus.PROPOSED, RequirementStatus.CUT)
+        and r.recurrence != Recurrence.STANDING
+        and not metrics_mod.is_metric(r.acceptance_test)
     ]
-    stmt = (
-        select(func.count(RequirementEvent.id))
-        .where(
+
+
+def _met_count(session: Session, project_id: str, since) -> int:
+    """MET transitions in the window that represent scope actually landing."""
+    countable = [r.id for r in countable_scope(session, project_id)]
+    if not countable:
+        return 0
+    return session.execute(
+        select(func.count(RequirementEvent.id)).where(
             RequirementEvent.project_id == project_id,
             RequirementEvent.to_status == RequirementStatus.MET,
             RequirementEvent.at >= since,
+            RequirementEvent.requirement_id.in_(countable),
         )
-    )
-    if plan is not None:
-        stmt = stmt.where(RequirementEvent.requirement_id != plan.id)
-    if excluded:
-        stmt = stmt.where(RequirementEvent.requirement_id.not_in(excluded))
-    return session.execute(stmt).scalar_one()
+    ).scalar_one()
 
 
 def standing_record(session: Session, project_id: str, cycles: int = 12) -> list[dict]:
@@ -241,12 +278,44 @@ def _worst_failure(session: Session, project_id: str) -> dict | None:
             "statement": worst.statement[:200]}
 
 
+def _observed_days(project: Project | None, window_days: int, now) -> float:
+    """How much of the window this project was actually alive for.
+
+    A window is a promise about how far back we looked, not about how long the
+    project has existed. Dividing by the nominal 21 days scored a thirteen-day
+    project as though eight days of silence had been measured and found empty:
+    one requirement met became 0.33/week instead of 0.54, the projection landed
+    weeks past a date the project was in fact on course for, and the chairman
+    was mailed an at-risk warning manufactured by the arithmetic. Pessimism
+    that lands hardest on the youngest projects is not conservatism; it is a
+    bug with a direction.
+    """
+    if project is None or project.created_at is None:
+        return float(window_days)
+    age_days = (now - project.created_at).total_seconds() / 86400
+    return max(0.0, min(float(window_days), age_days))
+
+
+def _per_week(met: int, observed_days: float) -> float:
+    """A rate, or 0.0 when the window is too short to have measured one.
+
+    0.0 rather than None because every reader downstream already treats "no
+    pace" as falsy — `commitment_projection` falls through to the longer
+    window, `weeks_left_at_pace` declines to divide, and the screen hides the
+    sentence. A new sentinel would need all three taught about it.
+    """
+    if observed_days < MIN_DAYS_FOR_A_WEEKLY_RATE:
+        return 0.0
+    return round(met / (observed_days / 7), 2)
+
+
 def project_velocity(session: Session, project_id: str) -> dict:
     """The block the context pack ships and the Plan screen draws. One
     producer, so the CEO and the chairman are always reading the same pace."""
     now = utcnow()
     short_since = now - timedelta(days=SHORT_WINDOW_DAYS)
     long_since = now - timedelta(days=LONG_WINDOW_DAYS)
+    project = session.get(Project, project_id)
 
     met_short = _met_count(session, project_id, short_since)
     met_long = _met_count(session, project_id, long_since)
@@ -270,7 +339,8 @@ def project_velocity(session: Session, project_id: str) -> dict:
     # as the STANDING exclusion in `_met_count`, one object further along.
     metric_reqs = [r for r in open_scope if metrics_mod.is_metric(r.acceptance_test)]
     remaining = len(open_scope) - len(metric_reqs)
-    per_week_short = round(met_short / (SHORT_WINDOW_DAYS / 7), 2)
+    observed_short = _observed_days(project, SHORT_WINDOW_DAYS, now)
+    per_week_short = _per_week(met_short, observed_short)
     scoreboard = [metrics_mod.scoreboard(session, r) for r in metric_reqs]
 
     return {
@@ -282,13 +352,29 @@ def project_velocity(session: Session, project_id: str) -> dict:
         "met_3w": met_short,
         "per_week_3w": per_week_short,
         "met_12w": met_long,
-        "per_week_12w": round(met_long / (LONG_WINDOW_DAYS / 7), 2),
+        "per_week_12w": _per_week(met_long, _observed_days(project, LONG_WINDOW_DAYS, now)),
         "remaining": remaining,
+        # What the pace was actually measured over, so a reader can tell a
+        # slow project from a young one. Both report a low rate; only one of
+        # them is a problem.
+        "measured_over_days": round(observed_short, 1),
+        "met_sample": met_short,
+        # Whether `per_week_3w` is a measurement at all. Without this a screen
+        # has no way to tell "nothing is landing" from "nothing has had time
+        # to land yet", and would print a confident 0 a week over a project
+        # two days old — a slander the arithmetic cannot support.
+        "pace_known": bool(per_week_short) and met_short >= MIN_MET_FOR_PACE,
         # The naive read of the pace, here so nobody computes it two ways.
         # None while there is no pace at all: "infinite weeks" helps nobody,
-        # and a made-up number would be worse.
+        # and a made-up number would be worse. The sample floor applies here
+        # for the same reason it applies in `commitment_projection` — this is
+        # the same division, and the screen quoting a confident "6.1 weeks"
+        # beside a projection that declined to name a date would be the
+        # platform disagreeing with itself in public.
         "weeks_left_at_pace": (
-            round(remaining / per_week_short, 1) if per_week_short > 0 else None
+            round(remaining / per_week_short, 1)
+            if per_week_short > 0 and met_short >= MIN_MET_FOR_PACE
+            else None
         ),
         # Said out loud, because "1.1 weeks left" on a project with an open
         # season-long target is true about the work and a lie about the goal.
@@ -308,11 +394,19 @@ def commitment_projection(session: Session, project: Project, cons: Constitution
     screen draws it — one function, so none of them can ever disagree.
 
     Measured pace first: remaining ÷ met-per-week, trailing 3 weeks, falling
-    back to 12. A project that has met nothing yet has no pace to divide by,
-    so it falls back to the plan's own arithmetic — adjusted runs at the daily
-    cap, the same sum the feasibility refusals quote. The basis is named in
-    the result, because a date that cannot say where it came from is an
-    assertion, not a forecast.
+    back to 12 — but only once MIN_MET_FOR_PACE requirements have actually
+    landed. A project that has met nothing yet, or too little to have a pace,
+    falls back to the plan's own arithmetic — adjusted runs at the daily cap,
+    the same sum the feasibility refusals quote. The basis is named in the
+    result, because a date that cannot say where it came from is an assertion,
+    not a forecast.
+
+    The floor is not decoration. Without it one requirement landing was a
+    "measured pace" of 0.33/week, and that number does not stay on the screen:
+    it flips the commitment to AT_RISK and hard-refuses the CEO's next
+    requirement with a 409. A promise frozen on the strength of a single
+    observation is the platform manufacturing the very lateness it is warning
+    about.
     """
     pace = project_velocity(session, project.id)
     remaining = pace["remaining"]
@@ -321,23 +415,31 @@ def commitment_projection(session: Session, project: Project, cons: Constitution
         return {"known": True, "remaining": 0, "method": "settled",
                 "projected_done_at": now,
                 "basis": "nothing is open — the scope is settled"}
-    per_week = pace["per_week_3w"] or pace["per_week_12w"]
+    # Each window carries its own sample, so the floor has to be checked
+    # against the one whose rate is about to be divided by.
+    per_week = window = sample = None
+    for rate, met, name in ((pace["per_week_3w"], pace["met_3w"], "3 weeks"),
+                            (pace["per_week_12w"], pace["met_12w"], "12 weeks")):
+        if rate and met >= MIN_MET_FOR_PACE:
+            per_week, window, sample = rate, name, met
+            break
     if per_week:
-        window = "3 weeks" if pace["per_week_3w"] else "12 weeks"
         projected = now + timedelta(weeks=remaining / per_week)
         return {"known": True, "remaining": remaining, "method": "velocity",
                 "per_week": per_week, "projected_done_at": projected,
                 "basis": f"{remaining} open requirement(s) at the measured pace of "
-                         f"{per_week}/week (trailing {window})"}
+                         f"{per_week}/week ({sample} met in the trailing {window})"}
     sums = policy.plan_arithmetic(session, project, cons)
     if sums["adjusted_runs"] > 0 and cons.runs_per_project_per_day:
         days = sums["adjusted_runs"] / cons.runs_per_project_per_day
+        too_few = (f"only {pace['met_3w']} requirement(s) have landed, which is not yet a pace"
+                   if pace["met_3w"] else "nothing has been met yet")
         return {"known": True, "remaining": remaining, "method": "plan_arithmetic",
                 "projected_done_at": now + timedelta(days=days),
-                "basis": f"nothing met yet, so this is the plan's own arithmetic: "
+                "basis": f"{too_few}, so this is the plan's own arithmetic: "
                          f"{sums['adjusted_runs']} adjusted runs at "
                          f"{cons.runs_per_project_per_day}/day ≈ {round(days, 1)} days — "
                          "an at-the-cap best case, not a measured pace"}
     return {"known": False, "remaining": remaining,
-            "why": "nothing has been met and nothing is estimated — there is no "
-                   "arithmetic to project a date from"}
+            "why": "too little has been met to measure a pace and nothing is "
+                   "estimated — there is no arithmetic to project a date from"}

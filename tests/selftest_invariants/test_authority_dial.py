@@ -305,12 +305,18 @@ def test_the_dial_is_not_the_ceos_to_turn(client):
 def slipped(client, slug: str, dial: dict):
     """An autonomous-by-default project whose promise has stopped holding.
 
-    Three requirements in scope, one met, a two-day promise: the measured pace
-    lands the projection weeks past the date, which is the state the whole of
-    this section is about.
+    Six requirements in scope, two met over a fortnight, a two-day promise: the
+    measured pace lands the projection weeks past the date, which is the state
+    the whole of this section is about.
+
+    It used to reach that state on one met requirement out of three. That is
+    the arithmetic `velocity.MIN_MET_FOR_PACE` now refuses — a pace of
+    "0.33/week" from a single observation — so the fixture buys its slippage
+    with a real measurement instead. What the tests below assert is unchanged.
     """
     from datetime import timedelta
 
+    from tests.conftest import backdate_project
     from tests.selftest_invariants.test_commitments import (
         committed_project,
         fabricate_met,
@@ -319,7 +325,8 @@ def slipped(client, slug: str, dial: dict):
     from yaaf.core.models import utcnow
 
     project, tok, rids, proposed = committed_project(
-        client, slug=slug, scope=3, constitution=dial)
+        client, slug=slug, scope=6, constitution=dial)
+    backdate_project(project["id"], hours=14 * 24)
     cid, tight = proposed["commitment_id"], utcnow() + timedelta(days=2)
     # Under the autonomous dial the CEO has already signed, so there is nothing
     # left to accept — the chairman tightens the date instead. Both paths end
@@ -335,6 +342,7 @@ def slipped(client, slug: str, dial: dict):
             headers=ADMIN)
     assert signed.status_code == 200, signed.text
     fabricate_met(project["id"], rids[0])
+    fabricate_met(project["id"], rids[1])
     run_commitment_check(project)
     return project, tok, cid
 

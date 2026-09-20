@@ -64,7 +64,12 @@ from yaaf.server.deps import admin_auth, db
 from yaaf.server.dispatcher import activity_state, chat_session_live
 from yaaf.server.receipt import receipt as receipt_projection
 from yaaf.server.rows import approval_row
-from yaaf.server.velocity import commitment_projection, project_velocity, standing_record
+from yaaf.server.velocity import (
+    commitment_projection,
+    countable_scope,
+    project_velocity,
+    standing_record,
+)
 
 router = APIRouter(dependencies=[Depends(admin_auth)])
 
@@ -999,23 +1004,47 @@ def plan_view(project_id: str, session: Session = Depends(db)) -> dict:
             "met_at": (commitment_row.met_at.isoformat()
                        if commitment_row.met_at else None),
         }
-        # Cumulative MET over time — the burn-up's line. R-00 excluded for the
-        # same reason velocity excludes it: the gate lifting is not scope
-        # landing.
-        met_stmt = (
-            select(RequirementEvent.at)
-            .where(RequirementEvent.project_id == project.id,
-                   RequirementEvent.to_status == RequirementStatus.MET)
-            .order_by(RequirementEvent.at)
-        )
-        if plan is not None:
-            met_stmt = met_stmt.where(RequirementEvent.requirement_id != plan.id)
-        met_at = [at for (at,) in session.execute(met_stmt)]
+        # How much of the scope has been true, over time — the burn-up's line.
+        #
+        # Built from `countable_scope`, the same set the pace is measured on,
+        # because the solid line and the dashed projection drawn from its tip
+        # used to come from two different datasets: the line counted every MET
+        # event but R-00, while the pace also dropped standing and metric
+        # requirements. One picture, two definitions of the same word.
+        #
+        # It tracks how many are met AT each instant rather than accumulating
+        # met-events, so it goes down when a requirement is reopened. A line
+        # that only ever rises cannot represent scope coming untrue, and the
+        # old one counted a reopened-then-re-met requirement twice — climbing,
+        # in principle, straight past its own ceiling.
+        countable = {r.id: r for r in countable_scope(session, project.id)}
+        met_points: list[dict] = []
+        if countable:
+            rows = session.execute(
+                select(RequirementEvent.requirement_id, RequirementEvent.at,
+                       RequirementEvent.to_status)
+                .where(RequirementEvent.project_id == project.id,
+                       RequirementEvent.requirement_id.in_(list(countable)))
+                .order_by(RequirementEvent.at)
+            )
+            met_now: set[str] = set()
+            for requirement_id, at, to_status in rows:
+                was_met = requirement_id in met_now
+                if to_status == RequirementStatus.MET:
+                    met_now.add(requirement_id)
+                else:
+                    met_now.discard(requirement_id)
+                if (requirement_id in met_now) != was_met:
+                    met_points.append({"at": at.isoformat(), "count": len(met_now)})
         burnup = {
-            "scope_total": len(policy.commitment_scope_keys(session, project.id)),
-            "met_points": [
-                {"at": at.isoformat(), "count": i + 1} for i, at in enumerate(met_at)
-            ],
+            "scope_total": len(countable),
+            # Counted here rather than left to callers, who were deriving it as
+            # `scope_total - velocity.remaining` — two sets that exclude
+            # different things, so the Overview's "N of M settled" ran ahead by
+            # the number of open metric requirements.
+            "settled": sum(1 for r in countable.values()
+                           if r.status == RequirementStatus.MET),
+            "met_points": met_points,
         }
 
     return {

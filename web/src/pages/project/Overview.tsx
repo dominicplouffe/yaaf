@@ -34,7 +34,7 @@ import {
   spentOf,
 } from "../../ui";
 import { BarChart, ChartHead, EmptyState, Person, Term, Verdict } from "../../ui/kit";
-import { deliveryVerdict, fmtDate } from "../../ui/project";
+import { chairmanDecides, deliveryVerdict, flagPlain, fmtDate, fullyAutonomous } from "../../ui/project";
 import Agenda from "../../agenda";
 import { PlanMeter } from "../../llmCredentials";
 import { HirePanel, gapsFor, needsOf, useRoleLibrary } from "../../roles";
@@ -286,28 +286,37 @@ function verdictBody(
 ) {
   const v = ctx.plan?.velocity;
   const c = ctx.plan?.commitment;
-  const settled = ctx.plan?.burnup
-    ? ctx.plan.burnup.scope_total - (v?.remaining ?? 0)
-    : null;
+  // The server's own count, not `scope_total - remaining`: those two exclude
+  // different things, so this sentence used to run ahead by the number of open
+  // metric requirements — and disagree with the chart below it.
+  const settled = ctx.plan?.burnup ? ctx.plan.burnup.settled : null;
 
   if (daysLate !== null && c?.projected_done_at) {
+    // Name the date. "8 days past the date you signed" left the reader to go
+    // and look up which date that was, in a sentence whose whole job was to
+    // tell him he had missed it — and quoted a pace without it, so "32 a week
+    // and 3 left" read like good news attached to a complaint.
+    const yours = chairmanDecides(dash, "scope_authority")
+      || chairmanDecides(dash, "commitment_authority");
     return (
       <>
-        {v && v.per_week_3w > 0 ? (
+        {v && v.pace_known && v.remaining > 0 ? (
           <>
-            Your team is settling requirements at <b>{v.per_week_3w.toFixed(2)} a week</b>. At that
-            speed the <b>{v.remaining}</b> still open finish around{" "}
-            <b>{fmtDate(c.projected_done_at)}</b> — {daysLate} day{daysLate === 1 ? "" : "s"} past
-            the date you signed.{" "}
+            <b>{v.remaining}</b> requirement{v.remaining === 1 ? " is" : "s are"} still open, and at{" "}
+            <b>{v.per_week_3w.toFixed(1)} a week</b> {v.remaining === 1 ? "it lands" : "they land"}{" "}
+            around <b>{fmtDate(c.projected_done_at)}</b> — {daysLate} day
+            {daysLate === 1 ? "" : "s"} past the <b>{fmtDate(c.deliver_by)}</b> you signed.{" "}
           </>
         ) : (
           <>
             The work still open looks like finishing around <b>{fmtDate(c.projected_done_at)}</b>,
-            which is {daysLate} day{daysLate === 1 ? "" : "s"} past the date you signed.{" "}
+            which is {daysLate} day{daysLate === 1 ? "" : "s"} past the{" "}
+            <b>{fmtDate(c.deliver_by)}</b> you signed.{" "}
           </>
         )}
-        Nothing new goes into the plan until you choose, and the work already under way carries on
-        either way.
+        {yours
+          ? "Nothing new goes into the plan until you choose, and the work already under way carries on either way."
+          : "You left scope and dates to your CEO, so it will cut something or move the date itself and tell you what it did. The work already under way carries on either way."}
       </>
     );
   }
@@ -500,6 +509,7 @@ export default function Overview({
   const receiptKeys = files?.published && new Set(files.published.map((r) => r.key));
 
   // ── needs you ──
+  const rawFlags = flagsView?.flags ?? [];
   const needs: React.ReactNode[] = [];
   for (const a of pending) {
     needs.push(
@@ -520,46 +530,6 @@ export default function Overview({
       </div>,
     );
   }
-  // A RAISED flag is the CEO having brought you a problem with a proposal —
-  // "here is what broke, here are the numbers, here is what I would do, say
-  // the word". That is a decision waiting on you, so it sits with the others —
-  // and until there was a button here it was the one row on this desk you
-  // could not answer. Pressing "read it" took you to the boardroom and left
-  // the card exactly where it was, forever on the kinds nothing resolves.
-  const rawFlags = flagsView?.flags ?? [];
-  for (const f of rawFlags.filter((f) => f.status === "raised" && !f.acknowledged_at)) {
-    needs.push(
-      <div className="arow" key={f.id}>
-        <span className="chip serious">{f.kind.replaceAll("_", " ")}</span>
-        <div className="grow">
-          <div className="tt">{clip(f.summary)}</div>
-          <div className="sb">
-            {f.proposal ? `proposes: ${clip(f.proposal)}` : "raised without a proposal"}
-          </div>
-          {/* The third thing every row on this desk owes its reader, and the
-              one this card never said: what happens if you do nothing. For a
-              flag the honest answer is "the CEO carries on" — it does not
-              block and it does not expire, which is exactly why it needs an
-              answer rather than a deadline. */}
-          <div className="sb help">
-            The platform opened this from arithmetic and made the CEO bring it to you. Nothing
-            here blocks or expires — it proceeds on its proposal unless you say otherwise.
-          </div>
-        </div>
-        <NoteAction
-          label="Noted"
-          className="small primary"
-          placeholder="Anything to say back? — the CEO reads this"
-          confirmLabel="✓ noted"
-          onSubmit={async (note) => {
-            await post(`/admin/flags/${f.id}/ack`, { note });
-            reloadFlags();
-          }}
-        />
-        <Link to={`/projects/${projectId}/boardroom`}>the CEO's case →</Link>
-      </div>,
-    );
-  }
   for (const h of expiredBets) {
     needs.push(
       <div className="arow" key={h.id}>
@@ -569,6 +539,50 @@ export default function Overview({
           <div className="sb">you hold the one extension — or let it stand and the CEO pivots</div>
         </div>
         <Link to={`/projects/${projectId}/progress/board`}>decide →</Link>
+      </div>,
+    );
+  }
+
+  // ── your CEO is telling you ──
+  //
+  // A raised flag is the CEO bringing you something with a proposal. It does
+  // not block, it does not expire, and it proceeds on that proposal whether or
+  // not you answer — which is the exact test the `watch` zone below was
+  // written around: "nothing expires, nothing breaks, and no agent is waiting
+  // on it, so putting it beside an approval that auto-denies in 6 hours
+  // teaches the chairman that the needs-you count is padded".
+  //
+  // It sat under "Waiting on you" anyway, with a sentence underneath admitting
+  // it did not belong there. On an autonomous project that was the whole of
+  // the desk: a count of 1, a heading claiming it was his, and nothing he
+  // could do that would change anything. Reading is a real thing to ask of a
+  // chairman. It is not deciding, and the heading now says which one it is.
+  const news: React.ReactNode[] = [];
+  for (const f of rawFlags.filter((f) => f.status === "raised" && !f.acknowledged_at)) {
+    const plain = flagPlain(f.kind);
+    news.push(
+      <div className="arow" key={f.id}>
+        <span className="chip serious">to read</span>
+        <div className="grow">
+          <div className="tt">{plain.title}</div>
+          <div className="sb">{plain.means}</div>
+          <div className="sb help">
+            Your CEO proposes: {f.proposal ? clip(f.proposal) : "nothing yet"}. It goes ahead on
+            that unless you say otherwise — nothing here blocks or expires.
+          </div>
+          <div className="sb help">In the platform's own words: {clip(f.summary)}</div>
+        </div>
+        <NoteAction
+          label="Noted"
+          className="small"
+          placeholder="Anything to say back? — the CEO reads this"
+          confirmLabel="✓ noted"
+          onSubmit={async (note) => {
+            await post(`/admin/flags/${f.id}/ack`, { note });
+            reloadFlags();
+          }}
+        />
+        <Link to={`/projects/${projectId}/boardroom`}>the CEO's case →</Link>
       </div>,
     );
   }
@@ -594,11 +608,11 @@ export default function Overview({
       <div className="wrow" key={f.id}>
         <span className="badge serious">not yet raised</span>
         <div className="grow">
-          {clip(f.summary)}{" "}
+          <b>{flagPlain(f.kind).title}</b>{" "}
           <span className="help">
             — the platform opened this{f.opened_at ? ` ${fmtWhenShort(f.opened_at)}` : ""}; your
             CEO is required to bring it to the boardroom with a proposal, and the reporting
-            cadence does not hold it back.
+            cadence does not hold it back. In its own words: {clip(f.summary)}
           </span>
         </div>
         <Link to={`/projects/${projectId}/boardroom`}>ask about it →</Link>
@@ -615,7 +629,7 @@ export default function Overview({
       <div className="wrow" key={f.id}>
         <span className="badge">noted</span>
         <div className="grow">
-          {clip(f.summary)}{" "}
+          <b>{flagPlain(f.kind).title}</b>{" "}
           <span className="help">
             — still true. You noted this
             {f.acknowledged_at ? ` ${fmtWhenShort(f.acknowledged_at)}` : ""}
@@ -750,16 +764,30 @@ export default function Overview({
           tone={verdict.tone === "good" ? undefined : verdict.tone}
           headline={verdict.headline}
           actions={
-            verdict.daysLate !== null ? (
-              <>
+            // Two imperatives for a decision the dial may have handed to the
+            // CEO. On an autonomous project the CEO resets its own date and
+            // cuts its own scope, so these buttons asked the chairman to do a
+            // job that was not his and that doing would not have helped.
+            verdict.daysLate === null ? undefined
+              : chairmanDecides(dash, "commitment_authority")
+                  || chairmanDecides(dash, "scope_authority") ? (
+                <>
+                  {chairmanDecides(dash, "scope_authority") && (
+                    <Link to={`/projects/${projectId}/progress`}>
+                      <button className="primary">Drop something from the plan</button>
+                    </Link>
+                  )}
+                  {chairmanDecides(dash, "commitment_authority") && (
+                    <Link to={`/projects/${projectId}/progress`}>
+                      <button>Move the delivery date</button>
+                    </Link>
+                  )}
+                </>
+              ) : (
                 <Link to={`/projects/${projectId}/progress`}>
-                  <button className="primary">Drop something from the plan</button>
+                  <button>See what your CEO is doing about it</button>
                 </Link>
-                <Link to={`/projects/${projectId}/progress`}>
-                  <button>Move the delivery date</button>
-                </Link>
-              </>
-            ) : undefined
+              )
           }
         >
           <p>{verdictBody(dash, ctx, verdict.daysLate, needs.length)}</p>
@@ -768,7 +796,18 @@ export default function Overview({
 
       {needs.length > 0 ? (
         <>
-          <h2 className="zone hot">Waiting on you <span className="cnt">{needs.length}</span></h2>
+          <h2 className="zone hot">
+            Needs a decision from you <span className="cnt">{needs.length}</span>
+          </h2>
+          {/* What every row here has in common, said once at the top rather
+              than argued row by row: leave it alone and it decides itself,
+              against you. Nothing that merely wants reading belongs under this
+              heading. */}
+          <p className="help" style={{ margin: "0 0 var(--s3)" }}>
+            Each of these decides itself if you leave it — an approval denies itself, a question
+            falls back to your CEO's stated default. Everything else on this page is yours to
+            read, not to answer.
+          </p>
           <div className="arows">{needs}</div>
         </>
       ) : (
@@ -776,14 +815,27 @@ export default function Overview({
           {/* Proves it is quiet rather than asserting it. "Nothing waiting on
               you" over a screen that cannot say whether anything is running is
               the sentence that teaches people to stop believing the screen. */}
-          <EmptyState good title="Nothing is waiting on you here.">
-            {dash.runs.running > 0
-              ? `${dash.runs.running} ${dash.runs.running === 1 ? "person is" : "people are"} working on this right now.`
-              : dash.runs.queued > 0
-                ? `${dash.runs.queued} ${dash.runs.queued === 1 ? "piece" : "pieces"} of work are queued to start.`
-                : "Nobody is working on it at this moment — the calendar below says when the next thing wakes up."}
+          <EmptyState good title="Nothing needs a decision from you.">
+            {fullyAutonomous(dash)
+              ? "You set this project to run itself, so scope, dates and verdicts are your CEO's "
+                + "to call. It will still bring you anything the platform makes it bring you — "
+                + "that appears below, to read rather than to answer."
+              : dash.runs.running > 0
+                ? `${dash.runs.running} ${dash.runs.running === 1 ? "person is" : "people are"} working on this right now.`
+                : dash.runs.queued > 0
+                  ? `${dash.runs.queued} ${dash.runs.queued === 1 ? "piece" : "pieces"} of work are queued to start.`
+                  : "Nobody is working on it at this moment — the calendar below says when the next thing wakes up."}
           </EmptyState>
         </div>
+      )}
+
+      {news.length > 0 && (
+        <>
+          <h2 className="zone">
+            Your CEO is telling you <span className="cnt">{news.length}</span>
+          </h2>
+          <div className="arows">{news}</div>
+        </>
       )}
 
       <h2 className="zone">What you are paying for</h2>

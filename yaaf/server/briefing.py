@@ -999,8 +999,20 @@ def _waiting(session: Session, project: Project, cons: ConstitutionDoc) -> dict:
         "commitment": waiting["commitment"] is not None,
         "flags_raised": raised_flags,
         "open_reviews": int(open_review),
+        # Decisions only. `awaiting_chairman` above is careful that every
+        # member of it is a decision the dial left with the chairman — "which
+        # is what lets an autonomous project read empty and mean it" — and
+        # this total then added raised flags and open reviews on top, which
+        # broke exactly that property in the one place it is quoted out loud:
+        # "N now waiting on you", in his email, about a flag that proceeds on
+        # the CEO's proposal whether he answers or not.
         "total": (len(pending) + len(waiting["plan"]) + len(waiting["verdicts"])
-                  + (1 if waiting["commitment"] else 0) + raised_flags + int(open_review)),
+                  + (1 if waiting["commitment"] else 0)),
+        # Real, and worth saying — just not the same sentence. A thing to read
+        # counted beside a thing that denies itself in six hours teaches the
+        # reader that the number is padded, and then the number that matters
+        # stops being read.
+        "to_read": raised_flags + int(open_review),
     }
 
 
@@ -1130,8 +1142,7 @@ def _headline(project: Project, lines: list[dict], pulse: dict, waiting: dict,
         elif pulse["running"]:
             sentence += f", and {pulse['running']} {_plural(pulse['running'], 'run')} " \
                         "are in flight right now"
-        if waiting["total"]:
-            sentence += f". {waiting['total']} now waiting on you"
+        sentence += _waiting_tail(waiting)
         return sentence + "."
     counts = {line["kind"]: (line["count"] or 0) for line in lines}
     parts: list[str] = []
@@ -1178,9 +1189,24 @@ def _headline(project: Project, lines: list[dict], pulse: dict, waiting: dict,
             else "Nothing settled"
         sentence = opener + (f" — but {setback['text']}" if setback and landed
                              else f" — {setback['text']}" if setback else "")
-    if waiting["total"]:
-        sentence += f". {waiting['total']} now waiting on you"
+    sentence += _waiting_tail(waiting)
     return sentence + "."
+
+
+def _waiting_tail(waiting: dict) -> str:
+    """What this leaves him, with the two kinds kept apart.
+
+    A decision decides itself if he ignores it; a flag or an open review does
+    not. Counting them together produced "3 now waiting on you" for one
+    approval and two things to read, and a chairman who acts on that sentence
+    twice and finds nothing to do the third time has learned to skip it.
+    """
+    parts = []
+    if waiting["total"]:
+        parts.append(f"{waiting['total']} now waiting on your decision")
+    if waiting.get("to_read"):
+        parts.append(f"{waiting['to_read']} to read")
+    return f". {' and '.join(parts)}" if parts else ""
 
 
 # ── the composers ───────────────────────────────────────────────────────────────
