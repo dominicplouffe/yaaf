@@ -1073,11 +1073,18 @@ export interface PlanCommitment {
 
 export interface PlanBurnup {
   scope_total: number;
+  /** How many of `scope_total` are true right now. Counted server-side from
+      the same set the line is drawn from, because deriving it here as
+      `scope_total - velocity.remaining` subtracted two sets that exclude
+      different things. */
+  settled: number;
   met_points: { at: string; count: number }[];
 }
 
 export interface PlanView {
-  mode: string;
+  /** Narrowed from `string` so a mis-typed mode in a gate is a build error
+      rather than a chart that silently never draws. */
+  mode: "explore" | "deliver" | "operate";
   planless: boolean;
   commitment?: PlanCommitment | null;
   burnup?: PlanBurnup | null;
@@ -1106,6 +1113,11 @@ export interface PlanView {
     per_week_12w: number;
     remaining: number;
     weeks_left_at_pace: number | null;
+    /** False when too little has settled, or too recently, for `per_week_3w`
+        to be a measurement. A screen that prints the rate anyway says "0 a
+        week" about a project two days old. */
+    pace_known: boolean;
+    measured_over_days: number;
     runs_3w: { total: number; dead: number; failure_share: number;
       attributed_share: number; usd: number;
       work: number; inbox: number; noop: number;
@@ -1133,6 +1145,10 @@ export interface ReviewNumbers {
   velocity: {
     per_week_3w: number; per_week_12w: number; remaining: number;
     weeks_left_at_pace: number | null;
+    /** Optional: review numbers are a JSON snapshot written at review time, so
+        meetings held before this field existed do not carry it. Absent means
+        "this snapshot cannot say", not "there was no pace". */
+    pace_known?: boolean;
     runs_3w: { total: number; dead: number; failure_share: number };
     worst_failure: { key: string; failure_load: number } | null;
   };

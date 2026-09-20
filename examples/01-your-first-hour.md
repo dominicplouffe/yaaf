@@ -66,10 +66,12 @@ paragraph.
 
 ## What to look at while you wait
 
-- **Plan → the burn-up.** Two lines: how much of the scope is true, and where
-  the platform projects it landing. On a four-requirement project this is
-  almost a joke — which is the point. Watch it here so it means something on a
-  forty-requirement one.
+- **Plan → the promise.** How much of the scope is true, and where the platform
+  projects it landing. On a four-requirement project you will see this as
+  numbers rather than a chart, deliberately: a line drawn through one or two
+  points is the number said twice with a slope nobody can check. Once enough
+  has settled over enough days it becomes the burn-up, and the same card
+  answers the same question either way.
 - **Records → Runs.** Every model call: which agent, why it woke, what it cost,
   and the full trace. Open one. This is where you learn what your agents are
   actually spending money on.

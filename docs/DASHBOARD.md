@@ -394,7 +394,13 @@ The tab that answers "when will this be done, and how would you know?"
   pace per week, waste (dead runs, with the worst offender named), and how many
   runs the remaining budget actually buys.
 - **The burn-up.** Requirements settled true against scope, with the committed
-  date and the projected date as two lines you can compare at a glance.
+  date and the projected date as marks you can compare at a glance. **Deliver
+  projects only** — work that comes round again has no line to burn up, so an
+  Operate project gets "Owed every cycle" instead, which says which obligation
+  slipped and in which turn. When a plan is too small or too young to have a
+  shape — fewer than three settled, fewer than three in scope, or everything
+  settled inside one day — the same facts are stated as numbers rather than
+  drawn as a line through one point.
 - **Stages and dependencies.** One toggle over the same data: stages in order,
   or the dependency graph with the server-computed critical path. Work in a
   stage beyond the open one is refused until the open one settles.

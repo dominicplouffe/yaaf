@@ -9,7 +9,7 @@ import {
 } from "../../api";
 import { usePoll } from "../../hooks";
 import { AsOf, ConfirmModal, ExportCsv, NoteAction, Skeleton, clip, downloadCsv } from "../../ui";
-import { ChartHead, plainStatus } from "../../ui/kit";
+import { Badge, ChartHead, EmptyState, plainStatus } from "../../ui/kit";
 import type { ProjectCtx } from "../Project";
 
 /** The visual plan the chairman asked for — twice — before it was twice
@@ -444,12 +444,97 @@ function SlippingCommitment({ c, onDone }: { c: PlanCommitment; onDone: () => vo
 
 const CW = 760, CH = 268, CL = 46, CR = 18, CT = 20, CB = 56;
 
+/** The value axis stops short of the frame. When "all N settled" WAS the top
+    of the picture, a project that had settled everything drew its last and
+    longest run — the days between the final requirement and today — along the
+    border, where a 2.5px accent line is indistinguishable from the frame
+    itself. The one mark encoding elapsed time was invisible. */
+const YTOP = CT + 18;
+
+/** Padding is a fraction of the window drawn, not of the promise. The window
+    used to start exactly at the first mark, so the first point was painted on
+    the left wall by construction — which is why every small project looked
+    like a single vertical line at the edge — and to end 8% of the whole
+    promise past the last, so a ninety-day commitment squeezed three weeks of
+    real work into the first inch of the frame. */
+const PAD_LEFT = 0.07, PAD_RIGHT = 0.11;
+
+/** A week is the narrowest honest window: this chart's unit is requirements
+    per week, and an axis of hours stretched over 700px is noise at full width. */
+const MIN_SPAN_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** A projection years past the promise is honest arithmetic and a useless
+    picture: one dashed line to 2031 flattens everything that happened into a
+    smudge at the origin. Past this the line runs to the wall and says so. */
+const HORIZON = 1.6;
+
+/** Wide enough for the longest bottom label plus air. Three dates share one
+    ruler, so collision is a question about every pair — not just about the
+    promise and the projection, which is all the old test asked. */
+const LABEL_W = 96;
+
+/** Below any of these there is no shape to draw, so the card states the
+    numbers instead. A line through two points is the number above it said
+    twice, with a slope nobody can check; a two-requirement scale makes every
+    step half the plot height; and a set of marks written inside one morning
+    is a moment, not a window. */
+const MIN_POINTS = 3, MIN_SCOPE = 3, MIN_SPREAD_MS = 24 * 60 * 60 * 1000;
+
 /** Keeps a label inside the frame and points it away from the wall it is
     nearest, which is the whole of the fix for the clipped axis label. */
 function labelAt(px: number): { x: number; anchor: "start" | "middle" | "end" } {
   if (px < CL + 34) return { x: CL, anchor: "start" };
   if (px > CW - CR - 34) return { x: CW - CR, anchor: "end" };
   return { x: px, anchor: "middle" };
+}
+
+/** "in 12 days" / "11 days ago". A date a reader has to do arithmetic on to
+    place against today is a date that has not finished being written. */
+function dayGap(t: number, now: number): string {
+  const days = Math.round((t - now) / 86400000);
+  if (days === 0) return "today";
+  return days > 0
+    ? `in ${days} day${days === 1 ? "" : "s"}`
+    : `${-days} day${days === -1 ? "" : "s"} ago`;
+}
+
+interface Mark {
+  at: number; top: string; bottom: string;
+  colour: string; weight: number; dashed: boolean;
+}
+
+/** Two dates a label's width apart on screen are one label, whatever they are
+    a fortnight apart in the data. Folding over all three — today, the promise,
+    the projection — rather than testing the promise against the projection
+    alone is what stops "today" and "now expected" being painted on top of each
+    other every time the scope settles and the projection becomes today. */
+function mergeMarks(marks: Mark[], x: (t: number) => number): Mark[] {
+  const out: Mark[] = [];
+  for (const m of [...marks].sort((a, b) => a.at - b.at)) {
+    const prev = out[out.length - 1];
+    const collides = prev !== undefined && (
+      Math.abs(x(m.at) - x(prev.at)) < LABEL_W ||
+      fmtDay(new Date(prev.at).toISOString()) === fmtDay(new Date(m.at).toISOString())
+    );
+    if (!collides) { out.push({ ...m }); continue; }
+    // The rule stands at the later of the two: of "promised the 20th" and
+    // "expected the 21st", the one a reader must not be told is early is the
+    // later one.
+    //
+    // But the label keeps BOTH dates. Collapsing "promised Oct 2" and
+    // "expected Oct 4" into a single "Oct 4 — you promised · now expected"
+    // moves the promise three days to the right and puts the chart at odds
+    // with the tile above it, which still reads Oct 2. Two dates close enough
+    // to share a label are not the same date.
+    const day = fmtDay(new Date(m.at).toISOString());
+    if (!prev.top.split(" → ").includes(day)) prev.top = `${prev.top} → ${day}`;
+    prev.at = Math.max(prev.at, m.at);
+    prev.bottom = `${prev.bottom} → ${m.bottom}`;
+    if (m.weight >= prev.weight) prev.colour = m.colour;
+    prev.weight = Math.max(prev.weight, m.weight);
+    prev.dashed = prev.dashed || m.dashed;
+  }
+  return out;
 }
 
 function yTicks(scope: number): number[] {
@@ -461,63 +546,169 @@ function yTicks(scope: number): number[] {
   return out;
 }
 
-function Burnup({ c, burnup }: { c: PlanCommitment; burnup: PlanBurnup }) {
-  const now = Date.now();
-  const points = burnup.met_points.map((p) => ({ t: new Date(p.at).getTime(), n: p.count }));
-  const start = Math.min(
-    c.accepted_at ? new Date(c.accepted_at).getTime() : now,
-    points.length ? points[0].t : now,
-  );
+interface BurnupFacts {
+  scope: number;
+  settled: number;
+  open: number | null;
+  points: { t: number; n: number }[];
+  deliverBy: number;
+  projected: number | null;
+  late: boolean;
+  daysLate: number | null;
+  drawable: boolean;
+  /** Empty when drawable. Why not, in the words the card prints. */
+  why: string;
+}
+
+/** The numbers both renderings read, computed once so the picture and the
+    tiles can never say different things about the same promise. */
+function burnupFacts(c: PlanCommitment, burnup: PlanBurnup, open: number | null): BurnupFacts {
+  const scope = Math.max(burnup.scope_total, 1);
+  // The server builds the line from the same set it counts the ceiling from,
+  // so this clamp is a belt: if that ever drifts again the chart flattens at
+  // its own top instead of walking out through the frame.
+  const points = burnup.met_points.map((p) => ({
+    t: new Date(p.at).getTime(), n: Math.min(p.count, scope),
+  }));
   const deliverBy = new Date(c.deliver_by).getTime();
   const projected = c.projected_done_at ? new Date(c.projected_done_at).getTime() : null;
-  const end = Math.max(deliverBy, projected ?? 0, now) + (Math.max(deliverBy - start, 1)) * 0.08;
-  const scope = Math.max(burnup.scope_total, 1);
-  const x = (t: number) => CL + ((t - start) / (end - start)) * (CW - CL - CR);
-  const y = (n: number) => CH - CB - (n / scope) * (CH - CT - CB);
-  const settled = points.length ? points[points.length - 1].n : 0;
   const late = projected !== null && projected > deliverBy;
+  const spread = points.length ? points[points.length - 1].t - points[0].t : 0;
+
+  const why =
+    points.length === 0 ? "nothing has settled yet"
+    : points.length < MIN_POINTS
+      ? `only ${points.length} thing${points.length === 1 ? " has" : "s have"} settled so far`
+    : scope < MIN_SCOPE ? `a plan of ${scope} has no shape to show`
+    : spread < MIN_SPREAD_MS ? "everything so far settled inside one day"
+    : "";
+
+  return {
+    scope, settled: Math.min(burnup.settled, scope), open, points, deliverBy, projected, late,
+    daysLate: late ? Math.ceil((projected! - deliverBy) / 86400000) : null,
+    drawable: why === "", why,
+  };
+}
+
+/** Will the work be finished by the date you signed? The card either draws the
+    shape or states the numbers — never a line through one or two points, which
+    is the number said twice and a slope that cannot be read. */
+function Burnup({ c, burnup, open }: {
+  c: PlanCommitment; burnup: PlanBurnup; open: number | null;
+}) {
+  const f = burnupFacts(c, burnup, open);
+  return f.drawable ? <BurnupChart c={c} f={f} /> : <BurnupSummary c={c} f={f} />;
+}
+
+function BurnupSummary({ c, f }: { c: PlanCommitment; f: BurnupFacts }) {
+  const now = Date.now();
+  return (
+    <div className="card" style={{ marginBottom: "var(--s4)" }}>
+      <ChartHead
+        question="Will the work be finished by the date you signed?"
+        meta={`Requirements settled, against all ${f.scope} in the plan · as at ${fmtDay(new Date(now).toISOString())}`}
+      />
+      <div className="tiles" style={{ marginTop: 0 }}>
+        <div className="tile">
+          <div className="label">Settled</div>
+          <div className="value">{f.settled} of {f.scope}</div>
+          <div className="sub">
+            {f.open === null ? "requirements proven true"
+              : f.open === 0 ? "nothing still open" : `${f.open} still open`}
+          </div>
+        </div>
+        <div className="tile">
+          <div className="label">You promised</div>
+          <div className="value">{fmtDay(c.deliver_by)}</div>
+          <div className="sub">{dayGap(f.deliverBy, now)}</div>
+        </div>
+        {f.projected !== null && (
+          <div className={`tile${c.status === "breached" ? " alert" : ""}`}>
+            <div className="label">{f.late ? "Now expected" : "On course for"}</div>
+            <div className="value">{fmtDay(new Date(f.projected).toISOString())}</div>
+            <div className="sub">
+              <Badge tone={f.late ? "serious" : "good"}>
+                {f.late
+                  ? `${f.daysLate} day${f.daysLate === 1 ? "" : "s"} past the promise`
+                  : "inside the promise"}
+              </Badge>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {f.points.length === 0 ? (
+        <EmptyState
+          icon="target"
+          title="Nothing has settled yet"
+          foot={c.projection_basis
+            ? `Any date above is arithmetic, not a promise anybody made — ${c.projection_basis}`
+            : undefined}
+        >
+          The promise stands and the work is under way. The moment requirements
+          start being proven true there is a line worth drawing here.
+        </EmptyState>
+      ) : (
+        <p className="help" style={{ margin: "var(--s3) 0 0" }}>
+          {/* Said rather than drawn. The chart that used to be here drew a line
+              through one point, which is how it came to be a vertical bar at
+              the left edge and nothing else. */}
+          Too little has happened to draw a line worth reading — {f.why}.
+          {c.projection_basis
+            ? ` The date is arithmetic, not a promise anybody made — ${c.projection_basis}.`
+            : ""}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function BurnupChart({ c, f }: { c: PlanCommitment; f: BurnupFacts }) {
+  const now = Date.now();
+  const { scope, points, settled, deliverBy, projected, late } = f;
   const projColour = late ? "var(--serious)" : "var(--good)";
 
-  let line = `M ${x(start)} ${y(0)}`;
+  // The window is the data's, padded on both sides, floored to a week, and
+  // capped so a runaway projection cannot squeeze the work into the origin.
+  const opened = c.accepted_at ? new Date(c.accepted_at).getTime() : points[0].t;
+  const lo0 = Math.min(opened, points[0].t, now);
+  const cap = deliverBy + Math.max(deliverBy - lo0, MIN_SPAN_MS) * HORIZON;
+  const offFrame = projected !== null && projected > cap;
+  const hi0 = Math.max(now, deliverBy, offFrame ? cap : (projected ?? 0));
+  const span = Math.max(hi0 - lo0, MIN_SPAN_MS);
+  const lo = lo0 - span * PAD_LEFT;
+  const hi = lo0 + span * (1 + PAD_RIGHT);
+
+  const x = (t: number) => CL + ((t - lo) / (hi - lo)) * (CW - CL - CR);
+  const y = (n: number) => CH - CB - (n / scope) * (CH - CB - YTOP);
+
+  let line = `M ${x(lo0)} ${y(0)}`;
   let lastN = 0;
   for (const p of points) {
     line += ` L ${x(p.t)} ${y(lastN)} L ${x(p.t)} ${y(p.n)}`;
     lastN = p.n;
   }
-  line += ` L ${x(Math.min(now, end))} ${y(lastN)}`;
+  line += ` L ${x(Math.min(now, hi))} ${y(lastN)}`;
 
-  // Two dates within a label's width of each other are one label, not two
-  // drawn on top of each other.
-  // Close enough to collide, or landing on the same day: either way it is one
-  // label. Two marks reading "Sep 20" at opposite ends of the frame is a
-  // chart arguing with itself over a difference of hours.
-  const together =
-    projected !== null &&
-    (Math.abs(x(projected) - x(deliverBy)) < 86 ||
-      fmtDay(new Date(projected).toISOString()) === fmtDay(c.deliver_by));
-  const marks: { at: number; top: string; bottom: string; colour: string; weight: number }[] = [];
-  marks.push({ at: now, top: fmtDay(new Date(now).toISOString()), bottom: "today",
-    colour: "var(--muted)", weight: 1 });
-  if (together) {
-    marks.push({
-      at: deliverBy, top: fmtDay(c.deliver_by),
-      bottom: projected === null ? "you promised" : late ? "promised, and expected" : "promised, and on course",
-      colour: late ? "var(--serious)" : "var(--ink-2)", weight: 1.5,
-    });
-  } else {
-    marks.push({ at: deliverBy, top: fmtDay(c.deliver_by), bottom: "you promised",
-      colour: c.status === "breached" ? "var(--critical)" : "var(--ink-2)", weight: 1.5 });
-    if (projected !== null) {
-      marks.push({ at: projected, top: fmtDay(new Date(projected).toISOString()),
-        bottom: late ? "now expected" : "on course for", colour: projColour, weight: 1.5 });
-    }
-  }
+  const marks = mergeMarks([
+    { at: now, top: fmtDay(new Date(now).toISOString()), bottom: "today",
+      colour: "var(--muted)", weight: 1, dashed: false },
+    { at: deliverBy, top: fmtDay(c.deliver_by), bottom: "you promised",
+      colour: c.status === "breached" ? "var(--critical)" : "var(--ink-2)",
+      weight: 1.5, dashed: false },
+    ...(projected === null ? [] : [{
+      at: offFrame ? cap : projected,
+      top: fmtDay(new Date(projected).toISOString()),
+      bottom: offFrame ? "expected beyond this window" : late ? "now expected" : "on course for",
+      colour: projColour, weight: 1.5, dashed: true,
+    }]),
+  ], x);
 
   return (
     <div className="card" style={{ marginBottom: "var(--s4)" }}>
       <ChartHead
         question="Will the work be finished by the date you signed?"
-        meta={`Requirements settled, against all ${scope} in the plan · ${fmtDay(new Date(start).toISOString())} to ${fmtDay(new Date(end).toISOString())}`}
+        meta={`Requirements settled, against all ${scope} in the plan · ${fmtDay(new Date(lo0).toISOString())} to ${fmtDay(new Date(hi0).toISOString())}`}
         legend={
           <>
             <span><i />Settled so far</span>
@@ -536,12 +727,16 @@ function Burnup({ c, burnup }: { c: PlanCommitment; burnup: PlanBurnup }) {
         {yTicks(scope).map((v) => (
           <g key={v}>
             <line x1={CL} y1={y(v)} x2={CW - CR} y2={y(v)}
-              stroke={v === 0 ? "var(--border-strong)" : "var(--border)"} strokeWidth={1} />
+              stroke={v === 0 || v === scope ? "var(--border-strong)" : "var(--border)"}
+              strokeWidth={1} />
             <text x={CL - 10} y={y(v) + 4} fontSize={12} textAnchor="end" fill="var(--muted)">{v}</text>
           </g>
         ))}
+        {/* Names the top of the axis. "all N settled" beside a forecast saying
+            work remains read as a claim that everything was done, so it only
+            says that once it is true. */}
         <text x={CL} y={y(scope) - 8} fontSize={12} fill="var(--muted)">
-          all {scope} settled
+          {lastN >= scope ? `all ${scope} settled` : `all ${scope} in the plan`}
         </text>
 
         {marks.map((m) => {
@@ -550,8 +745,7 @@ function Burnup({ c, burnup }: { c: PlanCommitment; burnup: PlanBurnup }) {
           return (
             <g key={m.bottom}>
               <line x1={px} y1={CT} x2={px} y2={CH - CB} stroke={m.colour}
-                strokeWidth={m.weight}
-                strokeDasharray={m.bottom.includes("expected") ? "5 4" : undefined} />
+                strokeWidth={m.weight} strokeDasharray={m.dashed ? "5 4" : undefined} />
               <text x={lbl.x} y={CH - CB + 20} fontSize={12} fontWeight={600}
                 textAnchor={lbl.anchor} fill={m.colour}>{m.top}</text>
               <text x={lbl.x} y={CH - CB + 36} fontSize={12}
@@ -561,8 +755,8 @@ function Burnup({ c, burnup }: { c: PlanCommitment; burnup: PlanBurnup }) {
         })}
 
         {projected !== null && lastN < scope && (
-          <line x1={x(Math.min(now, end))} y1={y(lastN)}
-            x2={Math.min(x(projected), CW - CR)} y2={y(scope)}
+          <line x1={x(Math.min(now, hi))} y1={y(lastN)}
+            x2={Math.min(x(offFrame ? cap : projected), CW - CR)} y2={y(scope)}
             stroke={projColour} strokeDasharray="6 5" strokeWidth={2} strokeLinecap="round" />
         )}
         <path d={line} fill="none" stroke="var(--accent)" strokeWidth={2.5}
@@ -834,9 +1028,18 @@ export default function Plan({ ctx }: { ctx: ProjectCtx }) {
             </div>
           )}
           <div className="tile">
-            <div className="label">Scope</div>
+            <div className="label">Still to do</div>
             <div className="value">{sums.requirements}</div>
-            <div className="sub">requirements in the plan</div>
+            {/* `plan_arithmetic.requirements` counts the LIVE ones — settled
+                and cut are out, which is what makes the runs beside it mean
+                "work left". Labelling it "requirements in the plan" had it
+                disagreeing with the card below, which counts the whole plan. */}
+            <div className="sub">
+              requirement{sums.requirements === 1 ? "" : "s"} still open
+              {data.burnup && data.burnup.scope_total > 0
+                ? ` of ${data.burnup.scope_total} in the plan`
+                : ""}
+            </div>
           </div>
           <div className="tile">
             <div className="label">Work it should take</div>
@@ -855,13 +1058,21 @@ export default function Plan({ ctx }: { ctx: ProjectCtx }) {
           {data.velocity && (
             <div className="tile">
               <div className="label">Requirements settled</div>
-              <div className="value">{data.velocity.per_week_3w}<small> a week</small></div>
+              {/* A rate, or a dash. Printing `0 a week` for a project that has
+                  not been alive a week says its team has achieved nothing,
+                  which is a different claim from "there is nothing to measure
+                  yet" and one the arithmetic cannot support. */}
+              <div className="value">
+                {data.velocity.pace_known
+                  ? <>{data.velocity.per_week_3w}<small> a week</small></>
+                  : "—"}
+              </div>
               <div className="sub">
-                {data.velocity.weeks_left_at_pace != null
-                  ? `${data.velocity.remaining} still open — about ${data.velocity.weeks_left_at_pace} weeks at this rate`
-                  : data.velocity.met_3w === 0
-                    ? "none settled in the last three weeks"
-                    : `${data.velocity.remaining} still open`}
+                {data.velocity.pace_known
+                  ? (data.velocity.weeks_left_at_pace != null
+                      ? `${data.velocity.remaining} still open — about ${data.velocity.weeks_left_at_pace} weeks at this rate`
+                      : `${data.velocity.remaining} still open`)
+                  : `${data.velocity.remaining} still open — too little has settled to call this a pace`}
               </div>
             </div>
           )}
@@ -926,6 +1137,13 @@ export default function Plan({ ctx }: { ctx: ProjectCtx }) {
            and before this it lived in prose where nothing could check it. */
         <div className="card" style={{ marginBottom: 14 }}>
           <div className="label" style={{ marginBottom: 8 }}>Owed every cycle</div>
+          {/* Said out loud because a burn-up used to sit below this. Work that
+              comes round again has no line to burn up; what matters is which
+              obligation slipped, and in which turn. */}
+          <p className="help" style={{ margin: "0 0 10px" }}>
+            This work comes round again every cycle, so there is no line to burn
+            up — what counts is which one slipped, and when.
+          </p>
           {data.standing.map((r) => {
             const missed = r.judged > 0 && r.met < r.judged;
             return (
@@ -951,8 +1169,14 @@ export default function Plan({ ctx }: { ctx: ProjectCtx }) {
         </div>
       )}
 
-      {commitment && commitment.status !== "proposed" && data.burnup && (
-        <Burnup c={commitment} burnup={data.burnup} />
+      {/* Deliver only. Work that comes round again does not burn up — the
+          shape that carries the information for an Operate project is the
+          record above, and drawing both put a chart that cannot be right
+          underneath the one that is. */}
+      {data.mode === "deliver" && commitment && commitment.status !== "proposed"
+        && data.burnup && (
+        <Burnup c={commitment} burnup={data.burnup}
+          open={data.velocity?.remaining ?? null} />
       )}
 
       <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 12 }}>

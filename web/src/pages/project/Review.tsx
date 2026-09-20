@@ -170,10 +170,22 @@ function NumbersTiles({ n }: { n: ReviewNumbers }) {
     <div className="tiles" style={{ margin: "12px 0" }}>
       <div className="tile">
         <div className="label">Requirements settled</div>
-        <div className="value">{n.velocity.per_week_3w}<small> a week</small></div>
+        {/* Same rule as the Plan tile: a rate is a measurement or it is a
+            dash. A review that opens with "0 a week" about a project too new
+            to have a pace starts the meeting on a false premise.
+
+            Falling back to the rate itself when the snapshot predates the
+            flag, rather than to "unknown": an older meeting that recorded a
+            real pace should keep showing it. */}
+        <div className="value">
+          {(n.velocity.pace_known ?? n.velocity.per_week_3w > 0)
+            ? <>{n.velocity.per_week_3w}<small> a week</small></> : "—"}
+        </div>
         <div className="sub">{n.velocity.remaining} still open
-          {n.velocity.weeks_left_at_pace != null
-            ? ` — about ${n.velocity.weeks_left_at_pace} weeks at this rate` : ""}</div>
+          {(n.velocity.pace_known ?? n.velocity.per_week_3w > 0)
+            ? (n.velocity.weeks_left_at_pace != null
+                ? ` — about ${n.velocity.weeks_left_at_pace} weeks at this rate` : "")
+            : " — too little has settled to call this a pace"}</div>
       </div>
       <div className="tile">
         <div className="label">Met since last</div>

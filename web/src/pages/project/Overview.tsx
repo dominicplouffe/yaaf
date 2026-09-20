@@ -286,9 +286,10 @@ function verdictBody(
 ) {
   const v = ctx.plan?.velocity;
   const c = ctx.plan?.commitment;
-  const settled = ctx.plan?.burnup
-    ? ctx.plan.burnup.scope_total - (v?.remaining ?? 0)
-    : null;
+  // The server's own count, not `scope_total - remaining`: those two exclude
+  // different things, so this sentence used to run ahead by the number of open
+  // metric requirements — and disagree with the chart below it.
+  const settled = ctx.plan?.burnup ? ctx.plan.burnup.settled : null;
 
   if (daysLate !== null && c?.projected_done_at) {
     return (

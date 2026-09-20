@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from tests.conftest import ADMIN, make_project
+from tests.conftest import ADMIN, backdate_project, make_project
 from tests.selftest_invariants.test_requirements import (
     accept,
     ceo_token,
@@ -68,6 +68,11 @@ def _dead_run(project: dict, requirement_id: str | None, status=RunStatus.FAILED
 
 def test_the_pace_lives_in_real_windows(client):
     project = deliver_project(client)
+    # Old enough to have lived through the windows its own events sit in. The
+    # pace divides by how long the project has actually existed, not by the
+    # nominal 21 days, so a fresh project holding a 40-day-old event is a state
+    # production cannot reach and the arithmetic should not have to honour.
+    backdate_project(project["id"], hours=60 * 24)
     token = ceo_token(project)
     keys = []
     for n in range(4):

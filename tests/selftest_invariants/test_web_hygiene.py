@@ -22,6 +22,14 @@ NESTED_DECL = re.compile(
 )
 
 
+#: A colour written as a hex literal has one value in both themes, and one of
+#: the two will be wrong.
+HEX_IN_PAINT = re.compile(
+    r"(?:fill|stroke|stopColor|color|background|borderColor|borderTopColor)"
+    r"\s*[:=]\s*[\"'`{]?\s*#[0-9a-fA-F]{3,8}\b"
+)
+
+
 def _tsx_files() -> list[Path]:
     return sorted(WEB_SRC.rglob("*.tsx"))
 
@@ -65,4 +73,48 @@ def test_no_component_is_declared_inside_another_component():
         "rebuilds their DOM on every parent render:\n  "
         + "\n  ".join(offenders)
         + "\nMove them to module scope and pass what they need as props."
+    )
+
+
+def test_no_chart_paints_with_a_hardcoded_colour():
+    """Every colour in the cockpit comes from a semantic custom property, so
+    light and dark are one decision made in `styles.css` rather than a decision
+    re-made in every SVG.
+
+    The burn-up is why this is a rule rather than a habit. It draws nine
+    strokes and a fill, and a single `#8ca0f0` among them would be invisible in
+    the light theme, correct in the dark one, and unreviewable in a diff — the
+    failure only shows up under a reader's eyes, on one of the two themes,
+    which is exactly the class of bug this file exists to refuse.
+    """
+    offenders: list[str] = []
+    for path in _tsx_files():
+        source = path.read_text()
+        for match in HEX_IN_PAINT.finditer(source):
+            line = source[: match.start()].count("\n") + 1
+            offenders.append(f"{path.relative_to(WEB_SRC.parents[1])}:{line}")
+
+    assert not offenders, (
+        "these paint a colour from a hex literal instead of a semantic custom "
+        "property, so one of the two themes is wrong:\n  " + "\n  ".join(offenders)
+    )
+
+
+def test_the_burn_up_is_drawn_for_deliver_projects_only():
+    """A burn-up of work that recurs is a flat line — `velocity.standing_record`
+    says so in its own docstring, and an Operate project already has the record
+    that carries the information drawn above this.
+
+    Worse than useless, it was wrong: an Operate project's ceiling is the open
+    cycle's scope while its met-events span every cycle it has run, so the line
+    climbed through the top of its own axis every turn of the rhythm. The
+    server no longer feeds it that, but the gate is one clause in one JSX
+    expression and a later refactor would drop it with nothing to notice.
+    """
+    source = (WEB_SRC / "pages" / "project" / "Plan.tsx").read_text()
+    call = re.search(r"\{[^{}]*<Burnup\b", source, re.DOTALL)
+    assert call, "<Burnup> is no longer rendered from a guarded expression"
+    assert 'mode === "deliver"' in call.group(0), (
+        "the burn-up is rendered without the Deliver gate — see "
+        "velocity.standing_record for why a recurring project must not get one"
     )

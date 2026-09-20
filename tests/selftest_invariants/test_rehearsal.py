@@ -446,7 +446,19 @@ def test_a_drill_never_delivers_a_notice_to_the_chairman_it_invented(monkeypatch
     environment, and the drill inherits the server's, so one fire drill put
     eight emails and eight outbound POSTs on the wire about a project that does
     not exist. The batching windows the drill lifts to zero were the only thing
-    that had been holding any of them back."""
+    that had been holding any of them back.
+
+    Run under the supervised dial, which is what puts those eight on the wire:
+    three verdicts parked on the desk, three audit samples, the commitment met
+    and the project ready to complete. On the autonomous default the CEO signs
+    its own verdicts and the chairman is told almost nothing — so the drill
+    that used to satisfy this test's non-vacuity guard was raising exactly one
+    notice, a *false* "commitment at risk" manufactured by a pace measured over
+    three weeks the project had not lived through. When that arithmetic was
+    fixed the guard went quiet, which is how this was found: the platform's own
+    rehearsal had been demonstrating the bug to every new reader.
+    """
+    from yaaf.core.constitution import AUTONOMY_PRESETS
     from yaaf.server import janitor as janitor_module
     from yaaf.server import notify as notify_module
 
@@ -473,9 +485,13 @@ def test_a_drill_never_delivers_a_notice_to_the_chairman_it_invented(monkeypatch
 
     # Its own drill, not the shared one: the spy above only sees notices raised
     # while it is installed.
-    report = rehearsal.rehearse(spec())
+    report = rehearsal.rehearse(spec(constitution=AUTONOMY_PRESETS["supervised"]))
     assert report["ok"], report["verdict"]
-    assert raised, "the drill raised no notice at all; this test proves nothing"
+    assert len(raised) >= 5, (
+        f"the drill raised {len(raised)} notices; this test proves nothing without "
+        "a chairman who is actually being written to — expected the verdicts, the "
+        "audit samples and the commitment"
+    )
     assert delivered == []
 
 
