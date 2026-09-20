@@ -118,3 +118,31 @@ def test_the_burn_up_is_drawn_for_deliver_projects_only():
         "the burn-up is rendered without the Deliver gate — see "
         "velocity.standing_record for why a recurring project must not get one"
     )
+
+
+def test_nothing_that_only_wants_reading_sits_under_the_decision_heading():
+    """The desk's decide zone holds only what decides itself if ignored.
+
+    An approval denies itself in hours; a question falls back to the CEO's
+    stated default. A raised flag does neither — it proceeds on the CEO's
+    proposal whether or not anybody answers, which `policy.awaiting_chairman`
+    says in as many words: every member of it is "a decision the dial left with
+    the chairman", and one member exempt from that "would make the emptiness
+    unreadable for all of them".
+
+    Flags were pushed into that zone anyway, under a heading claiming they were
+    waiting on the reader, with a sentence beneath them admitting they were
+    not. On an autonomous project that was the entire desk: a count of one and
+    nothing the reader could do about it. The rule is mechanical because the
+    argument for breaking it is always available and always wrong.
+    """
+    source = (WEB_SRC / "pages" / "project" / "Overview.tsx").read_text()
+    start = source.index("const needs: React.ReactNode[] = []")
+    end = source.index("const news: React.ReactNode[] = []")
+    assert start < end, "the desk's two zones are no longer in the expected order"
+    decide_zone = source[start:end]
+    assert "rawFlags" not in decide_zone, (
+        "a flag is being pushed into the zone that needs a decision. A flag "
+        "does not block and does not expire — it belongs with the news, which "
+        "is the `news` array below it."
+    )
