@@ -204,6 +204,31 @@ def _text(result: dict) -> dict:
     return {"content": [{"type": "text", "text": json.dumps(result, indent=2, default=str)}]}
 
 
+_JSON_TYPES = {str: "string", int: "integer", float: "number", bool: "boolean",
+               dict: "object", list: "array"}
+
+
+def _schema(fields: dict, *, optional: tuple[str, ...]) -> dict:
+    """A tool schema whose `optional` fields the model may leave out.
+
+    The SDK turns a bare `{name: type}` dict into a schema that REQUIRES every
+    field, and a string field cannot carry null. So a tool that needs a field
+    left blank forces the model to invent a placeholder — and it sends "null"
+    or a literal `""`, which the API then resolves as an id. task_create could
+    not open a team task that way for a whole night of a live project.
+    """
+    unknown = set(optional) - set(fields)
+    assert not unknown, f"optional names fields the tool lacks: {sorted(unknown)}"
+    properties = {}
+    for name, py_type in fields.items():
+        if py_type == list[str]:
+            properties[name] = {"type": "array", "items": {"type": "string"}}
+        else:
+            properties[name] = {"type": _JSON_TYPES[py_type]}
+    return {"type": "object", "properties": properties,
+            "required": [name for name in fields if name not in optional]}
+
+
 # ── platform tools ──────────────────────────────────────────────────────────────
 
 
@@ -222,6 +247,8 @@ async def t_board(args):
     "the team's lead claims it and decides who does what. Setting assignee_agent_id "
     "without parent_task_id is refused every time — it is the single most common "
     "refusal on this platform, so check yourself before you send it. "
+    "A team task OMITS parent_task_id, assignee_agent_id and hypothesis_id entirely — "
+    "never send 'null' or '\"\"' as a placeholder, it is read as an id and refused. "
     "not_before is an ISO 8601 datetime before which the task cannot be claimed. It "
     "wakes nobody and shows on no screen as work in progress, so a project gated on one "
     "looks stopped: use it only for a genuine calendar rhythm, never to express 'after "
@@ -232,7 +259,7 @@ async def t_board(args):
     "nothing true is how a project stays busy without finishing. Your context pack's "
     "`board` and `roster` carry the team ids, agent ids and requirement ids you need — "
     "read them rather than guessing at an id.",
-    {
+    _schema({
         "team_id": str,
         "title": str,
         "goal": str,
@@ -243,7 +270,8 @@ async def t_board(args):
         "hypothesis_id": str,
         "requirement_id": str,
         "not_before": str,
-    },
+    }, optional=("produces_external_evidence", "parent_task_id", "assignee_agent_id",
+                 "hypothesis_id", "requirement_id", "not_before")),
 )
 async def t_task_create(args):
     payload = {k: v for k, v in args.items() if v not in (None, "")}
@@ -278,7 +306,7 @@ async def t_task_create(args):
     "they get in spreadsheet terms, cadence: daily|weekly|null, due: an ISO date or "
     "null, lands: report|memo|note|table}. The statement is for the platform; meta "
     "is for the person who hired you.",
-    {
+    _schema({
         "statement": str,
         "acceptance_test": dict,
         "stage": int,
@@ -286,7 +314,7 @@ async def t_task_create(args):
         "depends_on": list,
         "recurrence": str,
         "meta": dict,
-    },
+    }, optional=("stage", "est_runs", "depends_on", "recurrence")),
 )
 async def t_requirement_propose(args):
     payload = {k: v for k, v in args.items() if v not in (None, "", [])}
@@ -367,7 +395,7 @@ async def t_channels(args):
 
 
 @tool("messages_read", "Read recent messages in one of your channels (advances your cursor).",
-      {"channel_id": str, "limit": int})
+      _schema({"channel_id": str, "limit": int}, optional=("limit",)))
 async def t_messages_read(args):
     return _text(_call("GET", "/agent/messages",
                        params={"channel_id": args["channel_id"],
@@ -388,7 +416,8 @@ async def t_messages_read(args):
     "cannot wait — overrides are recorded and he sees them. Asking him something is NOT "
     "a status and is not an override: that is ask_chairman, which this gate has never "
     "held.",
-    {"channel_id": str, "body": str, "thread_id": str, "override": str},
+    _schema({"channel_id": str, "body": str, "thread_id": str, "override": str},
+            optional=("thread_id", "override")),
 )
 async def t_message_post(args):
     payload = {"channel_id": args["channel_id"], "body": args["body"]}
@@ -448,7 +477,8 @@ async def t_ask_close(args):
     "It runs on HIS cited authority through the same machinery as his own buttons, and is "
     "echoed back to him threaded to his message — use it the moment he gives an order "
     "instead of asking him to click it himself.",
-    {"from_message_id": str, "changes": dict, "action": dict, "reason": str},
+    _schema({"from_message_id": str, "changes": dict, "action": dict, "reason": str},
+            optional=("changes", "action")),
 )
 async def t_directive_file(args):
     payload = {"from_message_id": args["from_message_id"], "reason": args["reason"]}
@@ -486,7 +516,7 @@ async def t_scope_act(args):
     "the platform stamps its own projection from pace and scope, and the chairman "
     "accepts it (with that date or his own) or declines. Nothing binds until he does. "
     "Optional note travels with the proposal.",
-    {"note": str},
+    _schema({"note": str}, optional=("note",)),
 )
 async def t_commitment_propose(args):
     payload = {}
@@ -513,7 +543,8 @@ async def t_commitment_reset(args):
 
 @tool("memory_search", "Search durable memory. Query it before repeating work. "
       "include_superseded=true also returns entries folded away by compaction.",
-      {"q": str, "scope": str, "include_superseded": bool})
+      _schema({"q": str, "scope": str, "include_superseded": bool},
+              optional=("q", "scope", "include_superseded")))
 async def t_memory_search(args):
     params = {"q": args.get("q", "")}
     if args.get("scope"):
@@ -565,7 +596,8 @@ async def t_memory_forget(args):
     "Record evidence. kind='external' needs a source_url on a domain this project does NOT "
     "control; the platform fetches and verifies it before it counts. kind='internal' for "
     "everything we did to our own things.",
-    {"kind": str, "description": str, "source_url": str, "task_id": str},
+    _schema({"kind": str, "description": str, "source_url": str, "task_id": str},
+            optional=("source_url", "task_id")),
 )
 async def t_evidence_add(args):
     payload = {k: v for k, v in args.items() if v not in (None, "")}
@@ -580,7 +612,7 @@ async def t_evidence_add(args):
     "failure storm — something with a handle), and in `recommended`, what you would cut or "
     "move. The platform's numbers are already on the review — explain them, do not restate "
     "them. The chairman's decisions come back to you as notices with his reasons.",
-    {"narrative": str, "recommended": str},
+    _schema({"narrative": str, "recommended": str}, optional=("recommended",)),
 )
 async def t_review_narrative(args):
     payload = {"narrative": args.get("narrative", "")}
@@ -648,8 +680,8 @@ async def t_roles_list(args):
     "PROJECT, so another seat spreads the same allowance thinner and adds wake-ups of "
     "its own. Hire because work needs doing that nobody here can do, never because a "
     "seat would be nice to have.",
-    {"role_slug": str, "name": str, "employees": list, "lead": str, "reason": str,
-     "stand_down_when": dict},
+    _schema({"role_slug": str, "name": str, "employees": list, "lead": str, "reason": str,
+             "stand_down_when": dict}, optional=("stand_down_when",)),
 )
 async def t_hire(args):
     payload = {k: v for k, v in args.items() if v not in (None, "", [], {})}
@@ -698,7 +730,7 @@ async def t_recall(args):
     "requirements gathering, the build, the validation — and it is the moment nobody "
     "has ever asked you. Afterwards nothing raises the question and an idle seat costs "
     "quietly. Pass when: null to clear one.",
-    {"team_id": str, "when": dict, "reason": str},
+    _schema({"team_id": str, "when": dict, "reason": str}, optional=("when",)),
 )
 async def t_stand_down_when(args):
     return _text(_call("POST", f"/agent/teams/{args['team_id']}/stand_down_when",
@@ -724,7 +756,7 @@ async def t_stand_down_when(args):
     "seven of the eleven had filed work, every task that seat touched "
     "completed on a retry, and the real fault was a ceiling cutting it off "
     "mid-task. Fix the cause before you blame the seat.",
-    {"since": str, "until": str},
+    _schema({"since": str, "until": str}, optional=("since", "until")),
 )
 async def t_roster_activity(args):
     params = {k: v for k, v in args.items() if v}
@@ -750,7 +782,8 @@ async def t_decision_add(args):
     "constitution already put in your hands: where the authority dial grants you the "
     "plan, the scope and the date, an owner_decision is refused and names the verb to "
     "use instead. To want his opinion without blocking, use ask_chairman and keep going.",
-    {"kind": str, "title": str, "body": str, "amount_usd": float},
+    _schema({"kind": str, "title": str, "body": str, "amount_usd": float},
+            optional=("amount_usd",)),
 )
 async def t_approval_request(args):
     payload = {k: v for k, v in args.items() if v is not None}
@@ -771,7 +804,7 @@ async def t_approvals_list(args):
     "purchase_finish — it checks the envelope before money moves and books itself. "
     "Every real purchase gets booked, one way or the other: an unbooked spend is what "
     "the chairman's spot-audit exists to catch.",
-    {"usd": float, "note": str, "approval_id": str},
+    _schema({"usd": float, "note": str, "approval_id": str}, optional=("approval_id",)),
 )
 async def t_spend_book(args):
     payload = {k: v for k, v in args.items() if v not in (None, "")}
@@ -817,7 +850,8 @@ async def t_data_write_request(args):
     "numbers ('ad spend on the 14 terms', '$0 in the 7 days since', the window it "
     "covers); note: anything else he should know. Without this the owner sees "
     "'approved · applied' and never learns whether it worked.",
-    {"approval_id": str, "ok": bool, "observed": dict, "note": str},
+    _schema({"approval_id": str, "ok": bool, "observed": dict, "note": str},
+            optional=("observed", "note")),
 )
 async def t_data_write_outcome(args):
     payload = {"ok": bool(args.get("ok", True)), "note": (args.get("note") or "").strip()}
@@ -855,8 +889,9 @@ async def t_assist_request(args):
     "secrets via a need, or note where they live), url, and a note with what matters "
     "at wind-down (plan tier, renewal date, how to cancel). An account nobody wrote "
     "down is an orphan the owner discovers on a bill.",
-    {"service": str, "username": str, "owner": str, "credential_name": str,
-     "url": str, "requirement_id": str, "note": str},
+    _schema({"service": str, "username": str, "owner": str, "credential_name": str,
+             "url": str, "requirement_id": str, "note": str},
+            optional=("credential_name", "url", "requirement_id", "note")),
 )
 async def t_account_record(args):
     payload = {k: v for k, v in args.items() if v not in (None, "")}
@@ -904,8 +939,9 @@ async def t_capacity_request(args):
     "you are woken with the decision. Unanswered, it expires to no — plan the work "
     "that does not depend on it rather than waiting. Say WHY (what work it unblocks), "
     "suggest a credential name, name the roles, and estimate monthly cost honestly.",
-    {"title": str, "why": str, "est_usd_per_month": float,
-     "suggested_secret_name": str, "roles": list},
+    _schema({"title": str, "why": str, "est_usd_per_month": float,
+             "suggested_secret_name": str, "roles": list},
+            optional=("suggested_secret_name",)),
 )
 async def t_need_request(args):
     payload = {k: v for k, v in args.items() if v not in (None, "", [])}
@@ -931,7 +967,8 @@ async def t_credentials_list(args):
     "remove_roles by role slug, with a reason. The value never moves — only who "
     "receives it at run time. Audited and sent to the chairman; effective on each "
     "role's next run.",
-    {"name": str, "add_roles": list, "remove_roles": list, "reason": str},
+    _schema({"name": str, "add_roles": list, "remove_roles": list, "reason": str},
+            optional=("add_roles", "remove_roles")),
 )
 async def t_credential_scope(args):
     payload = {k: v for k, v in dict(args).items()
@@ -949,8 +986,9 @@ async def t_credential_scope(args):
     "you), and call purchase_finish with the receipt. usd over the per-purchase line "
     "or the approval threshold needs an approved approval_id; the monthly external "
     "cap is a wall no approval overrides — recommend an amendment instead.",
-    {"vendor": str, "description": str, "usd": float, "idempotency_key": str,
-     "requirement_id": str, "approval_id": str},
+    _schema({"vendor": str, "description": str, "usd": float, "idempotency_key": str,
+             "requirement_id": str, "approval_id": str},
+            optional=("requirement_id", "approval_id")),
 )
 async def t_purchase_begin(args):
     payload = {k: v for k, v in args.items() if v not in (None, "")}
@@ -963,7 +1001,8 @@ async def t_purchase_begin(args):
     "keeps the receipt (quote the vendor's own confirmation — what was bought, from "
     "whom, for how much); ok=false records the failure and books nothing. Finishing "
     "twice never double-books.",
-    {"purchase_id": str, "ok": bool, "receipt": str, "external_ref": str},
+    _schema({"purchase_id": str, "ok": bool, "receipt": str, "external_ref": str},
+            optional=("receipt", "external_ref")),
 )
 async def t_purchase_finish(args):
     payload = {k: v for k, v in dict(args).items()
@@ -977,7 +1016,8 @@ async def t_purchase_finish(args):
     "REQUIRED before any external side effect (posting, emailing, spending, creating a PR): "
     "record it with a stable idempotency_key. If the response says duplicate/completed, DO "
     "NOT fire the effect again — a prior attempt already did.",
-    {"kind": str, "idempotency_key": str, "task_id": str, "payload": dict},
+    _schema({"kind": str, "idempotency_key": str, "task_id": str, "payload": dict},
+            optional=("task_id", "payload")),
 )
 async def t_side_effect_begin(args):
     payload = {k: v for k, v in args.items() if v not in (None, "")}
@@ -985,7 +1025,7 @@ async def t_side_effect_begin(args):
 
 
 @tool("side_effect_finish", "Mark a recorded side effect completed/failed with its result.",
-      {"effect_id": str, "ok": bool, "result": dict})
+      _schema({"effect_id": str, "ok": bool, "result": dict}, optional=("result",)))
 async def t_side_effect_finish(args):
     effect_id = args.pop("effect_id")
     return _text(_call("POST", f"/agent/side_effects/{effect_id}/finish", dict(args)))
@@ -1013,7 +1053,8 @@ async def t_side_effect_finish(args):
     "artifact's uri, key, size and sha256 — cite the uri in evidence, task "
     "completions and messages. The uri is NOT a path in your sandbox: read it back "
     "with artifact_get, never with a file tool.",
-    {"path": str, "filename": str, "content_base64": str, "satisfies": list},
+    _schema({"path": str, "filename": str, "content_base64": str, "satisfies": list},
+            optional=("path", "filename", "content_base64", "satisfies")),
 )
 async def t_artifact_put(args):
     path = (args.get("path") or "").strip()
@@ -1072,7 +1113,7 @@ async def t_artifact_list(args):
     "way to read what was actually shipped. exists:false means the uri was cited but "
     "no bytes are stored — that is a finding worth reporting, not an error on your "
     "part, and it costs you nothing to check.",
-    {"ref": str, "offset": int, "limit": int},
+    _schema({"ref": str, "offset": int, "limit": int}, optional=("offset", "limit")),
 )
 async def t_artifact_get(args):
     params = {"ref": args.get("ref") or ""}
@@ -1103,8 +1144,9 @@ def _memory_entry_id(path: str) -> str | None:
     "rename (path '/memories/<id>', new_path names the new subject). "
     "Check your memory directory at the start of a run; record only what will still "
     "be true next month.",
-    {"command": str, "path": str, "file_text": str, "old_str": str, "new_str": str,
-     "new_path": str},
+    _schema({"command": str, "path": str, "file_text": str, "old_str": str, "new_str": str,
+             "new_path": str},
+            optional=("path", "file_text", "old_str", "new_str", "new_path")),
 )
 async def t_memory_tool(args):
     command = (args.get("command") or "").strip()
@@ -1356,7 +1398,8 @@ def _row_count(body: str, countable: bool) -> int | None:
     "approval_id: only for a tool your source's allowlist refuses — file "
     "data_write_request first, wait to be woken with the decision, then pass "
     "the approved id here with the SAME arguments you had approved.",
-    {"server": str, "tool": str, "arguments": dict, "path": str, "approval_id": str},
+    _schema({"server": str, "tool": str, "arguments": dict, "path": str, "approval_id": str},
+            optional=("tool", "arguments", "path", "approval_id")),
 )
 async def t_data_fetch(args):
     specs = _data_source_specs()
