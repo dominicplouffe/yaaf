@@ -1033,8 +1033,10 @@ table.csv .rownum {
    inside its own card. The column stops at its track; the content scrolls. */
 .settings-lay > * { min-width: 0; }
 .srail { display: flex; flex-direction: column; gap: 2px; align-self: start; position: sticky; top: 16px; }
+/* Block, not the global button's centred inline-flex: flex ignores text-align. */
 .srail button {
-  text-align: left; background: none; border: 0; border-radius: 6px;
+  display: block; text-align: left; font-weight: 400;
+  background: none; border: 0; border-radius: 6px;
   padding: 7px 11px; color: var(--ink-2); font-size: 13.5px;
 }
 .srail button:hover { background: var(--surface); }
