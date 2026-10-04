@@ -231,6 +231,38 @@ def test_the_authorize_url_carries_pkce_state_and_resource(world, client):
         assert verifier not in blob
 
 
+def test_a_moved_origin_registers_a_new_client(world, client, monkeypatch):
+    """A registered client is bound to the callback it named. The install's
+    Tailscale hostname changed and every Connect after it was refused
+    invalid_redirect, because the old client was reused forever."""
+    from yaaf.core.config import settings
+
+    project = make_project(client, start=False)
+    try:
+        for origin in ("https://old.example.ts.net", "https://new.example.ts.net/"):
+            monkeypatch.setenv("YAAF_PUBLIC_BASE_URL", origin)
+            settings.cache_clear()
+            query, _ = _connect(client, project["id"])
+            assert query["redirect_uri"] == [origin.rstrip("/") + "/oauth/mcp/callback"]
+    finally:
+        settings.cache_clear()
+    assert [r["redirect_uris"] for r in world.registrations] == [
+        ["https://old.example.ts.net/oauth/mcp/callback"],
+        ["https://new.example.ts.net/oauth/mcp/callback"]]
+
+
+def test_a_pasted_client_is_never_re_registered(world, client):
+    """Only a client this install registered may be replaced: a pasted one is
+    the chairman's arrangement with the provider, not ours to throw away."""
+    project = make_project(client, start=False)
+    assert _save(client, project["id"], client_id="pasted-client").status_code == 200
+    started = client.post(f"/admin/projects/{project['id']}/mcp_servers/ppc/oauth/start",
+                          json={}, headers=ADMIN)
+    assert started.status_code == 200, started.text
+    assert world.registrations == []
+    assert _entry(project["id"])["oauth"]["client_id"] == "pasted-client"
+
+
 def test_the_callback_redeems_the_state_once_and_stores_the_tokens(world, client):
     project = make_project(client, start=False)
     query, _ = _connect(client, project["id"])

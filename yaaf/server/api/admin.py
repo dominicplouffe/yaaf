@@ -1342,7 +1342,8 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
                 **{k: v for k, v in (entry.get("oauth") or {}).items()
                    if k in ("authorization_endpoint", "token_endpoint",
                             "registration_endpoint", "client_id",
-                            "client_secret_secret", "resource", "scope")},
+                            "client_secret_secret", "registered_redirect_uri",
+                            "resource", "scope")},
                 "status": "needs_auth",
             }
             check = {"ok": False,
@@ -1968,9 +1969,19 @@ def start_data_source_oauth(project_id: str, name: str, request: Request,
     oauth = dict(entry.get("oauth") or {})
     try:
         disc = mcp_oauth.discover(url)
+        # A client we registered is bound to the callback it named. When this
+        # install's public origin moves, that client is refused with
+        # invalid_redirect forever, so register afresh. A pasted client
+        # (no registered_redirect_uri) is the chairman's and is never replaced.
+        registered_for = oauth.get("registered_redirect_uri")
+        if registered_for and registered_for != redirect_uri:
+            oauth.pop("client_id", None)
+            if oauth.get("client_secret_secret"):
+                _delete_project_secret(session, project.id, oauth.pop("client_secret_secret"))
         if not oauth.get("client_id"):
             client_id, client_secret = mcp_oauth.register_client(disc, redirect_uri)
             oauth["client_id"] = client_id
+            oauth["registered_redirect_uri"] = redirect_uri
             if client_secret:
                 client_row = _upsert_project_secret(
                     session, project.id, f"mcp-{name}-oauth-client", client_secret, [])
