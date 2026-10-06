@@ -21,7 +21,7 @@ interface RoleDetail {
 }
 
 
-/** "claude-opus-5" → "opus-5": the family is the choice; the vendor prefix is noise. */
+/** "claude-opus-5-5" → "opus-5": the family is the choice; the vendor prefix is noise. */
 function shortModel(model: string | null): string {
   return (model ?? "—").replace(/^claude-/, "");
 }
@@ -35,7 +35,7 @@ const EMPTY: RoleDetail = {
   version: 0,
   description: "",
   system_prompt: "",
-  model: "claude-sonnet-5",
+  model: "claude-sonnet-5-5",
   effort: "high",
   tool_permissions: { files: true, bash: false, data_processing: true, web: true },
   secret_scopes: [],
@@ -384,8 +384,8 @@ export default function Roles() {
                   value={editing.model}
                   onChange={(e) => setEditing({ ...editing, model: e.target.value })}
                 >
-                  <option value="claude-opus-5">claude-opus-5 (most capable)</option>
-                  <option value="claude-sonnet-5">claude-sonnet-5 (balanced)</option>
+                  <option value="claude-opus-5-5">claude-opus-5-5 (most capable)</option>
+                  <option value="claude-sonnet-5-5">claude-sonnet-5-5 (balanced)</option>
                   <option value="claude-haiku-4-5">claude-haiku-4-5 (cheap/fast)</option>
                 </select>
               </div>

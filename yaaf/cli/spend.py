@@ -134,7 +134,7 @@ def _agent_model(session: Session, agent: Agent) -> str:
     """Mirror the runner's model pick (yaaf.runner.daemon): override, then the
     role version's model, then the platform default."""
     role_version = role_version_for(session, agent)
-    return agent.model_override or (role_version.model if role_version else "claude-sonnet-5")
+    return agent.model_override or (role_version.model if role_version else "claude-sonnet-5-5")
 
 
 def _run_model(run, model_by_agent: dict[str, str]) -> tuple[str, bool]:

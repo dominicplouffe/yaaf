@@ -132,6 +132,6 @@ def test_a_role_seeded_with_an_unknown_effort_is_refused(client):
     """The library is the other door into the same env var."""
     refused = client.post("/admin/roles", json={
         "slug": "sloppy", "name": "Sloppy", "description": "d",
-        "system_prompt": "x", "model": "claude-sonnet-5", "effort": "maximum",
+        "system_prompt": "x", "model": "claude-sonnet-5-5", "effort": "maximum",
     }, headers=ADMIN)
     assert refused.status_code == 422

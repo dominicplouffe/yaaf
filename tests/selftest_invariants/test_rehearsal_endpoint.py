@@ -72,7 +72,7 @@ def test_the_definition_the_file_carries_wins_over_the_library_s(client):
 
     carried = {"slug": "researcher", "name": "Researcher", "is_ceo_role": False,
                "description": "the file's own", "system_prompt": "The file's researcher.",
-               "model": "claude-sonnet-5"}
+               "model": "claude-sonnet-5-5"}
     out = carry({"project": {"ceo_role_slug": "ceo",
                              "teams": [{"role_slug": "researcher", "name": "Research",
                                         "employees": ["Ida"]}]},
@@ -153,7 +153,7 @@ def test_the_drill_says_what_the_bundle_asks_of_the_work(client):
     # lift, so this needs a project the lift really ran on: an edited category
     # after the fact hires nobody, and a report that announced a lift there
     # would be describing arithmetic instead of the roster.
-    seed_role(client, "scribe", category="content", model="claude-sonnet-5",
+    seed_role(client, "scribe", category="content", model="claude-sonnet-5-5",
               effort="high")
     high = client.post("/admin/projects", json={
         "slug": "matters", "name": "Matters",

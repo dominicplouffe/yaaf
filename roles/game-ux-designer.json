@@ -7,7 +7,7 @@
     "games"
   ],
   "description": "Deep experience critiquing and designing mobile game UX: onboarding, controls, HUD, menus, monetization flows, juice. Audits what exists and delivers implementable specs for what should change.",
-  "model": "claude-sonnet-5",
+  "model": "claude-sonnet-5-5",
   "effort": "high",
   "tool_permissions": {
     "files": true,

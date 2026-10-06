@@ -126,7 +126,7 @@ class ModelTranscriptJudge:
     """
 
     env: dict[str, str]
-    model: str = "claude-opus-5"
+    model: str = "claude-opus-5-5"
     goal: str = ""
     #: Observed in practice: a judge asked for JSON sometimes answers with
     #: something else entirely — it read a transcript full of fantasy-football

@@ -350,7 +350,7 @@ def _prepare_session(session: Session, project: Project, ceo: Agent) -> tuple[di
         api_token=token_plain,
     )
     job.system_prompt = build_system_prompt(session, ceo, project, lane="chat") + CHAT_ADDENDUM
-    job.model = ceo.model_override or (role_version.model if role_version else "claude-sonnet-5")
+    job.model = ceo.model_override or (role_version.model if role_version else "claude-sonnet-5-5")
     job.effort = ceo.effort_override or (role_version.effort if role_version else "high")
     run.model = job.model
     run.effort = job.effort

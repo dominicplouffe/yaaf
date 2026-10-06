@@ -165,10 +165,10 @@ def test_the_platform_key_can_be_seen_rotated_tested_and_removed(client):
     assert API_KEY not in json.dumps(after)
 
     model = client.put("/admin/settings/anthropic/model",
-                       json={"model": "claude-sonnet-5"}, headers=ADMIN)
+                       json={"model": "claude-sonnet-5-5"}, headers=ADMIN)
     assert model.status_code == 200, model.text
     assert client.get("/admin/settings",
-                      headers=ADMIN).json()["anthropic"]["model"] == "claude-sonnet-5"
+                      headers=ADMIN).json()["anthropic"]["model"] == "claude-sonnet-5-5"
 
     removed = client.delete("/admin/settings/anthropic", headers=ADMIN)
     assert removed.status_code == 200 and removed.json()["removed"] is True

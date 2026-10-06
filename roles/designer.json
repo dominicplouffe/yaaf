@@ -7,7 +7,7 @@
     "general"
   ],
   "description": "Owns how the product looks and feels: a design system, then screens and specs a developer can build without guessing. Judges the rendered thing at both widths and in both themes — a design reviewed only as a spec is one nobody has seen.",
-  "model": "claude-sonnet-5",
+  "model": "claude-sonnet-5-5",
   "effort": "high",
   "tool_permissions": {
     "files": true,

@@ -169,7 +169,7 @@ class RoleIn(BaseModel):
     domains: list[str] = Field(default_factory=list)
     description: str
     system_prompt: str
-    model: str = "claude-sonnet-5"
+    model: str = "claude-sonnet-5-5"
     effort: str = Field(default="high", pattern=_EFFORT_PATTERN)
     tool_permissions: dict = Field(default_factory=dict)
     secret_scopes: list[str] = Field(default_factory=list)
@@ -690,7 +690,7 @@ def _check_review_seat(session: Session, doc: ConstitutionDoc, teams: list[TeamS
 
 #: What "this matters" buys a producing seat. Only ever upward: a role already
 #: at or above these keeps what it has.
-CRAFT_MODEL = "claude-opus-5"
+CRAFT_MODEL = "claude-opus-5-5"
 CRAFT_EFFORT = "xhigh"
 _EFFORT_RANK = {name: i for i, name in enumerate(EFFORTS)}
 
@@ -700,8 +700,10 @@ _EFFORT_RANK = {name: i for i, name in enumerate(EFFORTS)}
 _MODEL_RANK = {
     "claude-haiku-4-5": 1,
     "claude-sonnet-5": 2,
-    "claude-opus-5": 3,
-    "claude-fable-5-1": 4,
+    "claude-sonnet-5-5": 3,
+    "claude-opus-5": 4,
+    "claude-opus-5-5": 5,
+    "claude-fable-5-1": 6,
 }
 
 

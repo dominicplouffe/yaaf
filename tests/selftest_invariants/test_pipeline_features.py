@@ -20,7 +20,7 @@ def test_secret_grants_live_on_the_secret_and_apply_immediately(client):
     client.post("/admin/users", json={"email": "chair@example.com", "display_name": "Chair"},
                 headers=ADMIN)
     seed_role(client, "ceo", is_ceo=True)
-    seed_role(client, "publisher", model="claude-sonnet-5")
+    seed_role(client, "publisher", model="claude-sonnet-5-5")
     body = {
         "slug": "secretproj", "name": "Secretproj", "goal": "test secret injection end to end",
         "chairman_email": "chair@example.com", "ceo_role_slug": "ceo",

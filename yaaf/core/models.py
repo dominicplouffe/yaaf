@@ -700,7 +700,7 @@ class RoleVersion(Base):
     version: Mapped[int] = mapped_column(Integer)
     description: Mapped[str] = mapped_column(Text)
     system_prompt: Mapped[str] = mapped_column(Text)
-    model: Mapped[str] = mapped_column(String(64), default="claude-sonnet-5")
+    model: Mapped[str] = mapped_column(String(64), default="claude-sonnet-5-5")
     effort: Mapped[str] = mapped_column(String(8), default="high")
     # {"bash": true, "web": true, "github": false}
     tool_permissions: Mapped[dict] = mapped_column(JSONVariant, default=dict)

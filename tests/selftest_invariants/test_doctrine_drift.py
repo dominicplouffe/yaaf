@@ -195,7 +195,7 @@ def test_regrading_a_goal_reports_and_changes_nothing(client, monkeypatch):
     with db_session() as session:
         before = session.get(Project, project["id"]).goal
 
-    async def fake_grade(goal, *, env, model="claude-opus-5"):
+    async def fake_grade(goal, *, env, model="claude-opus-5-5"):
         assert goal == before, "graded something other than the project's actual goal"
         return GoalGrade(
             elements=[

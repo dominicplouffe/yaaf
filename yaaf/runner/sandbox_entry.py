@@ -40,7 +40,7 @@ from claude_agent_sdk import (
 API = os.environ["YAAF_API_BASE_URL"]
 TOKEN = os.environ["YAAF_API_TOKEN"]
 RUN_ID = os.environ["YAAF_RUN_ID"]
-MODEL = os.environ.get("YAAF_MODEL", "claude-sonnet-5")
+MODEL = os.environ.get("YAAF_MODEL", "claude-sonnet-5-5")
 EFFORT = os.environ.get("YAAF_EFFORT", "high")
 # A run that spends this much has stopped working and started looping. The SDK
 # tells the model as it approaches and stops it at the line, so the run ends

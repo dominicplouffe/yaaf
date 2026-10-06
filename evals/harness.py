@@ -94,7 +94,7 @@ GOLDEN_DIR = EVALS_DIR / "golden"
 ROLE_MIN = {
     "description": "eval role",
     "system_prompt": "You are a scripted eval agent.",
-    "model": "claude-sonnet-5",
+    "model": "claude-sonnet-5-5",
 }
 
 

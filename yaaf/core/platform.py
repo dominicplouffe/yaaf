@@ -53,7 +53,7 @@ SLACK_CHANNEL_PREFIX = "slack.channel_prefix"  # "" => the project slug
 SLACK_CHANNEL_VISIBILITY = "slack.channel_visibility"  # "private" | "public"
 SLACK_AUTO_CREATE = "slack.auto_create_channels"  # "true" | "false"
 
-DEFAULT_FOUNDER_MODEL = "claude-opus-5"
+DEFAULT_FOUNDER_MODEL = "claude-opus-5-5"
 DEFAULT_SLACK_VISIBILITY = "private"
 
 

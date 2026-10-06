@@ -46,7 +46,7 @@ def test_every_shipped_role_seeds_with_its_category(client):
 def test_a_role_seeded_before_the_taxonomy_can_be_refiled_without_a_new_version(client):
     client.post("/admin/roles", json={
         "slug": "legacy", "name": "Legacy", "description": "seeded long ago",
-        "system_prompt": "x", "model": "claude-sonnet-5"}, headers=ADMIN)
+        "system_prompt": "x", "model": "claude-sonnet-5-5"}, headers=ADMIN)
     before = client.get("/admin/roles/legacy", headers=ADMIN).json()
     assert before["category"] is None
 
@@ -62,7 +62,7 @@ def test_a_role_seeded_before_the_taxonomy_can_be_refiled_without_a_new_version(
 def test_a_bad_category_is_refused_by_name(client):
     r = client.post("/admin/roles", json={
         "slug": "nope", "name": "Nope", "category": "vibes",
-        "description": "d", "system_prompt": "x", "model": "claude-sonnet-5"},
+        "description": "d", "system_prompt": "x", "model": "claude-sonnet-5-5"},
         headers=ADMIN)
     assert r.status_code == 422 and "vibes" not in r.text and "leadership" in r.text
 

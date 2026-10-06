@@ -171,7 +171,7 @@ def _parse(text: str) -> dict:
 
 
 async def grade_goal(goal: str, *, env: dict[str, str],
-                     model: str = "claude-opus-5") -> GoalGrade:
+                     model: str = "claude-opus-5-5") -> GoalGrade:
     """Grade goal prose against the ten elements of the goal grammar.
 
     Runs on the credential the caller hands it, which is the same environment

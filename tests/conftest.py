@@ -45,7 +45,7 @@ ADMIN = {"Authorization": "Bearer test-admin-token"}
 ROLE_MIN = {
     "description": "test role",
     "system_prompt": "You are a test agent.",
-    "model": "claude-sonnet-5",
+    "model": "claude-sonnet-5-5",
 }
 
 

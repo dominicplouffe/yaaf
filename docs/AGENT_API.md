@@ -329,7 +329,7 @@ A role is a JSON file in [`roles/`](../roles):
   "name": "Software Engineer",
   "is_ceo_role": false,
   "description": "Builds and runs everything technical. Decides how, never what.",
-  "model": "claude-sonnet-5",
+  "model": "claude-sonnet-5-5",
   "effort": "xhigh",
   "tool_permissions": {"files": true, "bash": true,
                        "data_processing": true, "web": true},

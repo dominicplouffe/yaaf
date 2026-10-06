@@ -7,7 +7,7 @@
     "markets"
   ],
   "description": "Price, volume, trend, liquidity and positioning. Every pattern claim is backed by a measured base rate over the actual sample, never by the picture.",
-  "model": "claude-sonnet-5",
+  "model": "claude-sonnet-5-5",
   "effort": "high",
   "tool_permissions": {
     "files": true,

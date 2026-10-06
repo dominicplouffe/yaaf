@@ -63,7 +63,7 @@ Every command that takes a project accepts **either a slug or an id**.
     {"role_slug": "engineer", "name": "Engineering",
      "employees": ["Ada", "Grace"], "lead": "Ada",
      "schedules": {"Grace": "07:30"},
-     "model_overrides": {"Ada": "claude-opus-5"}}
+     "model_overrides": {"Ada": "claude-opus-5-5"}}
   ],
   "solo": false
 }

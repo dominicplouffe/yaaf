@@ -32,15 +32,15 @@ def _library(client) -> None:
     """A small library with one role in each category the lift cares about."""
     client.post("/admin/users", json=CHAIR, headers=ADMIN)
     seed_role(client, "ceo", is_ceo=True, category="leadership",
-              model="claude-opus-5", effort="high")
+              model="claude-opus-5-5", effort="high")
     seed_role(client, "scribe", category="content",
-              model="claude-sonnet-5", effort="high")
+              model="claude-sonnet-5-5", effort="high")
     seed_role(client, "digger", category="research",
-              model="claude-sonnet-5", effort="high")
+              model="claude-sonnet-5-5", effort="high")
     seed_role(client, "hawker", category="growth",
-              model="claude-sonnet-5", effort="high")
+              model="claude-sonnet-5-5", effort="high")
     seed_role(client, "reader", category="challenge",
-              model="claude-sonnet-5", effort="xhigh")
+              model="claude-sonnet-5-5", effort="xhigh")
 
 
 def _create(client, slug: str, *, constitution: dict, teams: list[dict]):
@@ -73,10 +73,10 @@ def test_high_stakes_hires_the_producing_seats_better_and_leaves_the_rest(client
     assert created.status_code == 200, created.text
     seats = _seats(created.json()["id"])
 
-    assert seats["Ada"] == ("claude-opus-5", "xhigh"), "the seat he actually reads"
-    assert seats["Rey"] == ("claude-opus-5", "xhigh")
+    assert seats["Ada"] == ("claude-opus-5-5", "xhigh"), "the seat he actually reads"
+    assert seats["Rey"] == ("claude-opus-5-5", "xhigh")
     # Already at xhigh in the library, so only the model moves — never downward.
-    assert seats["Juno"] == ("claude-opus-5", None)
+    assert seats["Juno"] == ("claude-opus-5-5", None)
     assert seats["Sol"] == (None, None), "outreach is not the deliverable"
 
 
@@ -103,7 +103,7 @@ def test_what_the_chairman_named_survives_the_lift(client):
     assert created.status_code == 200, created.text
     seats = _seats(created.json()["id"])
     assert seats["Kit"] == ("claude-haiku-4-5", "low"), "his answer wins"
-    assert seats["Ada"] == ("claude-opus-5", "xhigh"), "the silence is filled"
+    assert seats["Ada"] == ("claude-opus-5-5", "xhigh"), "the silence is filled"
 
 
 def test_the_shared_role_library_never_moves(client):
@@ -115,7 +115,7 @@ def test_the_shared_role_library_never_moves(client):
         {"role_slug": "scribe", "name": "Editorial", "employees": ["Ada"]},
     ]).status_code == 200
     role = client.get("/admin/roles/scribe", headers=ADMIN).json()
-    assert (role["model"], role["effort"]) == ("claude-sonnet-5", "high")
+    assert (role["model"], role["effort"]) == ("claude-sonnet-5-5", "high")
 
 
 def test_a_team_added_later_is_hired_on_the_same_terms(client):
@@ -135,7 +135,7 @@ def test_a_team_added_later_is_hired_on_the_same_terms(client):
     assert added.status_code == 200, added.text
 
     seats = _seats(project_id)
-    assert seats["Ada"] == ("claude-opus-5", "xhigh"), "the lift reaches a later team"
+    assert seats["Ada"] == ("claude-opus-5-5", "xhigh"), "the lift reaches a later team"
     assert seats["Kit"] == ("claude-haiku-4-5", "xhigh"), "and his model still wins"
     with db_session() as session:
         assert session.query(Agent).filter_by(
@@ -338,7 +338,7 @@ def test_the_lift_never_lowers_a_seat_the_library_already_placed_higher(client):
     seed_role(client, "ceo", is_ceo=True, category="leadership")
     seed_role(client, "reader", category="challenge", model="claude-fable-5-1",
               effort="xhigh")
-    seed_role(client, "scribe", category="content", model="claude-sonnet-5",
+    seed_role(client, "scribe", category="content", model="claude-sonnet-5-5",
               effort="high")
     created = _create(client, "no-demotion", constitution={"stakes": "high"}, teams=[
         {"role_slug": "reader", "name": "Review", "employees": ["Juno"]},
@@ -347,7 +347,22 @@ def test_the_lift_never_lowers_a_seat_the_library_already_placed_higher(client):
     assert created.status_code == 200, created.text
     seats = _seats(created.json()["id"])
     assert seats["Juno"] == (None, None), "a stronger seat was demoted by the lift"
-    assert seats["Ada"] == ("claude-opus-5", "xhigh")
+    assert seats["Ada"] == ("claude-opus-5-5", "xhigh")
+
+
+def test_a_seat_on_last_generations_opus_is_lifted_not_left(client):
+    """When the craft model moved to Opus 5.5, Opus 5 vanished from the rank
+    table, ranked 0 and was lifted by luck. With it ranked equal to Opus it
+    would have been left behind, paying more per token for the older model."""
+    client.post("/admin/users", json=CHAIR, headers=ADMIN)
+    seed_role(client, "ceo", is_ceo=True, category="leadership")
+    seed_role(client, "scribe", category="content", model="claude-opus-5",
+              effort="xhigh")
+    created = _create(client, "old-opus", constitution={"stakes": "high"}, teams=[
+        {"role_slug": "scribe", "name": "Editorial", "employees": ["Ada"]},
+    ])
+    assert created.status_code == 200, created.text
+    assert _seats(created.json()["id"])["Ada"] == ("claude-opus-5-5", None)
 
 
 def test_an_empty_roster_cannot_hold_a_rule_it_never_staffs(client):
@@ -422,7 +437,7 @@ def test_amending_stakes_actually_re_hires_the_seats(client):
     assert "Ada" in amended.json()["note"], "say whose hire changed"
 
     seats = _seats(project_id)
-    assert seats["Ada"] == ("claude-opus-5", "xhigh")
+    assert seats["Ada"] == ("claude-opus-5-5", "xhigh")
     assert seats["Sol"] == (None, None), "the lift is still aimed, not blanket"
 
 
@@ -442,11 +457,11 @@ def test_amending_stakes_does_not_overwrite_an_answer_somebody_gave(client):
                 json={"reason": "raising the bar", "changes": {"stakes": "high"}})
     seats = _seats(project_id)
     assert seats["Kit"] == ("claude-haiku-4-5", None), "his answer survived"
-    assert seats["Ada"] == ("claude-opus-5", "xhigh")
+    assert seats["Ada"] == ("claude-opus-5-5", "xhigh")
 
     client.post(f"/admin/projects/{project_id}/amendments", headers=ADMIN,
                 json={"reason": "back down", "changes": {"stakes": "low"}})
-    assert _seats(project_id)["Ada"] == ("claude-opus-5", "xhigh"), \
+    assert _seats(project_id)["Ada"] == ("claude-opus-5-5", "xhigh"), \
         "lowering the dial must not silently demote a seat"
 
 

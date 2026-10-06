@@ -7,7 +7,7 @@
     "data"
   ],
   "description": "Turns an advertising account's rows into figures somebody can act on and somebody else can re-derive. Knows which of Amazon's numbers mislead, and says so before quoting them.",
-  "model": "claude-sonnet-5",
+  "model": "claude-sonnet-5-5",
   "effort": "high",
   "tool_permissions": {
     "files": true,

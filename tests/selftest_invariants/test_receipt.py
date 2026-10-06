@@ -36,7 +36,7 @@ def _run(project_id: str, agent_id: str, cost: float, status=RunStatus.DONE) -> 
     run_id = ids.new_id(ids.RUN)
     with db_session() as session:
         session.add(Run(id=run_id, project_id=project_id, agent_id=agent_id,
-                        trigger={"type": "test"}, status=status, model="claude-opus-5",
+                        trigger={"type": "test"}, status=status, model="claude-opus-5-5",
                         cost_usd=cost, started_at=utcnow(), finished_at=utcnow()))
         session.add(LedgerEntry(id=ids.new_id(ids.LEDGER), project_id=project_id,
                                 kind=LedgerKind.MODEL_USAGE, usd=cost, run_id=run_id))

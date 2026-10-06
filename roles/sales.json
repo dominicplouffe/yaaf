@@ -7,7 +7,7 @@
     "general"
   ],
   "description": "Works qualified conversations to a close: follow-ups, objections, proposals, payment links.",
-  "model": "claude-sonnet-5",
+  "model": "claude-sonnet-5-5",
   "effort": "high",
   "tool_permissions": {
     "files": true,

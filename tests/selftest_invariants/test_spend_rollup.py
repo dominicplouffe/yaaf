@@ -41,18 +41,18 @@ def _add_run(project_id: str, agent_id: str | None, model: str | None = None,
 def test_spend_rollup_by_model_and_team(client):
     project = make_project(client)
     ceo = project["ceo_agent_id"]
-    _add_run(project["id"], ceo, model="claude-opus-5", cost=2.0, tokens_out=10)
-    _add_run(project["id"], ceo, model="claude-opus-5", cost=1.0, cache_read=5_000)
+    _add_run(project["id"], ceo, model="claude-opus-5-5", cost=2.0, tokens_out=10)
+    _add_run(project["id"], ceo, model="claude-opus-5-5", cost=1.0, cache_read=5_000)
     _add_run(project["id"], ceo, model=None, cost=0.5)  # pre-migration history
 
     by_model = client.get(f"/observe/projects/{project['id']}/spend?group_by=model",
                           headers=ADMIN).json()
     rows = {r["key"]: r for r in by_model["rows"]}
-    assert rows["claude-opus-5"]["runs"] == 2
-    assert rows["claude-opus-5"]["usd"] == 3.0
-    assert rows["claude-opus-5"]["cache_read"] == 5_000
+    assert rows["claude-opus-5-5"]["runs"] == 2
+    assert rows["claude-opus-5-5"]["usd"] == 3.0
+    assert rows["claude-opus-5-5"]["cache_read"] == 5_000
     assert rows["unknown"]["runs"] == 1
-    assert by_model["rows"][0]["key"] == "claude-opus-5", "sorted by usd desc"
+    assert by_model["rows"][0]["key"] == "claude-opus-5-5", "sorted by usd desc"
 
     by_team = client.get(f"/observe/projects/{project['id']}/spend?group_by=team",
                          headers=ADMIN).json()
@@ -69,7 +69,7 @@ def test_spend_rollup_by_model_and_team(client):
 def test_a_run_that_books_many_ledger_rows_is_still_one_run(client):
     """A chat session books a row per turn. The column says runs, not rows."""
     project = make_project(client)
-    _add_run(project["id"], project["ceo_agent_id"], model="claude-opus-5",
+    _add_run(project["id"], project["ceo_agent_id"], model="claude-opus-5-5",
              tokens_out=300, entries=3)
 
     rows = client.get(f"/observe/projects/{project['id']}/spend?group_by=model",
@@ -85,8 +85,8 @@ def test_spend_by_team_adds_up_to_the_budget_meter(client):
     contradicts itself teaches the reader to distrust both numbers."""
     project = make_project(client)
     ceo = project["ceo_agent_id"]
-    _add_run(project["id"], ceo, model="claude-opus-5", tokens_out=10, cache_read=900_000)
-    _add_run(project["id"], ceo, model="claude-opus-5", tokens_out=25, cache_read=120_000)
+    _add_run(project["id"], ceo, model="claude-opus-5-5", tokens_out=10, cache_read=900_000)
+    _add_run(project["id"], ceo, model="claude-opus-5-5", tokens_out=25, cache_read=120_000)
     # Spend with no agent behind it (a success check) is still someone's money.
     _add_run(project["id"], None, model="claude-haiku-4-5", tokens_out=7, cache_read=4_000)
     with db_session() as session:

@@ -44,9 +44,9 @@ MINIMAL = {
 
 ROLES = [
     {"slug": "ceo", "name": "Ceo", "is_ceo_role": True, "description": "plans",
-     "system_prompt": "You are the CEO.", "model": "claude-sonnet-5"},
+     "system_prompt": "You are the CEO.", "model": "claude-sonnet-5-5"},
     {"slug": "worker", "name": "Worker", "is_ceo_role": False, "description": "works",
-     "system_prompt": "You do the work.", "model": "claude-sonnet-5"},
+     "system_prompt": "You do the work.", "model": "claude-sonnet-5-5"},
 ]
 
 
@@ -640,7 +640,7 @@ def test_a_bundle_that_asks_for_an_independent_read_still_finishes():
     ) | {"roles": ROLES + [
         {"slug": "reader", "name": "Reader", "is_ceo_role": False,
          "description": "reads", "category": "challenge",
-         "system_prompt": "You read finished work.", "model": "claude-sonnet-5"}]})
+         "system_prompt": "You read finished work.", "model": "claude-sonnet-5-5"}]})
     assert report["ok"], report["verdict"]
     assert "closed it with evidence" in report["verdict"]
     read = next(s for s in report["walk"] if s["key"] == "work_read")

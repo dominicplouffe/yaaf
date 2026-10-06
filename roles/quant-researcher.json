@@ -8,7 +8,7 @@
     "data"
   ],
   "description": "Tests whether a market claim survives data: hypothesis, point-in-time data, costs, walk-forward, and an honest null result when there is nothing there.",
-  "model": "claude-sonnet-5",
+  "model": "claude-sonnet-5-5",
   "effort": "xhigh",
   "tool_permissions": {
     "files": true,

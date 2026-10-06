@@ -17,7 +17,7 @@ the ones the Founder exists to supply. If the grader cannot tell those two
 apart, nothing downstream works — the Founder grades its own drafts with it.
 
     python -m evals.founder                 # uses ANTHROPIC_API_KEY
-    python -m evals.founder --model claude-sonnet-5
+    python -m evals.founder --model claude-sonnet-5-5
 """
 
 from __future__ import annotations
@@ -62,7 +62,7 @@ def _report(label: str, grade: GoalGrade) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", default="claude-opus-5")
+    parser.add_argument("--model", default="claude-opus-5-5")
     args = parser.parse_args(argv)
 
     # Whichever credential this machine has, in the form the CLI reads it —

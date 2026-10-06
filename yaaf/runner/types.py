@@ -18,7 +18,7 @@ class RunJob:
     # Assembled by the runner from the DB before execution:
     system_prompt: str = ""
     context_pack: dict = field(default_factory=dict)
-    model: str = "claude-sonnet-5"
+    model: str = "claude-sonnet-5-5"
     effort: str = "high"
     tool_permissions: dict = field(default_factory=dict)
     # Which tool SCHEMAS this run is worth sending. Every agent used to receive
