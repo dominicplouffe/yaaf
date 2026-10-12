@@ -832,7 +832,17 @@ What M4 found on the way — each now configured against, with a test:
 ### M5 — The long tail
 - [ ] Gemini, by either road: `gemini_cli` on `CliDriver`, or a Gemini
       `ModelClient` on the loop
-- [ ] `opencode` (several providers through one harness), `cursor` CLI
+- [x] `opencode` on `CliDriver` (`opencode_cli_entry.py`), pinned at 1.19.0:
+      one CLI for every provider on the OpenAI-compatible chat API (OpenAI,
+      DeepSeek, a custom server, Moonshot, Qwen, Mistral, xAI), its own file
+      tools and shell, yaaf's tools over MCP. OpenRouter is left off: the
+      cost it states per call never reaches OpenCode's stream. Verified end to
+      end against the real binary and a stand-in chat API
+- [ ] ~~`cursor` CLI~~ — not built. Its installer (`cursor.com/install`) and
+      download host were unreachable from where this was built, so there was
+      no binary to read its flags off, and a driver written from its
+      documentation is the guess this design refuses everywhere else. It is
+      one `CliDriver` subclass once someone can run it
 - [x] Kimi, Qwen, Mistral, Grok: `moonshot`, `qwen`, `mistral` and `xai`,
       each a `Provider` entry on the M3 client and nothing else — a row in
       `providers.py` and one word in the harness's provider list. No model
@@ -934,5 +944,17 @@ written.
   `mcp__yaaf`.
 - **Gemini CLI.** Non-interactive prompt mode with JSON streaming output; MCP
   servers in its settings file; approvals off; API key by env.
-- **OpenCode.** `opencode run` with JSON output; providers and MCP servers in
-  its config.
+- **OpenCode — verified against 1.19.0 (M5).** `opencode run --format json
+  [--session <id>]`, the prompt on stdin (it waits for EOF), cwd the
+  workspace; one `step_finish` per model call with its tokens (input less the
+  cache, output less the reasoning) and a cost; an `error` event with the HTTP
+  status in `data.statusCode`, after five silent retries of its own on a
+  429 or 5xx; SIGTERM ends it and its MCP servers, SIGINT does nothing. No
+  strict config mode: an unknown key is ignored, a wrong type is fatal. What
+  the driver closes, each found by planting it: workspace config, agents,
+  commands, `AGENTS.md`, skills (its switches); plugins under `.opencode/`,
+  which no switch stops (moved aside before each launch); the model key in
+  the environment its shell and MCP servers inherit (a `{file:}` key
+  instead); its title call and sub-agents, whose spend never reaches the
+  stream (off); `steps`, which it does not enforce, and compaction, which can
+  loop (the driver's own call limit; off).

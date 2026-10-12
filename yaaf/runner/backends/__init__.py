@@ -14,6 +14,8 @@ A backend executes one leased job and returns a result — one per harness
   DeepSeek, OpenRouter, a custom server; one client, a registry row each
 - ``codex_cli``: OpenAI's Codex CLI (``codex exec --json``), the first CLI
   harness that is not Claude's
+- ``opencode``: the OpenCode CLI (``opencode run --format json``), one CLI for
+  every provider on the OpenAI-compatible chat API
 
 The backend never touches the database. Everything it needs rides on the
 :class:`~yaaf.runner.types.RunJob`; everything it produces comes back on the
@@ -60,4 +62,8 @@ def get_backend(name: str) -> RunnerBackend:
         from yaaf.runner.backends.agent_sdk import SandboxBackend
 
         return SandboxBackend("codex_cli_entry.py")
+    if name == "opencode":
+        from yaaf.runner.backends.agent_sdk import SandboxBackend
+
+        return SandboxBackend("opencode_cli_entry.py")
     raise ValueError(f"unknown runner backend {name!r}")

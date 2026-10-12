@@ -25,6 +25,11 @@ RUN npm install -g @anthropic-ai/claude-code
 # driver is a run that fails in a new way. Update deliberately, re-recording
 # tests/fixtures/harnesses/codex/.
 RUN npm install -g @openai/codex@0.162.1
+# The OpenCode CLI, pinned for the same reason (yaaf/runner/opencode_cli_entry.py,
+# tests/fixtures/harnesses/opencode/). Its plugin package is pre-seeded per run
+# at this version, which is what keeps it from fetching one at startup: move
+# both together.
+RUN npm install -g opencode-ai@1.19.0
 
 # pandas and duckdb are baked in because the alternative to having them is an
 # agent reading ten thousand rows into its own context to count them. duckdb
@@ -74,5 +79,7 @@ COPY yaaf/runner/anthropic_api_entry.py /opt/yaaf/anthropic_api_entry.py
 COPY yaaf/runner/openai_compatible_entry.py /opt/yaaf/openai_compatible_entry.py
 # The Codex CLI harness; it starts yaaf_tools.py above for the yaaf tools.
 COPY yaaf/runner/codex_cli_entry.py /opt/yaaf/codex_cli_entry.py
+# The OpenCode CLI harness; it too starts yaaf_tools.py for the yaaf tools.
+COPY yaaf/runner/opencode_cli_entry.py /opt/yaaf/opencode_cli_entry.py
 USER agent
 WORKDIR /workspace

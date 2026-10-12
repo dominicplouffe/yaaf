@@ -1709,6 +1709,19 @@ def skill_names() -> list[str]:
     return names
 
 
+def inline_skills() -> str:
+    """The role's skills, inline, for a CLI whose own skill roots are its home
+    or the workspace (Codex, OpenCode): an unlisted skill must stay dark, so
+    the system prompt is the only list."""
+    out = []
+    for spec in PERMS.get("skills", []):
+        slug = _skill_slug(str(spec.get("name", "")))
+        body = str(spec.get("body", "")).strip()
+        if slug and body:
+            out.append(f"## {slug}\n{str(spec.get('description', '')).strip()}\n\n{body}")
+    return "\n\n# Skills\n\n" + "\n\n".join(out) if out else ""
+
+
 def _skill_slug(name: str) -> str:
     return "".join(
         ch for ch in name.lower().strip().replace(" ", "-")

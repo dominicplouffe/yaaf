@@ -38,6 +38,10 @@ class Harness:
     #: the model as yaaf names it (the Claude harnesses, whose names are
     #: yaaf's). Empty: it has no effort dial at all, and the seat's is unused.
     efforts: tuple[str, ...] | None = None
+    #: Where a `web` grant's search comes from (R2): "own" — the harness
+    #: searches; "provider" — the provider's API does, where it does (yaaf's
+    #: loop); "none" — nothing does, so a role granting `web` is refused.
+    search: str = "own"
     #: Whether it can hold the boardroom conversation (R7): a session it can
     #: resume turn after turn. Off unless shown — the chat lane is the one
     #: place the chairman waits on a seat in real time.
@@ -75,6 +79,7 @@ HARNESSES: dict[str, Harness] = {h.name: h for h in (
         providers=("anthropic",),
         accepts=("anthropic:api_key",),
         cost="priced",
+        search="provider",
         conversation=True,
     ),
     # The same loop on the OpenAI-compatible chat API: one client, and every
@@ -91,6 +96,7 @@ HARNESSES: dict[str, Harness] = {h.name: h for h in (
         cost="priced",
         # The chat-completions shape has no common word for effort.
         efforts=(),
+        search="provider",
         conversation=True,
     ),
     # The Codex CLI (`codex exec --json`), driven like the Claude CLI: the
@@ -110,6 +116,24 @@ HARNESSES: dict[str, Harness] = {h.name: h for h in (
         withholds=("bash", "web"),
         cost="priced",
         efforts=("low", "medium", "high", "xhigh", "max"),
+        conversation=True,
+    ),
+    # The OpenCode CLI (`opencode run --format json`): one CLI for every
+    # provider on the OpenAI-compatible chat API, its own file tools and
+    # shell, yaaf's tools over MCP. Its search is its own hosted service's,
+    # so it searches for nobody here. OpenRouter is not among its providers:
+    # the cost OpenRouter states per call never reaches OpenCode's stream,
+    # and an OpenRouter model needs no price to be hired.
+    Harness(
+        name="opencode",
+        label="OpenCode CLI",
+        family="cli",
+        providers=("openai", "deepseek", "custom", "moonshot", "qwen", "mistral", "xai"),
+        accepts=("openai:api_key", "deepseek:api_key", "custom:api_key", "moonshot:api_key",
+                 "qwen:api_key", "mistral:api_key", "xai:api_key"),
+        cost="priced",
+        efforts=(),
+        search="none",
         conversation=True,
     ),
     # The scripted backend that drives the real API at $0: CI, the goldens and

@@ -118,16 +118,18 @@ def refusal(harness: str | None, model: str, tool_permissions: dict | None,
         grant = unwithholdable[0]
         return (f"{found.label} cannot run without {grant}, and this role does not "
                 f"grant it — grant {grant} on the role, or run this seat on another harness")
-    # R2, the other way round — a grant the harness cannot honour. On yaaf's
-    # loop the web is two tools, and search is the provider's: one that runs
-    # none cannot give a role that grants `web` what it was hired with.
-    # Refused rather than quietly halved (docs/RUNTIMES.md, open question 6).
+    # R2, the other way round — a grant the harness cannot honour. The web
+    # is fetch and search, and search is the harness's own, the provider's
+    # (yaaf's loop), or nobody's: a seat with none cannot give a role that
+    # grants `web` what it was hired with. Refused rather than quietly halved
+    # (docs/RUNTIMES.md, open question 6).
     seller = providers.provider(provider)
-    if (found.family == "loop" and (tool_permissions or {}).get("web")
-            and not seller.search):
-        return (f"{found.label} cannot search the web on {seller.label}, and this role "
-                f"grants web — run this seat on a model whose provider searches, or "
-                f"leave web off the role")
+    if (tool_permissions or {}).get("web") and (
+            found.search == "none" or (found.search == "provider" and not seller.search)):
+        where = f" on {seller.label}" if found.search == "provider" else ""
+        return (f"{found.label} cannot search the web{where}, and this role grants web — "
+                f"run this seat on a harness or a provider that searches, or leave web "
+                f"off the role")
     # R3 — a model the harness would have to price, with no price to price it
     # by. A run nobody can price is a run the budget cannot stop. Only under a
     # dollar meter: a credential metered in tokens is stopped in tokens.

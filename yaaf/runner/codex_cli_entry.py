@@ -100,7 +100,7 @@ class CodexCliDriver(base.CliDriver):
         self.home = base._credential_dir() / f"codex-{base.RUN_ID}"
         self.home.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.instructions = self.home / "instructions.md"
-        self.instructions.write_text(system_prompt + self._skills())
+        self.instructions.write_text(system_prompt + base.inline_skills())
         login = os.environ.get("CODEX_AUTH_JSON")
         self.subscription = bool(login)
         if login:
@@ -120,18 +120,6 @@ class CodexCliDriver(base.CliDriver):
         self._now: dict[Path, dict] = {}
 
     # ── what the run is told and offered ──────────────────────────────────
-
-    @staticmethod
-    def _skills() -> str:
-        """The role's skills, inline: Codex's own skill roots are its home,
-        and an unlisted skill must stay dark — this is the only list."""
-        out = []
-        for spec in base.PERMS.get("skills", []):
-            slug = base._skill_slug(str(spec.get("name", "")))
-            body = str(spec.get("body", "")).strip()
-            if slug and body:
-                out.append(f"## {slug}\n{str(spec.get('description', '')).strip()}\n\n{body}")
-        return "\n\n# Skills\n\n" + "\n\n".join(out) if out else ""
 
     def _shell(self) -> bool:
         return bool(base.PERMS.get("bash") or base.PERMS.get("data_processing"))

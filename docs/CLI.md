@@ -93,7 +93,7 @@ Every command that takes a project accepts **either a slug or an id**.
 - A team's `model_overrides`, `effort_overrides` and `harness_overrides` are
   per person, keyed by name; `ceo_model_override`, `ceo_effort_override` and
   `ceo_harness_override` are the CEO's. A harness (`claude_agent_sdk`,
-  `claude_cli`, `anthropic_api`, `openai_compatible`, `codex_cli` — see
+  `claude_cli`, `anthropic_api`, `openai_compatible`, `codex_cli`, `opencode` — see
   [RUNTIMES.md](RUNTIMES.md)) is what drives the seat's model; absent, it is the role's, and the role's absent is
   the model's provider default. A seat whose harness cannot serve its model,
   take away a grant its role withholds, pay with the project's credential, or
