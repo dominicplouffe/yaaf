@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+const STUCK_MS = 60_000;
+
 /** Fetch on mount and poll on an interval; exposes reload() for after-action refreshes.
     `at` is when the data last landed — a reader who reconciles against their own
     records needs to know how old a number is, and a stale-but-labelled number
@@ -21,16 +23,35 @@ export function usePoll<T>(fn: () => Promise<T>, intervalMs = 5000, deps: unknow
   const [at, setAt] = useState<Date | null>(null);
   const fnRef = useRef(fn);
   fnRef.current = fn;
+  // Requests are numbered so an answer can never overwrite a newer one: a slow
+  // reply to the question before the last click is not news. `pending` lets a
+  // timer tick stand down while a request is still out — against a server
+  // slower than the interval, ticks used to stack until the tab stopped
+  // answering, which is how a slow screen became a dead one.
+  const issued = useRef(0);
+  const landed = useRef(0);
+  const pending = useRef(0);
+  const outSince = useRef(0);
 
   const reload = useCallback(() => {
+    const mine = ++issued.current;
+    if (pending.current++ === 0) outSince.current = Date.now();
     fnRef
       .current()
       .then((d) => {
+        if (mine < landed.current) return;
+        landed.current = mine;
         setData(d);
         setAt(new Date());
         setError(null);
       })
-      .catch((e: Error) => setError(e.message));
+      .catch((e: Error) => {
+        if (mine < landed.current) return;
+        setError(e.message);
+      })
+      .finally(() => {
+        if (--pending.current === 0) outSince.current = 0;
+      });
   }, []);
 
   // A single string, because the effect's dependency list has to be the same
@@ -38,7 +59,11 @@ export function usePoll<T>(fn: () => Promise<T>, intervalMs = 5000, deps: unknow
   const depKey = JSON.stringify(deps);
   useEffect(() => {
     reload();
-    const timer = setInterval(reload, intervalMs);
+    const timer = setInterval(() => {
+      // A request out for a minute is not coming back; standing down for it
+      // for ever would freeze the screen as surely as stacking did.
+      if (pending.current === 0 || Date.now() - outSince.current > STUCK_MS) reload();
+    }, intervalMs);
     return () => clearInterval(timer);
   }, [reload, intervalMs, depKey]);
 

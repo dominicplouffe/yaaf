@@ -514,9 +514,15 @@ evidence at all about your *project*.
   a page, a dataset as a table, JSON as a tree, an image as a picture, a PDF in
   the browser's viewer, anything else as text with line numbers. The arrow keys
   walk the filtered list without leaving the reader.
-- **The listing says what it dropped.** Past the per-project cap the newest
-  files are kept, not the alphabetically first, and the screen says how many
-  are not shown.
+- **It stays fast at tens of thousands of files.** The server keeps one index
+  per project, rebuilt at most every few seconds however many screens are
+  open, and answers the search, filters, sort and day folders itself; the
+  browser receives the folder headers and only the rows it is showing. A
+  stale index is served at once and refreshed behind the request, with its
+  age in the footer, so a slow disk never stalls the tab.
+- **The listing says what it dropped.** Past the per-project cap (50,000
+  working files) the newest are kept, not the alphabetically first, and the
+  screen says how many are not shown.
 
 ## 16. Setup that can't silently fail
 
