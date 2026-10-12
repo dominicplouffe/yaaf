@@ -135,8 +135,8 @@ still reach you at every setting.
 
 | Rule | Default | What it does |
 |---|---|---|
-| `monthly_usd_cap` | 1000.0 | The unit under `api_key` billing. At 100% the project **pauses itself** and you're emailed. |
-| `monthly_token_cap` | 200,000,000 | The unit under `subscription` billing. Same hard stop. |
+| `monthly_usd_cap` | 1000.0 | The month's plan under `api_key` billing. The CEO is warned at `budget_warn_ratio`; crossing the plan records an overrun the CEO must account for, and stops nothing. The project **pauses itself** at the wall below, and you're emailed. |
+| `monthly_token_cap` | 200,000,000 | The same plan in tokens, under `subscription` billing. Same wall. |
 | `hard_stop_multiple` | 3.0 | The wall, as a multiple of the budget. The budget is the plan you make before the work starts; this is where a runaway is actually stopped. They used to be one number, which is why every CEO lowballed: crossing your own plan was fatal, so the plan became a thing to stay well back from. 1.0 restores the old behaviour. |
 | `budget_warn_ratio` | 0.8 | The CEO is told to cut burn here — before the platform pauses the project for it. Also warns on the external envelope. |
 | `external_monthly_usd_cap` | 500.0 | The month's real-world spend wall (purchases, services) — separate from the model budget and enforced in **every** billing mode. A purchase that would cross it is refused with the arithmetic; no approval overrides it, only an amendment. 0 turns it off. |

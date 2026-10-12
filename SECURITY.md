@@ -107,8 +107,8 @@ Stated here rather than waiting for someone to find them:
   `expires_at`. "Short-lived" means "scoped to one run", not "expires in N
   minutes".
 - **The default test suite never calls a model.** It attacks the policy layer
-  over HTTP with forged tokens, wrong roles and rephrased requests — 1,347 of
-  them, free and offline. Model *behaviour* is covered by golden transcripts of
+  over HTTP with forged tokens, wrong roles and rephrased requests — 1,813
+  tests in all, free and offline. Model *behaviour* is covered by golden transcripts of
   a scripted backend plus one opt-in paid test. The rules are tested. The models
   are not.
 
