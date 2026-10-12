@@ -250,3 +250,110 @@ def test_a_credential_for_a_provider_this_install_lacks_fails_its_own_project_on
         session.get(Secret, created.json()["id"]).provider = "a-provider-from-m3"
     with db_session() as session:
         assert _billing_env(session, session.get(Project, project["id"])) == {}
+
+
+# ── prices: every run is priced, and the price table is checked ─────────────────
+
+
+class _Returns:
+    def __init__(self, result: RunResult):
+        self.result = result
+
+    def execute(self, job, stop_event=None):
+        return self.result
+
+
+def test_a_finished_run_books_its_priced_cost_beside_its_reported_one(client):
+    job = _lease(client, "priced")[0]
+    # The lease hands the sandbox the model's price, which it cannot look up.
+    assert job.price == catalog.price(job.model).as_dict()
+    execute_job(job, backend=_Returns(RunResult(ok=True, tokens_out=10, cost_usd=1.0,
+                                                priced_usd=1.2)))
+    with db_session() as session:
+        run = session.get(Run, job.run_id)
+        assert (run.cost_usd, run.priced_usd) == (1.0, 1.2)
+
+
+def test_a_model_the_catalog_does_not_list_is_leased_with_no_price(client):
+    from yaaf.core.models import Agent
+
+    project = make_project(client, slug="unlisted", start=False)
+    with db_session() as session:
+        session.get(Agent, project["ceo_agent_id"]).model_override = "claude-mystery-9"
+    client.post(f"/admin/projects/{project['id']}/start", headers=ADMIN)
+    with db_session() as session:
+        dispatch_once(session)
+    job = next(j for j in lease_and_prepare(limit=10) if j.project_id == project["id"])
+    assert job.model == "claude-mystery-9"
+    assert (job.price, job.model_flags) == (None, {})
+
+
+def _bills(project_id: str, agent_id: str, model: str, reported: float, priced: float,
+           harness: str = "claude_agent_sdk", runs: int = 10) -> None:
+    from yaaf.core import ids
+
+    with db_session() as session:
+        for _ in range(runs):
+            session.add(Run(id=ids.new_id(ids.RUN), project_id=project_id, agent_id=agent_id,
+                            kind="agent_run", trigger={}, status="done", model=model,
+                            harness=harness, cost_usd=reported, priced_usd=priced))
+
+
+def _gap_checks(client, project_id: str) -> list[dict]:
+    checks = client.get(f"/observe/projects/{project_id}/health", headers=ADMIN).json()["checks"]
+    return [c for c in checks if c["key"].startswith("price-gap:")]
+
+
+def _on_the_loop(client, slug: str) -> dict:
+    from yaaf.core.models import Agent
+
+    project = make_project(client, slug=slug, start=False)
+    with db_session() as session:
+        session.get(Agent, project["ceo_agent_id"]).harness_override = "anthropic_api"
+    return project
+
+
+def test_a_price_table_that_drifts_from_the_bills_is_on_the_health_checklist(client):
+    """The catalog meters every seat on the loop, so it is checked against the
+    bills the self-reporting harnesses send for the same model."""
+    project = _on_the_loop(client, "drifted")
+    model = catalog.DEFAULT_MODEL
+    _bills(project["id"], project["ceo_agent_id"], model, reported=0.50, priced=0.60)
+    [gap] = _gap_checks(client, project["id"])
+    assert gap["key"] == f"price-gap:{model}" and gap["status"] == "warn"
+    assert "20% above" in gap["detail"] and "over-counted" in gap["detail"]
+    assert "Anthropic API (yaaf's own loop)" in gap["detail"]
+    assert catalog.price(model).as_of in gap["detail"]
+
+
+def test_a_price_table_within_tolerance_says_nothing(client):
+    project = _on_the_loop(client, "close-enough")
+    _bills(project["id"], project["ceo_agent_id"], catalog.DEFAULT_MODEL,
+           reported=0.50, priced=0.52)
+    assert _gap_checks(client, project["id"]) == []
+
+
+def test_a_handful_of_small_runs_cannot_raise_it(client):
+    project = _on_the_loop(client, "too-little")
+    _bills(project["id"], project["ceo_agent_id"], catalog.DEFAULT_MODEL,
+           reported=0.01, priced=0.02, runs=5)
+    assert _gap_checks(client, project["id"]) == []
+
+
+def test_a_project_metered_by_its_own_bills_is_not_told_about_the_table(client):
+    """Nothing it runs is metered by the catalog; the drift is not its problem."""
+    project = make_project(client, slug="self-billed", start=False)
+    _bills(project["id"], project["ceo_agent_id"], catalog.DEFAULT_MODEL,
+           reported=0.50, priced=0.60)
+    assert _gap_checks(client, project["id"]) == []
+
+
+def test_the_loops_own_runs_are_not_evidence_for_the_table(client):
+    """A priced run's two figures are the same number: counting it would only
+    pull the gap toward zero."""
+    project = _on_the_loop(client, "circular")
+    _bills(project["id"], project["ceo_agent_id"], catalog.DEFAULT_MODEL,
+           reported=0.50, priced=0.60)
+    _bills(project["id"], project["ceo_agent_id"], catalog.DEFAULT_MODEL,
+           reported=5.0, priced=5.0, harness="anthropic_api")
+    assert len(_gap_checks(client, project["id"])) == 1

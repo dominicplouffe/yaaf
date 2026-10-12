@@ -26,12 +26,14 @@ RUN npm install -g @anthropic-ai/claude-code
 # queries csv/parquet/json with SQL straight off disk; pandas is what a model
 # reaches for by reflex. Both land in /opt/venv, which PATH puts first — so
 # the `python3` an agent runs through Bash is this interpreter. The mcp pin
-# bounds client-API drift for data_fetch, which imports it. (The network is
+# bounds client-API drift for data_fetch, which imports it; the anthropic pin
+# does the same for the anthropic_api harness, which also imports the HTTP
+# client (httpx2) that SDK major speaks. (The network is
 # open, so an agent can pip install more at run time — these are baked so the
 # common cases cost zero setup.)
 RUN python3 -m venv /opt/venv \
     && /opt/venv/bin/pip install --no-cache-dir \
-        claude-agent-sdk httpx pandas duckdb "mcp<2" playwright
+        claude-agent-sdk "anthropic>=1.13,<2" httpx pandas duckdb "mcp<2" playwright
 ENV PATH="/opt/venv/bin:${PATH}"
 
 # The browser lane (CEO Charter, stage E): Chromium via playwright, for the
@@ -59,5 +61,9 @@ COPY yaaf/runner/chat_entry.py /opt/yaaf/chat_entry.py
 # The CLI itself is the one installed above for the Agent SDK to drive.
 COPY yaaf/runner/claude_cli_entry.py /opt/yaaf/claude_cli_entry.py
 COPY yaaf/runner/yaaf_tools.py /opt/yaaf/yaaf_tools.py
+# yaaf's own agent loop, and the Messages API client the anthropic_api harness
+# drives it with (the `anthropic` SDK above). No CLI underneath.
+COPY yaaf/runner/loop_harness.py /opt/yaaf/loop_harness.py
+COPY yaaf/runner/anthropic_api_entry.py /opt/yaaf/anthropic_api_entry.py
 USER agent
 WORKDIR /workspace

@@ -197,6 +197,38 @@ def test_a_reply_is_metered_the_same_on_every_harness(fresh):
         "five_hour": 0.03, "seven_day": 0.45}
 
 
+def test_every_harness_prices_the_run_beside_the_bill_it_reports(fresh):
+    """The gap check's input (docs/RUNTIMES.md): a harness that reports its own
+    bill is priced from the catalog too, and the two are compared. The
+    recorded run wrote its whole prompt to the 1-hour cache, priced above the
+    5-minute one, so a pricer that ignored the TTL split would be wrong by
+    exactly that.
+
+    They differ, and by a known amount: Claude Code 2.1.296 bills these
+    tokens at $0.0081355, the catalog at $0.008189. The whole $0.0000535 is
+    the 535 cache-read tokens — the CLI prices them at $0.10 per million, the
+    published list at $0.20 — which is the kind of drift the check exists to
+    surface."""
+    from yaaf.runtimes import catalog
+
+    price = catalog.price("claude-sonnet-5-5").as_dict()
+    results = _both(fresh, [{"fixture": "text_reply.jsonl"}], PRICE=price)
+    result = _same(results, ignore=("trace_path",))
+    assert result["cost_usd"] == pytest.approx(0.0081355)
+    assert result["priced_usd"] == pytest.approx(
+        (2 * price["input"] + 13 * price["output"] + 535 * price["cache_read"]
+         + 1987 * price["cache_write_1h"]) / 1_000_000)
+    assert result["priced_usd"] - result["cost_usd"] == pytest.approx(
+        535 * (price["cache_read"] - 0.10) / 1_000_000)
+
+
+def test_a_model_the_catalog_cannot_price_is_still_billed_as_reported(fresh):
+    results = _both(fresh, [{"fixture": "text_reply.jsonl"}], PRICE=None)
+    result = _same(results, ignore=("trace_path",))
+    assert result["cost_usd"] == pytest.approx(0.0081355)
+    assert result["priced_usd"] is None
+
+
 # ── 4. a dead credential reads as one, whatever the prose says ──────────────────
 
 
@@ -405,13 +437,29 @@ def test_the_sandbox_image_carries_every_harness_and_what_it_imports():
                    if h.family != "mock"}
     assert entrypoints <= copied, entrypoints - copied
     siblings = {p.name for p in RUNNER.glob("*.py")}
+    # What the image's venv installs, by import name; and what arrives only as
+    # a dependency of something installed (the anthropic SDK's HTTP client).
+    pip_line = re.search(r"pip install --no-cache-dir \\\n(.*)", dockerfile).group(1)
+    installed = {re.split(r"[<>=]", word.strip('"'))[0].replace("-", "_")
+                 for word in pip_line.split()}
+    installed |= {"httpx2"}
     for name in copied:
         tree = ast.parse((RUNNER / name).read_text())
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
-                for alias in node.names:
-                    module = f"{alias.name}.py"
-                    assert module not in siblings or module in copied, (name, module)
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+                names = [node.module]
+            else:
+                continue
+            for imported in names:
+                top = imported.split(".")[0]
+                if top in sys.stdlib_module_names:
+                    continue  # yaaf/runner/types.py is not copied, so `types` is the stdlib's
+                if f"{top}.py" in siblings:
+                    assert f"{top}.py" in copied, (name, top)
+                else:
+                    assert top in installed, (name, top)
 
 
 def test_a_tool_call_through_the_stdio_server_reaches_the_agent_api_as_this_run(run):

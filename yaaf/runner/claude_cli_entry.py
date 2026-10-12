@@ -40,10 +40,6 @@ _MESSAGE_NAMES = {"system": "SystemMessage", "user": "UserMessage",
                   "rate_limit_event": "RateLimitEvent", "stream_event": "StreamEvent"}
 
 
-def _int(usage: dict, key: str) -> int:
-    return int(usage.get(key) or 0)
-
-
 def _error_result_text(result: dict) -> str:
     """The most informative text in a result with ``is_error`` — the SDK's own
     order (``_internal.query._error_result_text``): ``errors[]``, then
@@ -131,15 +127,9 @@ class ClaudeCliDriver(base.CliDriver):
         elif kind == "result":
             if record.get("is_error"):
                 self.last_error_result = record
-            usage = record.get("usage") or {}
-            events.append(base.AttemptResult(
-                cost_usd=record.get("total_cost_usd"),
-                tokens_in=_int(usage, "input_tokens"),
-                tokens_out=_int(usage, "output_tokens"),
-                cache_creation=_int(usage, "cache_creation_input_tokens"),
-                cache_read=_int(usage, "cache_read_input_tokens"),
-                subtype=record.get("subtype"),
-            ))
+            events.append(base.usage_bill(record.get("usage") or {},
+                                          cost_usd=record.get("total_cost_usd"),
+                                          subtype=record.get("subtype")))
         else:
             if kind == "rate_limit_event":
                 info = record.get("rate_limit_info") or {}

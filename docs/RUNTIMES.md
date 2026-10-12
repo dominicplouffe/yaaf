@@ -1,8 +1,9 @@
 # Runtimes — any harness, any provider, the same rules
 
-**Status: M0 and M1 are built — the seams, then the Claude CLI as a second
-harness a seat can choose. M1's one unticked line is a week of a live seat on
-it, which only a deployment can tick. M2 onward is proposed.** This is the design and the tracking doc for running a seat on something other than the Claude Agent SDK:
+**Status: M0, M1 and M2 are built — the seams, the Claude CLI as a second
+harness a seat can choose, and yaaf's own agent loop on the Messages API as a
+third. Each milestone's one unticked line is a live seat on it, which only a
+deployment can tick. M3 onward is proposed.** This is the design and the tracking doc for running a seat on something other than the Claude Agent SDK:
 the Claude CLI driven directly, the Anthropic API under yaaf's own loop, and
 then Codex, Gemini, OpenCode and whatever comes after them. Update the
 checkboxes as milestones land; if a decision here turns out wrong, change the
@@ -197,11 +198,16 @@ and how the SDK does it. M1 split them. The first half is
   it is not resumed. Each resume is a fresh model process with a fresh budget
   of its own, so before M1 a cap handed to every attempt whole bounded a run
   at three times itself. Within an attempt the harness's own budget is the
-  line where it has one — and both Claude harnesses do (`--max-budget-usd`).
-  Pricing streamed usage to stop an attempt mid-flight arrives with prices,
-  in M2;
+  line where it has one — and both Claude CLI harnesses do
+  (`--max-budget-usd`). Where yaaf owns the loop (M2) it is yaaf's own: each
+  call is priced from the catalog as it is billed, the output it may write is
+  clamped to what is left, and a call whose prompt alone crosses the line is
+  abandoned before it writes a word;
 - the transient-error policy — classify, back off, resume in place if the
-  harness can, rerun fresh if no session exists yet;
+  harness can, rerun fresh if no session exists yet. Only `transient` is
+  resumed: a driver that can classify by type says so, and the error-text
+  markers decide only when it says nothing;
+- price every bill from the catalog (`priced_usd`), whoever reported it;
 - write the final `result.json`.
 
 A driver only translates. It turns a `RunSpec` into a running model and the
@@ -314,19 +320,27 @@ One file, `yaaf/runtimes/catalog.py`, replaces the default-model strings and
 ships in the wheel with nothing to remember in `package-data`:
 
 ```python
-Model("claude-opus-5-5", "anthropic", tier=5)
-# from M2, when a harness needs it to stop a run:
-#   price=Price(input=…, output=…, cache_read=…, cache_write=…, per="mtok", as_of="…")
+Model("claude-opus-5-5", "anthropic", 5,
+      Price(4.00, 20.00, 0.20, 5.00, 8.00, as_of="2026-10-12"),   # USD per million:
+      web_tools="20260209")    # input, output, cache read, cache write 5m / 1h
 ```
+
+What the API accepts per model rides beside the price (`effort`, the web
+search tool version), because a harness that builds its own requests needs
+it and nothing else does. The daemon hands both to the sandbox with the run
+(`YAAF_PRICE`, `YAAF_MODEL_FLAGS`): the sandbox cannot import the catalog.
 
 `tier` is what `stakes: high` lifts a seat to — the top tier **of the seat's
 own provider**. A dial labelled "how much this matters" that silently moved a
 Codex seat onto Opus would be two decisions wearing one label.
 
-Prices are in the repo, dated, and overridable per install in Settings. Where a
-harness reports its own cost, the loop prices the run anyway and records the
-gap in the trace; a model whose gap stays wide raises a health line — the
-price table is checked against the bills it is supposed to predict.
+Prices are in the repo and dated. Overriding one per install in Settings is
+proposed, not built: until it is, a wrong price is a one-line change to this
+file. Where a harness reports its own cost the run is priced anyway —
+`priced_usd` beside `cost_usd`, per attempt in the trace — and a model whose
+reported bills drift more than 10% from its price raises a health line on
+every project with a seat the catalog meters. The price table is checked
+against the bills it is supposed to predict.
 
 ### 6. The run contract
 
@@ -338,7 +352,7 @@ gains:
 | Field | Why |
 |---|---|
 | `harness`, `provider`, `model_served`, `harness_version` | `model_served` is what answered — a CLI can fall back — and the run is priced on it. The version makes a transcript reproducible. |
-| `cost_source` | `reported` \| `priced`. Never "unknown": an unpriced run cannot start under a USD meter (rule R3). |
+| `priced_usd` | The run priced from the catalog, whoever bills it (M2). For a harness that prices itself (`Harness.cost = "priced"`) it *is* `cost_usd`; for one that reports its own bill it is the check on the catalog. Stored on `runs.priced_usd` (migration `0043`). Which of the two `cost_usd` is lives on the harness, not on every result: `cost_source` was not needed. |
 | `error_kind` | `auth` \| `quota` \| `transient` \| `fatal`. The daemon stops string-matching one vendor's error messages. |
 | `session_id` | Trace only. |
 
@@ -362,7 +376,7 @@ All of them read manifests and the catalog; none names a harness.
 |---|---|---|
 | R1 | **A credential the seat's harness cannot accept is refused** — a subscription token on `anthropic_api`, a ChatGPT login on a Gemini seat. | creation, add-team, hire, repin, credential change, recall; lease backstop; health (built in M1) |
 | R2 | **A harness that cannot withhold a tool the role does not grant is refused for that role.** Codex cannot run without a shell; a role without `bash` cannot be hired onto it. Widening a role's tools silently because the transport is clumsy is exactly what the role version exists to prevent. | the role version itself, and every door R1 is at (built in M1) |
-| R3 | **Under a USD meter, a model with no price is refused.** A run nobody can price is a run the budget cannot stop. | hire, repin, override, lease |
+| R3 | **A model with no price is refused on a harness that prices its runs.** A run nobody can price is a run the budget cannot stop. A harness that reports its own bill (both CLI harnesses) is not metered by the catalog and takes any model. | the role version, and every door R1 is at; lease backstop; the loop itself refuses to make a call it cannot price (built in M2) |
 | R4 | **One project, one meter.** All of a project's credentials meter in USD or all in tokens. Two units cannot share one cap, and inventing an exchange rate between them is inventing a number. (Open question 1.) | credential assignment |
 | R5 | **A seat whose provider has no credential on the project cannot be hired, and a project with such a seat cannot start.** It fails at the door, not at 3am. | hire, start, health |
 | R6 | **An effort the model does not support is refused**, with the list it does. Never mapped silently, in either direction. | hire, repin, override (from M4) |
@@ -399,11 +413,11 @@ they are the reference for.
 | What runs | the Python SDK, driving the CLI it wraps | `claude -p`, stream-json in and out | yaaf's own loop on the Messages API |
 | Credentials | API key, subscription | API key, subscription | **API key only** — a subscription token is a CLI credential, not a Messages API one (`founder/session.py` says so for the Founder already) |
 | yaaf tools | in-process SDK MCP | `yaaf-tools` over stdio | function calling |
-| Built-in tools | Claude Code's | Claude Code's | the loop's own: files, shell, fetch; web search as the API's server tool |
+| Built-in tools | Claude Code's | Claude Code's | the loop's own, under Claude Code's names: files, shell, fetch; web search as the API's server tool. The shell does not see the model credential |
 | Budget | `max_budget_usd` per attempt + the cap across resumes | `--max-budget-usd` per attempt + the cap across resumes | governor, exact per call |
 | Cost | reported | reported | priced |
 | Plan meter | yes | yes | no — API keys have none, as now |
-| Image needs | Node, CLI, SDK | Node, CLI | nothing beyond the base image |
+| Image needs | Node, CLI, SDK | Node, CLI | the `anthropic` SDK — no Node, no CLI |
 | It is the reference for | — (today's behaviour) | **every CLI harness** | **every API provider** |
 
 **Why `claude_cli` when the SDK already drives the same CLI.** Because it is
@@ -420,7 +434,7 @@ class — version drift paid for a layer the CLI does not need.
 loop is how most providers will arrive. Owning the loop also buys what no CLI
 offers: exact per-call usage for the governor, control of cache breakpoints,
 and a run with no CLI underneath it at all. The cost is that yaaf now owns the
-built-in tools, which is why it waits until M2.
+built-in tools, which is why it waited for M2.
 
 ---
 
@@ -616,14 +630,71 @@ Two things moved on:
 **The boardroom chat stays on the SDK** whatever the CEO's seat names, and its
 runs are pinned as `claude_agent_sdk` so the record says so — until M6.
 
-### M2 — `anthropic_api`: the loop family's reference
-- [ ] `LoopDriver`; the loop's built-ins (files, shell, fetch) under the same
-      grants; web search as the API's server tool
-- [ ] `ModelClient` for Messages; prompt caching
-- [ ] The governor prices streamed usage and stops an attempt mid-flight
-- [ ] Prices in `catalog.py`; the reported-vs-priced gap check against the
-      SDK on the same models
-- [ ] R3 with an attack (an unpriced model hired under USD)
+### M2 — `anthropic_api`: the loop family's reference ✅ (but the live run)
+- [x] `LoopDriver` (`yaaf/runner/loop_harness.py`) over a provider-neutral
+      transcript; the loop's built-ins — `Read`, `Write`, `Edit`, `Glob`,
+      `Grep`, `Bash`, `WebFetch`, Claude Code's names — offered by the same
+      grant function the other harnesses use; skills from the grant, never
+      from the agent-writable workspace; inline data sources tool by tool,
+      allowlists honoured; web search as the API's server tool
+- [x] `AnthropicClient` (`anthropic_api_entry.py`) on the official `anthropic`
+      SDK: streaming, one cache breakpoint on the static prefix plus automatic
+      caching of the tail, `effort` only where the model takes it, `pause_turn`
+      resumed with no extra message, refusals end the run, typed errors to
+      `auth` / `transient` / `fatal` — including the ones that arrive
+      mid-stream with a 200
+- [x] The governor, exact per call: nothing starts once the cap is spent, each
+      call's output is clamped to what the cap can pay for, and a call whose
+      prompt alone crosses the cap is abandoned at `message_start`, before it
+      writes a word. What one call can overshoot by is bounded by its own
+      prompt
+- [x] Prices in `catalog.py` (dated, TTL-split cache writes, web search);
+      every run priced in the sandbox whoever bills it; `runs.priced_usd`;
+      the gap check — a health line when the self-reporting harnesses' bills
+      for a model drift more than 10% from the catalog's price, on any
+      project with a seat the catalog meters
+- [x] R3 with attacks, and R1 on its first real harness (`test_seat_harness.py`)
+- [x] Contract suite for the loop (`test_loop_harness.py`): the real SDK
+      against a fake API speaking its streaming protocol — usage and price,
+      the tool round trip, append-only replay, pause, refusal, the cut-off
+      tool call, a dead key (recorded from the live API), four kinds of
+      transient failure resumed in place, the governor three ways, the tool
+      surface per grant
+- [ ] **One seat of a live project on `anthropic_api`**, its priced cost
+      against what the Anthropic console bills for the same key. Needs a
+      deployment and a real key; nothing here can tick it
+
+What M2 found on the way:
+
+- **The catalog and Claude Code disagree about cache reads.** Claude Code
+  2.1.296 bills Sonnet 5.5 cache reads at $0.10 per million; the published
+  list says $0.20. On the recorded run that is the whole 0.66% gap; on a
+  cache-heavy agent run it is most of a much bigger one. The catalog keeps the
+  published price — over-metering is the safe direction for a budget — and
+  the gap check is what will say which is right, from real bills.
+- **A stream that drops mid-reply is not the SDK's error.** The `anthropic`
+  SDK wraps what fails before the response, not after: a dropped connection
+  mid-stream raises the HTTP client's own `ReadError`, and an `overloaded`
+  error event arrives as a status error whose status is the stream's 200. Both
+  are classified by what they are (the transport error's type, the error
+  body's `type`), not by their prose.
+- **A call that dies mid-stream is metered at the prompt it stated.** Whether
+  a provider bills a call it failed is its business; the budget assumes it
+  does.
+- **The shell does not see the model credential.** The loop's `Bash` runs
+  without `ANTHROPIC_API_KEY` in its environment — nothing an agent runs needs
+  to pay for the model.
+- **`cost_source` on every result was redundant** with `Harness.cost`, so it
+  was not built.
+
+Two choices the API offers that the loop declines, on purpose: server-side
+model fallback on a refusal (a seat runs on what it was hired on, priced on
+what it was hired on), and eager tool-input streaming (nothing reads a tool
+call before it is complete, so it would buy nothing but the truncated-input
+failure it brings). The request shape — caching, `effort`, the web search
+tool versions — is from the API's documentation and the SDK's types; the only
+live call made was the free one with an invalid key, which the API refuses
+before it validates anything else. The live run above is what proves it.
 
 ### M3 — The first other providers: everything OpenAI-compatible
 One `ModelClient` for the OpenAI-compatible chat API reaches more providers

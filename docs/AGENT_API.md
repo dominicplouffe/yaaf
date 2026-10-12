@@ -339,10 +339,13 @@ A role is a JSON file in [`roles/`](../roles):
 ```
 
 - `model` / `effort` — per role, so your writer isn't paying engineer prices.
-- `harness` (optional) — what drives the model in the sandbox: `claude_agent_sdk`
-  or `claude_cli` today ([RUNTIMES.md](RUNTIMES.md)). Absent is the model's
-  provider default. It changes how a run is driven, never what the role may do;
-  a harness that cannot take away a grant this role withholds is refused here.
+- `harness` (optional) — what drives the model in the sandbox: `claude_agent_sdk`,
+  `claude_cli`, or `anthropic_api` — yaaf's own loop on the Messages API, API
+  keys only ([RUNTIMES.md](RUNTIMES.md)). Absent is the model's provider
+  default. It changes how a run is driven, never what the role may do; a
+  harness that cannot take away a grant this role withholds is refused here,
+  and so is a model `anthropic_api` has no price for, because it meters every
+  call by the price.
 - `tool_permissions` — `files`, `bash`, `data_processing`, `web`.
   `data_processing` grants the same shell
   `bash` does; it is separate so that a role which has one in order to aggregate

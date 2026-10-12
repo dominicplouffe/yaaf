@@ -96,6 +96,12 @@ def refusal(harness: str | None, model: str, tool_permissions: dict | None,
         grant = unwithholdable[0]
         return (f"{found.label} cannot run without {grant}, and this role does not "
                 f"grant it — grant {grant} on the role, or run this seat on another harness")
+    # R3 — a model the harness would have to price, with no price to price it
+    # by. A run nobody can price is a run the budget cannot stop.
+    if found.cost == "priced" and catalog.price(model) is None:
+        return (f"{found.label} prices every run from yaaf's model catalog, and "
+                f"{model} has no price there — add one, or run this seat on a harness "
+                f"that reports its own cost")
     # R1 — a credential the harness cannot authenticate with.
     if credential is not None and found.accepts:
         cred_provider, mode = credential

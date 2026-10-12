@@ -82,6 +82,8 @@ RUNTIMES_COLUMNS = (
     # 0042: a seat chooses what drives its model.
     ("role_versions", "harness"),
     ("agents", "harness_override"),
+    # 0043: every run is priced from the catalog, whoever bills it.
+    ("runs", "priced_usd"),
 )
 
 REMOVED_TABLES = (STAGE_1_TABLES + STAGE_5_TABLES + STAGE_6_TABLES

@@ -1736,6 +1736,11 @@ class Run(Base):
     cache_creation_tokens: Mapped[int] = mapped_column(Integer, default=0)
     cache_read_tokens: Mapped[int] = mapped_column(Integer, default=0)
     cost_usd: Mapped[float | None] = mapped_column(Float)
+    # The same run priced from yaaf's model catalog (yaaf.runtimes.catalog).
+    # Equal to cost_usd on a harness yaaf prices itself; on one that reports
+    # its own bill, the check on the catalog — the health checklist compares
+    # the two (docs/RUNTIMES.md). NULL when unpriced, and where cost_usd is.
+    priced_usd: Mapped[float | None] = mapped_column(Float)
     # Pinned at lease time, not resolved at read time: a role repin or model
     # change must never silently re-attribute historical spend.
     model: Mapped[str | None] = mapped_column(String(64))

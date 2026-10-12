@@ -26,6 +26,12 @@ class RunJob:
     # with the model, by yaaf.runtimes.seats, and pinned on the run row.
     provider: str = ""
     harness: str = ""
+    # The model's catalog row, for the sandbox (which cannot import the
+    # catalog): its price, so every run is priced whoever bills it, and what
+    # the API accepts for it, for a harness that builds requests itself.
+    # None / {} for a model the catalog does not list.
+    price: dict | None = None
+    model_flags: dict = field(default_factory=dict)
     tool_permissions: dict = field(default_factory=dict)
     # Which tool SCHEMAS this run is worth sending. Every agent used to receive
     # all of them — for a plain employee that was 7,700 tokens of schema on
@@ -57,6 +63,10 @@ class RunResult:
     cache_creation_tokens: int = 0
     cache_read_tokens: int = 0
     cost_usd: float | None = None
+    #: The same run priced from yaaf's catalog. For a harness that prices its
+    #: own runs it *is* cost_usd; for one that reports its bill it is the check
+    #: on the catalog (docs/RUNTIMES.md, the gap check). None when unpriced.
+    priced_usd: float | None = None
     trace_path: str | None = None
     #: The plan meter the SDK volunteered during this run, if it did:
     #: {"status": str, "windows": [{"key", "utilization", "resets_at"}]}.

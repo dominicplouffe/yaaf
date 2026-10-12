@@ -1,12 +1,17 @@
-"""The models a seat can be hired on, and how they rank.
+"""The models a seat can be hired on: how they rank, what they cost, and what
+the API accepts for each.
 
-Data, not logic. A model this file does not list can still be named on a role —
-nothing here refuses one yet — but it ranks 0, so `stakes: high` lifts it
-rather than leaving it, and it is served by the default provider, which until a
-second provider exists is the only answer there is.
+Data, not logic. A model this file does not list can still be named on a role
+for a harness that reports its own cost — it ranks 0, so `stakes: high` lifts
+it rather than leaving it, and it is served by the default provider. A harness
+that *prices* runs itself refuses one (R3, yaaf.runtimes.seats): a run nobody
+can price is a run the budget cannot stop.
 
-Prices arrive with the harness that needs them to stop a run (docs/RUNTIMES.md,
-M2). Until then the Agent SDK reports each run's cost itself, as it always has.
+Prices are Anthropic's published list prices, per million tokens, as of the
+date beside them. They are checked rather than trusted: every run on a harness
+that reports its own bill is also priced from this table, and a model whose
+two figures drift apart is named on the health checklist of every project
+this table meters (docs/RUNTIMES.md).
 """
 
 from __future__ import annotations
@@ -17,21 +22,63 @@ from yaaf.runtimes.providers import DEFAULT_PROVIDER
 
 
 @dataclass(frozen=True)
+class Price:
+    """USD per million tokens. Cache writes are priced by TTL: the 5-minute
+    entry a loop writes and the 1-hour entry Claude Code writes are different
+    prices for the same tokens."""
+    input: float
+    output: float
+    cache_read: float
+    cache_write_5m: float
+    cache_write_1h: float
+    as_of: str
+
+    def as_dict(self) -> dict:
+        """What a sandbox prices a run by: it cannot import this module, so the
+        row travels to it as JSON (`YAAF_PRICE`)."""
+        return {"input": self.input, "output": self.output, "cache_read": self.cache_read,
+                "cache_write_5m": self.cache_write_5m, "cache_write_1h": self.cache_write_1h,
+                "web_search": WEB_SEARCH_USD, "as_of": self.as_of}
+
+
+#: Per web search on the Messages API's server tool. Web fetch is not metered.
+WEB_SEARCH_USD = 0.01
+
+
+@dataclass(frozen=True)
 class Model:
     id: str
     provider: str
     #: Weakest to strongest within the provider; 0 is "never heard of it". Only
     #: ever compared within one provider — a tier is not a cross-vendor claim.
     tier: int
+    price: Price | None = None
+    #: Whether the API takes `output_config.effort` for this model. Claude
+    #: Haiku 4.5 rejects it, so a harness that builds requests itself omits it.
+    effort: bool = True
+    #: The server web tools this model takes: "20260209" (dynamic filtering)
+    #: or "basic" (`web_search_20250305` / `web_fetch_20250910`).
+    web_tools: str = "basic"
 
+
+_AS_OF = "2026-10-12"
 
 MODELS: tuple[Model, ...] = (
-    Model("claude-haiku-4-5", "anthropic", 1),
-    Model("claude-sonnet-5", "anthropic", 2),
-    Model("claude-sonnet-5-5", "anthropic", 3),
-    Model("claude-opus-5", "anthropic", 4),
-    Model("claude-opus-5-5", "anthropic", 5),
-    Model("claude-fable-5-1", "anthropic", 6),
+    Model("claude-haiku-4-5", "anthropic", 1,
+          Price(1.00, 5.00, 0.10, 1.25, 2.00, _AS_OF), effort=False),
+    Model("claude-sonnet-5", "anthropic", 2,
+          Price(2.00, 10.00, 0.20, 2.50, 4.00, _AS_OF), web_tools="20260209"),
+    Model("claude-sonnet-5-5", "anthropic", 3,
+          Price(2.00, 10.00, 0.20, 2.50, 4.00, _AS_OF),
+          web_tools="20260209"),
+    Model("claude-opus-5", "anthropic", 4,
+          Price(5.00, 25.00, 0.50, 6.25, 10.00, _AS_OF),
+          web_tools="20260209"),
+    Model("claude-opus-5-5", "anthropic", 5,
+          Price(4.00, 20.00, 0.20, 5.00, 8.00, _AS_OF),
+          web_tools="20260209"),
+    Model("claude-fable-5-1", "anthropic", 6,
+          Price(10.00, 50.00, 0.25, 12.50, 20.00, _AS_OF)),
 )
 
 _BY_ID = {m.id: m for m in MODELS}
@@ -53,3 +100,8 @@ def tier(model_id: str | None) -> int:
 def provider_of(model_id: str | None) -> str:
     found = model(model_id)
     return found.provider if found else DEFAULT_PROVIDER
+
+
+def price(model_id: str | None) -> Price | None:
+    found = model(model_id)
+    return found.price if found else None

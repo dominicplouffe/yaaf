@@ -8,8 +8,9 @@ platform surface is the agent HTTP API.
 
 One backend for every harness that runs in the container. What differs between
 them is only the entry script — ``sandbox_entry.py`` drives the Agent SDK,
-``claude_cli_entry.py`` the Claude CLI — and every one of them reads the same
-staged files and writes the same result.json (docs/RUNTIMES.md).
+``claude_cli_entry.py`` the Claude CLI, ``anthropic_api_entry.py`` yaaf's own
+loop on the Messages API — and every one of them reads the same staged files
+and writes the same result.json (docs/RUNTIMES.md).
 """
 
 from __future__ import annotations
@@ -98,6 +99,8 @@ class SandboxBackend:
             "YAAF_EFFORT": job.effort,
             "YAAF_MAX_USD": str(job.max_usd or 0),
             "YAAF_TASK_BUDGET": str(job.task_budget_tokens or 0),
+            "YAAF_PRICE": json.dumps(job.price) if job.price else "",
+            "YAAF_MODEL_FLAGS": json.dumps(job.model_flags or {}),
             "YAAF_TOOL_PERMISSIONS": json.dumps(job.tool_permissions),
             "YAAF_AGENT_KIND": job.agent_kind,
             **job.billing_env,
@@ -124,6 +127,7 @@ class SandboxBackend:
                     cache_creation_tokens=int(data.get("cache_creation_tokens", 0)),
                     cache_read_tokens=int(data.get("cache_read_tokens", 0)),
                     cost_usd=data.get("cost_usd"),
+                    priced_usd=data.get("priced_usd"),
                     trace_path=data.get("trace_path"),
                     plan=data.get("plan"),
                     error_kind=data.get("error_kind"),

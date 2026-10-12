@@ -569,6 +569,44 @@ def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
     }
 
 
+#: The drift between what a self-reporting harness bills and what yaaf's
+#: catalog prices the same tokens at, past which the checklist says so; the
+#: priced spend it must have seen first, so a few small runs cannot raise it;
+#: and how far back it looks.
+PRICE_GAP_TOLERANCE = 0.10
+PRICE_GAP_MIN_USD = 1.0
+PRICE_GAP_RUNS = 200
+
+
+def price_gaps(session: Session, models: list[str]) -> list[dict]:
+    """For each model whose gap is past tolerance: what the harnesses that
+    report their own bill charged for it across this install's recent runs,
+    against what the catalog prices the same tokens at. Install-wide, because
+    the catalog is: a project with every seat on a priced harness has no
+    bills of its own to check it by."""
+    from yaaf.runtimes.harnesses import HARNESSES
+
+    reporting = [h.name for h in HARNESSES.values() if h.cost == "reported"]
+    gaps = []
+    for model in models:
+        rows = session.execute(
+            select(Run.cost_usd, Run.priced_usd)
+            .where(Run.model == model, Run.harness.in_(reporting),
+                   Run.cost_usd.is_not(None), Run.priced_usd.is_not(None))
+            .order_by(Run.finished_at.desc())
+            .limit(PRICE_GAP_RUNS)
+        ).all()
+        reported = sum(r.cost_usd for r in rows)
+        priced = sum(r.priced_usd for r in rows)
+        if priced < PRICE_GAP_MIN_USD:
+            continue
+        drift = priced / reported - 1 if reported else 1.0
+        if abs(drift) > PRICE_GAP_TOLERANCE:
+            gaps.append({"model": model, "runs": len(rows), "reported_usd": reported,
+                         "priced_usd": priced, "drift": drift})
+    return gaps
+
+
 @router.get("/projects/{project_id}/health")
 def project_health(project_id: str, session: Session = Depends(db)) -> dict:
     """Every way this project's configuration can be silently wrong, checked
@@ -618,6 +656,36 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
         refuse_unrunnable_seats(session, project, _project_agents(session, project.id))
     except HTTPException as refused:
         add("seats", "fail", f"a seat cannot run — {refused.detail}", "settings")
+
+    # Prices: a seat on a harness yaaf prices itself is metered by the model
+    # catalog, so its budget is only as right as the catalog. The bills the
+    # self-reporting harnesses send for the same model are the check on it.
+    from yaaf.runtimes import catalog
+    from yaaf.runtimes.harnesses import HARNESSES
+    from yaaf.runtimes.seats import seat_for
+    from yaaf.server.contextpack import role_version_for
+
+    metered: dict[str, set[str]] = {}
+    for agent in _project_agents(session, project.id):
+        seat = seat_for(agent, role_version_for(session, agent))
+        harness = HARNESSES.get(seat.harness or "")
+        if harness is not None and harness.cost == "priced":
+            metered.setdefault(seat.model, set()).add(harness.label)
+    for gap in price_gaps(session, sorted(metered)):
+        price = catalog.price(gap["model"])
+        add(f"price-gap:{gap['model']}", "warn",
+            f"yaaf prices {gap['model']} {abs(gap['drift']):.0%} "
+            f"{'above' if gap['drift'] > 0 else 'below'} what it is billed at: the "
+            f"harnesses that report their own cost charged "
+            f"${gap['reported_usd']:.2f} over its last {gap['runs']} runs on this "
+            f"install, and the price table puts the same tokens at "
+            f"${gap['priced_usd']:.2f}. Seats on "
+            f"{', '.join(sorted(metered[gap['model']]))} are metered by that table, so "
+            f"their budget is {'over' if gap['drift'] > 0 else 'under'}-counted by as "
+            f"much — the prices in yaaf/runtimes/catalog.py"
+            f"{f' (as of {price.as_of})' if price else ''} need checking against the "
+            "provider's current list.",
+            "runs")
 
     secrets = session.execute(
         select(Secret).where(or_(Secret.project_id == project.id,
@@ -1333,6 +1401,7 @@ def runs(project_id: str, limit: int = 50, session: Session = Depends(db)) -> li
             "tokens_in": r.tokens_in, "tokens_out": r.tokens_out,
             "cache_creation": r.cache_creation_tokens, "cache_read": r.cache_read_tokens,
             "model": r.model, "effort": r.effort, "cost_usd": r.cost_usd,
+            "priced_usd": r.priced_usd, "harness": r.harness,
             "refusals": r.refusal_count, "last_refusal": r.last_refusal,
             "summary": r.summary,
             "has_trace": r.trace_path is not None,

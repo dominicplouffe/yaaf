@@ -6,11 +6,13 @@ through runs one check (yaaf.runtimes.seats.refusal): the harness must exist,
 serve the seat's model, be able to take away what the role withholds (R2), and
 authenticate with the project's credential (R1).
 
-The two Claude harnesses can do all of that, so R1 and R2 cannot fire on them.
-The attacks therefore register a harness that cannot — exactly how the rules
-are written, against the registry rather than against a name — and the day a
-real one arrives (an API-key-only loop in M2, a CLI that always has a shell in
-M4) it is held by the same doors with nobody editing this file.
+The two Claude CLI harnesses can do all of that, so R1 and R2 cannot fire on
+them. The attacks therefore register a harness that cannot — exactly how the
+rules are written, against the registry rather than against a name — and a
+real one is held by the same doors with nobody editing them: `anthropic_api`
+(M2), which pays only with an API key and prices its own runs, is the first,
+and the section at the end proves it from the outside (R1, and R3: a model
+with no price cannot be hired onto a harness that meters by price).
 """
 
 from __future__ import annotations
@@ -30,7 +32,7 @@ from yaaf.core.db import db_session
 from yaaf.core.models import Agent, Project, RoleVersion, Run, Team
 from yaaf.runner.backends import get_backend
 from yaaf.runner.daemon import lease_and_prepare
-from yaaf.runtimes import harnesses
+from yaaf.runtimes import catalog, harnesses
 from yaaf.runtimes.harnesses import Harness
 from yaaf.server.dispatcher import dispatch_once
 
@@ -75,7 +77,7 @@ def _project_body(slug: str, **fields) -> dict:
 
 def test_the_picker_offers_every_harness_a_seat_may_run_on_and_not_the_test_switch(client):
     offered = {h["name"] for h in client.get("/admin/harnesses", headers=ADMIN).json()}
-    assert offered == {"claude_agent_sdk", "claude_cli"}
+    assert offered == {"claude_agent_sdk", "claude_cli", "anthropic_api"}
 
 
 def test_a_role_on_the_cli_runs_its_seats_on_the_cli(client):
@@ -266,3 +268,61 @@ def test_a_seat_that_cannot_run_is_named_on_the_health_checklist(client, picky):
              if c["key"] == "seats"]
     assert seats and seats[0]["status"] == "fail"
     assert "cannot pay with a Claude subscription" in seats[0]["detail"]
+
+
+# ── the first real harness the rules refuse: yaaf's own loop (M2) ──────────────
+
+
+def test_a_subscription_cannot_pay_for_a_seat_on_the_api_loop(client):
+    """R1 on a real harness. A subscription token is a credential for the
+    Claude Code CLI, not for the Messages API: a seat on the loop paid with
+    one would fail every run with an authentication error."""
+    make_project(client, start=False)
+    subscription = _credential(client, "Plan", "subscription")
+    key = _credential(client, "Key", "api_key")
+    teams = [{"role_slug": "worker", "name": "Alpha", "employees": ["Lead"],
+              "harness_overrides": {"Lead": "anthropic_api"}}]
+    refused = client.post("/admin/projects", headers=ADMIN, json=_project_body(
+        "loop-on-a-plan", billing_secret_id=subscription, teams=teams))
+    assert refused.status_code == 422
+    assert "Anthropic API (yaaf's own loop) cannot pay with a Claude subscription" in refused.text
+    accepted = client.post("/admin/projects", headers=ADMIN, json=_project_body(
+        "loop-on-a-key", billing_secret_id=key, teams=teams))
+    assert accepted.status_code == 200, accepted.text
+
+
+def test_a_model_with_no_price_cannot_be_hired_onto_a_harness_that_prices_runs(client):
+    """R3. The loop meters every call by the catalog's price, so a model the
+    catalog cannot price is a run the per-run cap cannot stop."""
+    make_project(client, start=False)
+    refused = _role(client, "mystery", model="claude-mystery-9", harness="anthropic_api")
+    assert refused.status_code == 422
+    assert "claude-mystery-9 has no price there" in refused.text
+    # A harness that reports its own bill is not metered by the catalog.
+    assert _role(client, "mystery", model="claude-mystery-9",
+                 harness="claude_cli").status_code == 200
+    # And the seat cannot be moved onto the loop either.
+    moved = client.post("/admin/projects", headers=ADMIN, json=_project_body(
+        "unpriced-seat", teams=[{"role_slug": "mystery", "name": "Odd", "employees": ["Ann"],
+                                 "harness_overrides": {"Ann": "anthropic_api"}}]))
+    assert moved.status_code == 422 and "Ann" in moved.text
+
+
+def test_a_seat_on_the_api_loop_is_leased_with_its_price_and_runs_on_its_entrypoint(client):
+    make_project(client, start=False)
+    assert _role(client, "ceo", is_ceo_role=True, harness="anthropic_api").status_code == 200
+    created = client.post("/admin/projects", headers=ADMIN, json=_project_body(
+        "on-the-loop", billing_secret_id=_credential(client, "Key", "api_key")))
+    assert created.status_code == 200, created.text
+    project = created.json()
+    assert client.post(f"/admin/projects/{project['id']}/start",
+                       headers=ADMIN).status_code == 200
+    with db_session() as session:
+        dispatch_once(session)
+    job = next(j for j in lease_and_prepare(limit=20)
+               if j.agent_id == project["ceo_agent_id"])
+    assert (job.provider, job.harness) == ("anthropic", "anthropic_api")
+    row = catalog.model(job.model)
+    assert job.price == row.price.as_dict()
+    assert job.model_flags == {"effort": row.effort, "web_tools": row.web_tools}
+    assert get_backend(job.harness).entrypoint == "anthropic_api_entry.py"

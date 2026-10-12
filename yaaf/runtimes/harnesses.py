@@ -30,6 +30,10 @@ class Harness:
     #: harness that cannot run without a shell cannot honour a role that
     #: grants none, and is refused for it rather than quietly widening it.
     withholds: tuple[str, ...] = ("files", "bash", "web")
+    #: "reported" — the harness bills each run itself (the Agent SDK, Claude
+    #: Code); "priced" — yaaf prices it from the catalog, so a model with no
+    #: price cannot run on it (R3).
+    cost: str = "reported"
 
 
 HARNESSES: dict[str, Harness] = {h.name: h for h in (
@@ -49,6 +53,18 @@ HARNESSES: dict[str, Harness] = {h.name: h for h in (
         family="cli",
         providers=("anthropic",),
         accepts=("anthropic:api_key", "anthropic:subscription"),
+    ),
+    # yaaf's own agent loop on the Messages API: no CLI underneath, the
+    # built-in tools yaaf's own, every call priced from the catalog. API keys
+    # only — a subscription token is a CLI credential, not a Messages API one.
+    # The reference every provider reached by plain API is built from.
+    Harness(
+        name="anthropic_api",
+        label="Anthropic API (yaaf's own loop)",
+        family="loop",
+        providers=("anthropic",),
+        accepts=("anthropic:api_key",),
+        cost="priced",
     ),
     # The scripted backend that drives the real API at $0: CI, the goldens and
     # the fire drill. It reads no credential and calls no model.

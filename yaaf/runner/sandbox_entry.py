@@ -56,6 +56,11 @@ MAX_USD = float(os.environ.get("YAAF_MAX_USD", "0") or 0)
 # budget so it paces itself and wraps up before the line. 0 = off.
 TASK_BUDGET = int(os.environ.get("YAAF_TASK_BUDGET", "0") or 0)
 PERMS = json.loads(os.environ.get("YAAF_TOOL_PERMISSIONS", "{}"))
+# The model's row from yaaf's catalog, which this file cannot import: its price
+# (USD per million tokens; null for a model the catalog does not list) and what
+# the API accepts for it. Every run is priced by the first, whoever bills it.
+PRICE = json.loads(os.environ.get("YAAF_PRICE") or "null")
+MODEL_FLAGS = json.loads(os.environ.get("YAAF_MODEL_FLAGS") or "{}")
 
 WORKSPACE = Path("/workspace")
 STAGING = Path("/workspace/.yaaf")
@@ -1842,6 +1847,12 @@ def _usage_int(usage, key: str) -> int:
     return int(getattr(usage, key, 0) or 0)
 
 
+def _usage_part(usage, key: str):
+    """A nested part of a usage object, or {} where there is none."""
+    part = usage.get(key) if isinstance(usage, dict) else getattr(usage, key, None)
+    return {} if part is None else part
+
+
 # The model API stream dies mid-response sometimes (network blips, proxy
 # resets, an overloaded upstream). Failing the run makes that error expensive
 # twice over: the turn's tokens are already spent AND the daemon's retry redoes
@@ -1850,8 +1861,8 @@ def _usage_int(usage, key: str) -> int:
 # tool calls, context, and prompt cache all survive; only the interrupted
 # response is redone. Anything not clearly transient still fails the run, and
 # credential errors must fail verbatim: the daemon reads them off the summary.
-# MAX_USD and TASK_BUDGET are enforced per attempt (each resume is a fresh CLI
-# process); the attempt cap bounds the total.
+# The per-run cap holds across attempts (run_harness); TASK_BUDGET is handed
+# to each attempt whole.
 TRANSIENT_API_MARKERS = (
     "connection lost", "connection error", "connection reset", "connection closed",
     "econnreset", "econnrefused", "etimedout", "epipe", "socket hang up",
@@ -1931,15 +1942,63 @@ class Plan:
 
 @dataclass(frozen=True)
 class AttemptResult:
-    """One model process's bill — the SDK's ResultMessage, the CLI's `result`
-    line. Accumulated by the loop, never assigned: a resumed run has one per
-    attempt and every attempt was billed."""
+    """One bill — the SDK's ResultMessage, the CLI's `result` line, one call
+    of yaaf's own loop. Accumulated by the run, never assigned: a resumed run
+    has one per attempt and every attempt was billed. `cache_creation` is
+    every cache write; `cache_creation_1h` the part written at the 1-hour TTL,
+    which is priced higher."""
     cost_usd: float | None
     tokens_in: int
     tokens_out: int
     cache_creation: int
     cache_read: int
     subtype: str | None = None
+    cache_creation_1h: int = 0
+    web_searches: int = 0
+
+
+def price_usage(price: dict, *, tokens_in: int, tokens_out: int, cache_read: int,
+                cache_creation: int, cache_creation_1h: int = 0,
+                web_searches: int = 0) -> float:
+    """USD for one bill at a catalog price row (per million tokens).
+    `tokens_in` is the uncached remainder of the prompt, as every Anthropic
+    surface reports it; the cached rest is priced as reads and writes."""
+    per_token = (tokens_in * price["input"] + tokens_out * price["output"]
+                 + cache_read * price["cache_read"]
+                 + (cache_creation - cache_creation_1h) * price["cache_write_5m"]
+                 + cache_creation_1h * price["cache_write_1h"])
+    return per_token / 1_000_000 + web_searches * price.get("web_search", 0.0)
+
+
+def _priced(price: dict | None, bill: AttemptResult) -> float | None:
+    if price is None:
+        return None
+    return price_usage(price, tokens_in=bill.tokens_in, tokens_out=bill.tokens_out,
+                       cache_read=bill.cache_read, cache_creation=bill.cache_creation,
+                       cache_creation_1h=bill.cache_creation_1h,
+                       web_searches=bill.web_searches)
+
+
+def usage_bill(usage, *, cost_usd: float | None, subtype: str | None) -> AttemptResult:
+    """An Anthropic `usage` object (a dict off the CLI, an object off an SDK)
+    as a bill. The TTL split and the search count are nested and optional —
+    absent on older CLIs — so their absence is zero, not an error."""
+    if usage is None:
+        return AttemptResult(cost_usd=cost_usd, tokens_in=0, tokens_out=0, cache_creation=0,
+                             cache_read=0, subtype=subtype)
+    return AttemptResult(
+        cost_usd=cost_usd,
+        # input_tokens is only the uncached remainder; the cache fields carry
+        # the rest of the real prompt.
+        tokens_in=_usage_int(usage, "input_tokens"),
+        tokens_out=_usage_int(usage, "output_tokens"),
+        cache_creation=_usage_int(usage, "cache_creation_input_tokens"),
+        cache_read=_usage_int(usage, "cache_read_input_tokens"),
+        subtype=subtype,
+        cache_creation_1h=_usage_int(_usage_part(usage, "cache_creation"),
+                                     "ephemeral_1h_input_tokens"),
+        web_searches=_usage_int(_usage_part(usage, "server_tool_use"), "web_search_requests"),
+    )
 
 
 #: What an assistant message's `error` field says when the credential, not the
@@ -1994,6 +2053,7 @@ async def run_harness(make_driver) -> int:
     summary_parts: list[str] = CREDENTIAL_PROBLEMS + list(MOUNT_PROBLEMS)
     plan_reading: dict | None = None
     cost_usd = None
+    priced_usd = None
     tokens_in = tokens_out = cache_creation = cache_read = 0
     ok = True
     error_kind: str | None = None
@@ -2010,6 +2070,7 @@ async def run_harness(make_driver) -> int:
                     "partial": partial,
                     "summary": ("\n".join(summary_parts))[-4000:],
                     "cost_usd": cost_usd,
+                    "priced_usd": priced_usd,
                     "tokens_in": tokens_in,
                     "tokens_out": tokens_out,
                     "cache_creation_tokens": cache_creation,
@@ -2055,6 +2116,9 @@ async def run_harness(make_driver) -> int:
                     elif isinstance(event, AttemptResult):
                         if event.cost_usd is not None:
                             cost_usd = (cost_usd or 0.0) + event.cost_usd
+                        priced = _priced(PRICE, event)
+                        if priced is not None:
+                            priced_usd = (priced_usd or 0.0) + priced
                         tokens_in += event.tokens_in
                         tokens_out += event.tokens_out
                         cache_creation += event.cache_creation
@@ -2062,7 +2126,8 @@ async def run_harness(make_driver) -> int:
                         # The per-attempt figures land in the trace so the sum
                         # stays auditable.
                         write({"type": "result", "subtype": event.subtype, "attempt": attempt,
-                               "cost_usd": event.cost_usd, "tokens_out": event.tokens_out})
+                               "cost_usd": event.cost_usd, "priced_usd": priced,
+                               "tokens_out": event.tokens_out})
                     elif isinstance(event, Plan):
                         plan_reading = event.reading
                     elif isinstance(event, TraceLine):
@@ -2071,8 +2136,12 @@ async def run_harness(make_driver) -> int:
                     write_result(partial=True)
                 break
             except Exception as exc:
+                # A driver that can classify by type says so; one that cannot
+                # says nothing, and the markers decide. Only "transient" is
+                # ever resumed — "auth" and "fatal" end the run where they are.
                 kind = driver.error_kind(exc)
-                if attempt >= RESUME_ATTEMPTS or kind == "auth" or not _looks_transient(exc):
+                transient = kind == "transient" or (kind is None and _looks_transient(exc))
+                if attempt >= RESUME_ATTEMPTS or not transient:
                     ok = False
                     error_kind = kind or _error_kind(exc)
                     summary_parts.append(f"[sandbox_entry error: {exc!r}]")
@@ -2163,19 +2232,8 @@ class SdkDriver:
                         yield TraceLine({"type": type(block).__name__,
                                          "repr": repr(block)[:2000]})
             elif isinstance(message, ResultMessage):
-                usage = message.usage
-                yield AttemptResult(
-                    cost_usd=message.total_cost_usd,
-                    # input_tokens is only the uncached remainder; the cache
-                    # fields carry the rest of the real prompt.
-                    tokens_in=_usage_int(usage, "input_tokens") if usage is not None else 0,
-                    tokens_out=_usage_int(usage, "output_tokens") if usage is not None else 0,
-                    cache_creation=(_usage_int(usage, "cache_creation_input_tokens")
-                                    if usage is not None else 0),
-                    cache_read=(_usage_int(usage, "cache_read_input_tokens")
-                                if usage is not None else 0),
-                    subtype=message.subtype,
-                )
+                yield usage_bill(message.usage, cost_usd=message.total_cost_usd,
+                                 subtype=message.subtype)
             else:
                 # The SDK tells us the plan meter without being asked: a
                 # RateLimitEvent carries the same five_hour/seven_day windows

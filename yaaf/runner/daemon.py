@@ -49,6 +49,7 @@ from yaaf.core.models import (
 from yaaf.core.tokens import mint
 from yaaf.runner.backends import get_backend
 from yaaf.runner.types import RunJob, RunResult
+from yaaf.runtimes import catalog
 from yaaf.runtimes.providers import PROVIDERS, credential_env, failure_markers
 from yaaf.runtimes.seats import effective_harness, seat_for
 from yaaf.runtimes.seats import refusal as seat_refusal
@@ -237,6 +238,10 @@ def _pin_seat(run: Run, job: RunJob, seat) -> None:
     provider and harness that actually ran."""
     job.model, job.effort = seat.model, seat.effort
     job.provider, job.harness = seat.provider, seat.harness
+    row = catalog.model(seat.model)
+    if row is not None:
+        job.price = row.price.as_dict() if row.price else None
+        job.model_flags = {"effort": row.effort, "web_tools": row.web_tools}
     run.model, run.effort = seat.model, seat.effort
     run.provider, run.harness = seat.provider, seat.harness
 
@@ -577,6 +582,7 @@ def finalize(job: RunJob, result: RunResult, was_revoked: bool = False) -> None:
         project = session.get(Project, job.project_id)
         subscription = project is not None and project.billing_mode == "subscription"
         run.cost_usd = None if subscription else result.cost_usd
+        run.priced_usd = None if subscription else result.priced_usd
         run.trace_path = _stash_trace(job) or result.trace_path
         run.context_path = _stash_context(job)
         _clear_staged_inputs(job)
