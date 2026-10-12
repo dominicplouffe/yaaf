@@ -252,6 +252,50 @@ XAI = Provider(
     base_url="https://api.x.ai/v1",
 )
 
+def _gemini_key_shape(plaintext: str) -> str | None:
+    if plaintext.lstrip().startswith("{"):
+        return ("that looks like a Google login (oauth_creds.json), not an API key — add it as "
+                "the subscription kind instead")
+    return _not_anthropic(plaintext)
+
+
+def _google_login_shape(plaintext: str) -> str | None:
+    import json
+
+    try:
+        login = json.loads(plaintext)
+    except ValueError:
+        login = None
+    if not isinstance(login, dict) or not login.get("refresh_token"):
+        return ("a Google login is the oauth_creds.json the Gemini CLI writes (in ~/.gemini) "
+                "once you sign in — paste the whole file; it has a \"refresh_token\"")
+    return None
+
+
+#: Reached through the Gemini CLI (docs/RUNTIMES.md, M5). An API key bills in
+#: dollars; a Google account login — the oauth_creds.json the CLI writes — is
+#: metered in tokens, and like the other logins it is a CLI credential.
+GOOGLE = Provider(
+    name="google",
+    label="Google (Gemini)",
+    default_harness="gemini_cli",
+    kinds=(
+        CredentialKind(mode="api_key", meter="usd", env_var="GEMINI_API_KEY",
+                       bills="Gemini API key, billed in USD",
+                       shape_error=_gemini_key_shape),
+        CredentialKind(mode="subscription", meter="tokens", env_var="GEMINI_OAUTH_CREDS",
+                       bills="Google account login (Gemini CLI), metered in tokens",
+                       shape_error=_google_login_shape),
+    ),
+    craft_model="gemini-3.1-pro-preview",
+    failure_markers=("api key not valid", "request had invalid authentication credentials",
+                     "manual authorization is required"),
+    # Its OpenAI-compatible chat API, for what runs in yaaf's own process on
+    # an API key — the Founder (yaaf.founder.loop). A seat reaches Gemini
+    # through the Gemini CLI.
+    base_url="https://generativelanguage.googleapis.com/v1beta/openai",
+)
+
 #: Reached through the Codex CLI (docs/RUNTIMES.md, M4). An API key bills in
 #: dollars; a ChatGPT plan is a login — the auth.json `codex login` writes —
 #: metered in tokens, and like a Claude subscription it is a CLI credential:
@@ -277,7 +321,8 @@ OPENAI = Provider(
 )
 
 PROVIDERS: dict[str, Provider] = {p.name: p for p in (ANTHROPIC, DEEPSEEK, OPENROUTER, CUSTOM,
-                                                      MOONSHOT, QWEN, MISTRAL, XAI, OPENAI)}
+                                                      MOONSHOT, QWEN, MISTRAL, XAI, OPENAI,
+                                                      GOOGLE)}
 
 #: Every credential row and every model the catalog does not know belongs here.
 #: Until a second provider exists that is not a guess but the only answer, and

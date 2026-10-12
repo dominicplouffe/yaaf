@@ -2,7 +2,7 @@
 
 For every harness that reaches tools over MCP rather than in process — a model
 CLI the run starts (``claude_cli_entry.py``, ``codex_cli_entry.py``,
-``opencode_cli_entry.py``) launches
+``gemini_cli_entry.py``, ``opencode_cli_entry.py``) launches
 this as a subprocess and speaks MCP to it over stdin and stdout. Imports ``sandbox_entry`` by bare name,
 as ``chat_entry`` does: the image lays the entrypoints out in one directory.
 

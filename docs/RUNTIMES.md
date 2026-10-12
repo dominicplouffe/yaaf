@@ -458,7 +458,8 @@ Where the providers people ask for actually land:
 | DeepSeek | OpenAI-compatible API → a `Provider` entry on the M3 client; no CLI needed. Open weights, so also reachable through OpenRouter or a local server. | M3 ✅ |
 | OpenRouter, local models (Ollama, vLLM) | the same client | M3 ✅ |
 | Codex | `codex_cli`, plus the `openai` provider with an API key or a ChatGPT login | M4 ✅ |
-| Gemini | `gemini_cli`, or a Gemini `ModelClient` on the loop | M5 |
+| Gemini | `gemini_cli`, plus the `google` provider with an API key or a Google account login | M5 ✅ |
+| Several at once | `opencode` — one CLI for every provider on the OpenAI-compatible chat API | M5 ✅ |
 | Kimi, Qwen, Mistral, Grok | `Provider` entries on the M3 client — `moonshot`, `qwen`, `mistral`, `xai` | M5 ✅ |
 
 Everything else — the credential form, the role editor's pickers, the health
@@ -830,8 +831,28 @@ What M4 found on the way — each now configured against, with a test:
   silently.
 
 ### M5 — The long tail
-- [ ] Gemini, by either road: `gemini_cli` on `CliDriver`, or a Gemini
-      `ModelClient` on the loop
+- [x] Gemini, by the CLI road: `gemini_cli` on `CliDriver`
+      (`gemini_cli_entry.py`), pinned at 0.63.0, and the `google` provider —
+      a Gemini API key in dollars, or a Google account login (the
+      `oauth_creds.json` the CLI writes) in tokens. Verified end to end
+      against the real binary and a stand-in Gemini API. The CLI road over a
+      `ModelClient` because it is the only one a Google login can pay. What
+      the probe found, each now a guard with a test: a workspace is loaded
+      only once trusted, and the trust switches load its settings whole —
+      `--skip-trust` does not (observed, not documented: re-check on a bump);
+      `GEMINI.md` and `.gemini/.env` load whatever the settings say, and a
+      planted `.env` once sent the key elsewhere — both moved aside before
+      every launch; the tool allowlist is an admin policy, which the CLI
+      ignores without failing if it cannot parse it — the driver watches
+      stderr and stops the run; `stream-json` states usage once and without
+      the thinking — the governor reads the telemetry file, billed after the
+      CLI exits because it flushes in batches; it rewrites some model names
+      on the wire and falls one family back to another model after rate
+      limits, silently — a name it would rewrite is refused before it starts
+      and a call answered by another model stops the run; it relaunches
+      itself as a child that ignores signals unless told not to. Its web
+      search runs on another model, priced at the seat's rate: the sandbox
+      holds one price
 - [x] `opencode` on `CliDriver` (`opencode_cli_entry.py`), pinned at 1.19.0:
       one CLI for every provider on the OpenAI-compatible chat API (OpenAI,
       DeepSeek, a custom server, Moonshot, Qwen, Mistral, xAI), its own file
@@ -854,8 +875,16 @@ What M4 found on the way — each now configured against, with a test:
       is the larger of the completion and the total less the prompt; and a
       dead key can be a 400 (xAI), so a provider's own words for one travel
       with its address
-- [ ] Each one is the "Adding a provider" table and nothing else. If one is
-      not, the pattern is wrong and gets fixed before the next one lands.
+- [x] Each one is the "Adding a provider" table and nothing else. The
+      providers on the OpenAI shape were a registry row each, plus what they
+      taught the shared client; each CLI was a `CliDriver` subclass, a
+      registry entry, an install line, fixtures and its contract tests. Two
+      facts a harness had to state became fields rather than names: `search`
+      (whose search a `web` grant gets — R2's honour half now reads it, so
+      OpenCode, which searches for nobody, is refused a `web` role) and
+      `conversation` (R7). Nothing outside the registries names a harness
+- [ ] **One seat of a live project on Gemini, and one on OpenCode.** Needs a
+      deployment and the keys; nothing here can tick it
 
 ### M6 — The conversations
 - [x] The boardroom chat on any harness with `conversation` (R7). The
@@ -942,8 +971,18 @@ written.
   inside input, reasoning inside output); a failure is a `turn.failed` whose
   message names the HTTP status, and exit 1. MCP tools are namespaced
   `mcp__yaaf`.
-- **Gemini CLI.** Non-interactive prompt mode with JSON streaming output; MCP
-  servers in its settings file; approvals off; API key by env.
+- **Gemini CLI — verified against 0.63.0 (M5).** `gemini --output-format
+  stream-json --skip-trust --approval-mode yolo -m <model> --admin-policy
+  <file> --allowed-mcp-server-names <list> [--resume <id>]`, the prompt on
+  stdin (it waits for EOF), `GEMINI_CLI_HOME` a home of its own,
+  `GEMINI_SYSTEM_MD` the whole system prompt, `GEMINI_CLI_NO_RELAUNCH`.
+  Events `init` (the session id), assistant `message` deltas, `tool_use`,
+  `tool_result`, `result` with stats; an API error exits with its HTTP
+  status mod 256 (401 → 145, 429 → 173), a cancelled run exits 0 with no
+  result. Per-call usage, thinking included, in the local telemetry
+  outfile — concatenated JSON objects, flushed in batches. Unknown settings
+  keys are accepted silently and a wrong type only warns, so every key the
+  driver writes was checked by its effect.
 - **OpenCode — verified against 1.19.0 (M5).** `opencode run --format json
   [--session <id>]`, the prompt on stdin (it waits for EOF), cwd the
   workspace; one `step_finish` per model call with its tokens (input less the

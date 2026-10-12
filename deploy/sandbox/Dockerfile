@@ -30,6 +30,11 @@ RUN npm install -g @openai/codex@0.162.1
 # at this version, which is what keeps it from fetching one at startup: move
 # both together.
 RUN npm install -g opencode-ai@1.19.0
+# The Gemini CLI, pinned likewise (yaaf/runner/gemini_cli_entry.py,
+# tests/fixtures/harnesses/gemini/). Two of its behaviours the driver leans on
+# are observed rather than documented — --skip-trust keeping a workspace's
+# settings out, and which model names it rewrites — so re-check both on a bump.
+RUN npm install -g @google/gemini-cli@0.63.0
 
 # pandas and duckdb are baked in because the alternative to having them is an
 # agent reading ten thousand rows into its own context to count them. duckdb
@@ -81,5 +86,7 @@ COPY yaaf/runner/openai_compatible_entry.py /opt/yaaf/openai_compatible_entry.py
 COPY yaaf/runner/codex_cli_entry.py /opt/yaaf/codex_cli_entry.py
 # The OpenCode CLI harness; it too starts yaaf_tools.py for the yaaf tools.
 COPY yaaf/runner/opencode_cli_entry.py /opt/yaaf/opencode_cli_entry.py
+# The Gemini CLI harness; it starts yaaf_tools.py for the yaaf tools too.
+COPY yaaf/runner/gemini_cli_entry.py /opt/yaaf/gemini_cli_entry.py
 USER agent
 WORKDIR /workspace

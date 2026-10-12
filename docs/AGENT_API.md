@@ -342,7 +342,8 @@ A role is a JSON file in [`roles/`](../roles):
 - `harness` (optional) — what drives the model in the sandbox: `claude_agent_sdk`,
   `claude_cli`, `anthropic_api` — yaaf's own loop on the Messages API, API
   keys only — `openai_compatible`, the same loop for DeepSeek, OpenRouter
-  and a custom server, `codex_cli`, OpenAI's Codex CLI, or `opencode`, the
+  and a custom server, `codex_cli`, OpenAI's Codex CLI, `gemini_cli`,
+  Google's Gemini CLI, or `opencode`, the
   OpenCode CLI for any provider on the OpenAI-compatible chat API
   ([RUNTIMES.md](RUNTIMES.md)). A `model` the catalog does
   not list names its provider first: `openrouter/qwen/qwen3-coder`,

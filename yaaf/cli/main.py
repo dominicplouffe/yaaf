@@ -348,8 +348,8 @@ def create_llm_credential(
     mode: str = typer.Option("api_key", "--mode"),
     provider: str = typer.Option("anthropic", "--provider",
                                  help="Which provider it pays: anthropic, openai, "
-                                      "deepseek, openrouter, moonshot, qwen, mistral, "
-                                      "xai, custom"),
+                                      "google, deepseek, openrouter, moonshot, qwen, "
+                                      "mistral, xai, custom"),
     base_url: str = typer.Option(None, "--base-url",
                                  help="A custom endpoint's OpenAI-compatible address"),
 ) -> None:

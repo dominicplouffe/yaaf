@@ -363,6 +363,8 @@ export function LlmCredentials({ onChanged }: { onChanged?: () => void } = {}) {
           placeholder={editing === "new" ? "Paste credential" : "Leave blank to keep current value"} />
         <p className="help">{provider === "openai" && mode === "subscription"
           ? "Run codex login on your own machine, then paste the whole ~/.codex/auth.json it wrote. A login refreshed inside a run is not written back: when it stops working, sign in again and paste the new file."
+          : provider === "google" && mode === "subscription"
+          ? "Sign in to the Gemini CLI with your Google account on your own machine, then paste the whole ~/.gemini/oauth_creds.json it wrote. A login refreshed inside a run is not written back: when it stops working, sign in again and paste the new file."
           : provider !== "anthropic"
           ? `Use a key from your ${seller?.label ?? provider} account. A server that needs none still takes a placeholder of eight characters or more.`
           : mode === "subscription"

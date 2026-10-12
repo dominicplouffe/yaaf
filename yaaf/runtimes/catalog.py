@@ -100,6 +100,17 @@ MODELS: tuple[Model, ...] = (
     Model("gpt-6-sol", "openai", 6, efforts=("low", "medium", "high", "xhigh", "max")),
     Model("gpt-6.1-sol", "openai", 7, efforts=("low", "medium", "high", "xhigh", "max")),
     Model("gpt-6-astra", "openai", 8, efforts=("low", "medium", "high", "xhigh", "max")),
+    # Google's, as the Gemini CLI the sandbox pins (0.63.0) names them, and
+    # only the names it sends as given: it swaps others for a newer model on
+    # the wire (yaaf/runner/gemini_cli_entry.py). The 3 family takes a
+    # thinking level, low or high; the 2.5 family keeps the CLI's own
+    # thinking budget and has no dial. Unpriced: Google's list was not
+    # reachable to check.
+    Model("gemini-2.5-flash", "google", 1, efforts=("high",)),
+    Model("gemini-3-flash-preview", "google", 2, efforts=("low", "high")),
+    Model("gemini-3.8-flash", "google", 3, efforts=("low", "high")),
+    Model("gemini-2.5-pro", "google", 4, efforts=("high",)),
+    Model("gemini-3.1-pro-preview", "google", 5, efforts=("low", "high")),
 )
 
 _BY_ID = {m.id: m for m in MODELS}

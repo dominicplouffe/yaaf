@@ -59,8 +59,9 @@ def _schema(required_args: list[str], **properties) -> dict:
                                                           "stop_paying_provider"]},
                          provider={"type": "string",
                                    "description": "pay_provider / stop_paying_provider: "
-                                                  "e.g. deepseek, openrouter, moonshot, "
-                                                  "qwen, mistral, xai, custom"},
+                                                  "e.g. openai, google, deepseek, "
+                                                  "openrouter, moonshot, qwen, mistral, "
+                                                  "xai, custom"},
                          credential={"type": "string",
                                      "description": "pay_provider: a stored credential's name"},
                          name={"type": "string"},

@@ -118,6 +118,19 @@ HARNESSES: dict[str, Harness] = {h.name: h for h in (
         efforts=("low", "medium", "high", "xhigh", "max"),
         conversation=True,
     ),
+    # The Gemini CLI (`gemini --output-format stream-json`), Google's agent.
+    # Tokens but no dollars, so yaaf prices it; every grant withholdable by
+    # an admin policy; its own search. Its thinking dial is two levels.
+    Harness(
+        name="gemini_cli",
+        label="Gemini CLI",
+        family="cli",
+        providers=("google",),
+        accepts=("google:api_key", "google:subscription"),
+        cost="priced",
+        efforts=("low", "high"),
+        conversation=True,
+    ),
     # The OpenCode CLI (`opencode run --format json`): one CLI for every
     # provider on the OpenAI-compatible chat API, its own file tools and
     # shell, yaaf's tools over MCP. Its search is its own hosted service's,

@@ -14,6 +14,7 @@ A backend executes one leased job and returns a result — one per harness
   DeepSeek, OpenRouter, a custom server; one client, a registry row each
 - ``codex_cli``: OpenAI's Codex CLI (``codex exec --json``), the first CLI
   harness that is not Claude's
+- ``gemini_cli``: Google's Gemini CLI (``gemini --output-format stream-json``)
 - ``opencode``: the OpenCode CLI (``opencode run --format json``), one CLI for
   every provider on the OpenAI-compatible chat API
 
@@ -62,6 +63,10 @@ def get_backend(name: str) -> RunnerBackend:
         from yaaf.runner.backends.agent_sdk import SandboxBackend
 
         return SandboxBackend("codex_cli_entry.py")
+    if name == "gemini_cli":
+        from yaaf.runner.backends.agent_sdk import SandboxBackend
+
+        return SandboxBackend("gemini_cli_entry.py")
     if name == "opencode":
         from yaaf.runner.backends.agent_sdk import SandboxBackend
 

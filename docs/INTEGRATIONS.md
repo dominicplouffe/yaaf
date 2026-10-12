@@ -30,6 +30,8 @@ budget unit — there is no separate switch:
 
 A credential names the **provider** it pays — Anthropic by default; OpenAI
 (an API key, or a ChatGPT plan as the `auth.json` that `codex login` writes),
+Google (a Gemini API key, or a Google account login as the
+`oauth_creds.json` the Gemini CLI writes),
 DeepSeek, OpenRouter, Moonshot (Kimi), Qwen (Alibaba Model Studio), Mistral,
 xAI (Grok), or a custom OpenAI-compatible server (its address goes with the
 credential — which is also how a key for Moonshot's or Alibaba's China region

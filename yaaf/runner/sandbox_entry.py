@@ -2322,6 +2322,10 @@ class CliDriver:
     def env(self) -> dict[str, str]:
         return dict(os.environ)
 
+    def on_stderr(self, chunk: bytes) -> None:
+        """Each piece of stderr as it arrives, for a CLI that says something
+        there the run cannot wait until the end to hear."""
+
     def budget(self, remaining_usd: float) -> None:
         self.max_usd = remaining_usd
 
@@ -2338,6 +2342,7 @@ class CliDriver:
             # Read concurrently: a CLI that fills the stderr pipe while nobody
             # reads it blocks forever, and the run dies at the timeout.
             while chunk := await process.stderr.read(65536):
+                self.on_stderr(chunk)
                 stderr_chunks.append(chunk)
                 while sum(map(len, stderr_chunks)) > 4 * self.STDERR_TAIL and len(stderr_chunks) > 1:
                     stderr_chunks.pop(0)
