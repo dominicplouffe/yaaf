@@ -4,13 +4,19 @@ Everything the dashboard does, scriptable. Useful for provisioning, CI, and
 poking at a running deployment.
 
 ```bash
-export YAAF_API=http://localhost:8080
-export YAAF_ADMIN_TOKEN=…
+export YAAF_API=http://localhost:8080      # the default, so usually omitted
+yaaf login                                 # your email and password, once
 ```
 
-Both have fallbacks: `YAAF_API` defaults to `http://localhost:8080`, and the
-token is read from `deploy/.env` (or `.env`) if you run from the repo root, so
-in practice you can usually just type `yaaf`.
+`yaaf login` exchanges your password for a **personal token** — named, expiring
+(30 days unless `--days` says otherwise, never more than 365), and kept in
+`~/.config/yaaf/credentials.json` with mode 0600, one per API base. It is you:
+it reaches what your account reaches and nothing more, and every write it makes
+is recorded as `via token:<name>` so a script never reads as a click. `yaaf
+logout` revokes it on the server and forgets it here; `yaaf whoami` says who
+the CLI is. `YAAF_TOKEN` overrides the stored token, for a script that was
+handed one. The static `YAAF_ADMIN_TOKEN` this used to read was retired — see
+[AUTH.md](AUTH.md).
 
 Every command that takes a project accepts **either a slug or an id**.
 
@@ -22,7 +28,7 @@ Every command that takes a project accepts **either a slug or an id**.
 |---|---|
 | `yaaf seed-roles [DIR] [--only-missing]` | Load every `*.json` in the directory (default `roles/`) into the role library. Re-running creates new role *versions* — which is how an edited prompt reaches a running install. `--only-missing` skips the slugs the library already has, which is what you want after an update adds roles to the checkout; it still refiles those roles' **category and domains**, because those live on the role rather than the version and so can move without putting a live team behind its prompt. |
 | `yaaf seed-crews [DIR] [--only-missing]` | Load every `*.json` in the directory (default `crews/`) into the crew library — the pre-staffed teams the hiring desk offers. Crews are not versioned: one is read at hiring time and copied into the project's own teams, so re-seeding an edited crew can never reach a project that already started. Run it after `seed-roles`. |
-| `yaaf create-user EMAIL NAME` | Create a user. Idempotent by email. |
+| `yaaf create-user EMAIL NAME [--admin]` | Invite somebody (instance admins only). Prints the one-time link that lets them choose a password — the box sends no mail, so hand it on. Idempotent by email. |
 | `yaaf create-project SPEC_FILE` | Create a project from a JSON spec (shape below). |
 | `yaaf set-secret NAME [--project P] [--scopes a,b] [--kind service]` | Store an encrypted secret. **The value is prompted** — never echoed, logged, or left in shell history. Omit `--project` for a platform-level secret. |
 | `yaaf set-secret NAME --from-file PATH [--filename NAME]` | Store a credential that **is a file** — a service-account key, a PEM, a kubeconfig. No prompt: a key file is not something anyone retypes. Granted roles receive its *path*, not its contents; `--filename` names it inside the sandbox and defaults to the file's own name. |
@@ -42,7 +48,7 @@ Every command that takes a project accepts **either a slug or an id**.
 | `yaaf configure PROJECT [--runtime …] [--billing-secret-id …] [--billing-mode …]` | Update outward wiring only. **Never the constitution** — cadence, concurrency and every other limit is an amendment. |
 | `yaaf amend PROJECT --reason "…" --set rule=value` | Change a constitution rule. Repeatable `--set`; values are parsed as JSON where possible, so `--set runs_per_project_per_day=80` gives a number and `--set ceo_daily_at='"09:00"'` gives a string. An invalid overlay is refused whole. |
 | `yaaf save-seed [DIR]` | Write every role and project *design* to a folder as JSON. Plumbing and secrets stay behind. |
-| `yaaf seed [DIR] --chairman EMAIL [--roles-only]` | Restore such a folder onto an install. Projects come back **in draft** — restoring a backup never starts spending. |
+| `yaaf seed [DIR] --chairman EMAIL [--roles-only]` | Restore such a folder onto an install. Projects come back **in draft** — restoring a backup never starts spending. `--chairman` is your own email unless you are an instance admin restoring for somebody else. |
 
 ### Project spec shape
 
@@ -169,28 +175,57 @@ moving a delivery date, pulling a review lever — are dashboard actions
 (**Plan** and **Review** tabs) or direct API calls; there is no CLI shorthand,
 because each needs a reason you would want read back at the next review.
 
-## MCP client tokens
+## People
 
-The chairman's MCP server ([MCP_SERVER.md](MCP_SERVER.md)) has its own
-principal — never the admin token, which is unscoped, unattributable and
-cannot be revoked one client at a time.
+Who sits on a project, and who is on the box. The roles are in
+[AUTH.md](AUTH.md): a chairman decides and decides who decides; co-chairs
+decide as peers; observers read.
 
 | Command | What it does |
 |---|---|
-| `yaaf mcp-token mint NAME --chairman EMAIL [--scopes read]` | Mint a client token. Printed once; only its hash is stored. |
-| `yaaf mcp-token list` | Every client, what it holds, when it was last used. |
+| `yaaf login [--email E] [--name N] [--days D]` / `yaaf logout` / `yaaf whoami` | Sign the CLI in and out; see above. |
+| `yaaf members list PROJECT` | Everyone on a project and their role. Any member may read it. |
+| `yaaf members add PROJECT EMAIL [--role co_chair\|observer]` | Put somebody with an account on a project. The chairman's alone. |
+| `yaaf members role PROJECT EMAIL ROLE` / `yaaf members remove PROJECT EMAIL` | Change a member's role, or take them off — from their next request on. The chairman's alone. |
+| `yaaf members hand-on PROJECT EMAIL` | Make somebody else the chairman; you stay on as a co-chair. The chairman may, and so may an instance admin for a chairman who has left — recorded as such. |
+| `yaaf people list\|link\|promote\|demote\|deactivate\|reactivate EMAIL` | The box's accounts, for instance admins. `link` prints a fresh password link; `deactivate` ends every credential the person holds, and is refused while they chair a live project. |
+
+**From a shell on the box**, `yaaf users` talks to the database directly — the
+same trust as `yaaf spend-report`, because a shell that can reach the database
+already is root on the box. It is how a box gets its first admin and a
+locked-out admin gets back in:
+
+| Command | What it does |
+|---|---|
+| `yaaf users bootstrap --email E [--name N] [--base-url URL]` | Make the first admin, on a box that has none, and print their setup link. Refused once any admin exists. |
+| `yaaf users setup-link EMAIL [--base-url URL]` | A fresh one-time link that sets this person's password; earlier unused ones stop working. |
+| `yaaf users token [EMAIL \| --first-admin] [--minutes M \| --days D] [--name N]` | Print a personal token and nothing else, for a script to capture. The deploy scripts mint a ten-minute one to load the role library. |
+| `yaaf users has-admin` / `yaaf users list` | Exit 0 if the box has an admin; list the accounts. |
+
+## MCP client tokens
+
+The chairman's MCP server ([MCP_SERVER.md](MCP_SERVER.md)) has its own
+principal — never your own login or personal token, which carry everything you
+may do and are unattributable to any machine.
+
+| Command | What it does |
+|---|---|
+| `yaaf mcp-token mint NAME [--scopes read]` | Mint a client token that acts for you. Printed once; only its hash is stored. |
+| `yaaf mcp-token list` | Your clients (every client, for an instance admin), what they hold, when last used. |
 | `yaaf mcp-token revoke CLIENT_ID` | Revoke it. The row survives — the audit trail names it. |
 
 ```bash
-yaaf mcp-token mint dom-laptop --chairman you@example.com --scopes read
+yaaf mcp-token mint dom-laptop --scopes read
 # → {"token": "ymt_…", "scopes": ["read"]}
 ```
 
 Scopes are `read`, `steer`, `create`, `configure`, and `read` is implied by all
 of them. Start with `read` alone: it is most of the value and none of the risk
-— a client holding it sees every project and signs for nothing. Scopes are the
-whole narrowing: a client reaches every project its chairman chairs, read fresh
-on every call, so a project founded tomorrow needs no new token.
+— a client holding it sees your projects and signs for nothing. A client
+reaches the projects you are a member of, read fresh on every call, and may
+steer or configure only where you chair or co-chair; scopes narrow that
+further. Nobody mints a client in somebody else's name, an instance admin
+included.
 
 ## Spend analysis
 
@@ -202,19 +237,19 @@ Breaks LLM spend down by agent, role, model, and wake reason. Defaults to the
 current calendar month.
 
 > This one reads the **database directly**, not the API: it needs
-> `YAAF_DATABASE_URL`, not `YAAF_API`/`YAAF_ADMIN_TOKEN`. Run it where the
-> server runs, or point `YAAF_DATABASE_URL` at the same Postgres.
+> `YAAF_DATABASE_URL`, not `YAAF_API` or a login. Run it where the server
+> runs, or point `YAAF_DATABASE_URL` at the same Postgres.
 
 ---
 
 ## A full provisioning script
 
 ```bash
-export YAAF_API=http://localhost:8080 YAAF_ADMIN_TOKEN=…
+export YAAF_API=http://localhost:8080
+yaaf login                                                    # an instance admin
 
 yaaf seed-roles roles/                                        # once per deployment
-yaaf create-user you@example.com "Your Name"
-yaaf create-project my-spec.json
+yaaf create-project my-spec.json                              # you chair what you found
 yaaf create-llm-credential "Production"    # once; value prompted, id printed
 yaaf configure my-slug --billing-secret-id secr_…
 yaaf start my-slug

@@ -540,6 +540,15 @@ def _chairman_state(session: Session, project: Project, agent: Agent, now) -> di
     return state
 
 
+def _speaker(session: Session, project_id: str, user_id: str | None) -> dict:
+    from yaaf.server.authority import speaker
+
+    if user_id is None:
+        return {}
+    label = speaker(session, session.get(Project, project_id), user_id)
+    return {"from_name": label} if label else {}
+
+
 def _unread_messages(session: Session, agent: Agent, include_recent: bool = False) -> list[dict]:
     """Unread per cursor — or, on retry attempts, the recent tail regardless of
     cursor: a failed prior attempt advanced the cursor without any model ever
@@ -595,6 +604,10 @@ def _unread_messages(session: Session, agent: Agent, include_recent: bool = Fals
                             "id": m.id,
                             "from_agent": m.sender_agent_id,
                             "from_user": m.sender_user_id,
+                            # Only on a co-chair's line: the chairman's carry
+                            # nothing new, so a pack for a project nobody else
+                            # chairs reads exactly as it always did.
+                            **_speaker(session, agent.project_id, m.sender_user_id),
                             "thread_id": m.thread_id,
                             "body": _clip(m.body, UNREAD_BODY_CHARS,
                                           "messages_read has the full text"),

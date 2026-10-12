@@ -28,7 +28,6 @@ cd web && npm install && npm run build && cd ..
 # 2. YAAF_MASTER_KEY encrypts every stored secret. Without it, saving the
 #    project's Anthropic key answers 500 and the project can never start.
 export YAAF_DATABASE_URL=sqlite:////tmp/yaaf.db \
-       YAAF_ADMIN_TOKEN=dev-admin-token \
        YAAF_SANDBOX_MODE=subprocess \
        YAAF_API=http://localhost:8080 \
        YAAF_MASTER_KEY=$(.venv/bin/python -c \
@@ -41,10 +40,18 @@ export YAAF_DATABASE_URL=sqlite:////tmp/yaaf.db \
 # 3. The server does NOT execute runs. Without a runner, every run sits in
 #    run_queue forever and the project never does anything at all.
 .venv/bin/yaaf-runner &
+
+# 4. Nobody can sign in to a box with no admin. This makes you one and prints
+#    a one-time link to choose your password; `yaaf login` then gives the CLI
+#    a personal token of its own.
+.venv/bin/yaaf users bootstrap --email you@example.com --name "You"
+.venv/bin/yaaf login --email you@example.com
 .venv/bin/yaaf seed-roles roles/
 ```
 
-Open **http://localhost:8080/app** and log in with the admin token.
+Open the link `bootstrap` printed, choose a password, and you are in the
+dashboard at **http://localhost:8080/app**. See [AUTH.md](AUTH.md) for who
+may do what once more people are on the box.
 
 4. is the one you do not have to do: the chat lane is a container, so in
 subprocess mode the supervisor stands down with one log line and the boardroom
@@ -111,7 +118,7 @@ Worth knowing, because when something breaks you debug these, not the script:
    sibling containers, so a workspace path must be the same string on the host
    and in the runner or the mount resolves to nothing.
 3. **Secrets** — generates `deploy/.env` if absent, never rewrites it. See
-   [The two secrets](#the-two-secrets).
+   [The master key](#the-master-key).
 4. **Port binding** — writes `deploy/docker-compose.override.yml`. The
    `!override` tag matters: without it compose *appends* to `ports` and you
    keep the original `0.0.0.0` binding you were trying to remove.
@@ -119,7 +126,12 @@ Worth knowing, because when something breaks you debug these, not the script:
    compose knows nothing about. Skipping it leaves agent runs on a stale image.
 6. **Schema** — waits for migrations, then checks `alembic current` really
    says `(head)`.
-7. **Role library** — loads `roles/*.json` over HTTP, and refiles the roles
+7. **The first admin** — on a box with none, makes the account named by
+   `--admin-email` (or `YAAF_ADMIN_EMAIL` in `deploy/.env`, or what you type
+   when asked) the admin and prints its one-time setup link. A box that has an
+   admin is left alone.
+8. **Role library** — mints a ten-minute personal token inside the `api`
+   container, loads `roles/*.json` over HTTP with it, and refiles the roles
    already there into their hiring categories (no new versions, so no live
    team goes behind its prompt). Then `crews/*.json`, on the same
    only-what-is-missing contract.
@@ -160,18 +172,18 @@ behind, and a long-running box accumulates dozens of exited ones.
 is box-wide, which is right for a single-server deployment and surprising if
 you ever run two stacks on one host.
 
-### The two secrets
+### The master key
 
-Compose reads `deploy/.env` from the directory you run it in, which is why
-they go in a file rather than on the command line: both values must be
-**identical on every boot**, and both fail quietly rather than loudly if they
-are not. `deploy/.env.example` is an annotated template if you would rather
-fill them in by hand; `deploy/.env` itself is gitignored.
+Compose reads `deploy/.env` from the directory you run it in, which is why it
+goes in a file rather than on the command line: the value must be **identical
+on every boot**, and it fails quietly rather than loudly if it is not.
+`deploy/.env.example` is an annotated template if you would rather fill it in
+by hand; `deploy/.env` itself is gitignored.
 
-**`YAAF_ADMIN_TOKEN`** — the bearer token for the admin/chairman API and the
-dashboard login. Any opaque string; it is compared verbatim, so length and
-alphabet are yours to choose. Omit it and compose substitutes
-`dev-admin-token`, the value printed throughout these docs.
+There is no login secret beside it any more. `YAAF_ADMIN_TOKEN` was retired —
+people sign in with an account ([AUTH.md](AUTH.md)) — and a line left over in
+an old `deploy/.env` is read by nothing; the scripts say so and it is safe to
+delete.
 
 **`YAAF_MASTER_KEY`** — envelope-encrypts every stored secret (API keys, MCP
 URLs, connector credentials). This one is not free-form: it must be a Fernet
@@ -207,11 +219,12 @@ laptop:
 ssh -N -L 8080:localhost:8080 you@your-server
 ```
 
-Then open **http://localhost:8080/app**. The script prints the admin token
-when it finishes; read it back any time with:
+Then open **http://localhost:8080/app** and sign in. On a first install the
+script ends with the one-time link that sets the first admin's password; lost
+it, or forgot the password later? From a shell on the box:
 
 ```bash
-grep YAAF_ADMIN_TOKEN deploy/.env
+docker compose -f deploy/docker-compose.yml exec api yaaf users setup-link you@example.com
 ```
 
 Then follow [CREATING_A_PROJECT.md](CREATING_A_PROJECT.md). Have an Anthropic
@@ -228,8 +241,7 @@ builds the web UI itself.
 ```bash
 sudo mkdir -p /var/lib/yaaf/workspaces /var/lib/yaaf/artifacts
 
-{ echo "YAAF_ADMIN_TOKEN=$(openssl rand -base64 32)"
-  echo "YAAF_MASTER_KEY=$(openssl rand -base64 32)"; } > deploy/.env
+echo "YAAF_MASTER_KEY=$(openssl rand -base64 32)" > deploy/.env
 
 cat > deploy/docker-compose.override.yml <<'YML'
 services:
@@ -248,11 +260,16 @@ docker build -f deploy/sandbox/Dockerfile -t yaaf-sandbox:latest .
   && echo "schema OK" \
   || echo "NO SCHEMA — run: docker compose exec -T api alembic upgrade head"
 
+# The first admin, and a short-lived token to load the library with.
+(cd deploy && docker compose exec -T api yaaf users bootstrap --email you@example.com \
+   --base-url http://localhost:8080)
+TOKEN=$(cd deploy && docker compose exec -T api yaaf users token --first-admin \
+          --name deploy --minutes 10)
+
 # roles/ is not in the image, so this is an HTTP load from the checkout.
-set -a; . deploy/.env; set +a
 for f in roles/*.json; do
   curl -fsS -X POST http://localhost:8080/admin/roles \
-    -H "Authorization: Bearer $YAAF_ADMIN_TOKEN" \
+    -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     --data-binary @"$f" > /dev/null && echo "seeded ${f##*/}"
 done
@@ -265,7 +282,9 @@ rules ahead of ufw's, so `ports: "8080:8080"` is reachable from anywhere the
 box is, whatever `ufw status` claims. The loopback binding the script writes
 is what actually keeps it private — binding to `127.0.0.1` means there is nothing to firewall.
 Drop the override only when a TLS-terminating reverse proxy is in front,
-because the admin token is a static bearer sent on every request.
+because passwords and session cookies cross that connection in cleartext
+otherwise. Set `YAAF_PUBLIC_BASE_URL` to the https origin when you do: the
+session cookie is marked `Secure` from it.
 
 **Hand-editing that binding without `!override` silently does nothing.** Compose *appends*
 list values when it merges, so an override without the tag leaves you with
@@ -278,7 +297,8 @@ does nothing.** The image has no `roles/` directory, and the command globs an
 empty path, prints nothing, and exits 0. `./deploy_single_server.sh` loads them
 over HTTP; by hand it is the loop above, or from a checkout with the CLI
 installed:
-`YAAF_API=http://localhost:8080 YAAF_ADMIN_TOKEN=$(grep YAAF_ADMIN_TOKEN deploy/.env | cut -d= -f2-) yaaf seed-roles roles/`.
+`YAAF_API=http://localhost:8080 yaaf login && yaaf seed-roles roles/` (an
+instance admin's account — the library is the box's).
 
 **Skipping the role seed is survivable only if your bundles carry their
 roles.** An export from another install does carry them, and the project wizard
@@ -328,12 +348,17 @@ concurrent `alembic current` waits for that commit rather than answering.
 Current versions of the script time out, say they are waiting, and retry;
 older ones sat silent. It is safe to Ctrl-C and re-run either way.
 
-**The login says the token was rejected.** The API reads `YAAF_ADMIN_TOKEN` at
-boot, so editing `deploy/.env` does nothing until the container restarts:
+**Nobody can sign in.** A box upgraded from before accounts existed has no
+admin until one is made — the chairman's own email keeps every project they
+chair:
 
 ```bash
-cd deploy && docker compose up -d      # picks up the new .env
+./update_single_server.sh --admin-email you@example.com
 ```
+
+A forgotten password is a fresh setup link, from a shell on the box:
+`docker compose -f deploy/docker-compose.yml exec api yaaf users setup-link you@example.com`.
+Ten wrong passwords for one address lock that address for fifteen minutes.
 
 **The role pickers are empty when creating a project.** The library was never
 seeded. Re-run `./deploy_single_server.sh` — it seeds only when the library is
@@ -391,10 +416,11 @@ they name, and says only that it could not register with your sign-in service,
 which sends you to look at OAuth. The server logs a warning at startup naming
 the advertised origin; if a connector cannot register, read that line first.
 
-**Publish four paths and nothing else.** Publishing the box publishes `/admin`,
-which is your unscoped bearer surface — the one the whole MCP design exists to
-avoid handing out. The public listener serves discovery, the consent flow and
-the MCP endpoint; everything else 404s and stays on your private listener.
+**Publish four paths and nothing else.** Publishing the box publishes `/admin`
+and the dashboard's password form to the internet, and a sign-in page nobody
+outside needs is a sign-in page somebody outside can guess at. The public
+listener serves discovery, the consent flow and the MCP endpoint; everything
+else 404s and stays on your private listener.
 
 ```nginx
 server {
@@ -416,18 +442,16 @@ yaaf.example.com {
 }
 ```
 
-**Give the chairman a password.** The consent screen authenticates a *person*;
-the admin token authenticates a client and is refused there on purpose.
-
-```bash
-yaaf set-password you@example.com     # prompted, argon2id, never echoed
-```
+**Sign in with your own account.** The consent screen authenticates a *person*
+— the same email and password as the dashboard, asked for again even when a
+dashboard session exists, because handing a machine a credential is the moment
+to prove it is still you. A personal token is refused there on purpose.
 
 Then in claude.ai: **Settings → Connectors → Add custom connector**, URL
 `https://yaaf.example.com/mcp`. It registers itself (RFC 7591), sends you to
 your own consent screen, and you tick the scopes it may hold. Start with `read`
-alone — a client reaches every project its chairman chairs, so scopes are the
-whole narrowing.
+alone — a client reaches the projects you are a member of, deciding only where
+you chair or co-chair, so scopes are the rest of the narrowing.
 
 If a client's redirect host is not `claude.ai`, registration refuses it — widen
 `YAAF_MCP_REDIRECT_HOSTS` deliberately, never by default.
@@ -445,8 +469,8 @@ in env vars. See [GOVERNANCE.md](GOVERNANCE.md).
 | Variable | Default | Notes |
 |---|---|---|
 | `YAAF_DATABASE_URL` | `postgresql+psycopg://yaaf:yaaf@localhost:5432/yaaf` | SQLite works for dev |
-| `YAAF_ADMIN_TOKEN` | `dev-admin-token` | Bearer token for the admin/chairman API and dashboard login. Any opaque string. **Change it** — see [The two secrets](#the-two-secrets) |
-| `YAAF_MASTER_KEY` | — | Fernet key (url-safe base64, 32 bytes, padded) for envelope-encrypting secrets — see [The two secrets](#the-two-secrets) |
+| `YAAF_MASTER_KEY` | — | Fernet key (url-safe base64, 32 bytes, padded) for envelope-encrypting secrets — see [The master key](#the-master-key) |
+| `YAAF_ADMIN_EMAIL` | — | Read by the deploy and update scripts only: the account to make the first admin on a box with none. People sign in with accounts — see [AUTH.md](AUTH.md); `YAAF_ADMIN_TOKEN` is retired and nothing reads it |
 | `YAAF_API_BASE_URL` | `http://localhost:8080` | How sandboxes reach the platform API |
 | `YAAF_API_HOST` / `YAAF_API_PORT` | `0.0.0.0` / `8080` | |
 

@@ -31,14 +31,16 @@ from sqlalchemy.orm import Session
 from yaaf.core import plan_usage, platform
 from yaaf.core.models import Secret
 from yaaf.runtimes.providers import DEFAULT_PROVIDER, MODE_PATTERN, PROVIDERS
-from yaaf.server.deps import admin_auth, db
+from yaaf.server import authority
+from yaaf.server.deps import db
+from yaaf.server.identity import Person, person_auth, signed_in
 from yaaf.server.slack import provision as slack_provision
 from yaaf.server.slack import settings as slack_settings
 
-router = APIRouter(dependencies=[Depends(admin_auth)])
+router = APIRouter(dependencies=[Depends(signed_in)])
 
 
-@router.get("")
+@router.get("", dependencies=[authority.INSTANCE_ADMIN])
 def get_settings(session: Session = Depends(db)) -> dict:
     """Everything the app-wide settings screen draws, in one call.
 
@@ -175,18 +177,18 @@ def check_credential(session: Session) -> dict:
     return {"ok": True, "detail": "the credential reached a model."}
 
 
-@router.put("/anthropic")
+@router.put("/anthropic", dependencies=[authority.INSTANCE_ADMIN])
 def put_anthropic(body: CredentialIn, session: Session = Depends(db)) -> dict:
     return install_credential(session, body.value, body.mode, body.provider, body.base_url,
                               body.model)
 
 
-@router.post("/anthropic/test")
+@router.post("/anthropic/test", dependencies=[authority.INSTANCE_ADMIN])
 def test_anthropic(session: Session = Depends(db)) -> dict:
     return check_credential(session)
 
 
-@router.delete("/anthropic")
+@router.delete("/anthropic", dependencies=[authority.INSTANCE_ADMIN])
 def delete_anthropic(session: Session = Depends(db)) -> dict:
     """Remove the platform key. Nothing else breaks: projects never used it,
     and the fire drill and the New Project form never needed it — only the
@@ -198,7 +200,7 @@ class ModelIn(BaseModel):
     model: str = Field(min_length=3, max_length=200)
 
 
-@router.put("/anthropic/model")
+@router.put("/anthropic/model", dependencies=[authority.INSTANCE_ADMIN])
 def put_anthropic_model(body: ModelIn, session: Session = Depends(db)) -> dict:
     return set_founder_model(session, body.model)
 
@@ -222,7 +224,7 @@ class SlackIn(BaseModel):
     auto_create_channels: bool | None = None
 
 
-@router.put("/slack")
+@router.put("/slack", dependencies=[authority.INSTANCE_ADMIN])
 def put_slack(body: SlackIn, session: Session = Depends(db)) -> dict:
     """Install or update the Slack connection every project inherits.
 
@@ -265,7 +267,7 @@ def put_slack(body: SlackIn, session: Session = Depends(db)) -> dict:
     return slack_settings.platform_summary(session)
 
 
-@router.post("/slack/test")
+@router.post("/slack/test", dependencies=[authority.INSTANCE_ADMIN])
 def test_slack(session: Session = Depends(db)) -> dict:
     """Ask Slack who this token is. Free, unscoped, and the only check that
     can be right about whether the connection actually works."""
@@ -275,7 +277,7 @@ def test_slack(session: Session = Depends(db)) -> dict:
     return slack_provision.workspace_check(token)
 
 
-@router.delete("/slack")
+@router.delete("/slack", dependencies=[authority.INSTANCE_ADMIN])
 def delete_slack(session: Session = Depends(db)) -> dict:
     """Forget the Slack connection. Projects that named their own tokens are
     untouched; projects that were inheriting stop mirroring and keep every
@@ -470,8 +472,9 @@ def _save_llm(session: Session, row: Secret, name: str, value: str | None) -> di
     return _llm_summary(session, row)
 
 
-@router.get("/llm-credentials")
-def list_llm_credentials(include_hidden: bool = False, session: Session = Depends(db)) -> list:
+@router.get("/llm-credentials", dependencies=[authority.SIGNED_IN])
+def list_llm_credentials(include_hidden: bool = False, session: Session = Depends(db),
+                         person: Person = Depends(person_auth)) -> list:
     """Every credential this install can still choose from.
 
     Hidden ones are absent by default, and that default is what every other
@@ -486,6 +489,13 @@ def list_llm_credentials(include_hidden: bool = False, session: Session = Depend
     from yaaf.core.project_credentials import usage as credential_usage
 
     usage = credential_usage(session)
+    # Anybody founding a project picks from this list, so anybody signed in may
+    # read it — but which projects a credential pays for is only theirs to see
+    # for the projects they could open anyway.
+    if not person.is_admin:
+        visible = {p.id for p in authority.reachable(session, person.id, False)}
+        usage = {sid: [p for p in projects if p.id in visible]
+                 for sid, projects in usage.items()}
     listing = select(Secret).where(Secret.llm_mode.is_not(None))
     if not include_hidden:
         listing = listing.where(Secret.hidden_at.is_(None))
@@ -497,7 +507,7 @@ def list_llm_credentials(include_hidden: bool = False, session: Session = Depend
             for row in session.scalars(listing.order_by(Secret.name))]
 
 
-@router.post("/llm-credentials", status_code=201)
+@router.post("/llm-credentials", status_code=201, dependencies=[authority.INSTANCE_ADMIN])
 def create_llm_credential(body: LlmCredentialIn, session: Session = Depends(db)) -> dict:
     from yaaf.core import ids
     from yaaf.core.models import Secret
@@ -536,7 +546,7 @@ def _managed(session: Session, credential_id: str, *, lock: bool = True) -> Secr
     return row
 
 
-@router.patch("/llm-credentials/{credential_id}")
+@router.patch("/llm-credentials/{credential_id}", dependencies=[authority.INSTANCE_ADMIN])
 def update_llm_credential(credential_id: str, body: LlmCredentialPatch,
                           session: Session = Depends(db)) -> dict:
     row = _managed(session, credential_id)
@@ -545,7 +555,7 @@ def update_llm_credential(credential_id: str, body: LlmCredentialPatch,
     return _save_llm(session, row, body.name, body.value)
 
 
-@router.delete("/llm-credentials/{credential_id}")
+@router.delete("/llm-credentials/{credential_id}", dependencies=[authority.INSTANCE_ADMIN])
 def delete_llm_credential(credential_id: str, session: Session = Depends(db)) -> dict:
     from yaaf.server.api.admin import delete_secret
 
@@ -635,12 +645,12 @@ def _set_hidden(session: Session, ids: list[str], *, hide: bool) -> dict:
     return {"hidden" if hide else "restored": moved, "refused": refused}
 
 
-@router.post("/llm-credentials/hide")
+@router.post("/llm-credentials/hide", dependencies=[authority.INSTANCE_ADMIN])
 def hide_llm_credentials(body: HiddenIn, session: Session = Depends(db)) -> dict:
     return _set_hidden(session, body.ids, hide=True)
 
 
-@router.post("/llm-credentials/unhide")
+@router.post("/llm-credentials/unhide", dependencies=[authority.INSTANCE_ADMIN])
 def unhide_llm_credentials(body: HiddenIn, session: Session = Depends(db)) -> dict:
     return _set_hidden(session, body.ids, hide=False)
 
@@ -670,7 +680,24 @@ def _no_reading_reason(outcome) -> str:
                          "next agent run, or now if you check it")
 
 
-@router.get("/llm-credentials/{credential_id}/usage")
+def _require_meter_reader(session: Session, row: Secret) -> None:
+    """The plan meter is the instance admin's — and a project's own readers'
+    for the credential that project pays with, since its Overview draws it."""
+    from sqlalchemy import select
+
+    from yaaf.core.models import Project
+
+    person = authority.acting_person(session)
+    if person is not None and person.is_admin:
+        return
+    billed = session.scalars(select(Project).where(Project.billing_secret_id == row.id)).all()
+    for project in billed:
+        if person is not None and authority.person_level(session, person, project):
+            return
+    authority.require_admin_here(session)
+
+
+@router.get("/llm-credentials/{credential_id}/usage", dependencies=[authority.IN_HANDLER])
 def llm_credential_usage(credential_id: str, refresh: bool = False,
                          session: Session = Depends(db)) -> dict:
     """What the plan behind a subscription credential last said was left.
@@ -703,6 +730,7 @@ def llm_credential_usage(credential_id: str, refresh: bool = False,
     from yaaf.server import plan_probe
 
     row = _managed(session, credential_id, lock=False)
+    _require_meter_reader(session, row)
     credential_id, mode = row.id, row.llm_mode
     if mode != "subscription":
         return {"credential_id": credential_id, "mode": mode, "available": False,
@@ -751,14 +779,14 @@ class ModelPriceIn(BaseModel):
     cache_write: float = Field(default=0.0, ge=0, le=10_000)
 
 
-@router.get("/model-prices")
+@router.get("/model-prices", dependencies=[authority.INSTANCE_ADMIN])
 def list_model_prices(session: Session = Depends(db)) -> list:
     from yaaf.core import prices
 
     return prices.table(session)
 
 
-@router.put("/model-prices/{model:path}")
+@router.put("/model-prices/{model:path}", dependencies=[authority.INSTANCE_ADMIN])
 def put_model_price(model: str, body: ModelPriceIn, session: Session = Depends(db)) -> dict:
     from yaaf.core.models import ModelPrice, utcnow
     from yaaf.runtimes import catalog
@@ -779,7 +807,7 @@ def put_model_price(model: str, body: ModelPriceIn, session: Session = Depends(d
     return {"model": model, "provider": catalog.provider_of(model), **body.model_dump()}
 
 
-@router.delete("/model-prices/{model:path}")
+@router.delete("/model-prices/{model:path}", dependencies=[authority.INSTANCE_ADMIN])
 def delete_model_price(model: str, session: Session = Depends(db)) -> dict:
     """Back to the catalog's price, or to none. A seat that needs one is not
     moved: the lease refuses its next run with the reason (R3)."""

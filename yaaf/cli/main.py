@@ -1,10 +1,14 @@
-"""The `yaaf` CLI: the chairman's terminal until the SPA lands.
+"""The `yaaf` CLI: the chairman's terminal.
 
 Observation plus the few powers the chairman actually has: boardroom speech,
 approval decisions, hypothesis extension, kill switches, spot audits.
 
   export YAAF_API=http://localhost:8080
-  export YAAF_ADMIN_TOKEN=...
+  yaaf login            # email + password, once; keeps a personal token
+
+`YAAF_TOKEN` overrides the stored token, for a script that was handed one
+(`yaaf users token` on the box mints a short-lived one). The static admin token
+this used to read was retired — see docs/AUTH.md.
 """
 
 from __future__ import annotations
@@ -28,26 +32,46 @@ def _register_spend() -> None:
     app.command(name="spend-report")(spend_report)
 
 
-def _env_file_token() -> str | None:
-    """Fall back to deploy/.env (cwd or repo root) so the CLI works without
-    exporting anything."""
-    for candidate in (Path("deploy/.env"), Path(".env"),
-                      Path(__file__).resolve().parents[2] / "deploy" / ".env"):
-        try:
-            if candidate.is_file():
-                for line in candidate.read_text().splitlines():
-                    if line.startswith("YAAF_ADMIN_TOKEN="):
-                        return line.split("=", 1)[1].strip()
-        except OSError:
-            continue
-    return None
+def _api_base() -> str:
+    return os.environ.get("YAAF_API", "http://localhost:8080").rstrip("/")
+
+
+def _credentials_path() -> Path:
+    """Where `yaaf login` keeps its token: one file, mode 0600, keyed by API
+    base so a laptop that talks to two boxes holds two tokens."""
+    override = os.environ.get("YAAF_CREDENTIALS")
+    if override:
+        return Path(override)
+    config = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+    return config / "yaaf" / "credentials.json"
+
+
+def _read_credentials() -> dict:
+    try:
+        return json.loads(_credentials_path().read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def _write_credentials(store: dict) -> None:
+    path = _credentials_path()
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    # Created 0600 rather than chmodded after: a token must never sit, even for
+    # a moment, in a file another user on this machine can read.
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as handle:
+        json.dump(store, handle, indent=2)
+
+
+def _token() -> str | None:
+    return os.environ.get("YAAF_TOKEN") or (_read_credentials().get(_api_base()) or {}).get(
+        "token")
 
 
 def _client() -> httpx.Client:
-    base = os.environ.get("YAAF_API", "http://localhost:8080")
-    token = os.environ.get("YAAF_ADMIN_TOKEN") or _env_file_token() or "dev-admin-token"
-    return httpx.Client(base_url=base, timeout=30,
-                        headers={"Authorization": f"Bearer {token}"})
+    token = _token()
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    return httpx.Client(base_url=_api_base(), timeout=30, headers=headers)
 
 
 def _json_or_die(response: httpx.Response):
@@ -58,8 +82,8 @@ def _json_or_die(response: httpx.Response):
             detail = response.text[:200]
         typer.echo(f"API error {response.status_code}: {detail}")
         if response.status_code == 401:
-            typer.echo("Hint: set YAAF_ADMIN_TOKEN (see deploy/.env) and YAAF_API, "
-                       "or run from the repo root so deploy/.env is auto-detected.")
+            typer.echo(f"Hint: run `yaaf login` (signing in to {_api_base()}), or set "
+                       "YAAF_TOKEN to a personal token.")
         raise typer.Exit(1)
     return response.json()
 
@@ -244,10 +268,63 @@ def seed(
             typer.echo(f"project {slug}: {status}")
 
 
+# ── signing in ──────────────────────────────────────────────────────────────────
+
+
 @app.command()
-def create_user(email: str, name: str) -> None:
+def login(
+    email: str = typer.Option("", "--email", help="Your account's email"),
+    name: str = typer.Option("", "--name", help="What to call this token (default: cli@host)"),
+    days: int = typer.Option(30, "--days", help="How long the token lives (1-365)"),
+) -> None:
+    """Sign in with your email and password, and keep a personal token for this
+    API base. The password is sent once and never stored."""
+    import socket
+
+    email = email or typer.prompt("Email")
+    password = typer.prompt("Password", hide_input=True)
+    label = name or f"cli@{socket.gethostname()}"[:80]
+    with httpx.Client(base_url=_api_base(), timeout=30) as client:
+        body = _json_or_die(client.post("/auth/token", json={
+            "email": email, "password": password, "name": label, "days": days}))
+    store = _read_credentials()
+    store[_api_base()] = {"token": body["token"], "email": email, "name": body["name"],
+                          "expires_at": body["expires_at"]}
+    _write_credentials(store)
+    typer.echo(f"Signed in to {_api_base()} as {email}. Token {body['name']!r} "
+               f"expires {body['expires_at'][:10]}.")
+
+
+@app.command()
+def logout() -> None:
+    """Revoke this machine's token on the server, and forget it here."""
+    store = _read_credentials()
+    entry = store.pop(_api_base(), None)
+    if entry:
+        with httpx.Client(base_url=_api_base(), timeout=30,
+                          headers={"Authorization": f"Bearer {entry['token']}"}) as client:
+            client.post("/auth/logout")
+        _write_credentials(store)
+        typer.echo(f"Signed out of {_api_base()}.")
+    else:
+        typer.echo(f"Not signed in to {_api_base()}.")
+
+
+@app.command()
+def whoami() -> None:
     with _client() as client:
-        _show(client.post("/admin/users", json={"email": email, "display_name": name}))
+        _show(client.get("/auth/me"))
+
+
+@app.command()
+def create_user(email: str, name: str,
+                admin: bool = typer.Option(False, "--admin", help="Make them an instance admin")
+                ) -> None:
+    """Invite somebody (instance admins only). Prints the one-time link that
+    lets them choose a password — this box sends no mail, so hand it on."""
+    with _client() as client:
+        _show(client.post("/admin/users",
+                          json={"email": email, "display_name": name, "is_admin": admin}))
 
 
 @app.command()
@@ -858,16 +935,116 @@ def audit_evidence(evidence_id: str, ok: bool = typer.Option(..., "--ok/--bad"),
                           json={"ok": ok, "note": note}))
 
 
-@app.command()
-def set_password(email: str) -> None:
-    """Give a chairman a password, so they can sign in to the consent screen.
+# ── who sits on a project, and the box's people ────────────────────────────────
 
-    Needed only for OAuth clients — claude.ai among them, which offers no field
-    for a pasted token. A terminal client with a minted token never sees this.
-    """
-    value = typer.prompt("Password", hide_input=True, confirmation_prompt=True)
+members = typer.Typer(no_args_is_help=True,
+                      help="Who is on a project: chairman, co-chairs, observers.")
+app.add_typer(members, name="members")
+
+
+@members.command("list")
+def members_list(project: str) -> None:
+    """Everyone on a project and what they are there."""
     with _client() as client:
-        _show(client.post("/admin/users/password", json={"email": email, "password": value}))
+        _show(client.get(f"/admin/projects/{_resolve_project(client, project)}/members"))
+
+
+@members.command("add")
+def members_add(project: str, email: str,
+                role: str = typer.Option("observer", "--role",
+                                         help="co_chair (decides) or observer (reads)")) -> None:
+    """Put somebody with an account on a project (its chairman only)."""
+    with _client() as client:
+        _show(client.post(f"/admin/projects/{_resolve_project(client, project)}/members",
+                          json={"email": email, "role": role}))
+
+
+@members.command("role")
+def members_role(project: str, email: str, role: str) -> None:
+    """Change a member's role between co_chair and observer (its chairman only)."""
+    with _client() as client:
+        pid = _resolve_project(client, project)
+        _show(client.patch(f"/admin/projects/{pid}/members/{_member_id(client, pid, email)}",
+                           json={"role": role}))
+
+
+@members.command("remove")
+def members_remove(project: str, email: str) -> None:
+    """Take somebody off a project, from their next request on (its chairman only)."""
+    with _client() as client:
+        pid = _resolve_project(client, project)
+        _show(client.request("DELETE",
+                             f"/admin/projects/{pid}/members/{_member_id(client, pid, email)}"))
+
+
+@members.command("hand-on")
+def members_hand_on(project: str, email: str) -> None:
+    """Make somebody else the chairman; you stay on as a co-chair. The chairman
+    may, and an instance admin may for a chairman who has left."""
+    with _client() as client:
+        _show(client.post(f"/admin/projects/{_resolve_project(client, project)}/chairman",
+                          json={"email": email}))
+
+
+def _member_id(client: httpx.Client, project_id: str, email: str) -> str:
+    for row in _json_or_die(client.get(f"/admin/projects/{project_id}/members")):
+        if row["email"] == email.strip().lower():
+            return row["user_id"]
+    typer.echo(f"{email} is not on this project")
+    raise typer.Exit(1)
+
+
+people = typer.Typer(no_args_is_help=True,
+                     help="The box's people, over the API (instance admins only).")
+app.add_typer(people, name="people")
+
+
+@people.command("list")
+def people_list() -> None:
+    with _client() as client:
+        _show(client.get("/admin/users"))
+
+
+def _person_id(client: httpx.Client, email: str) -> str:
+    for row in _json_or_die(client.get("/admin/users")):
+        if row["email"] == email.strip().lower():
+            return row["id"]
+    typer.echo(f"nobody with the email {email} has an account here")
+    raise typer.Exit(1)
+
+
+@people.command("link")
+def people_link(email: str) -> None:
+    """A fresh one-time link that sets their password; earlier ones stop working."""
+    with _client() as client:
+        _show(client.post(f"/admin/users/{_person_id(client, email)}/setup-link"))
+
+
+@people.command("promote")
+def people_promote(email: str) -> None:
+    with _client() as client:
+        _show(client.patch(f"/admin/users/{_person_id(client, email)}", json={"is_admin": True}))
+
+
+@people.command("demote")
+def people_demote(email: str) -> None:
+    with _client() as client:
+        _show(client.patch(f"/admin/users/{_person_id(client, email)}",
+                           json={"is_admin": False}))
+
+
+@people.command("deactivate")
+def people_deactivate(email: str) -> None:
+    """Every credential they hold stops working at once. Refused while they chair
+    a live project: hand it on first."""
+    with _client() as client:
+        _show(client.patch(f"/admin/users/{_person_id(client, email)}", json={"active": False}))
+
+
+@people.command("reactivate")
+def people_reactivate(email: str) -> None:
+    with _client() as client:
+        _show(client.patch(f"/admin/users/{_person_id(client, email)}", json={"active": True}))
 
 
 # ── MCP clients ─────────────────────────────────────────────────────────────────
@@ -879,21 +1056,20 @@ app.add_typer(mcp_token, name="mcp-token")
 @mcp_token.command("mint")
 def mcp_token_mint(
     name: str = typer.Argument(..., help="What this client is: 'dom-laptop', 'claude-desktop'"),
-    chairman: str = typer.Option(..., "--chairman", help="Email of the chairman it acts for"),
     scopes: str = typer.Option("read", "--scopes",
                                help="Comma-separated: read, steer, create, configure"),
 ) -> None:
     """Mint a scoped MCP client token. The value is printed once and never again.
 
-    Scopes are the whole narrowing: the client reaches every project this
-    chairman chairs, whenever it asks, and nothing anyone else chairs. Start
-    with `read`. It is most of the value and none of the risk — a client with
-    it can see every project and sign for nothing.
+    It acts for you — whoever `yaaf login` signed in — and reaches what you
+    reach: reading any project you are a member of, deciding on the ones you
+    chair or co-chair. Scopes narrow that further. Start with `read`. It is
+    most of the value and none of the risk — a client with it can see every
+    project you can and sign for nothing.
     """
     with _client() as client:
         _show(client.post("/admin/mcp_clients", json={
             "name": name,
-            "chairman_email": chairman,
             "scopes": [s.strip() for s in scopes.split(",") if s.strip()],
         }))
 
@@ -912,7 +1088,15 @@ def mcp_token_revoke(client_id: str) -> None:
         _show(client.request("DELETE", f"/admin/mcp_clients/{client_id}"))
 
 
+def _register_users() -> None:
+    # Lazily, for the same reason as spend: these open the database directly.
+    from yaaf.cli.users import users
+
+    app.add_typer(users, name="users")
+
+
 _register_spend()
+_register_users()
 
 if __name__ == "__main__":
     app()

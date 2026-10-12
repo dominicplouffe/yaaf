@@ -16,9 +16,6 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+psycopg://yaaf:yaaf@localhost:5432/yaaf"
 
-    # Bearer token for the admin/chairman API until full user auth lands (M3).
-    admin_token: str = "dev-admin-token"
-
     # Fernet key (urlsafe base64, 32 bytes) for envelope-encrypting secrets.
     # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
     master_key: str = ""

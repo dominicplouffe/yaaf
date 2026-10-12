@@ -84,7 +84,7 @@ def test_validation_and_legacy_write_refusal(client):
 def test_only_admin_can_manage_credentials(client):
     key = create(client)
     project = make_project(client)
-    token, _ = live_token(project["id"], project["ceo_agent_id"])
+    _, token = live_token(project["id"], project["ceo_agent_id"])
     for headers in ({}, bearer(token)):
         assert client.get(URL, headers=headers).status_code == 401
         assert client.post(URL, headers=headers, json={"name": "Forged", "mode": "api_key",
@@ -292,7 +292,7 @@ def test_bulk_hide_judges_each_row_and_only_admin_may(client):
     assert [r["name"] for r in result["hidden"]] == ["Spare"]
     assert [r["id"] for r in result["refused"]] == [busy["id"], "sec_nonexistent"]
 
-    token, _ = live_token(project["id"], project["ceo_agent_id"])
+    _, token = live_token(project["id"], project["ceo_agent_id"])
     for headers in ({}, bearer(token)):
         for verb in ("hide", "unhide"):
             assert client.post(f"{URL}/{verb}", headers=headers,
@@ -968,7 +968,7 @@ def test_plan_meter_has_nothing_to_say_about_an_api_key(client, monkeypatch):
 def test_plan_meter_is_the_administrators_to_read(client):
     key = create(client, value="sk-ant-oat01-plan-meter-test-token", mode="subscription")
     project = make_project(client)
-    token, _ = live_token(project["id"], project["ceo_agent_id"])
+    _, token = live_token(project["id"], project["ceo_agent_id"])
     for headers in ({}, bearer(token)):
         assert client.get(f"{URL}/{key['id']}/usage", headers=headers).status_code == 401
     assert client.get(f"{URL}/nope/usage", headers=ADMIN).status_code == 404

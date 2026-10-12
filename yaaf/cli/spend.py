@@ -2,7 +2,7 @@
 
 Unlike every other command (HTTP against the API), this opens the server's
 database directly via yaaf.core.db, so it needs the server's DB env vars
-(YAAF_DATABASE_URL — see yaaf.core.config), not YAAF_API/YAAF_ADMIN_TOKEN.
+(YAAF_DATABASE_URL — see yaaf.core.config), not YAAF_API or a login.
 Run it on the box that hosts the server, or point YAAF_DATABASE_URL at the
 same Postgres.
 
@@ -403,7 +403,7 @@ def spend_report(
     """Analyze LLM spend straight from the database (no API involved).
 
     Needs the server's DB env vars (YAAF_DATABASE_URL), not
-    YAAF_API/YAAF_ADMIN_TOKEN — run it where the server runs, or point
+    YAAF_API or a login — run it where the server runs, or point
     YAAF_DATABASE_URL at the same Postgres.
     """
     if all_projects and project:

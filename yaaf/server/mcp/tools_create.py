@@ -42,6 +42,7 @@ from yaaf.core.constitution import (
 )
 from yaaf.core.models import Secret, User
 from yaaf.founder import tools as founder_tools
+from yaaf.server import authority
 from yaaf.server.api import admin
 from yaaf.server.mcp import confirm, envelope
 from yaaf.server.mcp.auth import Principal, ToolRefusal, resolve_project
@@ -396,8 +397,11 @@ def create_project(principal: Principal, session: Session, arguments: dict) -> d
     },
 )
 def clone_project(principal: Principal, session: Session, arguments: dict) -> dict:
-    row = resolve_project(session, principal, required(arguments, "project"))
     verb = arguments.get("verb") or "export"
+    # Exporting is reading. Cloning makes a twin that holds the source's
+    # credentials verbatim, so it needs the standing to change the source.
+    row = resolve_project(session, principal, required(arguments, "project"),
+                          None if verb == "export" else authority.Level.STEER)
     if verb == "export":
         # Values are never included: an export through this surface would put
         # every credential the project holds into a model's context.

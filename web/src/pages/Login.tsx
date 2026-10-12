@@ -1,35 +1,46 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { get, setToken } from "../api";
+import { ApiError, post } from "../api";
+import { useMe } from "../me";
 import { Btn } from "../ui/kit";
 
 /** The first thing anyone sees.
  *
- * It used to say "The chairman's cockpit. Paste your admin token to enter",
- * and when the token was wrong it told the reader the value "lives in
- * deploy/.env". Both are true and neither is a sign-in screen: the first is
- * our word for the product, and the second is a path on a server the person
- * signing in may never have touched. */
+ * It used to ask for "your access key": one value for the whole box, pasted
+ * into a box of its own, which signed in a *client* and never a person — so
+ * whoever held it was recorded as the chairman of everything they touched.
+ * It is an email and a password now, the way every other site a person uses
+ * asks, and the browser keeps the session in a cookie this page cannot read.
+ *
+ * There is no "forgot your password" link because there is nothing for it to
+ * do: this box sends no email. A reset is a fresh setup link from whoever runs
+ * the box, and the page says so rather than offering a button that pretends. */
 export default function Login() {
-  const [token, setTokenInput] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const navigate = useNavigate();
+  const { refresh } = useMe();
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     setError(null);
-    setToken(token.trim());
     try {
-      await get("/observe/projects");
+      await post("/auth/login", { email: email.trim(), password });
+      await refresh();
       navigate("/desk");
-    } catch {
+    } catch (err) {
+      // A wrong password and an address with no account get the same sentence,
+      // because the server gives them the same answer: the form is not a way
+      // to find out who has an account here. A throttle says how long, in the
+      // server's own words.
       setError(
-        "That key was not accepted. It is the one printed at the end of your install — " +
-          "whoever set this up for you can read it out again.",
+        err instanceof ApiError && err.status === 401
+          ? "That email and password did not match."
+          : (err as Error).message,
       );
-    } finally {
       setBusy(false);
     }
   }
@@ -44,24 +55,39 @@ export default function Login() {
           Hire a team of agents, give them a budget and a deadline, and read what they did
           while you were out.
         </p>
-        <label className="field" htmlFor="token">
-          Your access key
+        <label className="field" htmlFor="email">
+          Email
         </label>
         <input
-          id="token"
-          type="password"
-          value={token}
-          onChange={(e) => setTokenInput(e.target.value)}
-          placeholder="Paste it here"
+          id="email"
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
           autoFocus
+          autoComplete="username"
+          required
+        />
+        <label className="field" htmlFor="password">
+          Password
+        </label>
+        <input
+          id="password"
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
           autoComplete="current-password"
+          required
         />
         {error && <div className="error">{error}</div>}
         <div className="actions">
-          <Btn kind="primary" type="submit" disabled={!token.trim()} busy={busy}>
+          <Btn kind="primary" type="submit" disabled={!email.trim() || !password} busy={busy}>
             Sign in
           </Btn>
         </div>
+        <p className="help" style={{ marginBottom: 0 }}>
+          Forgotten your password, or never chose one? Ask whoever runs this box for a setup
+          link — it lets you pick a new one.
+        </p>
       </form>
     </div>
   );

@@ -1,6 +1,7 @@
-// App-wide settings: the three things that are true above every project.
+// App-wide settings: the three things that are true above every project, and
+// your own account.
 //
-// Two of them — the Founder's own model credential and the Slack connection —
+// Two of the three — the Founder's own model credential and the Slack connection —
 // are small, stateful and read once a quarter. The third, the LLM credentials
 // projects pay with, is a working list that on a real install runs to dozens
 // of rows. Stacking all three on one scroll meant the rarely-touched cards sat
@@ -11,11 +12,19 @@
 // each section's state — which is the answer to "is anything wrong here?"
 // without opening anything. The section lives in the URL, so a link to the
 // credentials list is a link to the credentials list.
+//
+// The box's own settings and its People belong to the instance admin, and the
+// server refuses them to anyone else. So they are not drawn for anyone else
+// either: a rail entry that opens onto a refusal is a door painted on a wall.
+// Everybody gets Account, because everybody has a password.
 
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { del, get, post, put } from "../api";
+import { del, get, post, put, UserRow } from "../api";
+import { PasswordCard, SessionsCard, TokensCard } from "../account";
 import { LlmCredentials, ModelPrices, useProviders } from "../llmCredentials";
+import { useMe } from "../me";
+import { People } from "../people";
 import { SecretInput } from "../ui";
 
 interface AnthropicSettings {
@@ -451,19 +460,38 @@ function SlackCard({
   );
 }
 
-type SectionKey = "credentials" | "prices" | "founder" | "slack";
+type SectionKey = "credentials" | "prices" | "founder" | "slack" | "people" | "account";
 
-const SECTIONS: { key: SectionKey; label: string }[] = [
-  { key: "credentials", label: "LLM credentials" },
-  { key: "prices", label: "Model prices" },
-  { key: "founder", label: "Founder" },
-  { key: "slack", label: "Slack" },
+const SECTIONS: ({ group: string; admin: boolean } | { key: SectionKey; label: string; admin: boolean })[] = [
+  { group: "This box", admin: true },
+  { key: "credentials", label: "LLM credentials", admin: true },
+  { key: "prices", label: "Model prices", admin: true },
+  { key: "founder", label: "Founder", admin: true },
+  { key: "slack", label: "Slack", admin: true },
+  { key: "people", label: "People", admin: true },
+  { group: "You", admin: false },
+  { key: "account", label: "Account", admin: false },
 ];
 
 /** The state of a section, said in the rail. Three words at most: this is the
     line that decides whether the section is worth opening, not a summary of
     what is inside it. */
-function railNote(key: SectionKey, s: AppSettings): { text: string; tone: string } {
+function railNote(
+  key: SectionKey,
+  s: AppSettings | null,
+  users: UserRow[] | null,
+  email: string,
+): { text: string; tone: string } {
+  if (key === "account") return { text: email, tone: "" };
+  if (key === "people") {
+    if (!users) return { text: "…", tone: "" };
+    const active = users.filter((u) => u.active);
+    const waiting = active.filter((u) => !u.has_password).length;
+    return waiting
+      ? { text: `${waiting} not set up yet`, tone: "warn" }
+      : { text: `${active.length} ${active.length === 1 ? "person" : "people"}`, tone: "good" };
+  }
+  if (!s) return { text: "…", tone: "" };
   if (key === "credentials") {
     const { total, in_use, hidden, offerable } = s.llm_credentials;
     if (total === 0) return { text: "none yet", tone: "warn" };
@@ -484,65 +512,120 @@ function railNote(key: SectionKey, s: AppSettings): { text: string; tone: string
 }
 
 export default function Settings() {
+  const { me } = useMe();
+  const admin = Boolean(me?.is_admin);
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [users, setUsers] = useState<UserRow[] | null>(null);
+  const [usersError, setUsersError] = useState<string | null>(null);
   const [params, setParams] = useSearchParams();
-  const section = (SECTIONS.find((s) => s.key === params.get("section"))?.key
-    ?? "credentials") as SectionKey;
+  const visible = SECTIONS.filter((s) => admin || !s.admin);
+  const keys = visible.flatMap((s) => ("key" in s ? [s.key] : []));
+  // An admin still lands where they always did; everybody else has one place
+  // to land, and it is their own account.
+  const asked = params.get("section") as SectionKey | null;
+  const section: SectionKey = asked && keys.includes(asked) ? asked : admin ? "credentials" : "account";
 
   const reload = useCallback(() => {
+    if (!admin) return;
     get<AppSettings>("/admin/settings").then(setSettings).catch((e) => setError(e.message));
-  }, []);
+  }, [admin]);
+
+  const reloadUsers = useCallback(() => {
+    if (!admin) return;
+    get<UserRow[]>("/admin/users")
+      .then((rows) => {
+        setUsers(rows);
+        setUsersError(null);
+      })
+      .catch((e) => setUsersError((e as Error).message));
+  }, [admin]);
 
   useEffect(reload, [reload]);
+  useEffect(reloadUsers, [reloadUsers]);
+
+  const platform = section === "credentials" || section === "founder" || section === "slack";
 
   return (
     <>
       <h1>Settings</h1>
       <p className="subtitle">
-        What is true above every project. A project&apos;s own rules — its budget, its
-        constitution, who it hires — live in that project, because they bind that project.
-        The credentials and connections every project draws on live here.
+        {admin ? (
+          <>
+            What is true above every project. A project&apos;s own rules — its budget, its
+            constitution, who it hires, who may decide on it — live in that project, because
+            they bind that project. The credentials and connections every project draws on,
+            and the people who may sign in at all, live here.
+          </>
+        ) : (
+          <>
+            Your own account. A project&apos;s rules — its budget, its constitution, who may
+            decide on it — live in that project&apos;s own Settings. The box&apos;s settings
+            belong to whoever runs it.
+          </>
+        )}
       </p>
-      {error && <div className="error">{error}</div>}
-      {settings === null ? (
-        <div className="card muted">Loading…</div>
-      ) : (
-        <div className="settings-lay">
-          <div className="srail">
-            {SECTIONS.map((item) => {
-              const note = railNote(item.key, settings);
-              return (
-                <button
-                  key={item.key}
-                  className={section === item.key ? "active" : ""}
-                  onClick={() => setParams({ section: item.key }, { replace: true })}
-                >
-                  {item.label}
-                  <span className={`srail-note ${note.tone}`}>{note.text}</span>
-                </button>
-              );
-            })}
-          </div>
-
-          <div>
-            {section === "credentials" && <LlmCredentials onChanged={reload} />}
-            {section === "prices" && <ModelPrices />}
-            {section === "founder" && (
-              <>
-                <h2 style={{ marginTop: 0 }}>The Founder&apos;s own model credential</h2>
-                <ModelCard settings={settings.anthropic} reload={reload} />
-              </>
-            )}
-            {section === "slack" && (
-              <>
-                <h2 style={{ marginTop: 0 }}>Slack connection</h2>
-                <SlackCard settings={settings.slack} reload={reload} />
-              </>
-            )}
-          </div>
+      {error && platform && <div className="error">{error}</div>}
+      <div className="settings-lay">
+        <div className="srail">
+          {visible.map((item) => {
+            if ("group" in item) {
+              // One heading over one entry is a label for nothing.
+              return admin ? <div className="grp" key={item.group}>{item.group}</div> : null;
+            }
+            const note = railNote(item.key, settings, users, me?.email ?? "");
+            return (
+              <button
+                key={item.key}
+                className={section === item.key ? "active" : ""}
+                onClick={() => setParams({ section: item.key }, { replace: true })}
+              >
+                {item.label}
+                <span className={`srail-note ${note.tone}`}>{note.text}</span>
+              </button>
+            );
+          })}
         </div>
-      )}
+
+        <div>
+          {platform && settings === null ? (
+            <div className="card muted">Loading…</div>
+          ) : (
+            <>
+              {section === "credentials" && <LlmCredentials onChanged={reload} />}
+              {section === "prices" && <ModelPrices />}
+              {section === "founder" && settings && (
+                <>
+                  <h2 style={{ marginTop: 0 }}>The Founder&apos;s own model credential</h2>
+                  <ModelCard settings={settings.anthropic} reload={reload} />
+                </>
+              )}
+              {section === "slack" && settings && (
+                <>
+                  <h2 style={{ marginTop: 0 }}>Slack connection</h2>
+                  <SlackCard settings={settings.slack} reload={reload} />
+                </>
+              )}
+            </>
+          )}
+          {section === "people" && (
+            <>
+              <h2 style={{ marginTop: 0 }}>People</h2>
+              <People users={users} loadError={usersError} reload={reloadUsers} />
+            </>
+          )}
+          {section === "account" && (
+            <>
+              <h2 style={{ marginTop: 0 }}>Your password</h2>
+              <PasswordCard />
+              <h2>Personal tokens</h2>
+              <TokensCard />
+              <h2>Where you are signed in</h2>
+              <SessionsCard />
+            </>
+          )}
+        </div>
+      </div>
     </>
   );
 }

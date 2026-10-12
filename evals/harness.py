@@ -46,7 +46,6 @@ def _bootstrap_env() -> None:
     resolves settings. All setdefault, so under pytest the conftest wins."""
     os.environ.setdefault("YAAF_SANDBOX_MODE", "subprocess")
     os.environ.setdefault("YAAF_ALLOW_HOST_SUCCESS_TESTS", "1")
-    os.environ.setdefault("YAAF_ADMIN_TOKEN", "eval-admin-token")
     os.environ.setdefault("YAAF_MASTER_KEY", "kkP1p6Rt0DZ2rWv1w5Zq3o8y6bT4uY9cQ1eS7gJ0aXk=")
     os.environ.setdefault("YAAF_WORKSPACES_ROOT", tempfile.mkdtemp(prefix="yaaf-eval-ws-"))
     os.environ.setdefault("YAAF_ARTIFACTS_ROOT", tempfile.mkdtemp(prefix="yaaf-eval-art-"))
@@ -71,6 +70,7 @@ from yaaf.core.models import (  # noqa: E402
     Message,
     Project,
     Task,
+    User,
     utcnow,
 )
 from yaaf.runner.backends import mock as mock_backend  # noqa: E402
@@ -196,7 +196,18 @@ class RecordingClient:
 
 
 def _admin_headers() -> dict:
-    return {"Authorization": f"Bearer {settings().admin_token}"}
+    """The scenario's chairman, signed in: an account in the eval's throwaway
+    database and a personal token for it, as tests/conftest.py seeds one."""
+    from yaaf.server import identity
+
+    with db_session() as session:
+        user = identity.find_user(session, "chair@example.com")
+        if user is None:
+            user = User(id=ids.new_id(ids.USER), email="chair@example.com",
+                        display_name="Chair", is_admin=True)
+            session.add(user)
+        _, plaintext = identity.mint_token(session, user, "eval", days=1)
+    return {"Authorization": f"Bearer {plaintext}"}
 
 
 def _expect_ok(response, what: str) -> dict:

@@ -2860,9 +2860,18 @@ def check_directive_citation(
     # assist announcement, the session-ended notice) carry NEITHER sender, and
     # accepting one as "the chairman's words" would let a CEO cite a line it
     # caused to execute scope actions recorded as the chairman's own act.
-    if message.sender_agent_id is not None or message.sender_user_id != project.chairman_user_id:
-        raise Refusal("That message is not the chairman's own words in the boardroom. "
-                      "You cannot cite an agent, or a line the platform posted.")
+    #
+    # A co-chair's word binds as the chairman's does — they decide as peers —
+    # but only while it is still theirs to give: membership is read now, not
+    # when the message was written, so an order from somebody since removed or
+    # deactivated cannot be filed on authority they no longer hold.
+    from yaaf.server.authority import chairs
+
+    if message.sender_agent_id is not None or message.sender_user_id not in chairs(session,
+                                                                                    project):
+        raise Refusal("That message is not the chairman's own words in the boardroom, nor "
+                      "a co-chair's. You cannot cite an agent, a line the platform posted, "
+                      "or somebody who no longer chairs this project.")
     age = utcnow() - message.created_at
     if age > timedelta(hours=DIRECTIVE_MAX_AGE_HOURS):
         raise Refusal(

@@ -13,16 +13,18 @@ Protocol: the server pushes a JSON "change stamp" — cheap per-table aggregates
 from the last one sent. The client never inspects the stamp's contents; any
 message means "reload".
 
-Auth: browsers cannot set headers on a WebSocket, so the admin token rides as a
-?token= query param and is compared against settings().admin_token the same way
-deps.admin_auth compares its bearer token (constant-time via compare_digest).
+Auth: the browser's session cookie, which rides on the upgrade request like on
+any other — so there is no credential in the URL to land in a proxy log, which
+is where the admin token used to travel. The upgrade must also come from this
+install's own pages: a WebSocket is not covered by CORS, so without an Origin
+check any page the chairman visits could open one with his cookie attached.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
-import hmac
+import hashlib
 from datetime import datetime
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -30,7 +32,6 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
-from yaaf.core.config import settings
 from yaaf.core.db import session_factory
 from yaaf.core.models import (
     Agent,
@@ -40,9 +41,11 @@ from yaaf.core.models import (
     Message,
     Notice,
     Project,
+    ProjectMember,
     Run,
     Task,
 )
+from yaaf.server import identity
 
 router = APIRouter()
 
@@ -70,7 +73,8 @@ def _change_stamp(project_id: str) -> dict | None:
     equal means "nothing the UI cares about moved"; the client treats any
     difference as "poll now". Returns None for an unknown project."""
     with session_factory()() as session:
-        if session.get(Project, project_id) is None:
+        project = session.get(Project, project_id)
+        if project is None:
             return None
         # Run/approval STATUS changes mutate rows in place (no new row, no new
         # created_at), so those tables get status-shaped extras.
@@ -110,9 +114,17 @@ def _change_stamp(project_id: str) -> dict | None:
             .group_by(Agent.status)
             .all()
         )
+        # Who sits where. Membership mutates rows in place and has no clock of
+        # its own, so the stamp carries the whole (small) seating — a co-chair
+        # removed in one tab is a notice and a panel that change in the other.
+        seating = sorted(session.query(ProjectMember.user_id, ProjectMember.role)
+                         .filter(ProjectMember.project_id == project_id).all())
+        members = hashlib.sha256(
+            repr((project.chairman_user_id, seating)).encode()).hexdigest()[:16]
         return {
             "type": "stamp",
             "project": project_id,
+            "members": members,
             "agents": _count_max(session, Agent, Agent.created_at, project_id)
             + [agent_statuses],
             "messages": _count_max(session, Message, Message.created_at, project_id),
@@ -147,12 +159,31 @@ async def _stamp_loop(websocket: WebSocket, project_id: str) -> None:
         await asyncio.sleep(WS_POLL_S)
 
 
+def _may_watch(cookie: str | None, origin: str | None, host: str | None,
+               project_id: str) -> str | None:
+    """Why this socket may not open, or None when it may."""
+    from yaaf.server import authority
+
+    with session_factory()() as session:
+        reason = identity.socket_refusal(session, cookie, origin, host)
+        if reason is None:
+            # The change feed is a project's, so it is its readers' — refused in
+            # the words the socket uses for a project that does not exist.
+            person = identity.socket_person(session, cookie)
+            project = session.get(Project, project_id)
+            if project is None or not authority.person_level(session, person, project):
+                reason = "unknown project"
+        return reason
+
+
 @router.websocket("/ws/projects/{project_id}")
-async def project_live(websocket: WebSocket, project_id: str, token: str = "") -> None:
+async def project_live(websocket: WebSocket, project_id: str) -> None:
     await websocket.accept()
-    # Same comparison idiom as deps.admin_auth, minus the header transport.
-    if not hmac.compare_digest(token.encode(), settings().admin_token.encode()):
-        await websocket.close(code=1008, reason="bad admin token")
+    refused = await run_in_threadpool(
+        _may_watch, websocket.cookies.get(identity.COOKIE),
+        websocket.headers.get("origin"), websocket.headers.get("host"), project_id)
+    if refused:
+        await websocket.close(code=1008, reason=refused)
         return
 
     watcher = asyncio.ensure_future(_drain_inbound(websocket))

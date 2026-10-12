@@ -88,11 +88,16 @@ RUNTIMES_COLUMNS = (
     ("secrets", "base_url"),
 )
 RUNTIMES_TABLES = ("project_llm_credentials", "model_prices")
+# 0046: people (docs/AUTH.md).
+PEOPLE_TABLES = ("user_sessions", "user_tokens", "user_setup_links", "login_failures")
+PEOPLE_COLUMNS = (("users", "deactivated_at"),)
 
 REMOVED_TABLES = (STAGE_1_TABLES + STAGE_5_TABLES + STAGE_6_TABLES
-                  + STAGE_7_TABLES + STAGE_8_TABLES + STAGE_10_TABLES + RUNTIMES_TABLES)
+                  + STAGE_7_TABLES + STAGE_8_TABLES + STAGE_10_TABLES + RUNTIMES_TABLES
+                  + PEOPLE_TABLES)
 REMOVED_COLUMNS = (STAGE_1_COLUMNS + STAGE_8_COLUMNS + STAGE_9_COLUMNS
-                   + STAGE_10_COLUMNS + RUNTIMES_COLUMNS + (("secrets", "llm_mode"),))
+                   + STAGE_10_COLUMNS + RUNTIMES_COLUMNS + PEOPLE_COLUMNS
+                   + (("secrets", "llm_mode"),))
 
 
 def _alembic_config(url: str) -> Config:

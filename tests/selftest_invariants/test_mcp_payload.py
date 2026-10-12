@@ -185,7 +185,7 @@ def test_a_resource_for_another_chairmans_project_is_refused(client):
            "is reachable by this client" in answer["error"]["message"]
 
 
-def test_admin_token_still_opens_nothing_here(client):
+def test_a_personal_token_still_opens_nothing_here(client):
     """The read tools are new surface; the principal rule is not weakened by them."""
     make_project(client, slug=SLUG)
     assert rpc(client, ADMIN["Authorization"].split()[1], "resources/list").status_code == 401

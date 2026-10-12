@@ -221,7 +221,12 @@ def chairman_notify(session: Session, project: Project, subject: str, body: str,
     15s timeouts each, and several agent request handlers call this with a DB
     transaction open — a slow mail host must never hold row locks or pin a
     request worker. Everything the thread needs is resolved from the session
-    BEFORE it starts; the thread itself never touches the database."""
+    BEFORE it starts; the thread itself never touches the database.
+
+    The chairman alone, not the co-chairs, deliberately for now: the inbox
+    ration below is one person's, and splitting or multiplying it is a design
+    of its own (docs/AUTH.md, "Later"). Co-chairs read the same decisions on the
+    Desk, which lists every project they chair."""
     chairman = session.get(User, project.chairman_user_id)
     log.info("chairman notify [%s] (%s) %s: %s", project.slug, attention, subject, body)
     cfg = settings()

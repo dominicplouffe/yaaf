@@ -38,6 +38,14 @@ from yaaf.runtimes.providers import DEFAULT_PROVIDER
 
 JSONVariant = JSON().with_variant(JSONB(), "postgresql")
 
+#: Room for the longest attribution any surface writes: `user:<id> via
+#: mcp:<client name>`. It was 80 on the audit log and 64 on the event logs,
+#: which SQLite never enforces and Postgres does — so an MCP client named past
+#: about 37 characters had every write it attempted fail with a 500 on the
+#: database people deploy. `test_actor_columns_hold_the_longest_stamp` derives
+#: the floor from the columns that feed the stamp rather than restating it.
+ACTOR_LEN = 200
+
 
 def utcnow() -> datetime:
     return datetime.now(UTC)
@@ -547,11 +555,105 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    #: Stored lower-cased. A sign-in form that cared about case would lock out
+    #: the person who typed it differently the second time.
     email: Mapped[str] = mapped_column(String(255), unique=True)
     display_name: Mapped[str] = mapped_column(String(120))
     password_hash: Mapped[str | None] = mapped_column(String(255))
+    #: The instance admin: runs the box, reads every project, decides nothing on
+    #: a project it does not chair. See docs/AUTH.md.
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    #: A timestamp rather than a delete, for the reason McpClient.revoked_at
+    #: gives: the record names this person forever, so the row has to survive.
+    deactivated_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+
+
+class UserSession(Base):
+    """A browser signed in as a person.
+
+    A row rather than a signed cookie, so it can be revoked: logging out,
+    changing a password and deactivating an account all have to reach a
+    browser somebody else is holding, and a self-validating cookie would carry
+    on until it expired. Only the hash of the cookie value is stored.
+    """
+
+    __tablename__ = "user_sessions"
+    __table_args__ = (Index("ix_user_sessions_hash", "token_hash", unique=True),)
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    token_hash: Mapped[str] = mapped_column(String(64))
+    #: What the browser said it was, so a person reading their session list
+    #: can tell their laptop from somebody else's.
+    user_agent: Mapped[str | None] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    last_seen_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    revoked_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+
+
+class UserToken(Base):
+    """A personal token: the person, at a terminal or in a script.
+
+    It reaches exactly what its person reaches, never more, and is stamped
+    `via token:<name>` so a script's writes do not read as clicks. Always
+    expiring — a credential that outlives the reason it was minted is how a
+    laptop sold two years ago still runs a project.
+    """
+
+    __tablename__ = "user_tokens"
+    __table_args__ = (Index("ix_user_tokens_hash", "token_hash", unique=True),)
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    name: Mapped[str] = mapped_column(String(80))
+    token_hash: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    last_used_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    revoked_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+
+
+class UserSetupLink(Base):
+    """A single-use link that sets a password.
+
+    One mechanism for three moments — accepting an invite, resetting a
+    forgotten password, and the first admin signing in on a fresh box — so
+    there is one expiry, one single-use rule and one test, not three.
+    """
+
+    __tablename__ = "user_setup_links"
+    __table_args__ = (Index("ix_user_setup_links_hash", "token_hash", unique=True),)
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    token_hash: Mapped[str] = mapped_column(String(64))
+    #: invite | reset | bootstrap — for the record, not for the rules.
+    purpose: Mapped[str] = mapped_column(String(16))
+    #: Null when it was issued from a shell on the box rather than by a person.
+    created_by_user_id: Mapped[str | None] = mapped_column(String(40))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    used_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    revoked_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+
+
+class LoginFailure(Base):
+    """One wrong password, for the throttle.
+
+    Keyed by a hash of the address rather than by user, so an address with no
+    account is throttled exactly like one with an account: a throttle that only
+    ever fired for real accounts would answer the question the sign-in page
+    is careful not to.
+    """
+
+    __tablename__ = "login_failures"
+    __table_args__ = (Index("ix_login_failures_email_at", "email_hash", "at"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    email_hash: Mapped[str] = mapped_column(String(64))
+    at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 
 class Project(Base):
@@ -622,7 +724,9 @@ class ProjectMember(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
-    role: Mapped[str] = mapped_column(String(16))  # "chairman" | "observer"
+    #: chairman (exactly one, mirrors projects.chairman_user_id) | co_chair |
+    #: observer. What each may do is in docs/AUTH.md and yaaf.server.authority.
+    role: Mapped[str] = mapped_column(String(16))
     # When this member last read the briefing — the "since you were last here"
     # mark. Per member and per project on purpose: reading one project's brief
     # says nothing about having read another's, and a single box-wide mark
@@ -962,7 +1066,7 @@ class RequirementEvent(Base):
     requirement_id: Mapped[str] = mapped_column(ForeignKey("requirements.id"))
     from_status: Mapped[str | None] = mapped_column(String(16))
     to_status: Mapped[str] = mapped_column(String(16))
-    actor: Mapped[str] = mapped_column(String(64))  # agent id, user id, "janitor", "checker"
+    actor: Mapped[str] = mapped_column(String(ACTOR_LEN))  # agent id, user id, "janitor", "checker"
     note: Mapped[str | None] = mapped_column(Text)
     at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
@@ -1109,7 +1213,7 @@ class TaskEvent(Base):
     task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"))
     from_status: Mapped[str | None] = mapped_column(String(16))
     to_status: Mapped[str] = mapped_column(String(16))
-    actor: Mapped[str] = mapped_column(String(64))  # agent id, user id, or "janitor"/"checker"
+    actor: Mapped[str] = mapped_column(String(ACTOR_LEN))  # agent id, user id, or "janitor"/"checker"
     note: Mapped[str | None] = mapped_column(Text)
     at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
@@ -2197,7 +2301,7 @@ class AuditLog(Base):
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
     project_id: Mapped[str | None] = mapped_column(String(40))
-    actor: Mapped[str] = mapped_column(String(80))  # user:<id> | agent:<id> | system:<name>
+    actor: Mapped[str] = mapped_column(String(ACTOR_LEN))  # user:<id> | agent:<id> | system:<name>
     action: Mapped[str] = mapped_column(String(80))
     entity: Mapped[str] = mapped_column(String(40))
     entity_id: Mapped[str | None] = mapped_column(String(40))

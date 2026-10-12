@@ -10,7 +10,6 @@
 // fingerprint changes. We never inspect it: any message means onChange().
 
 import { useEffect, useRef } from "react";
-import { getToken } from "./api";
 
 const BACKOFF_MIN_MS = 1_000;
 const BACKOFF_MAX_MS = 30_000;
@@ -21,8 +20,11 @@ const MAX_FAILURES = 8;
 /**
  * Open a live-update socket for a project and call onChange on every stamp
  * message. Reconnects with capped exponential backoff; gives up quietly after
- * repeated failures. Browsers can't set headers on a WebSocket, so the stored
- * admin token rides as a query param.
+ * repeated failures. Browsers can't set headers on a WebSocket, which is why
+ * the token used to ride in the URL — where proxies log it. The session cookie
+ * rides on the upgrade request like on any other same-origin request, so the
+ * URL carries nothing, and a signed-out browser is simply refused and backs
+ * off like any other failure.
  */
 export function useProjectLive(projectId: string, onChange: () => void): void {
   // Ref so a fresh onChange closure never tears down the socket.
@@ -37,10 +39,8 @@ export function useProjectLive(projectId: string, onChange: () => void): void {
     let unmounted = false;
 
     const connect = () => {
-      const token = getToken();
-      if (!token) return; // not logged in; polling (and its 401 bounce) rules
       const scheme = location.protocol === "https:" ? "wss" : "ws";
-      const url = `${scheme}://${location.host}/ws/projects/${projectId}?token=${encodeURIComponent(token)}`;
+      const url = `${scheme}://${location.host}/ws/projects/${projectId}`;
       let sawStamp = false;
       try {
         socket = new WebSocket(url);
@@ -55,7 +55,7 @@ export function useProjectLive(projectId: string, onChange: () => void): void {
       };
       socket.onclose = () => {
         if (unmounted) return;
-        // A close before any stamp (e.g. bad token, dead endpoint) counts as
+        // A close before any stamp (e.g. no session, dead endpoint) counts as
         // a failure; enough of those and we go silent for good.
         if (!sawStamp) failures += 1;
         if (failures > MAX_FAILURES) return;

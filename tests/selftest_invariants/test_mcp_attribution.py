@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 
-from tests.conftest import ADMIN, live_token, make_project
+from tests.conftest import ADMIN, CHAIR_EMAIL, live_token, make_project, person
 from tests.selftest_invariants.test_mcp_auth import mint, rpc
 from tests.selftest_invariants.test_mcp_confirm import call, steerer
 from tests.selftest_invariants.test_requirements import CMD_TEST, deliver_project, propose
@@ -106,9 +106,22 @@ def test_the_browser_path_is_untouched(client):
     confirmed(client, token, "lifecycle",
               {"project": SLUG, "verb": "pause", "reason": "briefly"})
 
+    # The chairman in a browser: the bare person, no door named.
+    chair = person(CHAIR_EMAIL, password="a-long-enough-passphrase")
+    assert client.post("/auth/login", json={"email": CHAIR_EMAIL,
+                                            "password": "a-long-enough-passphrase"}
+                       ).status_code == 200
+    assert client.post(f"/admin/projects/{project['id']}/start",
+                       headers={"Origin": "http://testserver"}).status_code == 200
+    assert audit_rows("project.start")[-1].actor == f"user:{chair['id']}"
+
+    # The same person at a terminal: their token names itself, so a script's
+    # writes never read as clicks either.
+    confirmed(client, token, "lifecycle",
+              {"project": SLUG, "verb": "pause", "reason": "again"})
     assert client.post(f"/admin/projects/{project['id']}/start",
                        headers=ADMIN).status_code == 200
-    assert next(r for r in audit_rows("project.start")[-1:]).actor == "user:admin"
+    assert audit_rows("project.start")[-1].actor == f"user:{chair['id']} via token:suite"
 
 
 def test_a_scope_verdict_through_mcp_is_marked_as_machine_carried(client):
@@ -160,3 +173,33 @@ def test_an_agent_cannot_reach_the_steer_verbs_through_this_door(client):
     assert rpc(client, reader, "tools/call",
                {"name": "lifecycle", "arguments": {"project": SLUG}}
                ).json()["error"]["code"] == -32601
+
+
+def test_actor_columns_hold_the_longest_stamp():
+    """The stamp has to fit where it is written, on the database that enforces it.
+
+    SQLite treats a VARCHAR length as advice, so a stamp too long for its column
+    passes the default suite and is a 500 on Postgres. Derived from the columns
+    that feed the stamp, so widening a client name or a user id without
+    widening these fails here rather than in production.
+    """
+    from yaaf.core.models import McpClient, RequirementEvent, TaskEvent, User
+
+    user_id = User.__table__.c.id.type.length
+    client_name = McpClient.__table__.c.name.type.length
+    longest = len("user:") + user_id + len(" via mcp:") + client_name
+    for model in (AuditLog, RequirementEvent, TaskEvent):
+        assert model.__table__.c.actor.type.length >= longest, model.__tablename__
+
+
+def test_a_long_client_name_still_signs_its_writes(client):
+    """The behavioural half: on Postgres this was the 500 itself."""
+    make_project(client, slug=SLUG)
+    name = "n" * 80
+    token = steerer(client, name=name)["token"]
+
+    failed, outcome = call(client, token, "boardroom_say",
+                           {"project": SLUG, "body": "status please"})
+    assert failed is False, outcome
+    row = next(r for r in audit_rows("mcp.boardroom_say"))
+    assert row.actor.endswith(f" via mcp:{name}")

@@ -1,21 +1,24 @@
-"""The third principal: a model client acting for the chairman.
+"""The model-client principal: a machine acting for a person.
 
-`yaaf.server.deps` has two principals — the chairman's admin bearer, and the
-short-lived per-run token an agent acts through. This is the third, and the
-first rule about it is what it is *not*: it is never the admin token. The admin
-bearer is unscoped and unattributable, so a model holding it would hold every
-verb the platform exists to deny a model, and the audit trail would record the
-chairman as the one who used them.
+People sign in through `yaaf.server.identity` and agents act through their
+per-run token; this is the third kind of credential, and the first rule about
+it is what it is *not*: it is never the person's own. A session or a personal
+token carries everything its person may do, unattributed to any machine, so a
+model holding one would hold every verb the platform exists to deny a model,
+and the audit trail would record the person as the one who used them. (It was
+the static admin token this paragraph used to be about; that was retired, and
+the rule outlived it.)
 
-So an MCP client presents its own credential, which carries two narrowings the
-admin token cannot express — the scopes it may reach, and the identity it acts
-for, which is written into every record it touches as machine-mediated. What it
-may *see* is not a third narrowing: it is chairmanship, which the chairman
-already decides per project by chairing it.
+So an MCP client presents its own credential, which carries two narrowings a
+person's own credential cannot express — the scopes it may reach, and the
+identity it acts for, which is written into every record it touches as
+machine-mediated. What it may *see* is not a third narrowing: it is the
+projects its person may see, read on every call.
 """
 
 from __future__ import annotations
 
+from contextvars import ContextVar
 from dataclasses import dataclass
 
 from fastapi import Depends, HTTPException, Request
@@ -25,8 +28,9 @@ from sqlalchemy.orm import Session
 
 from yaaf.core.config import settings
 from yaaf.core.db import session_factory
-from yaaf.core.models import McpClient, McpToken, Project, utcnow
+from yaaf.core.models import McpClient, McpToken, Project, User, utcnow
 from yaaf.core.tokens import hash_token
+from yaaf.server import authority, identity
 
 #: Smallest to largest. `read` is implied by every other scope: a client that
 #: may steer a project can obviously look at it, and a grant that had to list
@@ -121,15 +125,18 @@ def mcp_auth(
         )
     token = credentials.credentials.strip()
     # Named explicitly, and first, so the refusal teaches instead of reading as
-    # a typo. Someone who reaches for the admin token here is not making a
-    # mistake about the value; they are making one about the design.
-    if token == settings().admin_token:
+    # a typo. Someone who reaches for their own personal token here is not
+    # making a mistake about the value; they are making one about the design.
+    # It used to be the admin token this refused; the rule did not change when
+    # that was retired, only the credential a person might mistakenly hand over.
+    if token.startswith(f"{identity.TOKEN_PREFIX}_"):
         raise HTTPException(
             status_code=401,
             detail=(
-                "the admin token is not an MCP principal. Mint a scoped client "
-                "token instead (`yaaf mcp-token mint`) — the chairman's bearer "
-                "is unscoped and unattributable, and a model must hold neither."
+                "a personal token is not an MCP principal. Mint a scoped client "
+                "token instead (`yaaf mcp-token mint`) — your own token carries "
+                "everything you may do, unattributed to any machine, and a model "
+                "must hold neither."
             ),
             headers={"WWW-Authenticate": challenge()},
         )
@@ -169,31 +176,60 @@ def mcp_auth(
     )
 
 
-def chaired_projects(session: Session, principal: Principal) -> list[Project]:
+#: The tool being dispatched has a scope, and its scope says how much standing
+#: on a project it needs: reading is for any member, steering and configuring
+#: for the chairman and co-chairs. Bound by `registry.call` for the length of
+#: the call, so a new steer tool that forgets to ask still asks.
+_TOOL_SCOPE: ContextVar[str | None] = ContextVar("yaaf_mcp_tool_scope", default=None)
+LEVEL_FOR_SCOPE = {
+    "read": authority.Level.READ,
+    "steer": authority.Level.STEER,
+    "configure": authority.Level.STEER,
+    "create": authority.Level.READ,
+}
+
+
+def reachable_projects(session: Session, principal: Principal,
+                       level: authority.Level = authority.Level.READ) -> list[Project]:
     """Every project this principal may see, in creation order.
+
+    Its person's memberships, read on every call — so reach tracks membership
+    in both directions with nothing to reissue. Not the instance admin's
+    read-everything: that is a person running the box, and a machine acting for
+    them stays on the projects they are actually on.
 
     One function rather than the query written at each call site, because the
     gate has to hold on payloads nobody wrote for this surface — the desk is a
     cross-project rollup, and the day it stops passing through here is the day
-    it lists a project the client cannot open. Read on every call, so reach
-    tracks chairmanship in both directions with nothing to reissue.
+    it lists a project the client cannot open.
     """
-    query = select(Project).where(Project.chairman_user_id == principal.user_id)
-    return list(session.execute(query.order_by(Project.created_at)).scalars())
+    user = session.get(User, principal.user_id)
+    if user is None or user.deactivated_at is not None:
+        return []
+    return authority.reachable(session, principal.user_id, False, level)
 
 
-def resolve_project(session: Session, principal: Principal, ref: str) -> Project:
+def resolve_project(session: Session, principal: Principal, ref: str,
+                    level: authority.Level | None = None) -> Project:
     """Turn an id or slug into a project this principal may act on.
 
     Every project-addressed tool goes through here, including ones that were
     handed an id indirectly — a run id, an approval id, a requirement key read
-    out of some other project's page. A project another chairman runs is
+    out of some other project's page. A project its person is not on is
     refused in the same words as one that does not exist, so the surface does
-    not become an oracle for which projects other people run.
+    not become an oracle for which projects other people run; one they only
+    observe is named, with the role a steer tool would need.
     """
-    reachable = chaired_projects(session, principal)
+    need = level or LEVEL_FOR_SCOPE.get(_TOOL_SCOPE.get() or "", authority.Level.READ)
+    reachable = reachable_projects(session, principal)
     for project in reachable:
         if ref in (project.id, project.slug):
+            have = authority.user_level(session, principal.user_id, project) or 0
+            if have < need:
+                raise ToolRefusal(
+                    f"on {project.slug} this client's person is "
+                    f"{authority.role_of(session, principal.user_id, project) or 'not a member'}"
+                    f", and only {authority.HOLDERS[need]} may do this")
             return project
     raise ToolRefusal(
         f"no project {ref!r} is reachable by this client. It can see: "

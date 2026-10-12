@@ -210,7 +210,7 @@ current token, `""` removes it, anything else rotates it.
 
 ```bash
 curl -X POST "$YAAF_API/admin/projects/$PROJECT/mcp_servers" \
-  -H "Authorization: Bearer $YAAF_ADMIN_TOKEN" \
+  -H "Authorization: Bearer $YAAF_TOKEN" \
   -d '{"name": "warehouse", "url": "https://mcp.example.com/sse",
        "bearer": "…", "roles": ["researcher", "engineer"],
        "access": "bulk"}'
@@ -373,7 +373,7 @@ secrets, **shown once**:
 
 ```bash
 curl -X POST "$YAAF_API/admin/projects/$PROJECT/webhook_secrets" \
-  -H "Authorization: Bearer $YAAF_ADMIN_TOKEN"
+  -H "Authorization: Bearer $YAAF_TOKEN"
 # → {"github_webhook_secret": "…", "webhook_secret": "…"}
 ```
 

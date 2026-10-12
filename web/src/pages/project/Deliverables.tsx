@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { ApiError, get, getToken } from "../../api";
+import { ApiError, get } from "../../api";
 import Markdown from "../../Markdown";
 import { fmtWhen, usePoll } from "../../hooks";
 import { AsOf, ExportCsv, Skeleton, downloadCsv } from "../../ui";
@@ -83,9 +83,9 @@ function fmtCount(n: number): string {
 }
 
 async function fetchBytes(url: string): Promise<Blob> {
-  const response = await fetch(url, {
-    headers: { Authorization: `Bearer ${getToken()}` },
-  });
+  // The session cookie authenticates this like any other request; the bytes
+  // are why it is a raw fetch rather than `get`, which parses JSON.
+  const response = await fetch(url, { credentials: "same-origin" });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   return response.blob();
 }

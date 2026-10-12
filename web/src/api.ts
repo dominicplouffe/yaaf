@@ -1,5 +1,8 @@
-// Thin API client. The admin token lives in localStorage and rides on every
-// request; a 401 clears it and bounces to the login screen.
+// Thin API client. The browser holds no credential of its own: the server sets
+// an HttpOnly session cookie at sign-in, and every same-origin request carries
+// it without this file ever seeing it. That is the point — a script that runs
+// in this page cannot read a cookie it cannot see, so it cannot carry one away.
+// A 401 means the session is gone, and bounces to the sign-in screen.
 
 export class ApiError extends Error {
   status: number;
@@ -31,18 +34,18 @@ function errorText(data: unknown, status: number): string {
   return `HTTP ${status}`;
 }
 
-const TOKEN_KEY = "yaaf_admin_token";
+/** A 401 from these is the server's answer about a password somebody just
+    typed, not news that the session died. Bouncing to the sign-in screen
+    there would throw away the form a person mistyped one field of — on the
+    account page, that was everything they had filled in. */
+const PASSWORD_CHECKS = ["/auth/login", "/auth/password"];
 
-export function getToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY);
-}
-
-export function setToken(token: string) {
-  localStorage.setItem(TOKEN_KEY, token);
-}
-
-export function clearToken() {
-  localStorage.removeItem(TOKEN_KEY);
+function signedOut(path: string) {
+  if (PASSWORD_CHECKS.some((p) => path.startsWith(p))) return;
+  // The two screens that exist for people without a session. Redirecting off
+  // a setup link would strand the person the link was made for.
+  if (location.hash.startsWith("#/login") || location.hash.startsWith("#/setup")) return;
+  location.hash = "#/login";
 }
 
 export async function api<T = unknown>(
@@ -52,10 +55,10 @@ export async function api<T = unknown>(
 ): Promise<T> {
   const response = await fetch(path, {
     method,
-    headers: {
-      "Content-Type": "application/json",
-      ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}),
-    },
+    // Same-origin is the browser's default; said out loud because the cookie
+    // riding along is now the whole of how this app authenticates.
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   let data: unknown = null;
@@ -65,10 +68,7 @@ export async function api<T = unknown>(
     /* empty body */
   }
   if (!response.ok) {
-    if (response.status === 401) {
-      clearToken();
-      if (!location.hash.startsWith("#/login")) location.hash = "#/login";
-    }
+    if (response.status === 401) signedOut(path);
     throw new ApiError(response.status, errorText(data, response.status));
   }
   return data as T;
@@ -82,14 +82,9 @@ export const del = <T = unknown>(path: string) => api<T>("DELETE", path);
 
 /** GET an endpoint that returns plain text (run traces) — no JSON parsing. */
 export async function getText(path: string): Promise<string> {
-  const response = await fetch(path, {
-    headers: getToken() ? { Authorization: `Bearer ${getToken()}` } : {},
-  });
+  const response = await fetch(path, { credentials: "same-origin" });
   if (!response.ok) {
-    if (response.status === 401) {
-      clearToken();
-      if (!location.hash.startsWith("#/login")) location.hash = "#/login";
-    }
+    if (response.status === 401) signedOut(path);
     let detail = `HTTP ${response.status}`;
     try {
       detail = errorText(JSON.parse(await response.text()), response.status);
@@ -101,6 +96,111 @@ export async function getText(path: string): Promise<string> {
   return response.text();
 }
 
+// ── people: who is signed in, and what they hold ───────────────────────────────
+
+/** GET /auth/me. `via` says which credential made the request — always
+    "session" from this app, which is why it is not shown anywhere. */
+export interface Me {
+  id: string;
+  email: string;
+  display_name: string;
+  is_admin: boolean;
+  via: string;
+}
+
+/** GET /auth/setup — who a setup link is for, read before it is spent. */
+export interface SetupInfo {
+  email: string;
+  display_name: string;
+  purpose: "invite" | "reset" | "bootstrap";
+}
+
+/** A personal token as listed. The value itself is never in this shape: it
+    exists once, in the answer to the POST that made it. */
+export interface PersonalToken {
+  id: string;
+  name: string;
+  created_at: string | null;
+  expires_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+}
+
+export interface MintedToken extends PersonalToken {
+  token: string;
+}
+
+export interface SignedInSession {
+  id: string;
+  user_agent: string | null;
+  created_at: string;
+  last_seen_at: string;
+  /** The browser this list is being read in. */
+  current: boolean;
+}
+
+/** One row of GET /admin/users — instance admins only. */
+export interface UserRow {
+  id: string;
+  email: string;
+  display_name: string;
+  is_admin: boolean;
+  active: boolean;
+  /** False until the person has followed their invite link. */
+  has_password: boolean;
+  created_at: string | null;
+  deactivated_at: string | null;
+}
+
+/** POST /admin/users and POST /admin/users/{id}/setup-link. The setup fields
+    are absent when the invite found an account that already existed. */
+export interface IssuedLink extends UserRow {
+  existing?: boolean;
+  setup_url?: string;
+  setup_path?: string;
+  setup_expires_in_hours?: number;
+  purpose?: "invite" | "reset";
+}
+
+/** The link to hand on, built from the origin this page is being read on.
+    The server's own `setup_url` can name a host only its containers resolve
+    (`http://api:8080` inside compose); the browser always knows where it is. */
+export function setupLink(issued: IssuedLink): string | null {
+  return issued.setup_path ? `${location.origin}${issued.setup_path}` : null;
+}
+
+/** A person's standing on a project. Null on a project payload means the
+    reader is the instance admin and not a member — they can read it because
+    they run the box, and decide nothing on it. */
+export type ProjectRole = "chairman" | "co_chair" | "observer";
+
+export const ROLE_LABEL: Record<ProjectRole, string> = {
+  chairman: "Chairman",
+  co_chair: "Co-chair",
+  observer: "Observer",
+};
+
+export interface PersonRef {
+  id: string;
+  email: string;
+  display_name: string;
+}
+
+/** One row of GET /admin/projects/{id}/members, chairman first. */
+export interface MemberRow {
+  user_id: string;
+  email: string;
+  display_name: string;
+  role: ProjectRole;
+  active: boolean;
+}
+
+/** POST /admin/projects/{id}/chairman. */
+export interface ChairHandover {
+  chairman: PersonRef;
+  members: MemberRow[];
+}
+
 // ── shared shapes (mirrors the observe/admin API) ──────────────────────────────
 
 export interface ProjectSummary {
@@ -109,6 +209,8 @@ export interface ProjectSummary {
   name: string;
   status: string;
   goal: string;
+  my_role: ProjectRole | null;
+  can_steer: boolean;
 }
 
 /** The one sentence for why this project is quiet, written server-side beside
@@ -321,6 +423,14 @@ export interface Dashboard {
   created_at: string;
   last_countable_evidence_at: string | null;
   memory: MemoryUsage;
+  /** The reader's standing here. Null: the instance admin, reading a project
+      they are not a member of. */
+  my_role: ProjectRole | null;
+  /** May decide and configure — the chairman or a co-chair. */
+  can_steer: boolean;
+  /** May decide who decides — the chairman alone. */
+  can_chair: boolean;
+  chairman: PersonRef;
 }
 
 /** How full each curated memory scope is, counted the same way the refusal
@@ -957,8 +1067,6 @@ export interface ProjectBundle {
     github_repo?: string | null;
     /** Explore's window, ISO-dated; may already be in the past. */
     deadline?: string | null;
-    /** Who ran the source project — a prefill, editable on import. */
-    chairman_email?: string | null;
     constitution: Record<string, unknown>;
     integrations: Record<string, unknown>;
     /** The managed LLM credential the project pays with, by id (a Founder draft

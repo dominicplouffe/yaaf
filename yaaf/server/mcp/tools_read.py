@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from yaaf.core.models import Agent, Channel, Evidence, Run, User
 from yaaf.server.api import observe
 from yaaf.server.mcp import envelope
-from yaaf.server.mcp.auth import Principal, ToolRefusal, chaired_projects, resolve_project
+from yaaf.server.mcp.auth import Principal, ToolRefusal, reachable_projects, resolve_project
 from yaaf.server.mcp.registry import register, required, whole
 
 #: Goals are written to brief a CEO, not to fit in a list. Full text is one
@@ -41,7 +41,7 @@ def whoami(principal: Principal, session: Session, arguments: dict) -> dict:
         "acting_for": None if user is None else user.email,
         "scopes": sorted(principal.scopes),
         "implied": ["read"],
-        "projects": [p.slug for p in chaired_projects(session, principal)],
+        "projects": [p.slug for p in reachable_projects(session, principal)],
         "note": (
             "Writes made through this client are recorded as machine-mediated "
             "and cannot be attributed to the chairman alone."
@@ -70,7 +70,7 @@ def projects(principal: Principal, session: Session, arguments: dict) -> dict:
     if isinstance(ref, str) and ref.strip():
         rows = [resolve_project(session, principal, ref.strip())]
     else:
-        rows = chaired_projects(session, principal)
+        rows = reachable_projects(session, principal)
     return envelope.fit({
         "projects": [
             {
@@ -215,7 +215,7 @@ def _schema(**properties) -> dict:
     },
 )
 def desk(principal: Principal, session: Session, arguments: dict) -> dict:
-    reachable = {p.id for p in chaired_projects(session, principal)}
+    reachable = {p.id for p in reachable_projects(session, principal)}
     payload = _observe(observe.desk, live=bool(arguments.get("live")), session=session)
     # The desk is the one cross-project page, so it is the one place the gate
     # has to be applied to somebody else's rollup rather than to a query we

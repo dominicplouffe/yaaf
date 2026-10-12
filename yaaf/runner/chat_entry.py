@@ -194,7 +194,8 @@ def _situation_block() -> str:
 def _transcript_block(messages: list[dict]) -> str:
     lines = []
     for m in messages[-HISTORY_BOOTSTRAP:]:
-        who = "Chairman" if m.get("from_user") else "You (CEO)"
+        # A co-chair's line carries their name; the chairman's carries none.
+        who = (m.get("from_name") or "Chairman") if m.get("from_user") else "You (CEO)"
         body = str(m.get("body", ""))
         if len(body) > CHAT_HISTORY_MSG_CHARS:
             body = body[:CHAT_HISTORY_MSG_CHARS] + " …[truncated; messages_read has the rest]"

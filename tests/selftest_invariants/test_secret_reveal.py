@@ -64,15 +64,15 @@ def test_every_reveal_is_audited(client):
         assert reveals[0].entity_id == wp["id"]
 
 
-def test_reveal_needs_the_admin_token(client):
-    """The whole safety argument is that this route sits behind admin auth."""
+def test_reveal_needs_a_signed_in_person(client):
+    """The whole safety argument is that this route sits behind a person."""
     project = make_project(client, start=False)
     wp = _store(client, project["id"], "wp-pass").json()
 
     assert client.get(f"/admin/secrets/{wp['id']}/value").status_code in (401, 403)
     assert client.get(
         f"/admin/secrets/{wp['id']}/value",
-        headers={"Authorization": "Bearer not-the-admin-token"},
+        headers={"Authorization": "Bearer not-a-personal-token"},
     ).status_code in (401, 403)
     assert client.get(f"/admin/secrets/{wp['id']}/value", headers=ADMIN).status_code == 200
 

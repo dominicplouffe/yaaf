@@ -300,6 +300,24 @@ def _patch_coalescing():
     return restore
 
 
+def _drill_person(email: str) -> str:
+    """The drill's chairman, in the drill's own throwaway database: an account
+    and a personal token for it, so every request the drill makes is signed
+    exactly as a person's would be. It is the instance admin of a box that
+    holds one project and lasts a minute."""
+    from yaaf.core import ids
+    from yaaf.core.db import db_session
+    from yaaf.core.models import User
+    from yaaf.server import identity
+
+    with db_session() as session:
+        user = User(id=ids.new_id(ids.USER), email=identity.normalise_email(email),
+                    display_name="Rehearsal", is_admin=True)
+        session.add(user)
+        _, plaintext = identity.mint_token(session, user, "rehearsal", days=1)
+    return plaintext
+
+
 def _install_prices() -> list[dict]:
     """This install's own model prices, as rows the drill can set again. Empty
     when there is no database to read — a drill from a bare checkout."""
@@ -317,7 +335,7 @@ def _install_prices() -> list[dict]:
         return []
 
 
-def _client() -> httpx.Client:
+def _client(email: str) -> httpx.Client:
     """An in-process client over the real app. No socket is ever opened.
 
     Starlette's `TestClient` rather than `httpx.ASGITransport`: the latter is
@@ -330,11 +348,10 @@ def _client() -> httpx.Client:
     """
     from starlette.testclient import TestClient
 
-    from yaaf.core.config import settings
     from yaaf.server.app import create_app
 
     client = TestClient(create_app(), base_url="http://rehearsal")
-    client.headers.update({"Authorization": f"Bearer {settings().admin_token}"})
+    client.headers.update({"Authorization": f"Bearer {_drill_person(email)}"})
     return client
 
 
@@ -536,7 +553,7 @@ def rehearse(spec: dict, *, days: int = 30, usd_per_run: float | None = None,
         restore_clone = _patch_workspace_clone()
         restore_notify = _mute_chairman_notifications()
         restore_pacing = _patch_coalescing()
-        client = _client()
+        client = _client(_drill_email(project_spec))
         try:
             for row in prices:
                 client.put(f"/admin/settings/model-prices/{row.pop('model')}", json=row)
@@ -557,6 +574,10 @@ def rehearse(spec: dict, *, days: int = 30, usd_per_run: float | None = None,
             restore_engine()
 
 
+def _drill_email(project_spec: dict) -> str:
+    return project_spec.get("chairman_email") or "rehearsal@localhost"
+
+
 def _run(client, project_spec, spec_roles, roles_dir, days, usd_per_run,
          max_ticks, crew, report, mock_backend, install=None) -> dict:
     steps: list[dict] = []
@@ -574,11 +595,8 @@ def _run(client, project_spec, spec_roles, roles_dir, days, usd_per_run,
                             days, usd_per_run, roles, 0, install=install)
     step("roles", True, f"{len(roles['loaded'])} role(s) resolved")
 
-    email = project_spec.get("chairman_email") or "rehearsal@localhost"
-    client.post("/admin/users", json={"email": email, "display_name": "Rehearsal"})
-
     body = dict(project_spec)
-    body["chairman_email"] = email
+    body["chairman_email"] = _drill_email(project_spec)
     body["slug"] = (body.get("slug") or "rehearsal")[:60]
     # A drill runs on scripted agents in a throwaway database that holds no
     # credentials. A draft may name the one it will pay with — the Founder is

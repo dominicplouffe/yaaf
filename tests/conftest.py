@@ -21,26 +21,45 @@ os.environ.setdefault("YAAF_SANDBOX_MODE", "subprocess")
 # half is what made the suite pass on a laptop without Docker and fail on one
 # with it: same commit, same command, and nothing on screen to say why.
 os.environ.setdefault("YAAF_ALLOW_HOST_SUCCESS_TESTS", "1")
-os.environ.setdefault("YAAF_ADMIN_TOKEN", "test-admin-token")
 os.environ.setdefault("YAAF_MASTER_KEY", "kkP1p6Rt0DZ2rWv1w5Zq3o8y6bT4uY9cQ1eS7gJ0aXk=")
 os.environ.setdefault("YAAF_WORKSPACES_ROOT", tempfile.mkdtemp(prefix="yaaf-test-ws-"))
 os.environ.setdefault("YAAF_ARTIFACTS_ROOT", tempfile.mkdtemp(prefix="yaaf-test-art-"))
 
+from datetime import timedelta
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import event, text
+from sqlalchemy import select as sa_select
 from sqlalchemy.engine import Engine, make_url
 
 from yaaf.core import ids
 from yaaf.core.config import settings
 from yaaf.core.constitution import AUTONOMY_PRESETS
 from yaaf.core.db import db_session, engine, reset_for_tests
-from yaaf.core.models import Agent, Base, Project, Run, RunStatus, utcnow
-from yaaf.core.tokens import mint
+from yaaf.core.models import (
+    Agent,
+    AuditLog,
+    Base,
+    Project,
+    Run,
+    RunStatus,
+    User,
+    UserToken,
+    utcnow,
+)
+from yaaf.core.tokens import hash_token, mint
 
 settings.cache_clear()
 
-ADMIN = {"Authorization": "Bearer test-admin-token"}
+#: The suite's person, seeded into every test's empty database: the instance
+#: admin, and — through `make_project` — the chairman of every project a test
+#: makes. Its credential is a personal token, the way a person at a terminal
+#: holds one; the name ADMIN outlived the static admin bearer it used to be,
+#: because seven hundred call sites do not need to learn a new word for "me".
+CHAIR_EMAIL = "chair@example.com"
+CHAIR_TOKEN = "ypt_test-chair-personal-token"
+ADMIN = {"Authorization": f"Bearer {CHAIR_TOKEN}"}
 
 ROLE_MIN = {
     "description": "test role",
@@ -160,11 +179,82 @@ def _app(_database):
     return create_app()
 
 
+def person(email: str, *, admin: bool = False, name: str | None = None,
+           password: str | None = None) -> dict:
+    """Another person on the box, and the headers that are them.
+
+    Written straight to the database, as `yaaf users token` does from a shell:
+    a test about what an observer may do should not also be a test of the
+    invite flow. Returns the bearer headers, with the user id under "id".
+    """
+    from yaaf.server import identity
+
+    with db_session() as session:
+        user = session.execute(
+            sa_select(User).where(User.email == email)).scalar_one_or_none()
+        if user is None:
+            user = User(id=ids.new_id(ids.USER), email=email,
+                        display_name=name or email.split("@")[0].title(), is_admin=admin)
+            session.add(user)
+        if password is not None:
+            identity.set_password(user, password)
+        _, plaintext = identity.mint_token(session, user, "test")
+        user_id = user.id
+    return {"Authorization": f"Bearer {plaintext}", "id": user_id}
+
+
+#: What the dashboard's own pages send with every write: the origin check on
+#: cookie-authenticated requests (docs/AUTH.md, rule 7) reads it.
+ORIGIN = {"Origin": "http://testserver"}
+PASSWORD = "a-long-enough-passphrase"
+
+
+def sign_in(client: TestClient, email: str = CHAIR_EMAIL, password: str = PASSWORD) -> dict:
+    """Sign `email` in to the dashboard on this client, the way a browser does:
+    a password, then a session cookie the client keeps sending. Creates the
+    person (and sets the password) if needed. Returns `/auth/login`'s body."""
+    person(email, password=password)
+    response = client.post("/auth/login", json={"email": email, "password": password})
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def headers_of(someone: dict) -> dict:
+    """`person()`'s result without the id, for the call sites that pass it on."""
+    return {k: v for k, v in someone.items() if k != "id"}
+
+
+def _seed_the_chair() -> None:
+    with db_session() as session:
+        user = User(id=ids.new_id(ids.USER), email=CHAIR_EMAIL, display_name="Chair",
+                    is_admin=True)
+        session.add(user)
+        session.add(UserToken(id=ids.new_id(ids.USER_TOKEN), user_id=user.id, name="suite",
+                              token_hash=hash_token(CHAIR_TOKEN),
+                              expires_at=utcnow() + timedelta(days=1)))
+
+
+def _no_unattributed_writes() -> None:
+    """Every write names whoever made it. A door that forgot to bind an actor
+    stamps its rows UNATTRIBUTED (yaaf.server.acting), and this is where that
+    fails — across the whole suite, rather than in the one test somebody
+    remembered to write for the new door."""
+    from yaaf.server.acting import UNATTRIBUTED
+
+    with db_session() as session:
+        rows = session.execute(
+            sa_select(AuditLog.action).where(AuditLog.actor == UNATTRIBUTED)
+        ).scalars().all()
+    assert not rows, f"audit rows written with no actor bound: {sorted(set(rows))}"
+
+
 @pytest.fixture()
 def client(_app):
     _empty_every_table()
+    _seed_the_chair()
     with TestClient(_app) as test_client:
         yield test_client
+    _no_unattributed_writes()
 
 
 def seed_role(client: TestClient, slug: str, is_ceo: bool = False, **overrides) -> None:
@@ -214,7 +304,12 @@ def make_project(
     assert response.status_code == 200, response.text
     project = response.json()
     if start:
-        started = client.post(f"/admin/projects/{project['id']}/start", headers=ADMIN)
+        # A project set up for somebody else is theirs to start: the suite's
+        # chair is the instance admin, which may found a project for a
+        # colleague and then decides nothing on it.
+        chair = body["chairman_email"]
+        headers = ADMIN if chair == CHAIR_EMAIL else headers_of(person(chair))
+        started = client.post(f"/admin/projects/{project['id']}/start", headers=headers)
         assert started.status_code == 200, started.text
     return project
 
