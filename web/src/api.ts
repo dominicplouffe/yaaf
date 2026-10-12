@@ -924,6 +924,8 @@ export interface BundleRole {
   system_prompt: string;
   model: string;
   effort: string;
+  /** What drives the model; absent is the provider's default. */
+  harness?: string | null;
   tool_permissions: Record<string, unknown>;
   secret_scopes: string[];
 }
@@ -966,6 +968,7 @@ export interface ProjectBundle {
     ceo_daily_at?: string | null;
     ceo_model_override?: string | null;
     ceo_effort_override?: string | null;
+    ceo_harness_override?: string | null;
     teams: {
       role_slug: string;
       name: string;
@@ -977,6 +980,8 @@ export interface ProjectBundle {
       model_overrides?: Record<string, string>;
       /** Per-agent reasoning-effort overrides, keyed by employee name. */
       effort_overrides?: Record<string, string>;
+      /** Per-agent harness overrides, keyed by employee name (docs/RUNTIMES.md). */
+      harness_overrides?: Record<string, string>;
     }[];
     solo: boolean;
   };

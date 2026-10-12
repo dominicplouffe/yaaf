@@ -63,7 +63,8 @@ Every command that takes a project accepts **either a slug or an id**.
     {"role_slug": "engineer", "name": "Engineering",
      "employees": ["Ada", "Grace"], "lead": "Ada",
      "schedules": {"Grace": "07:30"},
-     "model_overrides": {"Ada": "claude-opus-5-5"}}
+     "model_overrides": {"Ada": "claude-opus-5-5"},
+     "harness_overrides": {"Grace": "claude_cli"}}
   ],
   "solo": false
 }
@@ -85,7 +86,16 @@ Every command that takes a project accepts **either a slug or an id**.
   A full rulebook (what an export carries) validates fine too.
 - `integrations` is wiring, never limits: `runtime` (`agent_sdk` | `mock`),
   Slack mapping, data sources. Anything that caps or paces an agent lives in
-  the constitution.
+  the constitution. `runtime: mock` puts every seat on the scripted backend;
+  otherwise each seat runs on its own harness.
+- A team's `model_overrides`, `effort_overrides` and `harness_overrides` are
+  per person, keyed by name; `ceo_model_override`, `ceo_effort_override` and
+  `ceo_harness_override` are the CEO's. A harness (`claude_agent_sdk`,
+  `claude_cli` — see [RUNTIMES.md](RUNTIMES.md)) is what drives the seat's
+  model; absent, it is the role's, and the role's absent is the model's
+  provider default. A seat whose harness cannot serve its model, take away a
+  grant its role withholds, or pay with the project's credential is refused
+  at creation, with the reason.
 - `controlled_domains` are the domains that **cannot** count as external
   evidence — your own site proving your own success is not proof.
 - `ceo_daily_at` and a team's `schedules` are `"HH:MM"` daily wakes read in the

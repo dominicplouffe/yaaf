@@ -1,10 +1,15 @@
-"""The real backend: Claude Agent SDK inside a Docker sandbox.
+"""The real backend: a harness inside a Docker sandbox.
 
 The host side (this file) stages inputs into the workspace, launches the
 sandbox container, and reads the result back. The model runs *inside* the
-container (see ``sandbox_entry.py``): its only credentials are the per-run
-yaaf token and the project's billing credential, its only network is the
-open network, and its only platform surface is the agent HTTP API.
+container: its only credentials are the per-run yaaf token and the project's
+billing credential, its only network is the open network, and its only
+platform surface is the agent HTTP API.
+
+One backend for every harness that runs in the container. What differs between
+them is only the entry script — ``sandbox_entry.py`` drives the Agent SDK,
+``claude_cli_entry.py`` the Claude CLI — and every one of them reads the same
+staged files and writes the same result.json (docs/RUNTIMES.md).
 """
 
 from __future__ import annotations
@@ -56,7 +61,10 @@ def stage_skills(workspace: Path, specs: list) -> None:
             path.chmod(0o777 if path.is_dir() else 0o666)
 
 
-class AgentSDKBackend:
+class SandboxBackend:
+    def __init__(self, entrypoint: str = "sandbox_entry.py"):
+        self.entrypoint = entrypoint
+
     def execute(self, job: RunJob, stop_event=None) -> RunResult:
         from yaaf.runner.sandbox import run_agent_container
 
@@ -96,7 +104,7 @@ class AgentSDKBackend:
         }
         exit_code, logs = run_agent_container(
             workspace_dir=str(workspace), env=env, timeout_s=job.timeout_s,
-            stop_event=stop_event,
+            stop_event=stop_event, entrypoint=self.entrypoint,
         )
 
         if result_path.exists():
@@ -126,3 +134,7 @@ class AgentSDKBackend:
             ok=False,
             summary=f"sandbox exited {exit_code} without a result file; tail:\n{logs[-1500:]}",
         )
+
+
+#: The name it had while the SDK was the only harness in the container.
+AgentSDKBackend = SandboxBackend

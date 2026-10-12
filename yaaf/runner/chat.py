@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 
@@ -52,9 +53,12 @@ from yaaf.runner.daemon import (
     stash_context_doc,
 )
 from yaaf.runner.types import RunJob
-from yaaf.runtimes.seats import seat_for
+from yaaf.runtimes.seats import effective_harness, seat_for
 from yaaf.server import policy
 from yaaf.server.contextpack import build_system_prompt, role_version_for
+
+#: What holds the resident boardroom conversation, until M6.
+CHAT_HARNESS = "claude_agent_sdk"
 
 log = logging.getLogger("yaaf.chat")
 
@@ -352,8 +356,12 @@ def _prepare_session(session: Session, project: Project, ceo: Agent) -> tuple[di
         api_token=token_plain,
     )
     job.system_prompt = build_system_prompt(session, ceo, project, lane="chat") + CHAT_ADDENDUM
-    _pin_seat(run, job, seat_for(ceo, role_version,
-                                 runtime=(project.integrations or {}).get("runtime")))
+    # The boardroom chat runs on the Agent SDK whatever the CEO's seat says —
+    # the resident conversation is SDK-held until every harness can hold one
+    # (docs/RUNTIMES.md, M6) — so that is the harness this run is pinned to.
+    seat = seat_for(ceo, role_version)
+    _pin_seat(run, job, replace(seat, harness=effective_harness(
+        CHAT_HARNESS, (project.integrations or {}).get("runtime"))))
     job.tool_permissions = dict(role_version.tool_permissions) if role_version else {}
     # Same sources, same cost lesson: the chat lane mounts them exactly as a run
     # does, so it gets the same paragraph describing them.

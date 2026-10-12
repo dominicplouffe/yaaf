@@ -55,5 +55,9 @@ RUN useradd -m -u 10001 agent
 # directory inside it. Nothing here, on purpose — a key must never be in a layer.
 COPY yaaf/runner/sandbox_entry.py /opt/yaaf/sandbox_entry.py
 COPY yaaf/runner/chat_entry.py /opt/yaaf/chat_entry.py
+# The Claude CLI harness and the stdio MCP server it starts for the yaaf tools.
+# The CLI itself is the one installed above for the Agent SDK to drive.
+COPY yaaf/runner/claude_cli_entry.py /opt/yaaf/claude_cli_entry.py
+COPY yaaf/runner/yaaf_tools.py /opt/yaaf/yaaf_tools.py
 USER agent
 WORKDIR /workspace

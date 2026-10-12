@@ -605,6 +605,20 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
                 shape_error or f"paying with '{billing.name}' ({project.billing_mode})",
                 "settings")
 
+    # Seats: every one on a harness that can serve its model, honour its
+    # role's grants and pay with this credential. Every door that seats one
+    # refuses otherwise; this is for the seat that reached here by another
+    # way — a hand edit, a release rolled back past the harness it names —
+    # and would otherwise be found by its runs failing at lease.
+    from fastapi import HTTPException
+
+    from yaaf.server.api.admin import _project_agents, refuse_unrunnable_seats
+
+    try:
+        refuse_unrunnable_seats(session, project, _project_agents(session, project.id))
+    except HTTPException as refused:
+        add("seats", "fail", f"a seat cannot run — {refused.detail}", "settings")
+
     secrets = session.execute(
         select(Secret).where(or_(Secret.project_id == project.id,
                                  Secret.project_id.is_(None)),

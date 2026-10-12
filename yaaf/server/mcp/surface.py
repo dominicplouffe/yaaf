@@ -22,6 +22,7 @@ REACHED = {
     "GET /admin/projects/{project_id}/amendments": "amend (list)",
     "GET /admin/constitution/schema": "amend (schema)",
     "GET /admin/secrets": "credential (list) — names and scopes only",
+    "GET /admin/harnesses": "catalog (harnesses)",
     # steer
     "POST /admin/projects/{project_id}/boardroom": "boardroom_say",
     "POST /admin/approvals/{approval_id}/decide": "approval_decide",

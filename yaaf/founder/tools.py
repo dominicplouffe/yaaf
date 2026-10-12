@@ -70,6 +70,9 @@ def _role_row(session: Session, role: Role) -> dict:
             "description": version.description,
             "model": version.model,
             "effort": version.effort,
+            # Only when the role names one: every role that does not runs on
+            # its provider's default, and saying so on each would be noise.
+            **({"harness": version.harness} if version.harness else {}),
             # The chairman has to supply these before this role can work, which
             # is a fact about hiring it — surfaced here rather than discovered
             # when a run fails asking for one.

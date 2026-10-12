@@ -79,6 +79,9 @@ RUNTIMES_COLUMNS = (
     ("runs", "provider"),
     ("runs", "harness"),
     ("runs", "error_kind"),
+    # 0042: a seat chooses what drives its model.
+    ("role_versions", "harness"),
+    ("agents", "harness_override"),
 )
 
 REMOVED_TABLES = (STAGE_1_TABLES + STAGE_5_TABLES + STAGE_6_TABLES

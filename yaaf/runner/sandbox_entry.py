@@ -1859,7 +1859,7 @@ TRANSIENT_API_MARKERS = (
     "request timed out", "timed out",
 )
 FATAL_API_MARKERS = (
-    "not logged in", "please run /login", "invalid x-api-key",
+    "not logged in", "please run /login", "invalid x-api-key", "invalid api key",
     "authentication_error", "invalid bearer token", "oauth token has expired",
     "credit balance",
 )
@@ -1892,45 +1892,75 @@ def _error_kind(exc: BaseException) -> str:
     return "fatal"
 
 
-async def main() -> int:
-    # Run-keyed: the workspace is shared by every agent on the project, so a
-    # fixed name is another run's file half the time.
-    system_prompt = (STAGING / f"system_prompt-{RUN_ID}.txt").read_text()
-    context = json.loads((STAGING / f"context-{RUN_ID}.json").read_text())
-    trace_path = STAGING / f"trace-{RUN_ID}.jsonl"
-    plan_reading: dict | None = None
-    result_path = STAGING / f"result-{RUN_ID}.json"
+# ── the run: what every harness does ────────────────────────────────────────────
+#
+# A harness only translates (docs/RUNTIMES.md). It turns the staged prompt into a
+# running model and the model's output into the events below. Everything a run
+# must do whatever drives it — the trace, the checkpoint after every event so a
+# kill is metered rather than free, the per-run cap, the retry policy, the
+# result file the host reads — happens once, in `run_harness`.
+#
+# The loop lives in this file rather than beside it on purpose: every test that
+# drives a run patches this module's globals (STAGING, RESUME_BACKOFF_S, the
+# SDK's `query`), and a loop elsewhere would read different ones.
 
-    server = create_sdk_mcp_server(name="yaaf", version="1.0.0", tools=render_sdk(run_tools()))
-    options = ClaudeAgentOptions(
-        system_prompt=system_prompt,
-        model=MODEL,
-        effort=EFFORT,
-        mcp_servers={"yaaf": server, **_external_mcp_servers()},
-        tools=_builtin_tools(),
-        allowed_tools=_allowed_tools(),
-        # The agent is not asked for consent it cannot give: nothing here is
-        # interactive. Containment is the fresh container, the role-scoped
-        # credential set, the metered budget and the audited API — NOT the
-        # network. There is no egress proxy; the per-role allowlist was removed
-        # deliberately (docs/PLAN.md) and SECURITY.md states what follows from
-        # that. An earlier version of this comment still named the proxy.
-        permission_mode="bypassPermissions",
-        cwd="/workspace",
-        setting_sources=[],
-        max_turns=100,
-        hooks=build_hooks(),
-        # Explicit allowlist, [] when the role grants none — [] suppresses
-        # every discovered skill, which is the point: the workspace is
-        # agent-writable and an unlisted skill must stay dark.
-        skills=skill_names(),
-        **({"task_budget": {"total": TASK_BUDGET}} if TASK_BUDGET > 0 else {}),
-        **({"max_budget_usd": MAX_USD} if MAX_USD > 0 else {}),
-        # A big MCP tool result (a real data pull) overflows the SDK's default
-        # 1MB transport buffer and kills the run; seen live on audit data.
-        max_buffer_size=16 * 1024 * 1024,
-    )
-    prompt = (
+
+@dataclass(frozen=True)
+class Session:
+    """A handle the harness can resume this conversation by."""
+    id: str
+
+
+@dataclass(frozen=True)
+class Text:
+    """Prose the model wrote: the run summary is made of these."""
+    text: str
+
+
+@dataclass(frozen=True)
+class TraceLine:
+    """A record for the trace and nothing else."""
+    record: dict
+
+
+@dataclass(frozen=True)
+class Plan:
+    """The plan meter behind the credential, as the provider volunteered it."""
+    reading: dict
+
+
+@dataclass(frozen=True)
+class AttemptResult:
+    """One model process's bill — the SDK's ResultMessage, the CLI's `result`
+    line. Accumulated by the loop, never assigned: a resumed run has one per
+    attempt and every attempt was billed."""
+    cost_usd: float | None
+    tokens_in: int
+    tokens_out: int
+    cache_creation: int
+    cache_read: int
+    subtype: str | None = None
+
+
+#: What an assistant message's `error` field says when the credential, not the
+#: run, is the problem. The CLI reports these as fields; reading them is what
+#: lets a dead key pause a project whatever words the CLI puts around it — and
+#: it does put new ones around it: "Invalid API key · Fix external API key" is
+#: what 2.1.296 says, and no marker in the lists above matched it.
+AUTH_ASSISTANT_ERRORS = ("authentication_failed", "billing_error")
+
+
+def structured_error_kind(result: dict | None, assistant_error: str | None) -> str | None:
+    """'auth' when the fields say the credential is dead; None when they say
+    nothing, which sends the caller back to the markers."""
+    status = (result or {}).get("api_error_status")
+    if status in (401, 403) or assistant_error in AUTH_ASSISTANT_ERRORS:
+        return "auth"
+    return None
+
+
+def run_prompt(context: dict) -> str:
+    return (
         "Here is your context for this run (trigger, unread messages, notices, board, and "
         "the side-effect ledger for your task, if any):\n\n"
         f"```json\n{json.dumps(context, indent=2, default=str)}\n```\n\n"
@@ -1946,14 +1976,30 @@ async def main() -> int:
         "has gone wrong, and it is the whole of what this run leaves behind in words."
     )
 
+
+async def run_harness(make_driver) -> int:
+    """Drive one stateless run on the harness `make_driver` builds, from the
+    staged prompt and context to result.json. `make_driver(system_prompt,
+    system_prompt_path)` is called once; the driver's `attempt()` once per
+    model process — the first, then each in-place resume."""
+    # Run-keyed: the workspace is shared by every agent on the project, so a
+    # fixed name is another run's file half the time.
+    system_prompt_path = STAGING / f"system_prompt-{RUN_ID}.txt"
+    system_prompt = system_prompt_path.read_text()
+    context = json.loads((STAGING / f"context-{RUN_ID}.json").read_text())
+    trace_path = STAGING / f"trace-{RUN_ID}.jsonl"
+    result_path = STAGING / f"result-{RUN_ID}.json"
+    driver = make_driver(system_prompt, system_prompt_path)
+
     summary_parts: list[str] = CREDENTIAL_PROBLEMS + list(MOUNT_PROBLEMS)
+    plan_reading: dict | None = None
     cost_usd = None
     tokens_in = tokens_out = cache_creation = cache_read = 0
     ok = True
     error_kind: str | None = None
 
     def write_result(partial: bool) -> None:
-        # Written after every message (atomically), not just at the end: a
+        # Written after every event (atomically), not just at the end: a
         # container killed at the timeout still leaves its last known token
         # count behind, so hard kills are metered, not free.
         tmp = result_path.with_suffix(".tmp")
@@ -1977,93 +2023,305 @@ async def main() -> int:
         os.replace(tmp, result_path)
 
     with trace_path.open("a") as trace:
-        def drain_hooks() -> None:
-            while HOOK_LOG:
-                trace.write(json.dumps(HOOK_LOG.pop(0)) + "\n")
+        def write(record: dict) -> None:
+            trace.write(json.dumps(record) + "\n")
 
         session_id: str | None = None
-        next_prompt = prompt
+        resume: str | None = None
+        next_prompt = run_prompt(context)
         for attempt in range(1, RESUME_ATTEMPTS + 1):
+            # The per-run cap holds across resumes. Each resume is a fresh
+            # model process with a fresh budget of its own, so a cap handed to
+            # every attempt whole bounded the run at RESUME_ATTEMPTS times
+            # itself. What an attempt that died mid-stream spent is unknown —
+            # it never reported a bill — so this is a floor on the spend, and
+            # the harness's own cap on the remainder is the line.
+            if MAX_USD > 0:
+                remaining = MAX_USD - (cost_usd or 0.0)
+                if remaining <= 0:
+                    ok = False
+                    summary_parts.append(
+                        f"[per-run cap of ${MAX_USD:g} reached across attempts; not resuming]")
+                    write({"type": "budget_stop", "attempt": attempt, "cost_usd": cost_usd})
+                    break
+                driver.budget(remaining)
             try:
-                async for message in query(prompt=next_prompt, options=options):
-                    drain_hooks()
-                    sid = getattr(message, "session_id", None)
-                    if not sid and isinstance(message, SystemMessage):
-                        sid = (message.data or {}).get("session_id")
-                    if sid:
-                        session_id = sid
-                    if isinstance(message, AssistantMessage):
-                        for block in message.content:
-                            if isinstance(block, TextBlock):
-                                summary_parts.append(block.text)
-                                trace.write(json.dumps({"type": "text",
-                                                        "text": block.text}) + "\n")
-                            else:
-                                trace.write(json.dumps({"type": type(block).__name__,
-                                                        "repr": repr(block)[:2000]}) + "\n")
-                    elif isinstance(message, ResultMessage):
-                        # Accumulated, not assigned: a resumed run yields one
-                        # ResultMessage per attempt and every attempt's tokens
-                        # were billed. The per-attempt figures land in the trace
-                        # so the sum stays auditable.
-                        if message.total_cost_usd is not None:
-                            cost_usd = (cost_usd or 0.0) + message.total_cost_usd
-                        if message.usage is not None:
-                            usage = message.usage
-                            # input_tokens is only the uncached remainder; the cache
-                            # fields carry the rest of the real prompt.
-                            tokens_in += _usage_int(usage, "input_tokens")
-                            tokens_out += _usage_int(usage, "output_tokens")
-                            cache_creation += _usage_int(usage, "cache_creation_input_tokens")
-                            cache_read += _usage_int(usage, "cache_read_input_tokens")
-                        trace.write(json.dumps({
-                            "type": "result", "subtype": message.subtype,
-                            "attempt": attempt, "cost_usd": message.total_cost_usd,
-                            "tokens_out": _usage_int(message.usage, "output_tokens")
-                            if message.usage is not None else 0,
-                        }) + "\n")
-                    else:
-                        # The SDK tells us the plan meter without being asked:
-                        # a RateLimitEvent carries the same five_hour/seven_day
-                        # windows the /usage screen draws, on the very token
-                        # doing the spending. Duck-typed rather than isinstance
-                        # so an SDK too old to define the class just does not
-                        # match, instead of failing the import for every run.
-                        info = getattr(message, "rate_limit_info", None)
-                        if info is not None:
-                            plan = _plan_windows(info)
-                            if plan:
-                                plan_reading = plan
-                        trace.write(json.dumps({"type": type(message).__name__,
-                                                "repr": repr(message)[:2000]}) + "\n")
+                async for event in driver.attempt(next_prompt, resume=resume):
+                    if isinstance(event, Session):
+                        session_id = event.id
+                    elif isinstance(event, Text):
+                        summary_parts.append(event.text)
+                        write({"type": "text", "text": event.text})
+                    elif isinstance(event, AttemptResult):
+                        if event.cost_usd is not None:
+                            cost_usd = (cost_usd or 0.0) + event.cost_usd
+                        tokens_in += event.tokens_in
+                        tokens_out += event.tokens_out
+                        cache_creation += event.cache_creation
+                        cache_read += event.cache_read
+                        # The per-attempt figures land in the trace so the sum
+                        # stays auditable.
+                        write({"type": "result", "subtype": event.subtype, "attempt": attempt,
+                               "cost_usd": event.cost_usd, "tokens_out": event.tokens_out})
+                    elif isinstance(event, Plan):
+                        plan_reading = event.reading
+                    elif isinstance(event, TraceLine):
+                        write(event.record)
                     trace.flush()
                     write_result(partial=True)
                 break
             except Exception as exc:
-                if attempt >= RESUME_ATTEMPTS or not _looks_transient(exc):
+                kind = driver.error_kind(exc)
+                if attempt >= RESUME_ATTEMPTS or kind == "auth" or not _looks_transient(exc):
                     ok = False
-                    error_kind = _error_kind(exc)
+                    error_kind = kind or _error_kind(exc)
                     summary_parts.append(f"[sandbox_entry error: {exc!r}]")
-                    trace.write(json.dumps({"type": "error", "attempt": attempt,
-                                            "error": repr(exc)}) + "\n")
+                    write({"type": "error", "attempt": attempt, "error": repr(exc)})
                     break
                 summary_parts.append(
                     f"[transient API error on attempt {attempt}; resuming in place]")
-                trace.write(json.dumps({"type": "transient_error", "attempt": attempt,
-                                        "resume": session_id, "error": repr(exc)}) + "\n")
+                write({"type": "transient_error", "attempt": attempt, "resume": session_id,
+                       "error": repr(exc)})
                 trace.flush()
                 await asyncio.sleep(
                     RESUME_BACKOFF_S[min(attempt - 1, len(RESUME_BACKOFF_S) - 1)])
                 if session_id:
-                    options.resume = session_id
+                    resume = session_id
                     next_prompt = RESUME_PROMPT
                 # No session yet means the stream died before the model did
                 # anything; rerunning the original prompt fresh loses nothing.
-        drain_hooks()
+        for record in driver.drain():
+            write(record)
 
     write_result(partial=False)
     return 0 if ok else 1
 
+
+# ── the Agent SDK harness ───────────────────────────────────────────────────────
+
+
+class SdkDriver:
+    """The Claude Agent SDK, in process: the harness every run used before
+    there was a choice, and still the default (yaaf.runtimes.harnesses)."""
+
+    name = "claude_agent_sdk"
+
+    def __init__(self, system_prompt: str, system_prompt_path: Path):
+        server = create_sdk_mcp_server(name="yaaf", version="1.0.0",
+                                       tools=render_sdk(run_tools()))
+        self.options = ClaudeAgentOptions(
+            system_prompt=system_prompt,
+            model=MODEL,
+            effort=EFFORT,
+            mcp_servers={"yaaf": server, **_external_mcp_servers()},
+            tools=_builtin_tools(),
+            allowed_tools=_allowed_tools(),
+            # The agent is not asked for consent it cannot give: nothing here is
+            # interactive. Containment is the fresh container, the role-scoped
+            # credential set, the metered budget and the audited API — NOT the
+            # network. There is no egress proxy; the per-role allowlist was
+            # removed deliberately (docs/PLAN.md) and SECURITY.md states what
+            # follows from that.
+            permission_mode="bypassPermissions",
+            cwd="/workspace",
+            setting_sources=[],
+            max_turns=100,
+            hooks=build_hooks(),
+            # Explicit allowlist, [] when the role grants none — [] suppresses
+            # every discovered skill, which is the point: the workspace is
+            # agent-writable and an unlisted skill must stay dark.
+            skills=skill_names(),
+            **({"task_budget": {"total": TASK_BUDGET}} if TASK_BUDGET > 0 else {}),
+            **({"max_budget_usd": MAX_USD} if MAX_USD > 0 else {}),
+            # A big MCP tool result (a real data pull) overflows the SDK's
+            # default 1MB transport buffer and kills the run; seen live on
+            # audit data.
+            max_buffer_size=16 * 1024 * 1024,
+        )
+        self.assistant_error: str | None = None
+
+    def budget(self, remaining_usd: float) -> None:
+        self.options.max_budget_usd = remaining_usd
+
+    async def attempt(self, prompt: str, resume: str | None = None):
+        if resume:
+            self.options.resume = resume
+        async for message in query(prompt=prompt, options=self.options):
+            for record in self.drain():
+                yield TraceLine(record)
+            sid = getattr(message, "session_id", None)
+            if not sid and isinstance(message, SystemMessage):
+                sid = (message.data or {}).get("session_id")
+            if sid:
+                yield Session(sid)
+            if isinstance(message, AssistantMessage):
+                self.assistant_error = getattr(message, "error", None) or self.assistant_error
+                for block in message.content:
+                    if isinstance(block, TextBlock):
+                        yield Text(block.text)
+                    else:
+                        yield TraceLine({"type": type(block).__name__,
+                                         "repr": repr(block)[:2000]})
+            elif isinstance(message, ResultMessage):
+                usage = message.usage
+                yield AttemptResult(
+                    cost_usd=message.total_cost_usd,
+                    # input_tokens is only the uncached remainder; the cache
+                    # fields carry the rest of the real prompt.
+                    tokens_in=_usage_int(usage, "input_tokens") if usage is not None else 0,
+                    tokens_out=_usage_int(usage, "output_tokens") if usage is not None else 0,
+                    cache_creation=(_usage_int(usage, "cache_creation_input_tokens")
+                                    if usage is not None else 0),
+                    cache_read=(_usage_int(usage, "cache_read_input_tokens")
+                                if usage is not None else 0),
+                    subtype=message.subtype,
+                )
+            else:
+                # The SDK tells us the plan meter without being asked: a
+                # RateLimitEvent carries the same five_hour/seven_day windows
+                # the /usage screen draws, on the very token doing the
+                # spending. Duck-typed rather than isinstance so an SDK too old
+                # to define the class just does not match, instead of failing
+                # the import for every run.
+                info = getattr(message, "rate_limit_info", None)
+                if info is not None:
+                    plan = _plan_windows(info)
+                    if plan:
+                        yield Plan(plan)
+                yield TraceLine({"type": type(message).__name__, "repr": repr(message)[:2000]})
+
+    def error_kind(self, exc: BaseException) -> str | None:
+        # The SDK's ResultError carries the CLI's own result payload.
+        data = getattr(exc, "data", None)
+        return structured_error_kind(data if isinstance(data, dict) else None,
+                                     self.assistant_error)
+
+    def drain(self) -> list[dict]:
+        """The hooks' records, for the trace, in the order they fired."""
+        drained = list(HOOK_LOG)
+        HOOK_LOG.clear()
+        return drained
+
+
+# ── the CLI harnesses' common half ──────────────────────────────────────────────
+
+
+class CliRunError(RuntimeError):
+    """A CLI harness's process ended non-zero. Carries the last error result
+    the CLI reported, so the run is classified by field rather than by prose."""
+
+    def __init__(self, message: str, *, result: dict | None = None,
+                 exit_code: int | None = None):
+        super().__init__(message)
+        self.data = result
+        self.exit_code = exit_code
+
+
+class CliDriver:
+    """A model CLI as a subprocess speaking JSON lines: the shape Claude Code,
+    Codex, Gemini CLI and OpenCode all share. A concrete driver says how to
+    start it (`argv`, `env`) and how to read one line (`parse`); this owns the
+    process, the reading, and the stop."""
+
+    name = ""
+    #: Same lesson as the SDK's buffer: one JSON line carrying a real data pull
+    #: is far past asyncio's 64 KiB default, and overflowing it kills the run.
+    LINE_LIMIT = 16 * 1024 * 1024
+    STDERR_TAIL = 4000
+
+    def __init__(self) -> None:
+        self.max_usd = MAX_USD
+        self.last_error_result: dict | None = None
+        self.assistant_error: str | None = None
+        self._process: asyncio.subprocess.Process | None = None
+
+    # A concrete CLI supplies these.
+    def argv(self, resume: str | None) -> list[str]:
+        raise NotImplementedError
+
+    def parse(self, record: dict) -> list:
+        raise NotImplementedError
+
+    def failure_text(self, exit_code: int, stderr: str) -> str:
+        return f"{self.name} exited {exit_code}: {stderr[-self.STDERR_TAIL:]}"
+
+    def env(self) -> dict[str, str]:
+        return dict(os.environ)
+
+    def budget(self, remaining_usd: float) -> None:
+        self.max_usd = remaining_usd
+
+    async def attempt(self, prompt: str, resume: str | None = None):
+        self.last_error_result = None
+        process = await asyncio.create_subprocess_exec(
+            *self.argv(resume), cwd=str(WORKSPACE), env=self.env(), limit=self.LINE_LIMIT,
+            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE)
+        self._process = process
+        stderr_chunks: list[bytes] = []
+
+        async def drain_stderr() -> None:
+            # Read concurrently: a CLI that fills the stderr pipe while nobody
+            # reads it blocks forever, and the run dies at the timeout.
+            while chunk := await process.stderr.read(65536):
+                stderr_chunks.append(chunk)
+                while sum(map(len, stderr_chunks)) > 4 * self.STDERR_TAIL and len(stderr_chunks) > 1:
+                    stderr_chunks.pop(0)
+
+        stderr_task = asyncio.create_task(drain_stderr())
+        try:
+            # The prompt goes in on stdin, never argv: a context pack is far
+            # past what one argument may hold. A CLI that dies before reading
+            # it breaks the pipe — and "connection reset" is a transient marker,
+            # so that would be retried as a network blip. Its own exit code
+            # and stderr say why it died; let those.
+            try:
+                process.stdin.write(prompt.encode())
+                await process.stdin.drain()
+                process.stdin.close()
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            async for raw in process.stdout:
+                line = raw.decode(errors="replace").strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    yield TraceLine({"type": "stdout", "text": line[:2000]})
+                    continue
+                if not isinstance(record, dict):
+                    continue
+                for event in self.parse(record):
+                    yield event
+            exit_code = await process.wait()
+            await stderr_task
+        finally:
+            if process.returncode is None:
+                self.stop()
+                await process.wait()
+            stderr_task.cancel()
+            self._process = None
+        if exit_code != 0:
+            stderr = b"".join(stderr_chunks).decode(errors="replace")
+            raise CliRunError(self.failure_text(exit_code, stderr),
+                              result=self.last_error_result, exit_code=exit_code)
+
+    def stop(self) -> None:
+        if self._process is not None and self._process.returncode is None:
+            self._process.kill()
+
+    def error_kind(self, exc: BaseException) -> str | None:
+        data = getattr(exc, "data", None)
+        return structured_error_kind(data if isinstance(data, dict) else None,
+                                     self.assistant_error)
+
+    def drain(self) -> list[dict]:
+        return []
+
+
+async def main() -> int:
+    return await run_harness(SdkDriver)
 
 if __name__ == "__main__":
     raise SystemExit(asyncio.run(main()))

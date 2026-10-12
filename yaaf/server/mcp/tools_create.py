@@ -62,12 +62,15 @@ MAX_DRILL_DAYS = 90
         "Roles carry the credentials they will need, which is a fact about hiring one "
         "rather than something to discover when a run fails. `credentials` lists what "
         "a project can pay Claude with — names and billing modes, never values — so "
-        "you can ask the chairman which one before `create_project`."
+        "you can ask the chairman which one before `create_project`. `harnesses` lists "
+        "what can drive a seat's model; name one in a team's `harness_overrides` only "
+        "when the chairman asks for it — absent, a seat runs on its role's default."
     ),
     input_schema={
         "type": "object",
         "properties": {
-            "what": {"type": "string", "enum": ["roles", "crews", "credentials"]},
+            "what": {"type": "string",
+                     "enum": ["roles", "crews", "credentials", "harnesses"]},
             "query": {"type": "string"},
             "category": {"type": "string",
                          "enum": ["leadership", "research", "build", "content",
@@ -82,6 +85,10 @@ def catalog(principal: Principal, session: Session, arguments: dict) -> dict:
     what = arguments.get("what") or "roles"
     if what == "credentials":
         payload = founder_tools.list_credentials(session)
+    elif what == "harnesses":
+        from yaaf.server.api.admin import list_harnesses
+
+        payload = list_harnesses()
     elif what == "crews":
         payload = founder_tools.search_crews(session, query=arguments.get("query"))
     else:

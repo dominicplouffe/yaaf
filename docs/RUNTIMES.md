@@ -1,7 +1,8 @@
 # Runtimes — any harness, any provider, the same rules
 
-**Status: M0 is built — the seams, with nothing a chairman can see moved. M1
-onward is proposed.** This is the design and the tracking doc for running a seat on something other than the Claude Agent SDK:
+**Status: M0 and M1 are built — the seams, then the Claude CLI as a second
+harness a seat can choose. M1's one unticked line is a week of a live seat on
+it, which only a deployment can tick. M2 onward is proposed.** This is the design and the tracking doc for running a seat on something other than the Claude Agent SDK:
 the Claude CLI driven directly, the Anthropic API under yaaf's own loop, and
 then Codex, Gemini, OpenCode and whatever comes after them. Update the
 checkboxes as milestones land; if a decision here turns out wrong, change the
@@ -163,35 +164,42 @@ class Tool:
 `wire_schema()` is the SDK's schema rule, owned rather than borrowed, and
 `tests/fixtures/tool_catalog.json` — captured through the SDK's own conversion
 before the change — holds it to what the model was actually sent. That much is
-M0. In M1 `main()` and the `ClaudeAgentOptions` around it leave for the
-`claude_agent_sdk` driver, and `sandbox_entry.py` is left as the catalog: tools,
-`run_tools()`, the HTTP plumbing, no SDK import. Three renderers, each a few
-dozen lines:
+M0. The SDK driver stays in `sandbox_entry.py` beside the catalog, for the
+reason the tools did: the tests that drive a run patch that module's globals.
+Three renderers, each a few dozen lines:
 
 | Rendering | For | How |
 |---|---|---|
 | **in-process SDK** | `claude_agent_sdk` | `render_sdk()` → `create_sdk_mcp_server` — today's behaviour, handed the same objects (M0) |
-| **stdio MCP server** | every CLI harness | `yaaf-tools`, a small server on the `mcp` package the image already carries, launched by the CLI from a generated MCP config with the run's env. Every CLI worth supporting speaks MCP. |
+| **stdio MCP server** | every CLI harness | `yaaf_tools.py`, launched by the CLI from a generated MCP config with the run's env. It serves the **very server object** the SDK harness serves in process, so two harnesses cannot describe one tool two ways (M1). Every CLI worth supporting speaks MCP. |
 | **function calling** | every API harness | the catalog as the provider's tool schema; the loop calls the handler in-process |
 
-The stdio server also **proxies data sources**: it mounts each granted
-external MCP server, filters `tools/list` to the source's allowlist and
-refuses `tools/call` outside it. That makes the allowlist harness-independent
-instead of an SDK option — and it is the first half of the data-source gateway
-(move the proxy server-side and the bearer never enters the sandbox).
+Data sources reach `claude_cli` exactly as they reach the SDK harness: the
+same server configs in the MCP config, the same per-source allowlist as
+`--allowedTools`. The **proxy** — the stdio server mounting each source itself,
+filtering `tools/list` and refusing `tools/call` outside the allowlist — waits
+for the first CLI that has no allowlist of its own (M4). Built now, it would be
+a second enforcement of a rule Claude Code already enforces, on the one
+harness that needs neither. It remains the first half of the data-source
+gateway: move it server-side and the bearer never enters the sandbox.
 
 ### 2. One run loop, many drivers
 
-`sandbox_entry.main()` is two things tangled together: what any run must do,
-and how the SDK does it. The first half becomes `entry.py` and is written
-once:
+`sandbox_entry.main()` was two things tangled together: what any run must do,
+and how the SDK does it. M1 split them. The first half is
+`sandbox_entry.run_harness`, written once:
 
-- read the `RunSpec`, the system prompt and the context pack;
+- read the system prompt and the context pack;
 - write the trace; checkpoint `result.json` after **every** event, so a kill is
   metered rather than free;
-- the **governor** — sum usage, price it, and stop the driver at
-  `max_usd_per_run` (a harness with a native budget uses it too; the governor
-  is the backstop, never the only line on a harness that has one);
+- the **governor** — the per-run cap held across resumes: each resumed attempt
+  is handed only what is left of `max_usd_per_run`, and a run that has spent
+  it is not resumed. Each resume is a fresh model process with a fresh budget
+  of its own, so before M1 a cap handed to every attempt whole bounded a run
+  at three times itself. Within an attempt the harness's own budget is the
+  line where it has one — and both Claude harnesses do (`--max-budget-usd`).
+  Pricing streamed usage to stop an attempt mid-flight arrives with prices,
+  in M2;
 - the transient-error policy — classify, back off, resume in place if the
   harness can, rerun fresh if no session exists yet;
 - write the final `result.json`.
@@ -352,12 +360,12 @@ All of them read manifests and the catalog; none names a harness.
 
 | # | Rule | Where it fires |
 |---|---|---|
-| R1 | **A credential the seat's harness cannot accept is refused** — a subscription token on `anthropic_api`, a ChatGPT login on a Gemini seat. | credential assignment, hire, repin, override |
-| R2 | **A harness that cannot withhold a tool the role does not grant is refused for that role.** Codex cannot run without a shell; a role without `bash` cannot be hired onto it. Widening a role's tools silently because the transport is clumsy is exactly what the role version exists to prevent. | hire, repin, override |
+| R1 | **A credential the seat's harness cannot accept is refused** — a subscription token on `anthropic_api`, a ChatGPT login on a Gemini seat. | creation, add-team, hire, repin, credential change, recall; lease backstop; health (built in M1) |
+| R2 | **A harness that cannot withhold a tool the role does not grant is refused for that role.** Codex cannot run without a shell; a role without `bash` cannot be hired onto it. Widening a role's tools silently because the transport is clumsy is exactly what the role version exists to prevent. | the role version itself, and every door R1 is at (built in M1) |
 | R3 | **Under a USD meter, a model with no price is refused.** A run nobody can price is a run the budget cannot stop. | hire, repin, override, lease |
 | R4 | **One project, one meter.** All of a project's credentials meter in USD or all in tokens. Two units cannot share one cap, and inventing an exchange rate between them is inventing a number. (Open question 1.) | credential assignment |
 | R5 | **A seat whose provider has no credential on the project cannot be hired, and a project with such a seat cannot start.** It fails at the door, not at 3am. | hire, start, health |
-| R6 | **An effort the model does not support is refused**, with the list it does. Never mapped silently, in either direction. | hire, repin, override |
+| R6 | **An effort the model does not support is refused**, with the list it does. Never mapped silently, in either direction. | hire, repin, override (from M4) |
 | R7 | **A CEO seat holding the boardroom chat must be on a harness with `conversation`.** | hire, start (from M6) |
 
 Every one of them also shows in the health checklist and the fire drill's
@@ -392,7 +400,7 @@ they are the reference for.
 | Credentials | API key, subscription | API key, subscription | **API key only** — a subscription token is a CLI credential, not a Messages API one (`founder/session.py` says so for the Founder already) |
 | yaaf tools | in-process SDK MCP | `yaaf-tools` over stdio | function calling |
 | Built-in tools | Claude Code's | Claude Code's | the loop's own: files, shell, fetch; web search as the API's server tool |
-| Budget | SDK's `max_budget_usd` + governor | governor | governor, exact per call |
+| Budget | `max_budget_usd` per attempt + the cap across resumes | `--max-budget-usd` per attempt + the cap across resumes | governor, exact per call |
 | Cost | reported | reported | priced |
 | Plan meter | yes | yes | no — API keys have none, as now |
 | Image needs | Node, CLI, SDK | Node, CLI | nothing beyond the base image |
@@ -558,25 +566,61 @@ scaffolding*:
   write is a column nobody can test. They arrive with the first harness there
   is a choice of.
 
-### M1 — `claude_cli`: the CLI family's reference
-- [ ] `entry.py` run loop + `Driver` protocol, split out of `sandbox_entry.main()`
-      with `claude_agent_sdk` as its first driver; one sandbox backend
-- [ ] `RoleVersion.harness`, `Agent.harness_override`, and the role editor's
-      picker — the first seat that can choose
-- [ ] `yaaf-tools` stdio MCP server rendering the catalog, plus the
-      data-source proxy with the allowlist enforced in it
-- [ ] `CliDriver` base; `claude_cli` on it
-- [ ] The governor (here first — this harness has no SDK budget behind it)
-- [ ] Contract suite, with recorded `claude -p` streams as fixtures
-- [ ] R1, R2, R6 with attacks
+### M1 — `claude_cli`: the CLI family's reference ✅ (but the live week)
+- [x] `run_harness` + the driver shape (`attempt`, `budget`, `error_kind`,
+      `drain`), split out of `sandbox_entry.main()` with `SdkDriver` as the
+      first driver; every existing test that drives a run passes unmodified. One
+      `SandboxBackend`, one entry script per harness
+- [x] `RoleVersion.harness`, `Agent.harness_override` (migration `0042`); the
+      role editor's picker, fed by `GET /admin/harnesses`; overrides through
+      project create, add-team, export, clone and the New Project form
+- [x] `yaaf_tools.py` — the catalog over stdio MCP, serving the SDK harness's
+      own server object
+- [x] `CliDriver`; `claude_cli` on it — flags read off the SDK's own argv
+      builder and held to it by a test
+- [x] The governor: the per-run cap across resumes, on both harnesses
+- [x] Contract suite (`test_harness_contract.py`): two **recorded** `claude -p`
+      streams and one synthetic, each replayed through **both** harnesses,
+      which must land the same result.json; plus a real tool call through the
+      stdio server to a stub agent API
+- [x] R1 and R2, at every door a seat comes through — creation, add-team,
+      the CEO's hire, repin, a credential change, a recall — with a lease-time
+      backstop and a health-checklist line (`test_seat_harness.py`)
+- [ ] **One seat of a live project on `claude_cli` beside an SDK seat for a
+      week**, and the two Runs pages indistinguishable in shape. Needs a
+      deployment; nothing here can tick it
 
-**Done when:** one seat of a live project runs on `claude_cli` beside an SDK
-seat for a week, and the two Runs pages are indistinguishable in shape.
+What M1 found on the way, both now fixed:
+
+- **A dead API key never paused a project.** Claude Code 2.1.296 says
+  "Invalid API key · Fix external API key", and no marker matched it, so the
+  three-strikes pause never fired for a revoked key. Both harnesses now read
+  the fields beside the prose — `error: authentication_failed`,
+  `api_error_status: 401` — and the marker list learned the sentence too.
+- **The per-run cap was per attempt** — see the governor above.
+
+And what was checked and is fine: with `--setting-sources=` empty, an
+`.mcp.json` an agent plants in the workspace is not loaded on the next run, on
+either harness.
+
+Two things moved on:
+
+- **R6** (an effort the model does not support) to M4. Both Claude harnesses
+  pass every effort yaaf has; the first harness whose levels differ is Codex.
+- **R1 and R2 cannot fire on a real harness yet** — both Claude harnesses take
+  every Anthropic credential and can withhold every grant. They are built and
+  attacked against registered harnesses that cannot, because the rules read
+  the registry rather than names; `anthropic_api` (M2, API keys only) is the
+  first real one R1 refuses.
+
+**The boardroom chat stays on the SDK** whatever the CEO's seat names, and its
+runs are pinned as `claude_agent_sdk` so the record says so — until M6.
 
 ### M2 — `anthropic_api`: the loop family's reference
 - [ ] `LoopDriver`; the loop's built-ins (files, shell, fetch) under the same
       grants; web search as the API's server tool
 - [ ] `ModelClient` for Messages; prompt caching
+- [ ] The governor prices streamed usage and stops an attempt mid-flight
 - [ ] Prices in `catalog.py`; the reported-vs-priced gap check against the
       SDK on the same models
 - [ ] R3 with an attack (an unpriced model hired under USD)
@@ -606,6 +650,9 @@ both metered against one cap, and the receipt says which spent what.
 - [ ] `openai` provider: `api_key` (USD), `chatgpt` (tokens, a file credential)
 - [ ] `codex_cli` on `CliDriver` — the first CLI that is not Claude's, and the
       test of whether M1's pattern was general or merely Claude-shaped
+- [ ] The data-source proxy in the stdio server, if Codex has no per-tool
+      allowlist of its own
+- [ ] R6, with the harness's own effort levels in its registry entry
 
 ### M5 — The long tail
 - [ ] Gemini, by either road: `gemini_cli` on `CliDriver`, or a Gemini
@@ -663,14 +710,16 @@ Starting points, not facts: every CLI moves fast, and each line below gets
 checked against the version the install script pins before its driver is
 written.
 
-- **Claude CLI.** `claude -p` with `--output-format stream-json --verbose`;
-  `--mcp-config` + `--strict-mcp-config` for `yaaf-tools`; `--allowedTools`;
-  `--model`; `--max-turns`; system prompt by flag; `--resume <session>`;
-  permission prompts off. The SDK builds its CLI argv from `ClaudeAgentOptions`,
-  so the flags for every option `sandbox_entry` sets today can be read off the
-  SDK's own subprocess transport rather than guessed. The stream carries
-  per-message usage, the final cost and the rate-limit events the plan meter
-  already reads, because the SDK is a parser over it.
+- **Claude CLI — verified against 2.1.296 (M1).** `claude -p` with the flags
+  `SdkDriver`'s options produce (read off the SDK's own argv builder, held to
+  it by `test_the_cli_is_started_with_the_flags_the_sdk_itself_builds`), with
+  `--system-prompt-file` and an MCP config *file* where the SDK passes strings,
+  and the prompt on stdin. The stream carries per-message usage, the final
+  cost and the rate-limit events the plan meter reads. Two facts that cost a
+  run to learn: it refuses `bypassPermissions` as root — the sandbox runs as an
+  unprivileged user, as it does for the SDK — and it ends a failed run with an
+  `is_error` result and a non-zero exit, which is the rule both harnesses now
+  fail a run by.
 - **Codex CLI.** `codex exec --json`; MCP servers in its TOML config;
   `codex exec resume <id>`; reasoning effort by config; its own sandbox and
   approvals off (the container is the sandbox); API key by env, ChatGPT login

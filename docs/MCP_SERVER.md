@@ -392,7 +392,7 @@ discovering later.
 
 | Tool | Does | Backing | Confirm? | Status |
 |---|---|---|---|---|
-| `catalog` | Search the role and crew library; with `what: credentials`, list the LLM credentials a project may pay with — names and billing modes, never values. | `yaaf/founder/tools.py: search_roles, search_crews, list_credentials` | no | **done** (M4) |
+| `catalog` | Search the role and crew library; with `what: credentials`, list the LLM credentials a project may pay with — names and billing modes, never values; with `what: harnesses`, what can drive a seat's model ([RUNTIMES.md](RUNTIMES.md)). | `yaaf/founder/tools.py: search_roles, search_crews, list_credentials`; `GET /admin/harnesses` | no | **done** (M4) |
 | `read_source` | What a candidate data source actually serves. | `yaaf/founder/tools.py: read_source` | no | **done** (M4) |
 | `grade_goal` | Grade a draft goal against [GOAL_GRAMMAR.md](GOAL_GRAMMAR.md) — ten things a goal must contain. | `yaaf/founder/tools.py` | no | **done** (M4) |
 | `rehearse` | The fire drill: simulate the project for N days, create nothing. | `POST /admin/rehearse` | no | **done** (M4) |

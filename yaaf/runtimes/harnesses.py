@@ -26,6 +26,10 @@ class Harness:
     #: Credential kinds it can authenticate with, as "provider:mode". Empty
     #: means any, for the same reason.
     accepts: tuple[str, ...]
+    #: The role grants it can actually take away — "files", "bash", "web". A
+    #: harness that cannot run without a shell cannot honour a role that
+    #: grants none, and is refused for it rather than quietly widening it.
+    withholds: tuple[str, ...] = ("files", "bash", "web")
 
 
 HARNESSES: dict[str, Harness] = {h.name: h for h in (
@@ -33,6 +37,16 @@ HARNESSES: dict[str, Harness] = {h.name: h for h in (
         name="claude_agent_sdk",
         label="Claude Agent SDK",
         family="sdk",
+        providers=("anthropic",),
+        accepts=("anthropic:api_key", "anthropic:subscription"),
+    ),
+    # The same CLI the SDK drives, driven directly: same model, same
+    # credentials, same tools under the same names. The reference every other
+    # CLI harness is built from, which is why it changes nothing else.
+    Harness(
+        name="claude_cli",
+        label="Claude Code CLI (claude -p)",
+        family="cli",
         providers=("anthropic",),
         accepts=("anthropic:api_key", "anthropic:subscription"),
     ),

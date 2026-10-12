@@ -39,6 +39,7 @@ from yaaf.core.db import notify
 from yaaf.core.models import (
     Agent,
     AgentKind,
+    AgentStatus,
     Amendment,
     Approval,
     ApprovalStatus,
@@ -88,6 +89,8 @@ from yaaf.founder import doctrine
 from yaaf.runtimes import catalog
 from yaaf.runtimes import providers as runtime_providers
 from yaaf.runtimes.catalog import DEFAULT_EFFORT, DEFAULT_MODEL
+from yaaf.runtimes.seats import choosable, seat_for
+from yaaf.runtimes.seats import refusal as seat_refusal
 from yaaf.server import briefing, policy
 from yaaf.server.api.agent import WAKE_CHANNEL
 from yaaf.server.deps import admin_auth, db
@@ -174,6 +177,9 @@ class RoleIn(BaseModel):
     system_prompt: str
     model: str = DEFAULT_MODEL
     effort: str = Field(default=DEFAULT_EFFORT, pattern=_EFFORT_PATTERN)
+    # What drives the model (yaaf.runtimes.harnesses); absent is the provider's
+    # default, which is what every role written before there was a choice says.
+    harness: str | None = None
     tool_permissions: dict = Field(default_factory=dict)
     secret_scopes: list[str] = Field(default_factory=list)
 
@@ -203,6 +209,11 @@ def create_role(body: RoleIn, session: Session = Depends(db)) -> dict:
             detail=f"unknown domain {', '.join(unknown_domains)} — "
                    f"pick from {', '.join(ROLE_DOMAINS)}",
         )
+    # A role whose grants its harness cannot honour, or whose model it cannot
+    # serve, is refused here — at the version, before any project pins it.
+    problem = seat_refusal(body.harness, body.model, body.tool_permissions)
+    if problem:
+        raise HTTPException(status_code=422, detail=f"role '{body.slug}': {problem}")
     role = session.execute(select(Role).where(Role.slug == body.slug)).scalar_one_or_none()
     if role is None:
         role = Role(
@@ -234,6 +245,7 @@ def create_role(body: RoleIn, session: Session = Depends(db)) -> dict:
         system_prompt=body.system_prompt,
         model=body.model,
         effort=body.effort,
+        harness=body.harness,
         tool_permissions=body.tool_permissions,
         secret_scopes=body.secret_scopes,
     )
@@ -263,6 +275,7 @@ def get_role(slug: str, session: Session = Depends(db)) -> dict:
         "system_prompt": latest.system_prompt,
         "model": latest.model,
         "effort": latest.effort,
+        "harness": latest.harness,
         "tool_permissions": latest.tool_permissions,
         "secret_scopes": latest.secret_scopes,
     }
@@ -354,6 +367,7 @@ def list_roles(session: Session = Depends(db)) -> list[dict]:
                 "latest_version": latest.version if latest else 0,
                 "model": latest.model if latest else None,
                 "effort": latest.effort if latest else None,
+                "harness": latest.harness if latest else None,
                 "description": latest.description if latest else "",
                 "tools": sorted(
                     k for k, v in (latest.tool_permissions or {}).items()
@@ -488,6 +502,7 @@ class TeamSpec(BaseModel):
     schedules: dict[str, str] = Field(default_factory=dict)
     model_overrides: dict[str, str] = Field(default_factory=dict)
     effort_overrides: dict[str, str] = Field(default_factory=dict)
+    harness_overrides: dict[str, str] = Field(default_factory=dict)
 
 
 class ProjectCreate(BaseModel):
@@ -518,6 +533,7 @@ class ProjectCreate(BaseModel):
     ceo_daily_at: str | None = Field(default=None, pattern=_DAILY_AT_PATTERN)
     ceo_model_override: str | None = None
     ceo_effort_override: str | None = Field(default=None, pattern=_EFFORT_PATTERN)
+    ceo_harness_override: str | None = None
     teams: list[TeamSpec] = Field(default_factory=list)
     # Solo mode (the M2 single-agent arm): the CEO is placed as the sole member
     # — hence derived lead — of the only team, so one brain plans AND executes
@@ -546,6 +562,44 @@ def _latest_role_version(session: Session, slug: str) -> RoleVersion:
     ).scalar_one()
 
 
+def _project_agents(session: Session, project_id: str) -> list[Agent]:
+    return list(session.execute(
+        select(Agent).where(Agent.project_id == project_id,
+                            Agent.status != AgentStatus.STOOD_DOWN)).scalars())
+
+
+def refuse_unrunnable_seats(session: Session, project: Project, agents: list[Agent]) -> None:
+    """Refuse, before anything commits, a seat that could not run: a harness
+    that cannot serve its model, cannot take away a grant its role withholds,
+    or cannot pay with the project's credential (yaaf.runtimes.seats.refusal).
+
+    One check behind every door a seat comes through — creation, a team added,
+    a hire, a repin, a new credential — so no door is the one that lets it by.
+    The lease checks again, for a seat changed by a door nobody has built yet."""
+    from yaaf.server.contextpack import role_version_for
+
+    credential = None
+    if project.billing_secret_id:
+        secret = session.get(Secret, project.billing_secret_id)
+        if secret is not None:
+            credential = (secret.provider, project.billing_mode)
+    for agent in agents:
+        role_version = role_version_for(session, agent)
+        seat = seat_for(agent, role_version)
+        problem = seat_refusal(seat.harness, seat.model,
+                               role_version.tool_permissions if role_version else {},
+                               credential)
+        if problem:
+            raise HTTPException(status_code=422, detail=f"{agent.name}: {problem}")
+
+
+@router.get("/harnesses")
+def list_harnesses() -> list[dict]:
+    """What a seat may run on — the picker's options, from the registry."""
+    return [{"name": h.name, "label": h.label, "family": h.family,
+             "providers": list(h.providers)} for h in choosable()]
+
+
 def _check_team_people(spec: TeamSpec) -> None:
     """Per-employee settings name people who are actually on the team, and
     carry values the runtime understands.
@@ -560,7 +614,8 @@ def _check_team_people(spec: TeamSpec) -> None:
     """
     for field_name, mapping in (("schedules", spec.schedules),
                                 ("model_overrides", spec.model_overrides),
-                                ("effort_overrides", spec.effort_overrides)):
+                                ("effort_overrides", spec.effort_overrides),
+                                ("harness_overrides", spec.harness_overrides)):
         unknown = sorted(set(mapping) - set(spec.employees))
         if unknown:
             raise HTTPException(
@@ -840,6 +895,7 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
         role_version_id=ceo_role_version.id,
         model_override=body.ceo_model_override,
         effort_override=body.ceo_effort_override,
+        harness_override=body.ceo_harness_override,
         daily_at=body.ceo_daily_at,
     )
     session.add(ceo)
@@ -875,6 +931,7 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
                 # project as a whole.
                 model_override=spec.model_overrides.get(employee_name) or lift_model,
                 effort_override=spec.effort_overrides.get(employee_name) or lift_effort,
+                harness_override=spec.harness_overrides.get(employee_name),
             )
             session.add(agent)
             agents.append(agent)
@@ -890,6 +947,7 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
             agents.append(ceo)
         team_out.append({"id": team.id, "name": team.name,
                          "agents": [{"id": a.id, "name": a.name} for a in agents]})
+    refuse_unrunnable_seats(session, project, _project_agents(session, project.id))
 
     # The boardroom on day one, when the chairman has already told us the
     # workspace. The ask behind app-wide Slack settings is "I made a project —
@@ -976,6 +1034,7 @@ def export_project(project_id: str, include_values: bool = False,
             "system_prompt": version.system_prompt,
             "model": version.model,
             "effort": version.effort,
+            "harness": version.harness,
             # Roles no longer own MCP servers; strip the key from any old
             # pinned version so importing the role never 422s.
             "tool_permissions": {
@@ -1011,6 +1070,8 @@ def export_project(project_id: str, include_values: bool = False,
                                 for a in members if a.model_override},
             "effort_overrides": {a.name: a.effort_override
                                  for a in members if a.effort_override},
+            "harness_overrides": {a.name: a.harness_override
+                                  for a in members if a.harness_override},
         })
 
     billing_secret_name = None
@@ -1109,6 +1170,7 @@ def export_project(project_id: str, include_values: bool = False,
             "ceo_daily_at": ceo.daily_at,
             "ceo_model_override": ceo.model_override,
             "ceo_effort_override": ceo.effort_override,
+            "ceo_harness_override": ceo.harness_override,
             "teams": teams,
             "solo": ceo.team_id is not None,
         },
@@ -1278,6 +1340,7 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
                 status=source_ceo.status,
                 model_override=source_ceo.model_override,
                 effort_override=source_ceo.effort_override,
+                harness_override=source_ceo.harness_override,
                 daily_at=source_ceo.daily_at)
     session.add(ceo)
     session.add(Channel(id=ids.new_id(ids.CHANNEL), project_id=project.id,
@@ -1306,6 +1369,7 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
                           status=source_agent.status,
                           model_override=source_agent.model_override,
                           effort_override=source_agent.effort_override,
+                          harness_override=source_agent.harness_override,
                           daily_at=source_agent.daily_at)
             session.add(agent)
             agents.append(agent)
@@ -1474,10 +1538,12 @@ def add_team(project_id: str, body: TeamSpec, session: Session = Depends(db)) ->
             daily_at=body.schedules.get(employee_name),
             model_override=body.model_overrides.get(employee_name) or lift_model,
             effort_override=body.effort_overrides.get(employee_name) or lift_effort,
+            harness_override=body.harness_overrides.get(employee_name),
         )
         session.add(agent)
         agents.append(agent)
     session.flush()
+    refuse_unrunnable_seats(session, project, agents)
     if len(agents) > 1:
         lead_name = body.lead or body.employees[0]
         lead = next((a for a in agents if a.name == lead_name), agents[0])
@@ -2025,6 +2091,11 @@ def repin_team(team_id: str, session: Session = Depends(db)) -> dict:
     if latest.id == team.role_version_id:
         return {"team_id": team.id, "changed": False, "version": latest.version}
     team.role_version_id = latest.id
+    session.flush()
+    # The new version may name a harness — or withhold a grant — its seats'
+    # overrides and the project's credential cannot run with.
+    refuse_unrunnable_seats(session, session.get(Project, team.project_id), list(
+        session.execute(select(Agent).where(Agent.team_id == team.id)).scalars()))
     _audit(session, team.project_id, "team.repin", "team", team.id,
            {"role": role.slug, "from_version": current.version, "to_version": latest.version})
     return {"team_id": team.id, "changed": True, "version": latest.version}
@@ -2238,6 +2309,9 @@ def patch_project(project_id: str, body: ProjectPatch, session: Session = Depend
         shape_error = _billing_shape_error(project.billing_mode, decrypt(attached.ciphertext))
         if shape_error:
             raise HTTPException(status_code=422, detail=shape_error)
+        # A credential every seat already on the project can pay with — R1
+        # from the other side: the seats stayed put and the money moved.
+        refuse_unrunnable_seats(session, project, _project_agents(session, project.id))
     if body.controlled_domains is not None:
         project.controlled_domains = body.controlled_domains
         changed["controlled_domains"] = body.controlled_domains

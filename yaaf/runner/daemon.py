@@ -51,6 +51,7 @@ from yaaf.runner.backends import get_backend
 from yaaf.runner.types import RunJob, RunResult
 from yaaf.runtimes.providers import PROVIDERS, credential_env, failure_markers
 from yaaf.runtimes.seats import effective_harness, seat_for
+from yaaf.runtimes.seats import refusal as seat_refusal
 from yaaf.server import policy
 from yaaf.server.contextpack import build_context_pack, build_system_prompt, role_version_for
 from yaaf.server.dispatcher import MODEL_RUN_KINDS, NON_WORK_RUN_KINDS
@@ -190,6 +191,16 @@ def _materialize(session: Session, queued: RunQueue, project: Project) -> RunJob
     role_version = role_version_for(session, agent)
     job.max_usd = cons.max_usd_per_run
     job.task_budget_tokens = cons.run_token_budget
+    problem = _seat_problem(session, project, agent, role_version)
+    if problem:
+        # Every door a seat comes through refuses this already (admin.
+        # refuse_unrunnable_seats); this is the backstop for a door nobody has
+        # built yet. Failed at lease, like a paused agent: no container, no
+        # bill, and the reason on the Runs page instead of a dead sandbox.
+        run.status = RunStatus.FAILED
+        run.summary = f"seat cannot run: {problem}"
+        run.finished_at = utcnow()
+        return None
     _pin_seat(run, job, seat_for(agent, role_version,
                                  runtime=(project.integrations or {}).get("runtime")))
     job.tool_permissions = dict(role_version.tool_permissions) if role_version else {}
@@ -205,6 +216,19 @@ def _materialize(session: Session, queued: RunQueue, project: Project) -> RunJob
     job.system_prompt += credentials_prompt(*announced_credentials(role_secrets))
     job.system_prompt += _data_source_prompt(source_specs)
     return job
+
+
+def _seat_problem(session: Session, project: Project, agent: Agent, role_version) -> str | None:
+    """The seat's own choice, checked as the doors check it — before the
+    project's `runtime` override, which is a test switch, not a choice."""
+    credential = None
+    if project.billing_secret_id:
+        secret = session.get(Secret, project.billing_secret_id)
+        if secret is not None:
+            credential = (secret.provider, project.billing_mode)
+    seat = seat_for(agent, role_version)
+    return seat_refusal(seat.harness, seat.model,
+                        role_version.tool_permissions if role_version else {}, credential)
 
 
 def _pin_seat(run: Run, job: RunJob, seat) -> None:

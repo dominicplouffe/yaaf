@@ -1,11 +1,13 @@
 """Runner backends.
 
 A backend executes one leased job and returns a result — one per harness
-(yaaf.runtimes.harnesses; docs/RUNTIMES.md). Two exist:
+(yaaf.runtimes.harnesses; docs/RUNTIMES.md):
 
 - ``mock``: scripted behaviors that drive the *real* HTTP API — the framework's
   orchestration is CI-testable end to end at $0 in model tokens
 - ``claude_agent_sdk``: the Claude Agent SDK inside a Docker sandbox — the real thing
+- ``claude_cli``: the Claude Code CLI (``claude -p``) in the same sandbox, driven
+  directly — the reference every other CLI harness is built from
 
 The backend never touches the database. Everything it needs rides on the
 :class:`~yaaf.runner.types.RunJob`; everything it produces comes back on the
@@ -33,7 +35,11 @@ def get_backend(name: str) -> RunnerBackend:
 
         return MockBackend()
     if name in ("claude_agent_sdk", "agent_sdk"):
-        from yaaf.runner.backends.agent_sdk import AgentSDKBackend
+        from yaaf.runner.backends.agent_sdk import SandboxBackend
 
-        return AgentSDKBackend()
+        return SandboxBackend("sandbox_entry.py")
+    if name == "claude_cli":
+        from yaaf.runner.backends.agent_sdk import SandboxBackend
+
+        return SandboxBackend("claude_cli_entry.py")
     raise ValueError(f"unknown runner backend {name!r}")

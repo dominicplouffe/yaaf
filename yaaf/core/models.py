@@ -705,6 +705,9 @@ class RoleVersion(Base):
     system_prompt: Mapped[str] = mapped_column(Text)
     model: Mapped[str] = mapped_column(String(64), default=DEFAULT_MODEL)
     effort: Mapped[str] = mapped_column(String(8), default=DEFAULT_EFFORT)
+    # What drives the model (yaaf.runtimes.harnesses). NULL is the provider's
+    # default — which is every role written before there was a choice.
+    harness: Mapped[str | None] = mapped_column(String(32))
     # {"bash": true, "web": true, "github": false}
     tool_permissions: Mapped[dict] = mapped_column(JSONVariant, default=dict)
     secret_scopes: Mapped[list] = mapped_column(JSONVariant, default=list)
@@ -793,6 +796,9 @@ class Agent(Base):
     # Raising it in the library would have raised it everywhere.
     model_override: Mapped[str | None] = mapped_column(String(64))
     effort_override: Mapped[str | None] = mapped_column(String(16))
+    # The same for what drives the model (yaaf.runtimes.harnesses): null is the
+    # role's harness, and the role's null is its provider's default.
+    harness_override: Mapped[str | None] = mapped_column(String(32))
     # Per-agent daily wake, "HH:MM" in the constitution's timezone (stage E).
     # The CEO's standup generalized: a support agent that checks the inbox
     # every morning, a metrics agent that reports at close. Chairman-set;
