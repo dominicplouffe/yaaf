@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 
@@ -49,16 +48,15 @@ from yaaf.runner.daemon import (
     _data_source_prompt,
     _merge_project_data_sources,
     _pin_seat,
+    _provider_spec,
     _role_secret_env,
     stash_context_doc,
 )
 from yaaf.runner.types import RunJob
-from yaaf.runtimes.seats import effective_harness, seat_for
+from yaaf.runtimes.harnesses import HARNESSES
+from yaaf.runtimes.seats import seat_for
 from yaaf.server import policy
 from yaaf.server.contextpack import build_system_prompt, role_version_for
-
-#: What holds the resident boardroom conversation, until M6.
-CHAT_HARNESS = "claude_agent_sdk"
 
 log = logging.getLogger("yaaf.chat")
 
@@ -211,6 +209,15 @@ def _supervise_project(session: Session, project: Project) -> tuple[dict | None,
             _end_session(session, project, live_run, "chat session ended: no active CEO")
         return None, None
 
+    if not converses(session, project, ceo):
+        # R7's backstop, for a seat changed by a door that does not ask it:
+        # no session at all, so the boardroom is answered by queued runs, the
+        # way it is wherever there is no container lane.
+        if live_run is not None or running_ids:
+            _end_session(session, project, live_run,
+                         "chat session ended: the CEO's harness cannot hold a conversation")
+        return None, None
+
     if live_run is not None:
         if live_run.token_revoked:
             _end_session(session, project, live_run, "chat session ended: token revoked")
@@ -280,6 +287,16 @@ def _supervise_project(session: Session, project: Project) -> tuple[dict | None,
     if recent_starts >= MAX_STARTS_IN_WINDOW:
         return None, None  # boot-looping; hold until the window drains
     return _prepare_session(session, project, ceo)
+
+
+def converses(session: Session, project: Project, ceo: Agent) -> bool:
+    """Whether the CEO's seat runs on a harness that can hold the boardroom
+    conversation (R7) — the harness its work runs on, which is the one its
+    talk runs on too."""
+    seat = seat_for(ceo, role_version_for(session, ceo),
+                    (project.integrations or {}).get("runtime"))
+    found = HARNESSES.get(seat.harness)
+    return found is not None and (found.conversation or found.family == "mock")
 
 
 def _end_session(session: Session, project: Project, live_run: Run | None,
@@ -356,12 +373,16 @@ def _prepare_session(session: Session, project: Project, ceo: Agent) -> tuple[di
         api_token=token_plain,
     )
     job.system_prompt = build_system_prompt(session, ceo, project, lane="chat") + CHAT_ADDENDUM
-    # The boardroom chat runs on the Agent SDK whatever the CEO's seat says —
-    # the resident conversation is SDK-held until every harness can hold one
-    # (docs/RUNTIMES.md, M6) — so that is the harness this run is pinned to.
-    seat = seat_for(ceo, role_version)
-    _pin_seat(session, run, job, replace(seat, harness=effective_harness(
-        CHAT_HARNESS, (project.integrations or {}).get("runtime"))))
+    # The boardroom is held on the CEO's own seat — its model, its harness,
+    # its provider's credential — like any run of that seat (docs/RUNTIMES.md,
+    # M6). The harness's own entry holds the conversation; the SDK's entry
+    # is the SDK's resident client.
+    seat = seat_for(ceo, role_version, (project.integrations or {}).get("runtime"))
+    _pin_seat(session, run, job, seat)
+    job.provider_spec = _provider_spec(session, project, seat.provider)
+    from yaaf.runner.backends import get_backend
+
+    chat_entry = getattr(get_backend(seat.harness), "entrypoint", "sandbox_entry.py")
     job.tool_permissions = dict(role_version.tool_permissions) if role_version else {}
     # Same sources, same cost lesson: the chat lane mounts them exactly as a run
     # does, so it gets the same paragraph describing them.
@@ -373,7 +394,7 @@ def _prepare_session(session: Session, project: Project, ceo: Agent) -> tuple[di
     from yaaf.server.recognizers import credentials_prompt
 
     job.system_prompt += credentials_prompt(*announced_credentials(role_secrets))
-    job.billing_env = {**_billing_env(session, project), **role_secrets}
+    job.billing_env = {**_billing_env(session, project, seat.provider), **role_secrets}
 
     # Chat gets its own scratch at /workspace: a run's staging must never race
     # a resident session's. It also gets the project's working tree read-only
@@ -400,6 +421,12 @@ def _prepare_session(session: Session, project: Project, ceo: Agent) -> tuple[di
         "YAAF_API_TOKEN": token_plain,
         "YAAF_MODEL": job.model,
         "YAAF_EFFORT": job.effort,
+        "YAAF_CHAT_ENTRY": chat_entry,
+        # What a priced harness meters each turn by, and where its provider
+        # is — read exactly as a work run of this seat reads them.
+        "YAAF_PRICE": json.dumps(job.price) if job.price else "",
+        "YAAF_MODEL_FLAGS": json.dumps(job.model_flags or {}),
+        "YAAF_PROVIDER": json.dumps(job.provider_spec or {}),
         "YAAF_TOOL_PERMISSIONS": json.dumps(job.tool_permissions),
         # Stated rather than left to the default. This lane only ever runs the
         # CEO (chat._resident_ceo refuses anything else), so the surface is the

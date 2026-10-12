@@ -117,7 +117,7 @@ large. **M0** marks the ones that already have.
 | `sandbox_entry.py:1648`, `:1668` | `Read/Write/Bash/WebFetch…` — Claude Code's built-in names | manifest `builtins` map |
 | `sandbox_entry.py:1745` | plan meter parsed from the SDK's `RateLimitEvent` | a normalized `plan` event; provider-declared |
 | `sandbox_entry.py:1792`, `daemon.py:602` | Anthropic/Claude Code error strings | `error_kind` in `result.json`; markers per provider — **M0** |
-| `chat_entry.py:28`, `:410` | `ClaudeSDKClient` holds the boardroom conversation | driver `converse()` (M6) |
+| `chat_entry.py:28`, `:410` | `ClaudeSDKClient` holds the boardroom conversation | the seat's own driver, a resumed attempt per turn — **M6** |
 | `runner/backends/__init__.py` | `agent_sdk` \| `mock` | a backend per harness name — **M0**; one sandbox backend — M1 |
 | `runner/backends/agent_sdk.py:89` | `YAAF_MODEL`, `YAAF_EFFORT`, `YAAF_MAX_USD` env | a `RunSpec` file beside the context pack |
 | `runner/daemon.py:191`, `chat.py:353`, `types.py:21`, `sandbox_entry.py:43`, `cli/spend.py:137`, `core/models.py:703`, `api/admin.py:172` | default `claude-sonnet-5-5`, seven copies | the model catalog's default; the sandbox keeps a literal a test holds to it — **M0** |
@@ -382,7 +382,7 @@ All of them read manifests and the catalog; none names a harness.
 | R4 | **One project, one meter.** All of a project's credentials meter in USD or all in tokens. Two units cannot share one cap, and inventing an exchange rate between them is inventing a number. (Open question 1.) | project creation, a provider's credential attached, the billing credential changed (built in M3) |
 | R5 | **A seat whose provider has no credential on the project cannot be hired, and a project with such a seat cannot start.** It fails at the door, not at 3am. | every door R1 is at, the start, removing a provider's credential; lease backstop; health (built in M3) |
 | R6 | **An effort the model does not support is refused**, with the list it does. Never mapped silently, in either direction. The harness's list first (a loop on the OpenAI shape has no dial at all), then the model's. | the role version, hire, repin, override, and every door R1 is at; lease backstop (built in M4) |
-| R7 | **A CEO seat holding the boardroom chat must be on a harness with `conversation`.** | hire, start (from M6) |
+| R7 | **A CEO seat holding the boardroom chat must be on a harness with `conversation`.** Every harness registered today has it; a new one has it only once it is shown to resume a session turn after turn. | the CEO role version, every door R1 is at for the CEO's seat while the chat is on, the door that turns the chat on; health; the chat supervisor holds no session for one that slipped past (built in M6) |
 
 Every one of them also shows in the health checklist and the fire drill's
 "where it stopped", because both read the same functions.
@@ -631,7 +631,8 @@ Two things moved on:
   first real one R1 refuses.
 
 **The boardroom chat stays on the SDK** whatever the CEO's seat names, and its
-runs are pinned as `claude_agent_sdk` so the record says so — until M6.
+runs are pinned as `claude_agent_sdk` so the record says so — until M6, which
+moved it onto the CEO's own seat.
 
 ### M2 — `anthropic_api`: the loop family's reference ✅ (but the live run)
 - [x] `LoopDriver` (`yaaf/runner/loop_harness.py`) over a provider-neutral
@@ -847,7 +848,14 @@ What M4 found on the way — each now configured against, with a test:
       not, the pattern is wrong and gets fixed before the next one lands.
 
 ### M6 — The conversations
-- [ ] The boardroom chat on any harness with `conversation` (R7)
+- [x] The boardroom chat on any harness with `conversation` (R7). The
+      session is the CEO's own seat — its model, harness, provider and
+      credential, priced as its runs are — and the harness's own entry holds
+      it: the SDK's resident client as before, every other driver as one
+      attempt per turn resumed from the last (`chat_entry.DriverConversation`):
+      a CLI by its session id, yaaf's loop by continuing its transcript when
+      the last reply finished. A driver's conversation is re-primed from the
+      boardroom every 25 turns, because the loop compacts nothing
 - [ ] The Founder and the goal grader on any of them, still on the platform
       key and never a project's
 

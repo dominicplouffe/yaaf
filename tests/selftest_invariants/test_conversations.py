@@ -1,0 +1,305 @@
+"""Invariant selftests: the conversations (docs/RUNTIMES.md, M6) — the
+boardroom chat held on the CEO's own seat, on any harness that can hold one.
+
+The rule under attack is R7: a CEO seat holding the boardroom chat must be on
+a harness with `conversation`. Every harness registered today can hold one, so
+the rule is attacked against a registered harness that cannot — it reads the
+registry, never a name — at the role version, the start, the door that turns
+the chat on, the health checklist, and the supervisor's own backstop.
+
+And the lane itself: the session is pinned to, priced for and paid by the
+seat it talks as, and a harness other than the SDK holds it as resumed
+attempts of its own driver — yaaf's loop by continuing its transcript.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import importlib
+import json
+import sys
+import types
+
+import httpx
+import pytest
+
+from tests.conftest import ADMIN, ROLE_MIN, make_project
+from yaaf.core.db import db_session
+from yaaf.core.models import Agent, Run, RunStatus
+from yaaf.runtimes import harnesses
+from yaaf.runtimes.harnesses import Harness
+
+OFFLINE = {"files": True, "bash": False, "web": False}
+
+
+@pytest.fixture()
+def one_shot(monkeypatch):
+    """A harness that runs work and cannot resume a session: everything a
+    Claude harness can do but hold the boardroom."""
+    monkeypatch.setitem(harnesses.HARNESSES, "one_shot", Harness(
+        name="one_shot", label="One-shot harness", family="cli",
+        providers=("anthropic",), accepts=("anthropic:api_key", "anthropic:subscription")))
+
+
+def _role(client, slug: str, **fields):
+    return client.post("/admin/roles", headers=ADMIN, json={
+        "slug": slug, "name": slug.title(), **ROLE_MIN, **fields})
+
+
+def _credential(client, name: str = "Key", **fields) -> str:
+    response = client.post("/admin/settings/llm-credentials", headers=ADMIN, json={
+        "name": name, "mode": "api_key", "value": "sk-ant-api03-test-value", **fields})
+    assert response.status_code == 201, response.text
+    return response.json()["id"]
+
+
+def _fake_sandbox(monkeypatch) -> list[dict]:
+    from yaaf.runner import sandbox
+
+    launched: list[dict] = []
+    monkeypatch.setattr(sandbox, "start_chat_container",
+                        lambda **kw: (launched.append(kw), "cid")[1])
+    monkeypatch.setattr(sandbox, "chat_container_run_ids", lambda project_id: set())
+    monkeypatch.setattr(sandbox, "stop_chat_container", lambda project_id: "")
+    return launched
+
+
+# ── R7: the CEO's seat must be able to hold a conversation ──────────────────────
+
+
+def test_a_ceo_role_cannot_be_written_onto_a_harness_that_cannot_converse(client, one_shot):
+    make_project(client, start=False)
+    refused = _role(client, "ceo", is_ceo_role=True, harness="one_shot")
+    assert refused.status_code == 422
+    assert "cannot hold the boardroom conversation" in refused.text
+    # Any other seat may run there: R7 is about the chairman's real-time room.
+    assert _role(client, "worker", harness="one_shot").status_code == 200
+
+
+def test_a_project_whose_ceo_cannot_converse_does_not_start_with_the_chat_on(
+        client, one_shot):
+    make_project(client, start=False)
+    project = make_project(client, slug="silent", start=False,
+                           billing_secret_id=_credential(client))
+    with db_session() as session:
+        session.get(Agent, project["ceo_agent_id"]).harness_override = "one_shot"
+    start = f"/admin/projects/{project['id']}/start"
+    refused = client.post(start, headers=ADMIN)
+    assert refused.status_code == 422
+    assert "CEO: One-shot harness cannot hold the boardroom conversation" in refused.text
+    # With the chat off the boardroom is answered by queued runs, which any
+    # harness can take.
+    assert client.patch(f"/admin/projects/{project['id']}", headers=ADMIN, json={
+        "integrations": {"chat": {"enabled": False}}}).status_code == 200
+    assert client.post(start, headers=ADMIN).status_code == 200
+    # And it cannot come back on under the same seat.
+    back_on = client.patch(f"/admin/projects/{project['id']}", headers=ADMIN,
+                           json={"integrations": {"chat": {"enabled": True}}})
+    assert back_on.status_code == 422 and "boardroom conversation" in back_on.text
+
+
+def test_it_is_named_on_the_health_checklist(client, one_shot):
+    make_project(client, start=False)
+    project = make_project(client, slug="checked", billing_secret_id=_credential(client))
+    with db_session() as session:
+        session.get(Agent, project["ceo_agent_id"]).harness_override = "one_shot"
+    seats = [c for c in client.get(f"/observe/projects/{project['id']}/health",
+                                   headers=ADMIN).json()["checks"] if c["key"] == "seats"]
+    assert seats and "cannot hold the boardroom conversation" in seats[0]["detail"]
+
+
+def test_the_supervisor_holds_no_session_on_a_seat_that_cannot_converse(
+        client, one_shot, monkeypatch):
+    """The backstop for a seat changed behind every door: no session, so the
+    boardroom falls back to queued runs — and the CEO's work runs are not
+    refused for a rule about the chat."""
+    from yaaf.runner import chat
+    from yaaf.runner.daemon import _seat_problem
+
+    launched = _fake_sandbox(monkeypatch)
+    make_project(client, start=False)
+    project = make_project(client, slug="backstop", billing_secret_id=_credential(client))
+    chat.chat_supervisor_once()
+    assert len(launched) == 1
+    with db_session() as session:
+        session.get(Agent, project["ceo_agent_id"]).harness_override = "one_shot"
+    chat.chat_supervisor_once()
+    with db_session() as session:
+        ended = session.query(Run).filter_by(kind="chat_session").one()
+        assert ended.status == RunStatus.KILLED
+        assert "cannot hold a conversation" in ended.summary
+        from yaaf.core.models import Project
+
+        assert _seat_problem(session, session.get(Project, project["id"]),
+                             session.get(Agent, project["ceo_agent_id"])) is None
+    chat.chat_supervisor_once()
+    assert len(launched) == 1
+
+
+# ── the session runs on the CEO's own seat ─────────────────────────────────────
+
+
+def test_a_claude_ceo_is_held_by_the_sdk_as_it_always_was(client, monkeypatch):
+    from yaaf.runner import chat
+
+    launched = _fake_sandbox(monkeypatch)
+    make_project(client, start=False)
+    make_project(client, slug="claude-ceo", billing_secret_id=_credential(client))
+    chat.chat_supervisor_once()
+    env = launched[0]["env"]
+    assert env["YAAF_CHAT_ENTRY"] == "sandbox_entry.py"
+    assert env["ANTHROPIC_API_KEY"] == "sk-ant-api03-test-value"
+    with db_session() as session:
+        run = session.query(Run).filter_by(kind="chat_session").one()
+        assert (run.provider, run.harness) == ("anthropic", "claude_agent_sdk")
+
+
+def test_a_deepseek_ceo_talks_on_deepseek_priced_and_paid_as_its_runs_are(
+        client, monkeypatch):
+    from yaaf.runner import chat
+
+    launched = _fake_sandbox(monkeypatch)
+    make_project(client, start=False)
+    assert client.put("/admin/settings/model-prices/deepseek-chat", headers=ADMIN,
+                      json={"input": 0.28, "output": 0.42}).status_code == 200
+    assert _role(client, "ceo", is_ceo_role=True, model="deepseek-chat",
+                 tool_permissions=OFFLINE).status_code == 200
+    deepseek = _credential(client, "DeepSeek key", provider="deepseek",
+                           value="sk-deepseek-test-value")
+    created = client.post("/admin/projects", headers=ADMIN, json={
+        "slug": "deepseek-ceo", "name": "DeepSeek CEO", "chairman_email": "chair@example.com",
+        "goal": "Prove the framework works end to end.", "ceo_role_slug": "ceo",
+        "ceo_name": "CEO", "billing_secret_id": deepseek,
+        "teams": [{"role_slug": "worker", "name": "Alpha", "employees": ["Lead"],
+                   "model_overrides": {"Lead": "deepseek-chat"}}]})
+    assert created.status_code == 200, created.text
+    started = client.post(f"/admin/projects/{created.json()['id']}/start", headers=ADMIN)
+    assert started.status_code == 200, started.text
+    chat.chat_supervisor_once()
+    env = launched[0]["env"]
+    assert env["YAAF_CHAT_ENTRY"] == "openai_compatible_entry.py"
+    assert env["DEEPSEEK_API_KEY"] == "sk-deepseek-test-value"
+    assert "ANTHROPIC_API_KEY" not in env
+    assert json.loads(env["YAAF_PRICE"])["output"] == 0.42
+    assert json.loads(env["YAAF_PROVIDER"])["base_url"] == "https://api.deepseek.com/v1"
+    with db_session() as session:
+        run = session.query(Run).filter_by(kind="chat_session").one()
+        assert (run.model, run.provider, run.harness) == (
+            "deepseek-chat", "deepseek", "openai_compatible")
+
+
+# ── the sandbox side: a conversation on any driver ──────────────────────────────
+
+
+def _chat_entry(monkeypatch, entry: str = "sandbox_entry.py", **env):
+    for name, value in {"YAAF_API_BASE_URL": "http://api:8080", "YAAF_API_TOKEN": "t",
+                        "YAAF_RUN_ID": "run_chat", "YAAF_TOOL_PERMISSIONS": "{}",
+                        "YAAF_CHAT_ENTRY": entry, **env}.items():
+        monkeypatch.setenv(name, value)
+    import yaaf.runner.sandbox_entry as sandbox_entry_module
+
+    monkeypatch.setitem(sys.modules, "sandbox_entry", importlib.reload(sandbox_entry_module))
+    import yaaf.runner.chat_entry as chat_entry_module
+
+    return importlib.reload(chat_entry_module)
+
+
+class _ScriptedDriver:
+    """A driver whose every attempt is one turn of a script, recording the
+    prompt and the session it was asked to resume."""
+
+    def __init__(self, base, turns: list[str]):
+        self.base, self.turns, self.attempts = base, turns, []
+
+    async def attempt(self, prompt, resume=None):
+        self.attempts.append({"prompt": prompt, "resume": resume})
+        yield self.base.Session("thread-1")
+        yield self.base.Text(self.turns.pop(0))
+        yield self.base.AttemptResult(cost_usd=0.002, tokens_in=40, tokens_out=8,
+                                      cache_creation=0, cache_read=100)
+
+    def error_kind(self, exc):
+        return None
+
+
+def test_a_driver_holds_the_boardroom_one_resumed_attempt_per_turn(monkeypatch, tmp_path):
+    chat_entry = _chat_entry(monkeypatch, entry="scripted_entry.py")
+    driver = _ScriptedDriver(chat_entry.base, ["Two shipped.", "The third ships Friday."])
+    monkeypatch.setitem(sys.modules, "scripted_entry", types.SimpleNamespace(
+        make_driver=lambda system, path: driver))
+    posted, booked = [], []
+    messages = [{"id": "m0", "from_user": "u1", "body": "How many shipped?"}]
+
+    def call(method, path, payload=None, params=None):
+        if method == "GET" and path == "/agent/messages":
+            if len(posted) >= 2:
+                return {"status": 401, "body": {}}
+            if len(posted) == 1 and len(messages) == 1:
+                messages.append({"id": "m1", "from_user": "u1", "body": "And the third?"})
+            return {"status": 200, "body": list(messages)}
+        if method == "POST" and path == "/agent/messages":
+            posted.append(payload["body"])
+        if path == "/agent/chat_usage":
+            booked.append(payload)
+        if path == "/agent/channels":
+            return {"status": 200, "body": [{"id": "chan", "kind": "boardroom", "unread": 1}]}
+        return {"status": 200, "body": {}}
+
+    (tmp_path / "system_prompt.txt").write_text("You are the CEO.")
+    monkeypatch.setattr(chat_entry.base, "STAGING", tmp_path)
+    monkeypatch.setattr(chat_entry.base, "_call", call)
+
+    assert asyncio.run(chat_entry.main()) == 0
+    assert posted == ["Two shipped.", "The third ships Friday."]
+    # The second turn resumes the session the first one named.
+    assert [a["resume"] for a in driver.attempts] == [None, "thread-1"]
+    assert "And the third?" in driver.attempts[1]["prompt"]
+    assert [(b["tokens_in"], b["cache_read_tokens"], b["cost_usd"]) for b in booked] == [
+        (40, 100, 0.002), (40, 100, 0.002)]
+
+
+def test_yaafs_loop_carries_the_conversation_in_its_transcript(monkeypatch):
+    """The loop resumes nothing on disk: its transcript is the session. A
+    finished reply followed by the chairman's next word is a new turn on the
+    same transcript — not the interrupted call made again."""
+    price = {"input": 0.28, "output": 0.42, "cache_read": 0.028, "cache_write_5m": 0.0,
+             "cache_write_1h": 0.0, "web_search": 0.01}
+    chat_entry = _chat_entry(
+        monkeypatch, entry="openai_compatible_entry.py", YAAF_MODEL="deepseek-chat",
+        YAAF_PRICE=json.dumps(price), DEEPSEEK_API_KEY="sk-test",
+        YAAF_PROVIDER=json.dumps({"name": "deepseek", "base_url": "https://api.deepseek.com/v1",
+                                  "key_env": "DEEPSEEK_API_KEY"}))
+    import yaaf.runner.loop_harness as loop_module
+
+    monkeypatch.setitem(sys.modules, "loop_harness", importlib.reload(loop_module))
+    import yaaf.runner.openai_compatible_entry as api_module
+
+    api = importlib.reload(api_module)
+    monkeypatch.setattr(chat_entry.base, "_call", lambda *a, **k: {"status": 200, "body": {}})
+    monkeypatch.setattr(chat_entry.base, "_builtin_tools", lambda: [])
+    monkeypatch.setattr(chat_entry.base, "_external_mcp_servers", lambda: {})
+    sent: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(json.loads(request.content))
+        reply = ["Two shipped.", "Friday."][len(sent) - 1]
+        lines = [{"choices": [{"index": 0, "delta": {"content": reply}}]},
+                 {"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]},
+                 {"choices": [], "usage": {"prompt_tokens": 100, "completion_tokens": 5}}]
+        body = "".join(f"data: {json.dumps(line)}\n\n" for line in lines) + "data: [DONE]\n\n"
+        return httpx.Response(200, headers={"content-type": "text/event-stream"},
+                              content=body.encode())
+
+    client = api.OpenAICompatibleClient(model="deepseek-chat", spec=chat_entry.base.PROVIDER,
+                                        transport=httpx.MockTransport(handler))
+    conversation = chat_entry.DriverConversation(
+        sys.modules["loop_harness"].LoopDriver(client, "You are the CEO."))
+
+    async def talk():
+        return [await conversation.turn("chan", "How many shipped?"),
+                await conversation.turn("chan", "And the third?")]
+
+    assert asyncio.run(talk()) == ["Two shipped.", "Friday."]
+    assert [(m["role"], m["content"]) for m in sent[1]["messages"][1:]] == [
+        ("user", "How many shipped?"), ("assistant", "Two shipped."),
+        ("user", "And the third?")]

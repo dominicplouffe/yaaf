@@ -213,7 +213,8 @@ def create_role(body: RoleIn, session: Session = Depends(db)) -> dict:
     # A role whose grants its harness cannot honour, or whose model it cannot
     # serve, is refused here — at the version, before any project pins it.
     problem = seat_refusal(body.harness, body.model, body.tool_permissions,
-                           priced=prices.covered(session, body.model), effort=body.effort)
+                           priced=prices.covered(session, body.model), effort=body.effort,
+                           converses=body.is_ceo_role)
     if problem:
         raise HTTPException(status_code=422, detail=f"role '{body.slug}': {problem}")
     role = session.execute(select(Role).where(Role.slug == body.slug)).scalar_one_or_none()
@@ -2491,6 +2492,10 @@ def patch_project(project_id: str, body: ProjectPatch, session: Session = Depend
             )
         project.integrations = {**(project.integrations or {}), **body.integrations}
         changed["integrations"] = body.integrations
+        if "chat" in body.integrations:
+            # R7 from the other side: the CEO's seat stayed put and the
+            # boardroom chat came on.
+            refuse_unrunnable_seats(session, project, _project_agents(session, project.id))
     if body.deadline is not None or body.clear_deadline:
         # Operate keeps the refusal: its dates belong to cycles, which already
         # carry their own due-by AND its provenance, and a second competing

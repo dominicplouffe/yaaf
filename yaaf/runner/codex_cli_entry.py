@@ -359,5 +359,10 @@ class CodexCliDriver(base.CliDriver):
         return None
 
 
+#: What builds this harness's driver — for a run, and for the boardroom
+#: conversation (chat_entry), which holds one as resumed attempts.
+make_driver = CodexCliDriver
+
+
 if __name__ == "__main__":
-    raise SystemExit(asyncio.run(base.run_harness(CodexCliDriver)))
+    raise SystemExit(asyncio.run(base.run_harness(make_driver)))

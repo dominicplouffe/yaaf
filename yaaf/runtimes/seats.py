@@ -86,14 +86,16 @@ def _meters_usd(found, provider: str, credential) -> bool:
 
 def refusal(harness: str | None, model: str, tool_permissions: dict | None,
             credential: tuple[str | None, str | None] | None = None,
-            priced: bool | None = None, effort: str | None = None) -> str | None:
+            priced: bool | None = None, effort: str | None = None,
+            converses: bool = False) -> str | None:
     """Why a seat on `harness` running `model` under these grants cannot run,
     paying with `credential` — (provider, mode), when one is known — or None
     when it can. `priced` is whether the install can meter `model` in dollars
     (yaaf.core.prices.covered, which reads the install's own prices); a
-    caller with no database reads the shipped catalog. Every rule here reads
-    the registries and none names a harness (docs/RUNTIMES.md, "The rules this
-    adds")."""
+    caller with no database reads the shipped catalog. `converses` is whether
+    the seat holds the boardroom conversation — the CEO's, where the chat is
+    on. Every rule here reads the registries and none names a harness
+    (docs/RUNTIMES.md, "The rules this adds")."""
     provider = catalog.provider_of(model)
     name = harness or providers.provider(provider).default_harness
     found = HARNESSES.get(name)
@@ -103,6 +105,12 @@ def refusal(harness: str | None, model: str, tool_permissions: dict | None,
     if found.providers and provider not in found.providers:
         return (f"{found.label} cannot run {model}: it serves "
                 f"{', '.join(found.providers)} models, and {model} is {provider}'s")
+    # R7 — the chairman waits on the CEO's seat in real time, turn after
+    # turn; a harness that cannot resume a session cannot answer him.
+    if converses and not found.conversation:
+        return (f"{found.label} cannot hold the boardroom conversation, and this seat "
+                f"is the CEO's — run the CEO on a harness that can, or turn the "
+                f"boardroom chat off for this project")
     # R2 — a grant the harness cannot take away. Widening a role because the
     # transport is clumsy is exactly what a pinned role version exists to stop.
     unwithholdable = sorted(_withheld(tool_permissions) - set(found.withholds))

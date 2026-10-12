@@ -150,5 +150,10 @@ class ClaudeCliDriver(base.CliDriver):
                 f"{stderr[-self.STDERR_TAIL:].strip()}")
 
 
+#: What builds this harness's driver — for a run, and for the boardroom
+#: conversation (chat_entry), which holds one as resumed attempts.
+make_driver = ClaudeCliDriver
+
+
 if __name__ == "__main__":
-    raise SystemExit(asyncio.run(base.run_harness(ClaudeCliDriver)))
+    raise SystemExit(asyncio.run(base.run_harness(make_driver)))

@@ -536,9 +536,15 @@ class LoopDriver:
         # The transcript is held here, so a resume is the interrupted call made
         # again: no resume prompt, nothing redone, the cache intact. Only a
         # first attempt (or one that died before the model said anything)
-        # starts from the prompt.
+        # starts from the prompt. A transcript that ends on a finished reply
+        # was not interrupted: the prompt is the other side's next word — the
+        # boardroom conversation's next turn (chat_entry), with a call limit
+        # of its own.
         if resume is None or not self.transcript:
             self.transcript = [Turn("user", text=prompt)]
+        elif self.transcript[-1].role == "assistant" and not self.transcript[-1].calls:
+            self.transcript.append(Turn("user", text=prompt))
+            self.calls = 0
         yield base.Session(base.RUN_ID)
         specs = [ToolSpec(t.name, t.description, t.input_schema) for t in self.tools.values()]
         spent = 0.0

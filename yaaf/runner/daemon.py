@@ -224,7 +224,7 @@ def _seat_problem(session: Session, project: Project, agent: Agent) -> str | Non
     project's `runtime` override, which is a test switch, not a choice."""
     from yaaf.server.seat_checks import seat_problem
 
-    problem = seat_problem(session, project, [agent])
+    problem = seat_problem(session, project, [agent], chat=False)
     # The doors name the seat; the run already does.
     return problem.removeprefix(f"{agent.name}: ") if problem else None
 

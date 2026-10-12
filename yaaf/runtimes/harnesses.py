@@ -38,6 +38,10 @@ class Harness:
     #: the model as yaaf names it (the Claude harnesses, whose names are
     #: yaaf's). Empty: it has no effort dial at all, and the seat's is unused.
     efforts: tuple[str, ...] | None = None
+    #: Whether it can hold the boardroom conversation (R7): a session it can
+    #: resume turn after turn. Off unless shown — the chat lane is the one
+    #: place the chairman waits on a seat in real time.
+    conversation: bool = False
 
 
 HARNESSES: dict[str, Harness] = {h.name: h for h in (
@@ -47,6 +51,7 @@ HARNESSES: dict[str, Harness] = {h.name: h for h in (
         family="sdk",
         providers=("anthropic",),
         accepts=("anthropic:api_key", "anthropic:subscription"),
+        conversation=True,
     ),
     # The same CLI the SDK drives, driven directly: same model, same
     # credentials, same tools under the same names. The reference every other
@@ -57,6 +62,7 @@ HARNESSES: dict[str, Harness] = {h.name: h for h in (
         family="cli",
         providers=("anthropic",),
         accepts=("anthropic:api_key", "anthropic:subscription"),
+        conversation=True,
     ),
     # yaaf's own agent loop on the Messages API: no CLI underneath, the
     # built-in tools yaaf's own, every call priced from the catalog. API keys
@@ -69,6 +75,7 @@ HARNESSES: dict[str, Harness] = {h.name: h for h in (
         providers=("anthropic",),
         accepts=("anthropic:api_key",),
         cost="priced",
+        conversation=True,
     ),
     # The same loop on the OpenAI-compatible chat API: one client, and every
     # provider that speaks that shape is a row in the provider registry. The
@@ -84,6 +91,7 @@ HARNESSES: dict[str, Harness] = {h.name: h for h in (
         cost="priced",
         # The chat-completions shape has no common word for effort.
         efforts=(),
+        conversation=True,
     ),
     # The Codex CLI (`codex exec --json`), driven like the Claude CLI: the
     # first CLI that is not Claude's. It reports tokens but no dollars, so
@@ -102,6 +110,7 @@ HARNESSES: dict[str, Harness] = {h.name: h for h in (
         withholds=("bash", "web"),
         cost="priced",
         efforts=("low", "medium", "high", "xhigh", "max"),
+        conversation=True,
     ),
     # The scripted backend that drives the real API at $0: CI, the goldens and
     # the fire drill. It reads no credential and calls no model.

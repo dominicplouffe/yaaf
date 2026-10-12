@@ -42,14 +42,16 @@ CREDENTIALS = "/admin/settings/llm-credentials"
 @pytest.fixture()
 def picky(monkeypatch):
     """Two harnesses that cannot do what the Claude ones can: one that pays
-    only with an API key (R1), one that always has a shell (R2)."""
+    only with an API key (R1), one that always has a shell (R2). Both hold a
+    conversation, so a CEO put on either is refused for the rule under test
+    and not for R7."""
     monkeypatch.setitem(harnesses.HARNESSES, "key_only", Harness(
         name="key_only", label="Key-only harness", family="cli",
-        providers=("anthropic",), accepts=("anthropic:api_key",)))
+        providers=("anthropic",), accepts=("anthropic:api_key",), conversation=True))
     monkeypatch.setitem(harnesses.HARNESSES, "always_shell", Harness(
         name="always_shell", label="Always-a-shell harness", family="cli",
         providers=("anthropic",), accepts=("anthropic:api_key", "anthropic:subscription"),
-        withholds=("files", "web")))
+        withholds=("files", "web"), conversation=True))
 
 
 def _credential(client, name: str, mode: str) -> str:

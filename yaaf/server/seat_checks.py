@@ -17,10 +17,15 @@ from yaaf.runtimes.providers import provider as seller
 from yaaf.runtimes.seats import refusal, seat_for
 
 
-def seat_problem(session: Session, project: Project, agents: list[Agent]) -> str | None:
+def seat_problem(session: Session, project: Project, agents: list[Agent], *,
+                 chat: bool = True) -> str | None:
     """The first seat of `agents` that could not run on this project, named,
     with why — or None. The doors raise it; the lease and the health checklist
-    read it."""
+    read it. `chat` asks R7 too — whether the CEO's seat can hold the
+    boardroom — which the lease does not: a CEO's work run needs no
+    conversation, and the chat supervisor holds R7's backstop itself."""
+    from yaaf.core.models import AgentKind
+    from yaaf.runner.chat import chat_enabled
     from yaaf.server.contextpack import role_version_for
 
     # A project that holds no credential at all is not configured yet (its
@@ -40,7 +45,9 @@ def seat_problem(session: Session, project: Project, agents: list[Agent]) -> str
         problem = refusal(seat.harness, seat.model,
                           role_version.tool_permissions if role_version else {},
                           credential, priced=prices.covered(session, seat.model),
-                          effort=seat.effort)
+                          effort=seat.effort,
+                          converses=(chat and agent.kind == AgentKind.CEO
+                                     and chat_enabled(project)))
         if problem:
             return f"{agent.name}: {problem}"
     return None
