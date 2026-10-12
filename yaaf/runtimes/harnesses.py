@@ -78,8 +78,9 @@ HARNESSES: dict[str, Harness] = {h.name: h for h in (
         name="openai_compatible",
         label="OpenAI-compatible API (yaaf's own loop)",
         family="loop",
-        providers=("deepseek", "openrouter", "custom"),
-        accepts=("deepseek:api_key", "openrouter:api_key", "custom:api_key"),
+        providers=("deepseek", "openrouter", "custom", "moonshot", "qwen", "mistral", "xai"),
+        accepts=("deepseek:api_key", "openrouter:api_key", "custom:api_key",
+                 "moonshot:api_key", "qwen:api_key", "mistral:api_key", "xai:api_key"),
         cost="priced",
         # The chat-completions shape has no common word for effort.
         efforts=(),

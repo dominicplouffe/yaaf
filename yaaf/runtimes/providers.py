@@ -196,6 +196,62 @@ CUSTOM = Provider(
     credential_base_url=True,
 )
 
+#: The long tail (docs/RUNTIMES.md, M5): each speaks the OpenAI shape, so each
+#: is a row and nothing else. None ships a model: their lineups move monthly
+#: and no price could be checked, so a seat names `<provider>/<model>` and the
+#: install prices it. Each address is the vendor's international one; a key
+#: issued for another region (Moonshot's and Alibaba's China hosts) is a
+#: custom endpoint at that region's address.
+MOONSHOT = Provider(
+    name="moonshot",
+    label="Moonshot (Kimi)",
+    default_harness="openai_compatible",
+    kinds=(CredentialKind(mode="api_key", meter="usd", env_var="MOONSHOT_API_KEY",
+                          bills="Moonshot (Kimi) API key, billed in USD",
+                          shape_error=_not_anthropic),),
+    craft_model=None,
+    failure_markers=("invalid authentication",),
+    base_url="https://api.moonshot.ai/v1",
+)
+
+QWEN = Provider(
+    name="qwen",
+    label="Qwen (Alibaba Model Studio)",
+    default_harness="openai_compatible",
+    kinds=(CredentialKind(mode="api_key", meter="usd", env_var="DASHSCOPE_API_KEY",
+                          bills="Alibaba Model Studio (DashScope) API key, billed in USD",
+                          shape_error=_not_anthropic),),
+    craft_model=None,
+    failure_markers=("incorrect api key provided", "invalid_api_key"),
+    base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+)
+
+MISTRAL = Provider(
+    name="mistral",
+    label="Mistral",
+    default_harness="openai_compatible",
+    kinds=(CredentialKind(mode="api_key", meter="usd", env_var="MISTRAL_API_KEY",
+                          bills="Mistral API key, billed in USD",
+                          shape_error=_not_anthropic),),
+    craft_model=None,
+    # Mistral's 401 is a bare {"message": "Unauthorized"}.
+    failure_markers=("http 401: unauthorized",),
+    base_url="https://api.mistral.ai/v1",
+)
+
+XAI = Provider(
+    name="xai",
+    label="xAI (Grok)",
+    default_harness="openai_compatible",
+    kinds=(CredentialKind(mode="api_key", meter="usd", env_var="XAI_API_KEY",
+                          bills="xAI API key, billed in USD",
+                          shape_error=_not_anthropic),),
+    craft_model=None,
+    # Its search is a Responses API tool; the chat API this loop speaks has none.
+    failure_markers=("incorrect api key provided", "no credits"),
+    base_url="https://api.x.ai/v1",
+)
+
 #: Reached through the Codex CLI (docs/RUNTIMES.md, M4). An API key bills in
 #: dollars; a ChatGPT plan is a login — the auth.json `codex login` writes —
 #: metered in tokens, and like a Claude subscription it is a CLI credential:
@@ -218,7 +274,7 @@ OPENAI = Provider(
 )
 
 PROVIDERS: dict[str, Provider] = {p.name: p for p in (ANTHROPIC, DEEPSEEK, OPENROUTER, CUSTOM,
-                                                      OPENAI)}
+                                                      MOONSHOT, QWEN, MISTRAL, XAI, OPENAI)}
 
 #: Every credential row and every model the catalog does not know belongs here.
 #: Until a second provider exists that is not a guess but the only answer, and

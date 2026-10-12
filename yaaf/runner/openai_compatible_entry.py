@@ -2,9 +2,9 @@
 over the OpenAI-compatible chat API (docs/RUNTIMES.md, M3).
 
 One client for every provider that speaks that shape — DeepSeek, OpenRouter's
-hundreds of models, a local Ollama or vLLM server — because the shape is the
-same and only facts differ: the address, which variable holds the key, whether
-the provider states each call's cost. Those facts are the provider registry's
+hundreds of models, Kimi, Qwen, Mistral, Grok, a local Ollama or vLLM server —
+because the shape is the same and only facts differ: the address, which
+variable holds the key, whether the provider states each call's cost. Those facts are the provider registry's
 (yaaf.runtimes.providers), handed in by the daemon as `YAAF_PROVIDER`, so a new
 provider of this shape is a row there and nothing here.
 
@@ -159,6 +159,9 @@ class OpenAICompatibleClient:
                 if chunk.get("usage"):
                     usage = chunk["usage"]
                 for choice in chunk.get("choices") or []:
+                    # Moonshot's documented place for it: inside the last choice.
+                    if choice.get("usage") and not chunk.get("usage"):
+                        usage = choice["usage"]
                     delta = choice.get("delta") or {}
                     if delta.get("content"):
                         text.append(delta["content"])
@@ -205,9 +208,16 @@ class OpenAICompatibleClient:
         """The last line's usage as a bill. `prompt_tokens` counts the cached
         part too, which DeepSeek states as `prompt_cache_hit_tokens` and the
         OpenAI shape as `prompt_tokens_details.cached_tokens`; there are no
-        cache writes to pay for in this shape."""
+        cache writes to pay for in this shape.
+
+        The output is the larger of `completion_tokens` and what the total
+        leaves after the prompt: the OpenAI shape counts reasoning inside the
+        completion, xAI's beside it (billed at the output rate all the same),
+        and only the total says which."""
         usage = usage or {}
         prompt = int(usage.get("prompt_tokens") or 0)
+        completion = int(usage.get("completion_tokens") or 0)
+        total = int(usage.get("total_tokens") or 0)
         details = usage.get("prompt_tokens_details") or {}
         cached = int(usage.get("prompt_cache_hit_tokens")
                      or (details.get("cached_tokens") if isinstance(details, dict) else 0)
@@ -215,8 +225,7 @@ class OpenAICompatibleClient:
         cost = usage.get("cost") if self.reports_cost else None
         return base.AttemptResult(
             cost_usd=float(cost) if isinstance(cost, int | float) else None,
-            tokens_in=max(0, prompt - cached), tokens_out=int(usage.get("completion_tokens")
-                                                               or 0),
+            tokens_in=max(0, prompt - cached), tokens_out=max(completion, total - prompt),
             cache_creation=0, cache_read=cached)
 
     def error_kind(self, exc: BaseException) -> str | None:
@@ -227,6 +236,11 @@ class OpenAICompatibleClient:
                 return "auth"
             if exc.status in (408, 409, 429) or exc.status >= 500:
                 return "transient"
+            # Some providers refuse a dead key with a 400; their own words
+            # for it come with their address.
+            said = str(exc).lower()
+            if any(marker in said for marker in self.spec.get("failure_markers") or ()):
+                return "auth"
             return "auth" if base._error_kind(exc) == "auth" else "fatal"
         # A stream that dropped, or a line it cut in half.
         if isinstance(exc, httpx.TransportError | json.JSONDecodeError):

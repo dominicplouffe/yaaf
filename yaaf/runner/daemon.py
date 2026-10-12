@@ -508,7 +508,8 @@ def _billing_env(session: Session, project: Project, provider: str = DEFAULT_PRO
 def _provider_spec(session: Session, project: Project, provider: str) -> dict:
     """What a harness that calls the provider's API itself needs to know about
     it, for a sandbox that cannot import the registry: where it is, which
-    variable holds the key, whether it states its costs and searches. The
+    variable holds the key, whether it states its costs and searches, the
+    words its refusals use for a dead key. The
     address is the credential's where the provider's is (a custom server)."""
     from yaaf.core import project_credentials
 
@@ -521,7 +522,8 @@ def _provider_spec(session: Session, project: Project, provider: str) -> dict:
     base_url = (secret.base_url if seller.credential_base_url and secret is not None
                 else seller.base_url)
     return {"name": seller.name, "base_url": base_url, "key_env": seller.kind(mode).env_var,
-            "reports_cost": seller.reports_cost, "search": seller.search}
+            "reports_cost": seller.reports_cost, "search": seller.search,
+            "failure_markers": list(seller.failure_markers)}
 
 
 # ── execution ───────────────────────────────────────────────────────────────────

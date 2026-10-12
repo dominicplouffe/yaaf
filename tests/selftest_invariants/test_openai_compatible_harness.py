@@ -187,6 +187,45 @@ def test_the_cached_tokens_of_the_openai_shape_are_read_too(stage):
     assert r.requests[0]["model"] == "llama3.1:8b"
 
 
+def test_usage_inside_the_last_choice_is_read_too(run):
+    """Moonshot's documented place for a stream's usage: in the choice, not
+    beside it. A reply whose usage went unread would be a free one."""
+    chunks = _chunks("ok")
+    usage = chunks.pop()["usage"]
+    chunks[-1]["choices"][0]["usage"] = usage
+    _, result = _drive(run, [{"sse": chunks}])
+    assert (result["tokens_in"], result["cache_read_tokens"], result["tokens_out"]) == (200, 800, 50)
+    assert result["cost_usd"] == pytest.approx(_priced())
+
+
+@pytest.mark.parametrize(("usage", "out"), [
+    # xAI: reasoning beside the completion, inside the total.
+    ({"prompt_tokens": 663, "completion_tokens": 50, "total_tokens": 837,
+      "completion_tokens_details": {"reasoning_tokens": 124}}, 174),
+    # The OpenAI shape: reasoning inside the completion — not counted twice.
+    ({"prompt_tokens": 663, "completion_tokens": 174, "total_tokens": 837,
+      "completion_tokens_details": {"reasoning_tokens": 124}}, 174),
+    # No total at all: the completion is the output.
+    ({"prompt_tokens": 663, "completion_tokens": 50}, 50),
+])
+def test_reasoning_is_billed_as_output_wherever_the_provider_counts_it(run, usage, out):
+    _, result = _drive(run, [{"sse": _chunks("ok", usage=usage)}])
+    assert (result["tokens_in"], result["tokens_out"]) == (663, out)
+
+
+def test_a_dead_key_refused_as_a_bad_request_is_auth_by_the_providers_words(stage):
+    """xAI refuses a wrong key with a 400. The words it uses come with its
+    address, so the run is a dead credential and not a bad request."""
+    r = stage(spec={"name": "xai", "base_url": "https://api.x.ai/v1", "key_env": "XAI_API_KEY",
+                    "reports_cost": False, "search": False,
+                    "failure_markers": ["incorrect api key provided"]}, model="xai/grok-x")
+    code, result = _drive(r, [{"status": 400, "body": {
+        "code": "Client specified an invalid argument",
+        "error": "Incorrect API key provided: xa***ey. You can obtain an API key from "
+                 "https://console.x.ai."}}, {"sse": TEXT}])
+    assert code == 1 and result["error_kind"] == "auth" and len(r.requests) == 1
+
+
 def test_a_provider_that_states_its_cost_is_billed_at_it_with_no_price(stage):
     r = stage(spec=OPENROUTER, model="openrouter/qwen/qwen3-coder")
     r.mp.setattr(r.base, "PRICE", None)

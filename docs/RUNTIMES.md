@@ -459,7 +459,7 @@ Where the providers people ask for actually land:
 | OpenRouter, local models (Ollama, vLLM) | the same client | M3 ✅ |
 | Codex | `codex_cli`, plus the `openai` provider with an API key or a ChatGPT login | M4 ✅ |
 | Gemini | `gemini_cli`, or a Gemini `ModelClient` on the loop | M5 |
-| Kimi, Qwen, Mistral, Grok | `Provider` entries on the M3 client where they speak the OpenAI shape; their own CLIs where those are better | M5 |
+| Kimi, Qwen, Mistral, Grok | `Provider` entries on the M3 client — `moonshot`, `qwen`, `mistral`, `xai` | M5 ✅ |
 
 Everything else — the credential form, the role editor's pickers, the health
 checklist, the fire drill, the spend report, the receipt, the MCP `catalog`,
@@ -832,8 +832,17 @@ What M4 found on the way — each now configured against, with a test:
 - [ ] Gemini, by either road: `gemini_cli` on `CliDriver`, or a Gemini
       `ModelClient` on the loop
 - [ ] `opencode` (several providers through one harness), `cursor` CLI
-- [ ] Kimi, Qwen, Mistral, Grok and the rest: `Provider` entries on the M3
-      client wherever they speak the OpenAI shape
+- [x] Kimi, Qwen, Mistral, Grok: `moonshot`, `qwen`, `mistral` and `xai`,
+      each a `Provider` entry on the M3 client and nothing else — a row in
+      `providers.py` and one word in the harness's provider list. No model
+      ships for any of them (their lineups move monthly and no price could be
+      checked): a seat names `xai/<model>` and the install prices it. What
+      they taught the client, generically, with a test each: usage can arrive
+      inside the last choice (Moonshot's documented place); reasoning can sit
+      beside the completion rather than inside it (xAI), so the output billed
+      is the larger of the completion and the total less the prompt; and a
+      dead key can be a 400 (xAI), so a provider's own words for one travel
+      with its address
 - [ ] Each one is the "Adding a provider" table and nothing else. If one is
       not, the pattern is wrong and gets fixed before the next one lands.
 

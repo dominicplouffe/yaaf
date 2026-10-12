@@ -30,8 +30,10 @@ budget unit — there is no separate switch:
 
 A credential names the **provider** it pays — Anthropic by default; OpenAI
 (an API key, or a ChatGPT plan as the `auth.json` that `codex login` writes),
-DeepSeek, OpenRouter, or a custom OpenAI-compatible server (its address goes
-with the credential). A project's billing credential pays whichever provider it is for;
+DeepSeek, OpenRouter, Moonshot (Kimi), Qwen (Alibaba Model Studio), Mistral,
+xAI (Grok), or a custom OpenAI-compatible server (its address goes with the
+credential — which is also how a key for Moonshot's or Alibaba's China region
+is used). A project's billing credential pays whichever provider it is for;
 a project with a seat on a second provider's model pays that provider too,
 under its **Settings → Money → Other providers**, with a credential metered in
 the same unit — one project, one meter, one cap. A seat on a provider the

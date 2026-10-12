@@ -25,7 +25,7 @@ from yaaf.core.models import LedgerEntry, Project, ProjectLlmCredential, Run
 from yaaf.runner.backends import get_backend
 from yaaf.runner.daemon import execute_job, lease_and_prepare
 from yaaf.runner.types import RunResult
-from yaaf.runtimes import catalog
+from yaaf.runtimes import catalog, providers
 from yaaf.server.dispatcher import dispatch_once
 
 CREDENTIALS = "/admin/settings/llm-credentials"
@@ -306,9 +306,52 @@ def test_a_deepseek_seat_is_leased_onto_the_loop_with_its_own_key(client, critic
     assert "ANTHROPIC_API_KEY" not in critic_job.billing_env
     assert critic_job.provider_spec == {
         "name": "deepseek", "base_url": "https://api.deepseek.com/v1",
-        "key_env": "DEEPSEEK_API_KEY", "reports_cost": False, "search": False}
+        "key_env": "DEEPSEEK_API_KEY", "reports_cost": False, "search": False,
+        "failure_markers": ["authentication fails", "insufficient balance"]}
     assert critic_job.price["output"] == 0.42
     assert get_backend(critic_job.harness).entrypoint == "openai_compatible_entry.py"
+
+
+@pytest.mark.parametrize(("provider", "key_env", "address"), [
+    ("moonshot", "MOONSHOT_API_KEY", "https://api.moonshot.ai/v1"),
+    ("qwen", "DASHSCOPE_API_KEY", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"),
+    ("mistral", "MISTRAL_API_KEY", "https://api.mistral.ai/v1"),
+    ("xai", "XAI_API_KEY", "https://api.x.ai/v1"),
+])
+def test_a_long_tail_provider_is_a_row_and_nothing_else(client, provider, key_env, address):
+    """M5's promise: Kimi, Qwen, Mistral and Grok are each a provider entry. A
+    seat on one is hired, paid with its own key, and leased onto the loop at
+    its vendor's address — through the doors DeepSeek's seat goes through."""
+    make_project(client, start=False)
+    model = f"{provider}/some-model"
+    refused = _role(client, "critic", model=model, tool_permissions=OFFLINE)
+    assert refused.status_code == 422 and "no price on this install" in refused.text  # R3
+    assert _price(client, model).status_code == 200
+    assert _role(client, "critic", model=model, tool_permissions=OFFLINE).status_code == 200
+    claude = _id(_credential(client, "Claude key", value="sk-ant-api03-claude-test"))
+    project = client.post("/admin/projects", headers=ADMIN, json=_body(
+        "unpaid", billing_secret_id=claude))
+    label = providers.provider(provider).label
+    assert project.status_code == 422 and f"no {label} credential" in project.text  # R5
+    theirs = _id(_credential(client, f"{provider} key", provider=provider,
+                             value=f"key-for-{provider}"))
+    project = client.post("/admin/projects", headers=ADMIN, json=_body(
+        "paid", billing_secret_id=claude, credentials={provider: theirs})).json()
+    client.post(f"/admin/projects/{project['id']}/start", headers=ADMIN)
+    from yaaf.core import ids
+    from yaaf.core.models import RunQueue
+
+    with db_session() as session:
+        dispatch_once(session)
+        session.add(RunQueue(id=ids.new_id(ids.RUN), project_id=project["id"],
+                             agent_id=agent_by_name(project, "Dee"), kind="agent_run",
+                             trigger={"type": "test"}))
+    job = next(j for j in lease_and_prepare(limit=20)
+               if j.agent_id == agent_by_name(project, "Dee"))
+    assert (job.provider, job.harness) == (provider, "openai_compatible")
+    assert job.billing_env == {key_env: f"key-for-{provider}"}
+    assert (job.provider_spec["base_url"], job.provider_spec["key_env"]) == (address, key_env)
+    assert job.provider_spec["failure_markers"]
 
 
 def test_a_custom_servers_address_comes_from_its_credential(client):
