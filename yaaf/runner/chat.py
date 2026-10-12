@@ -387,7 +387,7 @@ def _prepare_session(session: Session, project: Project, ceo: Agent) -> tuple[di
     # Same sources, same cost lesson: the chat lane mounts them exactly as a run
     # does, so it gets the same paragraph describing them.
     job.system_prompt += _data_source_prompt(
-        _merge_project_data_sources(session, project, role_version, job))
+        _merge_project_data_sources(session, project, role_version, job), seat.harness)
     role_secrets = _role_secret_env(session, project, role_version)
     # The resident CEO knows its credentials the same way a run does.
     from yaaf.core.naming import announced_credentials

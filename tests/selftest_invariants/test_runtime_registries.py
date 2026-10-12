@@ -363,3 +363,20 @@ def test_the_loops_own_runs_are_not_evidence_for_the_table(client):
     _bills(project["id"], project["ceo_agent_id"], catalog.DEFAULT_MODEL,
            reported=5.0, priced=5.0, harness="anthropic_api")
     assert len(_gap_checks(client, project["id"])) == 1
+
+
+@pytest.mark.parametrize(("harness", "named"), [
+    ("claude_cli", "crm (mcp__crm__*)"),
+    ("gemini_cli", "crm (mcp_crm_*)"),
+    ("opencode", "crm (crm_*)"),
+])
+def test_a_prompt_names_a_data_sources_tools_as_the_seats_harness_shows_them(harness, named):
+    """The data-source paragraph told every model its tools were `mcp__crm__*`
+    — the Claude harnesses' names. A model told a name its harness does not
+    use looks for a tool it does not have."""
+    from yaaf.runner.daemon import _data_source_prompt
+    from yaaf.runtimes.harnesses import HARNESSES
+
+    assert f"Mounted as tools: {named}" in _data_source_prompt([{"name": "crm"}], harness)
+    for found in HARNESSES.values():
+        assert "{server}" in found.tool_ref and "{tool}" in found.tool_ref, found.name

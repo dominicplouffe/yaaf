@@ -215,7 +215,7 @@ def _materialize(session: Session, queued: RunQueue, project: Project) -> RunJob
     from yaaf.server.recognizers import credentials_prompt
 
     job.system_prompt += credentials_prompt(*announced_credentials(role_secrets))
-    job.system_prompt += _data_source_prompt(source_specs)
+    job.system_prompt += _data_source_prompt(source_specs, job.harness)
     return job
 
 
@@ -245,24 +245,29 @@ def _pin_seat(session: Session, run: Run, job: RunJob, seat) -> None:
     run.provider, run.harness = seat.provider, seat.harness
 
 
-def _data_source_prompt(specs: list[dict]) -> str:
+def _data_source_prompt(specs: list[dict], harness: str | None = None) -> str:
     """The DATA SOURCES paragraph — what is connected, and how to use it without
     setting money on fire.
 
     The cost lesson is stated here rather than in the always-on prompt because
     it is only payable when a source exists: a run with nothing connected should
     not carry a paragraph about pulls it cannot make. Both lanes (scheduled runs
-    and the resident chat) build it from the same specs.
+    and the resident chat) build it from the same specs. Tool names are the
+    ones the seat's harness shows its model (`Harness.tool_ref`).
     """
     if not specs:
         return ""
+    from yaaf.runtimes.harnesses import HARNESSES
+
+    found = HARNESSES.get(harness or "")
+    ref = found.tool_ref if found is not None else "mcp__{server}__{tool}"
     inline = [s.get("name", "?") for s in specs if s.get("access", "inline") != "bulk"]
     bulk = [s.get("name", "?") for s in specs if s.get("access", "inline") == "bulk"]
     lines = ["\n\nDATA SOURCES: MCP servers connected to this project for your role."]
     if inline:
         lines.append(
             " Mounted as tools: "
-            + ", ".join(f"{n} (mcp__{n}__*)" for n in inline)
+            + ", ".join(f"{n} ({ref.format(server=n, tool='*')})" for n in inline)
             + ". If a listed source's tools are absent from your toolset, report that "
             "plainly instead of guessing at causes."
         )
@@ -275,7 +280,7 @@ def _data_source_prompt(specs: list[dict]) -> str:
             "tool to see what each one offers."
         )
     lines.append(
-        "\n\nDATA HANDLING: every result a mounted mcp__* tool returns is copied into "
+        "\n\nDATA HANDLING: every result a mounted source's tool returns is copied into "
         "your context and paid for by the token, on that turn and on every turn after "
         "it. Use those tools only for small lookups you intend to read in full. For "
         "anything that could exceed a screenful — exports, row-level data, logs, "

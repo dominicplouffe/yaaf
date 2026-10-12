@@ -26,7 +26,7 @@ Start here if you're new; skim the table if you're not.
 |---|---|
 | [CLI.md](CLI.md) | Every `yaaf` command, the project spec shape, and a full provisioning script. |
 | [AGENT_API.md](AGENT_API.md) | The API your agents act through, and how to write a role that uses it well. |
-| [RUNTIMES.md](RUNTIMES.md) | **M0–M4 built; M5–M6 in progress.** Running a seat on any harness and provider — the Claude CLI, the Anthropic API under yaaf's own loop, then Codex, Gemini and the rest — under the same rules: the pattern, the refusals it adds, and what adding a provider costs. |
+| [RUNTIMES.md](RUNTIMES.md) | **M0–M6 built (the live runs and the Cursor CLI aside).** Running a seat on any harness and provider — the Claude CLI, the Anthropic API under yaaf's own loop, then Codex, Gemini and the rest — under the same rules: the pattern, the refusals it adds, and what adding a provider costs. |
 | [MCP_SERVER.md](MCP_SERVER.md) | **Built — M0 through M5.** yaaf as an MCP server: chairing your projects and founding new ones from a model client, every tool and scope, and the security model that makes writes safe. |
 
 ## Background

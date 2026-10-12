@@ -42,6 +42,9 @@ class Harness:
     #: searches; "provider" — the provider's API does, where it does (yaaf's
     #: loop); "none" — nothing does, so a role granting `web` is refused.
     search: str = "own"
+    #: The name the model sees for a tool `tool` of MCP server `server` —
+    #: what a prompt naming a data source's tools renders through.
+    tool_ref: str = "mcp__{server}__{tool}"
     #: Whether it can hold the boardroom conversation (R7): a session it can
     #: resume turn after turn. Off unless shown — the chat lane is the one
     #: place the chairman waits on a seat in real time.
@@ -129,6 +132,7 @@ HARNESSES: dict[str, Harness] = {h.name: h for h in (
         accepts=("google:api_key", "google:subscription"),
         cost="priced",
         efforts=("low", "high"),
+        tool_ref="mcp_{server}_{tool}",
         conversation=True,
     ),
     # The OpenCode CLI (`opencode run --format json`): one CLI for every
@@ -147,6 +151,7 @@ HARNESSES: dict[str, Harness] = {h.name: h for h in (
         cost="priced",
         efforts=(),
         search="none",
+        tool_ref="{server}_{tool}",
         conversation=True,
     ),
     # The scripted backend that drives the real API at $0: CI, the goldens and

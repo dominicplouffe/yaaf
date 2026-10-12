@@ -1,11 +1,14 @@
 # Runtimes — any harness, any provider, the same rules
 
-**Status: M0 through M4 are built — the seams, the Claude CLI as a second
-harness a seat can choose, yaaf's own agent loop on the Messages API as a
-third, the same loop on the OpenAI-compatible API for DeepSeek, OpenRouter
-and a local server, and the Codex CLI on an OpenAI key or a ChatGPT plan.
-Each milestone's one unticked line is a live seat on it, which only a
-deployment can tick. M5 onward is in progress.** This is the design and the tracking doc for running a seat on something other than the Claude Agent SDK:
+**Status: M0 through M6 are built — the seams; the Claude CLI as a second
+harness a seat can choose; yaaf's own agent loop on the Messages API and on
+the OpenAI-compatible API (DeepSeek, OpenRouter, Kimi, Qwen, Mistral, Grok, a
+local server); the Codex CLI on an OpenAI key or a ChatGPT plan; the Gemini
+CLI on a Gemini key or a Google login; OpenCode for every chat-API provider;
+the boardroom chat on the CEO's own seat, whatever its harness; and the
+Founder and goal grader on any provider's platform key. Each milestone's
+unticked line is a live seat on it, which only a deployment can tick; the
+Cursor CLI is not built, for want of a binary to read it off.** This is the design and the tracking doc for running a seat on something other than the Claude Agent SDK:
 the Claude CLI driven directly, the Anthropic API under yaaf's own loop, and
 then Codex, Gemini, OpenCode and whatever comes after them. Update the
 checkboxes as milestones land; if a decision here turns out wrong, change the
@@ -131,7 +134,7 @@ large. **M0** marks the ones that already have.
 | `server/plan_probe.py:59` | "Check now" calls Anthropic's usage URL | `provider.plan_probe` (optional) |
 | `api/admin.py:693–707` | `CRAFT_MODEL`, `_MODEL_RANK` — Claude only | catalog tiers, **within the seat's provider** — **M0** |
 | `runner/daemon.py:229` | the data-source paragraph names tools `mcp__<name>__*` | `manifest.tool_ref` renders the name the model actually sees |
-| `deploy/sandbox/Dockerfile` | installs `@anthropic-ai/claude-code` and `claude-agent-sdk` | one install script per harness |
+| `deploy/sandbox/Dockerfile` | installs `@anthropic-ai/claude-code` and `claude-agent-sdk` | one pinned install line per harness — built |
 | `founder/session.py`, `core/platform.py:56` | the Founder runs on the CLI via the SDK | the SDK for an Anthropic model, the provider's chat API for any other — **M6** |
 
 ---
@@ -446,7 +449,7 @@ The promise is that this list is the whole job:
 
 | A new… | Files |
 |---|---|
-| **CLI harness** | `drivers/<name>.py` (`argv`, `env`, `config_files`, `parse`, markers — a `CliDriver` subclass); a manifest entry; `deploy/sandbox/harnesses/<name>.sh`; recorded stream fixtures |
+| **CLI harness** | `yaaf/runner/<name>_entry.py` (`argv`, `env`, its config, `parse`, `error_kind` — a `CliDriver` subclass, exposing `make_driver`); a `Harness` entry; a backend line; a pinned install line and a `COPY` in the image; recorded stream fixtures and a contract test file (as built for Codex, Gemini and OpenCode) |
 | **API provider, OpenAI-compatible** | a `Provider` entry — base URL, credential kind, whether it states its costs or searches — and nothing else: the M3 client serves every one (`openai_compatible_entry.py`). Its models price in Settings, or ship priced in `catalog.py` once checked against the vendor's own list |
 | **API provider, another shape** | `<name>_entry.py` (a `ModelClient` on `loop_harness`); a `Provider` entry with its credential kinds; a `Harness` entry; fake-server contract tests |
 | **model** | a row in `catalog.py` — or none: `provider/model` names any model of a registered provider, ranked 0 |
@@ -472,20 +475,24 @@ this concept, the places do not get edited per provider at all.
 And forgetting one still fails a test, because the registries are tested for
 completeness:
 
-- every model names a registered provider and at least one harness that serves
-  it, and has a price unless every credential kind of its provider meters in
-  tokens;
+- every model names a registered provider and at least one harness that
+  serves it (a model without a price ships, and R3 refuses it under a dollar
+  meter until the install prices it — as built in M3);
 - every credential kind is accepted by at least one harness, and has a shape
-  check;
-- every harness has an install script, fixtures, a pinned version, and passes
-  the contract suite.
+  check and the provider's dead-credential words;
+- every harness's entry and what it imports is in the image, and its tool
+  names render through `tool_ref`; each CLI harness pins a version its
+  fixtures were recorded on.
 
 ### The contract suite
 
-`tests/selftest_invariants/test_harness_contract.py`, parametrized over every
-registered harness. CLI harnesses run against a fake binary that replays their
-recorded stream; loop providers against a fake HTTP server replaying recorded
-responses. Offline, $0, part of the default run:
+As built: `tests/selftest_invariants/test_harness_contract.py` holds the two
+Claude harnesses to it side by side; every other harness has a contract file
+of its own beside it (`test_loop_harness.py`, `test_openai_compatible_harness.py`,
+`test_codex_harness.py`, `test_gemini_harness.py`, `test_opencode_harness.py`),
+each asserting the same list. CLI harnesses run against a stand-in binary that
+replays their real recorded stream; loop providers against a fake HTTP server.
+Offline, $0, part of the default run:
 
 1. Usage parses to the fixture's known totals, cache split included.
 2. The governor stops a run whose priced cost crosses `max_usd`, and what was
@@ -535,8 +542,8 @@ touches, and whether a new provider edits it:
 | Credential-failure pause | `error_kind`, provider markers | no |
 | Craft lift (`stakes: high`) | catalog tier, within the provider | no |
 | Export / clone | role version `harness`; credentials by name per provider | no |
-| Context pack, data-source paragraph | tool names through `manifest.tool_ref` | no |
-| Sandbox image | one install script per harness | **yes — one file** |
+| Context pack, data-source paragraph | tool names through `Harness.tool_ref` (built in M5: the Gemini CLI and OpenCode name MCP tools their own way) | no |
+| Sandbox image | one pinned install line and one `COPY` per harness | **yes — one file** |
 | Goldens | unchanged: they run `mock` | no |
 | Docs | INTEGRATIONS (billing), AGENT_API (writing a role), DEPLOYMENT (image), SECURITY (each harness's own approvals off), GOVERNANCE (`max_usd_per_run` is the governor), PLAN (the multi-provider line) | once |
 
@@ -701,7 +708,7 @@ tool versions — is from the API's documentation and the SDK's types; the only
 live call made was the free one with an invalid key, which the API refuses
 before it validates anything else. The live run above is what proves it.
 
-### M3 — The first other providers: everything OpenAI-compatible
+### M3 — The first other providers: everything OpenAI-compatible ✅ (but the live run)
 One `ModelClient` for the OpenAI-compatible chat API reaches more providers
 than any other single piece of work, which is why it comes before any second
 CLI. Each named host is a `Provider` entry — base URL, credential kinds,
@@ -830,7 +837,7 @@ What M4 found on the way — each now configured against, with a test:
   only. The run says so in its trace rather than starting without them
   silently.
 
-### M5 — The long tail
+### M5 — The long tail ✅ (but the live runs, and Cursor)
 - [x] Gemini, by the CLI road: `gemini_cli` on `CliDriver`
       (`gemini_cli_entry.py`), pinned at 0.63.0, and the `google` provider —
       a Gemini API key in dollars, or a Google account login (the
@@ -886,7 +893,7 @@ What M4 found on the way — each now configured against, with a test:
 - [ ] **One seat of a live project on Gemini, and one on OpenCode.** Needs a
       deployment and the keys; nothing here can tick it
 
-### M6 — The conversations
+### M6 — The conversations ✅ (but the live run)
 - [x] The boardroom chat on any harness with `conversation` (R7). The
       session is the CEO's own seat — its model, harness, provider and
       credential, priced as its runs are — and the harness's own entry holds
@@ -919,13 +926,18 @@ What M4 found on the way — each now configured against, with a test:
    rate limit every project on the box shares" — with two providers that is two
    limits. Probably a per-provider ceiling beside the global one.
 3. **One image or one per harness.** One image is simpler and gets large.
-   Per-harness images are smaller and multiply builds. Start with one; split
-   when the size hurts.
-4. **Can the CEO pick a seat's harness when it hires?** Proposed: no. The CEO
+   Per-harness images are smaller and multiply builds. Started with one, and
+   it now carries four CLIs (Claude's, Codex, Gemini's, OpenCode) beside the
+   loop; split when the size hurts.
+4. **Can the CEO pick a seat's harness when it hires?** As built: no. The CEO
    hires roles; a role carries its harness; changing it is a role edit or a
    chairman override. Hiring stays free because it buys no new *kind* of spend.
-5. **A served model weaker than the hired one.** Price on the served model, as
-   designed. Should a downgrade also raise a flag?
+5. **A served model weaker than the hired one.** As built, a run is priced on
+   the model it was hired on — the sandbox holds that one price. Where a
+   harness can switch models without saying so (the Gemini CLI, after rate
+   limits on one family), the run stops rather than bill it; elsewhere the
+   served model is recorded on the run. Pricing on the served model, and a
+   flag on a downgrade, wait for a harness that switches and should not stop.
 6. **Web search on loop providers.** Under yaaf's loop a provider gets files,
    shell and fetch from yaaf, and search only where the provider runs one
    server-side — Anthropic, OpenAI and Gemini do; DeepSeek and most
