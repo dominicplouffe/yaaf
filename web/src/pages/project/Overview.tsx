@@ -40,12 +40,14 @@ import { PlanMeter } from "../../llmCredentials";
 import { HirePanel, gapsFor, needsOf, useRoleLibrary } from "../../roles";
 import type { ProjectCtx } from "../Project";
 
-interface ArtifactFile {
+/** A deliverable as the files index sends it: the newest version of a name,
+    with its receipt when one was written. */
+interface ShelfRow {
   key: string;
-  run_id: string | null;
   name: string;
   size: number;
-  modified: string | null;
+  at: string | null;
+  receipt: { key: string } | null;
 }
 /** An obligation to speak, opened by the platform from arithmetic or a failed
     check — never by the CEO deciding the news was worth your time. */
@@ -67,13 +69,9 @@ interface FlagsView {
   flags: FlagRow[];
 }
 
-interface FilesView {
-  workspace: { path: string; size: number; modified: string }[];
-  artifacts: ArtifactFile[];
-  // The receipts: one platform-written row per published version, with the
-  // hash and the publish time. `artifacts` is the store listing, which is a
-  // different thing — a key with no receipt behind it was never published.
-  published?: { key: string }[];
+interface ShelfView {
+  matched: number;
+  rows: ShelfRow[];
 }
 
 function fmtSize(bytes: number): string {
@@ -460,8 +458,13 @@ export default function Overview({
     () => get<RunRow[]>(`/observe/projects/${projectId}/runs?limit=200`),
     8000,
   );
-  const { data: files } = usePoll(
-    () => get<FilesView>(`/observe/projects/${projectId}/files`),
+  // Three rows and a count, asked of the same index the Deliverables tab
+  // reads. This card used to fetch every file the project had — the whole
+  // workspace walk, every twenty seconds — to show three of them.
+  const { data: shelf } = usePoll(
+    () => get<ShelfView>(
+      `/observe/projects/${projectId}/files/browse/rows?state=published&sort=at&desc=true&limit=3`,
+    ),
     20000,
   );
   const { data: flagsView, reload: reloadFlags } = usePoll(
@@ -488,27 +491,13 @@ export default function Overview({
   const health = runs ? runHealth(runs) : null;
   const usdMode = dash.billing_mode === "api_key";
 
-  // Newest artifact per name — the same deliverable republished by a later run
-  // is a version of one thing, not two unrelated files.
-  const byName = (() => {
-    const seen = new Map<string, ArtifactFile>();
-    for (const a of files?.artifacts ?? []) {
-      const held = seen.get(a.name);
-      if (!held || (a.modified ?? "") > (held.modified ?? "")) seen.set(a.name, a);
-    }
-    return seen;
-  })();
-  const latestArtifacts = [...byName.values()]
-    .sort((a, b) => (b.modified ?? "").localeCompare(a.modified ?? ""))
-    .slice(0, 3);
-  // Deduped, because the Deliverables tab counts deduped and the two numbers
-  // sat side by side disagreeing: this card counted every version of every
-  // file and called it "published files", so three deliverables republished
-  // fifty times read as 156 of them.
-  const deliverableCount = byName.size;
-  // Undefined means the field did not arrive, not that nothing was published:
-  // a missing receipts array must not turn every row into an accusation.
-  const receiptKeys = files?.published && new Set(files.published.map((r) => r.key));
+  // Newest version per name — the same deliverable republished by a later run
+  // is a version of one thing, not two unrelated files — and the count is of
+  // names, because the Deliverables tab counts names and the two numbers sit
+  // side by side: counting every version once read three deliverables
+  // republished fifty times as 156 of them.
+  const latestArtifacts = shelf?.rows ?? [];
+  const deliverableCount = shelf?.matched ?? 0;
 
   // ── needs you ──
   const rawFlags = flagsView?.flags ?? [];
@@ -854,7 +843,9 @@ export default function Overview({
           <>
             {latestArtifacts.map((a) => (
               <div className="wrow" key={a.key}>
-                {receiptKeys && !receiptKeys.has(a.key) ? (
+                {/* A key with no receipt behind it is in the store but was
+                    never formally published. */}
+                {!a.receipt ? (
                   <span className="chip warn">no receipt</span>
                 ) : (
                   <span className="chip ok">published</span>
@@ -862,7 +853,7 @@ export default function Overview({
                 <div className="grow">
                   <div className="tt mono">{a.name}</div>
                   <div className="sb">
-                    {fmtSize(a.size)} · {a.modified ? fmtWhen(a.modified) : "—"}
+                    {fmtSize(a.size)} · {a.at ? fmtWhen(a.at) : "—"}
                   </div>
                 </div>
                 <Link
