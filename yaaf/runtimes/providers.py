@@ -271,6 +271,9 @@ OPENAI = Provider(
     craft_model="gpt-6-astra",
     failure_markers=("incorrect api key provided", "unexpected status 401",
                      "unexpected status 403"),
+    # Its chat API, for what runs in yaaf's own process on an API key — the
+    # Founder (yaaf.founder.loop). A seat reaches OpenAI through Codex.
+    base_url="https://api.openai.com/v1",
 )
 
 PROVIDERS: dict[str, Provider] = {p.name: p for p in (ANTHROPIC, DEEPSEEK, OPENROUTER, CUSTOM,

@@ -135,25 +135,41 @@ def credential(session: Session) -> str:
     return decrypt(row.ciphertext)
 
 
-def set_credential(session: Session, plaintext: str, *, mode: str = "api_key") -> None:
-    """Install or rotate the platform credential and record its billing mode."""
+def set_credential(session: Session, plaintext: str, *, mode: str = "api_key",
+                   provider: str | None = None, base_url: str | None = None) -> None:
+    """Install or rotate the platform credential and record its billing mode,
+    the provider it pays and — for a server the chairman runs — its address."""
     from yaaf.core.crypto import encrypt
+    from yaaf.runtimes.providers import DEFAULT_PROVIDER
+    from yaaf.runtimes.providers import provider as seller
 
-    if mode not in {"api_key", "subscription"}:
+    provider = provider or DEFAULT_PROVIDER
+    if mode not in {k.mode for k in seller(provider).kinds}:
         raise ValueError(f"unknown billing mode {mode!r}")
     row = _credential_row(session)
     if row is None:
-        session.add(Secret(
+        row = Secret(
             id=ids.new_id(ids.SECRET),
             project_id=None,
             name=PLATFORM_BILLING_SECRET,
             ciphertext=encrypt(plaintext),
             role_scopes=[],
             kind="billing",
-        ))
+        )
+        session.add(row)
     else:
         row.ciphertext = encrypt(plaintext)
+    row.provider, row.base_url = provider, base_url
     set_setting(session, BILLING_MODE, mode)
+
+
+def credential_provider(session: Session) -> str:
+    """Which provider the platform credential pays — Anthropic until one says
+    otherwise, which is what every row written before there was a choice says."""
+    from yaaf.runtimes.providers import DEFAULT_PROVIDER
+
+    row = _credential_row(session)
+    return (row.provider if row is not None else None) or DEFAULT_PROVIDER
 
 
 def clear_credential(session: Session) -> bool:
@@ -181,8 +197,15 @@ def founder_env(session: Session) -> dict[str, str]:
     from yaaf.runtimes.providers import credential_env
 
     row = _credential_row(session)
-    return credential_env(row.provider if row is not None else None,
-                          billing_mode(session), credential(session))
+    env = credential_env(row.provider if row is not None else None,
+                         billing_mode(session), credential(session))
+    if row is not None and row.base_url:
+        # A server the chairman runs: its address travels with its key
+        # (yaaf.founder.loop reads it).
+        from yaaf.founder.loop import BASE_URL_ENV
+
+        env[BASE_URL_ENV] = row.base_url
+    return env
 
 
 def shape_error(mode: str, plaintext: str, provider: str | None = None) -> str | None:

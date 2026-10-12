@@ -15,12 +15,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { del, get, post, put } from "../api";
-import { LlmCredentials, ModelPrices } from "../llmCredentials";
+import { LlmCredentials, ModelPrices, useProviders } from "../llmCredentials";
 import { SecretInput } from "../ui";
 
 interface AnthropicSettings {
   configured: boolean;
   billing_mode: string;
+  /** Which provider the platform credential pays; the Founder runs on it. */
+  provider: string;
   model: string;
   note: string;
 }
@@ -59,14 +61,24 @@ function ModelCard({
 }: { settings: AnthropicSettings; reload: () => void }) {
   const [value, setValue] = useState("");
   const [mode, setMode] = useState(settings.billing_mode);
+  const [provider, setProvider] = useState(settings.provider || "anthropic");
+  const [baseUrl, setBaseUrl] = useState("");
   const [model, setModel] = useState(settings.model);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
+  // Any provider the Founder can run on: Anthropic's CLI takes a key or a
+  // subscription; every other provider's chat API takes an API key.
+  const sellers = useProviders();
+  const seller = sellers.find((p) => p.name === provider);
+  const kinds = (seller?.kinds ?? []).filter(
+    (k) => provider === "anthropic" || k.mode === "api_key");
+  const anthropic = provider === "anthropic";
 
   useEffect(() => {
     setMode(settings.billing_mode);
+    setProvider(settings.provider || "anthropic");
     setModel(settings.model);
-  }, [settings.billing_mode, settings.model]);
+  }, [settings.billing_mode, settings.provider, settings.model]);
 
   async function run(fn: () => Promise<string>) {
     setBusy(true);
@@ -89,10 +101,13 @@ function ModelCard({
       <p className="help">
         {settings.configured ? (
           <>
-            <span className="badge good">configured</span> an{" "}
-            {settings.billing_mode === "subscription"
-              ? "OAuth subscription token"
-              : "Anthropic API key"}{" "}
+            <span className="badge good">configured</span>{" "}
+            {settings.provider && settings.provider !== "anthropic"
+              ? `${sellers.find((p) => p.name === settings.provider)?.label
+                  ?? settings.provider} API key`
+              : settings.billing_mode === "subscription"
+                ? "OAuth subscription token"
+                : "Anthropic API key"}{" "}
             is installed, running <code>{settings.model}</code>. The value is never shown
             again — rotate it by pasting a new one.
           </>
@@ -107,10 +122,19 @@ function ModelCard({
 
       <div className="row">
         <div>
+          <label className="field">Provider</label>
+          <select value={provider} disabled={busy}
+                  onChange={(e) => { setProvider(e.target.value); setMode("api_key"); }}>
+            {(sellers.length ? sellers : [{ name: "anthropic", label: "Anthropic" }])
+              .map((p) => <option key={p.name} value={p.name}>{p.label}</option>)}
+          </select>
+        </div>
+        <div>
           <label className="field">Key type</label>
           <select value={mode} disabled={busy} onChange={(e) => setMode(e.target.value)}>
-            <option value="api_key">Anthropic API key</option>
-            <option value="subscription">Claude subscription token</option>
+            {kinds.length ? kinds.map((k) => (
+              <option key={k.mode} value={k.mode}>{k.bills.split(",")[0]}</option>
+            )) : <option value="api_key">API key</option>}
           </select>
         </div>
         <div>
@@ -120,15 +144,25 @@ function ModelCard({
           <SecretInput
             value={value}
             onChange={setValue}
-            placeholder={mode === "subscription" ? "sk-ant-oat…" : "sk-ant-api…"}
+            placeholder={!anthropic ? "the key" : mode === "subscription" ? "sk-ant-oat…" : "sk-ant-api…"}
             disabled={busy}
           />
         </div>
       </div>
+      {seller?.credential_base_url && (
+        <div>
+          <label className="field">The server&apos;s base URL</label>
+          <input value={baseUrl} disabled={busy} placeholder="http://ollama:11434/v1"
+                 onChange={(e) => setBaseUrl(e.target.value)} />
+        </div>
+      )}
       <p className="help">
-        {mode === "subscription"
-          ? "A subscription token comes from `claude setup-token` and starts sk-ant-oat."
-          : "An API key comes from the Anthropic console and starts sk-ant-api."}{" "}
+        {!anthropic
+          ? "On any provider but Anthropic the Founder runs on its chat API, with this key and "
+            + "the model below — one of that provider's — which is saved with it."
+          : mode === "subscription"
+            ? "A subscription token comes from `claude setup-token` and starts sk-ant-oat."
+            : "An API key comes from the Anthropic console and starts sk-ant-api."}{" "}
         Pasting one where the other belongs is refused here rather than failing on your
         first message.
       </p>
@@ -139,7 +173,14 @@ function ModelCard({
           disabled={busy || value.trim().length < 8}
           onClick={() =>
             run(async () => {
-              await put("/admin/settings/anthropic", { value: value.trim(), mode });
+              await put("/admin/settings/anthropic", {
+                value: value.trim(), mode, provider,
+                ...(baseUrl.trim() ? { base_url: baseUrl.trim() } : {}),
+                // The model travels with a key of another provider: the two are
+                // one decision, and the server refuses them apart.
+                ...(model.trim() !== settings.model || provider !== settings.provider
+                  ? { model: model.trim() } : {}),
+              });
               setValue("");
               return "Key saved. It is encrypted at rest; only the server reads it.";
             })

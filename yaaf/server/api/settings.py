@@ -50,6 +50,9 @@ def get_settings(session: Session = Depends(db)) -> dict:
         "anthropic": {
             "configured": platform.has_credential(session),
             "billing_mode": platform.billing_mode(session),
+            # Which provider it pays — the section keeps its old name, and
+            # the Founder runs on whichever one this says (docs/RUNTIMES.md M6).
+            "provider": platform.credential_provider(session),
             "model": platform.founder_model(session),
             "note": ("This key pays for product-wide conversations — the Founder. It is "
                      "never injected into a sandbox and never reaches a project's agents: "
@@ -90,9 +93,30 @@ def _llm_counts(session: Session) -> dict:
 class CredentialIn(BaseModel):
     value: str = Field(min_length=8)
     mode: str = Field(default="api_key", pattern=MODE_PATTERN)
+    provider: str = DEFAULT_PROVIDER
+    base_url: str | None = Field(default=None, max_length=500)
+    #: The Founder's model, given with a credential of another provider: the
+    #: two are one decision, and the door refuses them apart.
+    model: str | None = Field(default=None, min_length=3, max_length=200)
 
 
-def install_credential(session: Session, value: str, mode: str) -> dict:
+def _founder_model_problem(model: str, provider_name: str) -> str | None:
+    """A Founder's model the platform credential does not pay for. The model
+    picks the road (`yaaf.founder.session.on_sdk`); the credential pays it."""
+    from yaaf.runtimes import catalog
+
+    seller = PROVIDERS[provider_name]
+    if catalog.provider_of(model) == seller.name:
+        return None
+    owner = PROVIDERS[catalog.provider_of(model)].label
+    return (f"the Founder runs on {model}, which is {owner}'s, and the platform credential "
+            f"pays {seller.label} — name one of {seller.label}'s models for it "
+            f"({seller.name}/<model> for one the catalog does not list)")
+
+
+def install_credential(session: Session, value: str, mode: str,
+                       provider: str = DEFAULT_PROVIDER, base_url: str | None = None,
+                       model: str | None = None) -> dict:
     """Store the platform credential after refusing an impossible one.
 
     The shape check happens before the write on the same promise the
@@ -102,13 +126,36 @@ def install_credential(session: Session, value: str, mode: str) -> dict:
 
     Shared with ``/admin/founder/credential``, which predates this router and
     stays where the Founding screen expects it.
+
+    Any provider the Founder can run on (`yaaf.founder.session.refusal`), with
+    a model of that provider's — the one already set, or one given here.
     """
+    from yaaf.founder.session import refusal
+
     value = value.strip()
-    problem = platform.shape_error(mode, value)
+    base_url = _check_provider(provider, mode, base_url)
+    problem = (refusal(provider, mode) or platform.shape_error(mode, value, provider)
+               or _founder_model_problem((model or platform.founder_model(session)).strip(),
+                                         provider))
     if problem:
         raise HTTPException(status_code=422, detail=problem)
-    platform.set_credential(session, value, mode=mode)
-    return {"ok": True, "billing_mode": mode}
+    platform.set_credential(session, value, mode=mode, provider=provider, base_url=base_url)
+    if model:
+        platform.set_setting(session, platform.FOUNDER_MODEL, model.strip())
+    return {"ok": True, "billing_mode": mode, "provider": provider,
+            "model": platform.founder_model(session)}
+
+
+def set_founder_model(session: Session, model: str) -> dict:
+    """The Founder's model, held to the provider the platform credential pays.
+    Shared with ``/admin/founder/model``."""
+    model = model.strip()
+    if platform.has_credential(session):
+        problem = _founder_model_problem(model, platform.credential_provider(session))
+        if problem:
+            raise HTTPException(status_code=422, detail=problem)
+    platform.set_setting(session, platform.FOUNDER_MODEL, model)
+    return {"model": model}
 
 
 def check_credential(session: Session) -> dict:
@@ -130,7 +177,8 @@ def check_credential(session: Session) -> dict:
 
 @router.put("/anthropic")
 def put_anthropic(body: CredentialIn, session: Session = Depends(db)) -> dict:
-    return install_credential(session, body.value, body.mode)
+    return install_credential(session, body.value, body.mode, body.provider, body.base_url,
+                              body.model)
 
 
 @router.post("/anthropic/test")
@@ -147,13 +195,12 @@ def delete_anthropic(session: Session = Depends(db)) -> dict:
 
 
 class ModelIn(BaseModel):
-    model: str = Field(min_length=3, max_length=64)
+    model: str = Field(min_length=3, max_length=200)
 
 
 @router.put("/anthropic/model")
 def put_anthropic_model(body: ModelIn, session: Session = Depends(db)) -> dict:
-    platform.set_setting(session, platform.FOUNDER_MODEL, body.model.strip())
-    return {"model": body.model.strip()}
+    return set_founder_model(session, body.model)
 
 
 # ── the app-wide Slack connection ───────────────────────────────────────────────

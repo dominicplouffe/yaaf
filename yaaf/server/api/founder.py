@@ -122,6 +122,7 @@ def status(session: Session = Depends(db)) -> dict:
     return {
         "credential_configured": platform.has_credential(session),
         "billing_mode": platform.billing_mode(session),
+        "provider": platform.credential_provider(session),
         "model": platform.founder_model(session),
         # What a run has actually cost here. The new-project form inverts the
         # question rather than predicting a total — "your cap holds if a run
@@ -142,6 +143,9 @@ def status(session: Session = Depends(db)) -> dict:
 class CredentialIn(BaseModel):
     value: str = Field(min_length=8)
     mode: str = Field(default="api_key", pattern="^(api_key|subscription)$")
+    provider: str = "anthropic"
+    base_url: str | None = Field(default=None, max_length=500)
+    model: str | None = Field(default=None, min_length=3, max_length=200)
 
 
 @router.put("/credential")
@@ -162,7 +166,8 @@ def put_credential(body: CredentialIn, session: Session = Depends(db)) -> dict:
     The same credential is managed app-wide at ``PUT /admin/settings/anthropic``;
     both doors share one implementation so they cannot drift.
     """
-    return app_settings.install_credential(session, body.value, body.mode)
+    return app_settings.install_credential(session, body.value, body.mode, body.provider,
+                                           body.base_url, body.model)
 
 
 @router.post("/credential/test")
@@ -182,13 +187,12 @@ def delete_credential(session: Session = Depends(db)) -> dict:
 
 
 class ModelIn(BaseModel):
-    model: str = Field(min_length=3, max_length=64)
+    model: str = Field(min_length=3, max_length=200)
 
 
 @router.put("/model")
 def put_model(body: ModelIn, session: Session = Depends(db)) -> dict:
-    platform.set_setting(session, platform.FOUNDER_MODEL, body.model.strip())
-    return {"model": body.model.strip()}
+    return app_settings.set_founder_model(session, body.model)
 
 
 class StartIn(BaseModel):

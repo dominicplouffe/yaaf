@@ -303,3 +303,163 @@ def test_yaafs_loop_carries_the_conversation_in_its_transcript(monkeypatch):
     assert [(m["role"], m["content"]) for m in sent[1]["messages"][1:]] == [
         ("user", "How many shipped?"), ("assistant", "Two shipped."),
         ("user", "And the third?")]
+
+
+# ── the Founder and the grader, on the platform key, whatever its provider ─────
+
+#: A project the Founder's own draft check accepts.
+DRAFT = {
+    "slug": "sell-something", "name": "Sell Something",
+    "goal": "Find a product worth building and take money from strangers by 31 December. "
+            "Revenue through the payment processor's signed webhook is the only result "
+            "that counts; signups and traffic are not.",
+    "mode": "explore", "ceo_role_slug": "ceo", "ceo_name": "Founder",
+    "teams": [{"role_slug": "worker", "name": "Build", "employees": ["Mika"], "lead": "Mika"}],
+    "constitution": {"monthly_usd_cap": 120.0},
+}
+PLATFORM = "/admin/settings/anthropic"
+
+
+def _chat_api(monkeypatch, replies: list[dict]) -> list[dict]:
+    """The OpenAI-compatible chat API the Founder reaches on any provider but
+    Anthropic, scripted: each request gets the next message."""
+    from yaaf.founder import loop
+
+    sent: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append({"url": str(request.url), "auth": request.headers.get("authorization"),
+                     **json.loads(request.content)})
+        reply = replies[len(sent) - 1]
+        if "status" in reply:
+            return httpx.Response(reply["status"], json=reply["body"])
+        return httpx.Response(200, json={"choices": [{"message": reply}]})
+
+    real = loop.run
+
+    async def wired(*args, **kwargs):
+        return await real(*args, **kwargs, transport=httpx.MockTransport(handler))
+
+    monkeypatch.setattr(loop, "run", wired)
+    return sent
+
+
+def _deepseek_founder(client) -> None:
+    client.post("/admin/users", headers=ADMIN, json={
+        "email": "chair@example.com", "display_name": "Chair", "is_admin": True})
+    from tests.conftest import seed_role
+
+    seed_role(client, "ceo", is_ceo=True)
+    seed_role(client, "worker")
+    installed = client.put(PLATFORM, headers=ADMIN, json={
+        "provider": "deepseek", "value": "sk-deepseek-platform", "model": "deepseek-chat"})
+    assert installed.status_code == 200, installed.text
+
+
+def _settle(client, message: str) -> dict:
+    import time
+
+    thread_id = client.post("/admin/founder/threads", headers=ADMIN,
+                            json={"message": message}).json()["id"]
+    for _ in range(200):
+        state = client.get(f"/admin/founder/threads/{thread_id}", headers=ADMIN).json()
+        if not state["running"]:
+            return state
+        time.sleep(0.05)
+    raise AssertionError("the turn never settled")
+
+
+def test_the_founder_drafts_on_deepseek_through_its_chat_api(client, monkeypatch):
+    _deepseek_founder(client)
+    sent = _chat_api(monkeypatch, [
+        {"content": None, "reasoning_content": "never sent back",
+         "tool_calls": [{"id": "c1", "type": "function", "function": {
+             "name": "propose_bundle", "arguments": json.dumps({"project": DRAFT})}}]},
+        {"content": "Explore, because you are still choosing what to build."},
+    ])
+    thread = _settle(client, "I want to find an idea and sell it.")
+    assert thread["last_error"] is None, thread
+    assert thread["draft_bundle"]["project"]["slug"] == "sell-something"
+    first, second = sent
+    assert first["url"] == "https://api.deepseek.com/v1/chat/completions"
+    assert first["auth"] == "Bearer sk-deepseek-platform"
+    assert first["model"] == "deepseek-chat"
+    assert first["messages"][0]["role"] == "system"
+    # The Founder's seven tools and nothing else — no built-in of any kind.
+    from yaaf.founder.tools import TOOL_NAMES
+
+    assert sorted(t["function"]["name"] for t in first["tools"]) == sorted(TOOL_NAMES)
+    tool_result = json.loads(second["messages"][-1]["content"])
+    assert second["messages"][-1]["role"] == "tool" and tool_result["ok"] is True
+    assert all("reasoning_content" not in m for m in second["messages"])
+
+
+def test_the_grader_runs_on_the_same_credential(monkeypatch):
+    from yaaf.founder.grade import grade_goal
+
+    sent = _chat_api(monkeypatch, [{"content": json.dumps({"elements": [
+        {"element": "finish_line", "verdict": "present", "note": "named"}],
+        "summary": "fine"})}])
+    grade = asyncio.run(grade_goal("Sell it by Friday.", env={
+        "CUSTOM_LLM_API_KEY": "local", "CUSTOM_LLM_BASE_URL": "http://ollama:11434/v1"},
+        model="custom/llama3.1:8b"))
+    assert grade.summary == "fine"
+    # A custom server: its address is the credential's, the provider off the name.
+    assert sent[0]["url"] == "http://ollama:11434/v1/chat/completions"
+    assert sent[0]["model"] == "llama3.1:8b" and "tools" not in sent[0]
+
+
+def test_a_dead_platform_key_on_another_provider_says_auth(monkeypatch):
+    from yaaf.founder.session import FounderModelError, run_once
+
+    _chat_api(monkeypatch, [{"status": 401, "body": {"error": {
+        "message": "Authentication Fails, Your api key is invalid"}}}])
+    with pytest.raises(FounderModelError) as caught:
+        asyncio.run(run_once(prompt="ready?", system="check", model="deepseek-chat",
+                             env={"DEEPSEEK_API_KEY": "dead"}))
+    assert caught.value.kind == "auth" and "Authentication Fails" in str(caught.value)
+
+
+@pytest.mark.parametrize(("body", "says"), [
+    # The model is the Founder's road; the credential pays it — one decision.
+    ({"provider": "deepseek", "value": "sk-deepseek-platform"},
+     "the Founder runs on claude-opus-5-5, which is Anthropic's"),
+    ({"provider": "deepseek", "value": "sk-deepseek-platform", "model": "gpt-5.5"},
+     "gpt-5.5, which is OpenAI's"),
+    # A ChatGPT login pays the Codex CLI and nothing that runs in this process.
+    ({"provider": "openai", "mode": "subscription", "value": '{"tokens": {"a": 1}}',
+      "model": "gpt-5.5"}, "takes an API key"),
+    ({"provider": "custom", "value": "local-key", "model": "custom/llama3.1:8b"},
+     "carries the server's address"),
+])
+def test_a_platform_credential_the_founder_cannot_run_on_is_refused(client, body, says):
+    refused = client.put(PLATFORM, headers=ADMIN, json=body)
+    assert refused.status_code == 422 and says in refused.text, refused.text
+
+
+def test_the_founders_model_cannot_drift_from_the_credential(client):
+    _deepseek_founder(client)
+    refused = client.put(f"{PLATFORM}/model", headers=ADMIN, json={"model": "claude-opus-5-5"})
+    assert refused.status_code == 422 and "pays DeepSeek" in refused.text
+    assert client.put("/admin/founder/model", headers=ADMIN,
+                      json={"model": "claude-opus-5-5"}).status_code == 422
+    assert client.put(f"{PLATFORM}/model", headers=ADMIN,
+                      json={"model": "deepseek-reasoner"}).status_code == 200
+    shown = client.get("/admin/settings", headers=ADMIN).json()["anthropic"]
+    assert (shown["provider"], shown["model"]) == ("deepseek", "deepseek-reasoner")
+    from yaaf.core import platform
+
+    with db_session() as session:
+        assert platform.founder_env(session) == {"DEEPSEEK_API_KEY": "sk-deepseek-platform"}
+
+
+def test_a_custom_servers_address_travels_with_the_platform_key(client):
+    installed = client.put(PLATFORM, headers=ADMIN, json={
+        "provider": "custom", "value": "local-key", "base_url": "http://ollama:11434/v1/",
+        "model": "custom/llama3.1:8b"})
+    assert installed.status_code == 200, installed.text
+    from yaaf.core import platform
+
+    with db_session() as session:
+        assert platform.founder_env(session) == {
+            "CUSTOM_LLM_API_KEY": "local-key", "CUSTOM_LLM_BASE_URL": "http://ollama:11434/v1"}

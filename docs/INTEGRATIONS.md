@@ -101,7 +101,11 @@ What being managed buys you:
 product-wide conversations (the Founder, which drafts a project before one
 exists). It is decrypted server-side only and **never reaches a project's
 agents** — there is no inheritance and no fallback. A project with no
-credential assigned cannot run, and that is the intended answer.
+credential assigned cannot run, and that is the intended answer. It can be
+any provider's: an Anthropic key or subscription runs the Founder and the
+goal grader on the Claude Code CLI; an API key of any other provider runs
+them on its chat API, with a model of that provider's set beside it — a
+ChatGPT login cannot, since it pays only the Codex CLI.
 
 ## Credentials and variables
 

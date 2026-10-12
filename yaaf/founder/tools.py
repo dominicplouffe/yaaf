@@ -206,17 +206,20 @@ def rehearse(session: Session, bundle: dict | None, days: int = 30) -> dict:
 
 
 class FounderTools(NamedTuple):
-    """The tools, in the two forms their two callers need.
+    """The tools, in the forms their callers need.
 
     `server` is what the CLI is given. `handlers` is the same six functions by
     name, so a test — or anything else in-process — can call one without
     reaching into the MCP server's internals to find it. Exposing them costs
     nothing and is the difference between a test that asserts behaviour and one
-    that asserts the shape of somebody else's private attribute.
+    that asserts the shape of somebody else's private attribute. `specs` is
+    each as a function a chat API can call — name, description, JSON schema,
+    handler — for a Founder on any other provider (`yaaf.founder.loop`).
     """
 
     server: Any
     handlers: dict[str, Any]
+    specs: list = []
 
 
 def build_server(session: Session, state: dict, env: dict[str, str],
@@ -380,9 +383,13 @@ def build_server(session: Session, state: dict, env: dict[str, str],
 
     built = [_search_roles, _search_crews, _read_source,
              _grade_goal, _list_credentials, _propose_bundle, _rehearse]
+    from yaaf.founder.loop import schema
+
     return FounderTools(
         server=create_sdk_mcp_server(name=SERVER, tools=built),
         handlers={name: fn.handler for name, fn in zip(TOOL_NAMES, built, strict=True)},
+        specs=[(fn.name, fn.description, schema(fn.input_schema), fn.handler)
+               for fn in built],
     )
 
 

@@ -132,7 +132,7 @@ large. **M0** marks the ones that already have.
 | `api/admin.py:693–707` | `CRAFT_MODEL`, `_MODEL_RANK` — Claude only | catalog tiers, **within the seat's provider** — **M0** |
 | `runner/daemon.py:229` | the data-source paragraph names tools `mcp__<name>__*` | `manifest.tool_ref` renders the name the model actually sees |
 | `deploy/sandbox/Dockerfile` | installs `@anthropic-ai/claude-code` and `claude-agent-sdk` | one install script per harness |
-| `founder/session.py`, `core/platform.py:56` | the Founder runs on the CLI via the SDK | unchanged until M6 |
+| `founder/session.py`, `core/platform.py:56` | the Founder runs on the CLI via the SDK | the SDK for an Anthropic model, the provider's chat API for any other — **M6** |
 
 ---
 
@@ -856,8 +856,18 @@ What M4 found on the way — each now configured against, with a test:
       a CLI by its session id, yaaf's loop by continuing its transcript when
       the last reply finished. A driver's conversation is re-primed from the
       boardroom every 25 turns, because the loop compacts nothing
-- [ ] The Founder and the goal grader on any of them, still on the platform
-      key and never a project's
+- [x] The Founder and the goal grader on any provider, still on the platform
+      key and never a project's. The platform credential names its provider
+      (and, for a custom server, its address); the Founder's model is held to
+      it at both doors. An Anthropic model runs on the Claude Code CLI as
+      before; any other runs on its provider's chat API in the same process
+      (`yaaf.founder.loop`), with the Founder's seven tools as functions and
+      no built-in of any kind, bounded by silence and by turns exactly as the
+      SDK road is. A ChatGPT login is refused — it pays only the Codex CLI.
+      "Any of them" became "any provider" rather than "any harness": the
+      Founder runs in this process, not in a sandbox, so a CLI harness would
+      mean a CLI on the control plane for one conversation; the chat API is
+      the shape every provider but Anthropic already speaks
 
 ---
 
