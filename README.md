@@ -32,12 +32,10 @@ That is not a mockup. A six-team research project was designed and launched
 from a Claude window this week, and every write in its audit trail is signed
 `user:… via mcp:Claude`.
 
-**And the part you would find anyway:** this git history is two weeks old — it
-was restarted on 30 August, so the repository is younger than the project, and
-the screenshots above are stamped a week before its first commit. It was built
-fast and in the open with Claude Code, and roughly half the commits are authored
-by it. What that bought is a policy engine with 1,347 tests attacking
-it over HTTP. What it has not bought is a project anyone but me has run for a
+**And the part you would find anyway:** this repository is two months old — its
+first commit is 14 August 2026 — and it was built fast and in the open with
+Claude Code, which co-authored nearly every commit. What that bought is a
+policy engine and 1,813 offline tests attacking it. What it has not bought is a project anyone but me has run for a
 month, or a security review by someone who did not write the thing. Both are
 true at once — [PLAN.md](docs/PLAN.md) says which claims are load-bearing and
 what would falsify them, and [SECURITY.md](SECURITY.md) says what contains an
@@ -149,7 +147,9 @@ it, while nothing running changes until you say so.
 
 **The budget makes it safe to walk away.** You're not trusting an agent to be
 sensible about money. Every run is metered, killed ones included. At 80% the CEO
-is warned; at 100% the project pauses itself and emails you. Real-world spending
+is warned; past the budget it owes you an account of the overrun; at the wall —
+three times the budget unless you set it lower — the project pauses itself and
+emails you. Real-world spending
 has its own separate envelope, and purchases over your threshold need your
 signature.
 
@@ -184,8 +184,9 @@ held. Break one and it doesn't get a stern reminder — it gets a 403.
   refusal — plus random samples of "completed" work dealt to you to spot-check,
   because AI reviewers approve nearly everything and you don't.
 
-Each of those is a test, not a paragraph. 1,347 of them drive the real app over
-HTTP the way an agent would: forged tokens, wrong roles, rephrased requests.
+Each of those is a test, not a paragraph. The suite is 1,813 of them, and its
+invariant attacks drive the real app over HTTP the way an agent would: forged
+tokens, wrong roles, rephrased requests.
 They are free, offline, and they test **the rules, not the models** — model
 behaviour is held by golden transcripts of a scripted backend plus one opt-in
 paid check. The rules are the part an agent argues with, so the rules are the
