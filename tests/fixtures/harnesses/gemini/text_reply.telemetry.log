@@ -1,0 +1,35 @@
+{
+  "hrTime": [
+    1791823796,
+    262000000
+  ],
+  "hrTimeObserved": [
+    1791823796,
+    262000000
+  ],
+  "instrumentationScope": {
+    "name": "gemini-cli"
+  },
+  "attributes": {
+    "session.id": "dfc3b139-ce51-4140-9d07-eecbc2c21938",
+    "interactive": false,
+    "auth_type": "gemini-api-key",
+    "event.name": "gemini_cli.api_response",
+    "event.timestamp": "2026-10-12T16:49:56.261Z",
+    "model": "gemini-2.5-pro",
+    "duration_ms": 83,
+    "input_token_count": 1200,
+    "output_token_count": 4,
+    "cached_content_token_count": 0,
+    "thoughts_token_count": 9,
+    "tool_token_count": 0,
+    "total_token_count": 1213,
+    "prompt_id": "dfc3b139-ce51-4140-9d07-eecbc2c21938",
+    "status_code": 200,
+    "finish_reasons": [
+      "stop"
+    ],
+    "role": "main",
+    "http.status_code": 200
+  }
+}

@@ -1,0 +1,5 @@
+{"type":"thread.started","thread_id":"01a130c6-91bb-7723-a6a1-98a1111184c7"}
+{"type":"item.completed","item":{"id":"item_0","type":"error","message":"Model metadata for `gpt-5.1-codex` not found. Defaulting to fallback metadata; this can degrade performance and cause issues."}}
+{"type":"turn.started"}
+{"type":"error","message":"unexpected status 401 Unauthorized: Incorrect API key provided: sk-inval*****cost. You can find your API key at https://platform.openai.com/account/api-keys., url: http://127.0.0.1:18080/v1/responses"}
+{"type":"turn.failed","error":{"message":"unexpected status 401 Unauthorized: Incorrect API key provided: sk-inval*****cost. You can find your API key at https://platform.openai.com/account/api-keys., url: http://127.0.0.1:18080/v1/responses"}}

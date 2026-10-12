@@ -20,18 +20,35 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 RUN npm install -g @anthropic-ai/claude-code
+# The Codex CLI, pinned: its flags, config keys and session file were read off
+# this version (yaaf/runner/codex_cli_entry.py), and a CLI that moves under a
+# driver is a run that fails in a new way. Update deliberately, re-recording
+# tests/fixtures/harnesses/codex/.
+RUN npm install -g @openai/codex@0.162.1
+# The OpenCode CLI, pinned for the same reason (yaaf/runner/opencode_cli_entry.py,
+# tests/fixtures/harnesses/opencode/). Its plugin package is pre-seeded per run
+# at this version, which is what keeps it from fetching one at startup: move
+# both together.
+RUN npm install -g opencode-ai@1.19.0
+# The Gemini CLI, pinned likewise (yaaf/runner/gemini_cli_entry.py,
+# tests/fixtures/harnesses/gemini/). Two of its behaviours the driver leans on
+# are observed rather than documented — --skip-trust keeping a workspace's
+# settings out, and which model names it rewrites — so re-check both on a bump.
+RUN npm install -g @google/gemini-cli@0.63.0
 
 # pandas and duckdb are baked in because the alternative to having them is an
 # agent reading ten thousand rows into its own context to count them. duckdb
 # queries csv/parquet/json with SQL straight off disk; pandas is what a model
 # reaches for by reflex. Both land in /opt/venv, which PATH puts first — so
 # the `python3` an agent runs through Bash is this interpreter. The mcp pin
-# bounds client-API drift for data_fetch, which imports it. (The network is
+# bounds client-API drift for data_fetch, which imports it; the anthropic pin
+# does the same for the anthropic_api harness, which also imports the HTTP
+# client (httpx2) that SDK major speaks. (The network is
 # open, so an agent can pip install more at run time — these are baked so the
 # common cases cost zero setup.)
 RUN python3 -m venv /opt/venv \
     && /opt/venv/bin/pip install --no-cache-dir \
-        claude-agent-sdk httpx pandas duckdb "mcp<2" playwright
+        claude-agent-sdk "anthropic>=1.13,<2" httpx pandas duckdb "mcp<2" playwright
 ENV PATH="/opt/venv/bin:${PATH}"
 
 # The browser lane (CEO Charter, stage E): Chromium via playwright, for the
@@ -55,5 +72,21 @@ RUN useradd -m -u 10001 agent
 # directory inside it. Nothing here, on purpose — a key must never be in a layer.
 COPY yaaf/runner/sandbox_entry.py /opt/yaaf/sandbox_entry.py
 COPY yaaf/runner/chat_entry.py /opt/yaaf/chat_entry.py
+# The Claude CLI harness and the stdio MCP server it starts for the yaaf tools.
+# The CLI itself is the one installed above for the Agent SDK to drive.
+COPY yaaf/runner/claude_cli_entry.py /opt/yaaf/claude_cli_entry.py
+COPY yaaf/runner/yaaf_tools.py /opt/yaaf/yaaf_tools.py
+# yaaf's own agent loop, and the Messages API client the anthropic_api harness
+# drives it with (the `anthropic` SDK above). No CLI underneath.
+COPY yaaf/runner/loop_harness.py /opt/yaaf/loop_harness.py
+COPY yaaf/runner/anthropic_api_entry.py /opt/yaaf/anthropic_api_entry.py
+# The same loop on the OpenAI-compatible chat API, over the httpx above.
+COPY yaaf/runner/openai_compatible_entry.py /opt/yaaf/openai_compatible_entry.py
+# The Codex CLI harness; it starts yaaf_tools.py above for the yaaf tools.
+COPY yaaf/runner/codex_cli_entry.py /opt/yaaf/codex_cli_entry.py
+# The OpenCode CLI harness; it too starts yaaf_tools.py for the yaaf tools.
+COPY yaaf/runner/opencode_cli_entry.py /opt/yaaf/opencode_cli_entry.py
+# The Gemini CLI harness; it starts yaaf_tools.py for the yaaf tools too.
+COPY yaaf/runner/gemini_cli_entry.py /opt/yaaf/gemini_cli_entry.py
 USER agent
 WORKDIR /workspace

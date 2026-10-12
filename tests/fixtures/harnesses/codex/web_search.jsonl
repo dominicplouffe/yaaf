@@ -1,0 +1,7 @@
+{"type":"thread.started","thread_id":"01a130ce-1e57-7ab2-9b85-b57790094352"}
+{"type":"item.completed","item":{"id":"item_0","type":"error","message":"Model metadata for `gpt-5.1-codex` not found. Defaulting to fallback metadata; this can degrade performance and cause issues."}}
+{"type":"turn.started"}
+{"type":"item.started","item":{"id":"item_1","type":"web_search","id":"ws_1","query":"yaaf governance","action":{"type":"search","query":"yaaf governance"}}}
+{"type":"item.completed","item":{"id":"item_1","type":"web_search","id":"ws_1","query":"yaaf governance","action":{"type":"search","query":"yaaf governance"}}}
+{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"Found it."}}
+{"type":"turn.completed","usage":{"input_tokens":1200,"cached_input_tokens":1000,"cache_write_input_tokens":0,"output_tokens":40,"reasoning_output_tokens":12}}

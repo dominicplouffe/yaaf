@@ -1,4 +1,4 @@
-import { CredentialPicker, resolveCredential } from "../llmCredentials";
+import { CredentialPicker, resolveCredential, useProviders } from "../llmCredentials";
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { CrewSummary, get, McpServerEntry, post, ProjectBundle,
@@ -176,6 +176,11 @@ export default function NewProject() {
   const [chairmanName, setChairmanName] = useState("");
   const [billingMode, setBillingMode] = useState("api_key");
   const [billingCredentialId, setBillingCredentialId] = useState("");
+  // What pays each provider the billing credential does not: {provider: id}.
+  // A seat on another provider's model needs one, and is refused without it.
+  const [otherCredentials, setOtherCredentials] = useState<Record<string, string>>({});
+  const [otherProvider, setOtherProvider] = useState("");
+  const registry = useProviders();
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [mode, setMode] = useState("explore");
   // Set when a loaded setup file could not answer the shape question itself —
@@ -590,6 +595,16 @@ export default function NewProject() {
       resolveCredential(p.billing_secret_id, p.billing_secret_name).then((found) => {
         if (found && pick === billingPick.current) { setBillingCredentialId(found.id); setBillingMode(found.mode); }
       });
+      // The other providers' credentials travel by name too, and resolve the
+      // same way: one that matches nothing is simply left for the chairman.
+      setOtherCredentials({});
+      Object.entries(p.credential_names ?? {}).forEach(([provider, credName]) => {
+        resolveCredential(null, credName).then((found) => {
+          if (found && (found.provider ?? "anthropic") === provider) {
+            setOtherCredentials((prev) => ({ ...prev, [provider]: found.id }));
+          }
+        });
+      });
       // The file's whole job here is review-and-supply-keys, so land on the
       // step that shows the project it describes rather than the first field
       // of eleven sections it already filled.
@@ -807,6 +822,9 @@ export default function NewProject() {
           chairman_email: chairmanEmail.trim(),
           billing_mode: billingMode,
           billing_secret_id: billingCredentialId || undefined,
+          ...(Object.values(otherCredentials).some(Boolean)
+            ? { credentials: Object.fromEntries(
+                Object.entries(otherCredentials).filter(([, id]) => id)) } : {}),
           mode,
           ...(mode === "explore" && exploreDeadline
             ? { deadline: `${exploreDeadline}T23:59:59Z` } : {}),
@@ -852,6 +870,8 @@ export default function NewProject() {
             ? { ceo_model_override: bundle.project.ceo_model_override } : {}),
           ...(bundle?.project.ceo_effort_override
             ? { ceo_effort_override: bundle.project.ceo_effort_override } : {}),
+          ...(bundle?.project.ceo_harness_override
+            ? { ceo_harness_override: bundle.project.ceo_harness_override } : {}),
           solo,
           teams: teams
             .filter((t) => t.role_slug && t.name && (solo || t.employees.trim()))
@@ -870,6 +890,7 @@ export default function NewProject() {
               const schedules = keep({ ...t.schedules, ...fromBundle?.schedules });
               const modelOverrides = keep(fromBundle?.model_overrides);
               const effortOverrides = keep(fromBundle?.effort_overrides);
+              const harnessOverrides = keep(fromBundle?.harness_overrides);
               return {
                 role_slug: t.role_slug,
                 name: t.name.trim(),
@@ -880,6 +901,8 @@ export default function NewProject() {
                   ? { model_overrides: modelOverrides } : {}),
                 ...(Object.keys(effortOverrides).length
                   ? { effort_overrides: effortOverrides } : {}),
+                ...(Object.keys(harnessOverrides).length
+                  ? { harness_overrides: harnessOverrides } : {}),
               };
             }),
     };
@@ -1517,6 +1540,27 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
         <div className="card" style={{ marginTop: 10 }}>
           <CredentialPicker value={billingCredentialId} onChange={(id, mode) => { billingPick.current++; setBillingCredentialId(id); setBillingMode(mode); }} />
           <p className="help">The selected credential determines the budget unit. Without a credential, the project can be saved as a draft but cannot run models.</p>
+          {Object.entries(otherCredentials).map(([provider]) => (
+            <div key={provider} style={{ marginTop: 6 }}>
+              <CredentialPicker provider={provider} value={otherCredentials[provider]}
+                label={`${registry.find((r) => r.name === provider)?.label ?? provider} credential`}
+                onChange={(id) => setOtherCredentials((prev) => {
+                  const next = { ...prev };
+                  if (id) next[provider] = id; else delete next[provider];
+                  return next;
+                })} />
+            </div>
+          ))}
+          <label className="field" style={{ maxWidth: 380 }}>Also pay another provider
+            <select value={otherProvider} onChange={(e) => {
+              const chosen = e.target.value;
+              setOtherProvider("");
+              if (chosen) setOtherCredentials((prev) => ({ ...prev, [chosen]: prev[chosen] ?? "" }));
+            }}>
+              <option value="">— for seats on DeepSeek, OpenRouter or your own server —</option>
+              {registry.filter((r) => !(r.name in otherCredentials))
+                .map((r) => <option key={r.name} value={r.name}>{r.label}</option>)}
+            </select></label>
           <button type="button" className="small" style={{ marginTop: 4 }}
             onClick={() => setShowAdvanced((v) => !v)}>
             {showAdvanced ? "hide advanced" : "advanced…"}

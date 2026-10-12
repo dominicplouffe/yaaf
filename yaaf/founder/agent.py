@@ -10,7 +10,8 @@ for a conversation that needs none of them.
 What it *does* share with every agent is the credential and the transport: the
 Claude Code CLI, with a key or a subscription token in its environment. One
 credential story for the whole product is the reason this file exists in this
-shape at all.
+shape at all. A platform credential of another provider is the same story on
+that provider's chat API (`yaaf.founder.loop`).
 
 The conversation is replayed from the database on every turn rather than
 resumed from a CLI session on disk. A session file does not survive a container
@@ -98,18 +99,25 @@ def run_turn(session: Session, thread: FoundingThread) -> dict:
     state: dict = {"draft": thread.draft_bundle}
     founder_tools = tools.build_server(session, state, env, model, thread.id)
 
-    opts = founder_session.options(
-        system=system_prompt(),
-        env=env,
-        model=model,
-        mcp_servers={tools.SERVER: founder_tools.server},
-        allowed_tools=tools.ALLOWED_TOOLS,
-    )
     # This thread owns its event loop for the length of the turn. The turn
     # narrates itself into `progress` while it runs, which the page polls.
     try:
-        reply = asyncio.run(
-            founder_session.run(_prompt(thread), opts, thread_id=thread.id))
+        if founder_session.on_sdk(model):
+            opts = founder_session.options(
+                system=system_prompt(),
+                env=env,
+                model=model,
+                mcp_servers={tools.SERVER: founder_tools.server},
+                allowed_tools=tools.ALLOWED_TOOLS,
+            )
+            reply = asyncio.run(
+                founder_session.run(_prompt(thread), opts, thread_id=thread.id))
+        else:
+            from yaaf.founder import loop
+
+            reply = asyncio.run(loop.run(
+                _prompt(thread), env=env, model=model, system=system_prompt(),
+                tools=founder_tools.specs, thread_id=thread.id))
     except founder_session.FounderModelError as exc:
         raise _with_refusal(exc, state) from exc
 

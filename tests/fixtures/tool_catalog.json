@@ -1,0 +1,1257 @@
+[
+  {
+    "description": "REQUIRED whenever you create an account/identity anywhere in the world \u2014 a signup, a registration, a service login. Record: service, username, owner ('project' when it hangs off an identity the project owns like its own email/domain; 'chairman' when a responsible human is the name behind it \u2014 when unsure, ask in the boardroom), the NAME of the stored credential (never a value \u2014 store values as secrets via a need, or note where they live), url, and a note with what matters at wind-down (plan tier, renewal date, how to cancel). An account nobody wrote down is an orphan the owner discovers on a bill.",
+    "input_schema": {
+      "properties": {
+        "credential_name": {
+          "type": "string"
+        },
+        "note": {
+          "type": "string"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "requirement_id": {
+          "type": "string"
+        },
+        "service": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        },
+        "username": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "service",
+        "username",
+        "owner"
+      ],
+      "type": "object"
+    },
+    "name": "account_record"
+  },
+  {
+    "description": "The account registry: every identity the project has created in the world. Read it before signing up anywhere (it may already exist) and when winding anything down.",
+    "input_schema": {
+      "properties": {},
+      "required": [],
+      "type": "object"
+    },
+    "name": "accounts_list"
+  },
+  {
+    "description": "Put a decision to the chairman as a recommendation you would defend \u2014 never an open question. kind: spend|legal|owner_decision|tool_request. Unanswered approvals expire to DENIED. An approval BLOCKS on a human, so it is the wrong tool for anything the constitution already put in your hands: where the authority dial grants you the plan, the scope and the date, an owner_decision is refused and names the verb to use instead. To want his opinion without blocking, use ask_chairman and keep going.",
+    "input_schema": {
+      "properties": {
+        "amount_usd": {
+          "type": "number"
+        },
+        "body": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "title",
+        "body"
+      ],
+      "type": "object"
+    },
+    "name": "approval_request"
+  },
+  {
+    "description": "List this project's recent approvals and their status.",
+    "input_schema": {
+      "properties": {},
+      "required": [],
+      "type": "object"
+    },
+    "name": "approvals_list"
+  },
+  {
+    "description": "Read a shipped artifact's bytes back. ref is either a key from artifact_list or the uri cited in a message, evidence row, or task completion. Returns the whole file's size and sha256 plus a slice of its content (text when the file is text) \u2014 page a large file with offset, default 64 KB per read. An artifact uri is NOT a path in your sandbox; opening one with a file tool always fails. This is the only way to read what was actually shipped. exists:false means the uri was cited but no bytes are stored \u2014 that is a finding worth reporting, not an error on your part, and it costs you nothing to check.",
+    "input_schema": {
+      "properties": {
+        "limit": {
+          "type": "integer"
+        },
+        "offset": {
+          "type": "integer"
+        },
+        "ref": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "ref"
+      ],
+      "type": "object"
+    },
+    "name": "artifact_get"
+  },
+  {
+    "description": "List the deliverables this project has shipped to the artifact store: key, name, run_id, size, modified. Start here when checking anyone's work, including your own \u2014 the store is what shipped, the workspace is only what someone was working on, and the two can differ.",
+    "input_schema": {
+      "properties": {},
+      "required": [],
+      "type": "object"
+    },
+    "name": "artifact_list"
+  },
+  {
+    "description": "Persist a finished deliverable (report, dataset, document) to the platform's artifact store \u2014 the shipped, versioned record the platform serves and audits. A published file is how the chairman gets what he is paying for: no message or chat ceiling applies to it, so give him everything he needs to act, to check you and to decide. Ship it here and CITE it \u2014 never paste its contents into a channel or the boardroom. Your /workspace is NOT ephemeral: it persists with the project across runs and is shared by every agent on it, which makes it the right home for working state and cached data pulls; ship an artifact when the work is FINISHED. Pass path: a file under /workspace (absolute or workspace-relative) \u2014 the platform reads and uploads the bytes itself. NEVER base64-encode a file or route its contents through your own output to ship it; write it to the workspace and hand over the path. filename optionally renames the artifact (plain name, no path separators; defaults to the file's own name). content_base64 is a fallback for small payloads you have in hand and nowhere on disk; filename is required with it. Max 5 MB decoded either way. satisfies lists the requirement keys (R-03) this file delivers on. Returns the artifact's uri, key, size and sha256 \u2014 cite the uri in evidence, task completions and messages. The uri is NOT a path in your sandbox: read it back with artifact_get, never with a file tool.",
+    "input_schema": {
+      "properties": {
+        "content_base64": {
+          "type": "string"
+        },
+        "filename": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "satisfies": {
+          "type": "array"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "name": "artifact_put"
+  },
+  {
+    "description": "Put a question to the chairman that your next move depends on. The reporting cadence does not hold this \u2014 a question is not a status. It does NOT block: keep working while you wait. answer_by_hours is when you stop waiting; default_action is exactly what you will do if he has not answered by then, and you are held to it, so write the real thing rather than 'decide later'. If the window passes you are woken to do it and to tell him you did. Use this instead of sitting on something he needs to see \u2014 a question nobody knows is waiting is how a project spends a day idle.",
+    "input_schema": {
+      "properties": {
+        "answer_by_hours": {
+          "type": "number"
+        },
+        "body": {
+          "type": "string"
+        },
+        "default_action": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "body",
+        "answer_by_hours",
+        "default_action"
+      ],
+      "type": "object"
+    },
+    "name": "ask_chairman"
+  },
+  {
+    "description": "Close one of your questions by having acted on it and said so. message_id is the boardroom message where you told him what you did \u2014 with his answer, or with the default you named when its window passed. An ask does not close by going quiet.",
+    "input_schema": {
+      "properties": {
+        "ask_id": {
+          "type": "string"
+        },
+        "message_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "ask_id",
+        "message_id"
+      ],
+      "type": "object"
+    },
+    "name": "ask_close"
+  },
+  {
+    "description": "Any agent. A step only a HUMAN can do is blocking you \u2014 a captcha, a 2FA code, a KYC form, a signature, an account only the chairman can touch. Never try to defeat a security challenge; hand it over. Before calling: save your session state to the workspace (playwright storage_state / cookies, the URL you were on, what remains to do) \u2014 the workspace persists across runs, so the next run resumes where you stopped. Say exactly WHAT you need ('the 6-digit code SMS'd to your phone', 'solve the captcha at this URL and tell me done') and WHERE. His answer arrives verbatim in the decision that wakes you; unanswered it expires to no, so also plan the work that does not depend on it.",
+    "input_schema": {
+      "properties": {
+        "what": {
+          "type": "string"
+        },
+        "where": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "what",
+        "where"
+      ],
+      "type": "object"
+    },
+    "name": "assist_request"
+  },
+  {
+    "description": "Read the task board visible to you (open + recently closed).",
+    "input_schema": {
+      "properties": {},
+      "required": [],
+      "type": "object"
+    },
+    "name": "board"
+  },
+  {
+    "description": "CEO only. Put a case to the chairman for MORE of a capacity dial \u2014 runs a day, runs an hour, concurrency, queue depth, the month's money. This is the verb for the constraint that is actually binding: if you have worked out that the run ration is what paces you, say so here with the arithmetic rather than describing it in the boardroom, where it is a remark nobody can act on. rule is the constitution field; `to` is the number you want. All three of buys / costs / without are required and are the point \u2014 what more room BUYS in outcomes, what it COSTS in money and runs, and what happens WITHOUT it. A request without them is a wish. It does not block and it does not move the dial: keep working at the cap you have, plan for it, and treat a yes as upside. Unanswered it expires to no, which is the same as today. You may not request a lower bar, a change to who decides, or less auditing \u2014 those are his judgement about the project, not its throughput.",
+    "input_schema": {
+      "properties": {
+        "buys": {
+          "type": "string"
+        },
+        "costs": {
+          "type": "string"
+        },
+        "rule": {
+          "type": "string"
+        },
+        "to": {
+          "type": "number"
+        },
+        "without": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "rule",
+        "to",
+        "buys",
+        "costs",
+        "without"
+      ],
+      "type": "object"
+    },
+    "name": "capacity_request"
+  },
+  {
+    "description": "List your channels with unread counts.",
+    "input_schema": {
+      "properties": {},
+      "required": [],
+      "type": "object"
+    },
+    "name": "channels"
+  },
+  {
+    "description": "CEO only. Ask to commit to a delivery date. You do not and cannot write the date: the platform stamps its own projection from pace and scope, and the chairman accepts it (with that date or his own) or declines. Nothing binds until he does. Optional note travels with the proposal.",
+    "input_schema": {
+      "properties": {
+        "note": {
+          "type": "string"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "name": "commitment_propose"
+  },
+  {
+    "description": "CEO only, and only where the constitution grants you commitment_authority. Reset a promise that has stopped holding to the platform's CURRENT projection. You still cannot write a date \u2014 the only date you can reset to is the arithmetic's, so this buys no slack the pace has not already spent. Refused while the promise still holds. Every reset is audited, disclosed to the chairman with a running count of how many times you have done it, and reversible by him. Reach for it when the honest answer is that the date cannot hold; reach for cutting scope first when the honest answer is that the scope is too big.",
+    "input_schema": {
+      "properties": {
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "reason"
+      ],
+      "type": "object"
+    },
+    "name": "commitment_reset"
+  },
+  {
+    "description": "CEO only, and only where the constitution grants capability_authority: ceo \u2014 otherwise a 403 naming the paths (file a need, or the chairman's boardroom order as a directive). Delegate an existing credential across your team: add_roles / remove_roles by role slug, with a reason. The value never moves \u2014 only who receives it at run time. Audited and sent to the chairman; effective on each role's next run.",
+    "input_schema": {
+      "properties": {
+        "add_roles": {
+          "type": "array"
+        },
+        "name": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "remove_roles": {
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "name": "credential_scope"
+  },
+  {
+    "description": "CEO only. The credential roster: every service credential the project holds and which roles receive it \u2014 names and scopes only, never values. Read it before filing a need (the capability may already exist) or delegating one.",
+    "input_schema": {
+      "properties": {},
+      "required": [],
+      "type": "object"
+    },
+    "name": "credentials_list"
+  },
+  {
+    "description": "Call a tool on one of your data sources and write the FULL result to a file in your workspace WITHOUT it passing through your context. This is how bulk data is handled: fetch once to disk, then process the file with code (python3 has pandas and duckdb) or with Read/Grep slices, and report only the aggregate. server: the data source name (see DATA SOURCES in your system prompt). tool: that source's tool name, with or without its mcp__<server>__ prefix \u2014 OMIT tool to list what the source offers (names, descriptions and input schemas), which is how you discover a source that is not mounted as tools of your own. arguments: that tool's arguments, verbatim \u2014 prefer its own filter, date-range or pagination arguments over fetching everything and trimming later. path: optional workspace-relative destination; pass a stable path when you want a cache you can reuse, else it defaults to data/<server>/<tool>-<timestamp>.json. Returns {path, bytes, sha256, lines, rows, preview} \u2014 the preview is the first 2 KB ONLY; the answer is in the file, not the preview. Any mcp__* tools you do have are for small lookups you will read in full; use this for anything larger. Your workspace persists across runs, so check for an existing file before fetching again, and leave the script that processed it behind for the next run. approval_id: only for a tool your source's allowlist refuses \u2014 file data_write_request first, wait to be woken with the decision, then pass the approved id here with the SAME arguments you had approved.",
+    "input_schema": {
+      "properties": {
+        "approval_id": {
+          "type": "string"
+        },
+        "arguments": {
+          "type": "object"
+        },
+        "path": {
+          "type": "string"
+        },
+        "server": {
+          "type": "string"
+        },
+        "tool": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "server"
+      ],
+      "type": "object"
+    },
+    "name": "data_fetch"
+  },
+  {
+    "description": "After a data_fetch spent an approval, file what the call DID \u2014 on the run that made it, or the next one once the effect can be read. ok: whether the call succeeded; observed: {label, value, basis, as_of} \u2014 the effect in the owner's numbers ('ad spend on the 14 terms', '$0 in the 7 days since', the window it covers); note: anything else he should know. Without this the owner sees 'approved \u00b7 applied' and never learns whether it worked.",
+    "input_schema": {
+      "properties": {
+        "approval_id": {
+          "type": "string"
+        },
+        "note": {
+          "type": "string"
+        },
+        "observed": {
+          "type": "object"
+        },
+        "ok": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "approval_id",
+        "ok"
+      ],
+      "type": "object"
+    },
+    "name": "data_write_outcome"
+  },
+  {
+    "description": "Ask the chairman to approve ONE call your data source's allowlist refuses \u2014 a change to his live account, not a read. Pass the arguments you intend to send, exactly: he decides on those, the platform records their fingerprint, and the approval is spendable on nothing else. Approved, it buys exactly one call \u2014 a second change needs a second approval, so batch with the tool's own bulk arguments rather than filing twenty requests. Say WHY in terms of what it does to his numbers, not what it does to your task. Unanswered it expires to no; plan the work that does not need it. ALWAYS fill `disclosure` \u2014 it is what he decides on: `change_set` as [{entity, field, before, after}] for every thing that changes; `scope_counts` like {campaigns: 3, keywords: 14}; `evidence` as {columns, rows (the ones that matter, 200 at most), period_start, period_end, currency, as_of}; `estimate` as {label, value, basis} labelled as an estimate; `reversible` true/false; `counter_case` \u2014 the honest reason he might say no; `spend_affected_usd_month`; and `category` (one of: bids, budgets, targeting, negative_keywords, campaign_state, placements, other). A request without a disclosure is a paragraph with buttons.",
+    "input_schema": {
+      "properties": {
+        "arguments": {
+          "type": "object"
+        },
+        "disclosure": {
+          "type": "object"
+        },
+        "server": {
+          "type": "string"
+        },
+        "tool": {
+          "type": "string"
+        },
+        "why": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "server",
+        "tool",
+        "arguments",
+        "why",
+        "disclosure"
+      ],
+      "type": "object"
+    },
+    "name": "data_write_request"
+  },
+  {
+    "description": "Append to the decision record: what was decided and why.",
+    "input_schema": {
+      "properties": {
+        "body": {
+          "type": "string"
+        },
+        "subject": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "subject",
+        "body"
+      ],
+      "type": "object"
+    },
+    "name": "decision_add"
+  },
+  {
+    "description": "CEO: turn something the chairman said in the boardroom into something the platform does, citing the message he wrote it in. Two shapes, pass exactly one. `changes` files reporting policy the moment he changes how or how often he wants to be reported to \u2014 a rule kept in memory does not survive into the next run. Settable: chairman_report_interval_hours (0 disables), chairman_report_window_local ('09:00-20:00'), timezone (IANA name). `action` EXECUTES a plan order he gave \u2014 'cut R-07', 'reopen R-04', 'move R-02 to stage 1', 'accept R-09', 'that estimate should be 12 runs', 'reword R-03 to \u2026', 'R-05 should not wait on R-02' \u2014 as {\"kind\": \"accept|cut|reopen|restage|reestimate|reword|unsequence\", \"requirement_key\": \"R-07\", and for restage \"stage\", for reestimate \"est_runs\", for reword \"statement\", for unsequence \"depends_on_key\"}. It runs on HIS cited authority through the same machinery as his own buttons, and is echoed back to him threaded to his message \u2014 use it the moment he gives an order instead of asking him to click it himself.",
+    "input_schema": {
+      "properties": {
+        "action": {
+          "type": "object"
+        },
+        "changes": {
+          "type": "object"
+        },
+        "from_message_id": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "from_message_id",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "name": "directive_file"
+  },
+  {
+    "description": "List the environment variable NAMES available in your sandbox (never values). Answers 'do I have credential X?' definitively \u2014 use it instead of guessing.",
+    "input_schema": {
+      "properties": {},
+      "required": [],
+      "type": "object"
+    },
+    "name": "env_list"
+  },
+  {
+    "description": "Record evidence. kind='external' needs a source_url on a domain this project does NOT control; the platform fetches and verifies it before it counts. kind='internal' for everything we did to our own things.",
+    "input_schema": {
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "source_url": {
+          "type": "string"
+        },
+        "task_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "description"
+      ],
+      "type": "object"
+    },
+    "name": "evidence_add"
+  },
+  {
+    "description": "Close a flag by having TOLD the chairman, with what you propose doing about it. Two steps, in this order: message_post the news in the boardroom, then flag_raise with that message_id \u2014 the message is the proof he was told, which is why saying it in the boardroom does not close the flag on its own and why nothing else can. flag_id comes from the flags in your context pack. The proposal is required: a flag without one is anxiety forwarded to his desk, and what you add over a monitoring alert is the sentence AFTER the bad news \u2014 what broke, the arithmetic, the ways out, the one you would pick, and what you need from him. Closing it dismissively is legitimate and expected: 'the cycle boundary caused it, no action needed' is this verb working exactly as intended. What is not available is leaving it open while telling him everything is fine.",
+    "input_schema": {
+      "properties": {
+        "flag_id": {
+          "type": "string"
+        },
+        "message_id": {
+          "type": "string"
+        },
+        "proposal": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "flag_id",
+        "message_id",
+        "proposal"
+      ],
+      "type": "object"
+    },
+    "name": "flag_raise"
+  },
+  {
+    "description": "The flags open on this project and whether each has been raised.",
+    "input_schema": {
+      "properties": {},
+      "required": [],
+      "type": "object"
+    },
+    "name": "flags_list"
+  },
+  {
+    "description": "CEO only. Put a role on this project \u2014 yours to decide, no approval needed. `role_slug` comes from roles_list, `employees` are the names these people will work under, `reason` says what work this seat is for. Optionally set stand_down_when now, in the same shape stand_down_when takes. Hiring does not buy you runs: the daily ration and the monthly wall belong to the PROJECT, so another seat spreads the same allowance thinner and adds wake-ups of its own. Hire because work needs doing that nobody here can do, never because a seat would be nice to have.",
+    "input_schema": {
+      "properties": {
+        "employees": {
+          "type": "array"
+        },
+        "lead": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "role_slug": {
+          "type": "string"
+        },
+        "stand_down_when": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "role_slug",
+        "name",
+        "employees",
+        "lead",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "name": "hire"
+  },
+  {
+    "description": "CEO: state a falsifiable bet with a dated kill condition (ISO datetime), written BEFORE the work starts.",
+    "input_schema": {
+      "properties": {
+        "kill_condition": {
+          "type": "string"
+        },
+        "kill_date": {
+          "type": "string"
+        },
+        "statement": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "statement",
+        "kill_condition",
+        "kill_date"
+      ],
+      "type": "object"
+    },
+    "name": "hypothesis_add"
+  },
+  {
+    "description": "CEO: kill a bet and say why.",
+    "input_schema": {
+      "properties": {
+        "hypothesis_id": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "hypothesis_id",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "name": "hypothesis_kill"
+  },
+  {
+    "description": "Your durable memory, in the standard memory-tool directory shape \u2014 over the SAME governed store as the memory_* tools, with the same rules (caps refuse adds; only a scope's curator edits, folds or deletes). Commands: view (path '/memories' lists entries; '/memories/<id>' shows one) \u00b7 create (path '/memories/<scope>/<subject>.md' where scope is project|team, file_text is the content) \u00b7 str_replace (path '/memories/<id>', old_str, new_str \u2014 edits one entry) \u00b7 delete (path '/memories/<id>') \u00b7 rename (path '/memories/<id>', new_path names the new subject). Check your memory directory at the start of a run; record only what will still be true next month.",
+    "input_schema": {
+      "properties": {
+        "command": {
+          "type": "string"
+        },
+        "file_text": {
+          "type": "string"
+        },
+        "new_path": {
+          "type": "string"
+        },
+        "new_str": {
+          "type": "string"
+        },
+        "old_str": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "command"
+      ],
+      "type": "object"
+    },
+    "name": "memory"
+  },
+  {
+    "description": "Write ONE durable fact/lesson/preference/contact that will still be true next month. Not a diary, and not a write-up: two or three sentences, because every memory you add is re-read by everyone who searches this scope for as long as it stands. If it needs more room than that it is a document \u2014 put it in a file and record the fact that the file exists. scope: 'project' (CEO only) or 'team'.",
+    "input_schema": {
+      "properties": {
+        "body": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "scope": {
+          "type": "string"
+        },
+        "subject": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "scope",
+        "kind",
+        "subject",
+        "body"
+      ],
+      "type": "object"
+    },
+    "name": "memory_add"
+  },
+  {
+    "description": "Fold several overlapping memories into one (curators only) \u2014 the way to make room. Frees all but one of their slots; the originals stay readable via memory_search include_superseded=true, so folding is safe.",
+    "input_schema": {
+      "properties": {
+        "body": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "replaces": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "subject": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "replaces",
+        "kind",
+        "subject",
+        "body"
+      ],
+      "type": "object"
+    },
+    "name": "memory_compact"
+  },
+  {
+    "description": "Forget a wrong/dead memory (curators only).",
+    "input_schema": {
+      "properties": {
+        "memory_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "memory_id"
+      ],
+      "type": "object"
+    },
+    "name": "memory_forget"
+  },
+  {
+    "description": "Search durable memory. Query it before repeating work. include_superseded=true also returns entries folded away by compaction.",
+    "input_schema": {
+      "properties": {
+        "include_superseded": {
+          "type": "boolean"
+        },
+        "q": {
+          "type": "string"
+        },
+        "scope": {
+          "type": "string"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "name": "memory_search"
+  },
+  {
+    "description": "Replace ONE outdated memory with ONE new one (curators only). Frees no slot \u2014 use memory_compact or memory_forget for room.",
+    "input_schema": {
+      "properties": {
+        "body": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "memory_id": {
+          "type": "string"
+        },
+        "subject": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "memory_id",
+        "kind",
+        "subject",
+        "body"
+      ],
+      "type": "object"
+    },
+    "name": "memory_supersede"
+  },
+  {
+    "description": "Post to one of your channels. THREE SENTENCES. Lead with the answer or the ask, add the number that carries it, stop \u2014 no narration of what you did or decided, which the board and your memory already hold. Anything that genuinely needs more room goes in a file or a task, and you post the line that points at it: this body is re-read by every recipient on every wake, a file is read once by whoever needs it. Boardroom: CEO<->chairman. Leadership: CEO+leads. Team room: your team. Use thread_id to reply in a thread. An unprompted boardroom status is refused between the chairman's cadence slots (see the `chairman` block in your context); set override to 'blocker', 'budget' or 'approval' only when it truly cannot wait \u2014 overrides are recorded and he sees them. Asking him something is NOT a status and is not an override: that is ask_chairman, which this gate has never held.",
+    "input_schema": {
+      "properties": {
+        "body": {
+          "type": "string"
+        },
+        "channel_id": {
+          "type": "string"
+        },
+        "override": {
+          "type": "string"
+        },
+        "thread_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "channel_id",
+        "body"
+      ],
+      "type": "object"
+    },
+    "name": "message_post"
+  },
+  {
+    "description": "Read recent messages in one of your channels (advances your cursor).",
+    "input_schema": {
+      "properties": {
+        "channel_id": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "channel_id"
+      ],
+      "type": "object"
+    },
+    "name": "messages_read"
+  },
+  {
+    "description": "CEO only. File a NEED with the chairman: a capability the project lacks \u2014 'I need AWS access, give me a key', 'we need a Stripe account', 'SMTP credentials for the writer'. It reaches him where he reads (boardroom, Slack, email) and he fulfills it in one motion: the credential lands as an env var for the roles you name, and you are woken with the decision. Unanswered, it expires to no \u2014 plan the work that does not depend on it rather than waiting. Say WHY (what work it unblocks), suggest a credential name, name the roles, and estimate monthly cost honestly.",
+    "input_schema": {
+      "properties": {
+        "est_usd_per_month": {
+          "type": "number"
+        },
+        "roles": {
+          "type": "array"
+        },
+        "suggested_secret_name": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "why": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "why",
+        "est_usd_per_month",
+        "roles"
+      ],
+      "type": "object"
+    },
+    "name": "need_request"
+  },
+  {
+    "description": "Clear a real-world purchase against the spend envelope BEFORE paying \u2014 a refusal here costs nothing; the same refusal after paying costs the money. Records the purchase with a stable idempotency_key so a crash or retry can never buy twice: if the response says duplicate/completed, the money already moved \u2014 do NOT pay again. Then pay with whatever tool fits (the platform never holds the card for you), and call purchase_finish with the receipt. usd over the per-purchase line or the approval threshold needs an approved approval_id; the monthly external cap is a wall no approval overrides \u2014 recommend an amendment instead.",
+    "input_schema": {
+      "properties": {
+        "approval_id": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "idempotency_key": {
+          "type": "string"
+        },
+        "requirement_id": {
+          "type": "string"
+        },
+        "usd": {
+          "type": "number"
+        },
+        "vendor": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "vendor",
+        "description",
+        "usd",
+        "idempotency_key"
+      ],
+      "type": "object"
+    },
+    "name": "purchase_begin"
+  },
+  {
+    "description": "Close a purchase opened with purchase_begin. ok=true books the ledger entry and keeps the receipt (quote the vendor's own confirmation \u2014 what was bought, from whom, for how much); ok=false records the failure and books nothing. Finishing twice never double-books.",
+    "input_schema": {
+      "properties": {
+        "external_ref": {
+          "type": "string"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "purchase_id": {
+          "type": "string"
+        },
+        "receipt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "purchase_id",
+        "ok"
+      ],
+      "type": "object"
+    },
+    "name": "purchase_finish"
+  },
+  {
+    "description": "CEO only. Bring a stood-down role back, with its channel, memory and history intact \u2014 cheaper and better than hiring a replacement. A seat the CHAIRMAN paused is not yours to recall.",
+    "input_schema": {
+      "properties": {
+        "reason": {
+          "type": "string"
+        },
+        "team_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "team_id",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "name": "recall"
+  },
+  {
+    "description": "CEO only. Record that one requirement cannot be worked until another is settled. This is the sequencing the chairman looks at, and it is enforced: work is refused for a requirement whose dependencies are still open. An edge that would close a loop is refused.",
+    "input_schema": {
+      "properties": {
+        "depends_on_requirement_id": {
+          "type": "string"
+        },
+        "requirement_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "requirement_id",
+        "depends_on_requirement_id"
+      ],
+      "type": "object"
+    },
+    "name": "requirement_depends_on"
+  },
+  {
+    "description": "CEO only. Propose something that must be TRUE at the end \u2014 not a task, an outcome. acceptance_test has the same shape as a success test: {\"type\":\"command\",\"command\":...} the platform runs itself, {\"type\":\"observable\",\"target\":...} the chairman confirms, or {\"type\":\"metric\",\"source\":{\"kind\":\"http_json\",\"url\":...,\"path\":\"$.a.b[-1].c\"},\"direction\":\"decreasing\",\"target\":500000,\"measure_every_hours\":24} the platform MEASURES on a schedule. If this requirement is the objective itself \u2014 the rank, the revenue, the number the project exists to move \u2014 it is a metric, and nothing else will do: a command greps a file you wrote, so a finish line you can write into your own status report is not a finish line. Use a command for work that must be verifiably done, and an observable only when neither fits \u2014 it puts the chairman in the loop every time it closes, and a metric never does, because the platform reads the number itself. This is a PROPOSAL and creates no scope \u2014 the chairman accepts it, and until he does no work may be created for it. You cannot accept your own, and you cannot mark one met: the platform runs the test and writes the result. stage is the order this happens in (1, 2, 3\u2026); est_runs is your honest guess at how many runs it will take, and it is compared against what it actually costs. depends_on lists requirement ids that must be settled first. recurrence is 'terminal' (met once) or 'standing' (owed again every cycle; Operate only). ALWAYS fill meta \u2014 it is what the project's OWNER sees: {title: a noun they want ('Wasted-spend list'), description: one line of what they get in spreadsheet terms, cadence: daily|weekly|null, due: an ISO date or null, lands: report|memo|note|table}. The statement is for the platform; meta is for the person who hired you.",
+    "input_schema": {
+      "properties": {
+        "acceptance_test": {
+          "type": "object"
+        },
+        "depends_on": {
+          "type": "array"
+        },
+        "est_runs": {
+          "type": "integer"
+        },
+        "meta": {
+          "type": "object"
+        },
+        "recurrence": {
+          "type": "string"
+        },
+        "stage": {
+          "type": "integer"
+        },
+        "statement": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "statement",
+        "acceptance_test",
+        "meta"
+      ],
+      "type": "object"
+    },
+    "name": "requirement_propose"
+  },
+  {
+    "description": "CEO only, when a review is open (see the `review` block in your context). File your variance narrative for the standing status meeting: what moved against the plan since the last review, the SINGLE largest cause named (a requirement key, a dead bet, a failure storm \u2014 something with a handle), and in `recommended`, what you would cut or move. The platform's numbers are already on the review \u2014 explain them, do not restate them. The chairman's decisions come back to you as notices with his reasons.",
+    "input_schema": {
+      "properties": {
+        "narrative": {
+          "type": "string"
+        },
+        "recommended": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "narrative"
+      ],
+      "type": "object"
+    },
+    "name": "review_narrative"
+  },
+  {
+    "description": "CEO only. The role library you may hire from \u2014 slug, name, category and what the role is for, plus which roles are already on your roster and how many teams you may run. Read it before hiring: the seat you want may already be here under a different team name.",
+    "input_schema": {
+      "properties": {},
+      "required": [],
+      "type": "object"
+    },
+    "name": "roles_list"
+  },
+  {
+    "description": "Who spent the runs, and on what. `since` takes 'today' (the default), 'yesterday', '7d', '12h', a date like 2026-09-12, or an ISO timestamp; 'today' means today in the project's timezone, not a rolling 24 hours. Per seat you get runs split by kind and by outcome, what woke each one, tokens, money, tasks claimed and completed, and what they are holding now. READ THIS BEFORE YOU ANSWER ANY QUESTION ABOUT WHO SPENT WHAT. Do not estimate from what you remember doing: the last CEO asked 'who did today's 15 runs' guessed six of them were its own and had spent twelve, while asking for a bigger ration on the strength of the guess. `died_of` is why the dead runs died \u2014 the cause in words, the tokens it cost, and `produced_work_first`, the number of them that had already claimed a task or filed work before they were cut. NEVER read a dead run as an idle one without checking that number: a CEO reported eleven runs that 'died without finishing anything' and moved to stand the seat down; seven of the eleven had filed work, every task that seat touched completed on a retry, and the real fault was a ceiling cutting it off mid-task. Fix the cause before you blame the seat.",
+    "input_schema": {
+      "properties": {
+        "since": {
+          "type": "string"
+        },
+        "until": {
+          "type": "string"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "name": "roster_activity"
+  },
+  {
+    "description": "CEO only, and only where the constitution's authority dial grants it (your constitution prose says which verbs you hold; everything you don't hold is a 403 with the legitimate path named). Exercise a scope verb as YOUR OWN authority: {\"kind\": \"accept|cut|reopen|restage|reestimate|reword|unsequence|verdict\", \"requirement_key\": \"R-07\", plus for restage \"stage\", for reestimate \"est_runs\", for reword \"statement\", for unsequence \"depends_on_key\", for verdict \"ok\" (bool)}. verdict is for an UNVERIFIABLE observable in checking \u2014 judge it honestly and keep going; every self-judgment is disclosed to the chairman in full. Every use is audited and sent to the chairman; all of it is reversible. Spend this authority the way you would want it audited. This is not the tool for executing a chairman boardroom order \u2014 that is directive_file, citing his message, and works in every mode.",
+    "input_schema": {
+      "properties": {
+        "action": {
+          "type": "object"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "name": "scope_act"
+  },
+  {
+    "description": "REQUIRED before any external side effect (posting, emailing, spending, creating a PR): record it with a stable idempotency_key. If the response says duplicate/completed, DO NOT fire the effect again \u2014 a prior attempt already did.",
+    "input_schema": {
+      "properties": {
+        "idempotency_key": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "payload": {
+          "type": "object"
+        },
+        "task_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "idempotency_key"
+      ],
+      "type": "object"
+    },
+    "name": "side_effect_begin"
+  },
+  {
+    "description": "Mark a recorded side effect completed/failed with its result.",
+    "input_schema": {
+      "properties": {
+        "effect_id": {
+          "type": "string"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "result": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "effect_id",
+        "ok"
+      ],
+      "type": "object"
+    },
+    "name": "side_effect_finish"
+  },
+  {
+    "description": "Book a real-world dollar spend you made with your own tooling. Every spend faces the same envelope as purchase_begin: the monthly external cap is a hard wall, and amounts over the per-purchase line or the approval threshold need an approved approval_id. For a purchase you are ABOUT to make, prefer purchase_begin/purchase_finish \u2014 it checks the envelope before money moves and books itself. Every real purchase gets booked, one way or the other: an unbooked spend is what the chairman's spot-audit exists to catch.",
+    "input_schema": {
+      "properties": {
+        "approval_id": {
+          "type": "string"
+        },
+        "note": {
+          "type": "string"
+        },
+        "usd": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "usd",
+        "note"
+      ],
+      "type": "object"
+    },
+    "name": "spend_book"
+  },
+  {
+    "description": "CEO only. Stop a role whose job is finished \u2014 yours to decide, no approval needed. Its seats stop waking, stop reading, and stop costing; the team's channel, memory and history all stay. THIS IS NOT A PAUSE and it is not a punishment: it is the normal end of a role that was needed for the front half of a project. An idle seat is not free \u2014 it wakes to read its channels and it counts as a mover in your capacity forecast. Refused if the team is holding open work (finish it, kill it or move it first) and refused for your last challenge seat, which is not yours to remove.",
+    "input_schema": {
+      "properties": {
+        "reason": {
+          "type": "string"
+        },
+        "team_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "team_id",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "name": "stand_down"
+  },
+  {
+    "description": "CEO only. Say NOW when a team's job will end, and the platform will stand it down itself when that comes true. Two shapes: {\"kind\": \"requirement_met\", \"keys\": [\"R-03\"]} stops the seat once those requirements are all settled, and {\"kind\": \"stage_cleared\", \"stage\": 2} stops it once every requirement at or below that stage has settled. SET THIS FOR EVERY TEAM WHILE YOU ARE WRITING THE PLAN. Writing the plan is the one moment you know which roles are for the front half of this project \u2014 the requirements gathering, the build, the validation \u2014 and it is the moment nobody has ever asked you. Afterwards nothing raises the question and an idle seat costs quietly. Pass when: null to clear one.",
+    "input_schema": {
+      "properties": {
+        "reason": {
+          "type": "string"
+        },
+        "team_id": {
+          "type": "string"
+        },
+        "when": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "team_id",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "name": "stand_down_when"
+  },
+  {
+    "description": "Leave a suggestion for the CEO's next planning cycle. Creates no work.",
+    "input_schema": {
+      "properties": {
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "type": "object"
+    },
+    "name": "suggest"
+  },
+  {
+    "description": "Block your claimed task with a reason; the CEO will re-plan.",
+    "input_schema": {
+      "properties": {
+        "reason": {
+          "type": "string"
+        },
+        "task_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_id",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "name": "task_block"
+  },
+  {
+    "description": "Claim a ready task that is yours to work.",
+    "input_schema": {
+      "properties": {
+        "task_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_id"
+      ],
+      "type": "object"
+    },
+    "name": "task_claim"
+  },
+  {
+    "description": "Complete your claimed task with observed evidence (what you ran/saw, quoted). Command-type success tests are then executed by the platform, not by you.",
+    "input_schema": {
+      "properties": {
+        "evidence": {
+          "type": "string"
+        },
+        "task_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_id",
+        "evidence"
+      ],
+      "type": "object"
+    },
+    "name": "task_complete"
+  },
+  {
+    "description": "Create a task. CEO only for team tasks; team leads create subtasks (assignments) under a team task they claimed. success_test must be {\"type\":\"command\",\"command\":...} (platform-executed) or {\"type\":\"observable\",\"target\":...}. assignee_agent_id IS ONLY FOR SUBTASKS. A team task names a TEAM, never a person: the team's lead claims it and decides who does what. Setting assignee_agent_id without parent_task_id is refused every time \u2014 it is the single most common refusal on this platform, so check yourself before you send it. A team task OMITS parent_task_id, assignee_agent_id and hypothesis_id entirely \u2014 never send 'null' or '\"\"' as a placeholder, it is read as an id and refused. not_before is an ISO 8601 datetime before which the task cannot be claimed. It wakes nobody and shows on no screen as work in progress, so a project gated on one looks stopped: use it only for a genuine calendar rhythm, never to express 'after the other task finishes'. For that, create this task WHEN that one lands \u2014 you are woken for it. Gates beyond the constitution's limit are refused. requirement_id names what this work is FOR and is required outside Explore projects: a task that serves no requirement is refused, because work that makes nothing true is how a project stays busy without finishing. Your context pack's `board` and `roster` carry the team ids, agent ids and requirement ids you need \u2014 read them rather than guessing at an id.",
+    "input_schema": {
+      "properties": {
+        "assignee_agent_id": {
+          "type": "string"
+        },
+        "goal": {
+          "type": "string"
+        },
+        "hypothesis_id": {
+          "type": "string"
+        },
+        "not_before": {
+          "type": "string"
+        },
+        "parent_task_id": {
+          "type": "string"
+        },
+        "produces_external_evidence": {
+          "type": "boolean"
+        },
+        "requirement_id": {
+          "type": "string"
+        },
+        "success_test": {
+          "type": "object"
+        },
+        "team_id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "team_id",
+        "title",
+        "goal",
+        "success_test"
+      ],
+      "type": "object"
+    },
+    "name": "task_create"
+  },
+  {
+    "description": "Kill a task (CEO for team tasks; lead for own subtasks).",
+    "input_schema": {
+      "properties": {
+        "reason": {
+          "type": "string"
+        },
+        "task_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_id",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "name": "task_kill"
+  },
+  {
+    "description": "Sign off, or send back, work somebody else finished and left waiting for a read. `ok` true closes it; false returns it to whoever wrote it with your notes. Say what is ABSENT and which standard it fails \u2014 returning work is ordinary here, not an escalation, and 'looks fine' teaches the writer nothing. You cannot review your own work.",
+    "input_schema": {
+      "properties": {
+        "notes": {
+          "type": "string"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "task_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "task_id",
+        "ok",
+        "notes"
+      ],
+      "type": "object"
+    },
+    "name": "task_review"
+  }
+]

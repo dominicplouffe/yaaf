@@ -343,12 +343,44 @@ def unhide_llm_credentials(credential_ids: list[str]) -> None:
 
 
 @app.command()
-def create_llm_credential(name: str, mode: str = typer.Option("api_key", "--mode")) -> None:
+def create_llm_credential(
+    name: str,
+    mode: str = typer.Option("api_key", "--mode"),
+    provider: str = typer.Option("anthropic", "--provider",
+                                 help="Which provider it pays: anthropic, openai, "
+                                      "google, deepseek, openrouter, moonshot, qwen, "
+                                      "mistral, xai, custom"),
+    base_url: str = typer.Option(None, "--base-url",
+                                 help="A custom endpoint's OpenAI-compatible address"),
+) -> None:
     """Create a named LLM credential in Settings (value prompted)."""
     value = typer.prompt("Credential value", hide_input=True)
+    body = {"name": name, "mode": mode, "value": value, "provider": provider}
+    if base_url:
+        body["base_url"] = base_url
     with _client() as client:
-        _show(client.post("/admin/settings/llm-credentials",
-                          json={"name": name, "mode": mode, "value": value}))
+        _show(client.post("/admin/settings/llm-credentials", json=body))
+
+
+@app.command()
+def pay_provider(project: str, provider: str, credential_id: str) -> None:
+    """Pay a second provider on a project with a stored credential — for seats
+    on its models. Metered in the project's unit, against its one cap."""
+    with _client() as client:
+        project_id = _resolve_project(client, project)
+        _show(client.put(f"/admin/projects/{project_id}/credentials/{provider}",
+                         json={"credential_id": credential_id}))
+
+
+@app.command()
+def set_model_price(model: str, input_usd: float, output_usd: float,
+                    cache_read_usd: float = typer.Option(0.0, "--cache-read")) -> None:
+    """Price a model on this install, USD per million tokens — how a model yaaf
+    ships no price for (DeepSeek, a custom server) can be hired at all."""
+    with _client() as client:
+        _show(client.put(f"/admin/settings/model-prices/{model}",
+                         json={"input": input_usd, "output": output_usd,
+                               "cache_read": cache_read_usd}))
 
 
 @app.command()

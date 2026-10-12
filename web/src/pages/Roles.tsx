@@ -14,6 +14,8 @@ interface RoleDetail {
   system_prompt: string;
   model: string;
   effort: string;
+  // What drives the model; null is the provider's default (docs/RUNTIMES.md).
+  harness: string | null;
   // Booleans for the sandbox tools — unknown keys
   // are preserved verbatim on save (the proxy generator reads this dict too).
   tool_permissions: Record<string, unknown>;
@@ -37,6 +39,7 @@ const EMPTY: RoleDetail = {
   system_prompt: "",
   model: "claude-sonnet-5-5",
   effort: "high",
+  harness: null,
   tool_permissions: { files: true, bash: false, data_processing: true, web: true },
   secret_scopes: [],
 };
@@ -71,10 +74,18 @@ export default function Roles() {
   const [saved, setSaved] = useState<string | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
 
+  // The harnesses a seat may run on, from the registry rather than a list
+  // written into this page — the next one arrives without editing it.
+  const [harnesses, setHarnesses] = useState<{ name: string; label: string }[]>([]);
   function refresh() {
     get<RoleSummary[]>("/admin/roles").then(setRoles).catch((e: Error) => setError(e.message));
   }
   useEffect(refresh, []);
+  useEffect(() => {
+    get<{ name: string; label: string }[]>("/admin/harnesses")
+      .then(setHarnesses)
+      .catch(() => setHarnesses([]));
+  }, []);
   useEffect(() => {
     if (editing) formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [editing?.slug]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -113,6 +124,7 @@ export default function Roles() {
         system_prompt: editing.system_prompt,
         model: editing.model,
         effort: editing.effort,
+        harness: editing.harness || null,
         tool_permissions: editing.tool_permissions,
         secret_scopes: editing.secret_scopes,
       });
@@ -400,7 +412,23 @@ export default function Roles() {
                   ))}
                 </select>
               </div>
+              <div>
+                <label className="field">Harness</label>
+                <select
+                  value={editing.harness ?? ""}
+                  onChange={(e) => setEditing({ ...editing, harness: e.target.value || null })}
+                >
+                  <option value="">Default for the model</option>
+                  {harnesses.map((h) => (
+                    <option key={h.name} value={h.name}>{h.label}</option>
+                  ))}
+                </select>
+              </div>
             </div>
+            <p className="help">
+              The harness is what drives the model in the sandbox. It changes how a run is
+              driven, never what it may do — every rule is the server's, on every harness.
+            </p>
           </div>
 
           <div className="fs">

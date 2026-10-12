@@ -23,7 +23,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from yaaf.core import ids
+from yaaf.core import ids, prices
 from yaaf.core.config import settings
 from yaaf.core.constitution import effective
 from yaaf.core.db import db_session
@@ -49,6 +49,9 @@ from yaaf.core.models import (
 from yaaf.core.tokens import mint
 from yaaf.runner.backends import get_backend
 from yaaf.runner.types import RunJob, RunResult
+from yaaf.runtimes import catalog
+from yaaf.runtimes.providers import DEFAULT_PROVIDER, PROVIDERS, credential_env, failure_markers
+from yaaf.runtimes.seats import effective_harness, seat_for
 from yaaf.server import policy
 from yaaf.server.contextpack import build_context_pack, build_system_prompt, role_version_for
 from yaaf.server.dispatcher import MODEL_RUN_KINDS, NON_WORK_RUN_KINDS
@@ -188,45 +191,83 @@ def _materialize(session: Session, queued: RunQueue, project: Project) -> RunJob
     role_version = role_version_for(session, agent)
     job.max_usd = cons.max_usd_per_run
     job.task_budget_tokens = cons.run_token_budget
-    job.model = agent.model_override or (role_version.model if role_version else "claude-sonnet-5-5")
-    job.effort = agent.effort_override or (role_version.effort if role_version else "high")
-    # Pinned on the run row at lease time, not finalize: reaped and killed runs
-    # stay attributed to the model that actually ran.
-    run.model = job.model
-    run.effort = job.effort
+    problem = _seat_problem(session, project, agent)
+    if problem:
+        # Every door a seat comes through refuses this already (admin.
+        # refuse_unrunnable_seats); this is the backstop for a door nobody has
+        # built yet. Failed at lease, like a paused agent: no container, no
+        # bill, and the reason on the Runs page instead of a dead sandbox.
+        run.status = RunStatus.FAILED
+        run.summary = f"seat cannot run: {problem}"
+        run.finished_at = utcnow()
+        return None
+    _pin_seat(session, run, job, seat_for(agent, role_version,
+                                          runtime=(project.integrations or {}).get("runtime")))
     job.tool_permissions = dict(role_version.tool_permissions) if role_version else {}
     job.agent_kind = agent.kind
     source_specs = _merge_project_data_sources(session, project, role_version, job)
     role_secrets = _role_secret_env(session, project, role_version)
-    job.billing_env = {**_billing_env(session, project), **role_secrets}
+    job.billing_env = {**_billing_env(session, project, job.provider), **role_secrets}
+    job.provider_spec = _provider_spec(session, project, job.provider)
     # Credentials are capabilities: each variable arrives with what it is and
     # how to use it, where the recognizer library knows (docs/AUTONOMY.md).
     from yaaf.core.naming import announced_credentials
     from yaaf.server.recognizers import credentials_prompt
 
     job.system_prompt += credentials_prompt(*announced_credentials(role_secrets))
-    job.system_prompt += _data_source_prompt(source_specs)
+    job.system_prompt += _data_source_prompt(source_specs, job.harness)
     return job
 
 
-def _data_source_prompt(specs: list[dict]) -> str:
+def _seat_problem(session: Session, project: Project, agent: Agent) -> str | None:
+    """The seat's own choice, checked as the doors check it — before the
+    project's `runtime` override, which is a test switch, not a choice."""
+    from yaaf.server.seat_checks import seat_problem
+
+    problem = seat_problem(session, project, [agent], chat=False)
+    # The doors name the seat; the run already does.
+    return problem.removeprefix(f"{agent.name}: ") if problem else None
+
+
+def _pin_seat(session: Session, run: Run, job: RunJob, seat) -> None:
+    """What this run executes on, onto the job and the row. Pinned at lease
+    time, not finalize: reaped and killed runs stay attributed to the model,
+    provider and harness that actually ran — and priced at what the install
+    priced it at when it ran, not at whatever the price is by finalize."""
+    job.model, job.effort = seat.model, seat.effort
+    job.provider, job.harness = seat.provider, seat.harness
+    price = prices.price(session, seat.model)
+    job.price = price.as_dict() if price else None
+    row = catalog.model(seat.model)
+    if row is not None:
+        job.model_flags = {"effort": row.effort, "web_tools": row.web_tools}
+    run.model, run.effort = seat.model, seat.effort
+    run.provider, run.harness = seat.provider, seat.harness
+
+
+def _data_source_prompt(specs: list[dict], harness: str | None = None) -> str:
     """The DATA SOURCES paragraph — what is connected, and how to use it without
     setting money on fire.
 
     The cost lesson is stated here rather than in the always-on prompt because
     it is only payable when a source exists: a run with nothing connected should
     not carry a paragraph about pulls it cannot make. Both lanes (scheduled runs
-    and the resident chat) build it from the same specs.
+    and the resident chat) build it from the same specs. Tool names are the
+    ones the seat's harness shows its model (`Harness.tool_ref`).
     """
     if not specs:
         return ""
+    from yaaf.runtimes.harnesses import HARNESSES
+
+    found = HARNESSES.get(harness or "")
+    ref = found.tool_ref if found is not None else "mcp__{server}__{tool}"
     inline = [s.get("name", "?") for s in specs if s.get("access", "inline") != "bulk"]
     bulk = [s.get("name", "?") for s in specs if s.get("access", "inline") == "bulk"]
     lines = ["\n\nDATA SOURCES: MCP servers connected to this project for your role."]
     if inline:
         lines.append(
             " Mounted as tools: "
-            + ", ".join(f"{n} (mcp__{n}__*)" for n in inline)
+            + ", ".join(f"{n} ({ref.format(server=n, tool='*')})" for n in inline)
             + ". If a listed source's tools are absent from your toolset, report that "
             "plainly instead of guessing at causes."
         )
@@ -239,7 +280,7 @@ def _data_source_prompt(specs: list[dict]) -> str:
             "tool to see what each one offers."
         )
     lines.append(
-        "\n\nDATA HANDLING: every result a mounted mcp__* tool returns is copied into "
+        "\n\nDATA HANDLING: every result a mounted source's tool returns is copied into "
         "your context and paid for by the token, on that turn and on every turn after "
         "it. Use those tools only for small lookups you intend to read in full. For "
         "anything that could exceed a screenful — exports, row-level data, logs, "
@@ -438,10 +479,14 @@ def _role_secret_env(session: Session, project: Project, role_version) -> dict:
     return env
 
 
-def _billing_env(session: Session, project: Project) -> dict:
-    if not project.billing_secret_id:
-        return {}
-    secret = session.get(Secret, project.billing_secret_id)
+def _billing_env(session: Session, project: Project, provider: str = DEFAULT_PROVIDER) -> dict:
+    """The model credential a seat on `provider` pays with, as the one variable
+    its kind is injected under — the billing credential where it pays that
+    provider, else the project's credential for it (R5 refuses a seat with
+    neither, at every door and at lease)."""
+    from yaaf.core import project_credentials
+
+    secret = project_credentials.credential_for(session, project, provider)
     if secret is None:
         return {}
     from yaaf.core.crypto import decrypt
@@ -452,10 +497,38 @@ def _billing_env(session: Session, project: Project) -> dict:
         # call with "Not logged in", which describes nothing.
         log.warning("billing secret %s is stored as a file; refusing to inject it", secret.id)
         return {}
-    value = decrypt(secret.ciphertext)
-    if project.billing_mode == "subscription":
-        return {"CLAUDE_CODE_OAUTH_TOKEN": value}
-    return {"ANTHROPIC_API_KEY": value}
+    if secret.provider not in PROVIDERS:
+        # A provider this install does not have: a row a newer release wrote,
+        # then rolled back. Refused the same way as a file — this project's
+        # runs fail unauthenticated and pause it on the third. Raising instead
+        # would abort the lease transaction, and with it every other project's
+        # runs on the box.
+        log.warning("billing secret %s pays provider %r, which this install does not "
+                    "have; refusing to inject it", secret.id, secret.provider)
+        return {}
+    mode = project.billing_mode if secret.id == project.billing_secret_id else secret.llm_mode
+    return credential_env(secret.provider, mode, decrypt(secret.ciphertext))
+
+
+def _provider_spec(session: Session, project: Project, provider: str) -> dict:
+    """What a harness that calls the provider's API itself needs to know about
+    it, for a sandbox that cannot import the registry: where it is, which
+    variable holds the key, whether it states its costs and searches, the
+    words its refusals use for a dead key. The
+    address is the credential's where the provider's is (a custom server)."""
+    from yaaf.core import project_credentials
+
+    seller = PROVIDERS.get(provider)
+    if seller is None:
+        return {}
+    secret = project_credentials.credential_for(session, project, provider)
+    mode = (project.billing_mode if secret is not None and secret.id == project.billing_secret_id
+            else secret.llm_mode if secret is not None else None)
+    base_url = (secret.base_url if seller.credential_base_url and secret is not None
+                else seller.base_url)
+    return {"name": seller.name, "base_url": base_url, "key_env": seller.kind(mode).env_var,
+            "reports_cost": seller.reports_cost, "search": seller.search,
+            "failure_markers": list(seller.failure_markers)}
 
 
 # ── execution ───────────────────────────────────────────────────────────────────
@@ -491,10 +564,12 @@ def execute_job(job: RunJob, backend=None) -> RunResult:
 
 
 def _backend_for(job: RunJob):
+    """Each seat runs on its own harness, under the project's override — the
+    same rule the lease pinned on the run (yaaf.runtimes.seats)."""
     with db_session() as session:
         project = session.get(Project, job.project_id)
-        runtime = (project.integrations or {}).get("runtime", "agent_sdk")
-    return get_backend(runtime)
+        runtime = (project.integrations or {}).get("runtime")
+    return get_backend(effective_harness(job.harness, runtime))
 
 
 def _heartbeat(run_id: str, stop: threading.Event, revoked: threading.Event) -> None:
@@ -537,10 +612,12 @@ def finalize(job: RunJob, result: RunResult, was_revoked: bool = False) -> None:
         project = session.get(Project, job.project_id)
         subscription = project is not None and project.billing_mode == "subscription"
         run.cost_usd = None if subscription else result.cost_usd
+        run.priced_usd = None if subscription else result.priced_usd
         run.trace_path = _stash_trace(job) or result.trace_path
         run.context_path = _stash_context(job)
         _clear_staged_inputs(job)
         run.summary = (result.summary or "")[:4000]
+        run.error_kind = result.error_kind
 
         # Outcome metering. A wake cannot be known to be empty until it has
         # happened, so the refund is retroactive: the run is logged, billed to
@@ -594,20 +671,22 @@ def finalize(job: RunJob, result: RunResult, was_revoked: bool = False) -> None:
         elif job.kind == RunKind.REQUIREMENT_CHECK:
             _finalize_requirement_check(session, job, result)
         elif run.status == RunStatus.FAILED:
-            if project is not None and _looks_like_credential_failure(run.summary):
+            if project is not None and _looks_like_credential_failure(run):
                 _flag_credential_failure(session, project, run)
             _retry_failed_run(session, run)
 
 
-CREDENTIAL_FAILURE_MARKERS = (
-    "not logged in", "please run /login", "invalid x-api-key",
-    "authentication_error", "invalid bearer token", "oauth token has expired",
-    "credit balance is too low",
-)
+CREDENTIAL_FAILURE_MARKERS = failure_markers()
 
 
-def _looks_like_credential_failure(summary: str | None) -> bool:
-    lowered = (summary or "").lower()
+def _looks_like_credential_failure(run: Run) -> bool:
+    """A dead credential, as the harness classified it — or, for a run whose
+    harness said nothing, as its summary reads. The markers stay as the second
+    reading because a credential can also die in prose the model was handed
+    back rather than in an exception the harness caught."""
+    if getattr(run, "error_kind", None) == "auth":
+        return True
+    lowered = (run.summary or "").lower()
     return any(marker in lowered for marker in CREDENTIAL_FAILURE_MARKERS)
 
 
@@ -627,20 +706,26 @@ def _flag_credential_failure(session: Session, project: Project, run: Run) -> No
         action="billing.credential_failure", entity="run", entity_id=run.id,
         detail={"summary": (run.summary or "")[:300]},
     ))
+    # Counted per provider: a project paying two providers has two credentials,
+    # and one dying while the other's seats succeed must still be caught.
+    on_provider = [Run.provider == run.provider] if run.provider else []
     recent = session.execute(
         select(Run)
         .where(Run.project_id == project.id, Run.kind.in_(MODEL_RUN_KINDS),
-               Run.finished_at.is_not(None))
+               Run.finished_at.is_not(None), *on_provider)
         .order_by(Run.finished_at.desc())
         .limit(3)
     ).scalars().all()
     dead = len(recent) == 3 and all(
-        r.status == RunStatus.FAILED and _looks_like_credential_failure(r.summary)
+        r.status == RunStatus.FAILED and _looks_like_credential_failure(r)
         for r in recent
     )
     if dead and project.status == ProjectStatus.RUNNING:
         project.status = ProjectStatus.PAUSED
-        project.status_reason = ("billing credential invalid: 3 consecutive runs failed "
+        which = (f"{PROVIDERS[run.provider].label} credential"
+                 if run.provider in PROVIDERS and run.provider != DEFAULT_PROVIDER
+                 else "billing credential")
+        project.status_reason = (f"{which} invalid: 3 consecutive runs failed "
                                  "to authenticate")
         for queued in session.execute(
             select(RunQueue).where(RunQueue.project_id == project.id)

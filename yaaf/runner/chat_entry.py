@@ -13,12 +13,21 @@ the conversation, under the same server-side refusals.
 
 Imports sandbox_entry (staged next to this file in the image) for the tool
 definitions and HTTP plumbing; do not import from the yaaf package here.
+
+Any harness that can hold a conversation holds this one (docs/RUNTIMES.md,
+M6). The Agent SDK holds it as it always has, in one resident client; every
+other harness holds it with the same driver that runs the seat's work, one
+attempt per turn, each resumed from the last — the CLI's own session, or the
+transcript yaaf's loop keeps.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import importlib
 import json
+import os
 import sys
 import time
 
@@ -57,6 +66,16 @@ TRANSIENT_EXIT_S = 300.0
 # e.g. at the max_turns backstop). This caps the rebuilds per session so a
 # systematically broken SDK still surfaces to the supervisor.
 MAX_CLIENT_REBUILDS = 5
+
+#: The entry whose driver runs this seat's work, and so holds its talk too
+#: (yaaf.runner.backends picks it; the supervisor passes it). The SDK's own
+#: entry means the SDK's resident client.
+SDK_ENTRY = "sandbox_entry.py"
+CHAT_ENTRY = os.environ.get("YAAF_CHAT_ENTRY") or SDK_ENTRY
+#: Answered turns before a driver's conversation is re-primed from the
+#: boardroom. yaaf's loop compacts nothing, so its transcript would otherwise
+#: grow until a provider refused it; a CLI's session file grows the same way.
+TURNS_PER_CONVERSATION = 25
 
 
 def _log(text: str) -> None:
@@ -265,6 +284,94 @@ async def _run_turn(client: ClaudeSDKClient, channel_id: str, prompt: str) -> st
     return "\n".join(part for part in reply_parts if part.strip())
 
 
+class SdkConversation:
+    """The boardroom held by the Agent SDK's resident client."""
+
+    def __init__(self, client: ClaudeSDKClient):
+        self.client = client
+
+    async def turn(self, channel_id: str, prompt: str) -> str:
+        return await _run_turn(self.client, channel_id, prompt)
+
+    @staticmethod
+    def transient(exc: BaseException) -> bool:
+        return base._looks_transient(exc)
+
+    @staticmethod
+    def spent() -> bool:
+        # The SDK compacts its own context; one client lives until it breaks.
+        return False
+
+
+class DriverConversation:
+    """The boardroom held by any other harness's driver: a turn is one
+    attempt, resumed from the session the last turn named — the CLI's own,
+    or the loop's transcript, which `LoopDriver` continues when its last
+    reply finished. Each bill is booked the moment it lands, as the SDK's
+    are, priced or reported exactly as a run of the same seat's would be."""
+
+    def __init__(self, driver):
+        self.driver = driver
+        self.session: str | None = None
+        self.turns = 0
+
+    async def turn(self, channel_id: str, prompt: str) -> str:
+        parts: list[str] = []
+        async for event in self.driver.attempt(prompt, resume=self.session):
+            if isinstance(event, base.Session):
+                self.session = event.id
+            elif isinstance(event, base.Text):
+                _set_typing(channel_id, 60)
+                parts.append(event.text)
+            elif isinstance(event, base.AttemptResult):
+                _book_usage(event.tokens_in, event.tokens_out, event.cache_creation,
+                            event.cache_read, event.cost_usd)
+        self.turns += 1
+        return "\n".join(part for part in parts if part.strip())
+
+    def transient(self, exc: BaseException) -> bool:
+        # The work lane's rule, word for word: the driver's own reading first.
+        kind = self.driver.error_kind(exc)
+        return kind == "transient" or (kind is None and base._looks_transient(exc))
+
+    def spent(self) -> bool:
+        return self.turns >= TURNS_PER_CONVERSATION
+
+
+@contextlib.asynccontextmanager
+async def _conversation(options):
+    if CHAT_ENTRY == SDK_ENTRY:
+        async with ClaudeSDKClient(options) as client:
+            yield SdkConversation(client)
+        return
+    entry = importlib.import_module(CHAT_ENTRY.removesuffix(".py"))
+    prompt_path = base.STAGING / "system_prompt.txt"
+    yield DriverConversation(entry.make_driver(prompt_path.read_text(), prompt_path))
+
+
+def _sdk_options() -> ClaudeAgentOptions:
+    server = create_sdk_mcp_server(name="yaaf", version="1.0.0",
+                                   tools=base.render_sdk(base.run_tools()))
+    return ClaudeAgentOptions(
+        system_prompt=(base.STAGING / "system_prompt.txt").read_text(),
+        model=base.MODEL,
+        effort=base.EFFORT,
+        mcp_servers={"yaaf": server, **base._external_mcp_servers()},
+        tools=base._builtin_tools(),
+        allowed_tools=base._allowed_tools(),
+        permission_mode="bypassPermissions",  # containment is the sandbox + API
+        cwd="/workspace",
+        setting_sources=[],
+        # A runaway backstop, not a lifetime budget: the old value (30) was
+        # cumulative across the CLI process and quietly killed every busy
+        # session — tool calls count as turns.
+        max_turns=1000,
+        # Same live lesson as sandbox_entry: a real data pull can exceed the
+        # SDK's default 1MB transport buffer.
+        max_buffer_size=16 * 1024 * 1024,
+    )
+
+
 async def _resolve_boardroom() -> tuple[str, int] | None:
     auth_failures = 0
     transient_since = None
@@ -293,9 +400,9 @@ async def _resolve_boardroom() -> tuple[str, int] | None:
             delay = min(TRANSIENT_BACKOFF_MAX_S, delay * 2)
 
 
-async def _serve(client: ClaudeSDKClient, channel_id: str, state: dict) -> int | None:
-    """The poll/compose loop on one SDK client. Returns an exit code to end
-    the process, or None to have the caller rebuild the client and carry on."""
+async def _serve(conversation, channel_id: str, state: dict) -> int | None:
+    """The poll/compose loop on one conversation. Returns an exit code to end
+    the process, or None to have the caller rebuild it and carry on."""
     auth_failures = 0
     transient_since = None
     delay = TRANSIENT_BACKOFF_START_S
@@ -360,7 +467,7 @@ async def _serve(client: ClaudeSDKClient, channel_id: str, state: dict) -> int |
         prompt = preamble + "The chairman just said:\n" + prompt
 
         try:
-            reply = await _run_turn(client, channel_id, prompt)
+            reply = await conversation.turn(channel_id, prompt)
         except Exception as exc:
             ids_ = {m["id"] for m in fresh}
             attempt = 1 + max((state["attempts"].get(id_, 0) for id_ in ids_), default=0)
@@ -373,9 +480,9 @@ async def _serve(client: ClaudeSDKClient, channel_id: str, state: dict) -> int |
             # message that kills the client for a NON-transient reason is still
             # poison and still gets one attempt.
             retrying = bool(ids_) and attempt < base.RESUME_ATTEMPTS \
-                and base._looks_transient(exc)
+                and conversation.transient(exc)
             _log(f"turn failed on attempt {attempt}: {exc!r}; "
-                 + ("backing off, then rebuilding the SDK client" if retrying
+                 + ("backing off, then rebuilding the conversation" if retrying
                     else "answering the chairman without it"))
             if retrying:
                 delay = base.RESUME_BACKOFF_S[min(attempt - 1,
@@ -402,29 +509,15 @@ async def _serve(client: ClaudeSDKClient, channel_id: str, state: dict) -> int |
             _log("reply post refused or failed; leaving it in the logs:\n" + reply[:500])
         # Anything the chairman sent while we were composing is picked up
         # on the next poll — immediately, not next tick.
+        if conversation.spent():
+            _log("conversation re-primed from the boardroom after "
+                 f"{TURNS_PER_CONVERSATION} turns")
+            return None
 
 
 async def main() -> int:
     global _cost_booked
-    server = create_sdk_mcp_server(name="yaaf", version="1.0.0", tools=base.run_tools())
-    options = ClaudeAgentOptions(
-        system_prompt=(base.STAGING / "system_prompt.txt").read_text(),
-        model=base.MODEL,
-        effort=base.EFFORT,
-        mcp_servers={"yaaf": server, **base._external_mcp_servers()},
-        tools=base._builtin_tools(),
-        allowed_tools=base._allowed_tools(),
-        permission_mode="bypassPermissions",  # containment is the sandbox + API
-        cwd="/workspace",
-        setting_sources=[],
-        # A runaway backstop, not a lifetime budget: the old value (30) was
-        # cumulative across the CLI process and quietly killed every busy
-        # session — tool calls count as turns.
-        max_turns=1000,
-        # Same live lesson as sandbox_entry: a real data pull can exceed the
-        # SDK's default 1MB transport buffer.
-        max_buffer_size=16 * 1024 * 1024,
-    )
+    options = _sdk_options() if CHAT_ENTRY == SDK_ENTRY else None
 
     resolved = await _resolve_boardroom()
     if resolved is None:
@@ -453,12 +546,12 @@ async def main() -> int:
         _cost_booked = 0.0  # new CLI process: its cumulative total_cost_usd restarts at 0
         answered = state["turns_ok"]
         try:
-            async with ClaudeSDKClient(options) as client:
-                code = await _serve(client, channel_id, state)
+            async with _conversation(options) as conversation:
+                code = await _serve(conversation, channel_id, state)
                 if code is not None:
                     return code
         except Exception as exc:
-            _log(f"sdk client failed: {exc!r}")
+            _log(f"conversation failed: {exc!r}")
         # Consecutive, not lifetime. The cap exists to surface an SDK that is
         # systematically broken; a session that lives for days collects five
         # unrelated rebuilds — and a bad afternoon on the API now costs two per
@@ -466,7 +559,7 @@ async def main() -> int:
         # works, and starts the count over.
         rebuilds = 0 if state["turns_ok"] > answered else rebuilds + 1
         if rebuilds > MAX_CLIENT_REBUILDS:
-            _log("sdk client rebuilt too many times; exiting for the supervisor")
+            _log("conversation rebuilt too many times; exiting for the supervisor")
             return 1
         # The new client has no model context: refresh history so its first
         # turn re-primes with the transcript.

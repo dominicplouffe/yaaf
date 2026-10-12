@@ -150,10 +150,11 @@ def run_agent_container(
     timeout_s: int,
     memory: str = "2g",
     stop_event=None,
+    entrypoint: str = "sandbox_entry.py",
 ) -> tuple[int, str]:
     """Launch the sandbox entrypoint for an agent run; return (exit_code, logs).
-    The entry script reads its inputs from /workspace/.yaaf/ and writes
-    result.json + a trace there. If ``stop_event`` (a threading.Event) is set —
+    The entry script — one per harness (yaaf.runtimes.harnesses) — reads its
+    inputs from /workspace/.yaaf/ and writes result.json + a trace there. If ``stop_event`` (a threading.Event) is set —
     the run token was revoked by a kill switch, pause, or budget trip — the
     container itself is stopped: a revoked run must stop burning tokens, not
     just lose its API access."""
@@ -164,7 +165,7 @@ def run_agent_container(
     client = docker.from_env()
     container = client.containers.run(
         settings().sandbox_image,
-        command=["python3", "/opt/yaaf/sandbox_entry.py"],
+        command=["python3", f"/opt/yaaf/{entrypoint}"],
         environment=env,
         labels=_stack_labels(),
         volumes={workspace_dir: {"bind": "/workspace", "mode": "rw"}},

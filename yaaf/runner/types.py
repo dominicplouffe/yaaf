@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from yaaf.runtimes.catalog import DEFAULT_EFFORT, DEFAULT_MODEL
+
 
 @dataclass
 class RunJob:
@@ -18,8 +20,21 @@ class RunJob:
     # Assembled by the runner from the DB before execution:
     system_prompt: str = ""
     context_pack: dict = field(default_factory=dict)
-    model: str = "claude-sonnet-5-5"
-    effort: str = "high"
+    model: str = DEFAULT_MODEL
+    effort: str = DEFAULT_EFFORT
+    # What serves the model and what drives it (docs/RUNTIMES.md). Resolved
+    # with the model, by yaaf.runtimes.seats, and pinned on the run row.
+    provider: str = ""
+    harness: str = ""
+    # The model's catalog row, for the sandbox (which cannot import the
+    # catalog): its price, so every run is priced whoever bills it, and what
+    # the API accepts for it, for a harness that builds requests itself.
+    # None / {} for a model the catalog does not list.
+    price: dict | None = None
+    model_flags: dict = field(default_factory=dict)
+    # The provider, for a harness that calls its API itself: base URL, the
+    # key's variable, whether it states costs or searches (daemon._provider_spec).
+    provider_spec: dict = field(default_factory=dict)
     tool_permissions: dict = field(default_factory=dict)
     # Which tool SCHEMAS this run is worth sending. Every agent used to receive
     # all of them — for a plain employee that was 7,700 tokens of schema on
@@ -36,7 +51,7 @@ class RunJob:
     # Injected credentials (never logged):
     api_base_url: str = ""
     api_token: str = ""            # per-run yaaf token (plaintext)
-    billing_env: dict = field(default_factory=dict)  # ANTHROPIC_API_KEY / OAuth token
+    billing_env: dict = field(default_factory=dict)  # the credential kind's one variable
     workspace_dir: str = ""
     # Success checks only:
     check_command: str | None = None
@@ -51,11 +66,19 @@ class RunResult:
     cache_creation_tokens: int = 0
     cache_read_tokens: int = 0
     cost_usd: float | None = None
+    #: The same run priced from yaaf's catalog. For a harness that prices its
+    #: own runs it *is* cost_usd; for one that reports its bill it is the check
+    #: on the catalog (docs/RUNTIMES.md, the gap check). None when unpriced.
+    priced_usd: float | None = None
     trace_path: str | None = None
     #: The plan meter the SDK volunteered during this run, if it did:
     #: {"status": str, "windows": [{"key", "utilization", "resets_at"}]}.
     #: Belongs to the billing credential, not to the run.
     plan: dict | None = None
+    #: How a failed run failed, as the harness classified it: "auth" (the
+    #: credential is dead — the daemon pauses on three in a row), "transient",
+    #: or "fatal". None when the run did not fail or the harness could not say.
+    error_kind: str | None = None
     # Success checks only:
     check_exit_code: int | None = None
     check_output: str = ""

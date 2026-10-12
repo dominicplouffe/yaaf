@@ -293,7 +293,13 @@ def recall(session: Session, project: Project, team: Team, reason: str,
         agent.status = AgentStatus.ACTIVE
         agent.stood_down_at = None
         agent.stood_down_reason = None
-        returned.append(agent.name)
+        returned.append(agent)
+    # A seat that was down when the credential moved was never checked against
+    # it; coming back is when it is.
+    from yaaf.server.api.admin import refuse_unrunnable_seats
+
+    refuse_unrunnable_seats(session, project, returned)
+    returned = [agent.name for agent in returned]
     team.stood_down_at = None
     session.add(AuditLog(
         id=ids.new_id(ids.AUDIT), project_id=project.id, actor=actor,

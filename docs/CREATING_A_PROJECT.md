@@ -74,7 +74,8 @@ create** drops the whole thing into the form below, where you change anything
 you like, run the fire drill for nothing, and create it.
 
 It needs one thing first: the **Founder's own credential**, set once under
-Settings. That is not one of the LLM credentials projects pay with and never
+Settings — Anthropic's, or an API key of any other provider with one of its
+models. That is not one of the LLM credentials projects pay with and never
 becomes one — it pays for product-wide conversations like this, and no
 project's agents ever see it. Every project you create still pays its own way,
 and the Founder knows it: it reads the list of LLM credentials, names the one

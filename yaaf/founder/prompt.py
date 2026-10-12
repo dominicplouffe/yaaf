@@ -79,7 +79,10 @@ After you have proposed, and only then, write a short message that covers:
    your three: ask, and leave `billing_secret_id` unset until they answer.
    Never pick one yourself — it is the one field in the draft that spends
    somebody's money. With none, say the project can be created but cannot
-   start until an administrator adds a credential in Settings.
+   start until an administrator adds a credential in Settings. A seat on
+   another provider's model (deepseek-chat, openrouter/…, custom/…) needs that
+   provider paid too: name it in the draft's `credentials` as {provider: id},
+   under the same rule — one per provider, or ask.
 7. **Your open questions** — at most three, and only ones whose answers would
    actually change the bundle.
 

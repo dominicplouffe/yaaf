@@ -87,6 +87,22 @@ def test_a_reaped_run_books_the_usage_it_checkpointed(client):
     assert "reaped" in entries[0].note
 
 
+def test_a_reaped_run_books_its_priced_cost_beside_its_reported_one(client):
+    """The catalog's figure rides the same checkpoint (docs/RUNTIMES.md): on a
+    harness yaaf prices itself it is the bill, so a reap that dropped it would
+    leave the price-gap check a run short and nothing else wrong — quietly."""
+    slug = "reaped-priced"
+    project = make_project(client, slug=slug)
+    run_id, _ = live_token(project["id"], project["ceo_agent_id"])
+    _checkpoint(slug, run_id, {**CHECKPOINT, "priced_usd": 0.45})
+    _go_stale(run_id)
+
+    assert _reap(project) == 1
+    with db_session() as session:
+        run = session.get(Run, run_id)
+        assert (run.cost_usd, run.priced_usd) == (0.42, 0.45)
+
+
 def test_a_reaped_run_with_no_checkpoint_books_nothing(client):
     """It died before its first message. Inventing a number would be worse than
     the zero — the point is to stop guessing, in both directions."""

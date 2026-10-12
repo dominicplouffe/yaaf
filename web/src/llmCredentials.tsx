@@ -17,7 +17,7 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { del, get, patch, post } from "./api";
+import { del, get, patch, post, put } from "./api";
 import { ConfirmModal, fmtAgo, fmtSoon, SecretInput } from "./ui";
 
 export interface CredentialProject {
@@ -32,6 +32,12 @@ export interface Credential {
   id: string;
   name: string;
   mode: string;
+  /** Which provider it pays (yaaf.runtimes.providers); absent on an old server. */
+  provider?: string;
+  /** How it bills, in its own provider's words. */
+  bills?: string;
+  /** A custom endpoint's address. */
+  base_url?: string | null;
   created_at?: string;
   hidden_at?: string | null;
   /** True when at least one live project pays with it. The server decides. */
@@ -44,8 +50,38 @@ export interface Credential {
 }
 
 const endpoint = "/admin/settings/llm-credentials";
-const modeLabel = (mode: string) => mode === "subscription" ? "Claude subscription · tokens" : "Anthropic API · USD";
-const modeName = (mode: string) => mode === "subscription" ? "Claude subscription" : "Anthropic API key";
+
+/** A provider as the registry describes it (GET /admin/providers). */
+export interface ProviderInfo {
+  name: string;
+  label: string;
+  kinds: { mode: string; meter: string; bills: string }[];
+  credential_base_url: boolean;
+  search: boolean;
+  reports_cost: boolean;
+}
+
+let providerCache: Promise<ProviderInfo[]> | null = null;
+/** The provider registry, fetched once per page load: it changes with a release,
+    not with anything a person does on a screen. */
+export function providers(): Promise<ProviderInfo[]> {
+  providerCache ??= get<ProviderInfo[]>("/admin/providers").catch(() => {
+    providerCache = null;
+    return [] as ProviderInfo[];
+  });
+  return providerCache;
+}
+
+export function useProviders(): ProviderInfo[] {
+  const [rows, setRows] = useState<ProviderInfo[]>([]);
+  useEffect(() => { providers().then(setRows); }, []);
+  return rows;
+}
+
+const modeLabel = (row: Credential) => row.bills
+  ?? (row.mode === "subscription" ? "Claude subscription · tokens" : "Anthropic API · USD");
+const modeName = (row: Credential) => row.bills?.split(",")[0]
+  ?? (row.mode === "subscription" ? "Claude subscription" : "Anthropic API key");
 const modeMeter = (mode: string) => mode === "subscription" ? "metered in tokens" : "billed in USD";
 
 /** The credential a bundle names, if this install has it. By id first (a
@@ -60,21 +96,24 @@ export async function resolveCredential(id?: string | null, name?: string | null
     ?? null;
 }
 
-export function CredentialPicker({ value, onChange, disabled = false }: {
+export function CredentialPicker({ value, onChange, disabled = false, provider, label = "LLM credential" }: {
   value: string; onChange: (id: string, mode: string) => void; disabled?: boolean;
+  /** Only credentials paying this provider — for a project's second provider. */
+  provider?: string; label?: string;
 }) {
-  const [rows, setRows] = useState<Credential[] | null>(null);
+  const [all, setRows] = useState<Credential[] | null>(null);
   const [error, setError] = useState("");
   const reload = () => { setError(""); get<Credential[]>(endpoint).then(setRows).catch(e => setError(e.message)); };
   useEffect(reload, []);
+  const rows = all && provider ? all.filter(r => (r.provider ?? "anthropic") === provider) : all;
   return <div>
-    <label className="field">LLM credential
+    <label className="field">{label}
       <select value={value} disabled={disabled || rows === null} onChange={e => {
         const row = rows?.find(r => r.id === e.target.value);
         onChange(row?.id ?? "", row?.mode ?? "api_key");
       }}>
         <option value="">{rows === null ? "Loading credentials…" : "Select a credential"}</option>
-        {rows?.map(row => <option key={row.id} value={row.id}>{row.name} — {modeLabel(row.mode)}</option>)}
+        {rows?.map(row => <option key={row.id} value={row.id}>{row.name} — {modeLabel(row)}</option>)}
       </select>
     </label>
     {error && <p role="alert" className="error">{error} <button type="button" onClick={reload}>Retry</button></p>}
@@ -152,6 +191,10 @@ export function LlmCredentials({ onChanged }: { onChanged?: () => void } = {}) {
   const [editing, setEditing] = useState<Credential | "new" | null>(null);
   const [name, setName] = useState("");
   const [mode, setMode] = useState("api_key");
+  const [provider, setProvider] = useState("anthropic");
+  const [baseUrl, setBaseUrl] = useState("");
+  const registry = useProviders();
+  const seller = registry.find(p => p.name === provider);
   const [value, setValue] = useState("");
   const [search, setSearch] = useState("");
   // The filter lives in the URL: "the nine I hid" is a thing worth linking to,
@@ -225,6 +268,8 @@ export function LlmCredentials({ onChanged }: { onChanged?: () => void } = {}) {
   function edit(row: Credential | "new") {
     setEditing(row); setName(row === "new" ? "" : row.name);
     setMode(row === "new" ? "api_key" : row.mode); setValue(""); setError(""); setMessage("");
+    setProvider(row === "new" ? "anthropic" : row.provider ?? "anthropic");
+    setBaseUrl(row === "new" ? "" : row.base_url ?? "");
   }
 
   async function act<T>(fn: () => Promise<T>, done: (result: T) => string) {
@@ -250,9 +295,12 @@ export function LlmCredentials({ onChanged }: { onChanged?: () => void } = {}) {
       && editing.mode === "subscription" && !!value.trim() ? editing.id : null;
     await act(
       async () => {
-        if (editing === "new") await post(endpoint, { name: name.trim(), mode, value: value.trim() });
+        if (editing === "new") await post(endpoint, {
+          name: name.trim(), mode, value: value.trim(), provider,
+          ...(seller?.credential_base_url ? { base_url: baseUrl.trim() } : {}) });
         else if (editing) await patch(`${endpoint}/${editing.id}`,
-          { name: name.trim(), ...(value.trim() ? { value: value.trim() } : {}) });
+          { name: name.trim(), ...(value.trim() ? { value: value.trim() } : {}),
+            ...(seller?.credential_base_url && baseUrl.trim() ? { base_url: baseUrl.trim() } : {}) });
         setEditing(null); setValue("");
       },
       () => "Credential saved. New runs use the updated credential.");
@@ -272,7 +320,8 @@ export function LlmCredentials({ onChanged }: { onChanged?: () => void } = {}) {
     <div className="llm-header">
       <div>
         <h2>LLM credentials</h2>
-        <p className="help">What projects pay Claude with. Values are encrypted at rest and
+        <p className="help">What projects pay their models with — Anthropic, and any other
+          provider a seat runs on. Values are encrypted at rest and
           never shown back — rotate one rather than reading it. A credential a project ever
           named cannot be deleted; <b>hide</b> it instead and it leaves every menu without
           leaving the record.</p>
@@ -289,11 +338,22 @@ export function LlmCredentials({ onChanged }: { onChanged?: () => void } = {}) {
       <fieldset disabled={busy} style={{ border: 0, padding: 0 }}>
         <label className="field">Name<input autoFocus required maxLength={120} value={name}
           onChange={e => setName(e.target.value)} placeholder="e.g. Production — engineering" /></label>
+        <label className="field">Provider<select value={provider} disabled={editing !== "new"}
+          onChange={e => { setProvider(e.target.value); setMode("api_key"); setBaseUrl(""); }}>
+          {(registry.length ? registry : [{ name: "anthropic", label: "Anthropic" } as ProviderInfo])
+            .map(p => <option key={p.name} value={p.name}>{p.label}</option>)}
+        </select></label>
         <label className="field">Type<select value={mode} disabled={editing !== "new"}
           onChange={e => setMode(e.target.value)}>
-          <option value="api_key">Anthropic API key</option>
-          <option value="subscription">Claude subscription token</option>
+          {(seller?.kinds ?? [{ mode: "api_key", meter: "usd", bills: "Anthropic API key" },
+                              { mode: "subscription", meter: "tokens", bills: "Claude subscription token" }])
+            .map(k => <option key={k.mode} value={k.mode}>{k.bills.split(",")[0]}</option>)}
         </select></label>
+        {seller?.credential_base_url && <label className="field">Base URL
+          <input required value={baseUrl} onChange={e => setBaseUrl(e.target.value)}
+            placeholder="http://ollama:11434/v1" />
+          <span className="help">The server&apos;s OpenAI-compatible address. Price its
+            models under Settings → Model prices — zero is a price.</span></label>}
         {editing !== "new" && <p className="help">The type is fixed: it decides how every
           project on this credential is metered, and changing it under them would rewrite
           what their budgets mean.</p>}
@@ -301,7 +361,13 @@ export function LlmCredentials({ onChanged }: { onChanged?: () => void } = {}) {
           {editing === "new" ? "Credential value" : "Replace credential value (optional)"}</label>
         <SecretInput id="llm-credential-value" value={value} onChange={setValue}
           placeholder={editing === "new" ? "Paste credential" : "Leave blank to keep current value"} />
-        <p className="help">{mode === "subscription"
+        <p className="help">{provider === "openai" && mode === "subscription"
+          ? "Run codex login on your own machine, then paste the whole ~/.codex/auth.json it wrote. A login refreshed inside a run is not written back: when it stops working, sign in again and paste the new file."
+          : provider === "google" && mode === "subscription"
+          ? "Sign in to the Gemini CLI with your Google account on your own machine, then paste the whole ~/.gemini/oauth_creds.json it wrote. A login refreshed inside a run is not written back: when it stops working, sign in again and paste the new file."
+          : provider !== "anthropic"
+          ? `Use a key from your ${seller?.label ?? provider} account. A server that needs none still takes a placeholder of eight characters or more.`
+          : mode === "subscription"
           ? "Use the token generated by claude setup-token — it starts sk-ant-oat."
           : "Use an API key from your Anthropic account — it starts sk-ant-api."}</p>
         {editing !== "new" && editing.projects.filter(p => p.live).length > 0 &&
@@ -427,7 +493,7 @@ export function LlmCredentials({ onChanged }: { onChanged?: () => void } = {}) {
                   </div>
                 )}
                 {row.hidden_at && <div className="help">hidden {fmtAgo(row.hidden_at)}</div>}</td>
-              <td data-label="Type">{modeName(row.mode)}
+              <td data-label="Type">{modeName(row)}
                 <div className="help">{modeMeter(row.mode)}</div></td>
               <td data-label="Used by"><UsedBy row={row} /></td>
               <td data-label="Plan usage">
@@ -1071,4 +1137,160 @@ export function PlanMeterCompact({ credentialId, mode, auto = true, onRotate, on
       <span>{check}</span>
     </span>
   );
+}
+
+// ── model prices ────────────────────────────────────────────────────────────────
+//
+// What a model costs on this install. yaaf ships only the prices it could check
+// against the vendor's own list (Anthropic's); every other model a seat runs on
+// through yaaf's own loop is priced here, or that seat is refused — a run nobody
+// can price is a run the budget cannot stop. Zero is a price: a local server's.
+
+interface PriceRow { input: number; output: number; cache_read: number; cache_write_5m: number; as_of: string }
+interface ModelPriceRow { model: string; provider: string; listed: boolean;
+  shipped: PriceRow | null; own: PriceRow | null }
+
+const PRICES = "/admin/settings/model-prices";
+const perM = (n: number) => `$${n.toLocaleString(undefined, { maximumFractionDigits: 4 })}`;
+
+export function ModelPrices() {
+  const [rows, setRows] = useState<ModelPriceRow[] | null>(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [draft, setDraft] = useState({ model: "", input: "", output: "", cache_read: "" });
+  const reload = useCallback(() => {
+    get<ModelPriceRow[]>(PRICES).then(setRows).catch((e) => setError(e.message));
+  }, []);
+  useEffect(reload, [reload]);
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true); setError("");
+    try {
+      await put(`${PRICES}/${draft.model.trim()}`, {
+        input: Number(draft.input), output: Number(draft.output),
+        cache_read: Number(draft.cache_read || 0) });
+      setDraft({ model: "", input: "", output: "", cache_read: "" });
+      reload();
+    } catch (err) { setError((err as Error).message); } finally { setBusy(false); }
+  }
+
+  async function clear(model: string) {
+    setBusy(true); setError("");
+    try { await del(`${PRICES}/${model}`); reload(); }
+    catch (err) { setError((err as Error).message); } finally { setBusy(false); }
+  }
+
+  const price = (p: PriceRow | null) => p
+    ? `${perM(p.input)} in · ${perM(p.output)} out${p.cache_read ? ` · ${perM(p.cache_read)} cached` : ""}`
+    : "—";
+
+  return <section className="card" aria-label="Model prices">
+    <h2 style={{ marginTop: 0 }}>Model prices</h2>
+    <p className="help">USD per million tokens. A seat on a harness that meters its own runs
+      — yaaf&apos;s loop on the Anthropic API or an OpenAI-compatible one — needs its model
+      priced here or in the shipped list, or it is refused. Your price wins over the shipped
+      one. Name a model the list does not know with its provider first:{" "}
+      <code>openrouter/qwen/qwen3-coder</code>, <code>custom/llama3.1:8b</code>.
+      OpenRouter states each call&apos;s cost, so its models need no price at all.</p>
+    {error && <p className="error" role="alert">{error}</p>}
+    <table className="table">
+      <thead><tr><th>Model</th><th>Provider</th><th>Shipped</th><th>This install</th><th /></tr></thead>
+      <tbody>
+        {(rows ?? []).map((row) => <tr key={row.model}>
+          <td><code>{row.model}</code></td>
+          <td>{row.provider}</td>
+          <td>{price(row.shipped)}{row.shipped && <div className="help">as of {row.shipped.as_of}</div>}</td>
+          <td>{price(row.own)}</td>
+          <td>{row.own && <button type="button" className="small" disabled={busy}
+            onClick={() => clear(row.model)}>Use shipped</button>}
+            {!row.own && <button type="button" className="small" disabled={busy}
+              onClick={() => setDraft({ model: row.model, input: String(row.shipped?.input ?? ""),
+                output: String(row.shipped?.output ?? ""),
+                cache_read: String(row.shipped?.cache_read ?? "") })}>Set price</button>}</td>
+        </tr>)}
+      </tbody>
+    </table>
+    <form onSubmit={save} className="cred-form">
+      <fieldset disabled={busy} style={{ border: 0, padding: 0 }}>
+        <label className="field">Model<input required value={draft.model} maxLength={128}
+          onChange={(e) => setDraft({ ...draft, model: e.target.value })}
+          placeholder="deepseek-chat" /></label>
+        <label className="field">Input $/M<input required type="number" min={0} step="any"
+          value={draft.input} onChange={(e) => setDraft({ ...draft, input: e.target.value })} /></label>
+        <label className="field">Output $/M<input required type="number" min={0} step="any"
+          value={draft.output} onChange={(e) => setDraft({ ...draft, output: e.target.value })} /></label>
+        <label className="field">Cached input $/M<input type="number" min={0} step="any"
+          value={draft.cache_read}
+          onChange={(e) => setDraft({ ...draft, cache_read: e.target.value })} /></label>
+        <div className="actions"><button className="primary"
+          disabled={!draft.model.trim() || draft.input === "" || draft.output === ""}>
+          Save price</button></div>
+      </fieldset>
+    </form>
+  </section>;
+}
+
+// ── a project's other providers ─────────────────────────────────────────────────
+//
+// The billing credential pays whichever provider it is for. A seat on another
+// provider's model needs that provider paid too — one credential per provider,
+// each metered in the same unit as the billing one (one project, one meter).
+
+interface HeldCredential { provider: string; label: string; credential_id: string;
+  name: string; bills: string; billing: boolean }
+
+export function ProviderCredentials({ projectId, disabled = false }: {
+  projectId: string; disabled?: boolean;
+}) {
+  const registry = useProviders();
+  const [held, setHeld] = useState<HeldCredential[] | null>(null);
+  const [adding, setAdding] = useState("");
+  const [pick, setPick] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const base = `/admin/projects/${projectId}/credentials`;
+  const reload = useCallback(() => {
+    get<HeldCredential[]>(base).then(setHeld).catch((e) => setError(e.message));
+  }, [base]);
+  useEffect(reload, [reload]);
+
+  async function act(fn: () => Promise<HeldCredential[]>) {
+    setBusy(true); setError("");
+    try { setHeld(await fn()); setAdding(""); setPick(""); }
+    catch (err) { setError((err as Error).message); } finally { setBusy(false); }
+  }
+
+  const unpaid = registry.filter((p) => !(held ?? []).some((h) => h.provider === p.name));
+  const others = (held ?? []).filter((h) => !h.billing);
+
+  return <div aria-label="Other providers">
+    <h3>Other providers</h3>
+    <p className="help">A seat on another provider&apos;s model — DeepSeek, a model through
+      OpenRouter, your own server — pays with that provider&apos;s credential. Each is
+      metered in the same unit as the billing credential, against the same cap.</p>
+    {error && <p className="error" role="alert">{error}</p>}
+    {others.length === 0 ? <p className="muted">No other provider is paid on this project.</p>
+      : <ul>{others.map((h) => <li key={h.provider}>
+        <strong>{h.label}</strong> — {h.name} <span className="muted">({h.bills})</span>{" "}
+        <button type="button" className="small" disabled={busy || disabled}
+          onClick={() => act(() => del<HeldCredential[]>(`${base}/${h.provider}`))}>
+          Stop paying</button>
+      </li>)}</ul>}
+    <div className="actions">
+      <select value={adding} disabled={busy || disabled}
+        onChange={(e) => { setAdding(e.target.value); setPick(""); }}>
+        <option value="">Pay another provider…</option>
+        {unpaid.map((p) => <option key={p.name} value={p.name}>{p.label}</option>)}
+      </select>
+    </div>
+    {adding && <>
+      <CredentialPicker provider={adding} value={pick} label={`Credential for ${adding}`}
+        onChange={(id) => setPick(id)} disabled={busy || disabled} />
+      <div className="actions"><button type="button" className="primary"
+        disabled={busy || disabled || !pick}
+        onClick={() => act(() => put<HeldCredential[]>(`${base}/${adding}`, { credential_id: pick }))}>
+        Save</button></div>
+    </>}
+  </div>;
 }
