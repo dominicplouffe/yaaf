@@ -638,13 +638,12 @@ reporting cadence. The strategist is told why and re-plans.
 
 ```bash
 export YAAF_API=http://localhost:8080
-export YAAF_ADMIN_TOKEN=$(grep YAAF_ADMIN_TOKEN deploy/.env | cut -d= -f2-)
+yaaf login        # your email and password; keeps a personal token for the CLI
 
 # 1. seed the six roles (drop the JSON from §4 into roles/ first, or POST each)
 yaaf seed-roles roles/
 
-# 2. you, then the project
-yaaf create-user you@example.com "Your Name"
+# 2. the project — you chair what you found
 yaaf create-project docs/projects/fpl-manager.spec.json     # the JSON from §6
 
 # 3. billing

@@ -31,8 +31,9 @@ unit of work, and go back to sleep. Everything is recorded.
 
 ## Before you start, have these ready
 
-1. **The stack running** — `http://localhost:8080/app` loads and you can log
-   in with your admin token.
+1. **The stack running** — `http://localhost:8080/app` loads and you can sign
+   in. You chair whatever you found; add co-chairs or observers afterwards
+   from the project's Settings → People.
 2. **An Anthropic API key** (from console.anthropic.com) — this is how agents
    pay for their model calls.
 3. **Any outside-service credentials the work needs** — a WordPress password,
@@ -338,11 +339,12 @@ a token outright when a server stops needing one.
 
 ## A note on secrets and who can see them
 
-You are the chairman, and you are the only human on this system. Every stored
-project value — service credentials, a data source's address and token, the
-Slack tokens, the webhook signing secrets — is masked in the UI and one press
-of the **eye** from being readable, with a copy button and an inline edit to
-rotate it. Debugging a connection shouldn't require a database client. The
+You are the chairman. Whoever can change a project's credentials can read them
+back — you and your co-chairs, never an observer — and the box's own
+credentials are the instance admin's. Every stored project value — service
+credentials, a data source's address and token, the Slack tokens, the webhook
+signing secrets — is masked in the UI and one press of the **eye** from being
+readable, with a copy button and an inline edit to rotate it. Debugging a connection shouldn't require a database client. The
 LLM credentials projects pay with live above projects, under app-wide
 Settings, where they can be renamed and rotated but are never shown back.
 
@@ -350,7 +352,7 @@ That is a *display* choice for you, and it changes nothing about the agents.
 A role still receives only the credentials you granted it, still as
 environment variables in its own sandbox, and is still told the variable's
 *name* and never its value. The two are different doors: the eye lives behind
-your admin token, and no agent can reach it.
+your own sign-in, and no agent can reach it.
 
 One credential the eye cannot help with: a **binary** file credential — a
 `.p12`, a DER certificate. It says its size and that it is not text, because a

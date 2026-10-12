@@ -30,7 +30,7 @@ only. Deep link with `?s=rules&t=<tab>`.
 
 ```bash
 curl -X POST "$YAAF_API/admin/projects/$PROJECT/amendments" \
-  -H "Authorization: Bearer $YAAF_ADMIN_TOKEN" \
+  -H "Authorization: Bearer $YAAF_TOKEN" \
   -d '{"reason": "First month burned out in nine days", "changes": {"monthly_usd_cap": 400}}'
 ```
 

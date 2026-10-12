@@ -72,7 +72,8 @@ golden-transcript evals, green on SQLite and Postgres in CI.
 | Sandbox — container per run, scoped secrets, Chromium in the box | Built. |
 | Evidence verification, webhooks, spot-audit, CEO-judgment metric | Built. |
 | Dashboard — Desk, Overview, Boardroom, Plan, Work, Review, Deliverables, Records, Settings | Built. |
-| The chairman's MCP server — 32 tools across four scopes | Built, M0 through M5. Claude gets its own credential, never the admin token; nothing irreversible lands in one call; agent text arrives wrapped and labelled untrusted; no secret is readable at any scope. See [MCP_SERVER.md](MCP_SERVER.md). |
+| The chairman's MCP server — 32 tools across four scopes | Built, M0 through M5. Claude gets its own credential, never its person's own; nothing irreversible lands in one call; agent text arrives wrapped and labelled untrusted; no secret is readable at any scope. See [MCP_SERVER.md](MCP_SERVER.md). |
+| People — accounts, sessions, personal tokens; chairman, co-chairs, observers | Built. One box, several people, each project with one chairman who alone decides who decides; co-chairs decide as peers and are recorded as themselves. Every human route declares its authority and a test refuses one that does not. The static admin token is retired. See [AUTH.md](AUTH.md). |
 | Integrations — Slack (Socket Mode), GitHub, MCP data sources, S3, email | Built. |
 | Staffing — the CEO hires and stands roles down; the plan carries each seat's end | Built. Bounded by `max_teams`, a refusal to orphan open work, and a refusal to remove its own last critic. A declared `stand_down_when` is fired by the janitor, not by a reminder. |
 | Attribution — who spent which runs, and on what | Built. One producer behind the chairman's screen, the CLI, the chairman's MCP and the CEO's own reader, so the two sides of the boardroom cannot hold different numbers. |

@@ -16,8 +16,8 @@ There are four principals and they are not equal.
 
 | Principal | Holds | Can |
 |---|---|---|
-| **Chairman** | the admin bearer token | everything |
-| **Claude, via MCP** | its own scoped token, never the admin one | only what its scope names; nothing irreversible in one call |
+| **A person** | a password, then a browser session or an expiring personal token | what their roles hold: on the box (the instance admin runs it and reads every project), and per project (chairman, co-chair, observer) — see [docs/AUTH.md](docs/AUTH.md) |
+| **Claude, via MCP** | its own scoped token, never its person's own credential | only what its scope names, only on its person's projects; nothing irreversible in one call |
 | **An agent run** | a per-run token, one run, one agent, one project | only the `/agent/*` surface, only inside its own project |
 | **Everything an agent reads** | nothing | nothing — and it will try |
 
@@ -93,8 +93,15 @@ Stated here rather than waiting for someone to find them:
 - **Sandboxes share one Docker bridge.** Concurrent runs from different
   projects can reach each other on the network. Per-project networks are the
   obvious fix and are not built.
-- **The admin token is a single static bearer.** No rotation, no expiry, no
-  scopes below it. Full user auth is a milestone, not a feature.
+- **People have passwords and nothing stronger.** No TOTP, no SSO, no email
+  delivery of invites or resets — a setup link is shown to whoever issued it,
+  to hand on. Ten wrong passwords lock one address for fifteen minutes; there
+  is no per-IP throttle. The static admin token that preceded accounts was
+  retired rather than kept beside them.
+- **The instance admin reads every project.** Deliberately: whoever runs the
+  box can read its database, and the page says so rather than pretending
+  otherwise. It decides nothing on a project it does not chair, except handing
+  the chair on, which is recorded as a break-glass.
 - **A per-run token has no clock.** It is valid while its run is `RUNNING` and
   invalid after — bounded by the janitor's stale-run reaper rather than by an
   `expires_at`. "Short-lived" means "scoped to one run", not "expires in N
@@ -115,6 +122,9 @@ agent would — forged tokens, wrong roles, rephrased requests
 |---|---|
 | `test_secret_reveal.py` | Walks the live OpenAPI schema and fails if any `/agent/*` route grows a field named secret, value or credential outside a named allowlist. |
 | `test_mcp_oauth_attacks.py` | PKCE stripping, code replay, redirect swap, RFC 8707 audience confusion, scope widening at the token endpoint. |
+| `test_auth_surface.py` | Walks every `/admin`, `/observe` and `/auth` route and fails on any that does not declare, as a dependency run before its handler, who may call it. |
+| `test_auth_roles.py` | Strangers, observers, co-chairs and a non-member instance admin, each attacking a project with their own credentials: 404s that read like a missing project, 403s that name the role, a removed co-chair refused on their next request. |
+| `test_auth_sessions.py` | Replaying a signed-out cookie, writing from another origin, guessing passwords at speed, outliving a password change. |
 | `test_host_success_tests.py` | An agent-authored command does not reach the runner host because Docker was absent. |
 | `tests/chaos/` | Leases, claims and side effects keep their promises under violence. |
 

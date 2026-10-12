@@ -47,7 +47,8 @@ agent and what does not.
 
 A CEO sets the priorities. Teams of specialists argue with each other. A budget
 stops itself and a delivery date nobody can quietly move. **You are the
-chairman** — the one human in the building. Yet Another Agent Framework? No:
+chairman** — the human the project answers to, with co-chairs if you want them.
+Yet Another Agent Framework? No:
 this is the org chart, the boardroom and the accounting department around the
 agents you already have.
 
@@ -76,7 +77,7 @@ You pick the scopes when you connect:
 
 Four rules hold at every scope:
 
-- **Claude is never you.** It gets its own credential, not your admin token, and
+- **Claude is never you.** It gets its own credential, never your login, and
   every write is stamped *via Claude* in the record permanently — so months
   later you can still tell which decisions a machine carried.
 - **Nothing irreversible happens in one call.** Claude asks, gets a preview and
@@ -222,16 +223,18 @@ curl -fsSL https://get.docker.com | sh          # if docker isn't there yet
 sudo usermod -aG docker "$USER"                 # then log out and back in
 
 git clone <your-yaaf-remote> yaaf && cd yaaf
-./deploy_single_server.sh
+./deploy_single_server.sh --admin-email you@example.com
 ```
 
-Secrets, images, Postgres, migrations, the role library, and your login token
-printed at the end. Safe to re-run. The dashboard binds to `127.0.0.1`, so reach
+Secrets, images, Postgres, migrations, the role library, and — on a first
+install, with `--admin-email you@example.com` — a one-time link to choose your
+password, printed at the end. Safe to re-run. The dashboard binds to `127.0.0.1`, so reach
 it over SSH (`ssh -N -L 8080:localhost:8080 you@your-server`, then
 `localhost:8080/app`). Then connect Claude:
 
 ```bash
-yaaf mcp-token mint my-laptop --chairman you@example.com --scopes read
+yaaf login                                   # your email and password, once
+yaaf mcp-token mint my-laptop --scopes read
 # → ymt_…
 
 claude mcp add --transport http yaaf http://localhost:8080/mcp \

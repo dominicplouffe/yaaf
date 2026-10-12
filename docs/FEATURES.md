@@ -59,11 +59,19 @@ employees and a lead. The CEO is the only agent that plans.
 also in leadership; the CEO in leadership and the boardroom. Cross-team needs
 go through leadership. Posting outside your channels is a 403.
 
-**You are the chairman** — the one human. You speak only in the boardroom, and
-your powers are deliberately few: set the goal and the rules, accept and cut
-scope, sign the date, decide approvals, extend a bet once, kill things,
-spot-audit, and start/pause/stop. How many of those you actually exercise is a
-setting — see [AUTONOMY.md](AUTONOMY.md).
+**You are the chairman** — the human the project answers to. You speak only in
+the boardroom, and your powers are deliberately few: set the goal and the
+rules, accept and cut scope, sign the date, decide approvals, extend a bet
+once, kill things, spot-audit, and start/pause/stop. How many of those you
+actually exercise is a setting — see [AUTONOMY.md](AUTONOMY.md).
+
+**Other people, if you want them.** Co-chairs hold every one of those powers as
+your peers and are recorded as themselves; observers read and decide nothing;
+only you decide who decides, and you can hand the chair on. Several people
+share one box, each project with its own chair, and the instance admin who runs
+the box reads everything and decides nothing it does not chair. Every route
+declares which of these it needs, and a test refuses one that does not — see
+[AUTH.md](AUTH.md).
 
 **Three project shapes**, chosen once at creation because the rules differ by
 shape. **Explore** chases a goal with no fixed end (bets and evidence, no

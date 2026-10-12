@@ -1,8 +1,8 @@
 # People — accounts, sessions, and who may decide what
 
-**Status: the design and the tracking doc.** Update the checkboxes as they land;
-if a decision here turns out wrong, change the doc in the same PR that changes
-the code.
+**Status: A1 and A2 are built.** This is the design and the tracking doc.
+Update the checkboxes as they land; if a decision here turns out wrong, change
+the doc in the same PR that changes the code.
 
 Until this milestone yaaf had exactly one human credential: `YAAF_ADMIN_TOKEN`,
 a static bearer that authenticated a *client*, never a person. `admin_auth`
@@ -41,7 +41,7 @@ retired.
 |---|---|---|---|
 | **A person in a browser** | session cookie `yaaf_session` | `/admin`, `/observe`, `/auth`, the live socket — bounded by their roles | `user:<id>` |
 | **A person at a terminal** | personal token `ypt_…` | the same as their browser, never more | `user:<id> via token:<name>` |
-| **A model client** | MCP token `ymt_…` (unchanged) | `/mcp` only — its scopes, and the projects its person may see | `user:<id> via mcp:<name>` |
+| **A model client** | MCP token `ymt_…` (unchanged) | `/mcp` only — its scopes, on the projects its person is a member of (never the instance admin's read-everything) | `user:<id> via mcp:<name>` |
 | **An agent run** | per-run token `yrt_…` (unchanged) | `/agent/*` only, its own project | `agent:<id>` |
 | **The platform** | none | — | `system:<name>` |
 
@@ -89,7 +89,7 @@ Each names its enforcement, per [CONTRIBUTING.md](../CONTRIBUTING.md) house rule
 |---|---|---|---|
 | 1 | Every human route declares the authority it needs, and the declaration is the check. | A dependency per route (`authority.READ`, `STEER`, `CHAIR`, `SIGNED_IN`, `INSTANCE_ADMIN`) that resolves the project from the path and refuses before the handler runs. A route that cannot name its project in the path declares `IN_HANDLER` and calls `authority.require`. | `test_auth_surface.py` walks the live app and fails on any `/admin`, `/observe` or `/auth` route without exactly one declaration. |
 | 2 | Nobody reaches a project they are not a member of, and a member reaches only what their role holds. | The same dependency, reading `project_members` on every request — so removing a co-chair takes effect on their next click, with nothing to revoke. | `test_auth_roles.py` |
-| 3 | A write is recorded as the person who made it, through the door they used. | The actor is bound once per request from the credential that authenticated it; `decided_by_user_id`, `accepted_by_user_id`, `sender_user_id` and the audit `actor` all read it. Never `project.chairman_user_id`. | `test_auth_attribution.py` |
+| 3 | A write is recorded as the person who made it, through the door they used. | The actor is bound once per request from the credential that authenticated it; `decided_by_user_id`, `accepted_by_user_id`, `sender_user_id` and the audit `actor` all read it. Never `project.chairman_user_id`. | `test_auth_roles.py`, `test_mcp_attribution.py`, and the harness itself (below) |
 | 4 | A credential cannot widen itself. | A personal token cannot mint a personal token or change a password; an MCP token is refused on `/admin`; a personal token or session is refused on `/mcp`. | `test_auth_tokens.py`, `test_mcp_auth.py` |
 | 5 | The CEO may cite a boardroom order only from someone who may still give it. | `policy.check_directive_citation` checks the sender is the chairman or a co-chair *now* and their account is active. | `test_auth_roles.py` |
 | 6 | The box always has an admin, and a live project always has a chairman. | Demoting or deactivating the last active admin is refused; deactivating a person who chairs a live project is refused until the chair is handed on. | `test_auth_people.py` |
@@ -121,7 +121,9 @@ Issuing one for a person revokes their earlier unused ones. An instance admin
 issues them from the dashboard; whoever has a shell on the box can issue one
 with `yaaf users setup-link EMAIL`, which talks to the database directly — the
 same trust as `yaaf spend-report`, because a shell on the box already is root on
-the box.
+the box. The box sends no mail: the link is shown to whoever issued it, to hand
+on, and the API returns it as a path as well as a URL so the dashboard can
+complete it with the origin it is actually being read on.
 
 **The consent screen** for MCP clients keeps asking for the password even when a
 dashboard session exists. Handing a machine a credential is the moment to prove
@@ -160,36 +162,59 @@ stamped `system:unattributed`, and the test harness fails any test that leaves
 one behind — so a new door that forgets to say who walked through it fails the
 suite instead of lying in the record.
 
+## Known edges
+
+Said here rather than waiting to be found:
+
+- **A person can spend the box's model credentials.** Anyone with an account
+  may found a project and bill it to any LLM credential the box holds. The
+  instance admin owns those credentials and decides who has an account; per-person
+  grants on a credential are not built.
+- **Notices go to the chairman.** The email ration is one person's, so co-chairs
+  read decisions on the Desk rather than in their inbox (`yaaf.server.notify`).
+- **Slack trusts one person.** Inbound Slack maps one Slack user per box to the
+  chairman; a co-chair speaks through the dashboard, the CLI or a model client.
+- **The export is a read, the backup is not.** Any member may export a project's
+  design; `include_values=true` carries every credential decrypted and needs a
+  chair's standing, the same as the eye on a single secret.
+
 ---
 
 ## Milestones
 
 ### A1 — people authenticate, the admin token goes
 
-- [ ] `user_sessions`, `user_tokens`, `user_setup_links`, `login_failures`;
+- [x] `user_sessions`, `user_tokens`, `user_setup_links`, `login_failures`;
       `users.deactivated_at`; emails normalised; a chairman row in
-      `project_members` for every project that lacks one
-- [ ] `/auth`: login, logout, me, setup, password, tokens, sessions
-- [ ] `person_auth` replaces `admin_auth`; `YAAF_ADMIN_TOKEN` removed
-- [ ] Origin check on cookie-authenticated writes; login throttle
-- [ ] The live socket authenticates by cookie and checks `Origin`
-- [ ] `yaaf users bootstrap | setup-link | token`; `yaaf login | logout | whoami`
-- [ ] Rehearsal, evals and deploy scripts carry a person instead of the token
-- [ ] Dashboard: email + password sign-in, setup page, account page
+      `project_members` for every project that lacks one (migration 0042)
+- [x] `/auth`: login, logout, me, setup, password, tokens, sessions
+- [x] `person_auth` replaces `admin_auth`; `YAAF_ADMIN_TOKEN` removed
+- [x] Origin check on cookie-authenticated writes; login throttle
+- [x] The live socket authenticates by cookie and checks `Origin`
+- [x] `yaaf users bootstrap | setup-link | token | has-admin | list`;
+      `yaaf login | logout | whoami`
+- [x] Rehearsal, evals and deploy scripts carry a person instead of the token
+- [x] Dashboard: email + password sign-in, setup page, account page
 
 ### A2 — who may decide what
 
-- [ ] An authority declaration on every human route, and the test that walks them
-- [ ] Observer, co-chair and chairman enforced; membership routes; transfer
-- [ ] Cross-project rollups (projects, desk, briefing) list only what the person may see
-- [ ] Writes attributed to the person who made them, not to the chair
-- [ ] Directive citation honours co-chairs, and only current ones
-- [ ] MCP reach follows membership: read for any member, steer and configure for chairs
-- [ ] Instance admin: users page, invites, setup links, promote, deactivate
-- [ ] Dashboard: members panel, transfer, controls that match the role
+- [x] An authority declaration on every human route, and the test that walks them
+- [x] Observer, co-chair and chairman enforced; membership routes; transfer
+- [x] Cross-project rollups (projects, desk, briefing) list only what the person may see
+- [x] Writes attributed to the person who made them, not to the chair
+- [x] Directive citation honours co-chairs, and only current ones
+- [x] MCP reach follows membership: read for any member, steer and configure for chairs
+- [x] Instance admin: users page, invites, setup links, promote, deactivate
+- [x] `yaaf members` and `yaaf people` — the dashboard's people screens, scriptable
+- [x] The CEO, the boardroom, the dashboard and Slack name a co-chair's words as theirs
+- [x] Dashboard: members panel, transfer, and the role on screen — a notice for
+      observers and the instance admin, and no lifecycle buttons for them. Other
+      decide buttons stay and show the server's refusal; hiding every one of them
+      is a sweep across the app that has not been done.
 
 ### Later, if wanted
 
-- Per-person Slack identity (today one `slack.chairman_user` per install maps to the chairman).
+- Per-person Slack identity (today one `slack.chairman_user` per install maps to
+  the chairman, so a co-chair speaks in the dashboard, the CLI or a model client).
 - TOTP; OIDC sign-in; email delivery of invites and resets.
 - Chairman notices to co-chairs as well, once someone needs them.

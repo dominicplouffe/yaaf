@@ -50,8 +50,9 @@ that the verbs a language model must not hold are verbs it *does not have*.
 `requirement_verdict`, `commitment_accept`, `review_lever` and `audit_decide`
 exist on the admin surface precisely because agents are refused them.
 
-An MCP server carrying `YAAF_ADMIN_TOKEN` hands those verbs back to a language
-model. It is an **authority-laundering machine**: the platform spends its
+An MCP server carrying a person's own credential — the static admin token when
+this was written; a session or personal token since people got accounts
+([AUTH.md](AUTH.md)) — hands those verbs back to a language model. It is an **authority-laundering machine**: the platform spends its
 architecture denying a model the right to mark work done, and then a tool call
 reaches around the whole thing. Worse, it launders *identity* too — the audit
 log would record the chairman doing it.
@@ -72,8 +73,8 @@ house rule 1, and the invariant test that attacks it, per house rule 2.
 
 | # | Rule | Enforced by | Attacked in |
 |---|---|---|---|
-| 1 | An MCP client is never the admin principal. | A third principal (`mcp_auth`) with its own token table; `settings().admin_token` is not accepted on `/mcp` at all. | `test_mcp_auth.py` |
-| 2 | A token holds only the scopes it was issued for, and reaches only what its chairman chairs. | The scope is checked at dispatch against the tool's declaration, never at the call site; every project-addressed tool resolves its reference through `resolve_project`, which reads chairmanship on every call and refuses another chairman's project in the same words as one that does not exist. | `test_mcp_scopes.py` |
+| 1 | An MCP client is never its person's own principal. | A third principal (`mcp_auth`) with its own token table; a personal token is refused on `/mcp` by name, and the surface reads no session cookie. (It was the admin token this row named; that was retired, and the rule outlived it.) | `test_mcp_auth.py` |
+| 2 | A token holds only the scopes it was issued for, and reaches only what its person may. | The scope is checked at dispatch against the tool's declaration, never at the call site; every project-addressed tool resolves its reference through `resolve_project`, which reads membership on every call — any role to read, chairman or co-chair to steer or configure, derived from the dispatched tool's own scope — and refuses a project its person is not on in the same words as one that does not exist. The instance admin's read-everything does not extend to its model clients. | `test_mcp_scopes.py`, `test_auth_roles.py` |
 | 3 | Every write is attributed as machine-mediated, permanently. | `AuditLog.actor` is written as `user:<id> via mcp:<client>`; the field is never the bare `user:<id>` form on this path. | `test_mcp_attribution.py` |
 | 4 | Irreversible writes cannot happen in one call. | Server-issued `confirm_token`: bound to a hash of the exact arguments, single-use, 5-minute TTL. A second call with different arguments is refused. | `test_mcp_confirm.py` |
 | 5 | Agent-authored text is data, never instruction. | Every tool result carrying agent-written content wraps it in an `<untrusted_agent_content>` envelope naming the agent, and no tool result is ever executed as a directive. | `test_mcp_untrusted.py` |
@@ -196,6 +197,10 @@ consent screen does — but an open endpoint that mints rows still gets a limit.
 
 ### 3. A chairman login has to exist — this is the real work
 
+*(Since absorbed: people have accounts, sessions and personal tokens, and
+`yaaf set-password` is gone — [AUTH.md](AUTH.md). What follows is the slice
+that came first, kept because the consent screen still works this way.)*
+
 `yaaf/server/deps.py` says it plainly: "full user auth arrives with the UI
 milestone." There is one static admin token and no way to authenticate a
 *person* in a browser. OAuth's `/authorize` needs exactly that.
@@ -269,9 +274,11 @@ another chairman, and it stops being reachable with nothing to revoke. Scopes
 stay on the consent screen, because *what a client may do* is a real decision
 that no other record answers.
 
-The narrowing that remains is the one that matters: `configure` on a project
-nobody else chairs is still a smaller thing than the admin bearer, which is
-every verb on every project with no name attached.
+The narrowing that remains is the one that matters: `configure` on the projects
+its person chairs is still a smaller thing than its person's own credential,
+which is every verb they hold with no machine's name attached. With co-chairs,
+"what its chairman owns" reads "what its person is on": membership is the gate
+now, read the same way on every call.
 
 ### 4. Tokens rotate; grants and attribution do not
 

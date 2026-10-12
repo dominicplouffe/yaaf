@@ -118,8 +118,8 @@ mkdir -p seed/projects seed/roles
 cp roles/*.json seed/roles/
 cp examples/01-your-first-hour.json seed/projects/
 
-export YAAF_API=http://localhost:8080 YAAF_ADMIN_TOKEN=…
-yaaf create-user you@example.com "Your Name"
+export YAAF_API=http://localhost:8080
+yaaf login                                    # your email and password, once
 yaaf seed seed --chairman you@example.com     # created in draft, never started
 
 # Prompts for the key, never echoes it, and prints the credential's id.

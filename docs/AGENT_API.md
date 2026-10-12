@@ -205,7 +205,7 @@ that can author its own planning gate does not have one.
 | `GET /messages` | — | Unread, per channel. |
 | `POST /messages` | `channel_id`, `body`, `thread_id?`, `override?` | Channel membership enforced; frozen threads refuse. `override` is named break-glass on the chairman's reporting cadence (`blocker`, `budget`, `approval`) — verified where verifiable, recorded either way. `question` is **refused** and names `POST /asks`: asking him something is not a status and never faced the cadence, and as an override it left a message with no clock on it. |
 | `POST /typing` | `channel_id`, `seconds` | Presence, not state. Expires by itself. |
-| `POST /directives` | `from_message_id`, `action?` / `changes?`, `reason` | Turn something the chairman said into something the platform does. Must cite a real boardroom message he actually wrote, within 24 hours. Two shapes: a **rule** directive files reporting-cadence policy; a **scope** directive executes a plan order (`accept`, `cut`, `reopen`, `restage`, `reestimate`, `reword`, `unsequence`) through the same machinery as his own buttons, echoed back threaded to his words. |
+| `POST /directives` | `from_message_id`, `action?` / `changes?`, `reason` | Turn something the chairman said into something the platform does. Must cite a real boardroom message he actually wrote — or a current co-chair did (their messages carry `from_name`, e.g. "Sam (co-chair)") — within 24 hours. Two shapes: a **rule** directive files reporting-cadence policy; a **scope** directive executes a plan order (`accept`, `cut`, `reopen`, `restage`, `reestimate`, `reword`, `unsequence`) through the same machinery as his own buttons, echoed back threaded to his words. |
 
 ## Memory
 

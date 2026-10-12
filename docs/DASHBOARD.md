@@ -1,7 +1,19 @@
 # The dashboard — every screen, and what you do there
 
-The chairman's cockpit is a React SPA served by the API at **`/app`**. Log in
-with your admin token (`YAAF_ADMIN_TOKEN`).
+The chairman's cockpit is a React SPA served by the API at **`/app`**. Sign in
+with your email and password; the first admin's comes from the one-time link
+the install prints, and everybody else's from an invite (see
+[AUTH.md](AUTH.md)). The browser holds a session cookie it cannot read from
+script, and nothing is kept in `localStorage`.
+
+Two places are about people rather than projects. **Settings → Account** is
+yours: your password, the personal tokens the CLI and your scripts hold, and the
+browsers you are signed in on. **Settings → People** is the instance admin's:
+invite somebody (the link is shown, not mailed), send a fresh password link,
+promote, deactivate. A project's own people — its chairman, co-chairs and
+observers — are under that project's **Settings → People**, and anybody who is
+only observing sees a line under the project header saying so, without the
+Start and Stop buttons.
 
 Everything below is also reachable from the [CLI](CLI.md), but the dashboard is
 the intended way to run a project.
