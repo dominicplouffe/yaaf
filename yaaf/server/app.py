@@ -17,6 +17,8 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.gzip import GZipMiddleware
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from yaaf.core.constitution import effective
 from yaaf.core.db import db_session
@@ -50,6 +52,39 @@ def _recent_refusals(run_id: str) -> int:
                       if not v or now - v[-1] > CHAT_REFUSAL_WINDOW_S]:
             _CHAT_REFUSALS.pop(stale, None)
     return len(hits)
+
+
+class _Compressed:
+    """gzip for everything worth compressing, which is nearly everything here.
+
+    The API speaks JSON and the screen is a JavaScript bundle: both shrink by
+    five to ten times, and a Deliverables screenful went over the wire
+    uncompressed until this. Level 6 rather than Starlette's 9 — almost all of
+    the size for a fraction of the CPU.
+
+    One route is left alone: a file's own bytes (`/files/content`). They are
+    whatever an agent wrote — often already compressed, sometimes a 120 MB
+    render — and squeezing them again on a request thread buys nothing. Routed
+    by path rather than by content type, because the content-type exclusion
+    only exists in Starlette 1.5+ and this has to start on any version the
+    dependency range allows.
+
+    No BREACH exposure: that needs a compressed body holding a secret beside
+    attacker-chosen text, fetched with credentials a browser attaches on its
+    own. The chairman's API and MCP authenticate by bearer header, which no
+    cross-site request carries; the OAuth pages echo their parameters but hold
+    no secret in the body — the code leaves in a redirect header.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+        self.gzip = GZipMiddleware(app, minimum_size=1024, compresslevel=6)
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http" and scope["path"].endswith("/files/content"):
+            await self.app(scope, receive, send)
+            return
+        await self.gzip(scope, receive, send)
 
 
 def _web_dist() -> Path | None:
@@ -203,4 +238,6 @@ def create_app() -> FastAPI:
                 "api_docs": "/docs",
             }
 
+    # Last, so it is outermost and compresses what every other layer produced.
+    app.add_middleware(_Compressed)
     return app

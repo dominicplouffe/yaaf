@@ -907,6 +907,9 @@ tr.subtask td:first-child { padding-left: 28px; color: var(--ink-2); }
 }
 .fdl:hover { color: var(--accent); border-color: transparent; background: var(--surface-2); }
 .fmore { padding: 8px 12px; border-bottom: 1px solid var(--grid); }
+/* The rows answer the last question asked, not yet the one in the box. Dim
+   rather than blank: what was there stays readable until the answer lands. */
+.fbrowse.settling { opacity: 0.55; transition: opacity 0.15s 0.1s; }
 
 /* A phone is where the "did today's report land?" question gets asked. Size
    and type go first — the name, the state and the time are the answer. */

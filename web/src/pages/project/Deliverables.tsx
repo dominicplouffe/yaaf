@@ -1,23 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { get } from "../../api";
+import { ApiError, get } from "../../api";
 import Markdown from "../../Markdown";
 import { fmtWhen, usePoll } from "../../hooks";
 import { AsOf, ExportCsv, Skeleton, downloadCsv } from "../../ui";
-
-interface WorkspaceFile {
-  path: string;
-  size: number;
-  modified: string;
-}
-
-interface ArtifactFile {
-  key: string;
-  run_id: string | null;
-  name: string;
-  size: number;
-  modified: string | null;
-}
 
 interface PublishedRow {
   id: string;
@@ -31,15 +17,59 @@ interface PublishedRow {
   satisfies: string[];
 }
 
-interface FilesView {
-  workspace: WorkspaceFile[];
-  artifacts: ArtifactFile[];
-  // The receipts: platform-written rows with a real hash, a real publish
-  // time, and the requirements each claims to satisfy.
-  published?: PublishedRow[];
-  // How many working files the server had to drop to answer at all. A listing
-  // that silently stops at its cap is a listing that lies about the project.
-  workspace_truncated?: number;
+/** One row as the index sends it. The server does the searching, sorting and
+    foldering now — a project with fifty thousand files cannot be shipped to a
+    browser every fifteen seconds and sorted there — so a row arrives already
+    knowing its place (`pos`) in the filtered list. */
+interface FileRow {
+  id: string;
+  name: string;
+  dir: string;
+  state: State;
+  ext: string;
+  size: number;
+  at: string | null;
+  path: string | null;
+  key: string | null;
+  run_id: string | null;
+  version: number;
+  pos: number | null;
+  // The receipt: a platform-written row with a real hash, a real publish
+  // time, and the requirements it claims to satisfy.
+  receipt: PublishedRow | null;
+  older: FileRow[];
+}
+
+interface DayFolder {
+  key: string;
+  count: number;
+  published: number;
+  open: boolean;
+  cap: number;
+  /** Null while the folder is closed: its rows were never sent. */
+  rows: FileRow[] | null;
+}
+
+interface BrowseView {
+  as_of: string;
+  total: number;
+  published_total: number;
+  today_total: number;
+  matched: number;
+  states: Record<"all" | "published" | "working", number>;
+  types: [string, number][];
+  days: DayFolder[];
+  // How many working files the index had to leave out to hold the rest. A
+  // listing that silently stops at its cap is a listing that lies about the
+  // project.
+  working_kept: number;
+  working_dropped: number;
+  walk_stopped: boolean;
+}
+
+interface RowsView {
+  matched: number;
+  rows: FileRow[];
 }
 
 function fmtSize(bytes: number): string {
@@ -154,7 +184,32 @@ interface Entry {
   receipt: PublishedRow | null;
   /** Earlier publications of the same name, newest first. */
   older: Entry[];
-  haystack: string;
+  /** Where this row sits in the filtered list, which is what the reader walks.
+      Null for an earlier version, which is not in that list. */
+  pos: number | null;
+}
+
+function toEntry(row: FileRow, projectId: string): Entry {
+  const content = `/observe/projects/${projectId}/files/content`;
+  return {
+    id: row.id,
+    name: row.name,
+    dir: row.dir,
+    size: row.size,
+    at: row.at,
+    state: row.state,
+    ext: row.ext,
+    kind: kindOf(row.name),
+    url: row.key !== null
+      ? `${content}?artifact=${encodeURIComponent(row.key)}`
+      : `${content}?path=${encodeURIComponent(row.path ?? "")}`,
+    key: row.key,
+    runId: row.run_id,
+    version: row.version,
+    receipt: row.receipt,
+    older: (row.older ?? []).map((o) => toEntry(o, projectId)),
+    pos: row.pos,
+  };
 }
 
 // ── dates: the organising idea of the whole page ────────────────────────────
@@ -173,15 +228,20 @@ const STAMP = new Intl.DateTimeFormat(undefined, {
 
 /** Local days, not UTC ones. A file written at 6pm in California belongs in
     *this evening's* folder, and an ISO-prefix comparison would file it under
-    tomorrow. */
+    tomorrow. The server folders by the zone named here, so its day keys and
+    the labels below agree about when midnight was. */
+const TZ = (() => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
+})();
+
 function dayOf(d: Date): string {
   const m = `${d.getMonth() + 1}`.padStart(2, "0");
   const day = `${d.getDate()}`.padStart(2, "0");
   return `${d.getFullYear()}-${m}-${day}`;
-}
-
-function dayKey(iso: string): string {
-  return dayOf(new Date(iso));
 }
 
 function startOfDay(offsetDays = 0): Date {
@@ -745,9 +805,22 @@ const STATES = [
   { key: "working", label: "Working" },
 ] as const;
 
-// Even one open folder can hold a thousand rows. Show a screenful of them and
-// let the reader ask for the rest; the count is on the folder either way.
-const ROWS_PER_FOLDER = 150;
+// Even one open folder can hold a thousand rows. The server sends a screenful
+// of them (150) and the reader asks for the rest this many at a time; the
+// count is on the folder either way.
+const MORE_ROWS = 500;
+
+/** The search box is the URL, so every keystroke lands there at once; what is
+    *asked* of the server waits for a pause, or a six-letter word is six
+    questions racing each other home. */
+function useSettled<T>(value: T, ms: number): T {
+  const [settled, setSettled] = useState(value);
+  useEffect(() => {
+    const timer = setTimeout(() => setSettled(value), ms);
+    return () => clearTimeout(timer);
+  }, [value, ms]);
+  return settled;
+}
 
 /** Show the reader why this row matched. With a thousand files and a
     two-letter search, "which part of this is the hit" is a real question —
@@ -849,12 +922,15 @@ function Row(props: RowProps) {
 /** Every file the project has, in one list, filed by the day it landed.
     Published deliverables and the agents' working files differ by a column
     rather than by a section, because "what did we make today" is one question
-    and answering it used to mean reading two lists with different shapes. */
+    and answering it used to mean reading two lists with different shapes.
+
+    The list lives on the server. This page used to be handed every file and
+    sort them itself, which stopped working at about the size of project
+    whose files are worth a browser: the call slowed, the polls overlapped,
+    and the tab stopped loading. Now it asks a question — these filters, these
+    folders open, this far down — and gets back the folder headers and the
+    rows it is showing. */
 export default function Deliverables({ projectId }: { projectId: string }) {
-  const { data, error, at } = usePoll(
-    () => get<FilesView>(`/observe/projects/${projectId}/files`),
-    15000,
-  );
   const [params, setParams] = useSearchParams();
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [opening, setOpening] = useState<string | null>(null);
@@ -869,6 +945,7 @@ export default function Deliverables({ projectId }: { projectId: string }) {
   const state = (STATES.find((s) => s.key === params.get("state"))?.key ?? "all");
   const type = params.get("type") ?? "";
   const since = (WINDOWS.find((w) => w.key === params.get("since"))?.key ?? "all");
+  const asked = useSettled(query, 250);
 
   function setParam(key: string, value: string, fallback: string) {
     const next = new URLSearchParams(params);
@@ -901,161 +978,64 @@ export default function Deliverables({ projectId }: { projectId: string }) {
     return () => { if (url) URL.revokeObjectURL(url); };
   }, [loaded]);
 
-  const artifactUrl = useCallback(
-    (key: string) =>
-      `/observe/projects/${projectId}/files/content?artifact=${encodeURIComponent(key)}`,
-    [projectId],
+  const base = `/observe/projects/${projectId}/files/browse`;
+  // The question without the folders: the reader and the export ask it of
+  // the whole list, the poll asks it of a screenful.
+  const filters = useMemo(() => {
+    const p = new URLSearchParams({ tz: TZ, sort: sort.by, desc: String(sort.desc) });
+    if (asked.trim()) p.set("q", asked);
+    if (state !== "all") p.set("state", state);
+    if (type) p.set("type", type);
+    if (since !== "all") p.set("since", since);
+    return p.toString();
+  }, [asked, state, type, since, sort]);
+  const screen = useMemo(() => {
+    const p = new URLSearchParams(filters);
+    for (const [key, open] of Object.entries(toggled)) p.append(open ? "expand" : "collapse", key);
+    for (const [key, rows] of Object.entries(more)) p.append("more", `${key}:${rows}`);
+    return p.toString();
+  }, [filters, toggled, more]);
+
+  const { data, error } = usePoll(
+    () => get<BrowseView>(`${base}?${screen}`).then((view) => ({ view, filters })),
+    15000,
+    [screen],
+  );
+  const view = data?.view ?? null;
+  // What is on screen answers the last question asked, which is not always
+  // the one in the box. Say so rather than show old rows as new ones.
+  const settling = data !== null && (data.filters !== filters || asked !== query);
+
+  const terms = useMemo(() => asked.toLowerCase().split(/\s+/).filter(Boolean), [asked]);
+  const folders = useMemo(
+    () => (view?.days ?? []).map((d) => ({
+      ...d,
+      label: dayLabel(d.key),
+      entries: d.rows?.map((r) => toEntry(r, projectId)) ?? null,
+    })),
+    [view, projectId],
   );
 
-  const entries = useMemo<Entry[]>(() => {
-    const receipts = new Map((data?.published ?? []).map((p) => [p.key, p]));
-    const rows: Entry[] = [];
+  const filtering = query.trim() !== "" || state !== "all" || type !== "" || since !== "all";
+  const total = view?.total ?? 0;
+  const matched = view?.matched ?? 0;
 
-    // The same name republished by a later run is a new version of one thing.
-    // Listing every run's copy as its own row made five files look like five
-    // deliverables when there were three.
-    const byName = new Map<string, ArtifactFile[]>();
-    for (const a of data?.artifacts ?? []) {
-      byName.set(a.name, [...(byName.get(a.name) ?? []), a]);
-    }
-    for (const [name, all] of byName) {
-      const sorted = [...all].sort((a, b) => (b.modified ?? "").localeCompare(a.modified ?? ""));
-      const make = (a: ArtifactFile, version: number): Entry => ({
-        id: a.key,
-        name,
-        dir: "",
-        size: a.size,
-        at: a.modified,
-        state: "published",
-        ext: extOf(name),
-        kind: kindOf(name),
-        url: artifactUrl(a.key),
-        key: a.key,
-        runId: a.run_id,
-        version,
-        receipt: receipts.get(a.key) ?? null,
-        older: [],
-        haystack: name.toLowerCase(),
-      });
-      const latest = make(sorted[0], sorted.length);
-      latest.older = sorted.slice(1).map((a, i) => make(a, sorted.length - 1 - i));
-      rows.push(latest);
-    }
-
-    for (const f of data?.workspace ?? []) {
-      const name = f.path.split("/").pop() ?? f.path;
-      rows.push({
-        id: `w:${f.path}`,
-        name,
-        dir: f.path.slice(0, Math.max(f.path.length - name.length - 1, 0)),
-        size: f.size,
-        at: f.modified,
-        state: "working",
-        ext: extOf(name),
-        kind: kindOf(name),
-        url: `/observe/projects/${projectId}/files/content?path=${encodeURIComponent(f.path)}`,
-        key: null,
-        runId: null,
-        version: 1,
-        receipt: null,
-        older: [],
-        haystack: f.path.toLowerCase(),
-      });
-    }
-    return rows;
-  }, [data, projectId, artifactUrl]);
-
-  // Every term has to hit, in any order: "sep report" finds
-  // reports/september-summary.md without a syntax to learn.
-  const terms = useMemo(
-    () => query.toLowerCase().split(/\s+/).filter(Boolean),
-    [query],
-  );
-  const floor = useMemo(() => {
-    const w = WINDOWS.find((x) => x.key === since)!;
-    return w.days < 0 ? 0 : startOfDay(w.days).getTime();
-    // `data` is in the deps because "today" has to mean today after midnight
-    // on a screen that has been open since yesterday afternoon.
-  }, [since, data]);
-
-  /** `skip` leaves one filter out, so each filter can count what it *would*
-      show rather than what the others have already hidden. A type dropdown
-      that reads "md (0)" because you are on Published is a broken dropdown. */
-  const passes = useCallback(
-    (e: Entry, skip: "state" | "type" | "" = "") => {
-      if (skip !== "state" && state !== "all" && e.state !== state) return false;
-      if (skip !== "type" && type && e.ext !== type) return false;
-      if (floor && (!e.at || new Date(e.at).getTime() < floor)) return false;
-      return terms.every((t) => e.haystack.includes(t));
-    },
-    [state, type, floor, terms],
-  );
-
-  const stateCounts = useMemo(() => {
-    const counts: Record<string, number> = { all: 0, published: 0, working: 0 };
-    for (const e of entries) {
-      if (!passes(e, "state")) continue;
-      counts.all += 1;
-      counts[e.state] += 1;
-    }
-    return counts;
-  }, [entries, passes]);
-
-  const types = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const e of entries) {
-      if (!passes(e, "type")) continue;
-      counts.set(e.ext, (counts.get(e.ext) ?? 0) + 1);
-    }
-    return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
-  }, [entries, passes]);
-
-  const groups = useMemo(() => {
-    const dir = sort.desc ? -1 : 1;
-    const hits = entries.filter((e) => passes(e));
-    // Name sorts on the path as shown, folder and all: a list that prints
-    // "research/…" and then sorts on the part after the slash looks broken,
-    // and grouping a folder together is the reason to sort by name at all.
-    // Every column falls back to it, so two files of the same size or the same
-    // minute keep one order instead of trading places on each poll.
-    hits.sort((a, b) => (dir * (
-      sort.by === "size" ? a.size - b.size
-      : sort.by === "at" ? (a.at ?? "").localeCompare(b.at ?? "")
-      : sort.by === "state" ? a.state.localeCompare(b.state)
-      : sort.by === "type" ? a.ext.localeCompare(b.ext)
-      : a.haystack.localeCompare(b.haystack)
-    )) || a.haystack.localeCompare(b.haystack));
-    const folders = new Map<string, Entry[]>();
-    for (const e of hits) {
-      const key = e.at ? dayKey(e.at) : "unknown";
-      folders.set(key, [...(folders.get(key) ?? []), e]);
-    }
-    return [...folders.entries()]
-      .sort((a, b) => (a[0] === "unknown" ? 1 : b[0] === "unknown" ? -1 : b[0].localeCompare(a[0])))
-      .map(([key, items]) => ({
-        key,
-        label: dayLabel(key),
-        items,
-        published: items.filter((e) => e.state === "published").length,
-      }));
-  }, [entries, passes, sort]);
-
-  // The reader walks what the filters found, not what happens to be unfolded —
-  // pressing → into a closed folder is what you meant, every time.
-  const flat = useMemo(() => groups.flatMap((g) => g.items), [groups]);
-
-  const filtering = terms.length > 0 || state !== "all" || type !== "" || since !== "all";
-  const todayKey = dayOf(new Date());
-
-  const openFolder = (key: string, index: number) =>
-    toggled[key] ?? (key === todayKey || filtering || index === 0);
-
-  const openEntry = useCallback(async (entry: Entry) => {
+  // Every open is numbered when it is asked for, and only the newest one may
+  // put a file on screen. Each step is a round trip now, so a held arrow key
+  // has several in the air, and they do not come home in the order they left;
+  // `aim` is where the walk has got to, so the presses add up instead of all
+  // stepping from the file still showing.
+  const ticket = useRef(0);
+  const aim = useRef<number | null>(null);
+  const openEntry = useCallback(async (entry: Entry, mine = ++ticket.current) => {
+    if (mine !== ticket.current) return;
+    aim.current = entry.pos;
     setPreviewError(null);
     setOpening(entry.id);
     try {
       const blob = await fetchBytes(entry.url);
       const buffer = await blob.arrayBuffer();
+      if (mine !== ticket.current) return;
       if (entry.kind === "image" || entry.kind === "pdf") {
         const mime = entry.kind === "pdf" ? "application/pdf" : IMAGE_MIME[entry.ext];
         setLoaded({
@@ -1079,10 +1059,11 @@ export default function Deliverables({ projectId }: { projectId: string }) {
         shownBytes: shown < buffer.byteLength ? shown : undefined,
       });
     } catch (e) {
+      if (mine !== ticket.current) return;
       setPreviewError(`${entry.name}: ${(e as Error).message}`);
       setLoaded(null);
     } finally {
-      setOpening(null);
+      if (mine === ticket.current) setOpening(null);
     }
   }, []);
 
@@ -1095,40 +1076,80 @@ export default function Deliverables({ projectId }: { projectId: string }) {
     }
   }
 
-  const position = loaded ? flat.findIndex((e) => e.id === loaded.entry.id) : -1;
+  // The reader walks what the filters found, not what happens to be unfolded
+  // — pressing → into a closed folder is what you meant, every time. The next
+  // file is asked for by position, so walking a list of fifty thousand never
+  // needs the list.
   const step = useCallback(
     (delta: number) => {
-      if (!loaded || flat.length === 0) return;
-      const here = flat.findIndex((e) => e.id === loaded.entry.id);
-      // A file opened from a version list is not in `flat`; step from the top.
-      const next = here < 0 ? 0 : (here + delta + flat.length) % flat.length;
-      openEntry(flat[next]);
+      if (!loaded || matched === 0) return;
+      const here = aim.current;
+      // A file opened from a version list is not in the list; step from the top.
+      const next = here === null ? 0 : (here + delta + matched) % matched;
+      const mine = ++ticket.current;
+      aim.current = next;
+      setOpening("next");
+      get<RowsView>(`${base}/rows?${filters}&offset=${next}&limit=1`)
+        .then((page) => {
+          if (mine !== ticket.current) return;
+          if (page.rows[0]) return openEntry(toEntry(page.rows[0], projectId), mine);
+          setOpening(null);
+        })
+        .catch((e: Error) => {
+          if (mine !== ticket.current) return;
+          setPreviewError(e.message);
+          setOpening(null);
+        });
     },
-    [loaded, flat, openEntry],
+    [loaded, matched, base, filters, projectId, openEntry],
   );
 
   // "?open=<key>" arrives from the Overview's deliverable card, which knows
   // exactly which file the chairman pressed and used to throw it away — the
-  // link landed him on this list to find it again himself. The listing is
-  // polled, so this waits for the key to actually be in it rather than
-  // fetching a URL the project may not own; the parameter is consumed either
-  // way, so a reload does not reopen a file he has since closed.
+  // link landed him on this list to find it again himself. The server is
+  // asked for that one file, so the link works however long the list is; the
+  // parameter is consumed either way, so a reload does not reopen a file he
+  // has since closed.
   const wanted = params.get("open");
   useEffect(() => {
-    if (!wanted || !data) return;
+    if (!wanted) return;
     const next = new URLSearchParams(params);
     next.delete("open");
     setParams(next, { replace: true });
-    const all = entries.flatMap((e) => [e, ...e.older]);
-    const hit = all.find((e) => e.key === wanted);
-    if (hit) openEntry(hit);
-    else setPreviewError(`That file is no longer published: ${wanted}`);
-  }, [wanted, data]);
+    get<{ entry: FileRow }>(`${base}/entry?${filters}&id=${encodeURIComponent(wanted)}`)
+      .then((found) => openEntry(toEntry(found.entry, projectId)))
+      .catch((e: Error) =>
+        setPreviewError(e instanceof ApiError && e.status === 404
+          ? `That file is no longer published: ${wanted}`
+          : e.message));
+  }, [wanted]);
 
-  const total = entries.length;
-  const publishedTotal = entries.filter((e) => e.state === "published").length;
-  const todayTotal = entries.filter((e) => e.at && dayKey(e.at) === todayKey).length;
-  const dropped = data?.workspace_truncated ?? 0;
+  // What this reader does with a list is take it away. The whole filtered
+  // list, not the screenful — so it is asked for when the button is pressed.
+  async function exportCsv() {
+    setPreviewError(null);
+    try {
+      const page = await get<RowsView>(
+        `${base}/rows?${filters}&limit=${Math.min(Math.max(matched, 1), 250_000)}&lean=true`,
+      );
+      downloadCsv(
+        "deliverables.csv",
+        ["File", "Folder", "State", "Type", "Size (bytes)", "Landed"],
+        page.rows.map((r) => [
+          r.name,
+          r.dir,
+          r.state === "published" ? "Published" : "Still being worked on",
+          r.ext ? `.${r.ext}` : "",
+          r.size,
+          r.at ?? "",
+        ]),
+      );
+    } catch (e) {
+      setPreviewError(`Export: ${(e as Error).message}`);
+    }
+  }
+
+  const dropped = view?.working_dropped ?? 0;
 
   const sortBtn = (by: SortKey, label: string, cls: string) => (
     <button
@@ -1152,10 +1173,10 @@ export default function Deliverables({ projectId }: { projectId: string }) {
         client gets — explicitly published by a team, hashed and receipted. <b>Working</b> is the
         agents' shared scratch pad, kept in the same list so today is one screen rather than two.
       </p>
-      {error && !data && <div className="error">{error}</div>}
+      {error && !view && <div className="error">{error}</div>}
       {previewError && <div className="error">{previewError}</div>}
 
-      {!data ? (
+      {!view ? (
         <Skeleton rows={6} />
       ) : total === 0 ? (
         <div className="wbox">
@@ -1188,7 +1209,7 @@ export default function Deliverables({ projectId }: { projectId: string }) {
                   aria-pressed={state === s.key}
                   onClick={() => setParam("state", s.key, "all")}
                 >
-                  {s.label} <span className="n">{fmtCount(stateCounts[s.key])}</span>
+                  {s.label} <span className="n">{fmtCount(view.states[s.key])}</span>
                 </button>
               ))}
             </div>
@@ -1199,7 +1220,7 @@ export default function Deliverables({ projectId }: { projectId: string }) {
               onChange={(e) => setParam("type", e.target.value, "")}
             >
               <option value="">All types</option>
-              {types.map(([ext, n]) => (
+              {view.types.map(([ext, n]) => (
                 <option key={ext} value={ext}>
                   {ext ? `.${ext}` : "no extension"} · {fmtCount(n)}
                 </option>
@@ -1208,7 +1229,7 @@ export default function Deliverables({ projectId }: { projectId: string }) {
                   or the last file of it was replaced. Keep it in the list
                   rather than letting the control go blank about its own
                   state. */}
-              {type && !types.some(([ext]) => ext === type) && (
+              {type && !view.types.some(([ext]) => ext === type) && (
                 <option value={type}>.{type} · 0</option>
               )}
             </select>
@@ -1223,34 +1244,17 @@ export default function Deliverables({ projectId }: { projectId: string }) {
                 onClick={() => setParam("since", w.key, "all")}
               >
                 {w.label}
-                {w.key === "today" && todayTotal > 0 ? ` ${fmtCount(todayTotal)}` : ""}
+                {w.key === "today" && view.today_total > 0 ? ` ${fmtCount(view.today_total)}` : ""}
               </button>
             ))}
             <span className="help">
-              {fmtCount(flat.length)} of {fmtCount(total)} files ·{" "}
-              {fmtCount(publishedTotal)} published
+              {fmtCount(matched)} of {fmtCount(total)} files ·{" "}
+              {fmtCount(view.published_total)} published
             </span>
             {/* What this reader does with a list is take it away. Export was
                 built one table at a time, which is why the record screens had
                 it and the one holding the work did not. */}
-            {flat.length > 0 && (
-              <ExportCsv
-                onClick={() =>
-                  downloadCsv(
-                    "deliverables.csv",
-                    ["File", "Folder", "State", "Type", "Size (bytes)", "Landed"],
-                    flat.map((e) => [
-                      e.name,
-                      e.dir,
-                      e.state === "published" ? "Published" : "Still being worked on",
-                      e.ext ? `.${e.ext}` : "",
-                      e.size,
-                      e.at ?? "",
-                    ]),
-                  )
-                }
-              />
-            )}
+            {matched > 0 && <ExportCsv onClick={exportCsv} />}
             {filtering && (
               <button
                 className="linkish"
@@ -1264,12 +1268,13 @@ export default function Deliverables({ projectId }: { projectId: string }) {
           {dropped > 0 && (
             <div className="notice-box">
               This project has more working files than one screen can hold. Showing the{" "}
-              {fmtCount((data?.workspace ?? []).length)} most recently changed;{" "}
-              {fmtCount(dropped)} older ones are not listed. Published deliverables are all here.
+              {fmtCount(view.working_kept)} most recently changed;{" "}
+              {fmtCount(dropped)}{view.walk_stopped ? "+" : ""} older ones are not listed.
+              Published deliverables are all here.
             </div>
           )}
 
-          {flat.length === 0 ? (
+          {matched === 0 ? (
             <div className="wbox">
               <div className="wrow">
                 <span className="badge">no matches</span>
@@ -1286,7 +1291,7 @@ export default function Deliverables({ projectId }: { projectId: string }) {
               </div>
             </div>
           ) : (
-            <div className="wbox fbrowse">
+            <div className={`wbox fbrowse${settling ? " settling" : ""}`} aria-busy={settling}>
               <div className="fhead">
                 {sortBtn("type", "Type", "col-type")}
                 {sortBtn("name", "Name", "col-name")}
@@ -1295,9 +1300,11 @@ export default function Deliverables({ projectId }: { projectId: string }) {
                 {sortBtn("at", "Time", "col-when")}
                 <span />
               </div>
-              {groups.map((g, i) => {
-                const open = openFolder(g.key, i);
-                const cap = more[g.key] ?? ROWS_PER_FOLDER;
+              {folders.map((g) => {
+                // A folder the reader just opened is open now, not when the
+                // server next answers; its rows say so while they are on the way.
+                const open = toggled[g.key] ?? g.open;
+                const rows = g.open ? g.entries : null;
                 return (
                   <div className="folder" key={g.key}>
                     <button
@@ -1307,14 +1314,17 @@ export default function Deliverables({ projectId }: { projectId: string }) {
                     >
                       <span className={`caret${open ? " open" : ""}`} aria-hidden="true">▸</span>
                       <span className="fdir-name">{g.label}</span>
-                      <span className="cnt">{fmtCount(g.items.length)}</span>
+                      <span className="cnt">{fmtCount(g.count)}</span>
                       {g.published > 0 && (
                         <span className="chip accent">{fmtCount(g.published)} published</span>
                       )}
                     </button>
-                    {open && (
+                    {open && rows === null && (
+                      <div className="fmore"><span className="help">opening…</span></div>
+                    )}
+                    {open && rows !== null && (
                       <>
-                        {g.items.slice(0, cap).map((e) => (
+                        {rows.map((e) => (
                           <Row
                             key={e.id}
                             entry={e}
@@ -1328,14 +1338,18 @@ export default function Deliverables({ projectId }: { projectId: string }) {
                               setVersionsOf((v) => ({ ...v, [id]: !v[id] }))}
                           />
                         ))}
-                        {g.items.length > cap && (
+                        {g.count > rows.length && (
                           <div className="fmore">
-                            <button
-                              className="linkish"
-                              onClick={() => setMore({ ...more, [g.key]: cap + 500 })}
-                            >
-                              show {fmtCount(g.items.length - cap)} more from {g.label}
-                            </button>
+                            {(more[g.key] ?? 0) > g.cap ? (
+                              <span className="help">loading…</span>
+                            ) : (
+                              <button
+                                className="linkish"
+                                onClick={() => setMore({ ...more, [g.key]: g.cap + MORE_ROWS })}
+                              >
+                                show {fmtCount(g.count - rows.length)} more from {g.label}
+                              </button>
+                            )}
                           </div>
                         )}
                       </>
@@ -1348,17 +1362,24 @@ export default function Deliverables({ projectId }: { projectId: string }) {
         </>
       )}
 
-      <AsOf at={at} error={error} />
+      {/* The age of the index, not of the last poll: the server may answer a
+          poll from a walk a few seconds old, and this is where that is said. */}
+      <AsOf at={view ? new Date(view.as_of) : null} error={error} />
 
       {loaded && (
         <Preview
           key={loaded.entry.id}
           loaded={loaded}
-          position={position < 0 ? 0 : position}
-          total={flat.length || 1}
+          position={loaded.entry.pos ?? 0}
+          total={matched || 1}
           busy={opening !== null}
           onStep={step}
-          onClose={() => setLoaded(null)}
+          onClose={() => {
+            // A step still in the air must not reopen what was just closed.
+            ticket.current += 1;
+            setOpening(null);
+            setLoaded(null);
+          }}
           onDownload={() => download(loaded.blob, loaded.entry.name)}
         />
       )}

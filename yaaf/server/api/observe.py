@@ -10,7 +10,7 @@ import random
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import FileResponse, PlainTextResponse
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
@@ -60,7 +60,16 @@ from yaaf.core.models import (
     utcnow,
 )
 from yaaf.runtimes.providers import DEFAULT_PROVIDER, PROVIDERS
-from yaaf.server import activity, agenda, authority, briefing, metrics, policy, typing_state
+from yaaf.server import (
+    activity,
+    agenda,
+    authority,
+    briefing,
+    file_index,
+    metrics,
+    policy,
+    typing_state,
+)
 from yaaf.server import asks as ask_lib
 from yaaf.server.deps import db
 from yaaf.server.dispatcher import activity_state, chat_session_live
@@ -1801,13 +1810,11 @@ def memories(project_id: str, session: Session = Depends(db)) -> list[dict]:
 
 # ── files: the workspace (work in progress) and the artifact store ─────────────
 
+#: The flat listing's cap. The Deliverables screen no longer reads it — it asks
+#: the index a question at a time below — but the MCP reader does, and a model
+#: handed fifty thousand paths is not better informed than one handed two.
 MAX_FILE_LISTING = 2000
-# A tree big enough to hit this is a runaway, not a project; stopping the walk
-# beats holding the request open while an agent's node_modules is enumerated.
-MAX_SCANNED_FILES = 50_000
-# Platform plumbing, not agent work: staging (tokens, prompts, traces) and git
-# internals never show in the chairman's Files view.
-_SKIPPED_DIRS = {".git", ".yaaf"}
+_SKIPPED_DIRS = file_index.SKIPPED_DIRS
 
 
 def _workspace_root(project: Project) -> Path:
@@ -1816,62 +1823,184 @@ def _workspace_root(project: Project) -> Path:
     return Path(settings().workspaces_root) / project.slug
 
 
+def _file_index(project: Project) -> file_index.Snapshot:
+    return file_index.snapshot(project.id, _workspace_root(project), f"projects/{project.id}/")
+
+
+def _receipt(a: Artifact, key_of: dict[str, str]) -> dict:
+    return {
+        "id": a.id, "name": a.name, "version": a.version, "sha256": a.sha256,
+        "size": a.size_bytes, "key": a.storage_key,
+        "published_at": a.published_at.isoformat(),
+        "published_by": a.published_by_agent_id,
+        "satisfies": sorted(key_of.get(rid, rid) for rid in a.requirement_ids or []),
+    }
+
+
 @router.get("/projects/{project_id}/files", dependencies=[authority.READ])
 def project_files(project_id: str, session: Session = Depends(db)) -> dict:
     """Everything the agents have written: the shared workspace (work in
     progress — every sandbox mounts it) and the artifact store (finalized
     deliverables, keyed projects/<project>/<run>/<name>)."""
     project = _project(session, project_id)
-    found: list[dict] = []
-    root = _workspace_root(project)
-    if root.is_dir():
-        for path in root.rglob("*"):
-            rel = path.relative_to(root)
-            if any(part in _SKIPPED_DIRS for part in rel.parts):
-                continue
-            if path.is_symlink() or not path.is_file():
-                continue
-            stat = path.stat()
-            found.append({
-                "path": str(rel), "size": stat.st_size,
-                "modified": datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat(),
-            })
-            if len(found) >= MAX_SCANNED_FILES:
-                break
-    # Newest first, then cut. The old walk sorted by path and stopped at the
-    # cap, so a project past it lost whatever sorted last — which is where a
-    # date-stamped file written this morning lands. The screen's first question
-    # is "what changed today"; a listing that answers it by alphabet is worse
-    # than one that admits it is short.
-    found.sort(key=lambda f: f["modified"], reverse=True)
-    workspace = found[:MAX_FILE_LISTING]
-    rows = []
-    for entry in artifacts.store().list_keys(f"projects/{project.id}/"):
-        parts = entry["key"].split("/")
-        rows.append({**entry,
-                     "run_id": parts[2] if len(parts) > 3 else None,
-                     "name": parts[-1]})
+    snap = _file_index(project)
+    # The index holds the workspace newest first, so this cut keeps this
+    # morning's report rather than whatever sorts first by name.
+    workspace = [
+        {"path": i.path, "size": i.size, "modified": i.at}
+        for i in snap.items if i.state == "working"
+    ][:MAX_FILE_LISTING]
+    rows = sorted(
+        ({"key": v.key, "size": v.size, "modified": v.at, "run_id": v.run_id, "name": v.name}
+         for i in snap.items if i.state == "published" for v in (i, *i.older)),
+        key=lambda r: r["key"],
+    )
     # The receipts: published rows with a real hash, a real timestamp, and the
     # requirements each claims to satisfy. The listing above is what the store
     # HOLDS; this is what was formally shipped, and the two can differ.
     key_of = {r.id: r.key for r in policy.scope_requirements(session, project.id)}
     published = [
-        {
-            "id": a.id, "name": a.name, "version": a.version, "sha256": a.sha256,
-            "size": a.size_bytes, "key": a.storage_key,
-            "published_at": a.published_at.isoformat(),
-            "published_by": a.published_by_agent_id,
-            "satisfies": sorted(key_of.get(rid, rid) for rid in a.requirement_ids or []),
-        }
+        _receipt(a, key_of)
         for a in session.execute(
             select(Artifact).where(Artifact.project_id == project.id)
             .order_by(Artifact.published_at.desc()).limit(200)
         ).scalars()
     ]
     return {"workspace": workspace, "artifacts": rows, "published": published,
+            "as_of": snap.as_of.isoformat(),
             # What the cap cost, so the screen can say so instead of implying
             # the project only ever wrote two thousand files.
-            "workspace_truncated": len(found) - len(workspace)}
+            "workspace_truncated": snap.found - len(workspace)}
+
+
+def _receipts(session: Session, project: Project, items: list) -> dict[str, dict]:
+    """Receipts for exactly the rows being sent. Reading the newest two hundred
+    and matching against those left every older deliverable looking unreceipted
+    once a project had published more than that."""
+    keys = sorted({v.key for i in items for v in (i, *i.older) if v.key})
+    if not keys:
+        return {}
+    rows: list[Artifact] = []
+    for at in range(0, len(keys), 500):
+        rows += session.execute(
+            select(Artifact).where(Artifact.project_id == project.id,
+                                   Artifact.storage_key.in_(keys[at:at + 500]))
+        ).scalars().all()
+    if not rows:
+        return {}
+    key_of = {r.id: r.key for r in policy.scope_requirements(session, project.id)}
+    return {a.storage_key: _receipt(a, key_of) for a in rows}
+
+
+def _file_row(item: file_index.Item, pos: int | None, receipts: dict[str, dict],
+              lean: bool = False) -> dict:
+    row = {"id": item.id, "name": item.name, "dir": item.dir, "state": item.state,
+           "ext": item.ext, "size": item.size, "at": item.at, "path": item.path,
+           "key": item.key, "run_id": item.run_id, "version": item.version, "pos": pos}
+    if lean:
+        return row
+    return {**row, "receipt": receipts.get(item.key) if item.key else None,
+            "older": [_file_row(o, None, receipts) for o in item.older]}
+
+
+def _files_query(q: str, state: str, type_: str, since: str, tz: str, sort: str,
+                 desc: bool) -> file_index.Query:
+    return file_index.Query.of(q=q, state=state, type=type_, since=since, tz=tz,
+                               sort=sort, desc=desc)
+
+
+@router.get("/projects/{project_id}/files/browse", dependencies=[authority.READ])
+def project_files_browse(
+    project_id: str,
+    q: str = "", state: str = "all", type_: str = Query("", alias="type"),
+    since: str = "all", tz: str = "UTC", sort: str = "at", desc: bool = True,
+    expand: list[str] = Query([]), collapse: list[str] = Query([]),
+    more: list[str] = Query([]),
+    session: Session = Depends(db),
+) -> dict:
+    """The Deliverables screen, a screenful at a time: every day folder the
+    filters leave standing with its counts, and rows only for the folders that
+    are open. `expand`/`collapse` are day keys the reader toggled; `more` is
+    `<day>:<rows>` for a folder they asked to see further down."""
+    project = _project(session, project_id)
+    snap = _file_index(project)
+    query = _files_query(q, state, type_, since, tz, sort, desc)
+    result = file_index.view(snap, query)
+    caps: dict[str, int] = {}
+    for spec in more:
+        day, _, n = spec.rpartition(":")
+        if day and n.isdigit():
+            caps[day] = int(n)
+    plan = file_index.folders(result, query, set(expand), set(collapse), caps)
+    receipts = _receipts(session, project, [
+        item for day, is_open, cap in plan if is_open for item in day.items[:cap]])
+    return {
+        "as_of": snap.as_of.isoformat(),
+        "today": result.today,
+        "total": result.total,
+        "published_total": result.published_total,
+        "today_total": result.today_total,
+        "matched": result.matched,
+        "states": result.states,
+        "types": result.types,
+        "days": [
+            {"key": day.key, "count": len(day.items), "published": day.published,
+             "open": is_open, "cap": cap,
+             "rows": ([_file_row(item, day.start + n, receipts)
+                       for n, item in enumerate(day.items[:cap])] if is_open else None)}
+            for day, is_open, cap in plan
+        ],
+        # What the index could not hold, so the screen can say so rather than
+        # imply the project only ever wrote what it lists.
+        "working_kept": snap.kept,
+        "working_dropped": snap.found - snap.kept,
+        "walk_stopped": snap.stopped,
+    }
+
+
+@router.get("/projects/{project_id}/files/browse/rows", dependencies=[authority.READ])
+def project_files_rows(
+    project_id: str,
+    q: str = "", state: str = "all", type_: str = Query("", alias="type"),
+    since: str = "all", tz: str = "UTC", sort: str = "at", desc: bool = True,
+    offset: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=250_000),
+    lean: bool = False,
+    session: Session = Depends(db),
+) -> dict:
+    """A run of the filtered list in screen order, across day folders: the
+    reader stepping to the next file, the Overview's newest three, an export.
+    `lean` drops receipts and earlier versions, which an export does not use."""
+    project = _project(session, project_id)
+    snap = _file_index(project)
+    result = file_index.view(snap, _files_query(q, state, type_, since, tz, sort, desc))
+    window = result.flat[offset:offset + limit]
+    receipts = {} if lean else _receipts(session, project, window)
+    return {"as_of": snap.as_of.isoformat(), "matched": result.matched, "offset": offset,
+            "rows": [_file_row(item, offset + n, receipts, lean)
+                     for n, item in enumerate(window)]}
+
+
+@router.get("/projects/{project_id}/files/browse/entry", dependencies=[authority.READ])
+def project_files_entry(
+    project_id: str, id: str,
+    q: str = "", state: str = "all", type_: str = Query("", alias="type"),
+    since: str = "all", tz: str = "UTC", sort: str = "at", desc: bool = True,
+    session: Session = Depends(db),
+) -> dict:
+    """One file by id — a working file's `w:<path>`, or a storage key, earlier
+    versions included — and where it sits under these filters, if it does.
+    The Overview links to a deliverable by key; this is how that link lands
+    on the file instead of on a list the chairman has to search again."""
+    project = _project(session, project_id)
+    snap = _file_index(project)
+    item = snap.find(id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="no such file")
+    result = file_index.view(snap, _files_query(q, state, type_, since, tz, sort, desc))
+    pos = next((n for n, hit in enumerate(result.flat) if hit is item), None)
+    receipts = _receipts(session, project, [item])
+    return {"as_of": snap.as_of.isoformat(), "matched": result.matched,
+            "entry": _file_row(item, pos, receipts)}
 
 
 def _as_download(body: bytes | Path, name: str) -> Response:

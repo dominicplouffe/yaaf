@@ -33,7 +33,11 @@ class Forwarding(httpx.BaseTransport):
         response = self.client.request(
             request.method, str(request.url), headers=dict(request.headers),
             content=request.read(), follow_redirects=False)
-        return httpx.Response(response.status_code, headers=response.headers,
+        # `.content` is already decoded, so the headers must stop saying gzip:
+        # passed through as-is they would have it decompressed a second time.
+        headers = [(k, v) for k, v in response.headers.multi_items()
+                   if k.lower() not in ("content-encoding", "content-length")]
+        return httpx.Response(response.status_code, headers=headers,
                               content=response.content, request=request)
 
 
