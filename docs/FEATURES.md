@@ -244,9 +244,11 @@ Outside Explore mode the root object is not the task, it is the
   otherwise sit at full long after the plan was clear.
   Shown and never enforced: the token cap stays the platform's own rule. API
   keys have no plan meter and say so.
-- **Warn, then stop.** At the warn ratio the CEO is told to cut burn; at 100%
-  the project **pauses itself** and you get an email/webhook. Restarting is
-  your decision, not the project's.
+- **Warn, account, then stop.** At the warn ratio the CEO is told to cut burn.
+  Past the budget it records an overrun it must account for, and nothing stops:
+  the budget is a plan. At the wall — the budget times `hard_stop_multiple`,
+  three by default — the project **pauses itself** and you get an
+  email/webhook. Restarting is your decision, not the project's.
 - **Billing fails loud.** A missing or wrong-shaped credential is caught by a
   preflight and by the health checklist, not at 9am by a dead run.
 - **Approval threshold.** Spends at or above a USD line — and anything legally
