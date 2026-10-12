@@ -584,6 +584,43 @@ export function StoredSecret({ secretId, onRotate, note, isFile = false }: {
   );
 }
 
+/** A value shown exactly once — a personal token, a setup link — with the one
+    thing a person does with it. Selecting a 60-character token by hand is how
+    the last character gets left behind, and the first anyone hears of it is a
+    401 from a script at three in the morning. */
+export function CopyField({ value, note }: { value: string; note?: React.ReactNode }) {
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <div className="secret-field-stack">
+      <div className="secret-field">
+        <input
+          className="mono"
+          readOnly
+          value={value}
+          onFocus={(e) => e.currentTarget.select()}
+          aria-label="Value to copy"
+        />
+        <button
+          type="button"
+          className="small"
+          onClick={() => {
+            navigator.clipboard.writeText(value).then(
+              () => { setCopied(true); setError(null); setTimeout(() => setCopied(false), 1500); },
+              () => setError("the browser refused clipboard access — select the text and copy it by hand"),
+            );
+          }}
+        >
+          <Icon name={copied ? "check" : "file"} size={13} />
+          {copied ? "Copied" : "Copy"}
+        </button>
+      </div>
+      {error && <div className="help" style={{ color: "var(--critical)" }}>{error}</div>}
+      {note && <div className="help">{note}</div>}
+    </div>
+  );
+}
+
 /** What the chairman is about to store: a typed value, or a FILE.
 
     Two ways in because both genuinely happen. A key file is usually downloaded

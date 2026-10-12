@@ -208,6 +208,13 @@ code, .mono { font-family: var(--mono); font-size: 0.92em; }
 }
 .sidebar .foot .linkish { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); }
 .sidebar .foot .linkish:hover { color: var(--ink); }
+/* Whose desk this is. A long address is cut short rather than allowed to widen
+   the rail; the whole of it is on the link's tooltip. */
+.sidebar .foot .whoami { display: block; margin-top: var(--s3); color: inherit; min-width: 0; }
+.sidebar .foot .whoami:hover { text-decoration: none; }
+.sidebar .foot .whoami .person { max-width: 100%; }
+.sidebar .foot .whoami .pn b,
+.sidebar .foot .whoami .pn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* A fixed 1200px column left the right third of a wide screen empty while the
    tables inside it wrapped. The cap is wide enough to keep prose readable and

@@ -86,8 +86,6 @@ const MODES = [
 // Deliberately orthogonal to the authority presets above: neither of these
 // ever touches who holds the verbs.
 
-// Remembered across projects — there is one chairman on this install, and
-// retyping your own email every time was pure friction.
 /** The four decisions, and the one line each is answering. Shown in the rail
     so the chairman knows how much is left before they start typing. */
 const STEPS = [
@@ -127,7 +125,6 @@ function briefChecks(goal: string): { label: string; ok: boolean }[] {
   ];
 }
 
-const CHAIRMAN_KEY = "yaaf.chairman";
 const ONE_PAGE_KEY = "yaaf.newproject.onepage";
 
 export default function NewProject() {
@@ -172,8 +169,6 @@ export default function NewProject() {
   const [slugEdited, setSlugEdited] = useState(false);
   const [existingSlugs, setExistingSlugs] = useState<string[]>([]);
   const [goal, setGoal] = useState("");
-  const [chairmanEmail, setChairmanEmail] = useState("");
-  const [chairmanName, setChairmanName] = useState("");
   const [billingMode, setBillingMode] = useState("api_key");
   const [billingCredentialId, setBillingCredentialId] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -223,7 +218,7 @@ export default function NewProject() {
   // The same cap in the subscription unit. Which one binds is decided by the
   // credential, not the form: a subscription meters tokens and the USD figure
   // is never consulted, so the form shows and posts whichever one applies.
-  const [tokenCap, setTokenCap] = useState(200_000_000);
+  const [monthlyTokenCap, setMonthlyTokenCap] = useState(200_000_000);
   const tokensMode = billingMode === "subscription";
   const [approvalThreshold, setApprovalThreshold] = useState(250);
   const [requireVerification, setRequireVerification] = useState(false);
@@ -321,12 +316,6 @@ export default function NewProject() {
     get<{ slug: string }[]>("/observe/projects")
       .then((rows) => setExistingSlugs(rows.map((r) => r.slug)))
       .catch(() => {});
-    try {
-      const saved = JSON.parse(localStorage.getItem(CHAIRMAN_KEY) ?? "null") as
-        { email?: string; name?: string } | null;
-      if (saved?.email) setChairmanEmail(saved.email);
-      if (saved?.name) setChairmanName(saved.name);
-    } catch { /* a corrupt saved value is just a blank form */ }
   }, []);
 
   function dedupedSlug(base: string): string {
@@ -573,9 +562,6 @@ export default function NewProject() {
       setRuntime(String(p.integrations["runtime"] ?? "agent_sdk"));
       setControlledDomains((p.controlled_domains ?? []).join(", "));
       setSolo(Boolean(p.solo));
-      // Who ran the source project. A prefill like the rest of the form —
-      // change it if the twin answers to someone else.
-      if (p.chairman_email) setChairmanEmail(p.chairman_email);
       // An Explore window that is still open carries; a spent one would be
       // refused at create (a project the janitor closes at birth), so it is
       // left blank rather than prefilled into a guaranteed error.
@@ -627,7 +613,7 @@ export default function NewProject() {
       if (cons.queue_ceiling !== undefined) setQueueCeiling(cons.queue_ceiling);
       if (cons.drought_hours !== undefined) setDroughtHours(cons.drought_hours);
       if (cons.monthly_usd_cap !== undefined) setUsdCap(cons.monthly_usd_cap);
-      if (cons.monthly_token_cap !== undefined) setTokenCap(cons.monthly_token_cap);
+      if (cons.monthly_token_cap !== undefined) setMonthlyTokenCap(cons.monthly_token_cap);
       if (cons.approval_threshold_usd !== undefined) {
         setApprovalThreshold(cons.approval_threshold_usd);
       }
@@ -804,7 +790,6 @@ export default function NewProject() {
           slug: slug.trim(),
           name: name.trim(),
           goal: goal.trim(),
-          chairman_email: chairmanEmail.trim(),
           billing_mode: billingMode,
           billing_secret_id: billingCredentialId || undefined,
           mode,
@@ -830,7 +815,7 @@ export default function NewProject() {
             queue_ceiling: queueCeiling,
             drought_hours: droughtHours,
             monthly_usd_cap: usdCap,
-            monthly_token_cap: tokenCap,
+            monthly_token_cap: monthlyTokenCap,
             approval_threshold_usd: approvalThreshold,
             require_evidence_verification: requireVerification,
             chairman_report_interval_hours: reportHours,
@@ -965,14 +950,6 @@ export default function NewProject() {
       // around that CEO — otherwise the chairman's.
       const chosenCeo = bundle?.project.ceo_role_slug ?? ceoSlug ?? ceoRole?.slug;
       if (!chosenCeo) throw new Error("No CEO role in the library — create one on the Roles page first.");
-      await post("/admin/users", {
-        email: chairmanEmail.trim(),
-        display_name: chairmanName.trim() || chairmanEmail.trim(),
-      });
-      try {
-        localStorage.setItem(CHAIRMAN_KEY, JSON.stringify(
-          { email: chairmanEmail.trim(), name: chairmanName.trim() }));
-      } catch { /* remembering is a convenience, never a requirement */ }
       const body = projectBody(chosenCeo);
       const created = await post<{
         id: string;
@@ -1268,26 +1245,15 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
               </div>
             </div>
           </div>
-          <div className="row">
-            <div>
-              <label className="field">Chairman email (you)</label>
-              <input
-                type="email"
-                value={chairmanEmail}
-                onChange={(e) => setChairmanEmail(e.target.value)}
-                required
-              />
-            </div>
-            <div>
-              <label className="field">Chairman display name</label>
-              <input value={chairmanName} onChange={(e) => setChairmanName(e.target.value)} />
-            </div>
-          </div>
-          <p className="help" style={{ marginTop: 4 }}>
-            Your identity on approvals and boardroom messages — remembered for the next
-            project. If email is set up on this install, the things waiting on you and any
-            budget alarm also reach you here;
-            without it, nothing is sent and this is identity only.
+          {/* This used to be two fields — "Chairman email (you)" and a display
+              name — that created an account on submit and remembered what you
+              typed. A project is chaired by the person who founds it now, so
+              there is nothing to type: you are signed in, and that is who you
+              are. Somebody else to share it with is added afterwards, by email,
+              from the project's own Settings. */}
+          <p className="help" style={{ marginTop: "var(--s3)" }}>
+            You will chair this project: its decisions are yours, and so is who else may
+            make them. Add co-chairs and observers from its Settings → People once it exists.
           </p>
         </div>
 
@@ -1711,7 +1677,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             {(() => {
               if (tokensMode) {
                 return `Metered in tokens against the selected subscription: the cap is ` +
-                  `${tokenCap.toLocaleString()} tokens a month, and the plan's own session ` +
+                  `${monthlyTokenCap.toLocaleString()} tokens a month, and the plan's own session ` +
                   "and weekly windows apply before it does.";
               }
               const perRun = usdCap / Math.max(1, queueCeiling * 8);
@@ -1753,7 +1719,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
               {tokensMode ? (
                 <>
                   <label className="field">Monthly budget cap (tokens)</label>
-                  <input type="number" min={0} step={1_000_000} value={tokenCap} onChange={(e) => setTokenCap(+e.target.value)} />
+                  <input type="number" min={0} step={1_000_000} value={monthlyTokenCap} onChange={(e) => setMonthlyTokenCap(+e.target.value)} />
                   <div className="help">The selected credential is a subscription, so the budget is in tokens.</div>
                 </>
               ) : (
@@ -1904,7 +1870,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             <strong>Cap</strong>
             {tokensMode ? (
               <>
-                <span className="chip">{tokenCap.toLocaleString()} tokens/mo</span>
+                <span className="chip">{monthlyTokenCap.toLocaleString()} tokens/mo</span>
                 <span className="help">
                   metered against the selected subscription — the project pauses itself at
                   the cap, and the plan's own windows apply before it

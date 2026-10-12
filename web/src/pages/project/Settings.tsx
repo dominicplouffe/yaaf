@@ -31,6 +31,7 @@ import {
 import { fmtWhen, usePoll } from "../../hooks";
 import type { FounderStatus, PresetCard } from "../StartProject";
 import { RoleGrants } from "../../roles";
+import { MembersPanel } from "./Members";
 import { ConfirmModal, CredentialValue, SecretInput, StoredSecret } from "../../ui";
 
 /** "amazon-audit-v2" → "amazon-audit-v3"; "Acme" → "Acme (clone)". Twins come
@@ -1579,6 +1580,7 @@ const SETTINGS_NAV = [
   { group: "Connections" },
   { key: "integrations", label: "Integrations" },
   { group: "Governance" },
+  { key: "people", label: "People" },
   { key: "rules", label: "Rules in force" },
   { group: "Housekeeping" },
   { key: "duplicate", label: "Duplicate & export" },
@@ -2199,6 +2201,11 @@ export default function Settings({
         </div>
       </details>
 
+      </Section>
+
+      <Section on={section === "people"}>
+      <h2>People</h2>
+      <MembersPanel projectId={projectId} dash={dash} reload={reload} />
       </Section>
 
       <Section on={section === "rules"}>

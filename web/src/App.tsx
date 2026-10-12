@@ -1,7 +1,9 @@
 import { Link, Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom";
-import { DeskView, get, getToken } from "./api";
+import { DeskView, get } from "./api";
 import { usePoll } from "./hooks";
+import { MeProvider, useMe } from "./me";
 import Login from "./pages/Login";
+import Setup from "./pages/Setup";
 import Desk, { buildItems, needsYou } from "./pages/Desk";
 import Projects from "./pages/Projects";
 import Founding from "./pages/Founding";
@@ -11,7 +13,7 @@ import ProjectPage from "./pages/Project";
 import Roles from "./pages/Roles";
 import Settings from "./pages/Settings";
 import { Icon } from "./ui/Icon";
-import { ThemeToggle } from "./ui/kit";
+import { Btn, Person, ThemeToggle } from "./ui/kit";
 
 /** The count beside Desk in the sidebar. Only the rows a decision is actually
     waiting on (Desk's `needsYou`, not its tier) — because a badge that counts
@@ -44,6 +46,7 @@ const NAV = [
 ];
 
 function Shell({ children }: { children: React.ReactNode }) {
+  const { me, signOut } = useMe();
   return (
     <div className="shell">
       <nav className="sidebar">
@@ -77,13 +80,18 @@ function Shell({ children }: { children: React.ReactNode }) {
               any use for, and both told them they were looking at somebody's
               internal tool. The build stamp still exists, on the brand's
               tooltip, where support can ask for it. */}
+          {/* Whose desk this is. More than one person signs in to a box now,
+              and the name is how you know which of you is about to approve
+              something before you approve it — it opens your own account. */}
+          {me && (
+            <Link to="/settings?section=account" className="whoami" title={`${me.email} — your account`}>
+              <Person name={me.display_name} role={me.email} size="sm" />
+            </Link>
+          )}
           <button
             className="linkish"
-            style={{ marginTop: "var(--s3)", padding: 0, border: 0, background: "none", minHeight: 0 }}
-            onClick={() => {
-              localStorage.removeItem("yaaf_admin_token");
-              window.location.hash = "#/login";
-            }}
+            style={{ marginTop: "var(--s2)", padding: 0, border: 0, background: "none", minHeight: 0 }}
+            onClick={() => void signOut()}
           >
             <Icon name="logout" size={14} />
             Sign out
@@ -95,14 +103,44 @@ function Shell({ children }: { children: React.ReactNode }) {
   );
 }
 
-export default function App() {
+/** The moment between opening the app and the server saying who you are. */
+function Waiting({ error, retry }: { error: string | null; retry: () => void }) {
+  return (
+    <div className="center-page">
+      {error ? (
+        <div className="card login-card">
+          <h2 style={{ marginTop: 0 }}>The server is not answering</h2>
+          <p className="help">
+            yaaf could not ask it who you are, so it cannot show you anything yet. This is the
+            box, not your password — nothing about your sign-in has changed.
+          </p>
+          <div className="error">{error}</div>
+          <div className="actions">
+            <Btn kind="primary" onClick={retry}>Try again</Btn>
+          </div>
+        </div>
+      ) : (
+        <p className="subtitle">Loading…</p>
+      )}
+    </div>
+  );
+}
+
+/** Sign-in and setup are the two screens that exist for somebody with no
+    session — a setup link is opened by a person who has never had one. Every
+    other route waits for the server to say who is reading. */
+function Gate() {
+  const { me, error, refresh } = useMe();
   const location = useLocation();
-  if (!getToken() && !location.pathname.startsWith("/login")) {
-    return <Navigate to="/login" replace />;
+  const open = location.pathname.startsWith("/login") || location.pathname.startsWith("/setup");
+  if (!open) {
+    if (me === undefined) return <Waiting error={error} retry={() => void refresh()} />;
+    if (me === null) return <Navigate to="/login" replace />;
   }
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/setup" element={<Setup />} />
       <Route
         path="/desk"
         element={
@@ -176,5 +214,13 @@ export default function App() {
       />
       <Route path="*" element={<Navigate to="/desk" replace />} />
     </Routes>
+  );
+}
+
+export default function App() {
+  return (
+    <MeProvider>
+      <Gate />
+    </MeProvider>
   );
 }

@@ -296,13 +296,17 @@ function ProjectFrame({
         }
         actions={
           <>
-            {dash.status !== "running" && dash.status !== "stopped" && (
+            {/* The lifecycle is a decision, and the most prominent buttons on the
+                page — so they are not offered to somebody whose only outcome
+                would be the server's refusal. Absent means an older server,
+                which decided nothing by role. */}
+            {dash.can_steer !== false && dash.status !== "running" && dash.status !== "stopped" && (
               <Btn kind="primary" icon="play" onClick={onStart}>Start</Btn>
             )}
-            {dash.status === "running" && (
+            {dash.can_steer !== false && dash.status === "running" && (
               <Btn icon="pause" onClick={onPause}>Pause</Btn>
             )}
-            {dash.status !== "stopped" && (
+            {dash.can_steer !== false && dash.status !== "stopped" && (
               <Btn kind="danger" icon="stop" onClick={onStop}>Stop</Btn>
             )}
             <NavLink to={`/projects/${dash.id}/settings`} aria-label="Project settings" title="Project settings">
@@ -361,6 +365,30 @@ function whyItIsYours(kind: string): string {
     default:
       return "The constitution routes this kind of decision to you.";
   }
+}
+
+/** Said once, under the header, to anybody who may read this project but not
+    decide on it. The buttons stay where they are: the server refuses a verb
+    the reader does not hold, in a sentence that names who does, and the
+    screens already show that sentence where the button was pressed. Hiding
+    every control instead would make an observer's view a different product
+    from the one the chairman sees — and the point of observing is to see the
+    same thing. */
+function StandingNotice({ dash }: { dash: Dashboard }) {
+  if (dash.can_steer !== false) return null;
+  const said =
+    dash.my_role === "observer"
+      ? "You're an observer here: you can read everything; decisions are for the chairman and co-chairs."
+      : dash.my_role === null
+        ? "You're reading this as the instance admin. Decisions belong to the people who chair it."
+        : null;
+  if (!said) return null;
+  return (
+    <div className="notice-box" style={{ display: "flex", gap: "var(--s2)", alignItems: "baseline", flexWrap: "wrap" }}>
+      <span style={{ flex: 1, minWidth: 0 }}>{said}</span>
+      <NavLink to={`/projects/${dash.id}/settings?s=people`}>Who chairs it</NavLink>
+    </div>
+  );
 }
 
 /** What a tab cannot do: be seen from the other five. Approvals expire to DENY,
@@ -618,6 +646,8 @@ export default function ProjectPage() {
         onPause={() => setConfirming("pause")}
         onStop={() => setConfirming("stop")}
       />
+
+      <StandingNotice dash={dash} />
 
       {/* Everywhere except Overview, which lists these in full a few hundred
           pixels below. The strip exists so a decision that expires on its own
