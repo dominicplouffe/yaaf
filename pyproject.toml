@@ -38,6 +38,10 @@ dev = [
     # count rather than test count.
     "pytest-split>=0.9",
     "ruff>=0.5",
+    # The sandbox's Messages API client (deploy/sandbox/Dockerfile), never the
+    # server's: the anthropic_api harness runs inside the container. Here so
+    # the contract suite drives that harness against the SDK's own types.
+    "anthropic>=1.13",
 ]
 # S3-compatible artifact store backend (MinIO, R2, AWS). The base install
 # stays boto3-free: yaaf.core.artifacts imports it lazily, only when

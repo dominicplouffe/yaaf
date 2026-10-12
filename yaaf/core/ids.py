@@ -58,6 +58,7 @@ MCP_TOKEN = "mcpt"
 OAUTH_CLIENT = "oacl"
 OAUTH_CODE = "oacd"
 MCP_CONFIRMATION = "mcpx"
+PROJECT_CREDENTIAL = "pcrd"  # the credential a project pays a second provider with
 
 
 def new_id(prefix: str) -> str:

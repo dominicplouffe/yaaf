@@ -62,12 +62,15 @@ MAX_DRILL_DAYS = 90
         "Roles carry the credentials they will need, which is a fact about hiring one "
         "rather than something to discover when a run fails. `credentials` lists what "
         "a project can pay Claude with — names and billing modes, never values — so "
-        "you can ask the chairman which one before `create_project`."
+        "you can ask the chairman which one before `create_project`. `harnesses` lists "
+        "what can drive a seat's model; name one in a team's `harness_overrides` only "
+        "when the chairman asks for it — absent, a seat runs on its role's default."
     ),
     input_schema={
         "type": "object",
         "properties": {
-            "what": {"type": "string", "enum": ["roles", "crews", "credentials"]},
+            "what": {"type": "string",
+                     "enum": ["roles", "crews", "credentials", "harnesses", "providers"]},
             "query": {"type": "string"},
             "category": {"type": "string",
                          "enum": ["leadership", "research", "build", "content",
@@ -82,6 +85,14 @@ def catalog(principal: Principal, session: Session, arguments: dict) -> dict:
     what = arguments.get("what") or "roles"
     if what == "credentials":
         payload = founder_tools.list_credentials(session)
+    elif what == "harnesses":
+        from yaaf.server.api.admin import list_harnesses
+
+        payload = list_harnesses()
+    elif what == "providers":
+        from yaaf.server.api.admin import list_providers
+
+        payload = list_providers()
     elif what == "crews":
         payload = founder_tools.search_crews(session, query=arguments.get("query"))
     else:
@@ -243,6 +254,10 @@ def rehearse(principal: Principal, session: Session, arguments: dict) -> dict:
                                               "value. Omitted, the preview lists the "
                                               "choices and the project is created unable "
                                               "to start until one is assigned"},
+            "credentials": {"type": "object", "additionalProperties": {"type": "string"},
+                            "description": "What pays each provider the billing credential "
+                                           "does not, as {provider: credential name} — "
+                                           "{\"deepseek\": \"DeepSeek key\"}. Never a value"},
             "start": {"type": "boolean", "description": "Start it immediately (default false)"},
             "confirm": {"type": "string", "description": "The token from this tool's preview"},
             "detail": DETAIL_ARG,
@@ -290,10 +305,19 @@ def create_project(principal: Principal, session: Session, arguments: dict) -> d
             f"`billing_secret` names {named.name!r} but the spec names "
             f"{drafted.name!r}. Drop one so the choice is the chairman's.")
     billing = named or drafted
-    body = {k: v for k, v in body.items() if k not in ("billing_secret_id", "billing_secret_name")}
+    # The other providers' credentials, by name — from the arguments, or from an
+    # exported bundle's `credential_names` — resolved here so a value never has
+    # to travel and a name that matches nothing is refused with the menu.
+    wanted = {**(body.get("credential_names") or {}), **(arguments.get("credentials") or {})}
+    paying = {provider_name: _billing_secret(session, name)
+              for provider_name, name in wanted.items() if isinstance(name, str)}
+    body = {k: v for k, v in body.items()
+            if k not in ("billing_secret_id", "billing_secret_name", "credential_names")}
     if billing is not None:
         body["billing_secret_id"] = billing.id
         body["billing_secret_name"] = billing.name  # for the summary; the endpoint ignores it
+    if paying:
+        body["credentials"] = {p: row.id for p, row in paying.items()}
     about = {
         "about_to_create": founder_tools.summarise({"project": body}),
         "chairman": user.email,
@@ -311,6 +335,7 @@ def create_project(principal: Principal, session: Session, arguments: dict) -> d
         "tempo": _tempo_line(body.get("mode") or "explore",
                              body.get("constitution") or {}),
         "billing": llm_credentials.describe(billing) if billing else None,
+        "also_paying": {p: llm_credentials.describe(row) for p, row in paying.items()} or None,
         "start_immediately": bool(arguments.get("start")),
         "warning": (
             "Creating a project is the point where this stops being free: its "

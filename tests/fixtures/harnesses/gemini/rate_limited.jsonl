@@ -1,0 +1,3 @@
+{"type":"init","timestamp":"2026-10-12T16:50:00.561Z","session_id":"eaf82e31-5e6a-4250-b6b1-96757d3584e7","model":"gemini-2.5-pro"}
+{"type":"message","timestamp":"2026-10-12T16:50:00.562Z","role":"user","content":"Say hi"}
+{"type":"result","timestamp":"2026-10-12T16:50:11.350Z","status":"error","error":{"type":"unknown","message":"[API Error: Resource has been exhausted (e.g. check quota).]\nPlease wait and try again later. To increase your limits, request a quota increase through AI Studio, or switch to another /auth method"},"stats":{"total_tokens":0,"input_tokens":0,"output_tokens":0,"cached":0,"input":0,"duration_ms":0,"tool_calls":0,"models":{"gemini-2.5-pro":{"total_tokens":0,"input_tokens":0,"output_tokens":0,"cached":0,"input":0}}}}

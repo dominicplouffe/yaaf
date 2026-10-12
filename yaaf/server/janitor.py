@@ -1570,6 +1570,7 @@ def _harvest_reaped_usage(session: Session, project: Project, run: Run) -> bool:
     # runner applies at finalize.
     subscription = project.billing_mode == "subscription"
     run.cost_usd = None if subscription else data.get("cost_usd")
+    run.priced_usd = None if subscription else data.get("priced_usd")
 
     total = (run.tokens_in + run.tokens_out
              + run.cache_creation_tokens + run.cache_read_tokens)

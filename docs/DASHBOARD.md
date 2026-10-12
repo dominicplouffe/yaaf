@@ -186,7 +186,7 @@ A role you write yourself can be left unfiled; it sits under **Uncategorised**
 at the bottom of every list and is never filtered away.
 
 Each role shows its current version, its
-system prompt, model and effort, tool permissions, secret scopes — and its
+system prompt, model, effort and harness, tool permissions, secret scopes — and its
 **blast radius**: which projects run it, at which version.
 
 Editing a role creates a **new version**. Live teams keep the version they

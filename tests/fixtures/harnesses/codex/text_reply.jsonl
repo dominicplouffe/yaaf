@@ -1,0 +1,5 @@
+{"type":"thread.started","thread_id":"01a130c9-835b-7250-9b28-73c972a37db7"}
+{"type":"item.completed","item":{"id":"item_0","type":"error","message":"Model metadata for `gpt-5.1-codex` not found. Defaulting to fallback metadata; this can degrade performance and cause issues."}}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"Hi! What are we working on today?"}}
+{"type":"turn.completed","usage":{"input_tokens":1200,"cached_input_tokens":1000,"cache_write_input_tokens":0,"output_tokens":40,"reasoning_output_tokens":12}}

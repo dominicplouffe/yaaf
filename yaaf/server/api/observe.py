@@ -58,6 +58,7 @@ from yaaf.core.models import (
     VerificationStatus,
     utcnow,
 )
+from yaaf.runtimes.providers import DEFAULT_PROVIDER, PROVIDERS
 from yaaf.server import (
     activity,
     agenda,
@@ -467,6 +468,8 @@ def project_flags(project_id: str, session: Session = Depends(db)) -> dict:
 
 @router.get("/projects/{project_id}")
 def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
+    from yaaf.server.api.admin import provider_credentials_view
+
     project = _project(session, project_id)
     cons = effective(session, project.id)
     month_start = utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
@@ -565,6 +568,9 @@ def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
         "github_repo": project.github_repo,
         "billing_secret_id": project.billing_secret_id,
         "billing_secret_name": _secret_name(session, project.billing_secret_id),
+        # Every credential the project pays with, by provider — the billing
+        # one first. Never a value.
+        "credentials": provider_credentials_view(session, project),
         # Drought-clock anchors: the UI counts toward the refusal, not just
         # reporting it after the fact.
         "created_at": (
@@ -575,6 +581,44 @@ def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
             at.isoformat() if (at := _last_countable_evidence_at(session, project.id)) else None
         ),
     }
+
+
+#: The drift between what a self-reporting harness bills and what yaaf's
+#: catalog prices the same tokens at, past which the checklist says so; the
+#: priced spend it must have seen first, so a few small runs cannot raise it;
+#: and how far back it looks.
+PRICE_GAP_TOLERANCE = 0.10
+PRICE_GAP_MIN_USD = 1.0
+PRICE_GAP_RUNS = 200
+
+
+def price_gaps(session: Session, models: list[str]) -> list[dict]:
+    """For each model whose gap is past tolerance: what the harnesses that
+    report their own bill charged for it across this install's recent runs,
+    against what the catalog prices the same tokens at. Install-wide, because
+    the catalog is: a project with every seat on a priced harness has no
+    bills of its own to check it by."""
+    from yaaf.runtimes.harnesses import HARNESSES
+
+    reporting = [h.name for h in HARNESSES.values() if h.cost == "reported"]
+    gaps = []
+    for model in models:
+        rows = session.execute(
+            select(Run.cost_usd, Run.priced_usd)
+            .where(Run.model == model, Run.harness.in_(reporting),
+                   Run.cost_usd.is_not(None), Run.priced_usd.is_not(None))
+            .order_by(Run.finished_at.desc())
+            .limit(PRICE_GAP_RUNS)
+        ).all()
+        reported = sum(r.cost_usd for r in rows)
+        priced = sum(r.priced_usd for r in rows)
+        if priced < PRICE_GAP_MIN_USD:
+            continue
+        drift = priced / reported - 1 if reported else 1.0
+        if abs(drift) > PRICE_GAP_TOLERANCE:
+            gaps.append({"model": model, "runs": len(rows), "reported_usd": reported,
+                         "priced_usd": priced, "drift": drift})
+    return gaps
 
 
 @router.get("/projects/{project_id}/health")
@@ -608,10 +652,66 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
                 "settings")
         else:
             shape_error = _billing_shape_error(project.billing_mode,
-                                               decrypt(billing.ciphertext))
+                                               decrypt(billing.ciphertext), billing.provider)
             add("billing", "fail" if shape_error else "ok",
                 shape_error or f"paying with '{billing.name}' ({project.billing_mode})",
                 "settings")
+    # And what pays each other provider: named, so a chairman reading the
+    # checklist sees the whole of who pays for what.
+    from yaaf.core import project_credentials
+    from yaaf.runtimes.providers import PROVIDERS
+
+    for provider_name, secret in project_credentials.held(session, project).items():
+        if secret.id == project.billing_secret_id:
+            continue
+        seller = PROVIDERS.get(provider_name)
+        add(f"billing:{provider_name}", "ok",
+            f"paying {seller.label if seller else provider_name} with '{secret.name}'",
+            "settings")
+
+    # Seats: every one on a harness that can serve its model, honour its
+    # role's grants and pay with this credential. Every door that seats one
+    # refuses otherwise; this is for the seat that reached here by another
+    # way — a hand edit, a release rolled back past the harness it names —
+    # and would otherwise be found by its runs failing at lease.
+    from fastapi import HTTPException
+
+    from yaaf.server.api.admin import _project_agents, refuse_unrunnable_seats
+
+    try:
+        refuse_unrunnable_seats(session, project, _project_agents(session, project.id))
+    except HTTPException as refused:
+        add("seats", "fail", f"a seat cannot run — {refused.detail}", "settings")
+
+    # Prices: a seat on a harness yaaf prices itself is metered by the model
+    # catalog, so its budget is only as right as the catalog. The bills the
+    # self-reporting harnesses send for the same model are the check on it.
+    from yaaf.runtimes import catalog
+    from yaaf.runtimes.harnesses import HARNESSES
+    from yaaf.runtimes.seats import seat_for
+    from yaaf.server.contextpack import role_version_for
+
+    metered: dict[str, set[str]] = {}
+    for agent in _project_agents(session, project.id):
+        seat = seat_for(agent, role_version_for(session, agent))
+        harness = HARNESSES.get(seat.harness or "")
+        if harness is not None and harness.cost == "priced":
+            metered.setdefault(seat.model, set()).add(harness.label)
+    for gap in price_gaps(session, sorted(metered)):
+        price = catalog.price(gap["model"])
+        add(f"price-gap:{gap['model']}", "warn",
+            f"yaaf prices {gap['model']} {abs(gap['drift']):.0%} "
+            f"{'above' if gap['drift'] > 0 else 'below'} what it is billed at: the "
+            f"harnesses that report their own cost charged "
+            f"${gap['reported_usd']:.2f} over its last {gap['runs']} runs on this "
+            f"install, and the price table puts the same tokens at "
+            f"${gap['priced_usd']:.2f}. Seats on "
+            f"{', '.join(sorted(metered[gap['model']]))} are metered by that table, so "
+            f"their budget is {'over' if gap['drift'] > 0 else 'under'}-counted by as "
+            f"much — the prices in yaaf/runtimes/catalog.py"
+            f"{f' (as of {price.as_of})' if price else ''} need checking against the "
+            "provider's current list.",
+            "runs")
 
     secrets = session.execute(
         select(Secret).where(or_(Secret.project_id == project.id,
@@ -1327,6 +1427,7 @@ def runs(project_id: str, limit: int = 50, session: Session = Depends(db)) -> li
             "tokens_in": r.tokens_in, "tokens_out": r.tokens_out,
             "cache_creation": r.cache_creation_tokens, "cache_read": r.cache_read_tokens,
             "model": r.model, "effort": r.effort, "cost_usd": r.cost_usd,
+            "priced_usd": r.priced_usd, "harness": r.harness,
             "refusals": r.refusal_count, "last_refusal": r.last_refusal,
             "summary": r.summary,
             "has_trace": r.trace_path is not None,
@@ -1433,8 +1534,9 @@ def spend(project_id: str, group_by: str = "model", days: int = 30,
     meter's month-to-date; the default rolling window is for cards that stand
     on their own.
     """
-    if group_by not in ("model", "team", "agent", "kind"):
-        raise HTTPException(status_code=400, detail="group_by must be model|team|agent|kind")
+    if group_by not in ("model", "provider", "team", "agent", "kind"):
+        raise HTTPException(status_code=400,
+                            detail="group_by must be model|provider|team|agent|kind")
     if window not in ("days", "month"):
         raise HTTPException(status_code=400, detail="window must be days|month")
     since = (
@@ -1464,6 +1566,11 @@ def spend(project_id: str, group_by: str = "model", days: int = 30,
         if group_by == "model":
             name = run.model or "unknown"
             return name, name
+        if group_by == "provider":
+            # A run from before providers were recorded was Anthropic's.
+            name = run.provider or DEFAULT_PROVIDER
+            seller = PROVIDERS.get(name)
+            return name, seller.label if seller else name
         if group_by == "kind":
             return run.kind, run.kind
         agent = agents.get(run.agent_id) if run.agent_id else None
