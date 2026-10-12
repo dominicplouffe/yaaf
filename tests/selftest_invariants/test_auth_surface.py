@@ -53,11 +53,16 @@ def _declarations(dependant) -> list[str]:
     return found
 
 
+#: `{model:path}` in a route is `{model}` in the OpenAPI document; compare the
+#: two in the document's spelling.
+CONVERTER = re.compile(r"\{(\w+):\w+\}")
+
+
 def _human_routes():
     for prefix, router in _routers():
         for route in router.routes:
             for method in sorted(route.methods or ()):
-                yield f"{method} {prefix}{route.path}", route
+                yield f"{method} {prefix}{CONVERTER.sub(r'{\1}', route.path)}", route
 
 
 def test_every_human_route_declares_exactly_one_authority():

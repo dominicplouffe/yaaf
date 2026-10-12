@@ -28,6 +28,21 @@ budget unit — there is no separate switch:
 | Anthropic API key | `sk-ant-api…` from the console | USD (`monthly_usd_cap`) |
 | Claude subscription token | `sk-ant-oat…` from `claude setup-token` | Tokens (`monthly_token_cap`) |
 
+A credential names the **provider** it pays — Anthropic by default; OpenAI
+(an API key, or a ChatGPT plan as the `auth.json` that `codex login` writes),
+Google (a Gemini API key, or a Google account login as the
+`oauth_creds.json` the Gemini CLI writes),
+DeepSeek, OpenRouter, Moonshot (Kimi), Qwen (Alibaba Model Studio), Mistral,
+xAI (Grok), or a custom OpenAI-compatible server (its address goes with the
+credential — which is also how a key for Moonshot's or Alibaba's China region
+is used). A project's billing credential pays whichever provider it is for;
+a project with a seat on a second provider's model pays that provider too,
+under its **Settings → Money → Other providers**, with a credential metered in
+the same unit — one project, one meter, one cap. A seat on a provider the
+project does not pay is refused when it is created, not when it first runs.
+Models yaaf ships no price for are priced under **Settings → Model prices**
+(zero is a price, for your own server); see [RUNTIMES.md](RUNTIMES.md).
+
 A value of the wrong shape for its kind is **refused while you're still
 looking at the screen** — otherwise every future run fails with a baffling
 "Not logged in". The health checklist re-checks it, and **Test connection**
@@ -88,7 +103,11 @@ What being managed buys you:
 product-wide conversations (the Founder, which drafts a project before one
 exists). It is decrypted server-side only and **never reaches a project's
 agents** — there is no inheritance and no fallback. A project with no
-credential assigned cannot run, and that is the intended answer.
+credential assigned cannot run, and that is the intended answer. It can be
+any provider's: an Anthropic key or subscription runs the Founder and the
+goal grader on the Claude Code CLI; an API key of any other provider runs
+them on its chat API, with a model of that provider's set beside it — a
+ChatGPT login cannot, since it pays only the Codex CLI.
 
 ## Credentials and variables
 

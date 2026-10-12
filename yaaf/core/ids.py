@@ -58,6 +58,7 @@ MCP_TOKEN = "mcpt"
 OAUTH_CLIENT = "oacl"
 OAUTH_CODE = "oacd"
 MCP_CONFIRMATION = "mcpx"
+PROJECT_CREDENTIAL = "pcrd"  # the credential a project pays a second provider with
 USER_SESSION = "uses"  # a browser signed in as a person
 USER_TOKEN = "utok"  # a personal token: the person, at a terminal
 SETUP_LINK = "usetup"  # a single-use link that sets a password

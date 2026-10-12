@@ -186,7 +186,7 @@ Said here rather than waiting to be found:
 
 - [x] `user_sessions`, `user_tokens`, `user_setup_links`, `login_failures`;
       `users.deactivated_at`; emails normalised; a chairman row in
-      `project_members` for every project that lacks one (migration 0042)
+      `project_members` for every project that lacks one (migration 0046)
 - [x] `/auth`: login, logout, me, setup, password, tokens, sessions
 - [x] `person_auth` replaces `admin_auth`; `YAAF_ADMIN_TOKEN` removed
 - [x] Origin check on cookie-authenticated writes; login throttle

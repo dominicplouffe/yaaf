@@ -2,7 +2,7 @@
 
 Unlike every other command (HTTP against the API), this opens the server's
 database directly via yaaf.core.db, so it needs the server's DB env vars
-(YAAF_DATABASE_URL — see yaaf.core.config), not YAAF_API/YAAF_ADMIN_TOKEN.
+(YAAF_DATABASE_URL — see yaaf.core.config), not YAAF_API or a login.
 Run it on the box that hosts the server, or point YAAF_DATABASE_URL at the
 same Postgres.
 
@@ -34,6 +34,9 @@ from yaaf.core.models import (
     TaskStatus,
     Team,
 )
+from yaaf.runtimes import catalog
+from yaaf.runtimes.providers import PROVIDERS
+from yaaf.runtimes.seats import seat_for
 from yaaf.server.contextpack import role_version_for
 from yaaf.server.dispatcher import heartbeat_only
 
@@ -131,10 +134,8 @@ def _heading(title: str) -> None:
 
 
 def _agent_model(session: Session, agent: Agent) -> str:
-    """Mirror the runner's model pick (yaaf.runner.daemon): override, then the
-    role version's model, then the platform default."""
-    role_version = role_version_for(session, agent)
-    return agent.model_override or (role_version.model if role_version else "claude-sonnet-5-5")
+    """The runner's own model pick (yaaf.runtimes.seats), not a copy of it."""
+    return seat_for(agent, role_version_for(session, agent)).model
 
 
 def _run_model(run, model_by_agent: dict[str, str]) -> tuple[str, bool]:
@@ -235,6 +236,18 @@ def _report(session: Session, project: Project, since: datetime, window: str) ->
     if attributed:
         typer.echo(f"  ({_n(attributed)} runs predate runs.model; attributed via the agent's "
                    "role version)")
+    # 1b. By provider, once there is more than one: a seat on a second vendor's
+    # model is a decision about money, and this is where its bill shows.
+    provider_buckets: dict = {}
+    for run in runs:
+        model, _ = _run_model(run, model_by_agent)
+        seller = PROVIDERS.get(catalog.provider_of(model))
+        _add(provider_buckets, seller.label if seller else catalog.provider_of(model), run)
+    if len(provider_buckets) > 1:
+        _heading("Spend by provider")
+        typer.echo(_table(["provider", "runs", "tokens in", "tokens out", "usd"],
+                          [_row([label], bucket)
+                           for label, bucket in _by_spend(provider_buckets)]))
 
     # 2. Spend by team, and by agent.
     team_buckets: dict = {}
@@ -390,7 +403,7 @@ def spend_report(
     """Analyze LLM spend straight from the database (no API involved).
 
     Needs the server's DB env vars (YAAF_DATABASE_URL), not
-    YAAF_API/YAAF_ADMIN_TOKEN — run it where the server runs, or point
+    YAAF_API or a login — run it where the server runs, or point
     YAAF_DATABASE_URL at the same Postgres.
     """
     if all_projects and project:

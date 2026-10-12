@@ -1,0 +1,7 @@
+{"type":"thread.started","thread_id":"01a130c9-cec7-76c3-92b5-f4d3bae17af5"}
+{"type":"item.completed","item":{"id":"item_0","type":"error","message":"Model metadata for `gpt-5.1-codex` not found. Defaulting to fallback metadata; this can degrade performance and cause issues."}}
+{"type":"turn.started"}
+{"type":"item.started","item":{"id":"item_1","type":"mcp_tool_call","server":"yaaf","tool":"board","arguments":{},"result":null,"error":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_1","type":"mcp_tool_call","server":"yaaf","tool":"board","arguments":{},"result":{"content":[{"type":"text","text":"{\n  \"status\": 0,\n  \"body\": {\n    \"error\": \"platform unreachable: ConnectError('[Errno 111] Connection refused')\"\n  }\n}"}],"structured_content":null},"error":null,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"Hi! What are we working on today?"}}
+{"type":"turn.completed","usage":{"input_tokens":2100,"cached_input_tokens":1000,"cache_write_input_tokens":0,"output_tokens":60,"reasoning_output_tokens":12}}

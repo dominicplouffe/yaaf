@@ -21,8 +21,8 @@ And two data steps an existing box needs before any of that is usable:
     has written since that table existed. Older projects predate it, and
     membership is now what decides who may open a project at all.
 
-Revision ID: 0042
-Revises: 0041
+Revision ID: 0046
+Revises: 0045
 """
 import sqlalchemy as sa
 from alembic import op
@@ -33,8 +33,8 @@ from yaaf.core.migration_ops import (
     create_table_if_missing,
 )
 
-revision = "0042"
-down_revision = "0041"
+revision = "0046"
+down_revision = "0045"
 branch_labels = None
 depends_on = None
 

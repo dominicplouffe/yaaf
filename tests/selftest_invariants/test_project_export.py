@@ -53,7 +53,7 @@ def test_bundle_carries_design_not_plumbing(client):
     assert spec["teams"] == [{"role_slug": "worker", "name": "Alpha",
                               "employees": ["Lead", "Emp2"], "lead": "Lead",
                               "schedules": {}, "model_overrides": {},
-                              "effort_overrides": {}}]
+                              "effort_overrides": {}, "harness_overrides": {}}]
     assert spec["constitution"]["queue_ceiling"] == 5
     assert spec["ceo_role_slug"] == "ceo"
     assert spec["solo"] is False
@@ -122,7 +122,8 @@ def test_solo_bundle_round_trips(client):
     assert bundle["project"]["teams"] == [{"role_slug": "worker", "name": "Solo",
                                            "employees": [], "lead": None,
                                            "schedules": {}, "model_overrides": {},
-                                           "effort_overrides": {}}]
+                                           "effort_overrides": {},
+                                           "harness_overrides": {}}]
 
     created = client.post("/admin/projects", json={
         **bundle["project"], "slug": "solo-twin", "chairman_email": "chair@example.com",

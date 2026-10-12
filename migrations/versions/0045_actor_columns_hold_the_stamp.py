@@ -10,14 +10,14 @@ length and is where the suite runs by default.
 Widened in place. SQLite needs nothing: its declared length is advisory, and
 the models' new width is what `create_all` builds on a fresh file.
 
-Revision ID: 0041
-Revises: 0040
+Revision ID: 0045
+Revises: 0044
 """
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0041"
-down_revision = "0040"
+revision = "0045"
+down_revision = "0044"
 branch_labels = None
 depends_on = None
 

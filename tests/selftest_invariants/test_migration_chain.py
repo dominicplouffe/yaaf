@@ -71,15 +71,33 @@ STAGE_10_COLUMNS = (
     ("requirements", "recurrence"),
 )
 
-# 0042: people (docs/AUTH.md). The first tables since 0014, so the first time
-# create_table_if_missing is walked on the upgrade path rather than skipped.
+# 0041: what a run executed on, and what a credential pays (docs/RUNTIMES.md).
+# `secrets.provider` is NOT NULL with a server default — the shape most likely
+# to break an ALTER on a table that already has rows.
+RUNTIMES_COLUMNS = (
+    ("secrets", "provider"),
+    ("runs", "provider"),
+    ("runs", "harness"),
+    ("runs", "error_kind"),
+    # 0042: a seat chooses what drives its model.
+    ("role_versions", "harness"),
+    ("agents", "harness_override"),
+    # 0043: every run is priced from the catalog, whoever bills it.
+    ("runs", "priced_usd"),
+    # 0044: the first providers that are not Anthropic.
+    ("secrets", "base_url"),
+)
+RUNTIMES_TABLES = ("project_llm_credentials", "model_prices")
+# 0046: people (docs/AUTH.md).
 PEOPLE_TABLES = ("user_sessions", "user_tokens", "user_setup_links", "login_failures")
 PEOPLE_COLUMNS = (("users", "deactivated_at"),)
 
 REMOVED_TABLES = (STAGE_1_TABLES + STAGE_5_TABLES + STAGE_6_TABLES
-                  + STAGE_7_TABLES + STAGE_8_TABLES + STAGE_10_TABLES + PEOPLE_TABLES)
+                  + STAGE_7_TABLES + STAGE_8_TABLES + STAGE_10_TABLES + RUNTIMES_TABLES
+                  + PEOPLE_TABLES)
 REMOVED_COLUMNS = (STAGE_1_COLUMNS + STAGE_8_COLUMNS + STAGE_9_COLUMNS
-                   + STAGE_10_COLUMNS + PEOPLE_COLUMNS + (("secrets", "llm_mode"),))
+                   + STAGE_10_COLUMNS + RUNTIMES_COLUMNS + PEOPLE_COLUMNS
+                   + (("secrets", "llm_mode"),))
 
 
 def _alembic_config(url: str) -> Config:

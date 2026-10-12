@@ -33,6 +33,9 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+from yaaf.runtimes.catalog import DEFAULT_EFFORT, DEFAULT_MODEL
+from yaaf.runtimes.providers import DEFAULT_PROVIDER
+
 JSONVariant = JSON().with_variant(JSONB(), "postgresql")
 
 #: Room for the longest attribution any surface writes: `user:<id> via
@@ -804,8 +807,11 @@ class RoleVersion(Base):
     version: Mapped[int] = mapped_column(Integer)
     description: Mapped[str] = mapped_column(Text)
     system_prompt: Mapped[str] = mapped_column(Text)
-    model: Mapped[str] = mapped_column(String(64), default="claude-sonnet-5-5")
-    effort: Mapped[str] = mapped_column(String(8), default="high")
+    model: Mapped[str] = mapped_column(String(64), default=DEFAULT_MODEL)
+    effort: Mapped[str] = mapped_column(String(8), default=DEFAULT_EFFORT)
+    # What drives the model (yaaf.runtimes.harnesses). NULL is the provider's
+    # default — which is every role written before there was a choice.
+    harness: Mapped[str | None] = mapped_column(String(32))
     # {"bash": true, "web": true, "github": false}
     tool_permissions: Mapped[dict] = mapped_column(JSONVariant, default=dict)
     secret_scopes: Mapped[list] = mapped_column(JSONVariant, default=list)
@@ -894,6 +900,9 @@ class Agent(Base):
     # Raising it in the library would have raised it everywhere.
     model_override: Mapped[str | None] = mapped_column(String(64))
     effort_override: Mapped[str | None] = mapped_column(String(16))
+    # The same for what drives the model (yaaf.runtimes.harnesses): null is the
+    # role's harness, and the role's null is its provider's default.
+    harness_override: Mapped[str | None] = mapped_column(String(32))
     # Per-agent daily wake, "HH:MM" in the constitution's timezone (stage E).
     # The CEO's standup generalized: a support agent that checks the inbox
     # every morning, a metrics agent that reports at close. Chairman-set;
@@ -1831,10 +1840,24 @@ class Run(Base):
     cache_creation_tokens: Mapped[int] = mapped_column(Integer, default=0)
     cache_read_tokens: Mapped[int] = mapped_column(Integer, default=0)
     cost_usd: Mapped[float | None] = mapped_column(Float)
+    # The same run priced from yaaf's model catalog (yaaf.runtimes.catalog).
+    # Equal to cost_usd on a harness yaaf prices itself; on one that reports
+    # its own bill, the check on the catalog — the health checklist compares
+    # the two (docs/RUNTIMES.md). NULL when unpriced, and where cost_usd is.
+    priced_usd: Mapped[float | None] = mapped_column(Float)
     # Pinned at lease time, not resolved at read time: a role repin or model
     # change must never silently re-attribute historical spend.
     model: Mapped[str | None] = mapped_column(String(64))
     effort: Mapped[str | None] = mapped_column(String(16))
+    # Who served the model and what drove it (docs/RUNTIMES.md), pinned beside
+    # the model for the same reason. NULL on every run from before they were
+    # recorded — all of which were the Agent SDK on Anthropic.
+    provider: Mapped[str | None] = mapped_column(String(32))
+    harness: Mapped[str | None] = mapped_column(String(32))
+    # How a failed run failed, as its harness classified it: "auth" |
+    # "transient" | "fatal". Kept on the row because the credential-failure
+    # pause reads the last three runs, not just this one.
+    error_kind: Mapped[str | None] = mapped_column(String(16))
     # Did this run change anything? Incremented by the API layer on every
     # accepted write — a task claimed or closed, a message posted, evidence
     # filed, a memory written, scope moved. Zero means the run woke, thought,
@@ -2029,6 +2052,11 @@ class Secret(Base):
     name: Mapped[str] = mapped_column(String(120))
     ciphertext: Mapped[str] = mapped_column(Text)
     llm_mode: Mapped[str | None] = mapped_column(String(16))
+    # Which provider an LLM credential pays (yaaf.runtimes.providers); `llm_mode`
+    # is the kind within it. Set on every row, LLM credential or not, because a
+    # default is cheaper than a nullable column every reader has to second-guess.
+    provider: Mapped[str] = mapped_column(String(32), default=DEFAULT_PROVIDER,
+                                          server_default=DEFAULT_PROVIDER)
     role_scopes: Mapped[list] = mapped_column(JSONVariant, default=list)  # role slugs
     # "service" (role-granted, injected under its own name) vs "billing"
     # (attached as billing_secret_id, injected into EVERY run as the model
@@ -2059,6 +2087,45 @@ class Secret(Base):
     # It is also why the name index is partial on this column: a name nothing
     # can show you is not a name worth reserving.
     hidden_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # Where an LLM credential's provider is reached, for a provider whose
+    # address is the credential's own (yaaf.runtimes.providers: a custom
+    # OpenAI-compatible server). Not a secret, so not in the ciphertext.
+    base_url: Mapped[str | None] = mapped_column(String(500))
+
+
+class ProjectLlmCredential(Base):
+    """The credential a project pays a *second* provider with.
+
+    `Project.billing_secret_id` stays the project's billing credential — the
+    one its meter is read from — and pays whichever provider it is for. A
+    project whose seats run on more than one provider holds one row here per
+    other provider (docs/RUNTIMES.md, M3). Every credential a project holds
+    meters in its billing mode's unit (R4): one cap cannot be kept in two."""
+
+    __tablename__ = "project_llm_credentials"
+    __table_args__ = (UniqueConstraint("project_id", "provider"),)
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    provider: Mapped[str] = mapped_column(String(32))
+    secret_id: Mapped[str] = mapped_column(ForeignKey("secrets.id"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class ModelPrice(Base):
+    """An install's own price for a model, in USD per million tokens. Wins over
+    the shipped catalog (yaaf.runtimes.catalog) for that model — which is how a
+    provider yaaf ships no price for is priced at all, and how a local server
+    is priced at zero."""
+
+    __tablename__ = "model_prices"
+
+    model: Mapped[str] = mapped_column(String(128), primary_key=True)
+    input: Mapped[float] = mapped_column(Float)
+    output: Mapped[float] = mapped_column(Float)
+    cache_read: Mapped[float] = mapped_column(Float, default=0.0)
+    cache_write: Mapped[float] = mapped_column(Float, default=0.0)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 
 class PlanReading(Base):

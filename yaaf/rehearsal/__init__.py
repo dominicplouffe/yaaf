@@ -318,6 +318,23 @@ def _drill_person(email: str) -> str:
     return plaintext
 
 
+def _install_prices() -> list[dict]:
+    """This install's own model prices, as rows the drill can set again. Empty
+    when there is no database to read — a drill from a bare checkout."""
+    try:
+        from sqlalchemy import select
+
+        from yaaf.core.db import db_session
+        from yaaf.core.models import ModelPrice
+
+        with db_session() as session:
+            return [{"model": r.model, "input": r.input, "output": r.output,
+                     "cache_read": r.cache_read or 0.0, "cache_write": r.cache_write or 0.0}
+                    for r in session.scalars(select(ModelPrice))]
+    except Exception:
+        return []
+
+
 def _client(email: str) -> httpx.Client:
     """An in-process client over the real app. No socket is ever opened.
 
@@ -526,6 +543,10 @@ def rehearse(spec: dict, *, days: int = 30, usd_per_run: float | None = None,
         candidate = Path.cwd() / "roles"
         roles_dir = candidate if candidate.is_dir() else None
 
+    # The install's own model prices are configuration, not credentials, and a
+    # seat priced only here would be refused in a database that never heard
+    # of them (R3). Read before the drill swaps the database out from under us.
+    prices = _install_prices()
     with tempfile.TemporaryDirectory(prefix="yaaf-rehearsal-") as tmp:
         restore_engine = _isolate(Path(tmp))
         restore_state = _isolate_state_roots(Path(tmp))
@@ -534,6 +555,8 @@ def rehearse(spec: dict, *, days: int = 30, usd_per_run: float | None = None,
         restore_pacing = _patch_coalescing()
         client = _client(_drill_email(project_spec))
         try:
+            for row in prices:
+                client.put(f"/admin/settings/model-prices/{row.pop('model')}", json=row)
             return _run(client, project_spec, spec_roles, roles_dir, days,
                         usd_per_run, max_ticks, crew, report, mock_backend,
                         install)
@@ -581,6 +604,9 @@ def _run(client, project_spec, spec_roles, roles_dir, days, usd_per_run,
     # nothing and asks for nothing.
     body.pop("billing_secret_id", None)
     body.pop("billing_secret_name", None)
+    # And what pays any other provider, for the same reason.
+    body.pop("credentials", None)
+    body.pop("credential_names", None)
     # The runtime is the whole point: scripted agents against the real API.
     integrations = dict(body.get("integrations") or {})
     integrations["runtime"] = "mock"

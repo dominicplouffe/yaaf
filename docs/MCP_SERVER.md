@@ -399,7 +399,7 @@ discovering later.
 
 | Tool | Does | Backing | Confirm? | Status |
 |---|---|---|---|---|
-| `catalog` | Search the role and crew library; with `what: credentials`, list the LLM credentials a project may pay with — names and billing modes, never values. | `yaaf/founder/tools.py: search_roles, search_crews, list_credentials` | no | **done** (M4) |
+| `catalog` | Search the role and crew library; with `what: credentials`, list the LLM credentials a project may pay with — names and billing modes, never values; with `what: harnesses`, what can drive a seat's model; with `what: providers`, who sells the tokens and the credential kinds each takes ([RUNTIMES.md](RUNTIMES.md)). | `yaaf/founder/tools.py: search_roles, search_crews, list_credentials`; `GET /admin/harnesses`; `GET /admin/providers` | no | **done** (M4) |
 | `read_source` | What a candidate data source actually serves. | `yaaf/founder/tools.py: read_source` | no | **done** (M4) |
 | `grade_goal` | Grade a draft goal against [GOAL_GRAMMAR.md](GOAL_GRAMMAR.md) — ten things a goal must contain. | `yaaf/founder/tools.py` | no | **done** (M4) |
 | `rehearse` | The fire drill: simulate the project for N days, create nothing. | `POST /admin/rehearse` | no | **done** (M4) |
@@ -417,7 +417,7 @@ drafting a bundle and being graded on it.
 
 | Tool | Does | Backing | Confirm? | Status |
 |---|---|---|---|---|
-| `project_configure` | Settings, teams, repin a team's role version. | `PATCH /admin/projects/{id}`, `POST /admin/projects/{id}/teams`, `/admin/teams/{id}/repin` | yes | **done** (M5) |
+| `project_configure` | Settings, teams, repin a team's role version; pay a second provider, or stop. | `PATCH /admin/projects/{id}`, `POST /admin/projects/{id}/teams`, `/admin/teams/{id}/repin`, `PUT`/`DELETE /admin/projects/{id}/credentials/{provider}` | yes | **done** (M5) |
 | `data_source` | `verb`: `add` \| `check` \| `oauth_start` \| `remove`. | `POST /admin/projects/{id}/mcp_servers` `/check` `/oauth/start`, `DELETE …/{name}` | yes on `add`/`remove` | **done** (M5) |
 | `credential` | Create or scope a secret **by reference only** — the value is never read back, and a value passed in is written and forgotten. `filename` makes it a *file* credential, so granted roles get a path; text only here, binary goes through the dashboard. | `POST /admin/secrets`, `GET /admin/secrets` (names only) | yes | **done** (M5) |
 | `amend` | Propose or cancel a constitution amendment; read the schema. | `POST /admin/projects/{id}/amendments`, `/admin/amendments/{id}/cancel`, `GET /admin/constitution/schema` | yes | **done** (M5) |

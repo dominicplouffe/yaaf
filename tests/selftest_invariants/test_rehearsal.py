@@ -655,3 +655,22 @@ def test_the_read_is_not_drawn_as_a_miss_on_a_bundle_that_never_asked(client=Non
     read = next(s for s in report["walk"] if s["key"] == "work_read")
     assert read["na"] and not read["ok"], read
     assert report["ok"], report["verdict"]
+
+
+def test_a_seat_priced_by_this_install_is_priced_in_the_drill_too(monkeypatch):
+    """A drill runs in a database of its own, which has never heard of the
+    prices this install set — and a DeepSeek seat with no price is refused at
+    creation (R3, docs/RUNTIMES.md). So the drill carries the install's prices
+    over, as configuration rather than credentials. Unavoidably slow: it is a
+    whole drill, run for the side effect of getting past creation."""
+    monkeypatch.setattr(rehearsal, "_install_prices", lambda: [
+        {"model": "deepseek-chat", "input": 0.28, "output": 0.42, "cache_read": 0.028,
+         "cache_write": 0.0}])
+    critic = {"slug": "critic", "name": "Critic", "is_ceo_role": False,
+              "description": "doubts", "system_prompt": "You find the weak point.",
+              "model": "deepseek-chat", "tool_permissions": {"files": True, "web": False}}
+    report = rehearsal.rehearse({"project": {**MINIMAL, "slug": "two-vendors", "teams": [
+        {"role_slug": "critic", "name": "Red", "employees": ["Dee"]}]},
+        "roles": [*ROLES, critic]})
+    steps = walk(report)
+    assert steps["created"]["ok"], steps["created"]["detail"]

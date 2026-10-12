@@ -76,6 +76,7 @@ golden-transcript evals, green on SQLite and Postgres in CI.
 | People — accounts, sessions, personal tokens; chairman, co-chairs, observers | Built. One box, several people, each project with one chairman who alone decides who decides; co-chairs decide as peers and are recorded as themselves. Every human route declares its authority and a test refuses one that does not. The static admin token is retired. See [AUTH.md](AUTH.md). |
 | Integrations — Slack (Socket Mode), GitHub, MCP data sources, S3, email | Built. |
 | Staffing — the CEO hires and stands roles down; the plan carries each seat's end | Built. Bounded by `max_teams`, a refusal to orphan open work, and a refusal to remove its own last critic. A declared `stand_down_when` is fired by the janitor, not by a reminder. |
+| Runtimes — a seat on any harness and provider, under the same rules | Built through M3: Claude through the Agent SDK, the Claude CLI or yaaf's own loop on the API, and DeepSeek, OpenRouter or a local server through the same loop on the OpenAI-compatible API. Every seat is metered against its project's one cap; a seat that cannot be paid, priced, or given what its role grants is refused at the door. See [RUNTIMES.md](RUNTIMES.md). |
 | Attribution — who spent which runs, and on what | Built. One producer behind the chairman's screen, the CLI, the chairman's MCP and the CEO's own reader, so the two sides of the boardroom cannot hold different numbers. |
 
 ## What is next
@@ -99,7 +100,10 @@ golden-transcript evals, green on SQLite and Postgres in CI.
   serialize against exactly that.
 - **A worker fleet.** Same reason. It is a deploy choice, not an architecture
   change, and it waits for demonstrated need.
-- **Multi-provider models.** The runner interface leaves room; nothing more.
+- **A model router.** Seats run on many providers ([RUNTIMES.md](RUNTIMES.md)),
+  but a seat runs on what it was hired on: no automatic fallback from one
+  provider to another when a call fails, and no exchange rate between a meter
+  in dollars and a meter in tokens.
 - **Teardown machinery.** Winding a project down is a decision, not a script.
   The account registry records what exists so you can settle it yourself.
 - **Virtual-card issuance.** Recommended hardening if you bring an issuer,
@@ -134,3 +138,4 @@ golden-transcript evals, green on SQLite and Postgres in CI.
 - [FEATURES.md](FEATURES.md) — the complete feature reference.
 - [GOVERNANCE.md](GOVERNANCE.md) — every rule and its default.
 - [MCP_SERVER.md](MCP_SERVER.md) — chairing yaaf from a model client: design and milestones.
+- [RUNTIMES.md](RUNTIMES.md) — any harness, any provider, the same rules: design and milestones.

@@ -135,25 +135,41 @@ def credential(session: Session) -> str:
     return decrypt(row.ciphertext)
 
 
-def set_credential(session: Session, plaintext: str, *, mode: str = "api_key") -> None:
-    """Install or rotate the platform credential and record its billing mode."""
+def set_credential(session: Session, plaintext: str, *, mode: str = "api_key",
+                   provider: str | None = None, base_url: str | None = None) -> None:
+    """Install or rotate the platform credential and record its billing mode,
+    the provider it pays and — for a server the chairman runs — its address."""
     from yaaf.core.crypto import encrypt
+    from yaaf.runtimes.providers import DEFAULT_PROVIDER
+    from yaaf.runtimes.providers import provider as seller
 
-    if mode not in {"api_key", "subscription"}:
+    provider = provider or DEFAULT_PROVIDER
+    if mode not in {k.mode for k in seller(provider).kinds}:
         raise ValueError(f"unknown billing mode {mode!r}")
     row = _credential_row(session)
     if row is None:
-        session.add(Secret(
+        row = Secret(
             id=ids.new_id(ids.SECRET),
             project_id=None,
             name=PLATFORM_BILLING_SECRET,
             ciphertext=encrypt(plaintext),
             role_scopes=[],
             kind="billing",
-        ))
+        )
+        session.add(row)
     else:
         row.ciphertext = encrypt(plaintext)
+    row.provider, row.base_url = provider, base_url
     set_setting(session, BILLING_MODE, mode)
+
+
+def credential_provider(session: Session) -> str:
+    """Which provider the platform credential pays — Anthropic until one says
+    otherwise, which is what every row written before there was a choice says."""
+    from yaaf.runtimes.providers import DEFAULT_PROVIDER
+
+    row = _credential_row(session)
+    return (row.provider if row is not None else None) or DEFAULT_PROVIDER
 
 
 def clear_credential(session: Session) -> bool:
@@ -178,28 +194,31 @@ def founder_env(session: Session) -> dict[str, str]:
     One credential story for the whole product is the point. A key that works
     for a project's agents works for the Founder, and vice versa.
     """
-    key = credential(session)
-    if billing_mode(session) == "subscription":
-        return {"CLAUDE_CODE_OAUTH_TOKEN": key}
-    return {"ANTHROPIC_API_KEY": key}
+    from yaaf.runtimes.providers import credential_env
+
+    row = _credential_row(session)
+    env = credential_env(row.provider if row is not None else None,
+                         billing_mode(session), credential(session))
+    if row is not None and row.base_url:
+        # A server the chairman runs: its address travels with its key
+        # (yaaf.founder.loop reads it).
+        from yaaf.founder.loop import BASE_URL_ENV
+
+        env[BASE_URL_ENV] = row.base_url
+    return env
 
 
-def shape_error(mode: str, plaintext: str) -> str | None:
+def shape_error(mode: str, plaintext: str, provider: str | None = None) -> str | None:
     """Whether this credential can possibly be what its mode says it is.
 
     Shared with the per-project billing check so both say the same sentence:
     the message a chairman gets for pasting a subscription token into an
-    API-key field should not depend on which form he pasted it into.
+    API-key field should not depend on which form he pasted it into. The
+    sentences themselves belong to the provider (yaaf.runtimes.providers).
     """
-    is_oauth = plaintext.startswith("sk-ant-oat")
-    if mode == "subscription" and not is_oauth:
-        return ("that credential is not a subscription token (sk-ant-oat…). Run "
-                "`claude setup-token` and paste the result — or switch to API-key mode.")
-    if mode == "api_key" and is_oauth:
-        return ("that credential is a subscription OAuth token, not an API key "
-                "(sk-ant-api…). Paste a key from the Anthropic console — or switch "
-                "to subscription mode.")
-    return None
+    from yaaf.runtimes.providers import shape_error as provider_shape_error
+
+    return provider_shape_error(provider, mode, plaintext)
 
 
 # ── platform-level secrets ──────────────────────────────────────────────────────
