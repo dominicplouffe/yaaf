@@ -30,6 +30,7 @@ from sqlalchemy.orm import Session
 
 from yaaf.core import plan_usage, platform
 from yaaf.core.models import Secret
+from yaaf.runtimes.providers import MODE_PATTERN
 from yaaf.server.deps import admin_auth, db
 from yaaf.server.slack import provision as slack_provision
 from yaaf.server.slack import settings as slack_settings
@@ -88,7 +89,7 @@ def _llm_counts(session: Session) -> dict:
 
 class CredentialIn(BaseModel):
     value: str = Field(min_length=8)
-    mode: str = Field(default="api_key", pattern="^(api_key|subscription)$")
+    mode: str = Field(default="api_key", pattern=MODE_PATTERN)
 
 
 def install_credential(session: Session, value: str, mode: str) -> dict:
@@ -247,7 +248,7 @@ class LlmCredentialIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(min_length=1, max_length=120)
-    mode: str = Field(pattern="^(api_key|subscription)$")
+    mode: str = Field(pattern=MODE_PATTERN)
     value: str = Field(min_length=8, max_length=10000)
 
 

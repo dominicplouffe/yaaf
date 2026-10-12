@@ -118,6 +118,7 @@ class AgentSDKBackend:
                     cost_usd=data.get("cost_usd"),
                     trace_path=data.get("trace_path"),
                     plan=data.get("plan"),
+                    error_kind=data.get("error_kind"),
                 )
             except Exception:
                 log.exception("unreadable result.json for %s", job.run_id)

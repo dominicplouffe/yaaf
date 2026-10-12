@@ -34,6 +34,7 @@ from yaaf.core.models import (
     TaskStatus,
     Team,
 )
+from yaaf.runtimes.seats import seat_for
 from yaaf.server.contextpack import role_version_for
 from yaaf.server.dispatcher import heartbeat_only
 
@@ -131,10 +132,8 @@ def _heading(title: str) -> None:
 
 
 def _agent_model(session: Session, agent: Agent) -> str:
-    """Mirror the runner's model pick (yaaf.runner.daemon): override, then the
-    role version's model, then the platform default."""
-    role_version = role_version_for(session, agent)
-    return agent.model_override or (role_version.model if role_version else "claude-sonnet-5-5")
+    """The runner's own model pick (yaaf.runtimes.seats), not a copy of it."""
+    return seat_for(agent, role_version_for(session, agent)).model
 
 
 def _run_model(run, model_by_agent: dict[str, str]) -> tuple[str, bool]:

@@ -33,6 +33,9 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+from yaaf.runtimes.catalog import DEFAULT_EFFORT, DEFAULT_MODEL
+from yaaf.runtimes.providers import DEFAULT_PROVIDER
+
 JSONVariant = JSON().with_variant(JSONB(), "postgresql")
 
 
@@ -700,8 +703,8 @@ class RoleVersion(Base):
     version: Mapped[int] = mapped_column(Integer)
     description: Mapped[str] = mapped_column(Text)
     system_prompt: Mapped[str] = mapped_column(Text)
-    model: Mapped[str] = mapped_column(String(64), default="claude-sonnet-5-5")
-    effort: Mapped[str] = mapped_column(String(8), default="high")
+    model: Mapped[str] = mapped_column(String(64), default=DEFAULT_MODEL)
+    effort: Mapped[str] = mapped_column(String(8), default=DEFAULT_EFFORT)
     # {"bash": true, "web": true, "github": false}
     tool_permissions: Mapped[dict] = mapped_column(JSONVariant, default=dict)
     secret_scopes: Mapped[list] = mapped_column(JSONVariant, default=list)
@@ -1731,6 +1734,15 @@ class Run(Base):
     # change must never silently re-attribute historical spend.
     model: Mapped[str | None] = mapped_column(String(64))
     effort: Mapped[str | None] = mapped_column(String(16))
+    # Who served the model and what drove it (docs/RUNTIMES.md), pinned beside
+    # the model for the same reason. NULL on every run from before they were
+    # recorded — all of which were the Agent SDK on Anthropic.
+    provider: Mapped[str | None] = mapped_column(String(32))
+    harness: Mapped[str | None] = mapped_column(String(32))
+    # How a failed run failed, as its harness classified it: "auth" |
+    # "transient" | "fatal". Kept on the row because the credential-failure
+    # pause reads the last three runs, not just this one.
+    error_kind: Mapped[str | None] = mapped_column(String(16))
     # Did this run change anything? Incremented by the API layer on every
     # accepted write — a task claimed or closed, a message posted, evidence
     # filed, a memory written, scope moved. Zero means the run woke, thought,
@@ -1925,6 +1937,11 @@ class Secret(Base):
     name: Mapped[str] = mapped_column(String(120))
     ciphertext: Mapped[str] = mapped_column(Text)
     llm_mode: Mapped[str | None] = mapped_column(String(16))
+    # Which provider an LLM credential pays (yaaf.runtimes.providers); `llm_mode`
+    # is the kind within it. Set on every row, LLM credential or not, because a
+    # default is cheaper than a nullable column every reader has to second-guess.
+    provider: Mapped[str] = mapped_column(String(32), default=DEFAULT_PROVIDER,
+                                          server_default=DEFAULT_PROVIDER)
     role_scopes: Mapped[list] = mapped_column(JSONVariant, default=list)  # role slugs
     # "service" (role-granted, injected under its own name) vs "billing"
     # (attached as billing_secret_id, injected into EVERY run as the model

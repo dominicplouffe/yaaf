@@ -4,9 +4,12 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from yaaf.core.models import Project, ProjectStatus, Secret
+from yaaf.runtimes.providers import PROVIDERS
 
-MODE_LABELS = {"api_key": "Anthropic API key, billed in USD",
-               "subscription": "Claude subscription, metered in tokens"}
+#: How each kind of credential bills, in the provider's own words. A mode two
+#: providers share reads as the first one's until a credential carries its
+#: provider into the menu (docs/RUNTIMES.md, M3).
+MODE_LABELS = {kind.mode: kind.bills for p in reversed(PROVIDERS.values()) for kind in p.kinds}
 
 #: A project that has ended can neither start again nor spend again, so the
 #: credential it named is history rather than a live dependency. Every

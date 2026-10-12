@@ -1,7 +1,7 @@
 # Runtimes — any harness, any provider, the same rules
 
-**Status: proposed. Nothing here is built.** This is the design and the
-tracking doc for running a seat on something other than the Claude Agent SDK:
+**Status: M0 is built — the seams, with nothing a chairman can see moved. M1
+onward is proposed.** This is the design and the tracking doc for running a seat on something other than the Claude Agent SDK:
 the Claude CLI driven directly, the Anthropic API under yaaf's own loop, and
 then Codex, Gemini, OpenCode and whatever comes after them. Update the
 checkboxes as milestones land; if a decision here turns out wrong, change the
@@ -101,34 +101,35 @@ scripted backend exactly as they do now.
 
 ---
 
-## Where Claude is wired in today
+## Where Claude was wired in
 
-Every place a provider assumption lives, so M0 can move each one behind a
-registry. Twenty-odd sites; none is large.
+Every place a provider assumption lived when this was written (line numbers as
+of `43b315c`), so each can move behind a registry. Twenty-odd sites; none is
+large. **M0** marks the ones that already have.
 
 | Site | Today | Becomes |
 |---|---|---|
 | `yaaf/runner/sandbox_entry.py:28`, `:1830` | `claude_agent_sdk` imports; `ClaudeAgentOptions`, `query()` drive the run | the `claude_agent_sdk` driver |
-| `sandbox_entry.py:235–1516` | 59 tools declared with the SDK's `@tool` | the same tools as plain data; a renderer per harness |
+| `sandbox_entry.py:235–1516` | 59 tools declared with the SDK's `@tool` | the same tools as plain data; a renderer per harness — **M0** |
 | `sandbox_entry.py:1648`, `:1668` | `Read/Write/Bash/WebFetch…` — Claude Code's built-in names | manifest `builtins` map |
 | `sandbox_entry.py:1745` | plan meter parsed from the SDK's `RateLimitEvent` | a normalized `plan` event; provider-declared |
-| `sandbox_entry.py:1792`, `daemon.py:602` | Anthropic/Claude Code error strings | `error_kind` in `result.json`; markers per provider |
-| `chat_entry.py:28`, `:410` | `ClaudeSDKClient` holds the boardroom conversation | driver `converse()` (M5) |
-| `runner/backends/__init__.py` | `agent_sdk` \| `mock` | one sandbox backend + a harness registry |
+| `sandbox_entry.py:1792`, `daemon.py:602` | Anthropic/Claude Code error strings | `error_kind` in `result.json`; markers per provider — **M0** |
+| `chat_entry.py:28`, `:410` | `ClaudeSDKClient` holds the boardroom conversation | driver `converse()` (M6) |
+| `runner/backends/__init__.py` | `agent_sdk` \| `mock` | a backend per harness name — **M0**; one sandbox backend — M1 |
 | `runner/backends/agent_sdk.py:89` | `YAAF_MODEL`, `YAAF_EFFORT`, `YAAF_MAX_USD` env | a `RunSpec` file beside the context pack |
-| `runner/daemon.py:191`, `chat.py:353`, `types.py:21`, `sandbox_entry.py:43`, `cli/spend.py:137`, `core/models.py:703`, `api/admin.py:172` | default `claude-sonnet-5-5`, seven copies | the model catalog's default |
-| `runner/daemon.py:441` | `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` | `credential_kind.env(value)` |
-| `runner/daemon.py:496` | `integrations.runtime` picks the backend | seat resolution (above) |
+| `runner/daemon.py:191`, `chat.py:353`, `types.py:21`, `sandbox_entry.py:43`, `cli/spend.py:137`, `core/models.py:703`, `api/admin.py:172` | default `claude-sonnet-5-5`, seven copies | the model catalog's default; the sandbox keeps a literal a test holds to it — **M0** |
+| `runner/daemon.py:441` | `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` | the credential kind's variable — **M0**, for agents and the Founder |
+| `runner/daemon.py:496` | `integrations.runtime` picks the backend | seat resolution (above) — **M0** |
 | `runner/daemon.py:538` | `subscription` ⇒ cost is None | the credential kind's meter |
-| `core/models.py:1927` | `Secret.llm_mode`: `api_key` \| `subscription` | + `provider` column |
-| `core/llm_credentials.py:8`, `api/settings.py:91`, `:250`, `web/src/llmCredentials.tsx:47` | two Anthropic modes, hardcoded in labels, validation and the form | derived from the provider registry |
-| `api/admin.py:2180`, `core/platform.py:194` | `sk-ant-oat` / `sk-ant-api` shape checks | `credential_kind.shape_error` |
+| `core/models.py:1927` | `Secret.llm_mode`: `api_key` \| `subscription` | + `provider` column — **M0** |
+| `core/llm_credentials.py:8`, `api/settings.py:91`, `:250`, `web/src/llmCredentials.tsx:47` | two Anthropic modes, hardcoded in labels, validation and the form | derived from the provider registry — **M0** for the server; the form in M3, when it has a second provider to show |
+| `api/admin.py:2180`, `core/platform.py:194` | `sk-ant-oat` / `sk-ant-api` shape checks | `credential_kind.shape_error` — **M0** |
 | `api/admin.py:2311` | billing check calls `api.anthropic.com/v1/models` | `provider.live_check` |
 | `server/plan_probe.py:59` | "Check now" calls Anthropic's usage URL | `provider.plan_probe` (optional) |
-| `api/admin.py:693–707` | `CRAFT_MODEL`, `_MODEL_RANK` — Claude only | catalog tiers, **within the seat's provider** |
+| `api/admin.py:693–707` | `CRAFT_MODEL`, `_MODEL_RANK` — Claude only | catalog tiers, **within the seat's provider** — **M0** |
 | `runner/daemon.py:229` | the data-source paragraph names tools `mcp__<name>__*` | `manifest.tool_ref` renders the name the model actually sees |
 | `deploy/sandbox/Dockerfile` | installs `@anthropic-ai/claude-code` and `claude-agent-sdk` | one install script per harness |
-| `founder/session.py`, `core/platform.py:56` | the Founder runs on the CLI via the SDK | unchanged until M5 |
+| `founder/session.py`, `core/platform.py:56` | the Founder runs on the CLI via the SDK | unchanged until M6 |
 
 ---
 
@@ -159,14 +160,17 @@ class Tool:
     handler: Callable[[dict], Awaitable[dict]]
 ```
 
-`sandbox_entry.py` becomes the catalog: tools, `run_tools()`, the HTTP plumbing,
-no SDK import. What leaves it is `main()` and the `ClaudeAgentOptions` around
-it, which become the `claude_agent_sdk` driver. Then three renderers, each a
-few dozen lines:
+`wire_schema()` is the SDK's schema rule, owned rather than borrowed, and
+`tests/fixtures/tool_catalog.json` — captured through the SDK's own conversion
+before the change — holds it to what the model was actually sent. That much is
+M0. In M1 `main()` and the `ClaudeAgentOptions` around it leave for the
+`claude_agent_sdk` driver, and `sandbox_entry.py` is left as the catalog: tools,
+`run_tools()`, the HTTP plumbing, no SDK import. Three renderers, each a few
+dozen lines:
 
 | Rendering | For | How |
 |---|---|---|
-| **in-process SDK** | `claude_agent_sdk` | `create_sdk_mcp_server` over the catalog — today's behaviour, byte for byte |
+| **in-process SDK** | `claude_agent_sdk` | `render_sdk()` → `create_sdk_mcp_server` — today's behaviour, handed the same objects (M0) |
 | **stdio MCP server** | every CLI harness | `yaaf-tools`, a small server on the `mcp` package the image already carries, launched by the CLI from a generated MCP config with the run's env. Every CLI worth supporting speaks MCP. |
 | **function calling** | every API harness | the catalog as the provider's tool schema; the loop calls the handler in-process |
 
@@ -254,7 +258,7 @@ Manifest(
     cost="reported",                      # reported | priced
     native_budget=False,
     resume=True,
-    conversation=True,                    # can hold the boardroom chat (M5)
+    conversation=True,                    # can hold the boardroom chat (M6)
     skills="native",                      # native | inline | none
     plan_meter=True,
     efforts={"low": "low", "medium": "medium", "high": "high", "xhigh": "xhigh", "max": "max"},
@@ -262,8 +266,11 @@ Manifest(
 )
 ```
 
-The manifest lives in the sandbox package, which imports nothing from `yaaf`,
-so the control plane and the sandbox read **one** copy. `FILE_CRED_PREFIX`
+The harness registry lives in `yaaf/runtimes/harnesses.py`, which imports
+nothing from `yaaf` — a test holds that — so the control plane and the sandbox
+can read **one** copy. M0 registers `claude_agent_sdk` and `mock` with the
+fields something already reads; the rest of the manifest arrives with the
+harness that first needs each field. `FILE_CRED_PREFIX`
 solves the same problem today with two copies and a test that they agree; this
 solves it without the second copy.
 
@@ -294,13 +301,14 @@ new mechanism.
 
 ### 5. The model catalog
 
-One file, `models.json`, replaces seven default strings and `_MODEL_RANK`:
+One file, `yaaf/runtimes/catalog.py`, replaces the default-model strings and
+`_MODEL_RANK`. Data, not logic — a Python module rather than JSON only so it
+ships in the wheel with nothing to remember in `package-data`:
 
-```json
-{"id": "claude-opus-5-5", "provider": "anthropic", "tier": 5,
- "efforts": ["low", "medium", "high", "xhigh", "max"],
- "price": {"input": …, "output": …, "cache_read": …, "cache_write": …,
-           "per": "mtok", "as_of": "2026-10-12"}}
+```python
+Model("claude-opus-5-5", "anthropic", tier=5)
+# from M2, when a harness needs it to stop a run:
+#   price=Price(input=…, output=…, cache_read=…, cache_write=…, per="mtok", as_of="…")
 ```
 
 `tier` is what `stakes: high` lifts a seat to — the top tier **of the seat's
@@ -329,6 +337,11 @@ gains:
 `Run` gains `provider` and `harness` columns, pinned at lease time like `model`
 already is, so a reaped run stays attributed to what actually ran.
 
+M0 shipped the part something already reads: `RunJob.provider` and
+`RunJob.harness`, those two columns, and `error_kind` end to end. The rest of
+`result.json` arrives with the run loop in M1, because the loop is what fills
+it in.
+
 ---
 
 ## The rules this adds
@@ -345,7 +358,7 @@ All of them read manifests and the catalog; none names a harness.
 | R4 | **One project, one meter.** All of a project's credentials meter in USD or all in tokens. Two units cannot share one cap, and inventing an exchange rate between them is inventing a number. (Open question 1.) | credential assignment |
 | R5 | **A seat whose provider has no credential on the project cannot be hired, and a project with such a seat cannot start.** It fails at the door, not at 3am. | hire, start, health |
 | R6 | **An effort the model does not support is refused**, with the list it does. Never mapped silently, in either direction. | hire, repin, override |
-| R7 | **A CEO seat holding the boardroom chat must be on a harness with `conversation`.** | hire, start (from M5) |
+| R7 | **A CEO seat holding the boardroom chat must be on a harness with `conversation`.** | hire, start (from M6) |
 
 Every one of them also shows in the health checklist and the fire drill's
 "where it stopped", because both read the same functions.
@@ -410,8 +423,18 @@ The promise is that this list is the whole job:
 | A new… | Files |
 |---|---|
 | **CLI harness** | `drivers/<name>.py` (`argv`, `env`, `config_files`, `parse`, markers — a `CliDriver` subclass); a manifest entry; `deploy/sandbox/harnesses/<name>.sh`; recorded stream fixtures |
-| **API provider** | `clients/<name>.py` (a `ModelClient`); a `Provider` entry with its credential kinds; price rows in `models.json`; recorded response fixtures |
-| **model** | rows in `models.json` |
+| **API provider** | `clients/<name>.py` (a `ModelClient`); a `Provider` entry with its credential kinds; price rows in `catalog.py`; recorded response fixtures |
+| **model** | rows in `catalog.py` |
+
+Where the providers people ask for actually land:
+
+| Provider | Road | Milestone |
+|---|---|---|
+| DeepSeek | OpenAI-compatible API → a `Provider` entry on the M3 client; no CLI needed. Open weights, so also reachable through OpenRouter or a local server. | M3 |
+| OpenRouter, local models (Ollama, vLLM) | the same client | M3 |
+| Codex | `codex_cli`, plus the `openai` provider with an API key or a ChatGPT login | M4 |
+| Gemini | `gemini_cli`, or a Gemini `ModelClient` on the loop | M5 |
+| Kimi, Qwen, Mistral, Grok | `Provider` entries on the M3 client where they speak the OpenAI shape; their own CLIs where those are better | M5 |
 
 Everything else — the credential form, the role editor's pickers, the health
 checklist, the fire drill, the spend report, the receipt, the MCP `catalog`,
@@ -454,6 +477,17 @@ responses. Offline, $0, part of the default run:
 Plus one `-m paid` smoke per harness, like `test_planning_quality.py`: a real
 credential, one trivial run, usage non-zero and priced. Opt-in, never in CI.
 
+**The suite proves the plumbing, never the judgment.** A model that passes it
+can be driven, metered, stopped and refused. Whether it is any good at the job
+is a different question: yaaf's agents work by calling 59 tools correctly from
+role prompts written and tuned against Claude. A weaker model is still bounded
+by every rule — its bad calls are 403s and the refusal cap revokes its token —
+but being bounded is not being useful. Neither the fire drill nor the contract
+suite can see the difference, because both run scripted agents. So before a
+model is recommended for a seat, it gets the paid smoke and
+`test_planning_quality.py` pointed at it, and the result goes in the catalog
+entry's notes.
+
 ---
 
 ## The footprint
@@ -484,26 +518,51 @@ touches, and whether a new provider edits it:
 
 ## Milestones
 
-### M0 — The seams, and nothing else moves
-- [ ] The SDK's `@tool` swapped for a local decorator of the same signature;
+### M0 — The seams, and nothing else moves ✅
+- [x] The SDK's `@tool` swapped for a local decorator of the same signature;
       the 59 tools stay in `sandbox_entry.py`, and the fifteen test files that
-      import it pass **unmodified** — they are the proof the change moved
-      nothing
-- [ ] A byte-equality test: the SDK rendering of the catalog equals today's
-      schemas, tool for tool
-- [ ] `entry.py` run loop + `Driver` protocol; `claude_agent_sdk` and `mock`
-      registered as drivers; one sandbox backend
-- [ ] Provider registry (`anthropic`), credential kinds, `Secret.provider`;
-      `Run.provider`, `Run.harness`; `RoleVersion.harness`,
-      `Agent.harness_override` (nullable — null means the provider's default)
-- [ ] `models.json` replaces the seven defaults and `_MODEL_RANK`
-- [ ] `error_kind` in `result.json`; the daemon reads it before its markers
-- [ ] Migration run on Postgres (CLAUDE.md tier 3)
+      import it pass **unmodified** — the proof the change moved nothing
+- [x] `wire_schema()` held to `tests/fixtures/tool_catalog.json`, captured
+      through the SDK's own conversion before the change; `render_sdk()` hands
+      the SDK the very objects it always had (`test_tool_catalog.py`)
+- [x] `yaaf/runtimes/`: the provider registry (`anthropic`, its two credential
+      kinds, their variables, shape sentences, labels and dead-credential
+      markers), the model catalog, the harness registry (`claude_agent_sdk`,
+      `mock`), and `seats.seat_for` — the one resolution the runner, the chat
+      lane and the spend report now share
+- [x] `Secret.provider`, `Run.provider`, `Run.harness`, `Run.error_kind`
+      (migration `0041`); a mock project pins `mock`, the harness that actually
+      ran, not the seat's default
+- [x] A credential naming a provider the install does not have — a rollback
+      from a release that added one — is refused for its own project, never
+      raised in the lease, where one exception stalls every project's runs
+- [x] The catalog replaces six control-plane copies of the default model and
+      `_MODEL_RANK`; the sandbox's literal fallback is held to it by a test
+- [x] `error_kind` in `result.json`; the daemon believes `auth` before it
+      reads any vendor's prose, and still reads the prose when a run died
+      before its harness could say anything
+- [x] Registry completeness tests (`test_runtime_registries.py`)
+- [x] Full suite on SQLite and on Postgres 16 (CLAUDE.md tier 3)
 
 **Done when:** the goldens are byte-identical, the full suite is green on both
 databases, and a deploy shows no difference anywhere a chairman can look.
 
+Two items the first draft put here moved to M1, on the rule
+[PLAN.md](PLAN.md) applies to virtual cards — *a seam nothing uses is
+scaffolding*:
+
+- **The run loop and the `Driver` protocol.** An interface with one
+  implementation is a guess about the second. M1 brings the second, and the
+  interface gets decided against two real cases instead of one imagined one.
+- **`RoleVersion.harness` and `Agent.harness_override`.** A column nobody can
+  write is a column nobody can test. They arrive with the first harness there
+  is a choice of.
+
 ### M1 — `claude_cli`: the CLI family's reference
+- [ ] `entry.py` run loop + `Driver` protocol, split out of `sandbox_entry.main()`
+      with `claude_agent_sdk` as its first driver; one sandbox backend
+- [ ] `RoleVersion.harness`, `Agent.harness_override`, and the role editor's
+      picker — the first seat that can choose
 - [ ] `yaaf-tools` stdio MCP server rendering the catalog, plus the
       data-source proxy with the allowlist enforced in it
 - [ ] `CliDriver` base; `claude_cli` on it
@@ -518,30 +577,46 @@ seat for a week, and the two Runs pages are indistinguishable in shape.
 - [ ] `LoopDriver`; the loop's built-ins (files, shell, fetch) under the same
       grants; web search as the API's server tool
 - [ ] `ModelClient` for Messages; prompt caching
-- [ ] Pricing from `models.json`; the reported-vs-priced gap check against the
+- [ ] Prices in `catalog.py`; the reported-vs-priced gap check against the
       SDK on the same models
 - [ ] R3 with an attack (an unpriced model hired under USD)
 
-### M3 — The first other provider
-- [ ] `openai` provider: `api_key` (USD), `chatgpt` (tokens, a file credential)
-- [ ] `codex_cli` on `CliDriver`
+### M3 — The first other providers: everything OpenAI-compatible
+One `ModelClient` for the OpenAI-compatible chat API reaches more providers
+than any other single piece of work, which is why it comes before any second
+CLI. Each named host is a `Provider` entry — base URL, credential kinds,
+prices — and nothing more.
+- [ ] `openai_compatible` `ModelClient` on the M2 loop: per-call usage, the
+      provider's error classes, tool calls in the OpenAI shape
+- [ ] Providers: `deepseek`, `openrouter` (hundreds of models behind one
+      credential), and a custom endpoint whose base URL lives in the credential
+      — a local Ollama or vLLM server, priced at whatever the chairman says,
+      including zero
 - [ ] Project credentials per provider (a `project_llm_credentials` table;
       `billing_secret_id` migrates into it), R4, R5
 - [ ] Settings, New Project, Founder and MCP pick credentials by provider
+- [ ] Open question 6 (web search) decided, because most of these hosts have
+      no search of their own
 - [ ] PLAN.md's multi-provider line rewritten
 
-**Done when:** a project hires a Claude research seat and a Codex critic, both
-metered against one cap, and the receipt says which spent what.
+**Done when:** a project hires a Claude research seat and a DeepSeek critic,
+both metered against one cap, and the receipt says which spent what.
 
-### M4 — The long tail
-- [ ] `gemini_cli`, `opencode` (several providers through one harness — the
-      cheapest way to reach OpenRouter's catalog), `cursor` CLI
-- [ ] `ModelClient`s: OpenAI, Gemini, any OpenAI-compatible endpoint (local
-      models)
+### M4 — Codex
+- [ ] `openai` provider: `api_key` (USD), `chatgpt` (tokens, a file credential)
+- [ ] `codex_cli` on `CliDriver` — the first CLI that is not Claude's, and the
+      test of whether M1's pattern was general or merely Claude-shaped
+
+### M5 — The long tail
+- [ ] Gemini, by either road: `gemini_cli` on `CliDriver`, or a Gemini
+      `ModelClient` on the loop
+- [ ] `opencode` (several providers through one harness), `cursor` CLI
+- [ ] Kimi, Qwen, Mistral, Grok and the rest: `Provider` entries on the M3
+      client wherever they speak the OpenAI shape
 - [ ] Each one is the "Adding a provider" table and nothing else. If one is
       not, the pattern is wrong and gets fixed before the next one lands.
 
-### M5 — The conversations
+### M6 — The conversations
 - [ ] The boardroom chat on any harness with `conversation` (R7)
 - [ ] The Founder and the goal grader on any of them, still on the platform
       key and never a project's
@@ -564,6 +639,23 @@ metered against one cap, and the receipt says which spent what.
    chairman override. Hiring stays free because it buys no new *kind* of spend.
 5. **A served model weaker than the hired one.** Price on the served model, as
    designed. Should a downgrade also raise a flag?
+6. **Web search on loop providers.** Under yaaf's loop a provider gets files,
+   shell and fetch from yaaf, and search only where the provider runs one
+   server-side — Anthropic, OpenAI and Gemini do; DeepSeek and most
+   OpenAI-compatible hosts do not. Three answers:
+   - **refuse** — a role granting `web` cannot be hired onto a harness that
+     cannot search: R2's reasoning applied to a grant the harness cannot
+     honour, rather than one it cannot withhold. Honest, and the default
+     until something better is built;
+   - **yaaf supplies search** — one platform built-in backed by a search API
+     credential, so every loop provider gets the same tool. Each query costs
+     money, and that cost must be booked against the external envelope like any
+     other spend, or a run's price is understated;
+   - **search as a data source** — the chairman connects a search MCP server
+     and grants it to roles. Works today, but `web` stops meaning one thing.
+
+   Proposed: refuse now; build the second when the first loop provider without
+   search is actually wanted on a seat that needs it. Decided in M3.
 
 ## Appendix — invocation notes, to verify against pinned versions
 

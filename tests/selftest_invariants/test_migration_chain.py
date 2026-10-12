@@ -71,10 +71,20 @@ STAGE_10_COLUMNS = (
     ("requirements", "recurrence"),
 )
 
+# 0041: what a run executed on, and what a credential pays (docs/RUNTIMES.md).
+# `secrets.provider` is NOT NULL with a server default — the shape most likely
+# to break an ALTER on a table that already has rows.
+RUNTIMES_COLUMNS = (
+    ("secrets", "provider"),
+    ("runs", "provider"),
+    ("runs", "harness"),
+    ("runs", "error_kind"),
+)
+
 REMOVED_TABLES = (STAGE_1_TABLES + STAGE_5_TABLES + STAGE_6_TABLES
                   + STAGE_7_TABLES + STAGE_8_TABLES + STAGE_10_TABLES)
 REMOVED_COLUMNS = (STAGE_1_COLUMNS + STAGE_8_COLUMNS + STAGE_9_COLUMNS
-                   + STAGE_10_COLUMNS + (("secrets", "llm_mode"),))
+                   + STAGE_10_COLUMNS + RUNTIMES_COLUMNS + (("secrets", "llm_mode"),))
 
 
 def _alembic_config(url: str) -> Config:

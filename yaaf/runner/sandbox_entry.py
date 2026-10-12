@@ -2,10 +2,14 @@
 the container only has this file, the Claude Agent SDK (and its own dependency
 `mcp`, which data_fetch uses as a client), and httpx.
 
-It wires the yaaf platform tools (board, tasks, messages, memory, evidence,
-approvals, side effects) as SDK MCP tools that call the agent HTTP API with the
-per-run token, then drives one stateless run: context in, one unit of work,
-result.json out.
+It declares the yaaf platform tools (board, tasks, messages, memory, evidence,
+approvals, side effects) — each one a name, a description, a schema and a
+handler that calls the agent HTTP API with the per-run token — then drives one
+stateless run on the Agent SDK: context in, one unit of work, result.json out.
+
+The tools are declared as plain data, not as SDK objects, because the SDK is
+one harness among several that will need them (docs/RUNTIMES.md). The SDK sees
+them through `render_sdk` and nowhere else.
 
 Refusals come back to the model as tool output — the refusal text *is* the
 interface. The platform separately counts them and revokes the token at the cap.
@@ -19,7 +23,9 @@ import hashlib
 import json
 import os
 import tempfile
+from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -30,11 +36,11 @@ from claude_agent_sdk import (
     ClaudeAgentOptions,
     HookMatcher,
     ResultMessage,
+    SdkMcpTool,
     SystemMessage,
     TextBlock,
     create_sdk_mcp_server,
     query,
-    tool,
 )
 
 API = os.environ["YAAF_API_BASE_URL"]
@@ -227,6 +233,63 @@ def _schema(fields: dict, *, optional: tuple[str, ...]) -> dict:
             properties[name] = {"type": _JSON_TYPES[py_type]}
     return {"type": "object", "properties": properties,
             "required": [name for name in fields if name not in optional]}
+
+
+# ── the tool catalog, as data ───────────────────────────────────────────────────
+#
+# A tool is declared once, here, and rendered for whichever harness runs the
+# model. The attribute names are the SDK's own, so `render_sdk` is a copy and
+# every test that reads `.name`, `.input_schema` or `.handler` reads it
+# unchanged. Nothing about authority lives in this shape: the server's 403s are
+# the only thing that decides who may do what, on every harness.
+
+
+@dataclass(frozen=True)
+class Tool:
+    name: str
+    description: str
+    input_schema: dict
+    handler: Callable[[dict], Awaitable[dict]]
+
+
+def tool(name: str, description: str, input_schema: dict):
+    """The SDK decorator's signature, without the SDK."""
+
+    def decorator(handler: Callable[[dict], Awaitable[dict]]) -> Tool:
+        return Tool(name=name, description=description, input_schema=input_schema,
+                    handler=handler)
+
+    return decorator
+
+
+def _wire_type(py_type) -> dict:
+    if py_type in _JSON_TYPES:
+        return {"type": _JSON_TYPES[py_type]}
+    if getattr(py_type, "__origin__", None) is list:
+        args = getattr(py_type, "__args__", None)
+        return {"type": "array", "items": _wire_type(args[0])} if args else {"type": "array"}
+    # The SDK's own fallback for a type it does not recognise.
+    return {"type": "string"}
+
+
+def wire_schema(t: Tool) -> dict:
+    """The JSON schema the model receives for `t`, by the SDK's rule: a dict
+    that is already a schema passes through; a bare `{name: type}` dict becomes
+    one that requires every name. Owned here rather than borrowed from the SDK
+    — whose helper is private — because every other harness renders from it;
+    tests/fixtures/tool_catalog.json holds it to what the SDK sent."""
+    schema = t.input_schema
+    if isinstance(schema.get("type"), str) and "properties" in schema:
+        return schema
+    properties = {name: _wire_type(py_type) for name, py_type in schema.items()}
+    return {"type": "object", "properties": properties, "required": list(properties)}
+
+
+def render_sdk(tools: list[Tool]) -> list:
+    """The catalog as the Agent SDK's in-process MCP tools — today's behaviour,
+    handed the very schema objects it was always handed."""
+    return [SdkMcpTool(name=t.name, description=t.description,
+                       input_schema=t.input_schema, handler=t.handler) for t in tools]
 
 
 # ── platform tools ──────────────────────────────────────────────────────────────
@@ -1817,6 +1880,18 @@ def _looks_transient(exc: BaseException) -> bool:
     return any(marker in text for marker in TRANSIENT_API_MARKERS)
 
 
+def _error_kind(exc: BaseException) -> str:
+    """How the run failed, said once, here, by the harness that saw it — so
+    the daemon reads a field instead of re-guessing from one vendor's prose.
+    "auth" is the one with consequences: three in a row pause the project."""
+    text = repr(exc).lower()
+    if any(marker in text for marker in FATAL_API_MARKERS):
+        return "auth"
+    if any(marker in text for marker in TRANSIENT_API_MARKERS):
+        return "transient"
+    return "fatal"
+
+
 async def main() -> int:
     # Run-keyed: the workspace is shared by every agent on the project, so a
     # fixed name is another run's file half the time.
@@ -1826,7 +1901,7 @@ async def main() -> int:
     plan_reading: dict | None = None
     result_path = STAGING / f"result-{RUN_ID}.json"
 
-    server = create_sdk_mcp_server(name="yaaf", version="1.0.0", tools=run_tools())
+    server = create_sdk_mcp_server(name="yaaf", version="1.0.0", tools=render_sdk(run_tools()))
     options = ClaudeAgentOptions(
         system_prompt=system_prompt,
         model=MODEL,
@@ -1875,6 +1950,7 @@ async def main() -> int:
     cost_usd = None
     tokens_in = tokens_out = cache_creation = cache_read = 0
     ok = True
+    error_kind: str | None = None
 
     def write_result(partial: bool) -> None:
         # Written after every message (atomically), not just at the end: a
@@ -1894,6 +1970,7 @@ async def main() -> int:
                     "cache_read_tokens": cache_read,
                     "trace_path": str(trace_path),
                     "plan": plan_reading,
+                    "error_kind": error_kind,
                 }
             )
         )
@@ -1965,6 +2042,7 @@ async def main() -> int:
             except Exception as exc:
                 if attempt >= RESUME_ATTEMPTS or not _looks_transient(exc):
                     ok = False
+                    error_kind = _error_kind(exc)
                     summary_parts.append(f"[sandbox_entry error: {exc!r}]")
                     trace.write(json.dumps({"type": "error", "attempt": attempt,
                                             "error": repr(exc)}) + "\n")

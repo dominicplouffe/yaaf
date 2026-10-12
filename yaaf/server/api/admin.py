@@ -85,6 +85,9 @@ from yaaf.core.models import (
 )
 from yaaf.core.naming import env_var_name, is_reserved
 from yaaf.founder import doctrine
+from yaaf.runtimes import catalog
+from yaaf.runtimes import providers as runtime_providers
+from yaaf.runtimes.catalog import DEFAULT_EFFORT, DEFAULT_MODEL
 from yaaf.server import briefing, policy
 from yaaf.server.api.agent import WAKE_CHANNEL
 from yaaf.server.deps import admin_auth, db
@@ -169,8 +172,8 @@ class RoleIn(BaseModel):
     domains: list[str] = Field(default_factory=list)
     description: str
     system_prompt: str
-    model: str = "claude-sonnet-5-5"
-    effort: str = Field(default="high", pattern=_EFFORT_PATTERN)
+    model: str = DEFAULT_MODEL
+    effort: str = Field(default=DEFAULT_EFFORT, pattern=_EFFORT_PATTERN)
     tool_permissions: dict = Field(default_factory=dict)
     secret_scopes: list[str] = Field(default_factory=list)
 
@@ -688,23 +691,13 @@ def _check_review_seat(session: Session, doc: ConstitutionDoc, teams: list[TeamS
         return
     _refuse_without_review_seat(session, {spec.role_slug for spec in teams})
 
-#: What "this matters" buys a producing seat. Only ever upward: a role already
-#: at or above these keeps what it has.
-CRAFT_MODEL = "claude-opus-5-5"
+#: What "this matters" buys a producing seat in effort. Only ever upward: a
+#: role already at or above it keeps what it has. The model half is the seat's
+#: own provider's `craft_model`, ranked by the catalog's tiers — weakest to
+#: strongest, where a model this install has never heard of ranks 0, so it is
+#: lifted rather than left: an unknown string is not evidence of strength.
 CRAFT_EFFORT = "xhigh"
 _EFFORT_RANK = {name: i for i, name in enumerate(EFFORTS)}
-
-#: Weakest to strongest, for the same "never downward" reason as the effort
-#: rank beside it. A model this install has never heard of ranks 0, so it is
-#: lifted rather than left — an unknown string is not evidence of strength.
-_MODEL_RANK = {
-    "claude-haiku-4-5": 1,
-    "claude-sonnet-5": 2,
-    "claude-sonnet-5-5": 3,
-    "claude-opus-5": 4,
-    "claude-opus-5-5": 5,
-    "claude-fable-5-1": 6,
-}
 
 
 def _craft_lift(
@@ -729,8 +722,8 @@ def _craft_lift(
     role = session.execute(select(Role).where(Role.slug == slug)).scalar_one_or_none()
     if role is None or role.category not in CRAFT_CATEGORIES:
         return None, None
-    model = None if _MODEL_RANK.get(version.model, 0) >= _MODEL_RANK[CRAFT_MODEL] \
-        else CRAFT_MODEL
+    craft_model = runtime_providers.provider(catalog.provider_of(version.model)).craft_model
+    model = None if catalog.tier(version.model) >= catalog.tier(craft_model) else craft_model
     at_least = _EFFORT_RANK.get(CRAFT_EFFORT, 0)
     effort = (None if _EFFORT_RANK.get(version.effort, 0) >= at_least else CRAFT_EFFORT)
     return model, effort

@@ -178,28 +178,24 @@ def founder_env(session: Session) -> dict[str, str]:
     One credential story for the whole product is the point. A key that works
     for a project's agents works for the Founder, and vice versa.
     """
-    key = credential(session)
-    if billing_mode(session) == "subscription":
-        return {"CLAUDE_CODE_OAUTH_TOKEN": key}
-    return {"ANTHROPIC_API_KEY": key}
+    from yaaf.runtimes.providers import credential_env
+
+    row = _credential_row(session)
+    return credential_env(row.provider if row is not None else None,
+                          billing_mode(session), credential(session))
 
 
-def shape_error(mode: str, plaintext: str) -> str | None:
+def shape_error(mode: str, plaintext: str, provider: str | None = None) -> str | None:
     """Whether this credential can possibly be what its mode says it is.
 
     Shared with the per-project billing check so both say the same sentence:
     the message a chairman gets for pasting a subscription token into an
-    API-key field should not depend on which form he pasted it into.
+    API-key field should not depend on which form he pasted it into. The
+    sentences themselves belong to the provider (yaaf.runtimes.providers).
     """
-    is_oauth = plaintext.startswith("sk-ant-oat")
-    if mode == "subscription" and not is_oauth:
-        return ("that credential is not a subscription token (sk-ant-oat…). Run "
-                "`claude setup-token` and paste the result — or switch to API-key mode.")
-    if mode == "api_key" and is_oauth:
-        return ("that credential is a subscription OAuth token, not an API key "
-                "(sk-ant-api…). Paste a key from the Anthropic console — or switch "
-                "to subscription mode.")
-    return None
+    from yaaf.runtimes.providers import shape_error as provider_shape_error
+
+    return provider_shape_error(provider, mode, plaintext)
 
 
 # ── platform-level secrets ──────────────────────────────────────────────────────

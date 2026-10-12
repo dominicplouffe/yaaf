@@ -49,6 +49,8 @@ from yaaf.core.models import (
 from yaaf.core.tokens import mint
 from yaaf.runner.backends import get_backend
 from yaaf.runner.types import RunJob, RunResult
+from yaaf.runtimes.providers import PROVIDERS, credential_env, failure_markers
+from yaaf.runtimes.seats import effective_harness, seat_for
 from yaaf.server import policy
 from yaaf.server.contextpack import build_context_pack, build_system_prompt, role_version_for
 from yaaf.server.dispatcher import MODEL_RUN_KINDS, NON_WORK_RUN_KINDS
@@ -188,12 +190,8 @@ def _materialize(session: Session, queued: RunQueue, project: Project) -> RunJob
     role_version = role_version_for(session, agent)
     job.max_usd = cons.max_usd_per_run
     job.task_budget_tokens = cons.run_token_budget
-    job.model = agent.model_override or (role_version.model if role_version else "claude-sonnet-5-5")
-    job.effort = agent.effort_override or (role_version.effort if role_version else "high")
-    # Pinned on the run row at lease time, not finalize: reaped and killed runs
-    # stay attributed to the model that actually ran.
-    run.model = job.model
-    run.effort = job.effort
+    _pin_seat(run, job, seat_for(agent, role_version,
+                                 runtime=(project.integrations or {}).get("runtime")))
     job.tool_permissions = dict(role_version.tool_permissions) if role_version else {}
     job.agent_kind = agent.kind
     source_specs = _merge_project_data_sources(session, project, role_version, job)
@@ -207,6 +205,16 @@ def _materialize(session: Session, queued: RunQueue, project: Project) -> RunJob
     job.system_prompt += credentials_prompt(*announced_credentials(role_secrets))
     job.system_prompt += _data_source_prompt(source_specs)
     return job
+
+
+def _pin_seat(run: Run, job: RunJob, seat) -> None:
+    """What this run executes on, onto the job and the row. Pinned at lease
+    time, not finalize: reaped and killed runs stay attributed to the model,
+    provider and harness that actually ran."""
+    job.model, job.effort = seat.model, seat.effort
+    job.provider, job.harness = seat.provider, seat.harness
+    run.model, run.effort = seat.model, seat.effort
+    run.provider, run.harness = seat.provider, seat.harness
 
 
 def _data_source_prompt(specs: list[dict]) -> str:
@@ -452,10 +460,16 @@ def _billing_env(session: Session, project: Project) -> dict:
         # call with "Not logged in", which describes nothing.
         log.warning("billing secret %s is stored as a file; refusing to inject it", secret.id)
         return {}
-    value = decrypt(secret.ciphertext)
-    if project.billing_mode == "subscription":
-        return {"CLAUDE_CODE_OAUTH_TOKEN": value}
-    return {"ANTHROPIC_API_KEY": value}
+    if secret.provider not in PROVIDERS:
+        # A provider this install does not have: a row a newer release wrote,
+        # then rolled back. Refused the same way as a file — this project's
+        # runs fail unauthenticated and pause it on the third. Raising instead
+        # would abort the lease transaction, and with it every other project's
+        # runs on the box.
+        log.warning("billing secret %s pays provider %r, which this install does not "
+                    "have; refusing to inject it", secret.id, secret.provider)
+        return {}
+    return credential_env(secret.provider, project.billing_mode, decrypt(secret.ciphertext))
 
 
 # ── execution ───────────────────────────────────────────────────────────────────
@@ -491,10 +505,12 @@ def execute_job(job: RunJob, backend=None) -> RunResult:
 
 
 def _backend_for(job: RunJob):
+    """Each seat runs on its own harness, under the project's override — the
+    same rule the lease pinned on the run (yaaf.runtimes.seats)."""
     with db_session() as session:
         project = session.get(Project, job.project_id)
-        runtime = (project.integrations or {}).get("runtime", "agent_sdk")
-    return get_backend(runtime)
+        runtime = (project.integrations or {}).get("runtime")
+    return get_backend(effective_harness(job.harness, runtime))
 
 
 def _heartbeat(run_id: str, stop: threading.Event, revoked: threading.Event) -> None:
@@ -541,6 +557,7 @@ def finalize(job: RunJob, result: RunResult, was_revoked: bool = False) -> None:
         run.context_path = _stash_context(job)
         _clear_staged_inputs(job)
         run.summary = (result.summary or "")[:4000]
+        run.error_kind = result.error_kind
 
         # Outcome metering. A wake cannot be known to be empty until it has
         # happened, so the refund is retroactive: the run is logged, billed to
@@ -594,20 +611,22 @@ def finalize(job: RunJob, result: RunResult, was_revoked: bool = False) -> None:
         elif job.kind == RunKind.REQUIREMENT_CHECK:
             _finalize_requirement_check(session, job, result)
         elif run.status == RunStatus.FAILED:
-            if project is not None and _looks_like_credential_failure(run.summary):
+            if project is not None and _looks_like_credential_failure(run):
                 _flag_credential_failure(session, project, run)
             _retry_failed_run(session, run)
 
 
-CREDENTIAL_FAILURE_MARKERS = (
-    "not logged in", "please run /login", "invalid x-api-key",
-    "authentication_error", "invalid bearer token", "oauth token has expired",
-    "credit balance is too low",
-)
+CREDENTIAL_FAILURE_MARKERS = failure_markers()
 
 
-def _looks_like_credential_failure(summary: str | None) -> bool:
-    lowered = (summary or "").lower()
+def _looks_like_credential_failure(run: Run) -> bool:
+    """A dead credential, as the harness classified it — or, for a run whose
+    harness said nothing, as its summary reads. The markers stay as the second
+    reading because a credential can also die in prose the model was handed
+    back rather than in an exception the harness caught."""
+    if getattr(run, "error_kind", None) == "auth":
+        return True
+    lowered = (run.summary or "").lower()
     return any(marker in lowered for marker in CREDENTIAL_FAILURE_MARKERS)
 
 
@@ -635,7 +654,7 @@ def _flag_credential_failure(session: Session, project: Project, run: Run) -> No
         .limit(3)
     ).scalars().all()
     dead = len(recent) == 3 and all(
-        r.status == RunStatus.FAILED and _looks_like_credential_failure(r.summary)
+        r.status == RunStatus.FAILED and _looks_like_credential_failure(r)
         for r in recent
     )
     if dead and project.status == ProjectStatus.RUNNING:

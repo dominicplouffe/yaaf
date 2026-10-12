@@ -47,10 +47,12 @@ from yaaf.runner.daemon import (
     _billing_env,
     _data_source_prompt,
     _merge_project_data_sources,
+    _pin_seat,
     _role_secret_env,
     stash_context_doc,
 )
 from yaaf.runner.types import RunJob
+from yaaf.runtimes.seats import seat_for
 from yaaf.server import policy
 from yaaf.server.contextpack import build_system_prompt, role_version_for
 
@@ -350,10 +352,8 @@ def _prepare_session(session: Session, project: Project, ceo: Agent) -> tuple[di
         api_token=token_plain,
     )
     job.system_prompt = build_system_prompt(session, ceo, project, lane="chat") + CHAT_ADDENDUM
-    job.model = ceo.model_override or (role_version.model if role_version else "claude-sonnet-5-5")
-    job.effort = ceo.effort_override or (role_version.effort if role_version else "high")
-    run.model = job.model
-    run.effort = job.effort
+    _pin_seat(run, job, seat_for(ceo, role_version,
+                                 runtime=(project.integrations or {}).get("runtime")))
     job.tool_permissions = dict(role_version.tool_permissions) if role_version else {}
     # Same sources, same cost lesson: the chat lane mounts them exactly as a run
     # does, so it gets the same paragraph describing them.
