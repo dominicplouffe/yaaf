@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import { Link, useLocation } from "react-router-dom";
 import {
   ApprovalRow,
+  AskRow,
   ChannelRow,
   Dashboard,
   get,
@@ -30,6 +31,13 @@ import { Avatar } from "../../ui/kit";
     tab is open, and a chairman reading the room needs the last exchange, not
     the last fortnight. Everything older arrives because he scrolled to it. */
 const TAIL = 30;
+
+const SUGGESTIONS = [
+  "What changed since we last spoke?",
+  "Why did the date move?",
+  "What is blocked, and on whom?",
+  "From now on, ask me before buying any data.",
+];
 const OLDER_PAGE = 50;
 
 /** One conversation out of two sources: the tail the poll keeps refreshing, and
@@ -248,6 +256,13 @@ export default function Boardroom({ projectId, dash, org }: {
     () => get<HypothesisRow[]>(`/observe/projects/${projectId}/hypotheses`),
     15000,
   );
+  // The questions it is waiting on you for. The Desk used to send the chairman
+  // here to "answer in the boardroom" and the boardroom did not show them.
+  const { data: asks } = usePoll(
+    () => get<AskRow[]>(`/observe/projects/${projectId}/asks`),
+    10000,
+  );
+  const openAsks = (asks ?? []).filter((a) => a.status === "open");
 
   // Follow the conversation, but only for a reader who is at the foot of it.
   // Keyed on the newest message rather than the count, because the count also
@@ -381,10 +396,6 @@ export default function Boardroom({ projectId, dash, org }: {
 
   return (
     <>
-      <p className="subtitle">
-        Your only speaking channel. Don't ask {ceoFirst} to decide things they already hold —
-        give direction, and settle the things only you can.
-      </p>
       <div className="board-flex">
         <div className="board-chat">
           <div className="chat-id">
@@ -485,6 +496,15 @@ export default function Boardroom({ projectId, dash, org }: {
               {ceoFirst} is working — a reply lands here when they are done.
             </div>
           )}
+          {/* What a new chairman does not know he may ask. Each fills the box
+              rather than sending — the words are a suggestion, not a script. */}
+          {!draft && (
+            <div className="quick" style={{ margin: "0 0 8px" }}>
+              {SUGGESTIONS.map((q) => (
+                <button key={q} className="qchip" onClick={() => setDraft(q)}>{q}</button>
+              ))}
+            </div>
+          )}
           <div className="composer">
             <textarea
               value={draft}
@@ -549,6 +569,23 @@ export default function Boardroom({ projectId, dash, org }: {
             </div>
           )}
 
+          {openAsks.length > 0 && (
+            <div className="card">
+              <div className="h">{ceoFirst} is asking you · {openAsks.length}</div>
+              {openAsks.slice(0, 3).map((a) => (
+                <div key={a.id} style={{ marginBottom: 10, fontSize: 13 }}>
+                  <div style={{ fontWeight: 600 }}>{a.title}</div>
+                  <div className="help" style={{ marginTop: 3 }}>
+                    If you say nothing, {fmtLeft(a.answer_by).replace(" left", "")} from now: {clip(a.default_action, 120)}
+                  </div>
+                  <button className="small" style={{ marginTop: 6 }}
+                    onClick={() => setDraft(`Re: “${a.title}” — `)}>Answer</button>
+                </div>
+              ))}
+              <div className="help" style={{ fontSize: 12 }}>Any message from you answers every question asked before it.</div>
+            </div>
+          )}
+
           {pending.length > 0 && (
             <div className="card">
               <div className="h">Needs a decision · {pending.length}</div>
@@ -566,8 +603,8 @@ export default function Boardroom({ projectId, dash, org }: {
                   </div>
                 </div>
               ))}
-              <Link to={`/projects/${projectId}/approvals`} style={{ fontSize: 12 }}>
-                all approvals →
+              <Link to="/inbox" style={{ fontSize: 12 }}>
+                everything in your Inbox →
               </Link>
             </div>
           )}
@@ -581,7 +618,7 @@ export default function Boardroom({ projectId, dash, org }: {
                   <div style={{ marginTop: 3 }}>{killChip(h.kill_date, h.status)}</div>
                 </div>
               ))}
-              <Link to={`/projects/${projectId}/progress/proof`} style={{ fontSize: 12 }}>
+              <Link to={`/projects/${projectId}/tasks?view=list`} style={{ fontSize: 12 }}>
                 all bets &amp; evidence →
               </Link>
             </div>

@@ -128,12 +128,12 @@ now checks it first:
 Autonomy without disclosure is just an unsupervised agent. Every self-exercise
 — accepting scope, cutting it, signing or resetting the date, judging an
 unverifiable close, re-scoping a credential — is audited, emailed to you, and
-listed under **Records → Decisions → "What the CEO decided"**: what it did, its
+listed under **Activity → Decisions → "What the CEO decided"**: what it did, its
 reason, and when.
 
 Nothing on that list is pending and nothing expires. It is deliberately not
-filed under "Waiting on you", because none of it is — but every line of it is
-reversible from the Plan screen or Settings, and the dial that granted it is
+filed under the Inbox's "Needs you", because none of it is — but every line of it is
+reversible from the Roadmap or Settings, and the dial that granted it is
 one amendment from being turned back.
 
 ## What never moves, at any level

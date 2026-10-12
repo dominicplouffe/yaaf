@@ -16,6 +16,26 @@ design tokens in `web/src/styles.css`.
 |---|---|---|
 | ![Overview](screens/overview.png) | ![Inbox](screens/inbox.png) | ![Team](screens/team.png) |
 
+> **Status: built.** The app in `web/src` now has this layout — Home, Inbox, the sidebar with a
+> project switcher and ⌘K, and per project Overview, Chat, Roadmap, Tasks, Deliverables, Team,
+> Spend, Reviews, Activity and Settings. [`docs/DASHBOARD.md`](../DASHBOARD.md) describes it as
+> shipped, with screenshots of the real thing. Where the build departs from this proposal:
+>
+> - **No backend change.** The Inbox is a new screen over the same `/observe/desk` producer the
+>   Desk read, so the MCP `desk` tool, the CLI, the morning mail and the badge all still agree with
+>   it. Each seat's "doing now" line is worked out in the browser from the running run, the board
+>   and the pending approvals, so the org payload is unchanged.
+> - **The Overview's pollers moved, not merged.** One provider per project holds them all, so
+>   every page and the sidebar share one copy instead of each card polling its own. An aggregated
+>   `/overview` endpoint is still worth doing, but it was not needed for the layout.
+> - **Activity keeps separate views** (What happened, Runs, Decisions, Proof, Messages, Memory),
+>   not one merged timeline. Files stay on Deliverables.
+> - **Settings keeps its sections.** The "How it runs" rename was left for a later pass.
+> - **Open questions, answered:** the Boardroom is **Chat with {CEO}** in the app (Slack and the
+>   API keep "boardroom"); **Updates** shipped as an unbadged Inbox tab; on a phone the sidebar
+>   becomes a drawer, and there is no bottom nav yet.
+> - Every old route redirects to its new page, so links in email and bookmarks still work.
+
 ---
 
 ## 1. What was studied

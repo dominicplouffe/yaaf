@@ -90,7 +90,7 @@ Also enforced here, and not tunable because they're structural:
 | `approval_threshold_usd` | 250.0 | Spends at or above this — and anything legally ambiguous — wait for you. |
 | `approval_timeout_days` | 7 | An unanswered approval decides itself here, so a vacationing chairman degrades the project instead of deadlocking it. |
 | `approval_timeout_decision` | `"deny"` | What that expiry decides. Default-deny: silence is not consent. |
-| `ask_window_hours_max` | 72.0 | The longest window your CEO may give you to answer a question. It names a shorter one when the work has a deadline. There is no setting for what an unanswered question decides — the CEO writes that down before it asks, and you see it on the desk. |
+| `ask_window_hours_max` | 72.0 | The longest window your CEO may give you to answer a question. It names a shorter one when the work has a deadline. There is no setting for what an unanswered question decides — the CEO writes that down before it asks, and you see it in your Inbox. |
 | `max_open_asks` | 3 | How many unanswered questions your CEO may have on your desk at once. Asking is cheap for it and expensive for you. |
 | `plan_authority` | `"chairman"` | Who accepts proposed scope. `"ceo"`: the CEO accepts its own proposals — the plan gate runs the same arithmetic, every acceptance is audited and sent to you. |
 | `scope_authority` | `"chairman"` | Who may cut, reopen, restage, reestimate, reword and unsequence. `"ceo"` hands the verbs to the CEO, on the record, reversibly. Your routes never close. |
@@ -119,7 +119,7 @@ that mentions none of the five is stamped with the Autonomous preset instead.
 Say the rules you want and they are used verbatim — including a dial you set
 one rule at a time, which is never rounded to a preset. Every self-exercise runs
 through the same machinery as your own buttons, lands in the audit log, is sent
-to you out-of-band, and is listed under **Records → Decisions → what the CEO
+to you out-of-band, and is listed under **Activity → Decisions → what the CEO
 decided**. The dial itself is chairman-only — a directive touching it is refused
 like any other constitution grab.
 
@@ -300,7 +300,7 @@ Running every ~15s per project, without an agent asking:
 
 ## Reading enforcement after the fact
 
-- **Records → Decisions** shows everything you decided *and* everything that
+- **Activity → Decisions** shows everything you decided *and* everything that
   decided itself: expired approvals, auto-pauses, killed bets, frozen threads.
 - The audit log records every refusal. When a run hits a wall repeatedly, the
   dashboard names it: which agent, which rule, and what to say instead.
