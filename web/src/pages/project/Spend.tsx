@@ -84,14 +84,11 @@ export function BudgetCard({ ctx }: { ctx: ProjectCtx }) {
 
     These rows are the meter above them broken out: same ledger, same
     month-to-date window, same unit, so they add up to it. A reader who catches
-    a card contradicting itself is right to stop believing the rest. */
-export function SpendByTeam({ projectId, usdMode, compact }: {
-  projectId: string; usdMode: boolean; compact?: boolean;
+    a card contradicting itself is right to stop believing the rest. The rows
+    come with the rest of the project, in the same read as the meter. */
+export function SpendByTeam({ report: data, usdMode, compact, at }: {
+  report: SpendReport | null; usdMode: boolean; compact?: boolean; at?: Date | null;
 }) {
-  const { data, at } = usePoll(
-    () => get<SpendReport>(`/observe/projects/${projectId}/spend?group_by=team&window=month`),
-    30000,
-  );
   const unit = usdMode ? ("usd" as const) : ("tokens" as const);
   const spent = (r: SpendBucket) => spentOf(r, usdMode);
   const rows = [...(data?.rows ?? [])].sort((a, b) => spent(b) - spent(a));
@@ -175,7 +172,7 @@ export default function Spend({ ctx }: { ctx: ProjectCtx }) {
       </div>
 
       <div className="card" style={{ marginTop: "var(--s4)" }}>
-        <SpendByTeam projectId={projectId} usdMode={usdMode} />
+        <SpendByTeam report={ctx.spendByTeam} usdMode={usdMode} at={ctx.asOf} />
       </div>
 
       <h2 className="zone">The last 30 days, in detail</h2>

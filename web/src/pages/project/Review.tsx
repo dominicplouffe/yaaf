@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Decision, get, post, ReviewNumbers, ReviewRow, ReviewsView } from "../../api";
+import { Decision, get, post, ReviewNumbers, ReviewRow } from "../../api";
 import { fmtWhen, usePoll } from "../../hooks";
 import { AsOf, ExportCsv, NoteAction, Skeleton, downloadCsv } from "../../ui";
 import { fmtDate, fullyAutonomous } from "../../ui/project";
@@ -258,9 +258,7 @@ function NumbersTiles({ n }: { n: ReviewNumbers }) {
 }
 
 export default function Review({ ctx }: { ctx: ProjectCtx }) {
-  const { projectId } = ctx;
-  const { data, at, error, reload } = usePoll<ReviewsView>(
-    () => get<ReviewsView>(`/observe/projects/${projectId}/reviews`), 10000);
+  const { projectId, reviews: data, asOf: at, error, reload } = ctx;
   const { data: requirements } = usePoll<RequirementOption[]>(
     () => get<RequirementOption[]>(`/admin/projects/${projectId}/requirements`), 30000);
   const [lever, setLever] = useState<string | null>(null);

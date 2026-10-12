@@ -371,6 +371,12 @@ many tasks are open, how many seats are busy, how much of the budget is used,
 whether a review is open — so "where should I look?" is answered before you
 click anything.
 
+Everything on a project's screens — the sidebar's notes and Live now list, the
+header, every card — is drawn from one answer the server reads in a single
+pass, refreshed every six seconds and sooner when something changes. Two parts
+of the page no longer describe moments seconds apart, so a seat cannot read
+"working" beside a run that has already finished.
+
 Every page but the Overview opens with its title — most with one line on what
 it is for — and every page carries the same notices when they apply: why nothing is
 happening when the answer is not obvious, a project paused or stopped and why,

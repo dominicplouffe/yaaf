@@ -1,19 +1,9 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import {
-  ApprovalRow,
-  AskRow,
-  ChannelRow,
-  Dashboard,
-  get,
-  HypothesisRow,
-  MessageRow,
-  OrgView,
-  post,
-  RunRow,
-} from "../../api";
+import { ChannelRow, get, MessageRow, post } from "../../api";
 import { fmtWhen, usePoll } from "../../hooks";
 import Markdown from "../../Markdown";
+import type { ProjectCtx } from "../../projectCtx";
 import {
   clip,
   clockClass,
@@ -110,11 +100,13 @@ const MessageBubble = memo(function MessageBubble(
     bets on the table. It adds no new speaking channel, so the asymmetry
     survives intact — and every "what are you up to?" it answers is a paid
     model call not spent. */
-export default function Boardroom({ projectId, dash, org }: {
-  projectId: string;
-  dash: Dashboard;
-  org: OrgView | null;
-}) {
+export default function Boardroom({ ctx }: { ctx: ProjectCtx }) {
+  // The rail beside the chat — what the CEO is doing, what waits on you, the
+  // bets — is the frame's read, the same instant the sidebar and the header
+  // were drawn from. Only the conversation itself is polled here, on its own
+  // fast clock, because that is the one thing on the page that moves by the
+  // second.
+  const { projectId, dash, org, runs, approvals, hypotheses, asks } = ctx;
   const ceoName = org?.ceo?.name ?? "your CEO";
   const ceoFirst = ceoName.split(" ")[0];
   const ceoTitle = org?.ceo?.role_name ?? "Chief Executive";
@@ -244,25 +236,9 @@ export default function Boardroom({ projectId, dash, org }: {
     io.observe(sentinel);
     return () => io.disconnect();
   }, [channelId, hasSentinel]);
-  const { data: runs } = usePoll(
-    () => get<RunRow[]>(`/observe/projects/${projectId}/runs?limit=50`),
-    8000,
-  );
-  const { data: approvals, reload: reloadApprovals } = usePoll(
-    () => get<ApprovalRow[]>(`/observe/projects/${projectId}/approvals`),
-    6000,
-  );
-  const { data: hypotheses } = usePoll(
-    () => get<HypothesisRow[]>(`/observe/projects/${projectId}/hypotheses`),
-    15000,
-  );
   // The questions it is waiting on you for. The Desk used to send the chairman
   // here to "answer in the boardroom" and the boardroom did not show them.
-  const { data: asks } = usePoll(
-    () => get<AskRow[]>(`/observe/projects/${projectId}/asks`),
-    10000,
-  );
-  const openAsks = (asks ?? []).filter((a) => a.status === "open");
+  const openAsks = asks.filter((a) => a.status === "open");
 
   // Follow the conversation, but only for a reader who is at the foot of it.
   // Keyed on the newest message rather than the count, because the count also
@@ -599,7 +575,7 @@ export default function Boardroom({ projectId, dash, org }: {
                     Denies itself in {fmtLeft(a.expires_at).replace(" left", "")}
                   </div>
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                    <DecideButtons approvalId={a.id} onDone={reloadApprovals} />
+                    <DecideButtons approvalId={a.id} onDone={ctx.reload} />
                   </div>
                 </div>
               ))}

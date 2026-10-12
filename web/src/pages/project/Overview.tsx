@@ -1,14 +1,13 @@
-import { ReactNode, useEffect, useMemo, useState } from "react";
+import { ReactNode, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   AgendaView,
-  ChannelRow,
   Dashboard,
   get,
   HealthCheck,
-  MessageRow,
   post,
   RunRow,
+  ShelfView,
 } from "../../api";
 import Agenda from "../../agenda";
 import { ItemActions, itemsFor, needsYou, soonestClock, useDesk } from "../../desk";
@@ -49,28 +48,6 @@ import { SeatPill } from "./Team";
     the money to Spend, the records to Activity — and what stayed is what you
     open the project to find out. Everything here links to where its detail
     lives. */
-
-/** An obligation to speak, opened by the platform from arithmetic or a failed
-    check — never by the CEO deciding the news was worth your time. */
-interface FlagRow {
-  id: string;
-  kind: string;
-  status: string;
-  summary: string;
-  arithmetic: Record<string, unknown> | null;
-  opened_at: string | null;
-  raised_at: string | null;
-  proposal: string | null;
-  /** Raised is news he was given; acknowledged is news he answered. */
-  acknowledged_at: string | null;
-  acknowledgement: string | null;
-}
-interface FlagsView { unraised: number; flags: FlagRow[] }
-
-/** A deliverable as the files index sends it: the newest version of a name,
-    with its receipt when one was written. */
-interface ShelfRow { key: string; name: string; size: number; at: string | null; receipt: { key: string } | null }
-interface ShelfView { matched: number; rows: ShelfRow[] }
 
 const SEAT_ORDER: SeatState[] = ["working", "waiting", "blocked", "next", "idle", "paused"];
 
@@ -355,17 +332,7 @@ function LateBanner({ ctx }: { ctx: ProjectCtx }) {
 function CeoCard({ ctx, news }: { ctx: ProjectCtx; news: ReactNode[] }) {
   const { projectId } = ctx;
   const navigate = useNavigate();
-  const [channelId, setChannelId] = useState<string | null>(null);
-  useEffect(() => {
-    get<ChannelRow[]>(`/observe/projects/${projectId}/channels`)
-      .then((cs) => setChannelId(cs.find((c) => c.kind === "boardroom")?.id ?? null))
-      .catch(() => setChannelId(null));
-  }, [projectId]);
-  const { data: tail } = usePoll(
-    () => channelId ? get<MessageRow[]>(`/observe/channels/${channelId}/messages?limit=6`) : Promise.resolve([] as MessageRow[]),
-    15000, [channelId],
-  );
-  const last = [...(tail ?? [])].reverse().find((m) => !m.from_user);
+  const last = [...ctx.boardroom].reverse().find((m) => !m.from_user);
   const ceo = firstName(ctx.ceoName);
   return (
     <section className="card ov-card">
@@ -404,9 +371,8 @@ function CeoCard({ ctx, news }: { ctx: ProjectCtx; news: ReactNode[] }) {
 /** The calendar, as a list: what happens next, coloured by who resolves it.
     The full strip — rhythms, every wake, the notes that explain its blanks —
     is one press away rather than half a screen of the first page. */
-function ComingUp({ projectId }: { projectId: string }) {
+function ComingUp({ projectId, data }: { projectId: string; data: AgendaView | null }) {
   const [full, setFull] = useState(false);
-  const { data } = usePoll(() => get<AgendaView>(`/observe/projects/${projectId}/agenda?days=14`), 60000);
   const now = Date.now();
   const events = (data?.events ?? []).filter((e) => new Date(e.at).getTime() >= now - 3_600_000).slice(0, 7);
   return (
@@ -449,7 +415,7 @@ function ComingUp({ projectId }: { projectId: string }) {
     is ambiguous with a broken health check, and the ambiguity costs more than
     the pixels. Failing rows keep their plain-language fixes. */
 function HealthLine({ ctx }: { ctx: ProjectCtx }) {
-  const { projectId, health: data, reloadHealth, reloadOrg } = ctx;
+  const { projectId, health: data, reload } = ctx;
   const [show, setShow] = useState(false);
   if (!data) return null;
   if (data.all_ok && !show) {
@@ -488,8 +454,7 @@ function HealthLine({ ctx }: { ctx: ProjectCtx }) {
           {check.action?.kind === "repin" ? (
             <button className="small" onClick={async () => {
               await post(`/admin/teams/${check.action!.team_id}/repin`, {});
-              reloadHealth();
-              reloadOrg();
+              reload();
             }}>adopt the latest role version</button>
           ) : check.status !== "ok" && WHERE_TO[check.where ?? ""] ? (
             <Link to={`/projects/${projectId}/${WHERE_TO[check.where!][0]}`}>{WHERE_TO[check.where!][1]} →</Link>
@@ -517,14 +482,14 @@ export default function Overview({
   setupBadge: ReactNode;
   goalLead: string;
 }) {
-  const { projectId, dash, seats, hypotheses } = ctx;
+  const { projectId, dash, seats, hypotheses, flags: flagsView } = ctx;
   const navigate = useNavigate();
   const desk = useDesk();
   const [brief, setBrief] = useState(false);
-  const { data: flagsView, reload: reloadFlags } = usePoll(
-    () => get<FlagsView>(`/observe/projects/${projectId}/flags`), 15000);
   // Three rows and a count, asked of the same index the Deliverables page
   // reads — not the whole workspace walk, every twenty seconds, to show three.
+  // Its own request rather than part of the frame's read: the index is on
+  // disk, and its first walk would otherwise hold up the whole screen.
   const { data: shelf } = usePoll(
     () => get<ShelfView>(`/observe/projects/${projectId}/files/browse/rows?state=published&sort=at&desc=true&limit=3`),
     20000);
@@ -591,7 +556,7 @@ export default function Overview({
             confirmLabel="Noted"
             onSubmit={async (note) => {
               await post(`/admin/flags/${f.id}/ack`, { note });
-              reloadFlags();
+              ctx.reload();
             }}
           />
           <Link to={`${base}/chat`}>talk it through →</Link>
@@ -837,14 +802,14 @@ export default function Overview({
 
         <aside className="ov-col">
           <CeoCard ctx={ctx} news={news} />
-          <ComingUp projectId={projectId} />
+          <ComingUp projectId={projectId} data={ctx.agenda} />
           <section className="card ov-card">
             <div className="card-h">
               <h3>Where this month's money went</h3>
               <span className="grow" />
               <Link className="card-link" to={`${base}/spend`}>Spend <Icon name="arrow" size={13} /></Link>
             </div>
-            <SpendByTeam projectId={projectId} usdMode={usdMode} compact />
+            <SpendByTeam report={ctx.spendByTeam} usdMode={usdMode} compact />
           </section>
           <section className="card ov-card">
             <div className="card-h">

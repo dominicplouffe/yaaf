@@ -5,7 +5,6 @@ import {
   PlanBurnup,
   PlanCommitment,
   PlanRequirement,
-  PlanView,
 } from "../../api";
 import { usePoll } from "../../hooks";
 import { AsOf, ConfirmModal, ExportCsv, NoteAction, Skeleton, clip, downloadCsv } from "../../ui";
@@ -951,11 +950,9 @@ function CycleHistory({ projectId }: { projectId: string }) {
 }
 
 export default function Plan({ ctx }: { ctx: ProjectCtx }) {
-  const { projectId } = ctx;
-  const { data, at, error, reload } = usePoll<PlanView>(
-    () => get<PlanView>(`/observe/projects/${projectId}/plan`),
-    8000,
-  );
+  // The frame's read: the delivery tile, the sidebar's count and this page
+  // were drawn from the same answer, so they cannot disagree about the date.
+  const { projectId, plan: data, asOf: at, error, reload } = ctx;
   const [view, setView] = useState<"stages" | "graph">("stages");
 
   if (!data) return <Skeleton rows={5} />;

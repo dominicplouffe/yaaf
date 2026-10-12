@@ -312,7 +312,7 @@ function AskCard({ ask, to }: { ask: AskRow; to: string }) {
 }
 
 export default function Decisions({ ctx }: { ctx: ProjectCtx }) {
-  const { projectId, dash, approvals, asks, reloadApprovals } = ctx;
+  const { projectId, dash, approvals, asks } = ctx;
   const { data: amendments } = usePoll(
     () => get<AmendmentRow[]>(`/admin/projects/${projectId}/amendments`),
     15000,
@@ -360,10 +360,7 @@ export default function Decisions({ ctx }: { ctx: ProjectCtx }) {
               approval={a}
               dash={dash}
               org={ctx.org}
-              onDecided={() => {
-                reloadApprovals();
-                ctx.reload();
-              }}
+              onDecided={() => ctx.reload()}
             />
           ))}
         </>

@@ -27,6 +27,7 @@ from yaaf.core.models import (
     AuditSample,
     AuditSampleStatus,
     Channel,
+    ChannelKind,
     Commitment,
     Evidence,
     EvidenceKind,
@@ -621,6 +622,72 @@ def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
     }
 
 
+#: How many runs the project screens draw — the seats, today's tally and the
+#: hourly sparkline — and how much of the boardroom the Overview quotes.
+OVERVIEW_RUNS = 200
+OVERVIEW_BOARDROOM_TAIL = 6
+
+
+@router.get("/projects/{project_id}/overview", dependencies=[authority.READ])
+def overview(project_id: str, session: Session = Depends(db)) -> dict:
+    """Everything a project's screens read, in one request, read in one pass.
+
+    The frame around a project used to keep eleven polls on six clocks, and the
+    Overview added six more of its own, so the sidebar, the header and the
+    cards were each drawn from a different instant: a seat could read
+    "working" from one answer while the run it was working on had already
+    finished in the next. Seventeen requests to draw one screen, and no two of
+    them describing the same moment.
+
+    This composes the readers those requests hit — the same functions, called
+    one after another in one session — and re-derives nothing, so a section
+    here and its own endpoint cannot disagree. The sections are milliseconds
+    apart rather than up to fifteen seconds; on SQLite they share one snapshot,
+    and on Postgres's default isolation each query sees what had committed
+    when it began, which is as close as a read this cheap can get. Those endpoints stay: the CLI and the MCP tools
+    read them one at a time, sized for a terminal and a context window, and a
+    payload with two hundred runs in it is the wrong shape for either.
+
+    The dispatcher's account of why work is or is not starting is the costliest
+    thing here, and the dashboard and the health checks both want it; it is
+    taken once and handed to both.
+
+    Everything here is the database's answer. The Overview's newest deliverables
+    are not, and stay their own request: the file index walks the workspace on
+    disk, and the first read after a restart or an idle spell waits for the
+    whole walk. Inside this request that wait would hold up the header, the
+    sidebar and every card, where on its own it holds up one card.
+    """
+    project = _project(session, project_id)
+    dash = dashboard(project_id, session=session)
+    boardroom = session.scalar(select(Channel.id).where(
+        Channel.project_id == project.id, Channel.kind == ChannelKind.BOARDROOM))
+    return {
+        "dashboard": dash,
+        "plan": plan_view(project_id, session=session),
+        "approvals": approvals(project_id, session=session),
+        "asks": asks(project_id, session=session),
+        "hypotheses": hypotheses(project_id, session=session),
+        "org": org(project_id, session=session),
+        "health": health_view(session, project, activity=dash["activity"]),
+        "board": board(project_id, session=session),
+        "runs": runs(project_id, limit=OVERVIEW_RUNS, session=session),
+        # Each seat's day, in the project's own timezone — the Team page's
+        # numbers and the drawer's.
+        "today": project_activity(project_id, since="today", until=None, session=session),
+        "reviews": reviews(project_id, session=session),
+        "agenda": project_agenda(project_id, days=agenda.DEFAULT_DAYS, session=session),
+        "flags": project_flags(project_id, session=session),
+        # The month to date, so the rows add up to the budget meter beside them.
+        "spend_by_team": spend(project_id, group_by="team", days=30, window="month",
+                               session=session),
+        # The CEO's latest word on the Overview. Every running project has a
+        # boardroom; one being set up may not yet.
+        "boardroom": channel_messages(boardroom, limit=OVERVIEW_BOARDROOM_TAIL, before=None,
+                                      session=session) if boardroom else [],
+    }
+
+
 #: The drift between what a self-reporting harness bills and what yaaf's
 #: catalog prices the same tokens at, past which the checklist says so; the
 #: priced spend it must have seen first, so a few small runs cannot raise it;
@@ -665,12 +732,19 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
     server-side with a plain-language fix per finding. All green = the UI
     hides the card. This is the answer to 'is my project set up right?' —
     the project tells you, instead of failing quietly at 9am."""
+    return health_view(session, _project(session, project_id))
+
+
+def health_view(session: Session, project: Project, activity: dict | None = None) -> dict:
+    """The checks behind `/health`. `activity` is the dispatcher's read of why
+    work is or is not starting, when the caller already holds one taken in this
+    session — it is the most expensive thing on this page, and the overview
+    computes it for the dashboard a moment before it asks for these checks."""
     from sqlalchemy import or_
 
     from yaaf.core.crypto import decrypt
     from yaaf.server.api.admin import _billing_shape_error
 
-    project = _project(session, project_id)
     integrations = project.integrations or {}
     checks: list[dict] = []
 
@@ -1043,7 +1117,8 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
                         "different projects — one of the two is the one you meant.",
                         "settings")
 
-            act = activity_state(session, project, live_cons)
+            act = activity if activity is not None else activity_state(
+                session, project, live_cons)
             brief = act["brief"]
             # Only the briefs that mean *stopped* are findings. Concurrency and
             # busy agents mean the project is working, which is not news.

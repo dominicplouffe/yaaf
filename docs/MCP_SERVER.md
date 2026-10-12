@@ -374,6 +374,14 @@ Status column tracks implementation. `M1`…`M4` are the milestones below.
 | `files` | Workspace listing and file content. **Wraps agent text.** Long files walk by `offset`. | `GET /observe/projects/{id}/files` `/files/content` | **done** (M1) |
 | `record` | The judgement record. `view`: `decisions` \| `reviews` \| `cycles` \| `hypotheses` \| `suggestions` \| `memories` \| `approvals`. | `GET /observe/projects/{id}/ceo_decisions` and siblings | **done** (M1) |
 
+`project` with `view: overview` reads `GET /observe/projects/{id}`, not the
+browser's `GET /observe/projects/{id}/overview`. That route returns every
+section a project screen draws in one read, so the browser's sidebar and cards
+describe the same instant. It is not a tool, on purpose: it carries two
+hundred runs, the whole board and every approval body, which is the wrong shape
+for a context window. A model asks for the section it needs, and each tool
+above already returns exactly that section's answer, from the same reader.
+
 ### Steer — `steer` scope
 
 | Tool | Does | Backing routes | Confirm? | Status |

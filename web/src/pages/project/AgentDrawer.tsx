@@ -72,7 +72,6 @@ function PauseAction({ ctx, agentId, name, paused }: {
         try {
           await post(`/admin/agents/${agentId}/pause`, { paused: !paused });
           setConfirming(false);
-          ctx.reloadOrg();
           ctx.reload();
         } catch (e) {
           setError((e as Error).message);

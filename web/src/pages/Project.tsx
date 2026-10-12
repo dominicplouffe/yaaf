@@ -375,7 +375,7 @@ export default function ProjectPage() {
           <Overview ctx={ctx} onPause={() => setConfirming("pause")} onStop={() => setConfirming("stop")}
             setupBadge={setupBadge(dash, ctx.health)} goalLead={goalLead(dash.goal)} />
         } />
-        <Route path="chat" element={<Boardroom projectId={projectId} dash={dash} org={ctx.org} />} />
+        <Route path="chat" element={<Boardroom ctx={ctx} />} />
         <Route path="roadmap" element={<Plan ctx={ctx} />} />
         <Route path="tasks" element={<Tasks ctx={ctx} />} />
         <Route path="deliverables" element={<Deliverables projectId={projectId} />} />

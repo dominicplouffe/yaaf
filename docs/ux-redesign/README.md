@@ -25,9 +25,13 @@ design tokens in `web/src/styles.css`.
 >   Desk read, so the MCP `desk` tool, the CLI, the morning mail and the badge all still agree with
 >   it. Each seat's "doing now" line is worked out in the browser from the running run, the board
 >   and the pending approvals, so the org payload is unchanged.
-> - **The Overview's pollers moved, not merged.** One provider per project holds them all, so
->   every page and the sidebar share one copy instead of each card polling its own. An aggregated
->   `/overview` endpoint is still worth doing, but it was not needed for the layout.
+> - **One request per project.** `GET /observe/projects/{id}/overview` returns every section the
+>   project screens read, in one pass over one database session, so the sidebar, header and cards
+>   describe the same moment instead of six clocks seconds apart. Measured over the same 13 seconds on the demo data, the Overview
+>   makes 2 requests where it made 16, and Chat 5 where it made 21. The newest deliverables stay a
+>   request of their own, every 20 seconds, because the file index walks the disk and its first
+>   walk would otherwise hold up the whole screen. The per-section endpoints stay for the CLI and
+>   the MCP tools.
 > - **Activity keeps separate views** (What happened, Runs, Decisions, Proof, Messages, Memory),
 >   not one merged timeline. Files stay on Deliverables.
 > - **Settings keeps its sections.** The "How it runs" rename was left for a later pass.

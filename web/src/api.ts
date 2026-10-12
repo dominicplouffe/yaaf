@@ -1306,3 +1306,61 @@ export interface ReviewRow {
 }
 
 export interface ReviewsView { open: ReviewRow | null; history: ReviewRow[] }
+
+/** An obligation to speak, opened by the platform from arithmetic or a failed
+    check — never by the CEO deciding the news was worth your time. */
+export interface FlagRow {
+  id: string;
+  kind: string;
+  status: string;
+  summary: string;
+  arithmetic: Record<string, unknown> | null;
+  opened_at: string | null;
+  raised_at: string | null;
+  proposal: string | null;
+  /** Raised is news he was given; acknowledged is news he answered. */
+  acknowledged_at: string | null;
+  acknowledgement: string | null;
+}
+export interface FlagsView { unraised: number; flags: FlagRow[] }
+
+/** A deliverable as the files index sends it: the newest version of a name,
+    with its receipt when one was written. */
+export interface ShelfRow { key: string; name: string; size: number; at: string | null; receipt: { key: string } | null }
+export interface ShelfView { matched: number; rows: ShelfRow[] }
+
+/** `/observe/projects/{id}/overview`: everything a project's screens read, in
+    one request. Each section is exactly its own endpoint's answer — named in
+    the comment — read in one pass on the server, milliseconds apart rather
+    than on six different clocks. */
+export interface OverviewView {
+  dashboard: Dashboard;
+  /** `/plan` */
+  plan: PlanView;
+  /** `/approvals` */
+  approvals: ApprovalRow[];
+  /** `/asks` */
+  asks: AskRow[];
+  /** `/hypotheses` */
+  hypotheses: HypothesisRow[];
+  /** `/org` */
+  org: OrgView;
+  /** `/health` */
+  health: ProjectHealth;
+  /** `/board` */
+  board: TaskRow[];
+  /** `/runs?limit=200` */
+  runs: RunRow[];
+  /** `/activity?since=today` — each seat's day, in the project's timezone. */
+  today: ActivityView;
+  /** `/reviews` */
+  reviews: ReviewsView;
+  /** `/agenda?days=14` */
+  agenda: AgendaView;
+  /** `/flags` */
+  flags: FlagsView;
+  /** `/spend?group_by=team&window=month` */
+  spend_by_team: SpendReport;
+  /** The boardroom's last six messages, oldest first. */
+  boardroom: MessageRow[];
+}

@@ -153,8 +153,7 @@ function TeamHead({ ctx, team, onRepinned }: {
               onRepinned(result.changed
                 ? `${team.name} now runs ${team.role_name ?? team.role_slug} v${result.version}, from its next run.`
                 : `${team.name} is already on the latest role version (v${result.version}).`);
-              ctx.reloadOrg();
-              ctx.reloadHealth();
+              ctx.reload();
             }}>
             Adopt v{team.role_latest_version}
           </button>
@@ -164,7 +163,7 @@ function TeamHead({ ctx, team, onRepinned }: {
         {tasks.length === 0 ? "No work on its board" : `${open} open${stuck ? ` · ${stuck} stuck` : ""}`}
         {team.stand_down_when && <> · stands down when {conditionWords(team.stand_down_when)}</>}
       </div>
-      {steer && <StaffingAction team={team} onDone={ctx.reloadOrg} />}
+      {steer && <StaffingAction team={team} onDone={ctx.reload} />}
     </div>
   );
 }
@@ -211,7 +210,7 @@ function AddTeam({ ctx }: { ctx: ProjectCtx }) {
       setTeamName("");
       setEmployees("");
       setPicked([]);
-      ctx.reloadOrg();
+      ctx.reload();
     } catch (e) {
       setError((e as Error).message);
     } finally {

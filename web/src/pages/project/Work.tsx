@@ -234,11 +234,7 @@ function TaskDetails({ task }: { task: TaskRow }) {
 }
 
 export default function Work({ ctx }: { ctx: ProjectCtx }) {
-  const { projectId, hypotheses } = ctx;
-  const { data: tasks, error } = usePoll(
-    () => get<TaskRow[]>(`/observe/projects/${projectId}/board`),
-    6000,
-  );
+  const { projectId, hypotheses, tasks, error } = ctx;
   // Evidence still feeds this page, but only as the bet-level tally: "has this
   // bet been proven?" is the join the page exists for. The rows themselves are
   // a record and read in Records → Evidence.
