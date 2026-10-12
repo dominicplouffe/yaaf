@@ -16,6 +16,7 @@ already decides per project by chairing it.
 
 from __future__ import annotations
 
+import hmac
 from dataclasses import dataclass
 
 from fastapi import Depends, HTTPException, Request
@@ -123,7 +124,12 @@ def mcp_auth(
     # Named explicitly, and first, so the refusal teaches instead of reading as
     # a typo. Someone who reaches for the admin token here is not making a
     # mistake about the value; they are making one about the design.
-    if token == settings().admin_token:
+    #
+    # Constant-time, for the reason deps.admin_auth gives: `==` on a str leaks
+    # a prefix length through timing, and /mcp is the one path DEPLOYMENT.md
+    # tells you to publish — so this was the internet's way to guess the
+    # unscoped master credential a character at a time.
+    if hmac.compare_digest(token.encode(), settings().admin_token.encode()):
         raise HTTPException(
             status_code=401,
             detail=(

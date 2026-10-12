@@ -35,6 +35,14 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 JSONVariant = JSON().with_variant(JSONB(), "postgresql")
 
+#: Room for the longest attribution any surface writes: `user:<id> via
+#: mcp:<client name>`. It was 80 on the audit log and 64 on the event logs,
+#: which SQLite never enforces and Postgres does — so an MCP client named past
+#: about 37 characters had every write it attempted fail with a 500 on the
+#: database people deploy. `test_actor_columns_hold_the_longest_stamp` derives
+#: the floor from the columns that feed the stamp rather than restating it.
+ACTOR_LEN = 200
+
 
 def utcnow() -> datetime:
     return datetime.now(UTC)
@@ -953,7 +961,7 @@ class RequirementEvent(Base):
     requirement_id: Mapped[str] = mapped_column(ForeignKey("requirements.id"))
     from_status: Mapped[str | None] = mapped_column(String(16))
     to_status: Mapped[str] = mapped_column(String(16))
-    actor: Mapped[str] = mapped_column(String(64))  # agent id, user id, "janitor", "checker"
+    actor: Mapped[str] = mapped_column(String(ACTOR_LEN))  # agent id, user id, "janitor", "checker"
     note: Mapped[str | None] = mapped_column(Text)
     at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
@@ -1100,7 +1108,7 @@ class TaskEvent(Base):
     task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"))
     from_status: Mapped[str | None] = mapped_column(String(16))
     to_status: Mapped[str] = mapped_column(String(16))
-    actor: Mapped[str] = mapped_column(String(64))  # agent id, user id, or "janitor"/"checker"
+    actor: Mapped[str] = mapped_column(String(ACTOR_LEN))  # agent id, user id, or "janitor"/"checker"
     note: Mapped[str | None] = mapped_column(Text)
     at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
@@ -2130,7 +2138,7 @@ class AuditLog(Base):
 
     id: Mapped[str] = mapped_column(String(40), primary_key=True)
     project_id: Mapped[str | None] = mapped_column(String(40))
-    actor: Mapped[str] = mapped_column(String(80))  # user:<id> | agent:<id> | system:<name>
+    actor: Mapped[str] = mapped_column(String(ACTOR_LEN))  # user:<id> | agent:<id> | system:<name>
     action: Mapped[str] = mapped_column(String(80))
     entity: Mapped[str] = mapped_column(String(40))
     entity_id: Mapped[str | None] = mapped_column(String(40))
