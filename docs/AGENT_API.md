@@ -341,11 +341,13 @@ A role is a JSON file in [`roles/`](../roles):
 - `model` / `effort` — per role, so your writer isn't paying engineer prices.
 - `harness` (optional) — what drives the model in the sandbox: `claude_agent_sdk`,
   `claude_cli`, `anthropic_api` — yaaf's own loop on the Messages API, API
-  keys only — or `openai_compatible`, the same loop for DeepSeek, OpenRouter
-  and a custom server ([RUNTIMES.md](RUNTIMES.md)). A `model` the catalog does
+  keys only — `openai_compatible`, the same loop for DeepSeek, OpenRouter
+  and a custom server, or `codex_cli`, OpenAI's Codex CLI ([RUNTIMES.md](RUNTIMES.md)). A `model` the catalog does
   not list names its provider first: `openrouter/qwen/qwen3-coder`,
   `custom/llama3.1:8b`. A role granting `web` cannot run on a provider that
-  does not search. Absent is the model's provider
+  does not search; a role withholding `files` cannot run on Codex, which hands
+  its models a file editor regardless; and an `effort` the model does not take
+  is refused with the list it does. Absent is the model's provider
   default. It changes how a run is driven, never what the role may do; a
   harness that cannot take away a grant this role withholds is refused here,
   and so is a model `anthropic_api` has no price for, because it meters every

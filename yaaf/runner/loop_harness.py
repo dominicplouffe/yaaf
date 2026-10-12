@@ -353,6 +353,9 @@ async def b_web_fetch(args: dict) -> dict:
     return _text(_clip(f"HTTP {status} {url}\n\n{text}", TOOL_OUTPUT_CHARS), error=status >= 400)
 
 
+#: The file tools — what a `files` grant means — by name.
+FILE_TOOLS = ("Read", "Write", "Edit", "Glob", "Grep")
+
 _FILE_PATH = {"type": "string", "description": "Absolute, or relative to /workspace."}
 BUILTINS: dict[str, base.Tool] = {t.name: t for t in (
     base.Tool("Read", "Read a text file, with line numbers. Long files: pass offset (first "

@@ -12,6 +12,8 @@ A backend executes one leased job and returns a result — one per harness
   sandbox — the reference every provider reached by plain API is built from
 - ``openai_compatible``: the same loop on the OpenAI-compatible chat API —
   DeepSeek, OpenRouter, a custom server; one client, a registry row each
+- ``codex_cli``: OpenAI's Codex CLI (``codex exec --json``), the first CLI
+  harness that is not Claude's
 
 The backend never touches the database. Everything it needs rides on the
 :class:`~yaaf.runner.types.RunJob`; everything it produces comes back on the
@@ -54,4 +56,8 @@ def get_backend(name: str) -> RunnerBackend:
         from yaaf.runner.backends.agent_sdk import SandboxBackend
 
         return SandboxBackend("openai_compatible_entry.py")
+    if name == "codex_cli":
+        from yaaf.runner.backends.agent_sdk import SandboxBackend
+
+        return SandboxBackend("codex_cli_entry.py")
     raise ValueError(f"unknown runner backend {name!r}")

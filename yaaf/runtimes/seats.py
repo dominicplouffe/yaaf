@@ -86,7 +86,7 @@ def _meters_usd(found, provider: str, credential) -> bool:
 
 def refusal(harness: str | None, model: str, tool_permissions: dict | None,
             credential: tuple[str | None, str | None] | None = None,
-            priced: bool | None = None) -> str | None:
+            priced: bool | None = None, effort: str | None = None) -> str | None:
     """Why a seat on `harness` running `model` under these grants cannot run,
     paying with `credential` — (provider, mode), when one is known — or None
     when it can. `priced` is whether the install can meter `model` in dollars
@@ -129,6 +129,17 @@ def refusal(harness: str | None, model: str, tool_permissions: dict | None,
         return (f"{found.label} prices every run, and {model} has no price on this "
                 f"install — set one in Settings → Model prices, or run this seat on a "
                 f"harness that reports its own cost")
+    # R6 — an effort the harness cannot express, or the model does not take.
+    # Never mapped silently, in either direction: "max" sent as "high" is a
+    # seat run cheaper than it was hired at, and the other way round dearer.
+    if effort and found.efforts:
+        if effort not in found.efforts:
+            return (f"{found.label} has no effort '{effort}' — it takes "
+                    f"{', '.join(found.efforts)}")
+        row = catalog.model(model)
+        if row is not None and row.efforts is not None and effort not in row.efforts:
+            return (f"{model} takes the efforts {', '.join(row.efforts)} — not '{effort}'; "
+                    f"pick one of those for this seat")
     # R1 — a credential the harness cannot authenticate with.
     if credential is not None and found.accepts:
         cred_provider, mode = credential

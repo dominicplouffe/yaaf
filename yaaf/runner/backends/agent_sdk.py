@@ -8,10 +8,10 @@ platform surface is the agent HTTP API.
 
 One backend for every harness that runs in the container. What differs between
 them is only the entry script — ``sandbox_entry.py`` drives the Agent SDK,
-``claude_cli_entry.py`` the Claude CLI, ``anthropic_api_entry.py`` and
-``openai_compatible_entry.py`` yaaf's own loop on two APIs — and every one of
-them reads the same staged files and writes the same result.json
-(docs/RUNTIMES.md).
+``claude_cli_entry.py`` the Claude CLI, ``codex_cli_entry.py`` the Codex CLI,
+``anthropic_api_entry.py`` and ``openai_compatible_entry.py`` yaaf's own loop
+on two APIs — and every one of them reads the same staged files and writes
+the same result.json (docs/RUNTIMES.md).
 """
 
 from __future__ import annotations

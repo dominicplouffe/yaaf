@@ -39,7 +39,8 @@ def seat_problem(session: Session, project: Project, agents: list[Agent]) -> str
                     f"Settings, or put this seat on a model the project can pay for")
         problem = refusal(seat.harness, seat.model,
                           role_version.tool_permissions if role_version else {},
-                          credential, priced=prices.covered(session, seat.model))
+                          credential, priced=prices.covered(session, seat.model),
+                          effort=seat.effort)
         if problem:
             return f"{agent.name}: {problem}"
     return None

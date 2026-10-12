@@ -62,6 +62,9 @@ class Model:
     #: The server web tools this model takes: "20260209" (dynamic filtering)
     #: or "basic" (`web_search_20250305` / `web_fetch_20250910`).
     web_tools: str = "basic"
+    #: The efforts the model takes, where its maker publishes the list; None
+    #: when it does not, and then only the harness's own list is held (R6).
+    efforts: tuple[str, ...] | None = None
 
 
 _AS_OF = "2026-10-12"
@@ -86,6 +89,17 @@ MODELS: tuple[Model, ...] = (
     # models. Unpriced, for the reason above.
     Model("deepseek-chat", "deepseek", 1, effort=False),
     Model("deepseek-reasoner", "deepseek", 2, effort=False),
+    # OpenAI's, as the Codex CLI the sandbox pins (0.162.1) lists them in its
+    # own model presets, best last here, with the reasoning efforts each
+    # preset declares. Unpriced: OpenAI's list was not reachable to check.
+    Model("gpt-5.5", "openai", 1, efforts=("low", "medium", "high", "xhigh")),
+    Model("gpt-5.6-luna", "openai", 2, efforts=("low", "medium", "high", "xhigh", "max")),
+    Model("gpt-5.6-terra", "openai", 3, efforts=("low", "medium", "high", "xhigh", "max")),
+    Model("gpt-5.6-sol", "openai", 4, efforts=("low", "medium", "high", "xhigh", "max")),
+    Model("gpt-6-luna", "openai", 5, efforts=("low", "medium", "high", "xhigh", "max")),
+    Model("gpt-6-sol", "openai", 6, efforts=("low", "medium", "high", "xhigh", "max")),
+    Model("gpt-6.1-sol", "openai", 7, efforts=("low", "medium", "high", "xhigh", "max")),
+    Model("gpt-6-astra", "openai", 8, efforts=("low", "medium", "high", "xhigh", "max")),
 )
 
 _BY_ID = {m.id: m for m in MODELS}

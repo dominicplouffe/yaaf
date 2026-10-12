@@ -34,6 +34,10 @@ class Harness:
     #: Code); "priced" — yaaf prices it from the catalog, so a model with no
     #: price cannot run on it (R3).
     cost: str = "reported"
+    #: The efforts it can express (R6). None: it hands the seat's effort to
+    #: the model as yaaf names it (the Claude harnesses, whose names are
+    #: yaaf's). Empty: it has no effort dial at all, and the seat's is unused.
+    efforts: tuple[str, ...] | None = None
 
 
 HARNESSES: dict[str, Harness] = {h.name: h for h in (
@@ -77,6 +81,26 @@ HARNESSES: dict[str, Harness] = {h.name: h for h in (
         providers=("deepseek", "openrouter", "custom"),
         accepts=("deepseek:api_key", "openrouter:api_key", "custom:api_key"),
         cost="priced",
+        # The chat-completions shape has no common word for effort.
+        efforts=(),
+    ),
+    # The Codex CLI (`codex exec --json`), driven like the Claude CLI: the
+    # first CLI that is not Claude's. It reports tokens but no dollars, so
+    # yaaf prices it; it can take away its shell and its search, and a role's
+    # file grant without a shell is served by yaaf's own file tools over MCP.
+    Harness(
+        name="codex_cli",
+        label="Codex CLI",
+        family="cli",
+        providers=("openai",),
+        accepts=("openai:api_key", "openai:subscription"),
+        # Its shell and its search go when a role leaves them off; its file
+        # editor does not — the models it knows best are handed `apply_patch`
+        # by Codex's own presets, shell or no shell — so a role that withholds
+        # files is refused for it (R2) rather than quietly handed one.
+        withholds=("bash", "web"),
+        cost="priced",
+        efforts=("low", "medium", "high", "xhigh", "max"),
     ),
     # The scripted backend that drives the real API at $0: CI, the goldens and
     # the fire drill. It reads no credential and calls no model.

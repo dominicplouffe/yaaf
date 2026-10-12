@@ -1,10 +1,11 @@
 # Runtimes — any harness, any provider, the same rules
 
-**Status: M0 through M3 are built — the seams, the Claude CLI as a second
+**Status: M0 through M4 are built — the seams, the Claude CLI as a second
 harness a seat can choose, yaaf's own agent loop on the Messages API as a
-third, and the same loop on the OpenAI-compatible API for DeepSeek, OpenRouter
-and a local server. Each milestone's one unticked line is a live seat on it,
-which only a deployment can tick. M4 onward is in progress.** This is the design and the tracking doc for running a seat on something other than the Claude Agent SDK:
+third, the same loop on the OpenAI-compatible API for DeepSeek, OpenRouter
+and a local server, and the Codex CLI on an OpenAI key or a ChatGPT plan.
+Each milestone's one unticked line is a live seat on it, which only a
+deployment can tick. M5 onward is in progress.** This is the design and the tracking doc for running a seat on something other than the Claude Agent SDK:
 the Claude CLI driven directly, the Anthropic API under yaaf's own loop, and
 then Codex, Gemini, OpenCode and whatever comes after them. Update the
 checkboxes as milestones land; if a decision here turns out wrong, change the
@@ -376,11 +377,11 @@ All of them read manifests and the catalog; none names a harness.
 | # | Rule | Where it fires |
 |---|---|---|
 | R1 | **A credential the seat's harness cannot accept is refused** — a subscription token on `anthropic_api`, a ChatGPT login on a Gemini seat. | creation, add-team, hire, repin, credential change, recall; lease backstop; health (built in M1) |
-| R2 | **A harness that cannot withhold a tool the role does not grant is refused for that role** — and, from M3, one that cannot *honour* a grant: a role granting `web` on yaaf's loop needs a provider that searches (open question 6). Codex cannot run without a shell; a role without `bash` cannot be hired onto it. Widening a role's tools silently because the transport is clumsy is exactly what the role version exists to prevent; halving them silently is its mirror. | the role version itself, and every door R1 is at (built in M1; the web half in M3) |
+| R2 | **A harness that cannot withhold a tool the role does not grant is refused for that role** — and, from M3, one that cannot *honour* a grant: a role granting `web` on yaaf's loop needs a provider that searches (open question 6). Codex always offers its own file edits; a role without `files` cannot be hired onto it. Widening a role's tools silently because the transport is clumsy is exactly what the role version exists to prevent; halving them silently is its mirror. | the role version itself, and every door R1 is at (built in M1; the web half in M3) |
 | R3 | **A model with no price is refused on a harness that prices its runs, under a dollar meter.** A run nobody can price is a run the budget cannot stop. A harness that reports its own bill (both CLI harnesses) is not metered by the catalog and takes any model; a provider that states each call's cost (OpenRouter) needs no price; a credential metered in tokens is stopped in tokens. The price is the install's (Settings → Model prices) over the shipped catalog. | the role version, and every door R1 is at; lease backstop; the loop itself refuses to make a call it cannot price (built in M2; install prices in M3) |
 | R4 | **One project, one meter.** All of a project's credentials meter in USD or all in tokens. Two units cannot share one cap, and inventing an exchange rate between them is inventing a number. (Open question 1.) | project creation, a provider's credential attached, the billing credential changed (built in M3) |
 | R5 | **A seat whose provider has no credential on the project cannot be hired, and a project with such a seat cannot start.** It fails at the door, not at 3am. | every door R1 is at, the start, removing a provider's credential; lease backstop; health (built in M3) |
-| R6 | **An effort the model does not support is refused**, with the list it does. Never mapped silently, in either direction. | hire, repin, override (from M4) |
+| R6 | **An effort the model does not support is refused**, with the list it does. Never mapped silently, in either direction. The harness's list first (a loop on the OpenAI shape has no dial at all), then the model's. | the role version, hire, repin, override, and every door R1 is at; lease backstop (built in M4) |
 | R7 | **A CEO seat holding the boardroom chat must be on a harness with `conversation`.** | hire, start (from M6) |
 
 Every one of them also shows in the health checklist and the fire drill's
@@ -456,7 +457,7 @@ Where the providers people ask for actually land:
 |---|---|---|
 | DeepSeek | OpenAI-compatible API → a `Provider` entry on the M3 client; no CLI needed. Open weights, so also reachable through OpenRouter or a local server. | M3 ✅ |
 | OpenRouter, local models (Ollama, vLLM) | the same client | M3 ✅ |
-| Codex | `codex_cli`, plus the `openai` provider with an API key or a ChatGPT login | M4 |
+| Codex | `codex_cli`, plus the `openai` provider with an API key or a ChatGPT login | M4 ✅ |
 | Gemini | `gemini_cli`, or a Gemini `ModelClient` on the loop | M5 |
 | Kimi, Qwen, Mistral, Grok | `Provider` entries on the M3 client where they speak the OpenAI shape; their own CLIs where those are better | M5 |
 
@@ -764,13 +765,68 @@ What M3 found on the way:
   chat model refuses more than 8,192), so the client names one only when the
   cap is close enough to need it — below a limit every provider accepts.
 
-### M4 — Codex
-- [ ] `openai` provider: `api_key` (USD), `chatgpt` (tokens, a file credential)
-- [ ] `codex_cli` on `CliDriver` — the first CLI that is not Claude's, and the
-      test of whether M1's pattern was general or merely Claude-shaped
-- [ ] The data-source proxy in the stdio server, if Codex has no per-tool
-      allowlist of its own
-- [ ] R6, with the harness's own effort levels in its registry entry
+### M4 — Codex ✅ (but the live run)
+- [x] `openai` provider: `api_key` (USD), and a ChatGPT plan as `subscription`
+      (tokens; the `auth.json` Codex's own login writes, pasted as a file
+      credential and written into a per-run home at mode 0600)
+- [x] `codex_cli` on `CliDriver` (`codex_cli_entry.py`) — the first CLI that
+      is not Claude's. M1's pattern held: argv, environment, config file and
+      parser, and nothing in `sandbox_entry` changed shape for it
+- [x] ~~The data-source proxy in the stdio server~~ — not needed: Codex has a
+      per-tool allowlist of its own (`enabled_tools` per MCP server), and it
+      enforces it — a call to a tool off the list is refused by the CLI, not
+      merely hidden from the model
+- [x] R6, with the harness's own effort levels in its registry entry and the
+      model's in the catalog
+- [ ] **One seat of a live project on Codex.** Needs a deployment and an
+      OpenAI key or a ChatGPT plan; nothing here can tick it
+
+**Done when:** a Codex seat is hired, metered, capped and resumed like a
+Claude CLI seat, offline — `test_codex_harness.py` replays the real CLI's
+streams (0.162.1, recorded against a stand-in Responses API) through the
+driver, and the cap stops the CLI mid-attempt.
+
+What M4 changed from the plan, and why:
+
+- **The ChatGPT login is a `subscription`, not a third mode called
+  `chatgpt`.** M3's convention: the mode is the meter, and a ChatGPT plan
+  meters in tokens.
+- **The governor reads Codex's session files, not its stdout.** `--json`
+  states usage once per turn; the session file Codex writes beside it states
+  the thread's running total after every model call. A watcher prices that
+  total and stops the CLI when it reaches the cap, so a long turn is cut where
+  a Claude CLI seat's would be, not at its end. A sub-agent writes its own
+  session file, so every thread is billed, the ones Codex starts on its own
+  included.
+- **No OpenAI prices ship.** For M3's reason: OpenAI's list was not reachable
+  from where this was built. A Codex seat on an API key is refused (R3) until
+  the install prices its model; on a ChatGPT plan it is metered in tokens and
+  needs none. The effort lists are Codex's own presets for each model.
+- **Web search is Codex's own, counted per search** and priced at the
+  catalog's flat per-search rate, as Anthropic's is.
+
+What M4 found on the way — each now configured against, with a test:
+
+- **Codex trusts a workspace once it has run in it**, and then loads a
+  `.codex/config.toml` an agent planted there, and an `AGENTS.md` whatever
+  the trust. Each attempt writes a fresh home with the workspace marked
+  untrusted, and project documents off.
+- **Codex retries a dead network forever** under one of its own features;
+  it is switched off, so a run fails into yaaf's retry rule instead of
+  hanging to the timeout.
+- **Codex cannot withhold its file edits.** `apply_patch` is offered on every
+  model whatever the config, so `files` is not in the harness's `withholds`
+  and R2 refuses a role without it. A shell and the web it can withhold.
+- **Its bundled skills and its own base prompt are switched off**, so a seat
+  sees the role's skills and yaaf's system prompt and nothing else; the
+  analytics, feedback, update check and the plugin, app and image features
+  are off too.
+- **A ChatGPT login that Codex refreshes during a run is not written back.**
+  The next run starts from the pasted file; a chairman whose plan login
+  expires re-pastes it, as they would for a Claude subscription token.
+- **SSE data sources do not mount** — Codex speaks stdio and streamable HTTP
+  only. The run says so in its trace rather than starting without them
+  silently.
 
 ### M5 — The long tail
 - [ ] Gemini, by either road: `gemini_cli` on `CliDriver`, or a Gemini
@@ -839,10 +895,16 @@ written.
   unprivileged user, as it does for the SDK — and it ends a failed run with an
   `is_error` result and a non-zero exit, which is the rule both harnesses now
   fail a run by.
-- **Codex CLI.** `codex exec --json`; MCP servers in its TOML config;
-  `codex exec resume <id>`; reasoning effort by config; its own sandbox and
-  approvals off (the container is the sandbox); API key by env, ChatGPT login
-  as an `auth.json` file credential.
+- **Codex CLI — verified against 0.162.1 (M4).** `codex exec --json
+  --skip-git-repo-check -C <workspace> -`, the prompt on stdin, and
+  `codex exec … resume <thread> -` to continue a thread; everything else in a
+  per-run `CODEX_HOME/config.toml`, every key of which `--strict-config`
+  accepts. Its sandbox and approvals off (the container is the sandbox); an
+  API key by env under a model provider yaaf names, a ChatGPT login as the
+  `auth.json` file. `turn.completed` carries the turn's usage (cached input
+  inside input, reasoning inside output); a failure is a `turn.failed` whose
+  message names the HTTP status, and exit 1. MCP tools are namespaced
+  `mcp__yaaf`.
 - **Gemini CLI.** Non-interactive prompt mode with JSON streaming output; MCP
   servers in its settings file; approvals off; API key by env.
 - **OpenCode.** `opencode run` with JSON output; providers and MCP servers in

@@ -409,3 +409,81 @@ def test_what_pays_each_provider_travels_with_the_project(client, critic):
     health = client.get(f"/observe/projects/{project['id']}/health", headers=ADMIN).json()
     assert any(c["key"] == "billing:deepseek" and "DeepSeek key" in c["detail"]
                for c in health["checks"])
+
+
+# ── M4: OpenAI on the Codex CLI, and R6 ─────────────────────────────────────────
+
+
+def test_an_effort_the_model_does_not_take_is_refused_with_the_ones_it_does(client):
+    """R6. Codex hands the API whatever effort it is given, so the list is the
+    model's — read off the presets of the Codex CLI the image pins."""
+    make_project(client, start=False)
+    refused = _role(client, "coder", model="gpt-5.5", effort="max")
+    assert refused.status_code == 422
+    assert "gpt-5.5 takes the efforts low, medium, high, xhigh — not 'max'" in refused.text
+    assert _role(client, "coder", model="gpt-6-sol", effort="max").status_code == 200
+    # A Claude seat names efforts yaaf's way; nothing to refuse there.
+    assert _role(client, "writer", model="claude-opus-5-5", effort="max").status_code == 200
+
+
+def test_an_effort_override_meets_the_same_check(client):
+    make_project(client, start=False)
+    assert _role(client, "coder", model="gpt-5.5", effort="high").status_code == 200
+    refused = client.post("/admin/projects", headers=ADMIN, json=_body(
+        "effort-over", teams=[{"role_slug": "coder", "name": "Build", "employees": ["Ned"],
+                               "effort_overrides": {"Ned": "max"}}]))
+    assert refused.status_code == 422 and "Ned" in refused.text and "not 'max'" in refused.text
+
+
+def test_a_role_that_withholds_files_cannot_run_on_codex(client):
+    """Codex hands the models it knows best a file editor whatever the config
+    says, so a role that leaves files off is refused rather than widened."""
+    make_project(client, start=False)
+    refused = _role(client, "talker", model="gpt-6-sol", tool_permissions={"files": False})
+    assert refused.status_code == 422 and "cannot run without files" in refused.text
+    assert _role(client, "talker", model="gpt-6-sol",
+                 tool_permissions={"files": True}).status_code == 200
+
+
+def test_an_openai_seat_needs_a_price_only_under_a_dollar_meter(client):
+    """R3 is about stopping a run in dollars. A ChatGPT plan is metered in
+    tokens, so an unpriced model runs on it; an API key is not."""
+    make_project(client, start=False)
+    assert _role(client, "ceo", is_ceo_role=True, model="gpt-6-sol").status_code == 200
+    key = _id(_credential(client, "OpenAI key", provider="openai", value="sk-proj-test-value"))
+    login = _id(_credential(client, "ChatGPT", provider="openai", mode="subscription",
+                            value='{"tokens": {"access_token": "a", "refresh_token": "r"}}'))
+    team = [{"role_slug": "ceo", "name": "Solo", "employees": ["Ada"]}]
+    refused = client.post("/admin/projects", headers=ADMIN,
+                          json=_body("openai-key", billing_secret_id=key, teams=team))
+    assert refused.status_code == 422 and "gpt-6-sol has no price" in refused.text
+    paid = client.post("/admin/projects", headers=ADMIN,
+                       json=_body("openai-plan", billing_secret_id=login, teams=team))
+    assert paid.status_code == 200, paid.text
+
+
+@pytest.mark.parametrize(("mode", "value", "says"), [
+    ("subscription", "not-json-at-all", "auth.json"),
+    ("subscription", '{"OPENAI_API_KEY": null}', "auth.json"),
+    ("api_key", '{"tokens": {}}', "looks like a ChatGPT login"),
+])
+def test_an_openai_credential_of_the_wrong_shape_is_refused(client, mode, value, says):
+    refused = _credential(client, "Wrong", provider="openai", mode=mode, value=value)
+    assert refused.status_code == 422 and says in refused.text
+
+
+def test_a_chatgpt_plan_reaches_the_sandbox_as_the_login_file_codex_reads(client):
+    from yaaf.runner.daemon import _billing_env
+
+    make_project(client, start=False)
+    assert _role(client, "ceo", is_ceo_role=True, model="gpt-6-sol").status_code == 200
+    login = '{"tokens": {"access_token": "a", "refresh_token": "r"}}'
+    credential = _id(_credential(client, "ChatGPT", provider="openai", mode="subscription",
+                                 value=login))
+    project = client.post("/admin/projects", headers=ADMIN, json=_body(
+        "on-codex", billing_secret_id=credential,
+        teams=[{"role_slug": "ceo", "name": "Solo", "employees": ["Ada"]}])).json()
+    with db_session() as session:
+        assert _billing_env(session, session.get(Project, project["id"]), "openai") == {
+            "CODEX_AUTH_JSON": login}
+    assert get_backend("codex_cli").entrypoint == "codex_cli_entry.py"

@@ -76,8 +76,13 @@ def _project_body(slug: str, **fields) -> dict:
 
 
 def test_the_picker_offers_every_harness_a_seat_may_run_on_and_not_the_test_switch(client):
+    """Stated as the rule rather than a list, because the list grows with every
+    milestone: every registered harness, and never the scripted backend."""
     offered = {h["name"] for h in client.get("/admin/harnesses", headers=ADMIN).json()}
-    assert offered == {"claude_agent_sdk", "claude_cli", "anthropic_api", "openai_compatible"}
+    assert "mock" not in offered
+    assert offered == {name for name, h in harnesses.HARNESSES.items() if h.family != "mock"}
+    assert {"claude_agent_sdk", "claude_cli", "anthropic_api", "openai_compatible",
+            "codex_cli"} <= offered
 
 
 def test_a_role_on_the_cli_runs_its_seats_on_the_cli(client):

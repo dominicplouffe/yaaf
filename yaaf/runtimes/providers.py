@@ -116,6 +116,26 @@ ANTHROPIC = Provider(
 )
 
 
+def _openai_key_shape(plaintext: str) -> str | None:
+    if plaintext.lstrip().startswith("{"):
+        return ("that looks like a ChatGPT login (auth.json), not an API key — add it as "
+                "the subscription kind instead")
+    return _not_anthropic(plaintext)
+
+
+def _chatgpt_login_shape(plaintext: str) -> str | None:
+    import json
+
+    try:
+        login = json.loads(plaintext)
+    except ValueError:
+        login = None
+    if not isinstance(login, dict) or not isinstance(login.get("tokens"), dict):
+        return ("a ChatGPT login is the auth.json `codex login` writes (in ~/.codex) — paste "
+                "the whole file; it has a \"tokens\" section")
+    return None
+
+
 def _no_shape(plaintext: str) -> str | None:
     """A vendor whose keys have no stable shape to check. The live check is
     the first call, and a dead key is read as `auth` there like any other."""
@@ -176,7 +196,29 @@ CUSTOM = Provider(
     credential_base_url=True,
 )
 
-PROVIDERS: dict[str, Provider] = {p.name: p for p in (ANTHROPIC, DEEPSEEK, OPENROUTER, CUSTOM)}
+#: Reached through the Codex CLI (docs/RUNTIMES.md, M4). An API key bills in
+#: dollars; a ChatGPT plan is a login — the auth.json `codex login` writes —
+#: metered in tokens, and like a Claude subscription it is a CLI credential:
+#: only the CLI can use it.
+OPENAI = Provider(
+    name="openai",
+    label="OpenAI",
+    default_harness="codex_cli",
+    kinds=(
+        CredentialKind(mode="api_key", meter="usd", env_var="OPENAI_API_KEY",
+                       bills="OpenAI API key, billed in USD",
+                       shape_error=_openai_key_shape),
+        CredentialKind(mode="subscription", meter="tokens", env_var="CODEX_AUTH_JSON",
+                       bills="ChatGPT plan (Codex login), metered in tokens",
+                       shape_error=_chatgpt_login_shape),
+    ),
+    craft_model="gpt-6-astra",
+    failure_markers=("incorrect api key provided", "unexpected status 401",
+                     "unexpected status 403"),
+)
+
+PROVIDERS: dict[str, Provider] = {p.name: p for p in (ANTHROPIC, DEEPSEEK, OPENROUTER, CUSTOM,
+                                                      OPENAI)}
 
 #: Every credential row and every model the catalog does not know belongs here.
 #: Until a second provider exists that is not a guess but the only answer, and

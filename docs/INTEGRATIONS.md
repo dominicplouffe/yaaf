@@ -28,9 +28,10 @@ budget unit — there is no separate switch:
 | Anthropic API key | `sk-ant-api…` from the console | USD (`monthly_usd_cap`) |
 | Claude subscription token | `sk-ant-oat…` from `claude setup-token` | Tokens (`monthly_token_cap`) |
 
-A credential names the **provider** it pays — Anthropic by default; DeepSeek,
-OpenRouter, or a custom OpenAI-compatible server (its address goes with the
-credential). A project's billing credential pays whichever provider it is for;
+A credential names the **provider** it pays — Anthropic by default; OpenAI
+(an API key, or a ChatGPT plan as the `auth.json` that `codex login` writes),
+DeepSeek, OpenRouter, or a custom OpenAI-compatible server (its address goes
+with the credential). A project's billing credential pays whichever provider it is for;
 a project with a seat on a second provider's model pays that provider too,
 under its **Settings → Money → Other providers**, with a credential metered in
 the same unit — one project, one meter, one cap. A seat on a provider the

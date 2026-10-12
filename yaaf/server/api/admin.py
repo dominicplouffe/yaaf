@@ -213,7 +213,7 @@ def create_role(body: RoleIn, session: Session = Depends(db)) -> dict:
     # A role whose grants its harness cannot honour, or whose model it cannot
     # serve, is refused here — at the version, before any project pins it.
     problem = seat_refusal(body.harness, body.model, body.tool_permissions,
-                           priced=prices.covered(session, body.model))
+                           priced=prices.covered(session, body.model), effort=body.effort)
     if problem:
         raise HTTPException(status_code=422, detail=f"role '{body.slug}': {problem}")
     role = session.execute(select(Role).where(Role.slug == body.slug)).scalar_one_or_none()
