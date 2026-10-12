@@ -61,6 +61,9 @@ PERMS = json.loads(os.environ.get("YAAF_TOOL_PERMISSIONS", "{}"))
 # the API accepts for it. Every run is priced by the first, whoever bills it.
 PRICE = json.loads(os.environ.get("YAAF_PRICE") or "null")
 MODEL_FLAGS = json.loads(os.environ.get("YAAF_MODEL_FLAGS") or "{}")
+# The provider, for a harness that calls its API itself: base URL, the variable
+# its key is injected under, whether it states costs and searches.
+PROVIDER = json.loads(os.environ.get("YAAF_PROVIDER") or "{}")
 
 WORKSPACE = Path("/workspace")
 STAGING = Path("/workspace/.yaaf")

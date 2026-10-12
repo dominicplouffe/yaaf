@@ -23,7 +23,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from yaaf.core import ids
+from yaaf.core import ids, prices
 from yaaf.core.config import settings
 from yaaf.core.constitution import effective
 from yaaf.core.db import db_session
@@ -50,9 +50,8 @@ from yaaf.core.tokens import mint
 from yaaf.runner.backends import get_backend
 from yaaf.runner.types import RunJob, RunResult
 from yaaf.runtimes import catalog
-from yaaf.runtimes.providers import PROVIDERS, credential_env, failure_markers
+from yaaf.runtimes.providers import DEFAULT_PROVIDER, PROVIDERS, credential_env, failure_markers
 from yaaf.runtimes.seats import effective_harness, seat_for
-from yaaf.runtimes.seats import refusal as seat_refusal
 from yaaf.server import policy
 from yaaf.server.contextpack import build_context_pack, build_system_prompt, role_version_for
 from yaaf.server.dispatcher import MODEL_RUN_KINDS, NON_WORK_RUN_KINDS
@@ -192,7 +191,7 @@ def _materialize(session: Session, queued: RunQueue, project: Project) -> RunJob
     role_version = role_version_for(session, agent)
     job.max_usd = cons.max_usd_per_run
     job.task_budget_tokens = cons.run_token_budget
-    problem = _seat_problem(session, project, agent, role_version)
+    problem = _seat_problem(session, project, agent)
     if problem:
         # Every door a seat comes through refuses this already (admin.
         # refuse_unrunnable_seats); this is the backstop for a door nobody has
@@ -202,13 +201,14 @@ def _materialize(session: Session, queued: RunQueue, project: Project) -> RunJob
         run.summary = f"seat cannot run: {problem}"
         run.finished_at = utcnow()
         return None
-    _pin_seat(run, job, seat_for(agent, role_version,
-                                 runtime=(project.integrations or {}).get("runtime")))
+    _pin_seat(session, run, job, seat_for(agent, role_version,
+                                          runtime=(project.integrations or {}).get("runtime")))
     job.tool_permissions = dict(role_version.tool_permissions) if role_version else {}
     job.agent_kind = agent.kind
     source_specs = _merge_project_data_sources(session, project, role_version, job)
     role_secrets = _role_secret_env(session, project, role_version)
-    job.billing_env = {**_billing_env(session, project), **role_secrets}
+    job.billing_env = {**_billing_env(session, project, job.provider), **role_secrets}
+    job.provider_spec = _provider_spec(session, project, job.provider)
     # Credentials are capabilities: each variable arrives with what it is and
     # how to use it, where the recognizer library knows (docs/AUTONOMY.md).
     from yaaf.core.naming import announced_credentials
@@ -219,28 +219,27 @@ def _materialize(session: Session, queued: RunQueue, project: Project) -> RunJob
     return job
 
 
-def _seat_problem(session: Session, project: Project, agent: Agent, role_version) -> str | None:
+def _seat_problem(session: Session, project: Project, agent: Agent) -> str | None:
     """The seat's own choice, checked as the doors check it — before the
     project's `runtime` override, which is a test switch, not a choice."""
-    credential = None
-    if project.billing_secret_id:
-        secret = session.get(Secret, project.billing_secret_id)
-        if secret is not None:
-            credential = (secret.provider, project.billing_mode)
-    seat = seat_for(agent, role_version)
-    return seat_refusal(seat.harness, seat.model,
-                        role_version.tool_permissions if role_version else {}, credential)
+    from yaaf.server.seat_checks import seat_problem
+
+    problem = seat_problem(session, project, [agent])
+    # The doors name the seat; the run already does.
+    return problem.removeprefix(f"{agent.name}: ") if problem else None
 
 
-def _pin_seat(run: Run, job: RunJob, seat) -> None:
+def _pin_seat(session: Session, run: Run, job: RunJob, seat) -> None:
     """What this run executes on, onto the job and the row. Pinned at lease
     time, not finalize: reaped and killed runs stay attributed to the model,
-    provider and harness that actually ran."""
+    provider and harness that actually ran — and priced at what the install
+    priced it at when it ran, not at whatever the price is by finalize."""
     job.model, job.effort = seat.model, seat.effort
     job.provider, job.harness = seat.provider, seat.harness
+    price = prices.price(session, seat.model)
+    job.price = price.as_dict() if price else None
     row = catalog.model(seat.model)
     if row is not None:
-        job.price = row.price.as_dict() if row.price else None
         job.model_flags = {"effort": row.effort, "web_tools": row.web_tools}
     run.model, run.effort = seat.model, seat.effort
     run.provider, run.harness = seat.provider, seat.harness
@@ -475,10 +474,14 @@ def _role_secret_env(session: Session, project: Project, role_version) -> dict:
     return env
 
 
-def _billing_env(session: Session, project: Project) -> dict:
-    if not project.billing_secret_id:
-        return {}
-    secret = session.get(Secret, project.billing_secret_id)
+def _billing_env(session: Session, project: Project, provider: str = DEFAULT_PROVIDER) -> dict:
+    """The model credential a seat on `provider` pays with, as the one variable
+    its kind is injected under — the billing credential where it pays that
+    provider, else the project's credential for it (R5 refuses a seat with
+    neither, at every door and at lease)."""
+    from yaaf.core import project_credentials
+
+    secret = project_credentials.credential_for(session, project, provider)
     if secret is None:
         return {}
     from yaaf.core.crypto import decrypt
@@ -498,7 +501,27 @@ def _billing_env(session: Session, project: Project) -> dict:
         log.warning("billing secret %s pays provider %r, which this install does not "
                     "have; refusing to inject it", secret.id, secret.provider)
         return {}
-    return credential_env(secret.provider, project.billing_mode, decrypt(secret.ciphertext))
+    mode = project.billing_mode if secret.id == project.billing_secret_id else secret.llm_mode
+    return credential_env(secret.provider, mode, decrypt(secret.ciphertext))
+
+
+def _provider_spec(session: Session, project: Project, provider: str) -> dict:
+    """What a harness that calls the provider's API itself needs to know about
+    it, for a sandbox that cannot import the registry: where it is, which
+    variable holds the key, whether it states its costs and searches. The
+    address is the credential's where the provider's is (a custom server)."""
+    from yaaf.core import project_credentials
+
+    seller = PROVIDERS.get(provider)
+    if seller is None:
+        return {}
+    secret = project_credentials.credential_for(session, project, provider)
+    mode = (project.billing_mode if secret is not None and secret.id == project.billing_secret_id
+            else secret.llm_mode if secret is not None else None)
+    base_url = (secret.base_url if seller.credential_base_url and secret is not None
+                else seller.base_url)
+    return {"name": seller.name, "base_url": base_url, "key_env": seller.kind(mode).env_var,
+            "reports_cost": seller.reports_cost, "search": seller.search}
 
 
 # ── execution ───────────────────────────────────────────────────────────────────
@@ -676,10 +699,13 @@ def _flag_credential_failure(session: Session, project: Project, run: Run) -> No
         action="billing.credential_failure", entity="run", entity_id=run.id,
         detail={"summary": (run.summary or "")[:300]},
     ))
+    # Counted per provider: a project paying two providers has two credentials,
+    # and one dying while the other's seats succeed must still be caught.
+    on_provider = [Run.provider == run.provider] if run.provider else []
     recent = session.execute(
         select(Run)
         .where(Run.project_id == project.id, Run.kind.in_(MODEL_RUN_KINDS),
-               Run.finished_at.is_not(None))
+               Run.finished_at.is_not(None), *on_provider)
         .order_by(Run.finished_at.desc())
         .limit(3)
     ).scalars().all()
@@ -689,7 +715,10 @@ def _flag_credential_failure(session: Session, project: Project, run: Run) -> No
     )
     if dead and project.status == ProjectStatus.RUNNING:
         project.status = ProjectStatus.PAUSED
-        project.status_reason = ("billing credential invalid: 3 consecutive runs failed "
+        which = (f"{PROVIDERS[run.provider].label} credential"
+                 if run.provider in PROVIDERS and run.provider != DEFAULT_PROVIDER
+                 else "billing credential")
+        project.status_reason = (f"{which} invalid: 3 consecutive runs failed "
                                  "to authenticate")
         for queued in session.execute(
             select(RunQueue).where(RunQueue.project_id == project.id)

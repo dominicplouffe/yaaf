@@ -84,10 +84,13 @@ RUNTIMES_COLUMNS = (
     ("agents", "harness_override"),
     # 0043: every run is priced from the catalog, whoever bills it.
     ("runs", "priced_usd"),
+    # 0044: the first providers that are not Anthropic.
+    ("secrets", "base_url"),
 )
+RUNTIMES_TABLES = ("project_llm_credentials", "model_prices")
 
 REMOVED_TABLES = (STAGE_1_TABLES + STAGE_5_TABLES + STAGE_6_TABLES
-                  + STAGE_7_TABLES + STAGE_8_TABLES + STAGE_10_TABLES)
+                  + STAGE_7_TABLES + STAGE_8_TABLES + STAGE_10_TABLES + RUNTIMES_TABLES)
 REMOVED_COLUMNS = (STAGE_1_COLUMNS + STAGE_8_COLUMNS + STAGE_9_COLUMNS
                    + STAGE_10_COLUMNS + RUNTIMES_COLUMNS + (("secrets", "llm_mode"),))
 

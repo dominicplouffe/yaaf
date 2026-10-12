@@ -32,6 +32,9 @@ class RunJob:
     # None / {} for a model the catalog does not list.
     price: dict | None = None
     model_flags: dict = field(default_factory=dict)
+    # The provider, for a harness that calls its API itself: base URL, the
+    # key's variable, whether it states costs or searches (daemon._provider_spec).
+    provider_spec: dict = field(default_factory=dict)
     tool_permissions: dict = field(default_factory=dict)
     # Which tool SCHEMAS this run is worth sending. Every agent used to receive
     # all of them — for a plain employee that was 7,700 tokens of schema on

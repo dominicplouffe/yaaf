@@ -1,4 +1,4 @@
-import { CredentialPicker, PlanMeter } from "../../llmCredentials";
+import { CredentialPicker, PlanMeter, ProviderCredentials } from "../../llmCredentials";
 import { plainStatus } from "../../ui/kit";
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -1976,6 +1976,7 @@ export default function Settings({
         <p className="help">Changing the assignment applies to new runs. The selected credential also determines whether budgets use USD or tokens. Clearing the pick detaches the credential: the project keeps its rules but cannot run until one is assigned, and the credential can then be deleted in Settings.</p>
         <PlanMeter credentialId={dash.billing_secret_id} mode={dash.billing_mode}
           title={`Plan usage for ${dash.billing_secret_name ?? "this credential"}`} />
+        <ProviderCredentials projectId={projectId} disabled={busy} />
       </div>
 
       </Section>

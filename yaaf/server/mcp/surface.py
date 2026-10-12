@@ -23,6 +23,7 @@ REACHED = {
     "GET /admin/constitution/schema": "amend (schema)",
     "GET /admin/secrets": "credential (list) — names and scopes only",
     "GET /admin/harnesses": "catalog (harnesses)",
+    "GET /admin/providers": "catalog (providers)",
     # steer
     "POST /admin/projects/{project_id}/boardroom": "boardroom_say",
     "POST /admin/approvals/{approval_id}/decide": "approval_decide",
@@ -62,6 +63,10 @@ REACHED = {
     "PATCH /admin/projects/{project_id}": "project_configure",
     "POST /admin/projects/{project_id}/teams": "project_configure (add_team)",
     "POST /admin/teams/{team_id}/repin": "project_configure (repin)",
+    "PUT /admin/projects/{project_id}/credentials/{provider_name}":
+        "project_configure (pay_provider) — by credential name, never a value",
+    "DELETE /admin/projects/{project_id}/credentials/{provider_name}":
+        "project_configure (stop_paying_provider)",
     "POST /admin/teams/{team_id}/stand_down": "lifecycle (stand_down)",
     "POST /admin/teams/{team_id}/recall": "lifecycle (recall)",
     "POST /admin/projects/{project_id}/mcp_servers": "data_source (add)",
@@ -203,6 +208,17 @@ WITHHELD = {
         "a subscription's plan meter is the account owner's, not any one project's.",
     "GET /admin/settings":
         "the app-wide configuration screen, above every project a client is scoped to.",
+    "GET /admin/projects/{project_id}/credentials":
+        "the same list rides the project's dashboard (`credentials`), which `project` "
+        "already returns — a second read path would be a second definition of it.",
+    "GET /admin/settings/model-prices":
+        "the install's price table is above every project a client is scoped to; a "
+        "seat refused for want of a price says so in the refusal.",
+    "PUT /admin/settings/model-prices/{model}":
+        "a price is the meter every project on the install is stopped by. A model "
+        "that could set one could price its own runs at zero and spend without limit.",
+    "DELETE /admin/settings/model-prices/{model}":
+        "same reason as setting one: the meter is the administrator's.",
     "PUT /admin/settings/anthropic": "a platform credential value, inbound.",
     "POST /admin/settings/anthropic/test": "reaches the platform credential.",
     "DELETE /admin/settings/anthropic":

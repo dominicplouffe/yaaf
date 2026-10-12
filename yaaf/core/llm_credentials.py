@@ -3,13 +3,20 @@ from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from yaaf.core.models import Project, ProjectStatus, Secret
+from yaaf.core.models import ProjectStatus, Secret
 from yaaf.runtimes.providers import PROVIDERS
 
-#: How each kind of credential bills, in the provider's own words. A mode two
-#: providers share reads as the first one's until a credential carries its
-#: provider into the menu (docs/RUNTIMES.md, M3).
+#: How each kind of credential bills, in the provider's own words — for a row
+#: whose provider this install has lost, the first provider's (Anthropic's).
 MODE_LABELS = {kind.mode: kind.bills for p in reversed(PROVIDERS.values()) for kind in p.kinds}
+
+
+def bills(row: Secret) -> str:
+    """How this credential bills, in its own provider's words."""
+    seller = PROVIDERS.get(row.provider or "")
+    if seller is None:
+        return MODE_LABELS.get(row.llm_mode or "", row.llm_mode or "")
+    return seller.kind(row.llm_mode).bills
 
 #: A project that has ended can neither start again nor spend again, so the
 #: credential it named is history rather than a live dependency. Every
@@ -35,9 +42,9 @@ def live_project_names(session: Session, credential_id: str) -> list[str]:
     Empty is the licence to hide: nothing that can run tomorrow is pointing
     here, so taking the name off the menus cannot strand a project mid-flight.
     """
-    return list(session.scalars(
-        select(Project.name).where(Project.billing_secret_id == credential_id,
-                                   Project.status.not_in(TERMINAL)).order_by(Project.name)))
+    from yaaf.core.project_credentials import projects_using
+
+    return [p.name for p in projects_using(session, credential_id) if p.status not in TERMINAL]
 
 
 def assigned_credential(session: Session, credential_id: str) -> Secret:
@@ -78,9 +85,10 @@ def resolve(session: Session, *, credential_id: str | None = None,
 
 
 def describe(row: Secret) -> dict:
-    """A credential as a choice: what it is called and how it bills. Never a value."""
-    return {"id": row.id, "name": row.name, "mode": row.llm_mode,
-            "bills": MODE_LABELS.get(row.llm_mode or "", row.llm_mode)}
+    """A credential as a choice: what it is called, which provider it pays and
+    how it bills. Never a value."""
+    return {"id": row.id, "name": row.name, "mode": row.llm_mode, "provider": row.provider,
+            "bills": bills(row)}
 
 
 def choices(session: Session, *, with_plan: bool = False) -> list[dict]:
@@ -100,12 +108,10 @@ def choices(session: Session, *, with_plan: bool = False) -> list[dict]:
     is no network call for it to be worth avoiding.
     """
     from yaaf.core import plan_usage
+    from yaaf.core.project_credentials import usage
 
-    counts = dict(session.execute(
-        select(Project.billing_secret_id, func.count(Project.id))
-        .where(Project.billing_secret_id.is_not(None),
-               Project.status.not_in(TERMINAL)).group_by(Project.billing_secret_id)
-    ).all())
+    counts = {secret_id: sum(1 for p in projects if p.status not in TERMINAL)
+              for secret_id, projects in usage(session).items()}
     rows = session.scalars(offerable().order_by(Secret.name)).all()
     out = []
     for row in rows:

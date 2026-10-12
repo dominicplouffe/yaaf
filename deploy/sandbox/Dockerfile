@@ -65,5 +65,7 @@ COPY yaaf/runner/yaaf_tools.py /opt/yaaf/yaaf_tools.py
 # drives it with (the `anthropic` SDK above). No CLI underneath.
 COPY yaaf/runner/loop_harness.py /opt/yaaf/loop_harness.py
 COPY yaaf/runner/anthropic_api_entry.py /opt/yaaf/anthropic_api_entry.py
+# The same loop on the OpenAI-compatible chat API, over the httpx above.
+COPY yaaf/runner/openai_compatible_entry.py /opt/yaaf/openai_compatible_entry.py
 USER agent
 WORKDIR /workspace

@@ -1,18 +1,18 @@
 # Runtimes — any harness, any provider, the same rules
 
-**Status: M0, M1 and M2 are built — the seams, the Claude CLI as a second
-harness a seat can choose, and yaaf's own agent loop on the Messages API as a
-third. Each milestone's one unticked line is a live seat on it, which only a
-deployment can tick. M3 onward is proposed.** This is the design and the tracking doc for running a seat on something other than the Claude Agent SDK:
+**Status: M0 through M3 are built — the seams, the Claude CLI as a second
+harness a seat can choose, yaaf's own agent loop on the Messages API as a
+third, and the same loop on the OpenAI-compatible API for DeepSeek, OpenRouter
+and a local server. Each milestone's one unticked line is a live seat on it,
+which only a deployment can tick. M4 onward is in progress.** This is the design and the tracking doc for running a seat on something other than the Claude Agent SDK:
 the Claude CLI driven directly, the Anthropic API under yaaf's own loop, and
 then Codex, Gemini, OpenCode and whatever comes after them. Update the
 checkboxes as milestones land; if a decision here turns out wrong, change the
 doc in the same PR that changes the code.
 
-Adopting it means rewriting one line of [PLAN.md](PLAN.md) — *"Multi-provider
+Adopting it meant rewriting one line of [PLAN.md](PLAN.md) — *"Multi-provider
 models. The runner interface leaves room; nothing more."* — in the PR that
-lands M3, not before. M0 through M2 stay inside Anthropic and change no
-decision on record.
+landed M3, and it has been: what stays unbuilt is the model router.
 
 ---
 
@@ -334,9 +334,10 @@ it and nothing else does. The daemon hands both to the sandbox with the run
 own provider**. A dial labelled "how much this matters" that silently moved a
 Codex seat onto Opus would be two decisions wearing one label.
 
-Prices are in the repo and dated. Overriding one per install in Settings is
-proposed, not built: until it is, a wrong price is a one-line change to this
-file. Where a harness reports its own cost the run is priced anyway —
+Prices are in the repo and dated, and an install prices any model itself in
+Settings → Model prices (`yaaf.core.prices`), which wins over the shipped row —
+how every non-Anthropic model is priced at all, and how a local server is
+priced at zero. Where a harness reports its own cost the run is priced anyway —
 `priced_usd` beside `cost_usd`, per attempt in the trace — and a model whose
 reported bills drift more than 10% from its price raises a health line on
 every project with a seat the catalog meters. The price table is checked
@@ -375,10 +376,10 @@ All of them read manifests and the catalog; none names a harness.
 | # | Rule | Where it fires |
 |---|---|---|
 | R1 | **A credential the seat's harness cannot accept is refused** — a subscription token on `anthropic_api`, a ChatGPT login on a Gemini seat. | creation, add-team, hire, repin, credential change, recall; lease backstop; health (built in M1) |
-| R2 | **A harness that cannot withhold a tool the role does not grant is refused for that role.** Codex cannot run without a shell; a role without `bash` cannot be hired onto it. Widening a role's tools silently because the transport is clumsy is exactly what the role version exists to prevent. | the role version itself, and every door R1 is at (built in M1) |
-| R3 | **A model with no price is refused on a harness that prices its runs.** A run nobody can price is a run the budget cannot stop. A harness that reports its own bill (both CLI harnesses) is not metered by the catalog and takes any model. | the role version, and every door R1 is at; lease backstop; the loop itself refuses to make a call it cannot price (built in M2) |
-| R4 | **One project, one meter.** All of a project's credentials meter in USD or all in tokens. Two units cannot share one cap, and inventing an exchange rate between them is inventing a number. (Open question 1.) | credential assignment |
-| R5 | **A seat whose provider has no credential on the project cannot be hired, and a project with such a seat cannot start.** It fails at the door, not at 3am. | hire, start, health |
+| R2 | **A harness that cannot withhold a tool the role does not grant is refused for that role** — and, from M3, one that cannot *honour* a grant: a role granting `web` on yaaf's loop needs a provider that searches (open question 6). Codex cannot run without a shell; a role without `bash` cannot be hired onto it. Widening a role's tools silently because the transport is clumsy is exactly what the role version exists to prevent; halving them silently is its mirror. | the role version itself, and every door R1 is at (built in M1; the web half in M3) |
+| R3 | **A model with no price is refused on a harness that prices its runs, under a dollar meter.** A run nobody can price is a run the budget cannot stop. A harness that reports its own bill (both CLI harnesses) is not metered by the catalog and takes any model; a provider that states each call's cost (OpenRouter) needs no price; a credential metered in tokens is stopped in tokens. The price is the install's (Settings → Model prices) over the shipped catalog. | the role version, and every door R1 is at; lease backstop; the loop itself refuses to make a call it cannot price (built in M2; install prices in M3) |
+| R4 | **One project, one meter.** All of a project's credentials meter in USD or all in tokens. Two units cannot share one cap, and inventing an exchange rate between them is inventing a number. (Open question 1.) | project creation, a provider's credential attached, the billing credential changed (built in M3) |
+| R5 | **A seat whose provider has no credential on the project cannot be hired, and a project with such a seat cannot start.** It fails at the door, not at 3am. | every door R1 is at, the start, removing a provider's credential; lease backstop; health (built in M3) |
 | R6 | **An effort the model does not support is refused**, with the list it does. Never mapped silently, in either direction. | hire, repin, override (from M4) |
 | R7 | **A CEO seat holding the boardroom chat must be on a harness with `conversation`.** | hire, start (from M6) |
 
@@ -445,15 +446,16 @@ The promise is that this list is the whole job:
 | A new… | Files |
 |---|---|
 | **CLI harness** | `drivers/<name>.py` (`argv`, `env`, `config_files`, `parse`, markers — a `CliDriver` subclass); a manifest entry; `deploy/sandbox/harnesses/<name>.sh`; recorded stream fixtures |
-| **API provider** | `clients/<name>.py` (a `ModelClient`); a `Provider` entry with its credential kinds; price rows in `catalog.py`; recorded response fixtures |
-| **model** | rows in `catalog.py` |
+| **API provider, OpenAI-compatible** | a `Provider` entry — base URL, credential kind, whether it states its costs or searches — and nothing else: the M3 client serves every one (`openai_compatible_entry.py`). Its models price in Settings, or ship priced in `catalog.py` once checked against the vendor's own list |
+| **API provider, another shape** | `<name>_entry.py` (a `ModelClient` on `loop_harness`); a `Provider` entry with its credential kinds; a `Harness` entry; fake-server contract tests |
+| **model** | a row in `catalog.py` — or none: `provider/model` names any model of a registered provider, ranked 0 |
 
 Where the providers people ask for actually land:
 
 | Provider | Road | Milestone |
 |---|---|---|
-| DeepSeek | OpenAI-compatible API → a `Provider` entry on the M3 client; no CLI needed. Open weights, so also reachable through OpenRouter or a local server. | M3 |
-| OpenRouter, local models (Ollama, vLLM) | the same client | M3 |
+| DeepSeek | OpenAI-compatible API → a `Provider` entry on the M3 client; no CLI needed. Open weights, so also reachable through OpenRouter or a local server. | M3 ✅ |
+| OpenRouter, local models (Ollama, vLLM) | the same client | M3 ✅ |
 | Codex | `codex_cli`, plus the `openai` provider with an API key or a ChatGPT login | M4 |
 | Gemini | `gemini_cli`, or a Gemini `ModelClient` on the loop | M5 |
 | Kimi, Qwen, Mistral, Grok | `Provider` entries on the M3 client where they speak the OpenAI shape; their own CLIs where those are better | M5 |
@@ -701,21 +703,66 @@ One `ModelClient` for the OpenAI-compatible chat API reaches more providers
 than any other single piece of work, which is why it comes before any second
 CLI. Each named host is a `Provider` entry — base URL, credential kinds,
 prices — and nothing more.
-- [ ] `openai_compatible` `ModelClient` on the M2 loop: per-call usage, the
-      provider's error classes, tool calls in the OpenAI shape
-- [ ] Providers: `deepseek`, `openrouter` (hundreds of models behind one
-      credential), and a custom endpoint whose base URL lives in the credential
-      — a local Ollama or vLLM server, priced at whatever the chairman says,
-      including zero
-- [ ] Project credentials per provider (a `project_llm_credentials` table;
-      `billing_secret_id` migrates into it), R4, R5
-- [ ] Settings, New Project, Founder and MCP pick credentials by provider
-- [ ] Open question 6 (web search) decided, because most of these hosts have
-      no search of their own
-- [ ] PLAN.md's multi-provider line rewritten
+- [x] `openai_compatible` client (`openai_compatible_entry.py`) on the M2
+      loop, over the httpx the image already carries: per-call usage with the
+      cache split (DeepSeek's and the OpenAI shape's), the provider's error
+      classes — including an error that arrives as a line of a 200 stream —
+      tool calls in the OpenAI shape, reasoning never replayed
+- [x] Providers: `deepseek`, `openrouter` (hundreds of models behind one
+      credential, metered by the cost it states), and `custom` — a server whose
+      base URL lives in the credential, priced at whatever the chairman says,
+      including zero. Models a catalog does not list are named
+      `provider/model`
+- [x] Prices an install sets (Settings → Model prices, `model_prices`), over
+      the shipped catalog, read by every door, the lease and the gap check
+- [x] Project credentials per provider (`project_llm_credentials`), R4, R5 —
+      at creation, a provider's credential attached or removed, the billing
+      credential changed, the start; the lease backstop; health lines
+- [x] Settings, New Project, project Settings, the Founder and MCP pick
+      credentials by provider; export carries them by name, clone copies them
+- [x] Open question 6 (web search) decided: refuse — R2's other half
+- [x] The receipt, the spend report and `yaaf spend-report` say which
+      provider spent what
+- [x] PLAN.md's multi-provider line rewritten
+- [ ] **One seat of a live project on DeepSeek beside a Claude seat.** Needs a
+      deployment and a DeepSeek key; nothing here can tick it
 
 **Done when:** a project hires a Claude research seat and a DeepSeek critic,
-both metered against one cap, and the receipt says which spent what.
+both metered against one cap, and the receipt says which spent what — which
+`test_two_providers_are_metered_against_one_cap_and_the_receipt_says_which`
+is, offline.
+
+What M3 changed from the plan, and why:
+
+- **`billing_secret_id` did not migrate into the new table.** It stays the
+  project's billing credential — paying whichever provider it is for, and
+  setting the meter — and `project_llm_credentials` holds one row per *other*
+  provider. Moving it would have touched three hundred references for no
+  behaviour a chairman could see, and a project on one provider (all of them,
+  until now) needs no second row at all.
+- **No prices ship for any provider but Anthropic.** yaaf ships only prices it
+  could check against the vendor's own published list, and DeepSeek's,
+  OpenAI's and the rest were not reachable from where this was built — while
+  third-party aggregators disagreed with each other by a factor of three.
+  An unpriced model is refused (R3) with the place to price it, which is
+  safer than a guessed price the budget would trust.
+- **Every credential kind is `api_key` or `subscription`, whatever the vendor
+  calls it.** `billing_mode` is read as the project's meter in a dozen places,
+  and one project has one meter (R4), so the mode *is* the meter; a second
+  provider is a second registry row, never a third mode everywhere.
+- **The dead-credential pause counts per provider.** Three failed runs on a
+  project paying two providers could otherwise never be three in a row while
+  the other provider's seats succeed between them.
+
+What M3 found on the way:
+
+- **The OpenAI shape states usage only on its last line.** The governor still
+  refuses a call once the cap is spent and clamps output near it, but cannot
+  abandon a call at its prompt, and a call that dies mid-stream is unmetered
+  because nothing ever said what it was.
+- **Providers disagree on the largest `max_tokens` they accept** (DeepSeek's
+  chat model refuses more than 8,192), so the client names one only when the
+  cap is close enough to need it — below a limit every provider accepts.
 
 ### M4 — Codex
 - [ ] `openai` provider: `api_key` (USD), `chatgpt` (tokens, a file credential)
@@ -772,8 +819,9 @@ both metered against one cap, and the receipt says which spent what.
    - **search as a data source** — the chairman connects a search MCP server
      and grants it to roles. Works today, but `web` stops meaning one thing.
 
-   Proposed: refuse now; build the second when the first loop provider without
-   search is actually wanted on a seat that needs it. Decided in M3.
+   **Decided in M3: refuse** — R2's other half, built and attacked. The
+   second answer waits for the first loop provider without search that is
+   actually wanted on a seat that needs it.
 
 ## Appendix — invocation notes, to verify against pinned versions
 

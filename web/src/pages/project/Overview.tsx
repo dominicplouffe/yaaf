@@ -204,6 +204,8 @@ function BudgetMeter({ ctx }: { ctx: ProjectCtx }) {
             {dash.billing_secret_name
               ? `paying with: ${dash.billing_secret_name} (${usdMode ? "API key" : "Claude subscription"})`
               : "⚠ no payment credential connected — real runs will fail (Settings)"}
+            {(dash.credentials ?? []).filter((c) => !c.billing).map((c) =>
+              ` · ${c.label}: ${c.name}`).join("")}
           </span>
         </div>
         <PlanMeter credentialId={dash.billing_secret_id} mode={dash.billing_mode} />

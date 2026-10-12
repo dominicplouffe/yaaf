@@ -15,7 +15,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { del, get, post, put } from "../api";
-import { LlmCredentials } from "../llmCredentials";
+import { LlmCredentials, ModelPrices } from "../llmCredentials";
 import { SecretInput } from "../ui";
 
 interface AnthropicSettings {
@@ -410,10 +410,11 @@ function SlackCard({
   );
 }
 
-type SectionKey = "credentials" | "founder" | "slack";
+type SectionKey = "credentials" | "prices" | "founder" | "slack";
 
 const SECTIONS: { key: SectionKey; label: string }[] = [
   { key: "credentials", label: "LLM credentials" },
+  { key: "prices", label: "Model prices" },
   { key: "founder", label: "Founder" },
   { key: "slack", label: "Slack" },
 ];
@@ -429,6 +430,7 @@ function railNote(key: SectionKey, s: AppSettings): { text: string; tone: string
     return { text: `${in_use} in use of ${offerable}${hidden ? ` · ${hidden} hidden` : ""}`,
              tone: "good" };
   }
+  if (key === "prices") return { text: "what models cost", tone: "" };
   if (key === "founder") {
     return s.anthropic.configured
       ? { text: s.anthropic.model, tone: "good" }
@@ -484,6 +486,7 @@ export default function Settings() {
 
           <div>
             {section === "credentials" && <LlmCredentials onChanged={reload} />}
+            {section === "prices" && <ModelPrices />}
             {section === "founder" && (
               <>
                 <h2 style={{ marginTop: 0 }}>The Founder&apos;s own model credential</h2>

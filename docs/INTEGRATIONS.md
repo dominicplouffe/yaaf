@@ -28,6 +28,16 @@ budget unit — there is no separate switch:
 | Anthropic API key | `sk-ant-api…` from the console | USD (`monthly_usd_cap`) |
 | Claude subscription token | `sk-ant-oat…` from `claude setup-token` | Tokens (`monthly_token_cap`) |
 
+A credential names the **provider** it pays — Anthropic by default; DeepSeek,
+OpenRouter, or a custom OpenAI-compatible server (its address goes with the
+credential). A project's billing credential pays whichever provider it is for;
+a project with a seat on a second provider's model pays that provider too,
+under its **Settings → Money → Other providers**, with a credential metered in
+the same unit — one project, one meter, one cap. A seat on a provider the
+project does not pay is refused when it is created, not when it first runs.
+Models yaaf ships no price for are priced under **Settings → Model prices**
+(zero is a price, for your own server); see [RUNTIMES.md](RUNTIMES.md).
+
 A value of the wrong shape for its kind is **refused while you're still
 looking at the screen** — otherwise every future run fails with a baffling
 "Not logged in". The health checklist re-checks it, and **Test connection**

@@ -126,20 +126,30 @@ def list_credentials(session: Session, *, with_plan: bool = False) -> dict:
     ask about rather than fill in.
     """
     from yaaf.core import llm_credentials
+    from yaaf.runtimes.providers import DEFAULT_PROVIDER
 
     rows = llm_credentials.choices(session, with_plan=with_plan)
-    if not rows:
+    # The billing credential pays the provider the seats run on by default;
+    # the count that decides "ask or not" is of those. Another provider's
+    # credentials are for seats on its models, and ride in `credentials`.
+    claude = [r for r in rows if (r.get("provider") or DEFAULT_PROVIDER) == DEFAULT_PROVIDER]
+    if not claude:
         note = ("None yet. The project can still be drafted and created; it cannot start "
                 "until an administrator adds a credential in Settings and assigns it. "
                 "Say so in your cover note.")
-    elif len(rows) == 1:
+    elif len(claude) == 1:
         note = (f"Exactly one: put its id in the draft's billing_secret_id and say in your "
-                f"cover note that the project pays with {rows[0]['name']!r}.")
+                f"cover note that the project pays with {claude[0]['name']!r}.")
     else:
         note = ("More than one. Ask the chairman which should pay — this is a question "
                 "worth one of your three — and leave billing_secret_id unset until they "
                 "answer. Never guess: it is the one field in the draft that spends "
                 "somebody's money.")
+    if len(claude) < len(rows):
+        note += (" Each credential names the provider it pays. A seat on another "
+                 "provider's model (deepseek-chat, openrouter/…, custom/…) needs that "
+                 "provider paid too: put {provider: id} in the draft's `credentials`, "
+                 "under the same rule — one per provider, or ask.")
     return {"credentials": rows, "note": note}
 
 
@@ -441,20 +451,48 @@ def billing_problems(project: dict, session: Session) -> list[str]:
     Founder about which one it is."""
     from yaaf.core import llm_credentials
 
+    problems = _provider_credential_problems(project, session)
     wanted_id = project.get("billing_secret_id")
     wanted_name = project.get("billing_secret_name")
     if not wanted_id and not wanted_name:
         project.pop("billing_secret_id", None)
         project.pop("billing_secret_name", None)
-        return []
+        return problems
     row = llm_credentials.resolve(session, credential_id=wanted_id, name=wanted_name)
     if row is None:
-        return [f"billing_secret_id names no LLM credential on this install; "
-                f"{llm_credentials.menu(session)}. Call list_credentials."]
+        return problems + [f"billing_secret_id names no LLM credential on this install; "
+                           f"{llm_credentials.menu(session)}. Call list_credentials."]
     project["billing_secret_id"] = row.id
     project["billing_secret_name"] = row.name
     project["billing_mode"] = row.llm_mode
-    return []
+    return problems
+
+
+def _provider_credential_problems(project: dict, session: Session) -> list[str]:
+    """A draft whose seats run on a second provider names what pays it, by
+    name (`credential_names`, as an export carries it) or by id
+    (`credentials`), each resolved against what exists — the same rule as the
+    billing credential, one provider at a time."""
+    from yaaf.core import llm_credentials
+
+    problems = []
+    resolved = {}
+    by_id = project.get("credentials") or {}
+    by_name = project.pop("credential_names", None) or {}
+    for provider_name, wanted in {**by_name, **by_id}.items():
+        row = (llm_credentials.resolve(session, credential_id=wanted)
+               if provider_name in by_id else llm_credentials.resolve(session, name=wanted))
+        if row is None:
+            problems.append(f"credentials names no LLM credential {wanted!r} for "
+                            f"{provider_name}; {llm_credentials.menu(session)}. Call "
+                            "list_credentials.")
+        else:
+            resolved[provider_name] = row.id
+    if resolved:
+        project["credentials"] = resolved
+    else:
+        project.pop("credentials", None)
+    return problems
 
 
 def doctrine_problems(project: dict, session=None) -> list[str]:

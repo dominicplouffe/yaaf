@@ -58,6 +58,7 @@ from yaaf.core.models import (
     VerificationStatus,
     utcnow,
 )
+from yaaf.runtimes.providers import DEFAULT_PROVIDER, PROVIDERS
 from yaaf.server import activity, agenda, briefing, metrics, policy, typing_state
 from yaaf.server import asks as ask_lib
 from yaaf.server.deps import admin_auth, db
@@ -459,6 +460,8 @@ def project_flags(project_id: str, session: Session = Depends(db)) -> dict:
 
 @router.get("/projects/{project_id}")
 def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
+    from yaaf.server.api.admin import provider_credentials_view
+
     project = _project(session, project_id)
     cons = effective(session, project.id)
     month_start = utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
@@ -557,6 +560,9 @@ def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
         "github_repo": project.github_repo,
         "billing_secret_id": project.billing_secret_id,
         "billing_secret_name": _secret_name(session, project.billing_secret_id),
+        # Every credential the project pays with, by provider — the billing
+        # one first. Never a value.
+        "credentials": provider_credentials_view(session, project),
         # Drought-clock anchors: the UI counts toward the refusal, not just
         # reporting it after the fact.
         "created_at": (
@@ -638,10 +644,22 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
                 "settings")
         else:
             shape_error = _billing_shape_error(project.billing_mode,
-                                               decrypt(billing.ciphertext))
+                                               decrypt(billing.ciphertext), billing.provider)
             add("billing", "fail" if shape_error else "ok",
                 shape_error or f"paying with '{billing.name}' ({project.billing_mode})",
                 "settings")
+    # And what pays each other provider: named, so a chairman reading the
+    # checklist sees the whole of who pays for what.
+    from yaaf.core import project_credentials
+    from yaaf.runtimes.providers import PROVIDERS
+
+    for provider_name, secret in project_credentials.held(session, project).items():
+        if secret.id == project.billing_secret_id:
+            continue
+        seller = PROVIDERS.get(provider_name)
+        add(f"billing:{provider_name}", "ok",
+            f"paying {seller.label if seller else provider_name} with '{secret.name}'",
+            "settings")
 
     # Seats: every one on a harness that can serve its model, honour its
     # role's grants and pay with this credential. Every door that seats one
@@ -1508,8 +1526,9 @@ def spend(project_id: str, group_by: str = "model", days: int = 30,
     meter's month-to-date; the default rolling window is for cards that stand
     on their own.
     """
-    if group_by not in ("model", "team", "agent", "kind"):
-        raise HTTPException(status_code=400, detail="group_by must be model|team|agent|kind")
+    if group_by not in ("model", "provider", "team", "agent", "kind"):
+        raise HTTPException(status_code=400,
+                            detail="group_by must be model|provider|team|agent|kind")
     if window not in ("days", "month"):
         raise HTTPException(status_code=400, detail="window must be days|month")
     since = (
@@ -1539,6 +1558,11 @@ def spend(project_id: str, group_by: str = "model", days: int = 30,
         if group_by == "model":
             name = run.model or "unknown"
             return name, name
+        if group_by == "provider":
+            # A run from before providers were recorded was Anthropic's.
+            name = run.provider or DEFAULT_PROVIDER
+            seller = PROVIDERS.get(name)
+            return name, seller.label if seller else name
         if group_by == "kind":
             return run.kind, run.kind
         agent = agents.get(run.agent_id) if run.agent_id else None

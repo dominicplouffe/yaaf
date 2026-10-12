@@ -60,8 +60,14 @@ def test_the_defaults_name_things_that_exist():
 
 def test_each_provider_lifts_within_itself():
     """`stakes: high` moves a seat to its own provider's craft model — never to
-    another vendor's, and never to one the catalog cannot rank."""
+    another vendor's, and never to one the catalog cannot rank. A provider with
+    no ladder of its own (OpenRouter's hundreds of models, a custom server)
+    names none, and its seats stay where the chairman put them."""
     for provider in providers.PROVIDERS.values():
+        if provider.craft_model is None:
+            assert not any(m.provider == provider.name for m in catalog.MODELS), (
+                f"{provider.name} has catalog models to climb; name its craft model")
+            continue
         craft = catalog.model(provider.craft_model)
         assert craft is not None, provider.name
         assert craft.provider == provider.name

@@ -19,11 +19,11 @@ from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from yaaf.core import credential_files, ids, platform
+from yaaf.core import credential_files, ids, platform, prices
 from yaaf.core.constitution import (
     GROUP_THEMES,
     THEME_ORDER,
@@ -63,6 +63,7 @@ from yaaf.core.models import (
     Notice,
     NoticeKind,
     Project,
+    ProjectLlmCredential,
     ProjectMember,
     ProjectMode,
     ProjectStatus,
@@ -89,7 +90,7 @@ from yaaf.founder import doctrine
 from yaaf.runtimes import catalog
 from yaaf.runtimes import providers as runtime_providers
 from yaaf.runtimes.catalog import DEFAULT_EFFORT, DEFAULT_MODEL
-from yaaf.runtimes.seats import choosable, seat_for
+from yaaf.runtimes.seats import choosable
 from yaaf.runtimes.seats import refusal as seat_refusal
 from yaaf.server import briefing, policy
 from yaaf.server.api.agent import WAKE_CHANNEL
@@ -211,7 +212,8 @@ def create_role(body: RoleIn, session: Session = Depends(db)) -> dict:
         )
     # A role whose grants its harness cannot honour, or whose model it cannot
     # serve, is refused here — at the version, before any project pins it.
-    problem = seat_refusal(body.harness, body.model, body.tool_permissions)
+    problem = seat_refusal(body.harness, body.model, body.tool_permissions,
+                           priced=prices.covered(session, body.model))
     if problem:
         raise HTTPException(status_code=422, detail=f"role '{body.slug}': {problem}")
     role = session.execute(select(Role).where(Role.slug == body.slug)).scalar_one_or_none()
@@ -534,6 +536,11 @@ class ProjectCreate(BaseModel):
     ceo_model_override: str | None = None
     ceo_effort_override: str | None = Field(default=None, pattern=_EFFORT_PATTERN)
     ceo_harness_override: str | None = None
+    # What pays each provider the billing credential does not, by provider:
+    # {"deepseek": "<credential id>"}. One per provider, every one metered in
+    # the billing credential's unit (R4); a seat on a provider with none is
+    # refused (R5) — docs/RUNTIMES.md, M3.
+    credentials: dict[str, str] = Field(default_factory=dict)
     teams: list[TeamSpec] = Field(default_factory=list)
     # Solo mode (the M2 single-agent arm): the CEO is placed as the sole member
     # — hence derived lead — of the only team, so one brain plans AND executes
@@ -571,26 +578,157 @@ def _project_agents(session: Session, project_id: str) -> list[Agent]:
 def refuse_unrunnable_seats(session: Session, project: Project, agents: list[Agent]) -> None:
     """Refuse, before anything commits, a seat that could not run: a harness
     that cannot serve its model, cannot take away a grant its role withholds,
-    or cannot pay with the project's credential (yaaf.runtimes.seats.refusal).
+    or cannot pay with the project's credential (yaaf.runtimes.seats.refusal)
+    — or a seat on a provider the project holds no credential for at all (R5).
 
     One check behind every door a seat comes through — creation, a team added,
-    a hire, a repin, a new credential — so no door is the one that lets it by.
-    The lease checks again, for a seat changed by a door nobody has built yet."""
-    from yaaf.server.contextpack import role_version_for
+    a hire, a repin, a new credential, the start — so no door is the one that
+    lets it by. The lease checks again, for a seat changed by a door nobody
+    has built yet."""
+    from yaaf.server.seat_checks import seat_problem
 
-    credential = None
+    problem = seat_problem(session, project, agents)
+    if problem:
+        raise HTTPException(status_code=422, detail=problem)
+
+
+def attach_provider_credential(session: Session, project: Project, provider_name: str,
+                               credential_id: str) -> ProjectLlmCredential:
+    """Pay `provider_name` with this credential on this project. Refused for a
+    credential of another provider, for the provider the billing credential
+    already pays, and for a credential metered in another unit than the
+    project's (R4: one project, one meter — two units cannot share one cap,
+    and an exchange rate between them would be an invented number)."""
+    from yaaf.core.llm_credentials import assigned_credential, bills
+
+    seller = runtime_providers.PROVIDERS.get(provider_name)
+    if seller is None:
+        raise HTTPException(status_code=422, detail=(
+            f"unknown provider '{provider_name}' — one of: "
+            f"{', '.join(runtime_providers.PROVIDERS)}"))
+    secret = assigned_credential(session, credential_id)
+    if (secret.provider or runtime_providers.DEFAULT_PROVIDER) != provider_name:
+        raise HTTPException(status_code=422, detail=(
+            f"'{secret.name}' pays {runtime_providers.provider(secret.provider).label}, "
+            f"not {seller.label}"))
     if project.billing_secret_id:
-        secret = session.get(Secret, project.billing_secret_id)
-        if secret is not None:
-            credential = (secret.provider, project.billing_mode)
-    for agent in agents:
-        role_version = role_version_for(session, agent)
-        seat = seat_for(agent, role_version)
-        problem = seat_refusal(seat.harness, seat.model,
-                               role_version.tool_permissions if role_version else {},
-                               credential)
-        if problem:
-            raise HTTPException(status_code=422, detail=f"{agent.name}: {problem}")
+        billing = session.get(Secret, project.billing_secret_id)
+        if billing is not None and (billing.provider or runtime_providers.DEFAULT_PROVIDER) \
+                == provider_name:
+            raise HTTPException(status_code=422, detail=(
+                f"this project already pays {seller.label} with its billing credential "
+                f"'{billing.name}' — change that instead"))
+    if (secret.llm_mode or "api_key") != project.billing_mode:
+        raise HTTPException(status_code=422, detail=(
+            f"one project, one meter: this project's budget is kept in "
+            f"{'dollars' if project.billing_mode == 'api_key' else 'tokens'}, and "
+            f"'{secret.name}' is a {bills(secret)} — pick one metered the same way"))
+    row = session.scalar(select(ProjectLlmCredential).where(
+        ProjectLlmCredential.project_id == project.id,
+        ProjectLlmCredential.provider == provider_name))
+    if row is None:
+        row = ProjectLlmCredential(id=ids.new_id(ids.PROJECT_CREDENTIAL), project_id=project.id,
+                                   provider=provider_name, secret_id=secret.id)
+        session.add(row)
+    else:
+        row.secret_id = secret.id
+    session.flush()
+    return row
+
+
+def _settle_provider_credentials(session: Session, project: Project) -> None:
+    """After the billing credential moved: a row for the provider it now pays
+    is shadowed by it, so it goes; and every row left must still meter in the
+    project's unit (R4) — the money moved, and the other credentials did not
+    move with it."""
+    from yaaf.core.llm_credentials import bills
+
+    billing = session.get(Secret, project.billing_secret_id) if project.billing_secret_id else None
+    for row in session.scalars(select(ProjectLlmCredential).where(
+            ProjectLlmCredential.project_id == project.id)).all():
+        if billing is not None and row.provider == (billing.provider
+                                                    or runtime_providers.DEFAULT_PROVIDER):
+            session.delete(row)
+            continue
+        secret = session.get(Secret, row.secret_id)
+        if secret is not None and (secret.llm_mode or "api_key") != project.billing_mode:
+            raise HTTPException(status_code=422, detail=(
+                f"one project, one meter: '{secret.name}' pays "
+                f"{runtime_providers.provider(row.provider).label} as a {bills(secret)}, and "
+                f"this would keep the budget in "
+                f"{'dollars' if project.billing_mode == 'api_key' else 'tokens'} — remove "
+                f"it from the project first"))
+    session.flush()
+
+
+def provider_credentials_view(session: Session, project: Project) -> list[dict]:
+    """What pays which provider on this project, for the screens: the billing
+    credential first, then one per other provider. Never a value."""
+    from yaaf.core import project_credentials
+    from yaaf.core.llm_credentials import bills
+
+    out = []
+    for provider_name, secret in project_credentials.held(session, project).items():
+        seller = runtime_providers.PROVIDERS.get(provider_name)
+        out.append({"provider": provider_name,
+                    "label": seller.label if seller else provider_name,
+                    "credential_id": secret.id, "name": secret.name, "bills": bills(secret),
+                    "billing": secret.id == project.billing_secret_id})
+    return sorted(out, key=lambda c: (not c["billing"], c["label"]))
+
+
+class ProviderCredentialIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    credential_id: str
+
+
+@router.get("/projects/{project_id}/credentials")
+def list_project_credentials(project_id: str, session: Session = Depends(db)) -> list:
+    return provider_credentials_view(session, _get_project(session, project_id))
+
+
+@router.put("/projects/{project_id}/credentials/{provider_name}")
+def set_project_credential(project_id: str, provider_name: str, body: ProviderCredentialIn,
+                           session: Session = Depends(db)) -> list:
+    project = _get_project(session, project_id)
+    attach_provider_credential(session, project, provider_name, body.credential_id)
+    refuse_unrunnable_seats(session, project, _project_agents(session, project.id))
+    _audit(session, project.id, "billing.provider_credential", "project", project.id,
+           {"provider": provider_name, "credential_id": body.credential_id})
+    return provider_credentials_view(session, project)
+
+
+@router.delete("/projects/{project_id}/credentials/{provider_name}")
+def remove_project_credential(project_id: str, provider_name: str,
+                              session: Session = Depends(db)) -> list:
+    """Stop paying a provider on this project. Refused while a seat runs on
+    it (R5): the seat would be refused its next run, at whatever hour."""
+    project = _get_project(session, project_id)
+    row = session.scalar(select(ProjectLlmCredential).where(
+        ProjectLlmCredential.project_id == project.id,
+        ProjectLlmCredential.provider == provider_name))
+    if row is None:
+        raise HTTPException(status_code=404, detail=(
+            f"this project holds no credential for {provider_name} besides its billing one"))
+    session.delete(row)
+    session.flush()
+    refuse_unrunnable_seats(session, project, _project_agents(session, project.id))
+    _audit(session, project.id, "billing.provider_credential_removed", "project", project.id,
+           {"provider": provider_name})
+    return provider_credentials_view(session, project)
+
+
+@router.get("/providers")
+def list_providers() -> list[dict]:
+    """Who sells the tokens, from the registry: the credential kinds each
+    takes, whether its credential carries an address, whether it searches and
+    states its costs — what the credential form and a drafter need to know."""
+    return [{"name": p.name, "label": p.label, "default_harness": p.default_harness,
+             "kinds": [{"mode": k.mode, "meter": k.meter, "bills": k.bills} for k in p.kinds],
+             "credential_base_url": p.credential_base_url, "search": p.search,
+             "reports_cost": p.reports_cost}
+            for p in runtime_providers.PROVIDERS.values()]
 
 
 @router.get("/harnesses")
@@ -778,7 +916,8 @@ def _craft_lift(
     if role is None or role.category not in CRAFT_CATEGORIES:
         return None, None
     craft_model = runtime_providers.provider(catalog.provider_of(version.model)).craft_model
-    model = None if catalog.tier(version.model) >= catalog.tier(craft_model) else craft_model
+    model = (None if craft_model is None
+             or catalog.tier(version.model) >= catalog.tier(craft_model) else craft_model)
     at_least = _EFFORT_RANK.get(CRAFT_EFFORT, 0)
     effort = (None if _EFFORT_RANK.get(version.effort, 0) >= at_least else CRAFT_EFFORT)
     return model, effort
@@ -947,6 +1086,8 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
             agents.append(ceo)
         team_out.append({"id": team.id, "name": team.name,
                          "agents": [{"id": a.id, "name": a.name} for a in agents]})
+    for provider_name, credential_id in body.credentials.items():
+        attach_provider_credential(session, project, provider_name, credential_id)
     refuse_unrunnable_seats(session, project, _project_agents(session, project.id))
 
     # The boardroom on day one, when the chairman has already told us the
@@ -1165,6 +1306,11 @@ def export_project(project_id: str, include_values: bool = False,
             "constitution": effective(session, project.id).model_dump(),
             "integrations": integrations,
             "billing_secret_name": billing_secret_name,
+            # What pays each other provider, by name, as the billing credential
+            # travels: an import resolves the names against what exists there.
+            "credential_names": {c["provider"]: c["name"]
+                                 for c in provider_credentials_view(session, project)
+                                 if not c["billing"]},
             "ceo_role_slug": ceo_role_slug,
             "ceo_name": ceo.name,
             "ceo_daily_at": ceo.daily_at,
@@ -1330,6 +1476,18 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
         else:
             project.billing_secret_id = assigned_credential(session,
                                                             source.billing_secret_id).id
+    # The other providers' credentials go with it, under the same rule: one
+    # since hidden stays behind, and the twin's seat on that provider is
+    # refused at its next door until somebody picks another (R5).
+    from yaaf.core.llm_credentials import resolve
+
+    session.flush()
+    for row in session.scalars(select(ProjectLlmCredential).where(
+            ProjectLlmCredential.project_id == source.id)).all():
+        if resolve(session, credential_id=row.secret_id) is not None:
+            session.add(ProjectLlmCredential(id=ids.new_id(ids.PROJECT_CREDENTIAL),
+                                             project_id=project.id, provider=row.provider,
+                                             secret_id=row.secret_id))
 
     source_ceo = session.execute(
         select(Agent).where(Agent.project_id == source.id, Agent.kind == AgentKind.CEO)
@@ -2241,7 +2399,7 @@ def _deadline_source(mode: str, source: dict | None) -> dict:
     }
 
 
-def _billing_shape_error(mode: str, plaintext: str) -> str | None:
+def _billing_shape_error(mode: str, plaintext: str, provider: str | None = None) -> str | None:
     """Subscription tokens come from `claude setup-token` and start sk-ant-oat;
     API keys start sk-ant-api. A mismatched pair fails every future run with a
     baffling 'Not logged in' — refuse it while the human is still looking.
@@ -2252,7 +2410,7 @@ def _billing_shape_error(mode: str, plaintext: str) -> str | None:
     """
     from yaaf.core.platform import shape_error
 
-    return shape_error(mode, plaintext)
+    return shape_error(mode, plaintext, provider)
 
 
 @router.patch("/projects/{project_id}")
@@ -2311,6 +2469,7 @@ def patch_project(project_id: str, body: ProjectPatch, session: Session = Depend
             raise HTTPException(status_code=422, detail=shape_error)
         # A credential every seat already on the project can pay with — R1
         # from the other side: the seats stayed put and the money moved.
+        _settle_provider_credentials(session, project)
         refuse_unrunnable_seats(session, project, _project_agents(session, project.id))
     if body.controlled_domains is not None:
         project.controlled_domains = body.controlled_domains
@@ -2375,50 +2534,72 @@ def patch_project(project_id: str, body: ProjectPatch, session: Session = Depend
 
 
 @router.post("/projects/{project_id}/billing_check")
-def billing_check(project_id: str, session: Session = Depends(db)) -> dict:
-    """Preflight the active billing credential without burning an agent run.
-    API keys are verified against the live API (a free models-list call);
-    subscription tokens can only be shape-checked here — they authenticate
-    through the Claude Code CLI, which exists only inside sandboxes."""
-    import httpx
-
+def billing_check(project_id: str, provider: str | None = None,
+                  session: Session = Depends(db)) -> dict:
+    """Preflight a credential this project pays with, without burning an
+    agent run — the billing credential, or with `provider` the one that pays
+    that provider. API keys are verified against the provider's own live API
+    (a free models-list call); subscription tokens can only be shape-checked
+    here — they authenticate through the Claude Code CLI, which exists only
+    inside sandboxes."""
+    from yaaf.core import project_credentials
     from yaaf.core.crypto import decrypt
 
     project = _get_project(session, project_id)
-    if not project.billing_secret_id:
-        raise HTTPException(status_code=422, detail="no billing credential attached")
-    secret = session.get(Secret, project.billing_secret_id)
+    if provider is None:
+        if not project.billing_secret_id:
+            raise HTTPException(status_code=422, detail="no billing credential attached")
+        secret = session.get(Secret, project.billing_secret_id)
+        mode = project.billing_mode
+    else:
+        secret = project_credentials.credential_for(session, project, provider)
+        if secret is None:
+            raise HTTPException(status_code=422,
+                                detail=f"this project holds no credential for {provider}")
+        mode = (project.billing_mode if secret.id == project.billing_secret_id
+                else secret.llm_mode or "api_key")
     plaintext = decrypt(secret.ciphertext)
-    shape_error = _billing_shape_error(project.billing_mode, plaintext)
-    result: dict
+    shape_error = _billing_shape_error(mode, plaintext, secret.provider)
     if shape_error:
         result = {"ok": False, "detail": shape_error}
-    elif project.billing_mode == "api_key":
-        try:
-            response = httpx.get(
-                "https://api.anthropic.com/v1/models",
-                headers={"x-api-key": plaintext, "anthropic-version": "2023-06-01"},
-                timeout=15,
-            )
-            if response.status_code == 200:
-                result = {"ok": True, "detail": "API key verified against the live API."}
-            elif response.status_code in (401, 403):
-                result = {"ok": False,
-                          "detail": "the API rejected this key (revoked or mistyped) — "
-                                    "paste a fresh one from the Anthropic console"}
-            else:
-                result = {"ok": False,
-                          "detail": f"unexpected API response ({response.status_code}); "
-                                    "try again shortly"}
-        except httpx.HTTPError as exc:
-            result = {"ok": False, "detail": f"could not reach the API: {exc.__class__.__name__}"}
+    elif mode == "api_key":
+        result = _live_check(secret, plaintext)
     else:
         result = {"ok": True,
                   "detail": "token has the right shape (sk-ant-oat…); full validation "
                             "happens on the first run — expired tokens surface there"}
     _audit(session, project.id, "billing.check", "project", project.id,
-           {"ok": result["ok"]})
+           {"ok": result["ok"], "provider": secret.provider})
     return result
+
+
+def _live_check(secret: Secret, plaintext: str) -> dict:
+    """One free call that only a live key answers: the provider's models list.
+    Anthropic's by its own header; every OpenAI-compatible provider's by
+    bearer, at its address — the credential's own, for a custom server."""
+    import httpx
+
+    seller = runtime_providers.provider(secret.provider)
+    if seller.name == runtime_providers.DEFAULT_PROVIDER:
+        url, headers = ("https://api.anthropic.com/v1/models",
+                        {"x-api-key": plaintext, "anthropic-version": "2023-06-01"})
+    else:
+        base = (secret.base_url if seller.credential_base_url else seller.base_url) or ""
+        if not base:
+            return {"ok": False, "detail": f"no address to check a {seller.label} key against"}
+        url, headers = f"{base.rstrip('/')}/models", {"Authorization": f"Bearer {plaintext}"}
+    try:
+        response = httpx.get(url, headers=headers, timeout=15)
+    except httpx.HTTPError as exc:
+        return {"ok": False, "detail": f"could not reach the API: {exc.__class__.__name__}"}
+    if response.status_code == 200:
+        return {"ok": True, "detail": "API key verified against the live API."}
+    if response.status_code in (401, 403):
+        return {"ok": False,
+                "detail": f"the API rejected this key (revoked or mistyped) — paste a fresh "
+                          f"one from {seller.label}"}
+    return {"ok": False, "detail": f"unexpected API response ({response.status_code}); "
+                                   "try again shortly"}
 
 
 @router.post("/projects/{project_id}/regrade-goal")
@@ -2476,6 +2657,9 @@ def start_project(project_id: str, session: Session = Depends(db)) -> dict:
     if project.status in (ProjectStatus.STOPPED, ProjectStatus.COMPLETED):
         raise HTTPException(status_code=409,
                             detail=f"a {project.status} project is terminal")
+    # A project with a seat nothing can run does not start (R5 among them):
+    # the alternative is a start that succeeds and a first run that does not.
+    refuse_unrunnable_seats(session, project, _project_agents(session, project.id))
     project.status = ProjectStatus.RUNNING
     project.status_reason = None
     # A Deliver or Operate project starts owing a plan. The chairman's words
@@ -4723,7 +4907,9 @@ def delete_secret(secret_id: str, session: Session = Depends(db)) -> dict:
     row = session.scalar(select(Secret).where(Secret.id == secret_id).with_for_update())
     if row is None:
         raise HTTPException(status_code=404, detail="unknown secret")
-    if session.scalar(select(Project.id).where(Project.billing_secret_id == row.id).limit(1)):
+    from yaaf.core.project_credentials import projects_using
+
+    if projects_using(session, row.id):
         raise HTTPException(
             status_code=409,
             detail="This credential is assigned to a project. Reassign all projects before deleting it",

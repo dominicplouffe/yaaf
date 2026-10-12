@@ -49,10 +49,19 @@ def _schema(required_args: list[str], **properties) -> dict:
         "The project's outward wiring: name, goal, deadline, controlled domains, which "
         "stored credential it bills against. Rules are not here — those are `amend`, "
         "with a reason. verb `add_team` hires a team; `repin` moves a team to the "
-        "library's current version of its role."
+        "library's current version of its role; `pay_provider` pays a second provider "
+        "(provider, credential — a stored credential's name) for seats on its models; "
+        "`stop_paying_provider` removes one."
     ),
     input_schema=_schema([],
-                         verb={"type": "string", "enum": ["settings", "add_team", "repin"]},
+                         verb={"type": "string", "enum": ["settings", "add_team", "repin",
+                                                          "pay_provider",
+                                                          "stop_paying_provider"]},
+                         provider={"type": "string",
+                                   "description": "pay_provider / stop_paying_provider: "
+                                                  "e.g. deepseek, openrouter, custom"},
+                         credential={"type": "string",
+                                     "description": "pay_provider: a stored credential's name"},
                          name={"type": "string"},
                          goal={"type": "string"},
                          deadline={"type": "string", "description": "ISO 8601, or empty to clear"},
@@ -89,6 +98,27 @@ def project_configure(principal: Principal, session: Session, arguments: dict) -
                                             employees=employees,
                                             lead=arguments.get("lead")),
                         session=session)
+    elif verb in ("pay_provider", "stop_paying_provider"):
+        provider_name = required(arguments, "provider")
+        named = None
+        if verb == "pay_provider":
+            named = _billing_secret(session, required(arguments, "credential"))
+        preview = confirm.gate(session, principal, "project_configure", arguments, {
+            "verb": verb, "project": project.slug, "provider": provider_name,
+            "credential": named.name if named else None,
+            "warning": "Seats on this provider's models bill against it."
+            if named else "Refused while a seat still runs on this provider."})
+        if preview:
+            return preview
+        if named is not None:
+            outcome = _call(principal, admin.set_project_credential, project_id=project.id,
+                            provider_name=provider_name,
+                            body=admin.ProviderCredentialIn(credential_id=named.id),
+                            session=session)
+        else:
+            outcome = _call(principal, admin.remove_project_credential,
+                            project_id=project.id, provider_name=provider_name,
+                            session=session)
     elif verb == "repin":
         team = _owned(session, project, Team, str(arguments.get("team") or ""), "team")
         preview = confirm.gate(session, principal, "project_configure", arguments, {
@@ -325,12 +355,14 @@ def amend(principal: Principal, session: Session, arguments: dict) -> dict:
     "billing_check",
     scope="configure",
     description=(
-        "Verify this project's Anthropic credential actually works. Read-only and free; "
-        "the answer is the same one the health page shows."
+        "Verify a credential this project pays with actually works — its billing one, "
+        "or with `provider` the one paying that provider. Read-only and free; the "
+        "answer is the same one the health page shows."
     ),
-    input_schema=_schema([]),
+    input_schema=_schema([], provider={"type": "string"}),
 )
 def billing_check(principal: Principal, session: Session, arguments: dict) -> dict:
     project = resolve_project(session, principal, required(arguments, "project"))
-    outcome = _call(principal, admin.billing_check, project_id=project.id, session=session)
+    outcome = _call(principal, admin.billing_check, project_id=project.id,
+                    provider=arguments.get("provider") or None, session=session)
     return envelope.fit({"project": project.slug, **outcome}, arguments.get("detail"))

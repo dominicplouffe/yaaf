@@ -360,7 +360,7 @@ def _prepare_session(session: Session, project: Project, ceo: Agent) -> tuple[di
     # the resident conversation is SDK-held until every harness can hold one
     # (docs/RUNTIMES.md, M6) — so that is the harness this run is pinned to.
     seat = seat_for(ceo, role_version)
-    _pin_seat(run, job, replace(seat, harness=effective_harness(
+    _pin_seat(session, run, job, replace(seat, harness=effective_harness(
         CHAT_HARNESS, (project.integrations or {}).get("runtime"))))
     job.tool_permissions = dict(role_version.tool_permissions) if role_version else {}
     # Same sources, same cost lesson: the chat lane mounts them exactly as a run

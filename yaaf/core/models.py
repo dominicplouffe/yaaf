@@ -1983,6 +1983,45 @@ class Secret(Base):
     # It is also why the name index is partial on this column: a name nothing
     # can show you is not a name worth reserving.
     hidden_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # Where an LLM credential's provider is reached, for a provider whose
+    # address is the credential's own (yaaf.runtimes.providers: a custom
+    # OpenAI-compatible server). Not a secret, so not in the ciphertext.
+    base_url: Mapped[str | None] = mapped_column(String(500))
+
+
+class ProjectLlmCredential(Base):
+    """The credential a project pays a *second* provider with.
+
+    `Project.billing_secret_id` stays the project's billing credential — the
+    one its meter is read from — and pays whichever provider it is for. A
+    project whose seats run on more than one provider holds one row here per
+    other provider (docs/RUNTIMES.md, M3). Every credential a project holds
+    meters in its billing mode's unit (R4): one cap cannot be kept in two."""
+
+    __tablename__ = "project_llm_credentials"
+    __table_args__ = (UniqueConstraint("project_id", "provider"),)
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    provider: Mapped[str] = mapped_column(String(32))
+    secret_id: Mapped[str] = mapped_column(ForeignKey("secrets.id"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class ModelPrice(Base):
+    """An install's own price for a model, in USD per million tokens. Wins over
+    the shipped catalog (yaaf.runtimes.catalog) for that model — which is how a
+    provider yaaf ships no price for is priced at all, and how a local server
+    is priced at zero."""
+
+    __tablename__ = "model_prices"
+
+    model: Mapped[str] = mapped_column(String(128), primary_key=True)
+    input: Mapped[float] = mapped_column(Float)
+    output: Mapped[float] = mapped_column(Float)
+    cache_read: Mapped[float] = mapped_column(Float, default=0.0)
+    cache_write: Mapped[float] = mapped_column(Float, default=0.0)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 
 class PlanReading(Base):

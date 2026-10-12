@@ -77,7 +77,7 @@ def _project_body(slug: str, **fields) -> dict:
 
 def test_the_picker_offers_every_harness_a_seat_may_run_on_and_not_the_test_switch(client):
     offered = {h["name"] for h in client.get("/admin/harnesses", headers=ADMIN).json()}
-    assert offered == {"claude_agent_sdk", "claude_cli", "anthropic_api"}
+    assert offered == {"claude_agent_sdk", "claude_cli", "anthropic_api", "openai_compatible"}
 
 
 def test_a_role_on_the_cli_runs_its_seats_on_the_cli(client):
@@ -297,7 +297,8 @@ def test_a_model_with_no_price_cannot_be_hired_onto_a_harness_that_prices_runs(c
     make_project(client, start=False)
     refused = _role(client, "mystery", model="claude-mystery-9", harness="anthropic_api")
     assert refused.status_code == 422
-    assert "claude-mystery-9 has no price there" in refused.text
+    assert "claude-mystery-9 has no price on this install" in refused.text
+    assert "Settings → Model prices" in refused.text
     # A harness that reports its own bill is not metered by the catalog.
     assert _role(client, "mystery", model="claude-mystery-9",
                  harness="claude_cli").status_code == 200

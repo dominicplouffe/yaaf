@@ -66,6 +66,18 @@ HARNESSES: dict[str, Harness] = {h.name: h for h in (
         accepts=("anthropic:api_key",),
         cost="priced",
     ),
+    # The same loop on the OpenAI-compatible chat API: one client, and every
+    # provider that speaks that shape is a row in the provider registry. The
+    # loop's own tools; search only where the provider runs one (R2 refuses a
+    # `web` grant it cannot honour).
+    Harness(
+        name="openai_compatible",
+        label="OpenAI-compatible API (yaaf's own loop)",
+        family="loop",
+        providers=("deepseek", "openrouter", "custom"),
+        accepts=("deepseek:api_key", "openrouter:api_key", "custom:api_key"),
+        cost="priced",
+    ),
     # The scripted backend that drives the real API at $0: CI, the goldens and
     # the fire drill. It reads no credential and calls no model.
     Harness(

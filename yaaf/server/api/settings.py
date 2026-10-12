@@ -30,7 +30,7 @@ from sqlalchemy.orm import Session
 
 from yaaf.core import plan_usage, platform
 from yaaf.core.models import Secret
-from yaaf.runtimes.providers import MODE_PATTERN
+from yaaf.runtimes.providers import DEFAULT_PROVIDER, MODE_PATTERN, PROVIDERS
 from yaaf.server.deps import admin_auth, db
 from yaaf.server.slack import provision as slack_provision
 from yaaf.server.slack import settings as slack_settings
@@ -67,19 +67,19 @@ def _llm_counts(session: Session) -> dict:
     "3 in use, 9 hidden" send an administrator to different places, and the
     difference between those two numbers is the whole reason hiding exists.
     """
-    from sqlalchemy import distinct, func, select
+    from sqlalchemy import func, select
 
     from yaaf.core.llm_credentials import TERMINAL
-    from yaaf.core.models import Project
 
     managed = Secret.llm_mode.is_not(None), Secret.project_id.is_(None)
     total = session.scalar(select(func.count(Secret.id)).where(*managed)) or 0
     hidden = session.scalar(select(func.count(Secret.id))
                             .where(*managed, Secret.hidden_at.is_not(None))) or 0
-    in_use = session.scalar(
-        select(func.count(distinct(Project.billing_secret_id)))
-        .join(Secret, Secret.id == Project.billing_secret_id)
-        .where(*managed, Secret.hidden_at.is_(None), Project.status.not_in(TERMINAL))) or 0
+    from yaaf.core.project_credentials import usage
+
+    visible = set(session.scalars(select(Secret.id).where(*managed, Secret.hidden_at.is_(None))))
+    in_use = sum(1 for secret_id, projects in usage(session).items()
+                 if secret_id in visible and any(p.status not in TERMINAL for p in projects))
     return {"total": int(total), "hidden": int(hidden), "in_use": int(in_use),
             "offerable": int(total) - int(hidden)}
 
@@ -250,6 +250,12 @@ class LlmCredentialIn(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     mode: str = Field(pattern=MODE_PATTERN)
     value: str = Field(min_length=8, max_length=10000)
+    #: Which provider it pays (yaaf.runtimes.providers). Absent is Anthropic,
+    #: which every credential was before there was a second.
+    provider: str = Field(default=DEFAULT_PROVIDER, max_length=32)
+    #: Where the provider is reached, for one whose address is the
+    #: credential's (a custom OpenAI-compatible server). Refused otherwise.
+    base_url: str | None = Field(default=None, max_length=500)
 
 
 class LlmCredentialPatch(BaseModel):
@@ -257,6 +263,31 @@ class LlmCredentialPatch(BaseModel):
 
     name: str = Field(min_length=1, max_length=120)
     value: str | None = Field(default=None, min_length=8, max_length=10000)
+    base_url: str | None = Field(default=None, max_length=500)
+
+
+def _check_provider(provider_name: str, mode: str, base_url: str | None) -> str | None:
+    """The credential's provider, its kind and its address, against the
+    registry — the shape check reads the provider, so it comes first."""
+    seller = PROVIDERS.get(provider_name)
+    if seller is None:
+        raise HTTPException(status_code=422, detail=(
+            f"unknown provider '{provider_name}' — one of: {', '.join(PROVIDERS)}"))
+    if mode not in {k.mode for k in seller.kinds}:
+        raise HTTPException(status_code=422, detail=(
+            f"{seller.label} takes {', '.join(k.bills for k in seller.kinds)} — not '{mode}'"))
+    base_url = (base_url or "").strip() or None
+    if seller.credential_base_url:
+        if not base_url or not base_url.startswith(("http://", "https://")):
+            raise HTTPException(status_code=422, detail=(
+                f"a {seller.label} credential carries the server's address — give its "
+                "base URL, e.g. http://ollama:11434/v1"))
+        return base_url.rstrip("/")
+    if base_url:
+        raise HTTPException(status_code=422, detail=(
+            f"{seller.label} is reached at its own address; a base URL is only for a "
+            "custom endpoint"))
+    return None
 
 
 def _token_groups(session: Session) -> dict[str, tuple[str | None, int]]:
@@ -316,20 +347,22 @@ def _llm_summary(session: Session, row: Secret, projects: list | None = None,
     over — one definition, computed once, rather than three screens each
     guessing at "in use".
     """
-    from sqlalchemy import select
 
     from yaaf.core.llm_credentials import TERMINAL
-    from yaaf.core.models import Project
 
     if projects is None:
-        projects = session.scalars(select(Project).where(Project.billing_secret_id == row.id)
-                                   .order_by(Project.name)).all()
+        from yaaf.core.project_credentials import projects_using
+
+        projects = projects_using(session, row.id)
     out = [{"id": p.id, "name": p.name, "status": p.status, "live": p.status not in TERMINAL}
            for p in projects]
     if groups is None:
         groups = _token_groups(session)
     token, sharing = groups.get(row.id, (None, 1))
+    from yaaf.core.llm_credentials import bills
+
     return {"id": row.id, "name": row.name, "mode": row.llm_mode,
+            "provider": row.provider, "bills": bills(row), "base_url": row.base_url,
             "created_at": row.created_at, "hidden_at": row.hidden_at,
             "projects": out, "in_use": any(p["live"] for p in out),
             "token": token, "shares_token_with": max(0, sharing - 1)}
@@ -360,7 +393,7 @@ def _save_llm(session: Session, row: Secret, name: str, value: str | None) -> di
         value = value.strip()
         if len(value) < 8:
             raise HTTPException(status_code=422, detail="Enter a credential of at least 8 characters")
-        problem = platform.shape_error(row.llm_mode, value)
+        problem = platform.shape_error(row.llm_mode, value, row.provider)
         if problem:
             raise HTTPException(status_code=422, detail=problem)
         row.ciphertext = encrypt(value)
@@ -402,12 +435,10 @@ def list_llm_credentials(include_hidden: bool = False, session: Session = Depend
     """
     from sqlalchemy import select
 
-    from yaaf.core.models import Project, Secret
+    from yaaf.core.models import Secret
+    from yaaf.core.project_credentials import usage as credential_usage
 
-    usage: dict[str, list] = {}
-    for project in session.scalars(select(Project).where(Project.billing_secret_id.is_not(None))
-                                  .order_by(Project.name)):
-        usage.setdefault(project.billing_secret_id, []).append(project)
+    usage = credential_usage(session)
     listing = select(Secret).where(Secret.llm_mode.is_not(None))
     if not include_hidden:
         listing = listing.where(Secret.hidden_at.is_(None))
@@ -424,8 +455,10 @@ def create_llm_credential(body: LlmCredentialIn, session: Session = Depends(db))
     from yaaf.core import ids
     from yaaf.core.models import Secret
 
+    base_url = _check_provider(body.provider, body.mode, body.base_url)
     row = Secret(id=ids.new_id(ids.SECRET), project_id=None, name=body.name,
-                 kind="billing", role_scopes=[], llm_mode=body.mode)
+                 kind="billing", role_scopes=[], llm_mode=body.mode,
+                 provider=body.provider, base_url=base_url)
     return _save_llm(session, row, body.name, body.value)
 
 
@@ -460,6 +493,8 @@ def _managed(session: Session, credential_id: str, *, lock: bool = True) -> Secr
 def update_llm_credential(credential_id: str, body: LlmCredentialPatch,
                           session: Session = Depends(db)) -> dict:
     row = _managed(session, credential_id)
+    if body.base_url is not None:
+        row.base_url = _check_provider(row.provider, row.llm_mode or "api_key", body.base_url)
     return _save_llm(session, row, body.name, body.value)
 
 
@@ -648,3 +683,65 @@ def llm_credential_usage(credential_id: str, refresh: bool = False,
                 "reason": _no_reading_reason(outcome),
                 "windows": [], "fetched_at": None}
     return {**head, **found}
+
+
+# ── model prices ────────────────────────────────────────────────────────────────
+#
+# What a model costs on this install, over the shipped catalog (yaaf.core.prices).
+# The meter of every harness that prices its own runs reads it, so a model with
+# no price here or in the catalog cannot be hired onto one (R3). Setting one is
+# how a DeepSeek seat, an OpenRouter model, or a local server becomes hireable —
+# the last at zero, if the chairman's electricity is free.
+
+
+class ModelPriceIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    #: USD per million tokens. Zero is a price — a local server's.
+    input: float = Field(ge=0, le=10_000)
+    output: float = Field(ge=0, le=10_000)
+    cache_read: float = Field(default=0.0, ge=0, le=10_000)
+    cache_write: float = Field(default=0.0, ge=0, le=10_000)
+
+
+@router.get("/model-prices")
+def list_model_prices(session: Session = Depends(db)) -> list:
+    from yaaf.core import prices
+
+    return prices.table(session)
+
+
+@router.put("/model-prices/{model:path}")
+def put_model_price(model: str, body: ModelPriceIn, session: Session = Depends(db)) -> dict:
+    from yaaf.core.models import ModelPrice, utcnow
+    from yaaf.runtimes import catalog
+    from yaaf.server.api.admin import _audit
+
+    model = model.strip()
+    if not model or len(model) > 128:
+        raise HTTPException(status_code=422, detail="Name the model, as a seat names it")
+    row = session.get(ModelPrice, model) or ModelPrice(model=model)
+    row.input, row.output = body.input, body.output
+    row.cache_read, row.cache_write = body.cache_read, body.cache_write
+    row.updated_at = utcnow()
+    session.add(row)
+    session.flush()
+    _audit(session, None, "model_price.set", "model", model, body.model_dump())
+    # Which provider the name resolves to, said back: a typo in the provider
+    # part lands on the default provider, and the screen should show that.
+    return {"model": model, "provider": catalog.provider_of(model), **body.model_dump()}
+
+
+@router.delete("/model-prices/{model:path}")
+def delete_model_price(model: str, session: Session = Depends(db)) -> dict:
+    """Back to the catalog's price, or to none. A seat that needs one is not
+    moved: the lease refuses its next run with the reason (R3)."""
+    from yaaf.core.models import ModelPrice
+    from yaaf.server.api.admin import _audit
+
+    row = session.get(ModelPrice, model)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"no price of this install's own for {model}")
+    session.delete(row)
+    _audit(session, None, "model_price.clear", "model", model, {})
+    return {"model": model, "removed": True}

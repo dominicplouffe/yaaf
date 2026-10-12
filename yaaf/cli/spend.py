@@ -34,6 +34,8 @@ from yaaf.core.models import (
     TaskStatus,
     Team,
 )
+from yaaf.runtimes import catalog
+from yaaf.runtimes.providers import PROVIDERS
 from yaaf.runtimes.seats import seat_for
 from yaaf.server.contextpack import role_version_for
 from yaaf.server.dispatcher import heartbeat_only
@@ -234,6 +236,18 @@ def _report(session: Session, project: Project, since: datetime, window: str) ->
     if attributed:
         typer.echo(f"  ({_n(attributed)} runs predate runs.model; attributed via the agent's "
                    "role version)")
+    # 1b. By provider, once there is more than one: a seat on a second vendor's
+    # model is a decision about money, and this is where its bill shows.
+    provider_buckets: dict = {}
+    for run in runs:
+        model, _ = _run_model(run, model_by_agent)
+        seller = PROVIDERS.get(catalog.provider_of(model))
+        _add(provider_buckets, seller.label if seller else catalog.provider_of(model), run)
+    if len(provider_buckets) > 1:
+        _heading("Spend by provider")
+        typer.echo(_table(["provider", "runs", "tokens in", "tokens out", "usd"],
+                          [_row([label], bucket)
+                           for label, bucket in _by_spend(provider_buckets)]))
 
     # 2. Spend by team, and by agent.
     team_buckets: dict = {}

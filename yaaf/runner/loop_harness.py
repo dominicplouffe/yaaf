@@ -282,7 +282,8 @@ async def b_grep(args: dict) -> dict:
 async def b_bash(args: dict) -> dict:
     command = str(args.get("command", ""))
     timeout_ms = min(int(args.get("timeout") or BASH_TIMEOUT_MS), BASH_MAX_TIMEOUT_MS)
-    env = {k: v for k, v in os.environ.items() if k not in MODEL_CREDENTIAL_ENV}
+    hidden = {*MODEL_CREDENTIAL_ENV, base.PROVIDER.get("key_env")}
+    env = {k: v for k, v in os.environ.items() if k not in hidden}
     process = await asyncio.create_subprocess_exec(
         "bash", "-c", command, cwd=str(base.WORKSPACE), env=env,
         stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE,
@@ -505,8 +506,10 @@ class LoopDriver:
         return call
 
     def _bill(self, usage: base.AttemptResult, subtype: str) -> base.AttemptResult:
-        return dataclasses.replace(usage, cost_usd=base._priced(self.price, usage),
-                                   subtype=subtype)
+        """What a call cost: what the provider said it cost, where it says
+        (OpenRouter); otherwise the call priced at the model's price."""
+        cost = usage.cost_usd if usage.cost_usd is not None else base._priced(self.price, usage)
+        return dataclasses.replace(usage, cost_usd=cost, subtype=subtype)
 
     async def _run(self, call: ToolCall) -> ToolOutput:
         tool = (self.tools or {}).get(call.name)
@@ -519,8 +522,8 @@ class LoopDriver:
         return ToolOutput(call.id, text or "(no output)", is_error)
 
     async def attempt(self, prompt: str, resume: str | None = None):
-        if self.price is None:
-            raise Unpriced(f"{base.MODEL} has no price in yaaf's catalog, and this harness "
+        if self.price is None and not getattr(self.client, "reports_cost", False):
+            raise Unpriced(f"{base.MODEL} has no price on this install, and this harness "
                            "meters every call by it — a run nobody can price is a run the "
                            "budget cannot stop")
         if self.tools is None:
@@ -544,14 +547,17 @@ class LoopDriver:
             # The governor. Before the call: nothing starts once the cap is
             # spent, and the output is clamped to what is left. During it: the
             # call is abandoned the moment its prompt alone crosses the cap —
-            # the provider states the prompt's size before it writes a word. So
-            # what one call can overshoot by is bounded by its own prompt.
+            # where the provider states the prompt's size before it writes a
+            # word (Anthropic does; the OpenAI shape states usage only at the
+            # end). Either way what one call can overshoot by is bounded by its
+            # own prompt. A model metered by the provider's reported cost, with
+            # no price to clamp by, is stopped between calls only.
             room = self.max_usd - spent if self.max_usd > 0 else None
             if room is not None and room <= 0:
                 raise BudgetReached(f"per-run cap reached: ${spent:.4f} spent of "
                                     f"${self.max_usd:g} left for this attempt")
             max_tokens = MAX_OUTPUT_TOKENS
-            if room is not None:
+            if room is not None and self.price is not None and self.price["output"] > 0:
                 affordable = int(room / self.price["output"] * 1_000_000)
                 max_tokens = max(1, min(MAX_OUTPUT_TOKENS, affordable))
             reply: Reply | None = None
@@ -565,7 +571,8 @@ class LoopDriver:
                             reply = event
                             continue
                         stated = event
-                        if room is not None and base._priced(self.price, event) >= room:
+                        if (room is not None and self.price is not None
+                                and base._priced(self.price, event) >= room):
                             cut = True
                             break
             except Exception:
@@ -584,8 +591,14 @@ class LoopDriver:
             if reply is None:
                 raise RuntimeError(f"{self.client.name} stream ended without a reply")
             bill = self._bill(reply.usage, reply.stop)
-            spent += bill.cost_usd or 0.0
             yield bill
+            if bill.cost_usd is None:
+                # A provider that states costs, on a call it did not state one
+                # for, and no price to fall back on: the meter is blind, so the
+                # run stops rather than spend on it.
+                raise Unpriced(f"{self.client.name} stated no cost for a call, and "
+                               f"{base.MODEL} has no price on this install to meter it by")
+            spent += bill.cost_usd
             self.transcript.append(reply.turn)
             yield base.TraceLine({"type": "AssistantMessage", "model": reply.model,
                                   "stop": reply.stop,

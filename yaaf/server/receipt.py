@@ -49,6 +49,7 @@ from yaaf.core.models import (
     VerificationStatus,
     utcnow,
 )
+from yaaf.runtimes.providers import DEFAULT_PROVIDER, PROVIDERS
 from yaaf.server import policy
 
 #: A run that stopped without finishing. Money left the building and nothing
@@ -86,10 +87,20 @@ def _cost(session: Session, project_id: str) -> dict:
                LedgerEntry.kind != LedgerKind.REVENUE)
     ).all()
     runs = session.execute(
-        select(Run.id, Run.status).where(Run.project_id == project_id)
+        select(Run.id, Run.status, Run.provider).where(Run.project_id == project_id)
     ).all()
 
     early_ids = {r.id for r in runs if r.status in ENDED_EARLY}
+    # Which provider spent what — the whole point of a seat on a second one is
+    # that its cost is a decision, and a decision should be on the receipt. A
+    # run from before providers were recorded was Anthropic's.
+    provider_of = {r.id: r.provider or DEFAULT_PROVIDER for r in runs}
+    by_provider: dict[str, float] = {}
+    for e in entries:
+        if e.run_id in provider_of and e.kind == LedgerKind.MODEL_USAGE:
+            label = PROVIDERS[provider_of[e.run_id]].label \
+                if provider_of[e.run_id] in PROVIDERS else provider_of[e.run_id]
+            by_provider[label] = by_provider.get(label, 0.0) + (e.usd or 0.0)
     # A run that no longer exists still spent its money, so unattributed rows
     # stay in the total and simply cannot be blamed on a dead run.
     usd_early = sum(e.usd or 0.0 for e in entries if e.run_id in early_ids)
@@ -104,6 +115,7 @@ def _cost(session: Session, project_id: str) -> dict:
         "tokens_in": sum((e.tokens_in or 0) + (e.cache_creation_tokens or 0)
                          + (e.cache_read_tokens or 0) for e in entries),
         "tokens_out": sum(e.tokens_out or 0 for e in entries),
+        "by_provider": {label: round(usd, 2) for label, usd in sorted(by_provider.items())},
     }
 
 
@@ -257,6 +269,9 @@ def render(data: dict) -> str:
         left.append(f'{_money(cost["usd_on_runs_that_died"], billing_mode)} of that bought nothing')
     if cost["external_usd"]:
         left.append(f'{_money(cost["external_usd"], billing_mode)} spent in the real world')
+    if len(cost.get("by_provider") or {}) > 1:
+        left += [f'{_money(usd, billing_mode)} on {label}'
+                 for label, usd in cost["by_provider"].items()]
     left.append(f'{cost["tokens_in"]:,} in / {cost["tokens_out"]:,} out')
 
     right = [f'{req["met"]} of {accepted} requirements met']

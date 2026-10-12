@@ -314,6 +314,9 @@ export interface Dashboard {
   github_repo: string | null;
   billing_secret_id: string | null;
   billing_secret_name: string | null;
+  /** What pays each provider, the billing credential first. Never a value. */
+  credentials?: { provider: string; label: string; credential_id: string; name: string;
+                  bills: string; billing: boolean }[];
   /** Drought-clock anchors: the UI counts toward the refusal. */
   created_at: string;
   last_countable_evidence_at: string | null;
@@ -963,6 +966,8 @@ export interface ProjectBundle {
         never travels). The form resolves either to a real credential on arrival. */
     billing_secret_id?: string | null;
     billing_secret_name?: string | null;
+    /** What pays each other provider, by credential name: {deepseek: "DeepSeek key"}. */
+    credential_names?: Record<string, string>;
     ceo_role_slug: string;
     ceo_name: string;
     ceo_daily_at?: string | null;

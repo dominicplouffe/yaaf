@@ -5,6 +5,16 @@ Anthropic takes an API key, metered in dollars, or a Claude subscription token,
 metered in tokens — and it knows the variable it is injected as, the sentence a
 malformed value earns, and how it bills. Everything that used to hardcode the
 two Anthropic modes reads them from here instead.
+
+Two names carry the meter for every provider: a kind billed in dollars is
+`api_key`, a kind metered in tokens is `subscription`, whatever the vendor
+calls it. `Project.billing_mode` is read as the project's meter in a dozen
+places, and one project has one meter (R4) — so the mode *is* the meter, and a
+second provider is a second row here, never a third mode everywhere.
+
+A model the catalog does not list names its provider: `openrouter/qwen/…`,
+`custom/llama3.1:8b`. That is how a seat on one of hundreds of models behind
+one credential resolves without a row for each (yaaf.runtimes.catalog).
 """
 
 from __future__ import annotations
@@ -35,11 +45,23 @@ class Provider:
     kinds: tuple[CredentialKind, ...]
     #: What `stakes: high` lifts a producing seat to — within this provider,
     #: never across one. A dial labelled "how much this matters" that moved a
-    #: seat to another vendor would be two decisions wearing one label.
-    craft_model: str
+    #: seat to another vendor would be two decisions wearing one label. None
+    #: for a provider with no catalog of its own to rank: it lifts nothing.
+    craft_model: str | None
     #: Lower-case fragments that mean the credential is dead rather than the
     #: run unlucky. The daemon pauses a project on three in a row.
     failure_markers: tuple[str, ...]
+    #: Where an API harness reaches it (the OpenAI-compatible chat API). None
+    #: for a provider reached otherwise, or whose address is the credential's.
+    base_url: str | None = None
+    #: The address is part of the credential — a server the chairman runs.
+    credential_base_url: bool = False
+    #: Whether its API searches the web itself, for yaaf's loop to offer. A
+    #: provider that does not cannot honour a role's `web` grant on the loop.
+    search: bool = False
+    #: Whether its API states each call's cost. Then a model needs no price in
+    #: the catalog to be metered: the bill is reported, like a CLI's.
+    reports_cost: bool = False
 
     def kind(self, mode: str | None) -> CredentialKind:
         """The kind a mode names. A mode nobody registered is read as the first
@@ -84,6 +106,8 @@ ANTHROPIC = Provider(
                        shape_error=_anthropic_subscription_shape),
     ),
     craft_model="claude-opus-5-5",
+    # The Messages API's own server tool (yaaf's loop offers it as web_search).
+    search=True,
     failure_markers=(
         "not logged in", "please run /login", "invalid x-api-key",
         "authentication_error", "invalid bearer token", "oauth token has expired",
@@ -91,7 +115,68 @@ ANTHROPIC = Provider(
     ),
 )
 
-PROVIDERS: dict[str, Provider] = {p.name: p for p in (ANTHROPIC,)}
+
+def _no_shape(plaintext: str) -> str | None:
+    """A vendor whose keys have no stable shape to check. The live check is
+    the first call, and a dead key is read as `auth` there like any other."""
+    return None
+
+
+def _not_anthropic(plaintext: str) -> str | None:
+    if plaintext.startswith("sk-ant-"):
+        return ("that is an Anthropic credential — add it under the Anthropic "
+                "provider, not this one")
+    return None
+
+
+#: Reached through yaaf's own loop, on the OpenAI-compatible chat API. Each is
+#: a base URL, a credential kind and a few facts; the client is shared
+#: (docs/RUNTIMES.md, M3). Prices are not shipped for any of them: yaaf ships
+#: only prices it could check against the provider's own published list, and
+#: an install sets the rest in Settings → Model prices.
+DEEPSEEK = Provider(
+    name="deepseek",
+    label="DeepSeek",
+    default_harness="openai_compatible",
+    kinds=(CredentialKind(mode="api_key", meter="usd", env_var="DEEPSEEK_API_KEY",
+                          bills="DeepSeek API key, billed in USD",
+                          shape_error=_not_anthropic),),
+    craft_model="deepseek-reasoner",
+    failure_markers=("authentication fails", "insufficient balance"),
+    base_url="https://api.deepseek.com/v1",
+)
+
+OPENROUTER = Provider(
+    name="openrouter",
+    label="OpenRouter",
+    default_harness="openai_compatible",
+    kinds=(CredentialKind(mode="api_key", meter="usd", env_var="OPENROUTER_API_KEY",
+                          bills="OpenRouter API key, billed in USD",
+                          shape_error=_not_anthropic),),
+    # Hundreds of models from every vendor behind one key: there is no one
+    # ladder to climb, so the stakes dial leaves an OpenRouter seat where it is.
+    craft_model=None,
+    failure_markers=("no auth credentials found", "insufficient credits"),
+    base_url="https://openrouter.ai/api/v1",
+    # It states each call's cost, so its models need no row of their own.
+    reports_cost=True,
+)
+
+CUSTOM = Provider(
+    name="custom",
+    label="Custom endpoint (OpenAI-compatible)",
+    default_harness="openai_compatible",
+    kinds=(CredentialKind(mode="api_key", meter="usd", env_var="CUSTOM_LLM_API_KEY",
+                          bills="Custom endpoint key, priced in USD at the rates set in "
+                                "Settings",
+                          shape_error=_no_shape),),
+    craft_model=None,
+    failure_markers=("custom endpoint rejected the credential",),
+    # A local Ollama or vLLM server: its address is the chairman's to give.
+    credential_base_url=True,
+)
+
+PROVIDERS: dict[str, Provider] = {p.name: p for p in (ANTHROPIC, DEEPSEEK, OPENROUTER, CUSTOM)}
 
 #: Every credential row and every model the catalog does not know belongs here.
 #: Until a second provider exists that is not a guess but the only answer, and

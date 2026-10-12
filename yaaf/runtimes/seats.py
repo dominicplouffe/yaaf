@@ -74,12 +74,26 @@ def _withheld(tool_permissions: dict | None) -> set[str]:
     return withheld
 
 
+def _meters_usd(found, provider: str, credential) -> bool:
+    """Whether this seat's spend is kept in dollars: by its credential when
+    one is known, else by whether the harness could take anything else."""
+    if credential is not None:
+        return providers.provider(credential[0]).kind(credential[1]).meter == "usd"
+    kinds = [k for k in providers.provider(provider).kinds
+             if f"{provider}:{k.mode}" in found.accepts]
+    return not kinds or all(k.meter == "usd" for k in kinds)
+
+
 def refusal(harness: str | None, model: str, tool_permissions: dict | None,
-            credential: tuple[str | None, str | None] | None = None) -> str | None:
+            credential: tuple[str | None, str | None] | None = None,
+            priced: bool | None = None) -> str | None:
     """Why a seat on `harness` running `model` under these grants cannot run,
     paying with `credential` — (provider, mode), when one is known — or None
-    when it can. Every rule here reads the registries and none names a
-    harness (docs/RUNTIMES.md, "The rules this adds")."""
+    when it can. `priced` is whether the install can meter `model` in dollars
+    (yaaf.core.prices.covered, which reads the install's own prices); a
+    caller with no database reads the shipped catalog. Every rule here reads
+    the registries and none names a harness (docs/RUNTIMES.md, "The rules this
+    adds")."""
     provider = catalog.provider_of(model)
     name = harness or providers.provider(provider).default_harness
     found = HARNESSES.get(name)
@@ -96,12 +110,25 @@ def refusal(harness: str | None, model: str, tool_permissions: dict | None,
         grant = unwithholdable[0]
         return (f"{found.label} cannot run without {grant}, and this role does not "
                 f"grant it — grant {grant} on the role, or run this seat on another harness")
+    # R2, the other way round — a grant the harness cannot honour. On yaaf's
+    # loop the web is two tools, and search is the provider's: one that runs
+    # none cannot give a role that grants `web` what it was hired with.
+    # Refused rather than quietly halved (docs/RUNTIMES.md, open question 6).
+    seller = providers.provider(provider)
+    if (found.family == "loop" and (tool_permissions or {}).get("web")
+            and not seller.search):
+        return (f"{found.label} cannot search the web on {seller.label}, and this role "
+                f"grants web — run this seat on a model whose provider searches, or "
+                f"leave web off the role")
     # R3 — a model the harness would have to price, with no price to price it
-    # by. A run nobody can price is a run the budget cannot stop.
-    if found.cost == "priced" and catalog.price(model) is None:
-        return (f"{found.label} prices every run from yaaf's model catalog, and "
-                f"{model} has no price there — add one, or run this seat on a harness "
-                f"that reports its own cost")
+    # by. A run nobody can price is a run the budget cannot stop. Only under a
+    # dollar meter: a credential metered in tokens is stopped in tokens.
+    if priced is None:
+        priced = catalog.price(model) is not None or seller.reports_cost
+    if found.cost == "priced" and not priced and _meters_usd(found, provider, credential):
+        return (f"{found.label} prices every run, and {model} has no price on this "
+                f"install — set one in Settings → Model prices, or run this seat on a "
+                f"harness that reports its own cost")
     # R1 — a credential the harness cannot authenticate with.
     if credential is not None and found.accepts:
         cred_provider, mode = credential

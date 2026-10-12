@@ -1,24 +1,27 @@
 """The models a seat can be hired on: how they rank, what they cost, and what
 the API accepts for each.
 
-Data, not logic. A model this file does not list can still be named on a role
-for a harness that reports its own cost — it ranks 0, so `stakes: high` lifts
-it rather than leaving it, and it is served by the default provider. A harness
-that *prices* runs itself refuses one (R3, yaaf.runtimes.seats): a run nobody
-can price is a run the budget cannot stop.
+Data, not logic. A model this file does not list can still be named on a role.
+It ranks 0, so `stakes: high` lifts it rather than leaving it, and it is
+served by the provider its name starts with — `openrouter/qwen/qwen3-coder`,
+`custom/llama3.1:8b` — or by the default provider when it names none. A harness
+that *prices* runs itself refuses one with no price (R3, yaaf.runtimes.seats):
+a run nobody can price is a run the budget cannot stop.
 
-Prices are Anthropic's published list prices, per million tokens, as of the
-date beside them. They are checked rather than trusted: every run on a harness
-that reports its own bill is also priced from this table, and a model whose
-two figures drift apart is named on the health checklist of every project
-this table meters (docs/RUNTIMES.md).
+Prices here are Anthropic's published list prices, per million tokens, as of
+the date beside them — the only ones yaaf could check against the vendor's own
+list. Every other provider's models ship unpriced, and an install prices them
+in Settings (yaaf.core.prices), which wins over this table for any model. They
+are checked rather than trusted: every run on a harness that reports its own
+bill is also priced, and a model whose two figures drift apart is named on the
+health checklist of every project the price meters (docs/RUNTIMES.md).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from yaaf.runtimes.providers import DEFAULT_PROVIDER
+from yaaf.runtimes.providers import DEFAULT_PROVIDER, PROVIDERS
 
 
 @dataclass(frozen=True)
@@ -79,6 +82,10 @@ MODELS: tuple[Model, ...] = (
           web_tools="20260209"),
     Model("claude-fable-5-1", "anthropic", 6,
           Price(10.00, 50.00, 0.25, 12.50, 20.00, _AS_OF)),
+    # The names DeepSeek's API keeps pointed at its current chat and reasoning
+    # models. Unpriced, for the reason above.
+    Model("deepseek-chat", "deepseek", 1, effort=False),
+    Model("deepseek-reasoner", "deepseek", 2, effort=False),
 )
 
 _BY_ID = {m.id: m for m in MODELS}
@@ -99,7 +106,17 @@ def tier(model_id: str | None) -> int:
 
 def provider_of(model_id: str | None) -> str:
     found = model(model_id)
-    return found.provider if found else DEFAULT_PROVIDER
+    if found:
+        return found.provider
+    prefix, _, rest = (model_id or "").partition("/")
+    return prefix if rest and prefix in PROVIDERS else DEFAULT_PROVIDER
+
+
+def api_name(model_id: str) -> str:
+    """What the provider's own API calls the model: the name without the
+    provider in front of it, where the name carries one."""
+    prefix, _, rest = model_id.partition("/")
+    return rest if rest and prefix in PROVIDERS and model(model_id) is None else model_id
 
 
 def price(model_id: str | None) -> Price | None:
