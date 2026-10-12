@@ -66,6 +66,7 @@ from yaaf.core.models import (
     utcnow,
 )
 from yaaf.server import acting, activity, policy, typing_state
+from yaaf.server.contextpack import _speaker
 from yaaf.server.deps import RunContext, db, run_auth
 from yaaf.server.notify import Attention, chairman_notify
 from yaaf.server.policy import Refusal
@@ -851,6 +852,7 @@ def read_messages(
             "id": m.id,
             "from_agent": m.sender_agent_id,
             "from_user": m.sender_user_id,
+            **_speaker(session, ctx.project.id, m.sender_user_id),
             "thread_id": m.thread_id,
             "body": m.body,
             "at": m.created_at.isoformat(),
@@ -940,7 +942,7 @@ def file_directive(
     cited = policy.check_directive_citation(session, ctx.project, body.from_message_id)
     try:
         amendments = propose_amendment(
-            session, ctx.project.id, ctx.project.chairman_user_id,
+            session, ctx.project.id, cited.sender_user_id,
             f"{body.reason} [filed by the CEO from the chairman's boardroom message "
             f"{cited.id} at {cited.created_at.isoformat(timespec='minutes')}]",
             body.changes,
@@ -1045,8 +1047,10 @@ def _file_scope_directive(body: DirectiveIn, ctx: RunContext, session: Session) 
               f"{cited.created_at.isoformat(timespec='minutes')}]")
     result, detail = _execute_scope_action(
         session, ctx, action, reason,
-        actor=f"user:{ctx.project.chairman_user_id}",
-        by_user=ctx.project.chairman_user_id,
+        # Whose order it was — the chairman's or a co-chair's — so the plan
+        # names the person who gave it rather than whoever holds the chair.
+        actor=f"user:{cited.sender_user_id}",
+        by_user=cited.sender_user_id,
         notify_ceo=True,
     )
     session.add(

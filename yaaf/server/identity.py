@@ -439,6 +439,14 @@ def person_auth(
     return _person(user, "session", session_id=row.id)
 
 
+def socket_person(session: Session, cookie: str | None) -> Person | None:
+    row = read_session(session, cookie)
+    user = session.get(User, row.user_id) if row is not None else None
+    if row is None or user is None or user.deactivated_at is not None:
+        return None
+    return _person(user, "session", session_id=row.id)
+
+
 def socket_refusal(session: Session, cookie: str | None, origin: str | None,
                    host: str | None) -> str | None:
     """Why a live-update socket may not open, or None when it may.
@@ -449,9 +457,7 @@ def socket_refusal(session: Session, cookie: str | None, origin: str | None,
     """
     if not origin_allowed(origin, host):
         return "a live socket has to be opened by this install's own pages"
-    row = read_session(session, cookie)
-    user = session.get(User, row.user_id) if row is not None else None
-    if row is None or user is None or user.deactivated_at is not None:
+    if socket_person(session, cookie) is None:
         return "sign in first"
     return None
 

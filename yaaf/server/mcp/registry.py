@@ -14,6 +14,8 @@ from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
 
+from yaaf.server import acting
+from yaaf.server.mcp import auth
 from yaaf.server.mcp.auth import SCOPES, Principal, ToolRefusal
 
 
@@ -74,7 +76,17 @@ def call(principal: Principal, session: Session, name: str, arguments: dict) -> 
     tool = TOOLS.get(name)
     if tool is None or not principal.holds(tool.scope):
         raise KeyError(name)
-    return tool.handler(principal, session, arguments or {})
+    # Its scope rides along to `resolve_project`, which turns it into the role
+    # the client's person needs on the project being touched. And the person,
+    # via this client, is the actor for everything the call reads or records —
+    # reads included, so a briefing marked read through a model is its
+    # person's mark and nobody else's.
+    token = auth._TOOL_SCOPE.set(tool.scope)
+    try:
+        with acting.acting(acting.person(principal.user_id, f"mcp:{principal.name}")):
+            return tool.handler(principal, session, arguments or {})
+    finally:
+        auth._TOOL_SCOPE.reset(token)
 
 
 def required(arguments: dict, key: str) -> str:

@@ -304,7 +304,12 @@ def make_project(
     assert response.status_code == 200, response.text
     project = response.json()
     if start:
-        started = client.post(f"/admin/projects/{project['id']}/start", headers=ADMIN)
+        # A project set up for somebody else is theirs to start: the suite's
+        # chair is the instance admin, which may found a project for a
+        # colleague and then decides nothing on it.
+        chair = body["chairman_email"]
+        headers = ADMIN if chair == CHAIR_EMAIL else headers_of(person(chair))
+        started = client.post(f"/admin/projects/{project['id']}/start", headers=headers)
         assert started.status_code == 200, started.text
     return project
 

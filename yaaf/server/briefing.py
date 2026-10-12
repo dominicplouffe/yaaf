@@ -258,10 +258,16 @@ def _aware(dt: datetime | None) -> datetime | None:
 
 
 def _member(session: Session, project: Project) -> ProjectMember | None:
+    """Whose mark: the person reading, when somebody is — each member's
+    "since you were last here" is their own — and the chairman's when nobody is,
+    which is the janitor composing the daily email it sends him."""
+    from yaaf.server import acting
+
+    reader = acting.user_id() or project.chairman_user_id
     return session.execute(
         select(ProjectMember).where(
             ProjectMember.project_id == project.id,
-            ProjectMember.user_id == project.chairman_user_id,
+            ProjectMember.user_id == reader,
         )
     ).scalar_one_or_none()
 
@@ -285,9 +291,9 @@ def window_start(session: Session, project: Project) -> tuple[datetime, str]:
 
 
 def mark_read(session: Session, project: Project, at: datetime | None = None) -> bool:
-    """Stamp the chairman's mark. Returns False when the project has no member
-    row to stamp — an install seeded before members existed, which must not
-    500 a page that is only trying to be helpful."""
+    """Stamp the reader's mark. Returns False when they have no member row to
+    stamp — an instance admin reading a project they are not on, whose having
+    looked must not move anybody else's window."""
     member = _member(session, project)
     if member is None:
         return False
@@ -1358,7 +1364,8 @@ def project_briefing(session: Session, project: Project,
 
 
 def desk_briefing(session: Session, since: datetime | None = None,
-                  hours: float | None = None) -> dict:
+                  hours: float | None = None,
+                  projects: list[Project] | None = None) -> dict:
     """Every live project, each on its own window.
 
     Per-project windows rather than one shared clock, because the mark is per
@@ -1370,12 +1377,11 @@ def desk_briefing(session: Session, since: datetime | None = None,
     forced = since if since is not None else (
         now - timedelta(hours=hours) if hours else None)
     TERMINAL = (ProjectStatus.STOPPED, ProjectStatus.COMPLETED)
-    out = []
-    for project in session.execute(
-        select(Project).where(Project.status.not_in(TERMINAL))
-        .order_by(Project.created_at)
-    ).scalars():
-        out.append(project_briefing(session, project, since=forced, until=now))
+    if projects is None:
+        projects = list(session.execute(
+            select(Project).order_by(Project.created_at)).scalars())
+    out = [project_briefing(session, project, since=forced, until=now)
+           for project in projects if project.status not in TERMINAL]
     return {
         "as_of": now.isoformat(),
         "forced_window": forced.isoformat() if forced else None,

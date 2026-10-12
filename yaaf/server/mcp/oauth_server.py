@@ -343,8 +343,9 @@ def _consent_form(session: Session, user: User, params: dict) -> str:
     <form method="post" action="/oauth/authorize">
       {_hidden(params)}
       <h3>What it may do</h3>{scope_rows}
-      <p class="muted">On every project you chair, including ones you found
-      later — there is no project list to keep in step here. Untick anything
+      <p class="muted">On every project you are a member of, including ones
+      you join later — reading any of them, deciding only where you chair or
+      co-chair. There is no project list to keep in step here. Untick anything
       this client does not need. Every write it makes is recorded as
       machine-mediated, and you can revoke it at any time with
       <code>yaaf mcp-token revoke</code>.</p>
@@ -356,7 +357,7 @@ def _consent_form(session: Session, user: User, params: dict) -> str:
 
 def _describe(scope: str) -> str:
     return {
-        "read": "see every project you chair, its plan, spend, work and proof",
+        "read": "see every project you are on: its plan, spend, work and proof",
         "steer": "speak to the CEO, decide approvals, accept or cut scope, sign dates",
         "create": "create new projects and clone existing ones",
         "configure": "change settings, teams, data sources and credentials",

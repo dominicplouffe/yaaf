@@ -226,3 +226,16 @@ def test_a_link_the_browser_follows_by_itself_is_signed_in(client):
     served = client.get(f"/observe/evidence/{evidence['id']}/snapshot")
     assert served.status_code == 200
     assert served.text == page.decode()
+
+
+def test_another_site_cannot_sign_your_browser_in(client):
+    """Login CSRF: a page elsewhere posts its own owner's password to this
+    install, and your browser is now signed in as them — reading what you type
+    into an account somebody else controls."""
+    person(CHAIR_EMAIL, password=PASSWORD)
+    body = {"email": CHAIR_EMAIL, "password": PASSWORD}
+    assert client.post("/auth/login", json=body,
+                       headers={"Origin": "https://evil.example"}).status_code == 403
+    assert client.post("/auth/login", json=body, headers=ORIGIN).status_code == 200
+    # The CLI sends no Origin, and that is allowed: it is not a browser.
+    assert client.post("/auth/login", json=body).status_code == 200

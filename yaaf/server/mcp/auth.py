@@ -18,6 +18,7 @@ projects its person may see, read on every call.
 
 from __future__ import annotations
 
+from contextvars import ContextVar
 from dataclasses import dataclass
 
 from fastapi import Depends, HTTPException, Request
@@ -27,9 +28,9 @@ from sqlalchemy.orm import Session
 
 from yaaf.core.config import settings
 from yaaf.core.db import session_factory
-from yaaf.core.models import McpClient, McpToken, Project, utcnow
+from yaaf.core.models import McpClient, McpToken, Project, User, utcnow
 from yaaf.core.tokens import hash_token
-from yaaf.server import identity
+from yaaf.server import authority, identity
 
 #: Smallest to largest. `read` is implied by every other scope: a client that
 #: may steer a project can obviously look at it, and a grant that had to list
@@ -175,31 +176,60 @@ def mcp_auth(
     )
 
 
-def chaired_projects(session: Session, principal: Principal) -> list[Project]:
+#: The tool being dispatched has a scope, and its scope says how much standing
+#: on a project it needs: reading is for any member, steering and configuring
+#: for the chairman and co-chairs. Bound by `registry.call` for the length of
+#: the call, so a new steer tool that forgets to ask still asks.
+_TOOL_SCOPE: ContextVar[str | None] = ContextVar("yaaf_mcp_tool_scope", default=None)
+LEVEL_FOR_SCOPE = {
+    "read": authority.Level.READ,
+    "steer": authority.Level.STEER,
+    "configure": authority.Level.STEER,
+    "create": authority.Level.READ,
+}
+
+
+def reachable_projects(session: Session, principal: Principal,
+                       level: authority.Level = authority.Level.READ) -> list[Project]:
     """Every project this principal may see, in creation order.
+
+    Its person's memberships, read on every call — so reach tracks membership
+    in both directions with nothing to reissue. Not the instance admin's
+    read-everything: that is a person running the box, and a machine acting for
+    them stays on the projects they are actually on.
 
     One function rather than the query written at each call site, because the
     gate has to hold on payloads nobody wrote for this surface — the desk is a
     cross-project rollup, and the day it stops passing through here is the day
-    it lists a project the client cannot open. Read on every call, so reach
-    tracks chairmanship in both directions with nothing to reissue.
+    it lists a project the client cannot open.
     """
-    query = select(Project).where(Project.chairman_user_id == principal.user_id)
-    return list(session.execute(query.order_by(Project.created_at)).scalars())
+    user = session.get(User, principal.user_id)
+    if user is None or user.deactivated_at is not None:
+        return []
+    return authority.reachable(session, principal.user_id, False, level)
 
 
-def resolve_project(session: Session, principal: Principal, ref: str) -> Project:
+def resolve_project(session: Session, principal: Principal, ref: str,
+                    level: authority.Level | None = None) -> Project:
     """Turn an id or slug into a project this principal may act on.
 
     Every project-addressed tool goes through here, including ones that were
     handed an id indirectly — a run id, an approval id, a requirement key read
-    out of some other project's page. A project another chairman runs is
+    out of some other project's page. A project its person is not on is
     refused in the same words as one that does not exist, so the surface does
-    not become an oracle for which projects other people run.
+    not become an oracle for which projects other people run; one they only
+    observe is named, with the role a steer tool would need.
     """
-    reachable = chaired_projects(session, principal)
+    need = level or LEVEL_FOR_SCOPE.get(_TOOL_SCOPE.get() or "", authority.Level.READ)
+    reachable = reachable_projects(session, principal)
     for project in reachable:
         if ref in (project.id, project.slug):
+            have = authority.user_level(session, principal.user_id, project) or 0
+            if have < need:
+                raise ToolRefusal(
+                    f"on {project.slug} this client's person is "
+                    f"{authority.role_of(session, principal.user_id, project) or 'not a member'}"
+                    f", and only {authority.HOLDERS[need]} may do this")
             return project
     raise ToolRefusal(
         f"no project {ref!r} is reachable by this client. It can see: "

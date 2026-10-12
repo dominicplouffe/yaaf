@@ -81,9 +81,13 @@ def test_whoever_chairs_a_live_project_is_handed_off_it_first(client):
                            headers=ADMIN)
     assert refused.status_code == 409
     assert "theirs" in refused.json()["detail"]
-    # A finished project needs nobody to decide on it.
+    # A finished project needs nobody to decide on it — and stopping it is
+    # theirs, not the instance admin's.
     assert client.post(f"/admin/projects/{project['id']}/stop",
-                       json={"reason": "wound down"}, headers=ADMIN).status_code == 200
+                       json={"reason": "wound down"}, headers=ADMIN).status_code == 403
+    assert client.post(f"/admin/projects/{project['id']}/stop",
+                       json={"reason": "wound down"},
+                       headers=headers_of(founder)).status_code == 200
     assert client.patch(f"/admin/users/{founder['id']}", json={"active": False},
                         headers=ADMIN).status_code == 200
 

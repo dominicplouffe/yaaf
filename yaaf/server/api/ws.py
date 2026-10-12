@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 from datetime import datetime
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -40,6 +41,7 @@ from yaaf.core.models import (
     Message,
     Notice,
     Project,
+    ProjectMember,
     Run,
     Task,
 )
@@ -71,7 +73,8 @@ def _change_stamp(project_id: str) -> dict | None:
     equal means "nothing the UI cares about moved"; the client treats any
     difference as "poll now". Returns None for an unknown project."""
     with session_factory()() as session:
-        if session.get(Project, project_id) is None:
+        project = session.get(Project, project_id)
+        if project is None:
             return None
         # Run/approval STATUS changes mutate rows in place (no new row, no new
         # created_at), so those tables get status-shaped extras.
@@ -111,9 +114,17 @@ def _change_stamp(project_id: str) -> dict | None:
             .group_by(Agent.status)
             .all()
         )
+        # Who sits where. Membership mutates rows in place and has no clock of
+        # its own, so the stamp carries the whole (small) seating — a co-chair
+        # removed in one tab is a notice and a panel that change in the other.
+        seating = sorted(session.query(ProjectMember.user_id, ProjectMember.role)
+                         .filter(ProjectMember.project_id == project_id).all())
+        members = hashlib.sha256(
+            repr((project.chairman_user_id, seating)).encode()).hexdigest()[:16]
         return {
             "type": "stamp",
             "project": project_id,
+            "members": members,
             "agents": _count_max(session, Agent, Agent.created_at, project_id)
             + [agent_statuses],
             "messages": _count_max(session, Message, Message.created_at, project_id),
@@ -151,9 +162,17 @@ async def _stamp_loop(websocket: WebSocket, project_id: str) -> None:
 def _may_watch(cookie: str | None, origin: str | None, host: str | None,
                project_id: str) -> str | None:
     """Why this socket may not open, or None when it may."""
+    from yaaf.server import authority
+
     with session_factory()() as session:
         reason = identity.socket_refusal(session, cookie, origin, host)
-        session.commit()  # the session's last_seen_at, if it moved
+        if reason is None:
+            # The change feed is a project's, so it is its readers' — refused in
+            # the words the socket uses for a project that does not exist.
+            person = identity.socket_person(session, cookie)
+            project = session.get(Project, project_id)
+            if project is None or not authority.person_level(session, person, project):
+                reason = "unknown project"
         return reason
 
 

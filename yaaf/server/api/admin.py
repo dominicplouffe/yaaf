@@ -95,6 +95,24 @@ log = logging.getLogger("yaaf.admin")
 router = APIRouter(dependencies=[Depends(signed_in)])
 
 
+def _decider(project: Project) -> str:
+    """Who is deciding: the person this request or tool call is bound to.
+
+    It used to be `project.chairman_user_id` at every one of these sites, which
+    was true while one credential named nobody and so could only mean "the
+    chair". With co-chairs it names the wrong person, so it reads the actor.
+    Falling back to the chair is the old behaviour kept for a door that forgot
+    to bind anybody — said loudly, because that door is a bug, and its audit
+    row is stamped unattributed besides, which the suite refuses.
+    """
+    user_id = acting.user_id()
+    if user_id is None:
+        log.error("a decision on %s was made with no person bound; recording the chair",
+                  project.id)
+        return project.chairman_user_id
+    return user_id
+
+
 def _audit(session: Session, project_id: str | None, action: str, entity: str,
            entity_id: str | None, detail: dict | None = None) -> None:
     session.add(
@@ -251,6 +269,152 @@ def update_user(user_id: str, body: UserPatch, session: Session = Depends(db)) -
     return _user_row(user)
 
 
+# ── who is on a project ─────────────────────────────────────────────────────────
+
+
+class MemberIn(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
+    role: Literal["co_chair", "observer"]
+
+
+class MemberPatch(BaseModel):
+    role: Literal["co_chair", "observer"]
+
+
+class ChairIn(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
+
+
+def _member_rows(session: Session, project: Project) -> list[dict]:
+    """The chairman first, then co-chairs, then observers — the order of who
+    may do the most, which is the order a reader asks about."""
+    order = {authority.CHAIRMAN: 0, authority.CO_CHAIR: 1, authority.OBSERVER: 2}
+    rows = []
+    for user in session.execute(
+        select(User).join(ProjectMember, User.id == ProjectMember.user_id)
+        .where(ProjectMember.project_id == project.id).order_by(ProjectMember.id)
+    ).scalars():
+        role = authority.role_of(session, user.id, project)
+        if role is None:
+            continue
+        rows.append({"user_id": user.id, "email": user.email,
+                     "display_name": user.display_name, "role": role,
+                     "active": user.deactivated_at is None})
+    return sorted(rows, key=lambda r: order[r["role"]])
+
+
+@router.get("/projects/{project_id}/members", dependencies=[authority.READ])
+def list_members(project_id: str, session: Session = Depends(db)) -> list[dict]:
+    return _member_rows(session, _get_project(session, project_id))
+
+
+@router.post("/projects/{project_id}/members", dependencies=[authority.CHAIR])
+def add_member(project_id: str, body: MemberIn, session: Session = Depends(db)) -> dict:
+    """Put somebody who already has an account on this project.
+
+    The chairman's alone: co-chairs decide as peers, but only the chairman
+    decides who decides (docs/AUTH.md). Accounts themselves are an instance
+    admin's to create, because a box's people share its credentials and budget.
+    """
+    from yaaf.server.identity import find_user
+
+    project = _get_project(session, project_id)
+    user = find_user(session, body.email)
+    if user is None:
+        raise HTTPException(
+            status_code=404,
+            detail="nobody with that email has an account here; ask an instance admin "
+                   "to invite them, then add them")
+    if user.deactivated_at is not None:
+        raise HTTPException(status_code=409, detail=f"{user.email}'s account is deactivated")
+    current = authority.role_of(session, user.id, project)
+    if current is not None:
+        raise HTTPException(status_code=409,
+                            detail=f"{user.email} is already this project's "
+                                   f"{current.replace('_', '-')}")
+    stale = session.execute(select(ProjectMember).where(
+        ProjectMember.project_id == project.id, ProjectMember.user_id == user.id)
+    ).scalar_one_or_none()
+    if stale is not None:
+        stale.role = body.role
+    else:
+        session.add(ProjectMember(project_id=project.id, user_id=user.id, role=body.role))
+    _audit(session, project.id, "project.member_add", "user", user.id,
+           {"email": user.email, "role": body.role})
+    session.flush()
+    return {"members": _member_rows(session, project)}
+
+
+def _member_or_404(session: Session, project: Project, user_id: str) -> ProjectMember:
+    row = session.execute(select(ProjectMember).where(
+        ProjectMember.project_id == project.id, ProjectMember.user_id == user_id)
+    ).scalar_one_or_none()
+    if row is None or authority.role_of(session, user_id, project) is None:
+        raise HTTPException(status_code=404, detail="not a member of this project")
+    if user_id == project.chairman_user_id:
+        raise HTTPException(
+            status_code=409,
+            detail="this is the chairman; hand the chair to somebody else first")
+    return row
+
+
+@router.patch("/projects/{project_id}/members/{user_id}", dependencies=[authority.CHAIR])
+def change_member(project_id: str, user_id: str, body: MemberPatch,
+                  session: Session = Depends(db)) -> dict:
+    project = _get_project(session, project_id)
+    row = _member_or_404(session, project, user_id)
+    if row.role != body.role:
+        _audit(session, project.id, "project.member_role", "user", user_id,
+               {"from": row.role, "to": body.role})
+        row.role = body.role
+    return {"members": _member_rows(session, project)}
+
+
+@router.delete("/projects/{project_id}/members/{user_id}", dependencies=[authority.CHAIR])
+def remove_member(project_id: str, user_id: str, session: Session = Depends(db)) -> dict:
+    """Off the project, on their next click: authority is read from this table
+    on every request, so there is nothing of theirs left to revoke."""
+    project = _get_project(session, project_id)
+    row = _member_or_404(session, project, user_id)
+    _audit(session, project.id, "project.member_remove", "user", user_id, {"role": row.role})
+    session.delete(row)
+    session.flush()
+    return {"members": _member_rows(session, project)}
+
+
+@router.post("/projects/{project_id}/chairman", dependencies=[authority.IN_HANDLER])
+def hand_on_the_chair(project_id: str, body: ChairIn, session: Session = Depends(db),
+                      person: Person = Depends(person_auth)) -> dict:
+    """Make somebody else this project's chairman. The outgoing one stays on as
+    a co-chair — a change of who is accountable, not a removal.
+
+    The chairman may, and so may an instance admin: the break-glass for a
+    chairman who has left, so that no project is ever left with nobody who
+    may decide who decides. That second door is recorded as such.
+    """
+    from yaaf.server.identity import find_user
+
+    project = authority.require(session, person, project_id, authority.Level.READ)
+    chairs_it = authority.person_level(session, person, project) == authority.Level.CHAIR
+    if not (chairs_it or person.is_admin):
+        authority.require(session, person, project, authority.Level.CHAIR)
+    user = find_user(session, body.email)
+    if user is None or user.deactivated_at is not None:
+        raise HTTPException(status_code=404,
+                            detail="nobody with that email has an active account here")
+    if user.id == project.chairman_user_id:
+        raise HTTPException(status_code=409, detail=f"{user.email} already chairs it")
+    previous = project.chairman_user_id
+    authority.set_chairman(session, project, user.id)
+    _audit(session, project.id, "project.chair_handed_on", "user", user.id,
+           {"from": previous, "to": user.id, "email": user.email,
+            "break_glass": not chairs_it})
+    session.flush()
+    return {"chairman": {"id": user.id, "email": user.email,
+                         "display_name": user.display_name},
+            "members": _member_rows(session, project)}
+
+
 # The six aisles a role can be filed under. Discipline, not domain: a
 # Compliance Reviewer is a challenge role that happens to know markets, and
 # a single tree would file it in one place and send the chairman hunting in
@@ -289,7 +453,7 @@ class RoleIn(BaseModel):
     secret_scopes: list[str] = Field(default_factory=list)
 
 
-@router.post("/roles")
+@router.post("/roles", dependencies=[authority.INSTANCE_ADMIN])
 def create_role(body: RoleIn, session: Session = Depends(db)) -> dict:
     # Roles never own MCP servers. A server line frozen into a role template
     # follows every project that pins the role — the ghost that broke a live
@@ -352,7 +516,7 @@ def create_role(body: RoleIn, session: Session = Depends(db)) -> dict:
     return {"role_id": role.id, "role_version_id": row.id, "version": version}
 
 
-@router.get("/roles/{slug}")
+@router.get("/roles/{slug}", dependencies=[authority.SIGNED_IN])
 def get_role(slug: str, session: Session = Depends(db)) -> dict:
     role = session.execute(select(Role).where(Role.slug == slug)).scalar_one_or_none()
     if role is None:
@@ -386,7 +550,7 @@ class RoleTaxonomyIn(BaseModel):
     domains: list[str] | None = None
 
 
-@router.patch("/roles/{slug}")
+@router.patch("/roles/{slug}", dependencies=[authority.INSTANCE_ADMIN])
 def update_role_taxonomy(
     slug: str, body: RoleTaxonomyIn, session: Session = Depends(db)
 ) -> dict:
@@ -426,7 +590,7 @@ def update_role_taxonomy(
     }
 
 
-@router.get("/roles")
+@router.get("/roles", dependencies=[authority.SIGNED_IN])
 def list_roles(session: Session = Depends(db)) -> list[dict]:
     out = []
     for role in session.execute(select(Role)).scalars():
@@ -501,7 +665,7 @@ class CrewIn(BaseModel):
     teams: list[CrewTeamIn] = Field(default_factory=list)
 
 
-@router.post("/crews")
+@router.post("/crews", dependencies=[authority.INSTANCE_ADMIN])
 def create_crew(body: CrewIn, session: Session = Depends(db)) -> dict:
     """Upsert a crew by slug. Unlike a role there are no versions: a crew is
     read once, at hiring time, and copied into the project's own teams — so
@@ -527,7 +691,7 @@ def create_crew(body: CrewIn, session: Session = Depends(db)) -> dict:
     return {"crew_id": crew.id, "slug": crew.slug}
 
 
-@router.get("/crews")
+@router.get("/crews", dependencies=[authority.SIGNED_IN])
 def list_crews(session: Session = Depends(db)) -> list[dict]:
     """Every crew, with the roles it hires resolved against this install's
     library. A crew naming a role the library lacks is still returned, marked
@@ -876,7 +1040,7 @@ def _founding_chairman(session: Session, named: str | None) -> User:
     return chairman
 
 
-@router.post("/projects")
+@router.post("/projects", dependencies=[authority.SIGNED_IN])
 def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
     from yaaf.core.llm_credentials import assigned_credential
 
@@ -1086,7 +1250,7 @@ _NON_PORTABLE_INTEGRATION_KEYS = frozenset(
 )
 
 
-@router.get("/projects/{project_id}/export")
+@router.get("/projects/{project_id}/export", dependencies=[authority.READ])
 def export_project(project_id: str, include_values: bool = False,
                    session: Session = Depends(db)) -> dict:
     """The project as a setup file, in one of two strengths.
@@ -1106,6 +1270,11 @@ def export_project(project_id: str, include_values: bool = False,
 
     The New Project page accepts either file."""
     project = _get_project(session, project_id)
+    if include_values:
+        # The design is anybody's on the project to read; the backup carries
+        # every credential decrypted, and reading those back is a chair's — the
+        # same standing the eye on a single secret needs.
+        authority.require_here(session, project, authority.Level.STEER)
     chairman = session.get(User, project.chairman_user_id)
     ceo = session.execute(
         select(Agent).where(Agent.project_id == project.id, Agent.kind == AgentKind.CEO)
@@ -1283,7 +1452,7 @@ class ProjectCloneIn(BaseModel):
     goal: str | None = Field(default=None, min_length=10)
 
 
-@router.post("/projects/{project_id}/clone")
+@router.post("/projects/{project_id}/clone", dependencies=[authority.STEER])
 def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depends(db)) -> dict:
     """A running twin on this install — the counterpart to export, which makes
     a portable *design*. An export cannot carry a secret off the deployment
@@ -1583,7 +1752,7 @@ def _void_pending_approvals(session: Session, project_id: str, why: str) -> int:
     return n
 
 
-@router.post("/projects/{project_id}/teams")
+@router.post("/projects/{project_id}/teams", dependencies=[authority.STEER])
 def add_team(project_id: str, body: TeamSpec, session: Session = Depends(db)) -> dict:
     """Add a team to an existing project: agents, derived lead, team channel."""
     if not body.employees:
@@ -1892,7 +2061,7 @@ def _oauth_checked(url: str, token: str, entry: dict, transport=None) -> dict:
     return check
 
 
-@router.post("/projects/{project_id}/mcp_servers")
+@router.post("/projects/{project_id}/mcp_servers", dependencies=[authority.STEER])
 def add_data_source(project_id: str, body: DataSourceIn, session: Session = Depends(db)) -> dict:
     """One form, everything wired: validates the URL at the door, stores it
     (and any token) as role-granted secrets, records the mapping in project
@@ -2028,7 +2197,7 @@ def add_data_source(project_id: str, body: DataSourceIn, session: Session = Depe
             "note": "Effective on each granted role's next run."}
 
 
-@router.delete("/projects/{project_id}/mcp_servers/{name}")
+@router.delete("/projects/{project_id}/mcp_servers/{name}", dependencies=[authority.STEER])
 def delete_data_source(project_id: str, name: str, session: Session = Depends(db)) -> dict:
     project = _get_project(session, project_id)
     servers = (project.integrations or {}).get("mcp_servers", [])
@@ -2044,7 +2213,7 @@ def delete_data_source(project_id: str, name: str, session: Session = Depends(db
     return {"deleted": name}
 
 
-@router.post("/projects/{project_id}/mcp_servers/{name}/check")
+@router.post("/projects/{project_id}/mcp_servers/{name}/check", dependencies=[authority.STEER])
 def check_data_source(project_id: str, name: str, session: Session = Depends(db)) -> dict:
     project = _get_project(session, project_id)
     servers = (project.integrations or {}).get("mcp_servers", [])
@@ -2082,7 +2251,7 @@ def check_data_source(project_id: str, name: str, session: Session = Depends(db)
     return check
 
 
-@router.post("/projects/{project_id}/mcp_servers/{name}/oauth/start")
+@router.post("/projects/{project_id}/mcp_servers/{name}/oauth/start", dependencies=[authority.STEER])
 def start_data_source_oauth(project_id: str, name: str, request: Request,
                             session: Session = Depends(db)) -> dict:
     """Begin the browser sign-in for an OAuth data source: discover the
@@ -2165,7 +2334,7 @@ def start_data_source_oauth(project_id: str, name: str, request: Request,
             "note": "Complete the sign-in in the opened tab, then test the source."}
 
 
-@router.post("/teams/{team_id}/repin")
+@router.post("/teams/{team_id}/repin", dependencies=[authority.STEER])
 def repin_team(team_id: str, session: Session = Depends(db)) -> dict:
     """Adopt the latest version of the team's role. Teams pin their role
     version at creation so an edited prompt never changes running agents
@@ -2189,7 +2358,7 @@ class TeamStandDown(BaseModel):
     reason: str = Field(min_length=10, max_length=4000)
 
 
-@router.post("/teams/{team_id}/stand_down")
+@router.post("/teams/{team_id}/stand_down", dependencies=[authority.STEER])
 def stand_down_team(team_id: str, body: TeamStandDown,
                     session: Session = Depends(db)) -> dict:
     """Stop a role whose job is finished.
@@ -2209,7 +2378,7 @@ def stand_down_team(team_id: str, body: TeamStandDown,
     project = _get_project(session, team.project_id)
     staffing.check_stand_down(session, project, team, by_chairman=True)
     outcome = staffing.stand_down(session, project, team, body.reason,
-                                  actor=f"user:{project.chairman_user_id}")
+                                  actor=acting.stamp())
     staffing.notify_ceo(
         session, project,
         f"The chairman stood down {team.name}: {body.reason[:400]} Plan around a "
@@ -2218,7 +2387,7 @@ def stand_down_team(team_id: str, body: TeamStandDown,
     return outcome
 
 
-@router.post("/teams/{team_id}/recall")
+@router.post("/teams/{team_id}/recall", dependencies=[authority.STEER])
 def recall_team(team_id: str, body: TeamStandDown,
                 session: Session = Depends(db)) -> dict:
     """Bring a stood-down role back. A seat the chairman PAUSED stays paused —
@@ -2230,7 +2399,7 @@ def recall_team(team_id: str, body: TeamStandDown,
         raise HTTPException(status_code=404, detail="unknown team")
     project = _get_project(session, team.project_id)
     outcome = staffing.recall(session, project, team, body.reason,
-                              actor=f"user:{project.chairman_user_id}")
+                              actor=acting.stamp())
     staffing.notify_ceo(
         session, project,
         f"The chairman recalled {team.name}: {body.reason[:400]} That seat is "
@@ -2339,7 +2508,7 @@ def _billing_shape_error(mode: str, plaintext: str) -> str | None:
     return shape_error(mode, plaintext)
 
 
-@router.patch("/projects/{project_id}")
+@router.patch("/projects/{project_id}", dependencies=[authority.STEER])
 def patch_project(project_id: str, body: ProjectPatch, session: Session = Depends(db)) -> dict:
     project = _get_project(session, project_id)
     changed: dict = {}
@@ -2455,7 +2624,7 @@ def patch_project(project_id: str, body: ProjectPatch, session: Session = Depend
             "changed": changed}
 
 
-@router.post("/projects/{project_id}/billing_check")
+@router.post("/projects/{project_id}/billing_check", dependencies=[authority.STEER])
 def billing_check(project_id: str, session: Session = Depends(db)) -> dict:
     """Preflight the active billing credential without burning an agent run.
     API keys are verified against the live API (a free models-list call);
@@ -2502,7 +2671,7 @@ def billing_check(project_id: str, session: Session = Depends(db)) -> dict:
     return result
 
 
-@router.post("/projects/{project_id}/regrade-goal")
+@router.post("/projects/{project_id}/regrade-goal", dependencies=[authority.STEER])
 async def regrade_goal(project_id: str, session: Session = Depends(db)) -> dict:
     """Grade a RUNNING project's goal against the goal grammar as it stands now.
 
@@ -2551,7 +2720,7 @@ async def regrade_goal(project_id: str, session: Session = Depends(db)) -> dict:
     }
 
 
-@router.post("/projects/{project_id}/start")
+@router.post("/projects/{project_id}/start", dependencies=[authority.STEER])
 def start_project(project_id: str, session: Session = Depends(db)) -> dict:
     project = _get_project(session, project_id)
     if project.status in (ProjectStatus.STOPPED, ProjectStatus.COMPLETED):
@@ -2585,7 +2754,7 @@ class LifecycleReason(BaseModel):
     reason: str = Field(default="", max_length=2000)
 
 
-@router.post("/projects/{project_id}/pause")
+@router.post("/projects/{project_id}/pause", dependencies=[authority.STEER])
 def pause_project(
     project_id: str, body: LifecycleReason, session: Session = Depends(db)
 ) -> dict:
@@ -2598,7 +2767,7 @@ def pause_project(
     return {"id": project.id, "status": project.status, "revoked_runs": revoked}
 
 
-@router.post("/projects/{project_id}/stop")
+@router.post("/projects/{project_id}/stop", dependencies=[authority.STEER])
 def stop_project(
     project_id: str, body: LifecycleReason, session: Session = Depends(db)
 ) -> dict:
@@ -2613,7 +2782,7 @@ def stop_project(
             "voided_approvals": voided}
 
 
-@router.post("/projects/{project_id}/complete")
+@router.post("/projects/{project_id}/complete", dependencies=[authority.STEER])
 def complete_project(project_id: str, session: Session = Depends(db)) -> dict:
     """The chairman confirms a delivery. One of the three gates he chose to be
     asked at — the janitor only detects readiness and emails; this button
@@ -2696,7 +2865,7 @@ def complete_project(project_id: str, session: Session = Depends(db)) -> dict:
     session.add(Decision(
         id=ids.new_id(ids.DECISION),
         project_id=project.id,
-        by_user_id=project.chairman_user_id,
+        by_user_id=_decider(project),
         subject=f"delivery receipt: {receipt['met']} true, {receipt['cut']} cut",
         body=("Confirmed complete by the chairman.\n\n" + "\n".join(lines)
               + f"\n\nTotals: {receipt['runs_total']} runs, "
@@ -2715,7 +2884,7 @@ class AgentPause(BaseModel):
     paused: bool
 
 
-@router.post("/agents/{agent_id}/pause")
+@router.post("/agents/{agent_id}/pause", dependencies=[authority.STEER])
 def pause_agent(agent_id: str, body: AgentPause, session: Session = Depends(db)) -> dict:
     agent = session.get(Agent, agent_id)
     if agent is None:
@@ -2739,7 +2908,7 @@ class BoardroomPost(BaseModel):
     thread_id: str | None = None
 
 
-@router.post("/projects/{project_id}/boardroom")
+@router.post("/projects/{project_id}/boardroom", dependencies=[authority.STEER])
 def boardroom_post(
     project_id: str, body: BoardroomPost, session: Session = Depends(db)
 ) -> dict:
@@ -2753,7 +2922,7 @@ def boardroom_post(
         id=ids.new_id(ids.MESSAGE),
         project_id=project.id,
         channel_id=channel.id,
-        sender_user_id=project.chairman_user_id,
+        sender_user_id=_decider(project),
         thread_id=body.thread_id,
         body=body.body,
     )
@@ -2830,7 +2999,7 @@ def _carry_library_roles(session: Session, spec: dict) -> dict:
     return {**spec, "roles": out}
 
 
-@router.post("/rehearse")
+@router.post("/rehearse", dependencies=[authority.SIGNED_IN])
 def rehearse(body: RehearseIn, session: Session = Depends(db)) -> dict:
     """Run a spec as a project for nothing, and report what happened.
 
@@ -2913,7 +3082,7 @@ class BriefingSeen(BaseModel):
     until: datetime | None = None
 
 
-@router.post("/projects/{project_id}/briefing/seen")
+@router.post("/projects/{project_id}/briefing/seen", dependencies=[authority.READ])
 def briefing_seen(project_id: str, body: BriefingSeen | None = None,
                   session: Session = Depends(db)) -> dict:
     """Move the chairman's read mark for one project.
@@ -2950,7 +3119,7 @@ def _apply_decision(session: Session, approval: Approval, project: Project,
     approval.status = ApprovalStatus.APPROVED if approve else ApprovalStatus.DENIED
     approval.decided_at = utcnow()
     approval.decision_note = note
-    approval.decided_by_user_id = project.chairman_user_id
+    approval.decided_by_user_id = _decider(project)
     session.add(
         Notice(
             id=ids.new_id(ids.NOTICE),
@@ -2970,7 +3139,7 @@ class ApprovalExtend(BaseModel):
     reason: str = Field(min_length=3, max_length=500)
 
 
-@router.post("/approvals/{approval_id}/extend")
+@router.post("/approvals/{approval_id}/extend", dependencies=[authority.STEER])
 def extend_approval(
     approval_id: str, body: ApprovalExtend, session: Session = Depends(db)
 ) -> dict:
@@ -2992,7 +3161,7 @@ def extend_approval(
     return {"id": approval.id, "expires_at": approval.expires_at.isoformat()}
 
 
-@router.post("/approvals/{approval_id}/decide")
+@router.post("/approvals/{approval_id}/decide", dependencies=[authority.STEER])
 def decide_approval(
     approval_id: str, body: ApprovalDecision, session: Session = Depends(db)
 ) -> dict:
@@ -3011,7 +3180,7 @@ def decide_approval(
     return {"id": approval.id, "status": approval.status}
 
 
-@router.get("/projects/{project_id}/accounts")
+@router.get("/projects/{project_id}/accounts", dependencies=[authority.READ])
 def list_accounts(project_id: str, session: Session = Depends(db)) -> list[dict]:
     """The account registry: everything the project answers to out in the
     world. Record-only by decision — winding down is the CEO's call while the
@@ -3034,7 +3203,7 @@ class AgentSchedule(BaseModel):
     daily_at: str | None = Field(default=None, pattern="^([01]?\\d|2[0-3]):[0-5]\\d$")
 
 
-@router.patch("/agents/{agent_id}/schedule")
+@router.patch("/agents/{agent_id}/schedule", dependencies=[authority.STEER])
 def set_agent_schedule(
     agent_id: str, body: AgentSchedule, session: Session = Depends(db)
 ) -> dict:
@@ -3063,7 +3232,7 @@ class NeedFulfillIn(BaseModel):
     filename: str | None = Field(default=None, max_length=120)
 
 
-@router.post("/approvals/{approval_id}/fulfill")
+@router.post("/approvals/{approval_id}/fulfill", dependencies=[authority.STEER])
 def fulfill_need(
     approval_id: str, body: NeedFulfillIn, session: Session = Depends(db)
 ) -> dict:
@@ -3135,7 +3304,7 @@ class HypothesisExtend(BaseModel):
     reason: str = Field(min_length=10)
 
 
-@router.post("/hypotheses/{hypothesis_id}/extend")
+@router.post("/hypotheses/{hypothesis_id}/extend", dependencies=[authority.STEER])
 def extend_hypothesis(
     hypothesis_id: str, body: HypothesisExtend, session: Session = Depends(db)
 ) -> dict:
@@ -3174,7 +3343,7 @@ class AmendmentIn(BaseModel):
 
 
 
-@router.get("/constitution/schema")
+@router.get("/constitution/schema", dependencies=[authority.SIGNED_IN])
 def constitution_schema() -> list[dict]:
     """Every rule the constitution holds, described well enough to render an
     editor from. Derived from the model itself, so a field added to
@@ -3230,7 +3399,7 @@ class OverrunDecision(BaseModel):
     new_budget: float | None = Field(default=None, ge=0)
 
 
-@router.get("/projects/{project_id}/overruns")
+@router.get("/projects/{project_id}/overruns", dependencies=[authority.READ])
 def list_overruns(project_id: str, session: Session = Depends(db)) -> dict:
     """Every month that went past its plan, newest first, with the platform's
     breakdown, the CEO's account and your decision — the whole conversation in
@@ -3259,7 +3428,7 @@ def list_overruns(project_id: str, session: Session = Depends(db)) -> dict:
     } for o in rows]}
 
 
-@router.post("/overruns/{overrun_id}/decide")
+@router.post("/overruns/{overrun_id}/decide", dependencies=[authority.STEER])
 def decide_overrun(
     overrun_id: str, body: OverrunDecision, session: Session = Depends(db)
 ) -> dict:
@@ -3277,7 +3446,7 @@ def decide_overrun(
     overrun.outcome = body.outcome
     overrun.chairman_note = body.note.strip()
     overrun.decided_at = utcnow()
-    overrun.decided_by_user_id = project.chairman_user_id
+    overrun.decided_by_user_id = _decider(project)
 
     raised = None
     if body.new_budget is not None:
@@ -3310,7 +3479,7 @@ def decide_overrun(
             "budget_amended": raised is not None}
 
 
-@router.get("/projects/{project_id}/budget-advice")
+@router.get("/projects/{project_id}/budget-advice", dependencies=[authority.READ])
 def budget_advice(project_id: str, session: Session = Depends(db)) -> dict:
     """What the settled months say the budget should be.
 
@@ -3354,7 +3523,7 @@ class SpendWindowPatch(BaseModel):
     reason: str = Field(min_length=1, max_length=2000)
 
 
-@router.post("/projects/{project_id}/spend-window")
+@router.post("/projects/{project_id}/spend-window", dependencies=[authority.STEER])
 def open_spend_window(
     project_id: str, body: SpendWindowIn, session: Session = Depends(db)
 ) -> dict:
@@ -3387,7 +3556,7 @@ def open_spend_window(
         ends_at=now + timedelta(days=body.days),
         checkpoint_hours=body.checkpoint_hours,
         status=SpendWindowStatus.OPEN,
-        opened_by_user_id=project.chairman_user_id,
+        opened_by_user_id=_decider(project),
         adjustments=[],
     )
     session.add(window)
@@ -3414,7 +3583,7 @@ def open_spend_window(
             "allowance": window.allowance, "unit": window.unit}
 
 
-@router.patch("/projects/{project_id}/spend-window")
+@router.patch("/projects/{project_id}/spend-window", dependencies=[authority.STEER])
 def adjust_spend_window(
     project_id: str, body: SpendWindowPatch, session: Session = Depends(db)
 ) -> dict:
@@ -3460,7 +3629,7 @@ def adjust_spend_window(
     return {"id": window.id, "adjustments": len(window.adjustments), **entry["to"]}
 
 
-@router.post("/projects/{project_id}/spend-window/stop")
+@router.post("/projects/{project_id}/spend-window/stop", dependencies=[authority.STEER])
 def stop_spend_window(project_id: str, session: Session = Depends(db)) -> dict:
     """End it early. The findings are still written — a window stopped on day
     four measured four days, and four measured days beat any estimate."""
@@ -3481,7 +3650,7 @@ def stop_spend_window(project_id: str, session: Session = Depends(db)) -> dict:
     return {"id": window.id, "findings": window.findings}
 
 
-@router.get("/projects/{project_id}/spend-window")
+@router.get("/projects/{project_id}/spend-window", dependencies=[authority.READ])
 def read_spend_window(project_id: str, session: Session = Depends(db)) -> dict:
     """The live window and where it stands, or the last one that closed."""
     from yaaf.core.models import SpendWindow
@@ -3541,7 +3710,7 @@ def _apply_craft_lift(session: Session, project_id: str, cons: ConstitutionDoc) 
     return sorted(lifted)
 
 
-@router.post("/projects/{project_id}/amendments")
+@router.post("/projects/{project_id}/amendments", dependencies=[authority.STEER])
 def amend_constitution(
     project_id: str, body: AmendmentIn, session: Session = Depends(db)
 ) -> dict:
@@ -3556,7 +3725,7 @@ def amend_constitution(
         _refuse_without_review_seat(session, _project_role_slugs(session, project.id))
     try:
         amendments = propose_amendment(
-            session, project.id, project.chairman_user_id, body.reason, body.changes,
+            session, project.id, _decider(project), body.reason, body.changes,
         )
     except Exception as exc:  # invalid overlay
         raise HTTPException(status_code=422, detail=f"invalid amendment: {exc}") from exc
@@ -3611,7 +3780,7 @@ def _amendment_status(a: Amendment) -> str:
     return "pending"
 
 
-@router.get("/projects/{project_id}/amendments")
+@router.get("/projects/{project_id}/amendments", dependencies=[authority.READ])
 def list_amendments(project_id: str, session: Session = Depends(db)) -> list[dict]:
     project = _get_project(session, project_id)
     rows = session.execute(
@@ -3633,7 +3802,7 @@ def list_amendments(project_id: str, session: Session = Depends(db)) -> list[dic
     ]
 
 
-@router.post("/amendments/{amendment_id}/cancel")
+@router.post("/amendments/{amendment_id}/cancel", dependencies=[authority.STEER])
 def cancel_amendment(amendment_id: str, session: Session = Depends(db)) -> dict:
     """Cancels an amendment that has not landed yet. New amendments take effect
     the moment they are saved, so nothing reaches this any more — it stays for
@@ -3652,7 +3821,7 @@ def cancel_amendment(amendment_id: str, session: Session = Depends(db)) -> dict:
     return {"id": row.id, "status": "cancelled"}
 
 
-@router.post("/threads/{message_id}/unfreeze")
+@router.post("/threads/{message_id}/unfreeze", dependencies=[authority.STEER])
 def unfreeze_thread(message_id: str, session: Session = Depends(db)) -> dict:
     root = session.get(Message, message_id)
     if root is None:
@@ -3679,7 +3848,7 @@ def _notice_ceo(session: Session, project_id: str, kind: str, body: str) -> None
         )
 
 
-@router.post("/evidence/{evidence_id}/audit")
+@router.post("/evidence/{evidence_id}/audit", dependencies=[authority.STEER])
 def audit_evidence(
     evidence_id: str, body: EvidenceAudit, session: Session = Depends(db)
 ) -> dict:
@@ -3704,7 +3873,7 @@ class TaskAudit(BaseModel):
     note: str = Field(default="", max_length=4000)
 
 
-@router.post("/tasks/{task_id}/audit")
+@router.post("/tasks/{task_id}/audit", dependencies=[authority.STEER])
 def audit_task(task_id: str, body: TaskAudit, session: Session = Depends(db)) -> dict:
     """Completions join the spot-audit sample alongside evidence rows: LLM
     reviewers approve nearly everything, so the chairman's verdict is recorded
@@ -3731,7 +3900,7 @@ class FlagAck(BaseModel):
     note: str = Field(default="", max_length=4000)
 
 
-@router.post("/flags/{flag_id}/ack")
+@router.post("/flags/{flag_id}/ack", dependencies=[authority.STEER])
 def acknowledge_flag(flag_id: str, body: FlagAck, session: Session = Depends(db)) -> dict:
     """The chairman answering a flag the CEO raised.
 
@@ -3779,7 +3948,7 @@ class AuditSampleDecision(BaseModel):
     note: str = Field(default="", max_length=4000)
 
 
-@router.post("/audit_samples/{sample_id}/decide")
+@router.post("/audit_samples/{sample_id}/decide", dependencies=[authority.STEER])
 def decide_audit_sample(
     sample_id: str, body: AuditSampleDecision, session: Session = Depends(db)
 ) -> dict:
@@ -3820,7 +3989,7 @@ def decide_audit_sample(
 # ── requirements: the chairman owns scope ───────────────────────────────────────
 
 
-@router.get("/projects/{project_id}/requirements")
+@router.get("/projects/{project_id}/requirements", dependencies=[authority.READ])
 def list_requirements(project_id: str, session: Session = Depends(db)) -> list[dict]:
     project = _get_project(session, project_id)
     edges = list(session.execute(
@@ -4107,7 +4276,7 @@ def apply_edge_remove(session: Session, project: Project, actor: str,
             "from": source.key if source else None, "to": target.key if target else None}
 
 
-@router.post("/requirements/{requirement_id}/accept")
+@router.post("/requirements/{requirement_id}/accept", dependencies=[authority.STEER])
 def accept_requirement(
     requirement_id: str, body: RequirementDecision, session: Session = Depends(db)
 ) -> dict:
@@ -4126,8 +4295,8 @@ def accept_requirement(
     project = _get_project(session, row.project_id)
     try:
         return apply_accept(session, project, row,
-                            f"user:{project.chairman_user_id}",
-                            body.stage, body.note, project.chairman_user_id)
+                            acting.stamp(),
+                            body.stage, body.note, _decider(project))
     except policy.Refusal as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
@@ -4136,7 +4305,7 @@ class RequirementCut(BaseModel):
     reason: str = Field(min_length=5, max_length=4000)
 
 
-@router.post("/requirements/{requirement_id}/cut")
+@router.post("/requirements/{requirement_id}/cut", dependencies=[authority.STEER])
 def cut_requirement(
     requirement_id: str, body: RequirementCut, session: Session = Depends(db)
 ) -> dict:
@@ -4149,7 +4318,7 @@ def cut_requirement(
     project = _get_project(session, row.project_id)
     try:
         return apply_cut(session, project, row,
-                         f"user:{project.chairman_user_id}", body.reason)
+                         acting.stamp(), body.reason)
     except policy.Refusal as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
@@ -4163,7 +4332,7 @@ class RequirementVerdict(BaseModel):
     note: str = Field(default="", max_length=10_000)
 
 
-@router.post("/requirements/{requirement_id}/verdict")
+@router.post("/requirements/{requirement_id}/verdict", dependencies=[authority.STEER])
 def requirement_verdict(
     requirement_id: str, body: RequirementVerdict, session: Session = Depends(db)
 ) -> dict:
@@ -4188,7 +4357,7 @@ def requirement_verdict(
     project = _get_project(session, row.project_id)
     try:
         return apply_verdict(session, project, row,
-                             f"user:{project.chairman_user_id}", body.ok, body.note)
+                             acting.stamp(), body.ok, body.note)
     except policy.Refusal as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
@@ -4208,7 +4377,7 @@ class RequirementReopen(BaseModel):
     reason: str = Field(min_length=5, max_length=4000)
 
 
-@router.post("/requirements/{requirement_id}/reopen")
+@router.post("/requirements/{requirement_id}/reopen", dependencies=[authority.STEER])
 def reopen_requirement(
     requirement_id: str, body: RequirementReopen, session: Session = Depends(db)
 ) -> dict:
@@ -4221,7 +4390,7 @@ def reopen_requirement(
     project = _get_project(session, row.project_id)
     try:
         return apply_reopen(session, project, row,
-                            f"user:{project.chairman_user_id}", body.reason)
+                            acting.stamp(), body.reason)
     except policy.Refusal as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
@@ -4231,7 +4400,7 @@ class RequirementRestage(BaseModel):
     reason: str = Field(min_length=5, max_length=4000)
 
 
-@router.post("/requirements/{requirement_id}/restage")
+@router.post("/requirements/{requirement_id}/restage", dependencies=[authority.STEER])
 def restage_requirement(
     requirement_id: str, body: RequirementRestage, session: Session = Depends(db)
 ) -> dict:
@@ -4243,7 +4412,7 @@ def restage_requirement(
     project = _get_project(session, row.project_id)
     try:
         return apply_restage(session, project, row,
-                             f"user:{project.chairman_user_id}",
+                             acting.stamp(),
                              body.stage, body.reason)
     except policy.Refusal as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
@@ -4254,7 +4423,7 @@ class RequirementReestimate(BaseModel):
     reason: str = Field(min_length=5, max_length=4000)
 
 
-@router.post("/requirements/{requirement_id}/reestimate")
+@router.post("/requirements/{requirement_id}/reestimate", dependencies=[authority.STEER])
 def reestimate_requirement(
     requirement_id: str, body: RequirementReestimate, session: Session = Depends(db)
 ) -> dict:
@@ -4268,7 +4437,7 @@ def reestimate_requirement(
     project = _get_project(session, row.project_id)
     try:
         return apply_reestimate(session, project, row,
-                                f"user:{project.chairman_user_id}",
+                                acting.stamp(),
                                 body.est_runs, body.reason)
     except policy.Refusal as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
@@ -4280,16 +4449,18 @@ class EdgeRemove(BaseModel):
     reason: str = Field(min_length=5, max_length=4000)
 
 
-@router.post("/requirement_edges/remove")
+@router.post("/requirement_edges/remove", dependencies=[authority.IN_HANDLER])
 def remove_requirement_edge(body: EdgeRemove, session: Session = Depends(db)) -> dict:
     """Unsequence: dependency edges stop being a one-way ratchet. The cycle
     check still guards every add; removal needs no check beyond existing."""
     source = session.get(Requirement, body.from_requirement_id)
     project = _get_project(session, source.project_id) if source else None
+    if project is not None:
+        authority.require_here(session, project, authority.Level.STEER)
     try:
         if project is None:
             raise policy.Refusal("no such dependency edge", status_code=404)
-        return apply_edge_remove(session, project, f"user:{project.chairman_user_id}",
+        return apply_edge_remove(session, project, acting.stamp(),
                                  body.from_requirement_id, body.to_requirement_id,
                                  body.reason)
     except policy.Refusal as exc:
@@ -4307,7 +4478,7 @@ class ChairmanRequirementIn(BaseModel):
     note: str = Field(default="", max_length=4000)
 
 
-@router.post("/projects/{project_id}/requirements")
+@router.post("/projects/{project_id}/requirements", dependencies=[authority.STEER])
 def add_requirement(
     project_id: str, body: ChairmanRequirementIn, session: Session = Depends(db)
 ) -> dict:
@@ -4339,13 +4510,13 @@ def add_requirement(
         stage=body.stage,
         est_runs=body.est_runs,
         est_runs_first=body.est_runs,
-        accepted_by_user_id=project.chairman_user_id,
+        accepted_by_user_id=_decider(project),
         accepted_at=utcnow(),
     )
     session.add(requirement)
     session.flush()
     policy.record_requirement_event(session, requirement, RequirementStatus.PENDING,
-                                    f"user:{project.chairman_user_id}",
+                                    acting.stamp(),
                                     note=body.note or "chairman-authored",
                                     from_status=None)
     _audit(session, project.id, "requirement.add", "requirement", requirement.id,
@@ -4368,7 +4539,7 @@ class RequirementReword(BaseModel):
     reason: str = Field(min_length=5, max_length=4000)
 
 
-@router.post("/requirements/{requirement_id}/reword")
+@router.post("/requirements/{requirement_id}/reword", dependencies=[authority.STEER])
 def reword_requirement(
     requirement_id: str, body: RequirementReword, session: Session = Depends(db)
 ) -> dict:
@@ -4381,7 +4552,7 @@ def reword_requirement(
     project = _get_project(session, row.project_id)
     try:
         return apply_reword(session, project, row,
-                            f"user:{project.chairman_user_id}",
+                            acting.stamp(),
                             body.statement, body.reason)
     except policy.Refusal as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
@@ -4408,7 +4579,7 @@ def _lever_needs(body: ReviewLeverIn, *fields: str) -> None:
         )
 
 
-@router.post("/reviews/{review_id}/lever")
+@router.post("/reviews/{review_id}/lever", dependencies=[authority.STEER])
 def pull_review_lever(
     review_id: str, body: ReviewLeverIn, session: Session = Depends(db)
 ) -> dict:
@@ -4490,7 +4661,7 @@ class ReviewClose(BaseModel):
     note: str = Field(default="", max_length=4000)
 
 
-@router.post("/reviews/{review_id}/close")
+@router.post("/reviews/{review_id}/close", dependencies=[authority.STEER])
 def close_review(
     review_id: str, body: ReviewClose, session: Session = Depends(db)
 ) -> dict:
@@ -4506,7 +4677,7 @@ def close_review(
     project = _get_project(session, review.project_id)
     review.status = ReviewStatus.CLOSED
     review.closed_at = utcnow()
-    review.closed_by_user_id = project.chairman_user_id
+    review.closed_by_user_id = _decider(project)
     decisions = review.decisions or []
     summary = ("; ".join(f"{d['kind']}: {d['detail']} — {d['reason'][:120]}"
                          for d in decisions)
@@ -4580,7 +4751,7 @@ class CommitmentAccept(BaseModel):
     note: str = Field(default="", max_length=4000)
 
 
-@router.post("/commitments/{commitment_id}/accept")
+@router.post("/commitments/{commitment_id}/accept", dependencies=[authority.STEER])
 def accept_commitment(
     commitment_id: str, body: CommitmentAccept, session: Session = Depends(db)
 ) -> dict:
@@ -4611,7 +4782,7 @@ def accept_commitment(
         row.deliver_by = deliver_by
     cons = effective(session, project.id)
     row.status = CommitmentStatus.ACCEPTED
-    row.accepted_by_user_id = project.chairman_user_id
+    row.accepted_by_user_id = _decider(project)
     row.accepted_at = utcnow()
     _freeze_commitment_basis(session, project, row, cons)
     _audit(session, project.id, "commitment.accept", "commitment", row.id,
@@ -4638,7 +4809,7 @@ class CommitmentDecline(BaseModel):
     reason: str = Field(min_length=5, max_length=4000)
 
 
-@router.post("/commitments/{commitment_id}/decline")
+@router.post("/commitments/{commitment_id}/decline", dependencies=[authority.STEER])
 def decline_commitment(
     commitment_id: str, body: CommitmentDecline, session: Session = Depends(db)
 ) -> dict:
@@ -4671,7 +4842,7 @@ class CommitmentMove(BaseModel):
     reason: str = Field(min_length=5, max_length=4000)
 
 
-@router.post("/commitments/{commitment_id}/move")
+@router.post("/commitments/{commitment_id}/move", dependencies=[authority.STEER])
 def move_commitment(
     commitment_id: str, body: CommitmentMove, session: Session = Depends(db)
 ) -> dict:
@@ -4729,13 +4900,19 @@ class SecretIn(BaseModel):
     filename: str | None = Field(default=None, max_length=120)
 
 
-@router.get("/secrets")
+@router.get("/secrets", dependencies=[authority.IN_HANDLER])
 def list_secrets(project_id: str | None = None, session: Session = Depends(db)) -> list[dict]:
     """Names and scopes only. The list is polled every few seconds, so values
-    never ride it — reading one is a deliberate act, and has its own endpoint."""
+    never ride it — reading one is a deliberate act, and has its own endpoint.
+
+    One project's to any of its members; every project's, and the platform's
+    own, to the instance admin alone."""
     stmt = select(Secret)
     if project_id is not None:
+        authority.require_here(session, project_id, authority.Level.READ)
         stmt = stmt.where(Secret.project_id == project_id)
+    else:
+        authority.require_admin_here(session)
     return [
         {"id": s.id, "name": s.name, "project_id": s.project_id,
          "role_scopes": s.role_scopes, "kind": s.kind, "filename": s.filename}
@@ -4743,14 +4920,15 @@ def list_secrets(project_id: str | None = None, session: Session = Depends(db)) 
     ]
 
 
-@router.get("/secrets/{secret_id}/value")
+@router.get("/secrets/{secret_id}/value", dependencies=[authority.IN_HANDLER])
 def reveal_secret(secret_id: str, session: Session = Depends(db)) -> dict:
-    """The chairman reads their own credential.
+    """Whoever may change a credential reads it back.
 
-    There is one human here, they hold the master admin token, and they can
-    already read any of this straight out of Postgres. Hiding a value from them
-    protects nothing and costs a debugging session every time a data source
-    will not mount. So values are *visually* masked in the UI and fetched only
+    A project's credential is its chairman's and co-chairs' to read, because
+    they can already overwrite it, and hiding a value from the people who set
+    it costs a debugging session every time a data source will not mount. A
+    platform credential is the instance admin's, who can read it out of
+    Postgres anyway. So values are *visually* masked in the UI and fetched only
     when the eye is pressed — one press, one call, one audit row.
 
     This is a `/admin` route. Agents authenticate against `/agent/*` with
@@ -4763,6 +4941,7 @@ def reveal_secret(secret_id: str, session: Session = Depends(db)) -> dict:
     row = session.get(Secret, secret_id)
     if row is None:
         raise HTTPException(status_code=404, detail="unknown secret")
+    _require_secret_steer(session, row.project_id)
     if row.llm_mode is not None:
         # The one value that pays for every project on it. A project secret is
         # the chairman's to read back; this one is rotated, never read.
@@ -4796,7 +4975,7 @@ def reveal_secret(secret_id: str, session: Session = Depends(db)) -> dict:
     return {"id": row.id, "name": row.name, "value": decrypt(row.ciphertext)}
 
 
-@router.delete("/secrets/{secret_id}")
+@router.delete("/secrets/{secret_id}", dependencies=[authority.IN_HANDLER])
 def delete_secret(secret_id: str, session: Session = Depends(db)) -> dict:
     """Remove a credential outright. Refused for the two kinds that something
     else owns: the credential the project is actively paying with, and a data
@@ -4804,6 +4983,7 @@ def delete_secret(secret_id: str, session: Session = Depends(db)) -> dict:
     row = session.scalar(select(Secret).where(Secret.id == secret_id).with_for_update())
     if row is None:
         raise HTTPException(status_code=404, detail="unknown secret")
+    _require_secret_steer(session, row.project_id)
     if session.scalar(select(Project.id).where(Project.billing_secret_id == row.id).limit(1)):
         raise HTTPException(
             status_code=409,
@@ -4821,7 +5001,7 @@ def delete_secret(secret_id: str, session: Session = Depends(db)) -> dict:
     return {"deleted": row.name}
 
 
-@router.post("/projects/{project_id}/webhook_secrets")
+@router.post("/projects/{project_id}/webhook_secrets", dependencies=[authority.STEER])
 def provision_webhook_secrets(project_id: str, session: Session = Depends(db)) -> dict:
     """Generate the signing secrets for the inbound evidence connectors. The
     secrets live only in project.integrations — never in a role scope — so no run
@@ -4852,7 +5032,7 @@ class GithubAttach(BaseModel):
     repo: str = Field(min_length=1, max_length=200, pattern=r"^[\w.-]+(/[\w.-]+)?$")
 
 
-@router.post("/projects/{project_id}/github")
+@router.post("/projects/{project_id}/github", dependencies=[authority.STEER])
 def attach_github(project_id: str, body: GithubAttach, session: Session = Depends(db)) -> dict:
     """Provision the project's private GitHub workspace repo. The platform
     token does the creating and the runner's one-time clone; it never enters a
@@ -4870,7 +5050,7 @@ def attach_github(project_id: str, body: GithubAttach, session: Session = Depend
 # ── slack: what this project inherits, and its rooms ────────────────────────────
 
 
-@router.get("/projects/{project_id}/slack")
+@router.get("/projects/{project_id}/slack", dependencies=[authority.READ])
 def project_slack(project_id: str, session: Session = Depends(db)) -> dict:
     """This project's effective Slack wiring and where each field came from.
 
@@ -4921,7 +5101,7 @@ def project_slack(project_id: str, session: Session = Depends(db)) -> dict:
     }
 
 
-@router.post("/projects/{project_id}/slack/channels")
+@router.post("/projects/{project_id}/slack/channels", dependencies=[authority.STEER])
 def provision_slack_channels(project_id: str, session: Session = Depends(db)) -> dict:
     """Create every Slack room this project is missing and say what they are.
 
@@ -4943,9 +5123,20 @@ def provision_slack_channels(project_id: str, session: Session = Depends(db)) ->
     return result
 
 
-@router.post("/secrets")
+def _require_secret_steer(session: Session, project_id: str | None) -> None:
+    """A project's credentials are its chairs' to change; the platform's own
+    — project_id null — are the instance admin's."""
+    if project_id is None:
+        authority.require_admin_here(session)
+    else:
+        authority.require_here(session, project_id, authority.Level.STEER)
+
+
+@router.post("/secrets", dependencies=[authority.IN_HANDLER])
 def put_secret(body: SecretIn, session: Session = Depends(db)) -> dict:
     from yaaf.core.crypto import encrypt
+
+    _require_secret_steer(session, body.project_id)
 
     # The kind stays in the model's pattern so this sentence, not a validation
     # error, answers a chairman who reaches for the old door.

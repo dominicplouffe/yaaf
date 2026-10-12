@@ -93,3 +93,21 @@ def test_a_session_gets_stamps_and_changes_move_them(client):
         second = socket.receive_json()
         assert second != first
         assert second["messages"][0] == first["messages"][0] + 1
+
+
+def test_a_change_of_seating_moves_the_stamp(client):
+    """Membership has no timestamp to aggregate, so it would never move the stamp
+    — and an observer's notice would sit there after they were made a co-chair."""
+    from tests.conftest import person
+
+    project = make_project(client, start=False)
+    person("colleague@example.com")
+    sign_in(client)
+    with client.websocket_connect(f"/ws/projects/{project['id']}", headers=ORIGIN) as socket:
+        first = socket.receive_json()
+        added = client.post(f"/admin/projects/{project['id']}/members",
+                            json={"email": "colleague@example.com", "role": "observer"},
+                            headers=ADMIN)
+        assert added.status_code == 200, added.text
+        second = socket.receive_json()
+        assert second["members"] != first["members"]

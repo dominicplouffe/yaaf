@@ -60,6 +60,17 @@ def _audit(session: Session, action: str, user: User, detail: dict | None = None
         audit(session, None, action, "user", user.id, detail or {})
 
 
+def _same_site_or_none(request: Request) -> None:
+    """A sign-in from another site's page is refused: it is how a stranger
+    signs your browser into *their* account and reads what you then type into
+    it. A browser always says where a POST came from; the CLI says nothing,
+    and nothing is what the CLI is allowed to say."""
+    origin = request.headers.get("origin")
+    if origin is not None and not identity.origin_allowed(origin, request.headers.get("host")):
+        raise HTTPException(status_code=403,
+                            detail="a sign-in has to come from this install's own pages")
+
+
 def me_payload(session: Session, user: User, via: str) -> dict:
     return {
         "id": user.id,
@@ -85,6 +96,7 @@ def _sole_session(person: Person) -> None:
 @router.post("/login", dependencies=[authority.PUBLIC])  # the door itself
 def login(body: LoginIn, request: Request, response: Response,
           session: Session = Depends(db)) -> dict:
+    _same_site_or_none(request)
     user = identity.authenticate(session, body.email, body.password)
     plaintext = identity.open_session(session, user, request.headers.get("user-agent"))
     identity.set_session_cookie(response, plaintext)
@@ -138,6 +150,7 @@ def setup_info(token: str, session: Session = Depends(db)) -> dict:
 @router.post("/setup", dependencies=[authority.PUBLIC])  # credentialed by the link
 def setup(body: SetupIn, request: Request, response: Response,
           session: Session = Depends(db)) -> dict:
+    _same_site_or_none(request)
     user = identity.redeem_setup_link(session, body.token, body.password)
     plaintext = identity.open_session(session, user, request.headers.get("user-agent"))
     identity.set_session_cookie(response, plaintext)

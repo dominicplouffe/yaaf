@@ -903,6 +903,118 @@ def audit_evidence(evidence_id: str, ok: bool = typer.Option(..., "--ok/--bad"),
                           json={"ok": ok, "note": note}))
 
 
+# ── who sits on a project, and the box's people ────────────────────────────────
+
+members = typer.Typer(no_args_is_help=True,
+                      help="Who is on a project: chairman, co-chairs, observers.")
+app.add_typer(members, name="members")
+
+
+@members.command("list")
+def members_list(project: str) -> None:
+    """Everyone on a project and what they are there."""
+    with _client() as client:
+        _show(client.get(f"/admin/projects/{_resolve_project(client, project)}/members"))
+
+
+@members.command("add")
+def members_add(project: str, email: str,
+                role: str = typer.Option("observer", "--role",
+                                         help="co_chair (decides) or observer (reads)")) -> None:
+    """Put somebody with an account on a project (its chairman only)."""
+    with _client() as client:
+        _show(client.post(f"/admin/projects/{_resolve_project(client, project)}/members",
+                          json={"email": email, "role": role}))
+
+
+@members.command("role")
+def members_role(project: str, email: str, role: str) -> None:
+    """Change a member's role between co_chair and observer (its chairman only)."""
+    with _client() as client:
+        pid = _resolve_project(client, project)
+        _show(client.patch(f"/admin/projects/{pid}/members/{_member_id(client, pid, email)}",
+                           json={"role": role}))
+
+
+@members.command("remove")
+def members_remove(project: str, email: str) -> None:
+    """Take somebody off a project, from their next request on (its chairman only)."""
+    with _client() as client:
+        pid = _resolve_project(client, project)
+        _show(client.request("DELETE",
+                             f"/admin/projects/{pid}/members/{_member_id(client, pid, email)}"))
+
+
+@members.command("hand-on")
+def members_hand_on(project: str, email: str) -> None:
+    """Make somebody else the chairman; you stay on as a co-chair. The chairman
+    may, and an instance admin may for a chairman who has left."""
+    with _client() as client:
+        _show(client.post(f"/admin/projects/{_resolve_project(client, project)}/chairman",
+                          json={"email": email}))
+
+
+def _member_id(client: httpx.Client, project_id: str, email: str) -> str:
+    for row in _json_or_die(client.get(f"/admin/projects/{project_id}/members")):
+        if row["email"] == email.strip().lower():
+            return row["user_id"]
+    typer.echo(f"{email} is not on this project")
+    raise typer.Exit(1)
+
+
+people = typer.Typer(no_args_is_help=True,
+                     help="The box's people, over the API (instance admins only).")
+app.add_typer(people, name="people")
+
+
+@people.command("list")
+def people_list() -> None:
+    with _client() as client:
+        _show(client.get("/admin/users"))
+
+
+def _person_id(client: httpx.Client, email: str) -> str:
+    for row in _json_or_die(client.get("/admin/users")):
+        if row["email"] == email.strip().lower():
+            return row["id"]
+    typer.echo(f"nobody with the email {email} has an account here")
+    raise typer.Exit(1)
+
+
+@people.command("link")
+def people_link(email: str) -> None:
+    """A fresh one-time link that sets their password; earlier ones stop working."""
+    with _client() as client:
+        _show(client.post(f"/admin/users/{_person_id(client, email)}/setup-link"))
+
+
+@people.command("promote")
+def people_promote(email: str) -> None:
+    with _client() as client:
+        _show(client.patch(f"/admin/users/{_person_id(client, email)}", json={"is_admin": True}))
+
+
+@people.command("demote")
+def people_demote(email: str) -> None:
+    with _client() as client:
+        _show(client.patch(f"/admin/users/{_person_id(client, email)}",
+                           json={"is_admin": False}))
+
+
+@people.command("deactivate")
+def people_deactivate(email: str) -> None:
+    """Every credential they hold stops working at once. Refused while they chair
+    a live project: hand it on first."""
+    with _client() as client:
+        _show(client.patch(f"/admin/users/{_person_id(client, email)}", json={"active": False}))
+
+
+@people.command("reactivate")
+def people_reactivate(email: str) -> None:
+    with _client() as client:
+        _show(client.patch(f"/admin/users/{_person_id(client, email)}", json={"active": True}))
+
+
 # ── MCP clients ─────────────────────────────────────────────────────────────────
 
 mcp_token = typer.Typer(no_args_is_help=True, help="Tokens for model clients that speak MCP.")

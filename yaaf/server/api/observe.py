@@ -55,14 +55,15 @@ from yaaf.core.models import (
     Task,
     TaskStatus,
     Team,
+    User,
     VerificationStatus,
     utcnow,
 )
-from yaaf.server import activity, agenda, briefing, metrics, policy, typing_state
+from yaaf.server import activity, agenda, authority, briefing, metrics, policy, typing_state
 from yaaf.server import asks as ask_lib
 from yaaf.server.deps import db
 from yaaf.server.dispatcher import activity_state, chat_session_live
-from yaaf.server.identity import signed_in
+from yaaf.server.identity import Person, person_auth, signed_in
 from yaaf.server.receipt import receipt as receipt_projection
 from yaaf.server.rows import approval_row
 from yaaf.server.velocity import (
@@ -134,11 +135,35 @@ def _last_countable_evidence_at(session: Session, project_id: str) -> datetime |
     return at
 
 
-@router.get("/projects")
-def projects(session: Session = Depends(db)) -> list[dict]:
+def standing(session: Session, person: Person, project: Project) -> dict:
+    """What the reader is on this project, for the screen to say and to shape
+    its controls by. The server refuses regardless; this is so the page does
+    not offer a button whose only outcome is a 403."""
+    role = authority.role_of(session, person.id, project)
+    level = authority.person_level(session, person, project) or 0
+    return {"my_role": role, "can_steer": level >= authority.Level.STEER,
+            "can_chair": level >= authority.Level.CHAIR}
+
+
+def _reachable(session: Session, person: Person | object) -> list[Project]:
+    """What this reader may open. `person` is the dependency's answer over HTTP;
+    the MCP tools call these rollups as plain functions, where it is still the
+    unresolved default, and the reader is whoever that call is bound to — whose
+    payload the tool then narrows again to their memberships."""
+    reader = person if isinstance(person, Person) else authority.acting_person(session)
+    if reader is None:
+        return []
+    return authority.reachable(session, reader.id, reader.is_admin)
+
+
+@router.get("/projects", dependencies=[authority.SIGNED_IN])
+def projects(session: Session = Depends(db),
+             person: Person = Depends(person_auth)) -> list[dict]:
+    """The projects this person may open — every one, for the instance admin."""
     return [
-        {"id": p.id, "slug": p.slug, "name": p.name, "status": p.status, "goal": p.goal}
-        for p in session.execute(select(Project).order_by(Project.created_at)).scalars()
+        {"id": p.id, "slug": p.slug, "name": p.name, "status": p.status, "goal": p.goal,
+         **standing(session, person, p)}
+        for p in _reachable(session, person)
     ]
 
 
@@ -159,8 +184,9 @@ def _awaiting_chairman(session: Session, project: Project, cons) -> dict:
     }
 
 
-@router.get("/desk")
-def desk(live: bool = False, session: Session = Depends(db)) -> dict:
+@router.get("/desk", dependencies=[authority.SIGNED_IN])
+def desk(live: bool = False, session: Session = Depends(db),
+         person: Person = Depends(person_auth)) -> dict:
     """Cross-project rollup: decisions waiting on the chairman, countdowns
     worth watching, and one comparable row per project — in one request, so a
     page answers "what needs me?" without fanning out per project.
@@ -182,15 +208,15 @@ def desk(live: bool = False, session: Session = Depends(db)) -> dict:
             return None
         return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
 
-    finished = int(session.execute(
-        select(func.count(Project.id)).where(Project.status.in_(TERMINAL))
-    ).scalar_one())
-    listing = select(Project).order_by(Project.created_at)
-    if live:
-        listing = listing.where(Project.status.not_in(TERMINAL))
+    # Only what this reader may open, through the one function every rollup
+    # shares — the desk is exactly the payload nobody wrote with the gate in
+    # mind, and the day it bypassed it is the day it listed a stranger's work.
+    reachable = _reachable(session, person)
+    finished = sum(1 for p in reachable if p.status in TERMINAL)
+    listing = [p for p in reachable if not (live and p.status in TERMINAL)]
 
     projects_out: list[dict] = []
-    for project in session.execute(listing).scalars():
+    for project in listing:
         cons = effective(session, project.id)
         month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         usd, tokens_in, tokens_out, cache_creation, cache_read = session.execute(
@@ -335,9 +361,10 @@ def desk(live: bool = False, session: Session = Depends(db)) -> dict:
     return {"as_of": now.isoformat(), "finished": finished, "projects": projects_out}
 
 
-@router.get("/briefing")
+@router.get("/briefing", dependencies=[authority.SIGNED_IN])
 def briefing_all(hours: float | None = None, since: str | None = None,
-                 session: Session = Depends(db)) -> dict:
+                 session: Session = Depends(db),
+                 person: Person = Depends(person_auth)) -> dict:
     """"What happened while I was away", across every live project.
 
     Each project is read on its OWN window by default — the mark is per
@@ -350,10 +377,11 @@ def briefing_all(hours: float | None = None, since: str | None = None,
     lose the chairman a window he has not looked at yet.
     """
     at = _parse_since(since)
-    return briefing.desk_briefing(session, since=at, hours=hours)
+    return briefing.desk_briefing(session, since=at, hours=hours,
+                                  projects=_reachable(session, person))
 
 
-@router.get("/projects/{project_id}/briefing")
+@router.get("/projects/{project_id}/briefing", dependencies=[authority.READ])
 def project_briefing(project_id: str, hours: float | None = None,
                      since: str | None = None,
                      session: Session = Depends(db)) -> dict:
@@ -364,7 +392,7 @@ def project_briefing(project_id: str, hours: float | None = None,
     return briefing.project_briefing(session, project, since=at)
 
 
-@router.get("/projects/{project_id}/agenda")
+@router.get("/projects/{project_id}/agenda", dependencies=[authority.READ])
 def project_agenda(project_id: str, days: int = agenda.DEFAULT_DAYS,
                    session: Session = Depends(db)) -> dict:
     """What this project is scheduled to do next: the wakes, the meeting, the
@@ -421,7 +449,7 @@ def _current_cycle_view(session: Session, project: Project) -> dict | None:
     return view
 
 
-@router.get("/projects/{project_id}/flags")
+@router.get("/projects/{project_id}/flags", dependencies=[authority.READ])
 def project_flags(project_id: str, session: Session = Depends(db)) -> dict:
     """What the platform decided the chairman needs to hear, and whether the
     CEO has actually said it.
@@ -458,7 +486,7 @@ def project_flags(project_id: str, session: Session = Depends(db)) -> dict:
     }
 
 
-@router.get("/projects/{project_id}")
+@router.get("/projects/{project_id}", dependencies=[authority.READ])
 def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
     project = _project(session, project_id)
     cons = effective(session, project.id)
@@ -514,6 +542,10 @@ def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
             Requirement.status == RequirementStatus.PROPOSED,
         )
     ).scalar_one()
+    # Read off whoever this request is bound to rather than taken as a
+    # parameter: the MCP read tools call this handler as a plain function.
+    reader = authority.acting_person(session)
+    chairman = session.get(User, project.chairman_user_id)
     return {
         "id": project.id,
         "slug": project.slug,
@@ -521,6 +553,10 @@ def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
         "status": project.status,
         "status_reason": project.status_reason,
         "goal": project.goal,
+        **(standing(session, reader, project) if reader is not None else {}),
+        "chairman": None if chairman is None else {
+            "id": chairman.id, "email": chairman.email,
+            "display_name": chairman.display_name},
         "billing_mode": project.billing_mode,
         "month_to_date": {"usd": float(usd), "tokens_in": int(tokens_in),
                           "tokens_out": int(tokens_out),
@@ -570,7 +606,7 @@ def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
     }
 
 
-@router.get("/projects/{project_id}/health")
+@router.get("/projects/{project_id}/health", dependencies=[authority.READ])
 def project_health(project_id: str, session: Session = Depends(db)) -> dict:
     """Every way this project's configuration can be silently wrong, checked
     server-side with a plain-language fix per finding. All green = the UI
@@ -923,7 +959,7 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
     }
 
 
-@router.get("/projects/{project_id}/plan")
+@router.get("/projects/{project_id}/plan", dependencies=[authority.READ])
 def plan_view(project_id: str, session: Session = Depends(db)) -> dict:
     """Everything the Plan screen draws, in one request.
 
@@ -1104,7 +1140,7 @@ def plan_view(project_id: str, session: Session = Depends(db)) -> dict:
     }
 
 
-@router.get("/projects/{project_id}/org")
+@router.get("/projects/{project_id}/org", dependencies=[authority.READ])
 def org(project_id: str, session: Session = Depends(db)) -> dict:
     project = _project(session, project_id)
     teams = []
@@ -1176,7 +1212,7 @@ def _name_maps(session: Session, project_id: str) -> tuple[dict, dict]:
     return agents, teams
 
 
-@router.get("/projects/{project_id}/board")
+@router.get("/projects/{project_id}/board", dependencies=[authority.READ])
 def board(project_id: str, session: Session = Depends(db)) -> list[dict]:
     project = _project(session, project_id)
     agents, teams = _name_maps(session, project.id)
@@ -1203,7 +1239,7 @@ def board(project_id: str, session: Session = Depends(db)) -> list[dict]:
     ]
 
 
-@router.get("/projects/{project_id}/channels")
+@router.get("/projects/{project_id}/channels", dependencies=[authority.READ])
 def channels(project_id: str, session: Session = Depends(db)) -> list[dict]:
     project = _project(session, project_id)
     _, teams = _name_maps(session, project.id)
@@ -1216,14 +1252,14 @@ def channels(project_id: str, session: Session = Depends(db)) -> list[dict]:
     ]
 
 
-@router.get("/channels/{channel_id}/typing")
+@router.get("/channels/{channel_id}/typing", dependencies=[authority.READ])
 def channel_typing(channel_id: str) -> dict:
     """Ephemeral presence for the chat UI — true while the CEO's chat session
     is composing a reply. In-memory, self-expiring, never stored."""
     return {"typing": typing_state.is_typing(channel_id)}
 
 
-@router.get("/channels/{channel_id}/messages")
+@router.get("/channels/{channel_id}/messages", dependencies=[authority.READ])
 def channel_messages(channel_id: str, limit: int = 100, before: str | None = None,
                      session: Session = Depends(db)) -> list[dict]:
     """The newest `limit` messages in a channel, oldest first — and, with
@@ -1273,10 +1309,16 @@ def channel_messages(channel_id: str, limit: int = 100, before: str | None = Non
             select(Agent.id, Agent.name).where(Agent.id.in_(sender_ids))).all()}
         if sender_ids else {}
     )
+    # People by name when there is more than one of them: a co-chair's line read
+    # as "chairman" would put words in the chairman's mouth.
+    channel = session.get(Channel, channel_id)
+    project = session.get(Project, channel.project_id) if channel is not None else None
+    people = {uid: (authority.speaker(session, project, uid) if project else None) or "chairman"
+              for uid in {m.sender_user_id for m in rows if m.sender_user_id}}
     return [
         {
             "id": m.id, "from_agent": m.sender_agent_id, "from_user": m.sender_user_id,
-            "from_name": ("chairman" if m.sender_user_id
+            "from_name": (people[m.sender_user_id] if m.sender_user_id
                           else agents.get(m.sender_agent_id)),
             "thread_id": m.thread_id, "frozen": m.frozen_at is not None,
             "body": m.body, "at": m.created_at.isoformat(),
@@ -1285,7 +1327,7 @@ def channel_messages(channel_id: str, limit: int = 100, before: str | None = Non
     ]
 
 
-@router.get("/projects/{project_id}/runs")
+@router.get("/projects/{project_id}/runs", dependencies=[authority.READ])
 def runs(project_id: str, limit: int = 50, session: Session = Depends(db)) -> list[dict]:
     rows = list(
         session.execute(
@@ -1350,7 +1392,7 @@ def _artifact_text(path_or_uri: str, missing: str) -> str:
     return data.decode(errors="replace")
 
 
-@router.get("/runs/{run_id}/trace")
+@router.get("/runs/{run_id}/trace", dependencies=[authority.READ])
 def run_trace(run_id: str, session: Session = Depends(db)) -> PlainTextResponse:
     """The run's raw JSONL trace, as stashed in the artifact store at finalize."""
     run = session.get(Run, run_id)
@@ -1360,7 +1402,7 @@ def run_trace(run_id: str, session: Session = Depends(db)) -> PlainTextResponse:
     return PlainTextResponse(text[-500_000:])
 
 
-@router.get("/runs/{run_id}/context")
+@router.get("/runs/{run_id}/context", dependencies=[authority.READ])
 def run_context(run_id: str, session: Session = Depends(db)) -> PlainTextResponse:
     """What the run actually sent to the model — the staged system prompt and
     context pack, stashed in the artifact store as one JSON document."""
@@ -1373,7 +1415,7 @@ def run_context(run_id: str, session: Session = Depends(db)) -> PlainTextRespons
     return PlainTextResponse(text, media_type="application/json")
 
 
-@router.get("/evidence/{evidence_id}/snapshot")
+@router.get("/evidence/{evidence_id}/snapshot", dependencies=[authority.READ])
 def evidence_snapshot(evidence_id: str, session: Session = Depends(db)) -> PlainTextResponse:
     """The verifier's snapshot of the evidence source, fetched and stored at
     verification time. The sha256 on the row is the authoritative record; this
@@ -1387,7 +1429,7 @@ def evidence_snapshot(evidence_id: str, session: Session = Depends(db)) -> Plain
     return PlainTextResponse(text)
 
 
-@router.get("/projects/{project_id}/ledger")
+@router.get("/projects/{project_id}/ledger", dependencies=[authority.READ])
 def ledger(project_id: str, limit: int = 100, session: Session = Depends(db)) -> list[dict]:
     rows = session.execute(
         select(LedgerEntry)
@@ -1403,7 +1445,7 @@ def ledger(project_id: str, limit: int = 100, session: Session = Depends(db)) ->
     ]
 
 
-@router.get("/projects/{project_id}/spend")
+@router.get("/projects/{project_id}/spend", dependencies=[authority.READ])
 def spend(project_id: str, group_by: str = "model", days: int = 30,
           window: str = "days", session: Session = Depends(db)) -> dict:
     """Spend rollup, summed from the ledger.
@@ -1496,7 +1538,7 @@ def spend(project_id: str, group_by: str = "model", days: int = 30,
             "since": since.isoformat(), "rows": out}
 
 
-@router.get("/projects/{project_id}/activity")
+@router.get("/projects/{project_id}/activity", dependencies=[authority.READ])
 def project_activity(project_id: str, since: str = "today", until: str | None = None,
                      session: Session = Depends(db)) -> dict:
     """Who did the work, in a window the caller names.
@@ -1515,7 +1557,7 @@ def project_activity(project_id: str, since: str = "today", until: str | None = 
     except activity.WindowError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {"window": label, **activity.roster_activity(session, project, start, end)}
-@router.get("/projects/{project_id}/receipt")
+@router.get("/projects/{project_id}/receipt", dependencies=[authority.READ])
 def receipt(project_id: str, session: Session = Depends(db)) -> dict:
     """What this project cost, and what the money bought.
 
@@ -1532,7 +1574,7 @@ def receipt(project_id: str, session: Session = Depends(db)) -> dict:
     return receipt_projection(session, _project(session, project_id))
 
 
-@router.get("/projects/{project_id}/evidence")
+@router.get("/projects/{project_id}/evidence", dependencies=[authority.READ])
 def evidence(project_id: str, limit: int = 100, session: Session = Depends(db)) -> list[dict]:
     rows = list(session.execute(
         select(Evidence)
@@ -1570,7 +1612,7 @@ def evidence(project_id: str, limit: int = 100, session: Session = Depends(db)) 
     ]
 
 
-@router.get("/projects/{project_id}/hypotheses")
+@router.get("/projects/{project_id}/hypotheses", dependencies=[authority.READ])
 def hypotheses(project_id: str, session: Session = Depends(db)) -> list[dict]:
     rows = session.execute(
         select(Hypothesis).where(Hypothesis.project_id == project_id)
@@ -1583,7 +1625,7 @@ def hypotheses(project_id: str, session: Session = Depends(db)) -> list[dict]:
     ]
 
 
-@router.get("/projects/{project_id}/approvals")
+@router.get("/projects/{project_id}/approvals", dependencies=[authority.READ])
 def approvals(project_id: str, session: Session = Depends(db)) -> list[dict]:
     rows = list(session.execute(
         select(Approval)
@@ -1605,7 +1647,7 @@ def approvals(project_id: str, session: Session = Depends(db)) -> list[dict]:
     return [approval_row(a, outcome=outcomes.get(a.id)) for a in rows]
 
 
-@router.get("/projects/{project_id}/asks")
+@router.get("/projects/{project_id}/asks", dependencies=[authority.READ])
 def asks(project_id: str, session: Session = Depends(db)) -> list[dict]:
     """The CEO's questions to the chairman, live and settled.
 
@@ -1636,7 +1678,7 @@ def asks(project_id: str, session: Session = Depends(db)) -> list[dict]:
     ]
 
 
-@router.get("/projects/{project_id}/memories")
+@router.get("/projects/{project_id}/memories", dependencies=[authority.READ])
 def memories(project_id: str, session: Session = Depends(db)) -> list[dict]:
     rows = session.execute(
         select(Memory)
@@ -1667,7 +1709,7 @@ def _workspace_root(project: Project) -> Path:
     return Path(settings().workspaces_root) / project.slug
 
 
-@router.get("/projects/{project_id}/files")
+@router.get("/projects/{project_id}/files", dependencies=[authority.READ])
 def project_files(project_id: str, session: Session = Depends(db)) -> dict:
     """Everything the agents have written: the shared workspace (work in
     progress — every sandbox mounts it) and the artifact store (finalized
@@ -1737,7 +1779,7 @@ def _as_download(body: bytes | Path, name: str) -> Response:
     return Response(content=body, media_type="application/octet-stream", headers=headers)
 
 
-@router.get("/projects/{project_id}/files/content")
+@router.get("/projects/{project_id}/files/content", dependencies=[authority.READ])
 def project_file_content(
     project_id: str, path: str = "", artifact: str = "",
     session: Session = Depends(db),
@@ -1783,7 +1825,7 @@ def project_file_content(
     return _as_download(target, target.name)
 
 
-@router.get("/projects/{project_id}/suggestions")
+@router.get("/projects/{project_id}/suggestions", dependencies=[authority.READ])
 def suggestions(project_id: str, session: Session = Depends(db)) -> list[dict]:
     rows = session.execute(
         select(Suggestion)
@@ -1795,7 +1837,7 @@ def suggestions(project_id: str, session: Session = Depends(db)) -> list[dict]:
              "consumed": s.consumed_at is not None} for s in rows]
 
 
-@router.get("/projects/{project_id}/cycles")
+@router.get("/projects/{project_id}/cycles", dependencies=[authority.READ])
 def cycles(project_id: str, session: Session = Depends(db)) -> dict:
     """The rhythm's record: every turn, newest first, narratives whole. The
     narratives are the learning loop's storage — clipping them here would
@@ -1821,7 +1863,7 @@ def cycles(project_id: str, session: Session = Depends(db)) -> dict:
     }
 
 
-@router.get("/projects/{project_id}/reviews")
+@router.get("/projects/{project_id}/reviews", dependencies=[authority.READ])
 def reviews(project_id: str, session: Session = Depends(db)) -> dict:
     """The standing meeting's record: the open one (if any) and the history,
     newest first. The numbers on each are the janitor's frozen snapshot from
@@ -1866,7 +1908,7 @@ _SELF_EXERCISE_ACTIONS = {
 }
 
 
-@router.get("/projects/{project_id}/ceo_decisions")
+@router.get("/projects/{project_id}/ceo_decisions", dependencies=[authority.READ])
 def ceo_decisions(project_id: str, limit: int = 50, session: Session = Depends(db)) -> list[dict]:
     """What the CEO decided on its own authority — the disclosure half of the
     autonomy dial, as a screen rather than only as an email.
@@ -1928,7 +1970,7 @@ def _self_exercise_summary(action: str, detail: dict) -> str:
     return action
 
 
-@router.get("/projects/{project_id}/audit_samples")
+@router.get("/projects/{project_id}/audit_samples", dependencies=[authority.READ])
 def audit_samples(project_id: str, session: Session = Depends(db)) -> dict:
     """The sampled audit's desk: pending draws first, then the recent record.
     Chairman-only by router auth — no agent route serves any of this, because
@@ -1979,7 +2021,7 @@ def audit_samples(project_id: str, session: Session = Depends(db)) -> dict:
 AUDIT_PAGE = 200
 
 
-@router.get("/projects/{project_id}/spot_audit")
+@router.get("/projects/{project_id}/spot_audit", dependencies=[authority.READ])
 def spot_audit(project_id: str, n: int | None = None,
                session: Session = Depends(db)) -> dict:
     """Everything a human has not judged yet — or, with `n`, a random sample of
@@ -2053,7 +2095,7 @@ def spot_audit(project_id: str, n: int | None = None,
     }
 
 
-@router.get("/agents/{agent_id}")
+@router.get("/agents/{agent_id}", dependencies=[authority.READ])
 def agent_detail(agent_id: str, session: Session = Depends(db)) -> dict:
     agent = session.get(Agent, agent_id)
     if agent is None:

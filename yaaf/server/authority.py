@@ -53,6 +53,7 @@ from yaaf.core.models import (
     Team,
     User,
 )
+from yaaf.server import acting
 from yaaf.server.deps import db
 from yaaf.server.identity import Person, person_auth
 
@@ -96,6 +97,16 @@ ENTITY_PARAMS: dict[str, type] = {
     "run_id": Run,
 }
 PROJECT_PARAMS = ("project_id", *ENTITY_PARAMS)
+
+#: What a handler says when the thing a path names does not exist — and so
+#: what a person with no standing on its project is told too, word for word.
+NOT_FOUND = {
+    "project_id": "unknown project",
+    "overrun_id": "no such overrun",
+    "sample_id": "unknown audit sample",
+    **{name: f"unknown {name.removesuffix('_id')}" for name in ENTITY_PARAMS
+       if name not in ("overrun_id", "sample_id")},
+}
 
 
 # ── membership ──────────────────────────────────────────────────────────────────
@@ -163,23 +174,57 @@ def reachable(session: Session, user_id: str, is_admin: bool,
 
 
 def require(session: Session, person: Person, project: Project | str | None,
-            level: Level) -> Project:
+            level: Level, *, not_found: str = "unknown project") -> Project:
     """Refuse unless this person holds `level` on this project.
 
     The function every declaration below resolves to, and the one a handler
-    calls itself when its project is not in the path (IN_HANDLER).
+    calls itself when its project is not in the path (IN_HANDLER). Somebody
+    with no standing is told `not_found` — what the handler says of a thing
+    that does not exist — so the refusal answers nothing about what does.
     """
     if isinstance(project, str):
         project = session.get(Project, project)
     have = person_level(session, person, project) if project is not None else None
     if project is None or have is None:
-        raise HTTPException(status_code=404, detail="project not found")
+        raise HTTPException(status_code=404, detail=not_found)
     if have < level:
         raise HTTPException(
             status_code=403,
             detail=f"only {HOLDERS[level]} may do this; you are "
                    f"{_described(session, person, project)}")
     return project
+
+
+def acting_person(session: Session) -> Person | None:
+    """The person this work is bound to (`yaaf.server.acting`), as a Person."""
+    user_id = acting.user_id()
+    user = session.get(User, user_id) if user_id else None
+    if user is None or user.deactivated_at is not None:
+        return None
+    return Person(id=user.id, email=user.email, display_name=user.display_name,
+                  is_admin=bool(user.is_admin), via="bound")
+
+
+def require_here(session: Session, project: Project | str | None, level: Level) -> Project:
+    """`require`, for whoever this work is bound to.
+
+    The form a handler uses when it is also called as a plain function — the
+    MCP tools reach several handlers that way, and a function called directly
+    has no dependency to take the person from. The MCP call bound its actor
+    (`confirm.attributed`), the HTTP request bound its person; either way it is
+    here.
+    """
+    person = acting_person(session)
+    if person is None:
+        raise HTTPException(status_code=401, detail="sign in first")
+    return require(session, person, project, level)
+
+
+def require_admin_here(session: Session) -> Person:
+    person = acting_person(session)
+    if person is None:
+        raise HTTPException(status_code=401, detail="sign in first")
+    return require_admin(person)
 
 
 def _described(session: Session, person: Person, project: Project) -> str:
@@ -238,27 +283,29 @@ def _in_handler(person: Person = Depends(person_auth)) -> Person:
     return person
 
 
-def project_of(session: Session, request: Request) -> Project | None:
+def project_of(session: Session, request: Request) -> tuple[Project | None, str]:
+    """The project the path names, and the words for "no such thing" there."""
     params = request.path_params
     if "project_id" in params:
-        return session.get(Project, params["project_id"])
+        return session.get(Project, params["project_id"]), NOT_FOUND["project_id"]
     for name, model in ENTITY_PARAMS.items():
         if name in params:
             row = session.get(model, params[name])
-            return session.get(Project, row.project_id) if row is not None else None
-    return None
+            project = session.get(Project, row.project_id) if row is not None else None
+            return project, NOT_FOUND[name]
+    return None, NOT_FOUND["project_id"]
 
 
 def _project_gate(level: Level) -> Callable:
     @_declares(f"project:{level.name.lower()}")
     def gate(request: Request, person: Person = Depends(person_auth),
              session: Session = Depends(db)) -> Person:
-        project = project_of(session, request)
+        project, not_found = project_of(session, request)
         if project is None:
             # Nothing to protect: let the handler say "not found" in its own
             # words, as it always has.
             return person
-        require(session, person, project, level)
+        require(session, person, project, level, not_found=not_found)
         return person
     return gate
 
@@ -296,6 +343,22 @@ def set_chairman(session: Session, project: Project, user_id: str) -> None:
             rows[previous].role = CO_CHAIR
         else:
             session.add(ProjectMember(project_id=project.id, user_id=previous, role=CO_CHAIR))
+
+
+def speaker(session: Session, project: Project, user_id: str | None) -> str | None:
+    """How a person's message is labelled for the agents and the screens: None
+    for the chairman — every message a project ever had was his, and saying so
+    on each would change what every existing pack reads — and "Name (co-chair)"
+    for anybody else whose words land in the boardroom, so a CEO taking an
+    order knows whose it was."""
+    if user_id is None or user_id == project.chairman_user_id:
+        return None
+    user = session.get(User, user_id)
+    if user is None:
+        return None
+    role = role_of(session, user_id, project)
+    suffix = {CO_CHAIR: " (co-chair)", OBSERVER: " (observer)"}.get(role, "")
+    return f"{user.display_name}{suffix}"
 
 
 def chairs(session: Session, project: Project) -> list[str]:

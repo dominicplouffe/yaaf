@@ -247,10 +247,13 @@ def _channel_key(channel: Channel) -> str:
 
 
 def _author_display(session: Session, message: Message) -> str:
-    """The prefix Slack readers see. The chairman is the only human on the bus;
-    agents show as "CEO" or their given name."""
+    """The prefix Slack readers see: "Chair" for the chairman, a co-chair by
+    name, and agents as "CEO" or their given name."""
     if message.sender_user_id is not None:
-        return "Chair"
+        from yaaf.server.authority import speaker
+
+        project = session.get(Project, message.project_id)
+        return (speaker(session, project, message.sender_user_id) if project else None) or "Chair"
     if message.sender_agent_id is not None:
         agent = session.get(Agent, message.sender_agent_id)
         if agent is not None:
