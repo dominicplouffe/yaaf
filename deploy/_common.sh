@@ -66,7 +66,48 @@ compose() { ( cd "$REPO/deploy" && $DOCKER compose "$@" ); }
 load_env() {
   [ -f "$REPO/deploy/.env" ] || die "no deploy/.env — run ./deploy_single_server.sh first"
   set -a; . "$REPO/deploy/.env"; set +a
-  [ -n "${YAAF_ADMIN_TOKEN:-}" ] || die "deploy/.env has no YAAF_ADMIN_TOKEN"
+  warn_retired_token
+}
+
+# The admin token was retired (docs/AUTH.md): people sign in with an account.
+# A line left in deploy/.env is harmless, but somebody will be reading it as
+# their password, so say so rather than letting it look current.
+warn_retired_token() {
+  if [ -n "${YAAF_ADMIN_TOKEN:-}" ]; then
+    warn "deploy/.env still sets YAAF_ADMIN_TOKEN, which nothing reads any more —"
+    warn "sign in with your email and password instead. The line is safe to delete."
+  fi
+}
+
+# A box with no admin gets one: the account with this email is promoted (or
+# created) and a one-time setup link is printed. Sets BOOTSTRAP_OUT so the
+# closing "how to sign in" can repeat the link where it will be read.
+BOOTSTRAP_OUT=""
+ensure_admin() {
+  local email="$1" base_url="$2"
+  if compose exec -T api yaaf users has-admin >/dev/null 2>&1; then
+    ok "the box has an admin"
+    return 0
+  fi
+  if [ -z "$email" ]; then
+    warn "this box has no admin yet, so nobody can sign in. Make one with:"
+    warn "  $0 --admin-email you@example.com"
+    return 1
+  fi
+  BOOTSTRAP_OUT=$(compose exec -T api yaaf users bootstrap --email "$email" \
+                    --base-url "$base_url") \
+    || die "could not make $email this box's admin: $BOOTSTRAP_OUT"
+  ok "$email is this box's admin"
+}
+
+# A personal token for the library sync, living ten minutes, minted from inside
+# the container — where a shell already is root on the box — rather than kept
+# anywhere. It replaces the static admin token this script used to read.
+YAAF_DEPLOY_TOKEN=""
+deploy_token() {
+  YAAF_DEPLOY_TOKEN=$(compose exec -T api yaaf users token --first-admin \
+                        --name deploy --minutes 10 | tr -d '\r\n') || return 1
+  [ -n "$YAAF_DEPLOY_TOKEN" ]
 }
 
 # Sandboxes are sibling containers the runner launches directly, not compose
@@ -185,7 +226,7 @@ wait_for_schema() {
 # container that glob matches nothing and exits 0.
 sync_role_library() {
   local port="$1" library slug refile seeded=0 present=0 refiled=0 added=""
-  library=$(curl -fsS -H "Authorization: Bearer ${YAAF_ADMIN_TOKEN}" \
+  library=$(curl -fsS -H "Authorization: Bearer ${YAAF_DEPLOY_TOKEN}" \
     "http://127.0.0.1:${port}/admin/roles") \
     || return 1
   compgen -G "$REPO/roles/*.json" >/dev/null || { warn "no roles/*.json in the checkout"; return 0; }
@@ -204,7 +245,7 @@ sync_role_library() {
       refile=$(sed -n 's/.*"category"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$f" | head -1)
       if [ -n "$refile" ]; then
         curl -fsS -X PATCH "http://127.0.0.1:${port}/admin/roles/${slug}" \
-          -H "Authorization: Bearer ${YAAF_ADMIN_TOKEN}" \
+          -H "Authorization: Bearer ${YAAF_DEPLOY_TOKEN}" \
           -H "Content-Type: application/json" \
           --data "$(python3 -c '
 import json, sys
@@ -216,7 +257,7 @@ print(json.dumps({"name": d["name"], "category": d.get("category"),
       continue
     fi
     curl -fsS -X POST "http://127.0.0.1:${port}/admin/roles" \
-      -H "Authorization: Bearer ${YAAF_ADMIN_TOKEN}" \
+      -H "Authorization: Bearer ${YAAF_DEPLOY_TOKEN}" \
       -H "Content-Type: application/json" \
       --data-binary @"$f" >/dev/null || die "failed to seed ${f##*/}"
     seeded=$((seeded + 1))
@@ -242,7 +283,7 @@ print(json.dumps({"name": d["name"], "category": d.get("category"),
 # reach a project that already started, and an edited crew stays edited.
 sync_crew_library() {
   local port="$1" library slug seeded=0 present=0
-  library=$(curl -fsS -H "Authorization: Bearer ${YAAF_ADMIN_TOKEN}" \
+  library=$(curl -fsS -H "Authorization: Bearer ${YAAF_DEPLOY_TOKEN}" \
     "http://127.0.0.1:${port}/admin/crews") \
     || return 1
   compgen -G "$REPO/crews/*.json" >/dev/null || { warn "no crews/*.json in the checkout"; return 0; }
@@ -254,7 +295,7 @@ sync_crew_library() {
       continue
     fi
     curl -fsS -X POST "http://127.0.0.1:${port}/admin/crews" \
-      -H "Authorization: Bearer ${YAAF_ADMIN_TOKEN}" \
+      -H "Authorization: Bearer ${YAAF_DEPLOY_TOKEN}" \
       -H "Content-Type: application/json" \
       --data-binary @"$f" >/dev/null || die "failed to seed ${f##*/}"
     seeded=$((seeded + 1))

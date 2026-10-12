@@ -60,8 +60,9 @@ from yaaf.core.models import (
 )
 from yaaf.server import activity, agenda, briefing, metrics, policy, typing_state
 from yaaf.server import asks as ask_lib
-from yaaf.server.deps import admin_auth, db
+from yaaf.server.deps import db
 from yaaf.server.dispatcher import activity_state, chat_session_live
+from yaaf.server.identity import signed_in
 from yaaf.server.receipt import receipt as receipt_projection
 from yaaf.server.rows import approval_row
 from yaaf.server.velocity import (
@@ -71,7 +72,7 @@ from yaaf.server.velocity import (
     standing_record,
 )
 
-router = APIRouter(dependencies=[Depends(admin_auth)])
+router = APIRouter(dependencies=[Depends(signed_in)])
 
 
 def _secret_name(session: Session, secret_id: str | None) -> str | None:

@@ -50,7 +50,6 @@ services:
     command: yaaf-server
     environment:
       YAAF_DATABASE_URL: postgresql+psycopg://yaaf:yaaf@db:5432/yaaf
-      YAAF_ADMIN_TOKEN: ${YAAF_ADMIN_TOKEN:-dev-admin-token}
       YAAF_MASTER_KEY: ${YAAF_MASTER_KEY:-}
       YAAF_API_BASE_URL: http://api:8080
       # Browser-facing origin (https://yaaf.example.com). Two surfaces need

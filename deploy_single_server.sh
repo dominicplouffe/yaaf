@@ -10,6 +10,7 @@
 # EXTERNAL-DB below.
 #
 # Usage:
+#   ./deploy_single_server.sh --admin-email you@example.com   # first install
 #   ./deploy_single_server.sh                  # dashboard on 127.0.0.1:8080
 #   ./deploy_single_server.sh --bind 0.0.0.0   # publish it (see the warning)
 #   ./deploy_single_server.sh --bind 127.0.0.1 --bind 192.168.0.5   # both
@@ -21,13 +22,15 @@ set -euo pipefail
 BINDS=()
 PORT=""
 SKIP_ROLES="no"
+ADMIN_EMAIL=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --bind)  BINDS+=("${2:?--bind needs an address}"); shift 2 ;;
     --port)  PORT="${2:?--port needs a port}"; shift 2 ;;
     --skip-roles) SKIP_ROLES="yes"; shift ;;
-    -h|--help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --admin-email) ADMIN_EMAIL="${2:?--admin-email needs an address}"; shift 2 ;;
+    -h|--help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown argument: $1 (try --help)" >&2; exit 2 ;;
   esac
 done
@@ -60,22 +63,20 @@ for d in "$YAAF_STATE_ROOT/workspaces" "$YAAF_STATE_ROOT/artifacts"; do
 done
 
 # ── 3. secrets ────────────────────────────────────────────────────────────────
-# YAAF_ADMIN_TOKEN is any opaque string. YAAF_MASTER_KEY must be a Fernet key
-# (32 url-safe base64 bytes, padded) — `openssl rand -base64 32` satisfies it;
-# secrets.token_urlsafe(32) does NOT, it strips the padding.
+# YAAF_MASTER_KEY must be a Fernet key (32 url-safe base64 bytes, padded) —
+# `openssl rand -base64 32` satisfies it; secrets.token_urlsafe(32) does NOT, it
+# strips the padding. There is no login secret here any more: people sign in
+# with an account (docs/AUTH.md), and the first one is made in step 8.
 say "Secrets (deploy/.env)"
 if [ -f deploy/.env ]; then
   ok "deploy/.env already exists — leaving it alone"
   # Changing YAAF_MASTER_KEY strands every secret already encrypted with it,
   # so a half-populated file is worth stopping for rather than "fixing".
-  for key in YAAF_ADMIN_TOKEN YAAF_MASTER_KEY; do
-    grep -qE "^${key}=.+" deploy/.env \
-      || die "deploy/.env has no value for $key. Fill it in (see deploy/.env.example) and re-run."
-  done
-  ok "both secrets are set"
+  grep -qE "^YAAF_MASTER_KEY=.+" deploy/.env \
+    || die "deploy/.env has no value for YAAF_MASTER_KEY. Fill it in (see deploy/.env.example) and re-run."
+  ok "the master key is set"
 else
-  { echo "YAAF_ADMIN_TOKEN=$(openssl rand -base64 32)"
-    echo "YAAF_MASTER_KEY=$(openssl rand -base64 32)"; } > deploy/.env
+  echo "YAAF_MASTER_KEY=$(openssl rand -base64 32)" > deploy/.env
   chmod 600 deploy/.env
   ok "generated deploy/.env"
   warn "back up YAAF_MASTER_KEY somewhere off this box — losing it makes every"
@@ -83,6 +84,8 @@ else
 fi
 
 set -a; . ./deploy/.env; set +a
+warn_retired_token
+ADMIN_EMAIL="${ADMIN_EMAIL:-${YAAF_ADMIN_EMAIL:-}}"
 
 # ── 4. where the dashboard listens ────────────────────────────────────────────
 # Compose merges docker-compose.override.yml automatically. The !override tag
@@ -139,8 +142,8 @@ for addr in "${BINDS[@]}"; do
   fi
 done
 if [ "$exposed" = "yes" ]; then
-  warn "The admin token is a static bearer sent in cleartext, and Docker's iptables"
-  warn "rules sit in front of ufw, so this really is reachable."
+  warn "Passwords and session cookies cross that address in cleartext, and Docker's"
+  warn "iptables rules sit in front of ufw, so this really is reachable."
   warn "Put TLS in front of it before using this over an untrusted network."
 fi
 
@@ -179,7 +182,22 @@ else
   ok "migrations applied"
 fi
 
-# ── 8. role library ───────────────────────────────────────────────────────────
+# ── 8. the first admin ────────────────────────────────────────────────────────
+# Nobody can sign in to a box with no admin, so a first install makes one. An
+# existing box is left alone: after the first, admins are made by admins.
+say "People"
+if [ -z "$ADMIN_EMAIL" ] && [ -t 0 ] \
+    && ! compose exec -T api yaaf users has-admin >/dev/null 2>&1; then
+  read -r -p "    The first admin's email: " ADMIN_EMAIL
+fi
+# Where a person will open the link: through the tunnel when loopback is
+# published, otherwise this host's own address.
+URL_BASE="http://<this-host>:${PORT}"
+case " ${BINDS[*]} " in *" 127.0.0.1 "*) URL_BASE="http://localhost:${PORT}" ;; esac
+HAS_ADMIN="yes"
+ensure_admin "$ADMIN_EMAIL" "${YAAF_PUBLIC_BASE_URL:-$URL_BASE}" || HAS_ADMIN="no"
+
+# ── 9. role library ───────────────────────────────────────────────────────────
 # Every role in the checkout that this install does not already have, loaded by
 # slug (see sync_role_library). Roles the library already carries are left
 # exactly as they are: re-posting one stamps a new version and would overwrite
@@ -187,11 +205,12 @@ fi
 say "Role library"
 if [ "$SKIP_ROLES" = "yes" ]; then
   warn "skipped (--skip-roles)"
+elif [ "$HAS_ADMIN" = "no" ]; then
+  warn "skipped — loading the library needs an admin, and the box has none yet"
 else
-  sync_role_library "$PORT" \
-    || die "could not read the role library — is YAAF_ADMIN_TOKEN in deploy/.env the one the API booted with?"
-  sync_crew_library "$PORT" \
-    || die "could not read the crew library — is YAAF_ADMIN_TOKEN in deploy/.env the one the API booted with?"
+  deploy_token || die "could not mint a deploy token inside the api container"
+  sync_role_library "$PORT" || die "could not read the role library through the API"
+  sync_crew_library "$PORT" || die "could not read the crew library through the API"
 fi
 
 # ── EXTERNAL-DB ───────────────────────────────────────────────────────────────
@@ -208,45 +227,49 @@ cat <<EOF
   is nothing for you to set.
 EOF
 
-# The token is generated once and never printed again unless asked for, so
-# print it plainly here: it is the whole of the login, and a first install
-# that ends without it strands you at the sign-in screen.
-printf '\n\033[1m==> HOW TO LOG IN\033[0m\n'
-if [ "$BIND" = "127.0.0.1" ]; then
-  cat <<EOF
+# A first install that ends without saying how to get in strands you at the
+# sign-in screen, so the setup link — printed once, by the bootstrap — is
+# repeated here, where it will be read.
+printf '\n\033[1m==> HOW TO SIGN IN\033[0m\n'
+URL="${URL_BASE}/app"
+case " ${BINDS[*]} " in
+  *" 127.0.0.1 "*)
+    cat <<EOF
 
-  1. From your laptop, open the tunnel (leave it running):
+  From your laptop, open the tunnel (leave it running):
 
        ssh -N -L ${PORT}:localhost:${PORT} $(whoami)@<this-host>
+EOF
+    ;;
+esac
+if [ -n "$BOOTSTRAP_OUT" ]; then
+  printf '\n%s\n' "$BOOTSTRAP_OUT" | sed 's/^/  /'
+  cat <<EOF
 
-  2. Browse to:
+  Choose a password on that page and you are in.
+EOF
+elif [ "$HAS_ADMIN" = "no" ]; then
+  cat <<EOF
 
-       http://localhost:${PORT}/app
+  Nobody can sign in yet. Make the first admin, then follow the link it prints:
 
-  3. Paste this admin token when it asks:
-
-       ${YAAF_ADMIN_TOKEN}
+       $0 --admin-email you@example.com
 EOF
 else
   cat <<EOF
 
-  1. Browse to:
-
-       http://<this-host>:${PORT}/app
-
-  2. Paste this admin token when it asks:
-
-       ${YAAF_ADMIN_TOKEN}
+  Browse to ${URL} and sign in with your email and password.
 EOF
 fi
 
 cat <<EOF
 
-  Lost it? It is not regenerated — read it back with:
+  Forgotten password? From a shell on this box:
 
-       grep YAAF_ADMIN_TOKEN deploy/.env
+       docker compose -f deploy/docker-compose.yml exec api yaaf users setup-link you@example.com
 
-  That token is also the bearer for the admin API and the yaaf CLI.
+  The yaaf CLI signs in the same way — \`yaaf login\` exchanges your email and
+  password for a personal token. Invite colleagues from Settings → People.
 
   Next: create a project in the dashboard. That step needs an Anthropic API
   key, which this script does NOT create — bring your own from

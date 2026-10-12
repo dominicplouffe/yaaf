@@ -1,10 +1,15 @@
 """Invariant selftests: the live-update WebSocket.
 
 The socket is a latency hint over polling (like LISTEN/NOTIFY over the
-dispatcher's polling floor), so the invariants are small: it must not admit a
-bad token, it must send an initial change stamp, and the stamp must actually
-change when project data changes — otherwise the hint never fires and the UI
-silently degrades to pure polling forever.
+dispatcher's polling floor), so the invariants are small: it must not admit
+anybody without a session, nor a page from another origin; it must send an
+initial change stamp; and the stamp must actually change when project data
+changes — otherwise the hint never fires and the UI silently degrades to pure
+polling forever.
+
+It authenticates with the browser's session cookie, never a token in the URL:
+the admin token used to ride as `?token=`, which put the master credential in
+every proxy log the socket passed through.
 """
 
 from __future__ import annotations
@@ -12,7 +17,7 @@ from __future__ import annotations
 import pytest
 from starlette.websockets import WebSocketDisconnect
 
-from tests.conftest import ADMIN, make_project
+from tests.conftest import ADMIN, CHAIR_TOKEN, ORIGIN, make_project, sign_in
 from yaaf.server.api import ws as ws_module
 
 
@@ -23,33 +28,52 @@ def fast_stamp_loop(monkeypatch):
     monkeypatch.setattr(ws_module, "WS_POLL_S", 0.02)
 
 
-def test_bad_token_is_refused(client):
-    project = make_project(client, start=False)
+def _refused(client, url: str, headers: dict | None = None) -> int:
     with (
-        client.websocket_connect(
-            f"/ws/projects/{project['id']}?token=wrong-token"
-        ) as socket,
+        client.websocket_connect(url, headers=headers or ORIGIN) as socket,
         pytest.raises(WebSocketDisconnect) as excinfo,
     ):
         socket.receive_json()
-    assert excinfo.value.code == 1008
+    return excinfo.value.code
 
 
-def test_missing_token_is_refused(client):
+def test_no_session_is_refused(client):
     project = make_project(client, start=False)
-    with (
-        client.websocket_connect(f"/ws/projects/{project['id']}") as socket,
-        pytest.raises(WebSocketDisconnect) as excinfo,
-    ):
-        socket.receive_json()
-    assert excinfo.value.code == 1008
+    assert _refused(client, f"/ws/projects/{project['id']}") == 1008
 
 
-def test_good_token_gets_stamp_and_changes_move_it(client):
+def test_a_token_in_the_url_opens_nothing(client):
+    """The old transport, with a credential that is perfectly good elsewhere."""
     project = make_project(client, start=False)
-    with client.websocket_connect(
-        f"/ws/projects/{project['id']}?token=test-admin-token"
-    ) as socket:
+    assert _refused(client, f"/ws/projects/{project['id']}?token={CHAIR_TOKEN}") == 1008
+
+
+def test_another_origin_cannot_borrow_the_session(client):
+    """Cross-site WebSocket hijacking: CORS never covers a socket, so a page
+    elsewhere could open one with the chairman's cookie attached. The Origin
+    check is the only thing between that page and the change feed."""
+    project = make_project(client, start=False)
+    sign_in(client)
+    url = f"/ws/projects/{project['id']}"
+    assert _refused(client, url, {"Origin": "https://evil.example"}) == 1008
+    assert _refused(client, url, {"Origin": ""}) == 1008
+
+
+def test_a_signed_out_session_stops_opening_sockets(client):
+    project = make_project(client, start=False)
+    sign_in(client)
+    kept = client.cookies.get("yaaf_session")
+    assert client.post("/auth/logout", headers=ORIGIN).status_code == 200
+    # The browser forgot its cookie; somebody who copied it did not. The row is
+    # what refuses it, not the browser's manners.
+    client.cookies.set("yaaf_session", kept)
+    assert _refused(client, f"/ws/projects/{project['id']}") == 1008
+
+
+def test_a_session_gets_stamps_and_changes_move_them(client):
+    project = make_project(client, start=False)
+    sign_in(client)
+    with client.websocket_connect(f"/ws/projects/{project['id']}", headers=ORIGIN) as socket:
         first = socket.receive_json()
         assert first["type"] == "stamp"
         assert first["project"] == project["id"]

@@ -14,12 +14,11 @@ import logging
 import os
 import re
 import secrets as pysecrets
-from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -85,23 +84,15 @@ from yaaf.core.models import (
 )
 from yaaf.core.naming import env_var_name, is_reserved
 from yaaf.founder import doctrine
-from yaaf.server import briefing, policy
+from yaaf.server import acting, authority, briefing, policy
 from yaaf.server.api.agent import WAKE_CHANNEL
-from yaaf.server.deps import admin_auth, db
+from yaaf.server.deps import db
+from yaaf.server.identity import Person, person_auth, signed_in
 from yaaf.server.mcp.auth import SCOPES as MCP_SCOPES
 
 log = logging.getLogger("yaaf.admin")
 
-router = APIRouter(dependencies=[Depends(admin_auth)])
-
-
-#: Who the audit trail should name for writes on this surface.
-#:
-#: "user:admin" is true when the chairman is holding the bearer themselves. It
-#: is a lie when a model client is driving through MCP, and the difference has
-#: to survive into a review six weeks later — so the MCP layer sets this for
-#: the duration of a call rather than every handler growing an actor argument.
-ACTOR: ContextVar[str] = ContextVar("yaaf_audit_actor", default="user:admin")
+router = APIRouter(dependencies=[Depends(signed_in)])
 
 
 def _audit(session: Session, project_id: str | None, action: str, entity: str,
@@ -110,7 +101,7 @@ def _audit(session: Session, project_id: str | None, action: str, entity: str,
         AuditLog(
             id=ids.new_id(ids.AUDIT),
             project_id=project_id,
-            actor=ACTOR.get(),
+            actor=acting.stamp(),
             action=action,
             entity=entity,
             entity_id=entity_id,
@@ -123,18 +114,141 @@ def _audit(session: Session, project_id: str | None, action: str, entity: str,
 
 
 class UserIn(BaseModel):
-    email: str
-    display_name: str
+    email: str = Field(min_length=3, max_length=255)
+    display_name: str = Field(min_length=1, max_length=120)
+    is_admin: bool = False
 
 
-@router.post("/users")
-def create_user(body: UserIn, session: Session = Depends(db)) -> dict:
-    existing = session.execute(select(User).where(User.email == body.email)).scalar_one_or_none()
+class UserPatch(BaseModel):
+    display_name: str | None = Field(default=None, min_length=1, max_length=120)
+    is_admin: bool | None = None
+    active: bool | None = None
+
+
+def _user_row(user: User) -> dict:
+    return {
+        "id": user.id,
+        "email": user.email,
+        "display_name": user.display_name,
+        "is_admin": bool(user.is_admin),
+        "active": user.deactivated_at is None,
+        "has_password": bool(user.password_hash),
+        "created_at": user.created_at.isoformat() if user.created_at else None,
+        "deactivated_at": user.deactivated_at.isoformat() if user.deactivated_at else None,
+    }
+
+
+def _setup_fields(link: str) -> dict:
+    from yaaf.server import identity
+
+    # The path as well as the URL: the dashboard completes it with the origin it
+    # is actually being read on, which the server cannot always know.
+    return {"setup_url": identity.setup_url(link), "setup_path": identity.setup_path(link),
+            "setup_expires_in_hours": int(identity.SETUP_TTL.total_seconds() // 3600)}
+
+
+@router.get("/users", dependencies=[authority.INSTANCE_ADMIN])
+def list_users(session: Session = Depends(db)) -> list[dict]:
+    return [_user_row(u) for u in
+            session.execute(select(User).order_by(User.created_at)).scalars()]
+
+
+@router.post("/users", dependencies=[authority.INSTANCE_ADMIN])
+def create_user(body: UserIn, session: Session = Depends(db),
+                person: Person = Depends(person_auth)) -> dict:
+    """Invite somebody: an account with no password, and the one-time link
+    that lets them choose one. The link is the whole of the invitation — this
+    box sends no mail — so it is shown here, once, to hand on."""
+    from yaaf.server import identity
+
+    email = identity.normalise_email(body.email)
+    if "@" not in email:
+        raise HTTPException(status_code=422, detail="that is not an email address")
+    existing = identity.find_user(session, email)
     if existing:
-        return {"id": existing.id, "existing": True}
-    user = User(id=ids.new_id(ids.USER), email=body.email, display_name=body.display_name)
+        return {"id": existing.id, "existing": True, **_user_row(existing)}
+    user = User(id=ids.new_id(ids.USER), email=email, display_name=body.display_name,
+                is_admin=body.is_admin)
     session.add(user)
-    return {"id": user.id, "existing": False}
+    session.flush()
+    link = identity.issue_setup_link(session, user, "invite", person.id)
+    _audit(session, None, "user.invite", "user", user.id,
+           {"email": email, "is_admin": body.is_admin})
+    return {"existing": False, **_user_row(user), **_setup_fields(link)}
+
+
+@router.post("/users/{user_id}/setup-link", dependencies=[authority.INSTANCE_ADMIN])
+def reissue_setup_link(user_id: str, session: Session = Depends(db),
+                       person: Person = Depends(person_auth)) -> dict:
+    """A fresh link for somebody who lost theirs or forgot their password. Any
+    earlier unused link for them stops working."""
+    from yaaf.server import identity
+
+    user = session.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="no such user")
+    if user.deactivated_at is not None:
+        raise HTTPException(status_code=409,
+                            detail="this account is deactivated; reactivate it first")
+    purpose = "reset" if user.password_hash else "invite"
+    link = identity.issue_setup_link(session, user, purpose, person.id)
+    _audit(session, None, f"user.setup_link.{purpose}", "user", user.id, {"email": user.email})
+    return {**_user_row(user), **_setup_fields(link), "purpose": purpose}
+
+
+def _active_admins(session: Session) -> int:
+    return int(session.execute(
+        select(func.count(User.id)).where(User.is_admin.is_(True),
+                                          User.deactivated_at.is_(None))
+    ).scalar_one())
+
+
+@router.patch("/users/{user_id}", dependencies=[authority.INSTANCE_ADMIN])
+def update_user(user_id: str, body: UserPatch, session: Session = Depends(db)) -> dict:
+    """Rename, promote, demote, deactivate, reactivate.
+
+    Two refusals keep the box governable (rule 6 of docs/AUTH.md): it always
+    has an active admin, and a live project always has a chairman who can sign
+    in. A person who chairs something is handed off it first — the instance
+    admin can transfer the chair — rather than leaving a project nobody may
+    decide on.
+    """
+    from yaaf.server import identity
+
+    user = session.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="no such user")
+    leaving_admin = user.is_admin and user.deactivated_at is None and (
+        body.is_admin is False or body.active is False)
+    if leaving_admin and _active_admins(session) <= 1:
+        raise HTTPException(
+            status_code=409,
+            detail="this is the box's last active admin; promote somebody else first")
+    if body.active is False and user.deactivated_at is None:
+        chaired = session.execute(
+            select(Project.slug).where(Project.chairman_user_id == user.id,
+                                       Project.status.not_in([ProjectStatus.STOPPED,
+                                                              ProjectStatus.COMPLETED]))
+        ).scalars().all()
+        if chaired:
+            raise HTTPException(
+                status_code=409,
+                detail=f"{user.email} chairs {', '.join(chaired)}; hand the chair on "
+                       "first, so every live project still has somebody who may decide")
+        user.deactivated_at = utcnow()
+        identity.revoke_everything(session, user)
+        _audit(session, None, "user.deactivate", "user", user.id, {"email": user.email})
+    elif body.active is True and user.deactivated_at is not None:
+        user.deactivated_at = None
+        _audit(session, None, "user.reactivate", "user", user.id, {"email": user.email})
+    if body.is_admin is not None and body.is_admin != bool(user.is_admin):
+        user.is_admin = body.is_admin
+        _audit(session, None, "user.promote" if body.is_admin else "user.demote", "user",
+               user.id, {"email": user.email})
+    if body.display_name is not None and body.display_name != user.display_name:
+        user.display_name = body.display_name
+        _audit(session, None, "user.rename", "user", user.id, {"name": body.display_name})
+    return _user_row(user)
 
 
 # The six aisles a role can be filed under. Discipline, not domain: a
@@ -492,7 +606,10 @@ class ProjectCreate(BaseModel):
     slug: str = Field(pattern="^[a-z0-9-]{2,64}$")
     name: str
     goal: str = Field(min_length=10)
-    chairman_email: str
+    # Omitted, the chairman is whoever founds it. An instance admin may name
+    # somebody else — setting a project up for a colleague is running the box —
+    # and nobody else may: chairing is accepted, not assigned.
+    chairman_email: str | None = None
     # Omitted, the mode is the credential's (api_key with no credential). Given
     # and contradicting the credential, refused — the same answer PATCH gives.
     billing_mode: str | None = Field(default=None, pattern="^(api_key|subscription)$")
@@ -736,6 +853,29 @@ def _craft_lift(
     return model, effort
 
 
+def _founding_chairman(session: Session, named: str | None) -> User:
+    """Who chairs a project being created: its founder, unless an instance
+    admin names somebody else."""
+    from yaaf.server.identity import find_user, normalise_email
+
+    founder_id = acting.user_id()
+    founder = session.get(User, founder_id) if founder_id else None
+    if founder is None:
+        raise HTTPException(status_code=401, detail="sign in first")
+    if not named or normalise_email(named) == founder.email:
+        return founder
+    if not founder.is_admin:
+        raise HTTPException(
+            status_code=403,
+            detail="a project is chaired by whoever founds it. Found it yourself and hand "
+                   "the chair on afterwards, or ask an instance admin to set it up for them.")
+    chairman = find_user(session, named)
+    if chairman is None or chairman.deactivated_at is not None:
+        raise HTTPException(status_code=422,
+                            detail="nobody with that email has an account here; invite them first")
+    return chairman
+
+
 @router.post("/projects")
 def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
     from yaaf.core.llm_credentials import assigned_credential
@@ -744,11 +884,7 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
     if billing is not None and body.billing_mode not in (None, billing.llm_mode):
         raise HTTPException(status_code=422,
                             detail="billing mode must match the selected credential")
-    chairman = session.execute(
-        select(User).where(User.email == body.chairman_email)
-    ).scalar_one_or_none()
-    if chairman is None:
-        raise HTTPException(status_code=422, detail="chairman user does not exist; create it first")
+    chairman = _founding_chairman(session, body.chairman_email)
     if session.execute(select(Project).where(Project.slug == body.slug)).scalar_one_or_none():
         raise HTTPException(status_code=409, detail="project slug already exists")
     if body.solo and (len(body.teams) != 1 or body.teams[0].employees):
@@ -776,9 +912,18 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
     # Built here rather than after the insert because the roster check below is
     # a refusal, and a refusal that fires after rows are written is a rollback
     # waiting to be got wrong.
-    doc = ConstitutionDoc.model_validate(
-        {**ConstitutionDoc().model_dump(),
-         **default_tempo(body.mode, default_autonomy(body.constitution))})
+    try:
+        doc = ConstitutionDoc.model_validate(
+            {**ConstitutionDoc().model_dump(),
+             **default_tempo(body.mode, default_autonomy(body.constitution))})
+    except ValidationError as exc:
+        # A rule that cannot hold — a 29th of every month — is the founder's to
+        # fix, not a 500. It reached here unchecked for as long as the suite's
+        # only attack on it failed earlier, on a chairman account that did not
+        # exist, and passed for that reason instead.
+        raise HTTPException(status_code=422, detail="; ".join(
+            f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}" for e in exc.errors()
+        )) from None
     _check_review_seat(session, doc, body.teams, solo=body.solo)
     deadline = body.deadline
     deadline_source = None
@@ -1198,7 +1343,10 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
         slug=body.slug,
         name=body.name or f"{source.name} (clone)",
         goal=body.goal or source.goal,
-        chairman_user_id=source.chairman_user_id,
+        # Whoever clones it chairs it. The source's other people are not
+        # copied onto the twin: membership is something a person accepts, and
+        # the new chairman can add them in a click.
+        chairman_user_id=acting.user_id() or source.chairman_user_id,
         mode=source.mode,
         # The org shape, for the same reason mode is here: the twin rebuilds the
         # source's teams and people exactly, so the source's recorded shape is
@@ -1221,11 +1369,8 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
     )
     session.add(project)
     session.flush()
-    for member in session.execute(
-        select(ProjectMember).where(ProjectMember.project_id == source.id)
-    ).scalars():
-        session.add(ProjectMember(project_id=project.id, user_id=member.user_id,
-                                  role=member.role))
+    session.add(ProjectMember(project_id=project.id, user_id=project.chairman_user_id,
+                              role="chairman"))
 
     # The rulebook the source is governed by *now*, frozen fresh at version 1:
     # the twin inherits the rules, not the argument that produced them.
@@ -2004,7 +2149,10 @@ def start_data_source_oauth(project_id: str, name: str, request: Request,
         # The PKCE verifier is a secret with a fifteen-minute life; it still
         # never touches the config JSON in plaintext.
         "pending": {"state": state, "verifier_cipher": encrypt(verifier),
-                    "redirect_uri": redirect_uri, "created_at": utcnow().isoformat()},
+                    "redirect_uri": redirect_uri, "created_at": utcnow().isoformat(),
+                    # Who pressed Connect: the callback arrives with no
+                    # credential but a state, and its record should name them.
+                    "by_user_id": acting.user_id()},
     })
     oauth.pop("error", None)
     entry["oauth"] = oauth
@@ -4931,23 +5079,31 @@ def put_secret(body: SecretIn, session: Session = Depends(db)) -> dict:
 
 class McpClientIn(BaseModel):
     name: str = Field(min_length=2, max_length=80)
-    chairman_email: str
+    # Always the person minting it. Kept so an older CLI that sends it still
+    # works when it names you, and is refused when it names anybody else.
+    chairman_email: str | None = None
     # At least one, because a token with no scope is a credential that exists
     # to be widened later — and widening is the failure mode this table exists
     # to make deliberate.
     scopes: list[str] = Field(min_length=1)
 
 
-@router.post("/mcp_clients")
-def create_mcp_client(body: McpClientIn, session: Session = Depends(db)) -> dict:
+@router.post("/mcp_clients", dependencies=[authority.SIGNED_IN])
+def create_mcp_client(body: McpClientIn, session: Session = Depends(db),
+                      person: Person = Depends(person_auth)) -> dict:
     """Mint a token for a model client. The plaintext is shown once, here.
 
-    This is the only place the chairman's authority is ever narrowed rather
-    than copied: the admin bearer stays where it is, and what leaves is a
-    scoped, revocable, attributable credential that names the person it acts
-    for. See docs/MCP_SERVER.md.
+    This is the only place a person's authority is ever narrowed rather than
+    copied: their own credential stays where it is, and what leaves is a
+    scoped, revocable, attributable credential that names them. See
+    docs/MCP_SERVER.md.
+
+    Only ever for yourself — an instance admin included. Running the box is
+    not acting as the people on it, and a model holding a grant in somebody
+    else's name would be exactly that.
     """
     from yaaf.core.tokens import mint_mcp
+    from yaaf.server.identity import normalise_email
 
     unknown = sorted(set(body.scopes) - set(MCP_SCOPES))
     if unknown:
@@ -4955,11 +5111,11 @@ def create_mcp_client(body: McpClientIn, session: Session = Depends(db)) -> dict
             status_code=422,
             detail=f"unknown scope(s) {', '.join(unknown)}; valid: {', '.join(MCP_SCOPES)}",
         )
-    chairman = session.execute(
-        select(User).where(User.email == body.chairman_email)
-    ).scalar_one_or_none()
-    if chairman is None:
-        raise HTTPException(status_code=422, detail="no such user")
+    if body.chairman_email and normalise_email(body.chairman_email) != person.email:
+        raise HTTPException(
+            status_code=403,
+            detail="a model client acts for the person who mints it; sign in as them")
+    chairman = session.get(User, person.id)
 
     plaintext, token_hash = mint_mcp()
     row = McpClient(
@@ -4988,22 +5144,29 @@ def create_mcp_client(body: McpClientIn, session: Session = Depends(db)) -> dict
     }
 
 
-@router.get("/mcp_clients")
-def list_mcp_clients(session: Session = Depends(db)) -> list[dict]:
+@router.get("/mcp_clients", dependencies=[authority.SIGNED_IN])
+def list_mcp_clients(session: Session = Depends(db),
+                     person: Person = Depends(person_auth)) -> list[dict]:
+    """Your own clients — and, for an instance admin, everybody's, because
+    revoking a departed colleague's laptop is running the box."""
+    query = select(McpClient).order_by(McpClient.created_at)
+    if not person.is_admin:
+        query = query.where(McpClient.user_id == person.id)
     return [
         {"id": c.id, "name": c.name, "user_id": c.user_id, "scopes": c.scopes,
          "created_at": c.created_at, "last_used_at": c.last_used_at,
          "revoked_at": c.revoked_at}
-        for c in session.execute(select(McpClient).order_by(McpClient.created_at)).scalars()
+        for c in session.execute(query).scalars()
     ]
 
 
-@router.delete("/mcp_clients/{client_id}")
-def revoke_mcp_client(client_id: str, session: Session = Depends(db)) -> dict:
+@router.delete("/mcp_clients/{client_id}", dependencies=[authority.IN_HANDLER])
+def revoke_mcp_client(client_id: str, session: Session = Depends(db),
+                      person: Person = Depends(person_auth)) -> dict:
     """Revoke, never delete: the audit trail names this client forever, so the
     row it names has to survive to be readable."""
     row = session.get(McpClient, client_id)
-    if row is None:
+    if row is None or not authority.owns(person, row.user_id, admin_may=True):
         raise HTTPException(status_code=404, detail="unknown MCP client")
     if row.revoked_at is None:
         row.revoked_at = utcnow()
@@ -5014,28 +5177,3 @@ def revoke_mcp_client(client_id: str, session: Session = Depends(db)) -> dict:
             token_row.revoked_at = token_row.revoked_at or utcnow()
         _audit(session, None, "mcp_client.revoke", "mcp_client", row.id, {"name": row.name})
     return {"id": row.id, "name": row.name, "revoked_at": row.revoked_at}
-
-
-class PasswordIn(BaseModel):
-    email: str
-    password: str = Field(min_length=12)
-
-
-@router.post("/users/password")
-def set_user_password(body: PasswordIn, session: Session = Depends(db)) -> dict:
-    """Give a chairman a password, so a browser can authenticate them.
-
-    The admin token authenticates a *client*; OAuth's consent screen has to
-    know which person is at the keyboard. This is the seam between the two, and
-    the only thing on the admin surface that writes `users.password_hash`.
-    """
-    from yaaf.server import login as login_module
-
-    try:
-        user = login_module.set_password(session, body.email.strip().lower(), body.password)
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from None
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from None
-    _audit(session, None, "user.set_password", "user", user.id, {"email": user.email})
-    return {"id": user.id, "email": user.email}

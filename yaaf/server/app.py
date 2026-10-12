@@ -59,20 +59,23 @@ def _web_dist() -> Path | None:
 
 def create_app() -> FastAPI:
     from yaaf.server import mcp
-    from yaaf.server.api import admin, agent, founder, oauth, observe, webhooks, ws
+    from yaaf.server.api import admin, agent, auth, founder, oauth, observe, webhooks, ws
     from yaaf.server.api import settings as app_settings
     from yaaf.server.mcp import oauth_server
 
     app = FastAPI(title="yaaf", version="0.1.0")
     app.include_router(agent.router, prefix="/agent", tags=["agent"])
+    # People sign in here: the dashboard's password and session, the CLI's
+    # personal token, and a person's own credentials. See docs/AUTH.md.
+    app.include_router(auth.router, prefix="/auth", tags=["auth"])
     app.include_router(admin.router, prefix="/admin", tags=["admin"])
-    # The founding conversation, before a project exists. Admin-authenticated
-    # like the rest of the chairman surface; mounted under /admin so it shares
-    # that auth rather than growing a second one.
+    # The founding conversation, before a project exists. Signed in like the
+    # rest of the chairman surface; mounted under /admin so it shares that auth
+    # rather than growing a second one.
     app.include_router(founder.router, prefix="/admin/founder", tags=["founder"])
     # App-wide settings: the model credential and the Slack connection every
     # project inherits. Mounted under /admin for the same reason the Founder is
-    # — one chairman auth, not a second one.
+    # — one sign-in, not a second one.
     app.include_router(app_settings.router, prefix="/admin/settings", tags=["settings"])
     app.include_router(observe.router, prefix="/observe", tags=["observe"])
     # Unauthenticated by bearer-token design: senders sign each body with a
@@ -86,7 +89,7 @@ def create_app() -> FastAPI:
     # replacement for it (mirrors LISTEN/NOTIFY over the dispatcher's floor).
     app.include_router(ws.router, tags=["ws"])
     # yaaf as an MCP server: the chairman's surface for a model client. Its own
-    # principal, never the admin bearer — see yaaf/server/mcp/auth.py.
+    # principal, never a person's own credential — see yaaf/server/mcp/auth.py.
     app.include_router(mcp.router, prefix="/mcp", tags=["mcp"])
     # Its OAuth half: discovery at the root (unauthenticated by spec — a client
     # that cannot read these cannot learn how to authenticate), and the consent
@@ -96,6 +99,13 @@ def create_app() -> FastAPI:
     # Both documents above are built from the advertised origin, so an origin
     # only this network can resolve is published as fact and breaks the
     # connector somewhere we get no report from. See unroutable_base_url.
+    # Said once, at boot, because the person it is for is reading a deploy log
+    # wondering why the value in their shell profile stopped working.
+    if os.environ.get("YAAF_ADMIN_TOKEN"):
+        log.warning(
+            "YAAF_ADMIN_TOKEN is set and is no longer read: the admin token was "
+            "retired. People sign in with an account (docs/AUTH.md); a box with no "
+            "admin yet gets one with `yaaf users bootstrap --email you@example.com`.")
     stranded = oauth_server.unroutable_base_url()
     if stranded:
         log.warning(

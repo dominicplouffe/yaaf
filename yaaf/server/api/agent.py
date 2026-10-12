@@ -65,13 +65,27 @@ from yaaf.core.models import (
     VerificationStatus,
     utcnow,
 )
-from yaaf.server import activity, policy, typing_state
+from yaaf.server import acting, activity, policy, typing_state
 from yaaf.server.deps import RunContext, db, run_auth
 from yaaf.server.notify import Attention, chairman_notify
 from yaaf.server.policy import Refusal
 from yaaf.server.rows import approval_row
 
-router = APIRouter()
+
+async def _the_agent_acts(ctx: RunContext = Depends(run_auth)) -> None:
+    """Bind the run's agent as the actor for everything this request records.
+
+    Most of this surface writes `agent:<id>` by hand, but a few verbs reach
+    into the chairman's own helpers — a CEO hiring goes through `admin.add_team`,
+    a directive through the scope verbs — and those read the actor from
+    `yaaf.server.acting`. Before this, they found nothing bound and fell back to
+    "user:admin", so the record said the chairman made every hire the CEO made.
+    Async for the reason `identity.signed_in` gives.
+    """
+    acting.bind(acting.agent(ctx.agent.id))
+
+
+router = APIRouter(dependencies=[Depends(_the_agent_acts)])
 
 WAKE_CHANNEL = "yaaf_wake"
 

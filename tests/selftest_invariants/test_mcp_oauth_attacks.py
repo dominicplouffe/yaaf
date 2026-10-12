@@ -11,7 +11,7 @@ The rule each defends is in docs/MCP_SERVER.md under "Full claude.ai support".
 
 from __future__ import annotations
 
-from tests.conftest import ADMIN, bearer, make_project
+from tests.conftest import ADMIN, CHAIR_EMAIL, bearer, make_project
 from tests.oauth_flow import (
     PASSWORD,
     REDIRECT,
@@ -210,17 +210,20 @@ def test_an_expired_code_is_refused(client, public):
     assert "expired" in stale.json()["error_description"]
 
 
-def test_consent_requires_the_chairmans_password_not_the_admin_token(client, public):
-    """The admin token authenticates a client. Consent needs a person.
+def test_consent_requires_the_chairmans_password_not_a_token(client, public):
+    """A personal token authenticates a person at a terminal, and a dashboard
+    session one in a browser. Consent needs the password again, anyway.
 
-    Reusing the bearer here would put the whole design back where it started:
-    an unattributable credential granting authority to a machine.
+    Accepting either here would put the whole design back where it started: a
+    credential that is not the moment's proof of a person, granting authority
+    to a machine.
     """
     chairman_with_password(client)
     registered = register(client)
     params = authorize_params(registered)
 
-    # No cookie, admin header offered instead — still the login page, not consent.
+    # No consent cookie, the personal token offered instead — still the login
+    # page, not consent.
     page = client.get("/oauth/authorize", params=params, headers=ADMIN)
     assert page.status_code == 200
     assert "Sign in" in page.text
@@ -230,6 +233,18 @@ def test_consent_requires_the_chairmans_password_not_the_admin_token(client, pub
     forged = client.post("/oauth/authorize",
                          data={**params, "action": "approve", "scope_grant": ["configure"]},
                          headers=ADMIN, follow_redirects=False)
+    assert forged.status_code == 401
+
+    # A browser signed in to the dashboard is not signed in to consent either:
+    # the session cookie is not the consent cookie, by design.
+    signed_in = client.post("/auth/login",
+                            json={"email": CHAIR_EMAIL, "password": PASSWORD})
+    assert signed_in.status_code == 200, signed_in.text
+    page = client.get("/oauth/authorize", params=params)
+    assert "Sign in" in page.text and "Approve" not in page.text
+    forged = client.post("/oauth/authorize",
+                         data={**params, "action": "approve", "scope_grant": ["configure"]},
+                         follow_redirects=False)
     assert forged.status_code == 401
 
     wrong = client.post("/oauth/authorize", data={

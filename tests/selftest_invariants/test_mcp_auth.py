@@ -1,22 +1,33 @@
 """The MCP surface's principal, attacked the way a client would attack it.
 
-Rule 1 of docs/MCP_SERVER.md: an MCP client is never the admin principal. The
-attacks here are the ones a model client actually makes by accident and an
-attacker makes on purpose — reach for the admin token, guess a token, keep
-using a revoked one, or skip the credential entirely.
+Rule 1 of docs/MCP_SERVER.md: an MCP client is never a person's own principal.
+The attacks here are the ones a model client actually makes by accident and an
+attacker makes on purpose — reach for its person's own token, guess a token,
+keep using a revoked one, or skip the credential entirely.
 """
 
 from __future__ import annotations
 
 import json
 
-from tests.conftest import ADMIN, bearer, make_project
+from tests.conftest import (
+    ADMIN,
+    CHAIR_EMAIL,
+    CHAIR_TOKEN,
+    bearer,
+    headers_of,
+    make_project,
+    person,
+)
 
 
-def mint(client, name="laptop", scopes=("read",), chairman="chair@example.com"):
+def mint(client, name="laptop", scopes=("read",), chairman=CHAIR_EMAIL):
+    """A model client for `chairman`, minted by them: nobody mints one in
+    somebody else's name, an instance admin included."""
+    headers = ADMIN if chairman == CHAIR_EMAIL else headers_of(person(chairman))
     response = client.post("/admin/mcp_clients", json={
-        "name": name, "chairman_email": chairman, "scopes": list(scopes),
-    }, headers=ADMIN)
+        "name": name, "scopes": list(scopes),
+    }, headers=headers)
     assert response.status_code == 200, response.text
     return response.json()
 
@@ -40,18 +51,22 @@ def rpc(client, token, method, params=None, message_id=1):
     return client.post("/mcp", json=body, headers=bearer(token))
 
 
-def test_admin_token_is_not_an_mcp_principal(client):
-    """The chairman's bearer opens every admin route and must open none of this.
+def test_a_persons_own_token_is_not_an_mcp_principal(client):
+    """A personal token opens everything its person may do, and must open none
+    of this.
 
     The whole surface exists so a model can hold the chairman's eyes without
-    holding the chairman's signature; accepting the admin token here would
-    hand back everything the design refuses.
+    holding the chairman's signature; accepting the person's own credential here
+    would hand back everything the design refuses. (This test used to be about
+    the admin token. The token was retired; the rule was not.)
     """
     make_project(client)
-    response = rpc(client, "test-admin-token", "initialize")
+    response = rpc(client, CHAIR_TOKEN, "initialize")
     assert response.status_code == 401
     # And the refusal teaches, rather than reading as a typo.
-    assert "admin token is not an MCP principal" in response.json()["detail"]
+    assert "personal token is not an MCP principal" in response.json()["detail"]
+    # The retired bearer is nothing at all here, as everywhere.
+    assert rpc(client, "test-admin-token", "initialize").status_code == 401
 
 
 def test_unknown_and_missing_tokens_are_refused(client):

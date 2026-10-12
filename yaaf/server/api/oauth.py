@@ -27,7 +27,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from yaaf.core.models import Project, utcnow
-from yaaf.server import mcp_oauth
+from yaaf.server import acting, mcp_oauth
 from yaaf.server.deps import db
 
 log = logging.getLogger("yaaf.oauth")
@@ -95,6 +95,11 @@ def mcp_oauth_callback(state: str = "", code: str = "", error: str = "",
     name = entry.get("name", "")
     oauth = dict(entry.get("oauth") or {})
     pending = dict(oauth.pop("pending", {}) or {})
+    # The person who pressed Connect, completing their own sign-in in their own
+    # browser. A state minted before that was recorded names the callback.
+    starter = pending.get("by_user_id")
+    acting.bind(acting.person(starter) if starter
+                else acting.Actor("system", "oauth-callback"))
 
     def persist(status: str, error_detail: str | None = None) -> None:
         oauth["status"] = status

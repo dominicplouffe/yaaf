@@ -27,46 +27,38 @@ from yaaf.core.models import (
     ChannelKind,
     FoundingThread,
     Message,
-    Project,
     User,
     utcnow,
 )
 from yaaf.founder import agent as founder_agent
 from yaaf.founder import progress
 from yaaf.founder import runner as founder_runner
-from yaaf.server import policy
+from yaaf.server import acting, authority, policy
 from yaaf.server.api import settings as app_settings
-from yaaf.server.deps import admin_auth, db
+from yaaf.server.deps import db
+from yaaf.server.identity import Person, person_auth, signed_in
 
-router = APIRouter(dependencies=[Depends(admin_auth)])
+router = APIRouter(dependencies=[Depends(signed_in)])
 
 WAKE_CHANNEL = "yaaf_wake"
 
 
-def _chairman(session: Session) -> User:
-    """The one human on this system.
-
-    Auth here is a single admin token and the product says so in as many words
-    — "you are the chairman, and you are the only human on this system". So a
-    founding thread belongs to the admin user rather than asking for an email
-    the chairman would have to type to talk to an agent.
-    """
-    user = session.execute(
-        select(User).where(User.is_admin.is_(True)).order_by(User.created_at)
-    ).scalars().first()
+def _founder(session: Session) -> User:
+    """Whoever is signed in. A founding conversation is theirs: it used to
+    belong to "the admin user, else the oldest", because the only credential
+    named nobody in particular."""
+    user = session.get(User, acting.user_id() or "")
     if user is None:
-        user = session.execute(select(User).order_by(User.created_at)).scalars().first()
-    if user is None:
-        raise HTTPException(
-            status_code=422,
-            detail="no user exists yet; create the chairman account before founding a project",
-        )
+        raise HTTPException(status_code=401, detail="sign in first")
     return user
 
 
-def _thread(session: Session, thread_id: str) -> FoundingThread:
+def _thread(session: Session, thread_id: str, person: Person) -> FoundingThread:
+    """A thread this person owns — somebody else's is refused in the words of
+    one that does not exist, because a founding conversation is a person's
+    thinking out loud, not a record of the box."""
     thread = session.get(FoundingThread, thread_id)
-    if thread is None:
+    if thread is None or not authority.owns(person, thread.user_id):
         raise HTTPException(status_code=404, detail="no such founding thread")
     return thread
 
@@ -111,7 +103,7 @@ def _render(thread: FoundingThread, running: bool | None = None) -> dict:
     }
 
 
-@router.get("/status")
+@router.get("/status", dependencies=[authority.SIGNED_IN])
 def status(session: Session = Depends(db)) -> dict:
     """Whether the Founder can run at all, and on what.
 
@@ -144,7 +136,7 @@ class CredentialIn(BaseModel):
     mode: str = Field(default="api_key", pattern="^(api_key|subscription)$")
 
 
-@router.put("/credential")
+@router.put("/credential", dependencies=[authority.INSTANCE_ADMIN])
 def put_credential(body: CredentialIn, session: Session = Depends(db)) -> dict:
     """Install or rotate the platform credential, and refuse a bad one now.
 
@@ -165,7 +157,7 @@ def put_credential(body: CredentialIn, session: Session = Depends(db)) -> dict:
     return app_settings.install_credential(session, body.value, body.mode)
 
 
-@router.post("/credential/test")
+@router.post("/credential/test", dependencies=[authority.INSTANCE_ADMIN])
 def test_credential(session: Session = Depends(db)) -> dict:
     """Prove the stored credential can actually reach a model.
 
@@ -176,7 +168,7 @@ def test_credential(session: Session = Depends(db)) -> dict:
     return app_settings.check_credential(session)
 
 
-@router.delete("/credential")
+@router.delete("/credential", dependencies=[authority.INSTANCE_ADMIN])
 def delete_credential(session: Session = Depends(db)) -> dict:
     return {"removed": platform.clear_credential(session)}
 
@@ -185,7 +177,7 @@ class ModelIn(BaseModel):
     model: str = Field(min_length=3, max_length=64)
 
 
-@router.put("/model")
+@router.put("/model", dependencies=[authority.INSTANCE_ADMIN])
 def put_model(body: ModelIn, session: Session = Depends(db)) -> dict:
     platform.set_setting(session, platform.FOUNDER_MODEL, body.model.strip())
     return {"model": body.model.strip()}
@@ -198,11 +190,11 @@ class StartIn(BaseModel):
     message: str | None = Field(default=None, max_length=40_000)
 
 
-@router.post("/threads")
+@router.post("/threads", dependencies=[authority.SIGNED_IN])
 def start_thread(body: StartIn, session: Session = Depends(db)) -> dict:
     thread = FoundingThread(
         id=ids.new_id(ids.FOUNDING_THREAD),
-        user_id=_chairman(session).id,
+        user_id=_founder(session).id,
         transcript=[],
     )
     session.add(thread)
@@ -213,10 +205,12 @@ def start_thread(body: StartIn, session: Session = Depends(db)) -> dict:
     return _accepted(_render(thread)) if started else _render(thread)
 
 
-@router.get("/threads")
-def list_threads(session: Session = Depends(db)) -> dict:
+@router.get("/threads", dependencies=[authority.SIGNED_IN])
+def list_threads(session: Session = Depends(db),
+                 person: Person = Depends(person_auth)) -> dict:
     rows = session.execute(
-        select(FoundingThread).order_by(FoundingThread.updated_at.desc()).limit(50)
+        select(FoundingThread).where(FoundingThread.user_id == person.id)
+        .order_by(FoundingThread.updated_at.desc()).limit(50)
     ).scalars().all()
     return {"threads": [{
         "id": t.id,
@@ -227,14 +221,13 @@ def list_threads(session: Session = Depends(db)) -> dict:
     } for t in rows]}
 
 
-@router.get("/threads/{thread_id}")
-def get_thread(thread_id: str, session: Session = Depends(db)) -> dict:
-    # Liveness first, then the row — see `_render`. This is the endpoint the
-    # page polls in a loop, so it is the one that meets a turn ending mid-read.
+@router.get("/threads/{thread_id}", dependencies=[authority.IN_HANDLER])
+def get_thread(thread_id: str, session: Session = Depends(db),
+               person: Person = Depends(person_auth)) -> dict:
     # Liveness first, then the row — see `_render`. This is the endpoint the
     # page polls in a loop, so it is the one that meets a turn ending mid-read.
     running = progress.is_running(thread_id)
-    return _render(_thread(session, thread_id), running)
+    return _render(_thread(session, thread_id, person), running)
 
 
 class SayIn(BaseModel):
@@ -293,9 +286,10 @@ def _after_commit(session: Session, work) -> None:
         work()
 
 
-@router.post("/threads/{thread_id}/say")
-def say(thread_id: str, body: SayIn, session: Session = Depends(db)) -> dict:
-    thread = _thread(session, thread_id)
+@router.post("/threads/{thread_id}/say", dependencies=[authority.IN_HANDLER])
+def say(thread_id: str, body: SayIn, session: Session = Depends(db),
+        person: Person = Depends(person_auth)) -> dict:
+    thread = _thread(session, thread_id, person)
     if thread.created_project_id:
         raise HTTPException(
             status_code=409,
@@ -305,21 +299,25 @@ def say(thread_id: str, body: SayIn, session: Session = Depends(db)) -> dict:
     return _accepted(_render(thread))
 
 
-@router.get("/threads/{thread_id}/progress")
-def thread_progress(thread_id: str) -> dict:
+@router.get("/threads/{thread_id}/progress", dependencies=[authority.IN_HANDLER])
+def thread_progress(thread_id: str, session: Session = Depends(db),
+                    person: Person = Depends(person_auth)) -> dict:
     """What the Founder is doing right now.
 
-    Deliberately touches no database: a turn holds its transaction open for the
+    Reads progress from no database: a turn holds its transaction open for the
     length of the turn, so anything it wrote would be invisible here until it
     committed — which is exactly when progress stops being interesting. The
-    store is in-process and ephemeral, like typing state.
+    store is in-process and ephemeral, like typing state. Who owns the thread
+    is a different matter, committed when it was opened, and is checked.
     """
+    _thread(session, thread_id, person)
     return progress.read(thread_id)
 
 
-@router.delete("/threads/{thread_id}")
-def delete_thread(thread_id: str, session: Session = Depends(db)) -> dict:
-    session.delete(_thread(session, thread_id))
+@router.delete("/threads/{thread_id}", dependencies=[authority.IN_HANDLER])
+def delete_thread(thread_id: str, session: Session = Depends(db),
+                  person: Person = Depends(person_auth)) -> dict:
+    session.delete(_thread(session, thread_id, person))
     return {"ok": True}
 
 
@@ -327,8 +325,9 @@ class AttachIn(BaseModel):
     project_id: str
 
 
-@router.post("/threads/{thread_id}/attach")
-def attach(thread_id: str, body: AttachIn, session: Session = Depends(db)) -> dict:
+@router.post("/threads/{thread_id}/attach", dependencies=[authority.IN_HANDLER])
+def attach(thread_id: str, body: AttachIn, session: Session = Depends(db),
+           person: Person = Depends(person_auth)) -> dict:
     """Record that a thread became a project, and hand the CEO the conversation.
 
     The chairman explained what they wanted here, argued about it, and settled
@@ -340,10 +339,10 @@ def attach(thread_id: str, body: AttachIn, session: Session = Depends(db)) -> di
     through the one channel the CEO already reads and is subject to the same
     rules as anything else said there.
     """
-    thread = _thread(session, thread_id)
-    project = session.get(Project, body.project_id)
-    if project is None:
-        raise HTTPException(status_code=404, detail="no such project")
+    thread = _thread(session, thread_id, person)
+    # The briefing lands as a chair's word the CEO may act on, so only somebody
+    # whose word that is may put it there.
+    project = authority.require(session, person, body.project_id, authority.Level.STEER)
     if thread.created_project_id:
         raise HTTPException(status_code=409, detail="this thread is already attached")
 
@@ -364,7 +363,7 @@ def attach(thread_id: str, body: AttachIn, session: Session = Depends(db)) -> di
         id=ids.new_id(ids.MESSAGE),
         project_id=project.id,
         channel_id=channel.id,
-        sender_user_id=project.chairman_user_id,
+        sender_user_id=person.id,
         # Trimmed to the boardroom's own ceiling rather than sent whole: a long
         # founding argument is still a boardroom message, and the limit is
         # there because a CEO has to be able to read it.

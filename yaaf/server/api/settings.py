@@ -30,11 +30,12 @@ from sqlalchemy.orm import Session
 
 from yaaf.core import plan_usage, platform
 from yaaf.core.models import Secret
-from yaaf.server.deps import admin_auth, db
+from yaaf.server.deps import db
+from yaaf.server.identity import signed_in
 from yaaf.server.slack import provision as slack_provision
 from yaaf.server.slack import settings as slack_settings
 
-router = APIRouter(dependencies=[Depends(admin_auth)])
+router = APIRouter(dependencies=[Depends(signed_in)])
 
 
 @router.get("")

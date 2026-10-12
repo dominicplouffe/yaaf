@@ -71,10 +71,15 @@ STAGE_10_COLUMNS = (
     ("requirements", "recurrence"),
 )
 
+# 0042: people (docs/AUTH.md). The first tables since 0014, so the first time
+# create_table_if_missing is walked on the upgrade path rather than skipped.
+PEOPLE_TABLES = ("user_sessions", "user_tokens", "user_setup_links", "login_failures")
+PEOPLE_COLUMNS = (("users", "deactivated_at"),)
+
 REMOVED_TABLES = (STAGE_1_TABLES + STAGE_5_TABLES + STAGE_6_TABLES
-                  + STAGE_7_TABLES + STAGE_8_TABLES + STAGE_10_TABLES)
+                  + STAGE_7_TABLES + STAGE_8_TABLES + STAGE_10_TABLES + PEOPLE_TABLES)
 REMOVED_COLUMNS = (STAGE_1_COLUMNS + STAGE_8_COLUMNS + STAGE_9_COLUMNS
-                   + STAGE_10_COLUMNS + (("secrets", "llm_mode"),))
+                   + STAGE_10_COLUMNS + PEOPLE_COLUMNS + (("secrets", "llm_mode"),))
 
 
 def _alembic_config(url: str) -> Config:

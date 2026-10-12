@@ -28,7 +28,7 @@ import secrets as pysecrets
 from datetime import timedelta
 from urllib.parse import urlencode, urlparse
 
-from fastapi import APIRouter, Depends, Form, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -45,7 +45,7 @@ from yaaf.core.models import (
     utcnow,
 )
 from yaaf.core.tokens import hash_token, mint_prefixed
-from yaaf.server import login
+from yaaf.server import identity, login
 from yaaf.server.mcp.auth import SCOPES, base_url, canonical_resource, mcp_db
 
 #: An access token outlives a conversation, not an afternoon.
@@ -241,11 +241,15 @@ async def authorize_submit(
         return _page("Cannot continue", f"<p>{html.escape(problem)}</p>", status=400)
 
     if action == "login":
-        user = login.check_password(session, email.strip().lower(), password)
-        if user is None:
-            return _page("Sign in to yaaf",
-                         '<p class="bad">That email and password did not match.</p>'
-                         + _login_form(params), status=401)
+        # The same door as the dashboard's, throttle included: a consent screen
+        # that took unlimited guesses would be the cheap way in.
+        try:
+            user = identity.authenticate(session, email, password)
+        except HTTPException as exc:
+            message = ("Too many wrong passwords for this address. Wait a few minutes."
+                       if exc.status_code == 429 else "That email and password did not match.")
+            return _page("Sign in to yaaf", f'<p class="bad">{message}</p>'
+                         + _login_form(params), status=exc.status_code)
         response = _page("Approve this client", _consent_form(session, user, params))
         response.set_cookie(login.COOKIE, login.issue(user), httponly=True, samesite="lax",
                             secure=base_url().startswith("https"), max_age=login.TTL_S,
@@ -315,8 +319,8 @@ def _login_form(params: dict) -> str:
              autocomplete="current-password" required></label>
       <button type="submit">Sign in</button>
     </form>
-    <p class="muted">This is the chairman's account — the same person the
-    projects name. Set a password with <code>yaaf set-password</code>.</p>
+    <p class="muted">Your yaaf account — the same email and password you sign
+    in to the dashboard with.</p>
     """
 
 

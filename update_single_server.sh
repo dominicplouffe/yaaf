@@ -15,10 +15,13 @@
 #   ./update_single_server.sh --no-backup    # skip the pg_dump (not advised)
 #   ./update_single_server.sh --keep-chat    # leave resident chat sessions running
 #   ./update_single_server.sh --skip-roles   # do not load roles new to the checkout
+#   ./update_single_server.sh --admin-email you@example.com
+#                                            # the first update after people
+#                                            # arrived: make this account the admin
 #
 set -euo pipefail
 
-PULL="yes"; BACKUP="yes"; RESTART_CHAT="yes"; SKIP_ROLES="no"
+PULL="yes"; BACKUP="yes"; RESTART_CHAT="yes"; SKIP_ROLES="no"; ADMIN_EMAIL=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -26,7 +29,8 @@ while [ $# -gt 0 ]; do
     --no-backup) BACKUP="no"; shift ;;
     --keep-chat) RESTART_CHAT="no"; shift ;;
     --skip-roles) SKIP_ROLES="yes"; shift ;;
-    -h|--help)   sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --admin-email) ADMIN_EMAIL="${2:?--admin-email needs an address}"; shift 2 ;;
+    -h|--help)   sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown argument: $1 (try --help)" >&2; exit 2 ;;
   esac
 done
@@ -132,14 +136,23 @@ fi
 #
 # Only the missing slugs are loaded: a role already in the library is left
 # alone, edits and all.
+# The admin token was retired (docs/AUTH.md). An install that last updated
+# before that has accounts but no admin, so nobody can sign in until one is
+# made — from the chairman's own email, which keeps every project they chair.
+say "People"
+HAS_ADMIN="yes"
+ensure_admin "${ADMIN_EMAIL:-${YAAF_ADMIN_EMAIL:-}}" \
+  "${YAAF_PUBLIC_BASE_URL:-http://localhost:${PORT}}" || HAS_ADMIN="no"
+
 say "Role library"
 if [ "$SKIP_ROLES" = "yes" ]; then
   warn "skipped (--skip-roles)"
+elif [ "$HAS_ADMIN" = "no" ]; then
+  warn "skipped — loading the library needs an admin, and the box has none yet"
 else
-  sync_role_library "$PORT" \
-    || die "could not read the role library — is YAAF_ADMIN_TOKEN in deploy/.env the one the API booted with?"
-  sync_crew_library "$PORT" \
-    || die "could not read the crew library — is YAAF_ADMIN_TOKEN in deploy/.env the one the API booted with?"
+  deploy_token || die "could not mint a deploy token inside the api container"
+  sync_role_library "$PORT" || die "could not read the role library through the API"
+  sync_crew_library "$PORT" || die "could not read the crew library through the API"
 fi
 
 # ── 6. resident chat sessions ─────────────────────────────────────────────────
@@ -158,10 +171,13 @@ else
 fi
 
 say "Done"
+if [ -n "$BOOTSTRAP_OUT" ]; then
+  printf '\n%s\n' "$BOOTSTRAP_OUT" | sed 's/^/  /'
+fi
 cat <<EOF
 
-  Dashboard   http://localhost:${PORT}/app
-  Token       grep YAAF_ADMIN_TOKEN deploy/.env
+  Dashboard   http://localhost:${PORT}/app — sign in with your email and password
+  Locked out  docker compose -f deploy/docker-compose.yml exec api yaaf users setup-link EMAIL
   Backups     ./backups/   (this run's dump is the newest)
 
   Rolling back a bad migration means restoring the dump:

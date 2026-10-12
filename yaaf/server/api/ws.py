@@ -13,16 +13,17 @@ Protocol: the server pushes a JSON "change stamp" — cheap per-table aggregates
 from the last one sent. The client never inspects the stamp's contents; any
 message means "reload".
 
-Auth: browsers cannot set headers on a WebSocket, so the admin token rides as a
-?token= query param and is compared against settings().admin_token the same way
-deps.admin_auth compares its bearer token (constant-time via compare_digest).
+Auth: the browser's session cookie, which rides on the upgrade request like on
+any other — so there is no credential in the URL to land in a proxy log, which
+is where the admin token used to travel. The upgrade must also come from this
+install's own pages: a WebSocket is not covered by CORS, so without an Origin
+check any page the chairman visits could open one with his cookie attached.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
-import hmac
 from datetime import datetime
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -30,7 +31,6 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
-from yaaf.core.config import settings
 from yaaf.core.db import session_factory
 from yaaf.core.models import (
     Agent,
@@ -43,6 +43,7 @@ from yaaf.core.models import (
     Run,
     Task,
 )
+from yaaf.server import identity
 
 router = APIRouter()
 
@@ -147,12 +148,23 @@ async def _stamp_loop(websocket: WebSocket, project_id: str) -> None:
         await asyncio.sleep(WS_POLL_S)
 
 
+def _may_watch(cookie: str | None, origin: str | None, host: str | None,
+               project_id: str) -> str | None:
+    """Why this socket may not open, or None when it may."""
+    with session_factory()() as session:
+        reason = identity.socket_refusal(session, cookie, origin, host)
+        session.commit()  # the session's last_seen_at, if it moved
+        return reason
+
+
 @router.websocket("/ws/projects/{project_id}")
-async def project_live(websocket: WebSocket, project_id: str, token: str = "") -> None:
+async def project_live(websocket: WebSocket, project_id: str) -> None:
     await websocket.accept()
-    # Same comparison idiom as deps.admin_auth, minus the header transport.
-    if not hmac.compare_digest(token.encode(), settings().admin_token.encode()):
-        await websocket.close(code=1008, reason="bad admin token")
+    refused = await run_in_threadpool(
+        _may_watch, websocket.cookies.get(identity.COOKIE),
+        websocket.headers.get("origin"), websocket.headers.get("host"), project_id)
+    if refused:
+        await websocket.close(code=1008, reason=refused)
         return
 
     watcher = asyncio.ensure_future(_drain_inbound(websocket))

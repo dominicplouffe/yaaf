@@ -135,9 +135,15 @@ WITHHELD = {
         "returns a sign-in URL a browser must open, carrying a single-use state. A "
         "model holding it can do nothing with it.",
     "POST /admin/users": "creating people is not a project decision.",
-    "POST /admin/users/password":
-        "setting the chairman's own password from a model client would let a "
-        "compromised client lock its chairman out of the consent screen.",
+    "GET /admin/users":
+        "the box's list of people is the instance admin's, and a client acts for one "
+        "person rather than administering the rest.",
+    "PATCH /admin/users/{user_id}":
+        "promoting, demoting and deactivating people is running the box; a model "
+        "that could do it could make its own person an admin.",
+    "POST /admin/users/{user_id}/setup-link":
+        "a setup link sets somebody's password, so a client holding one could take "
+        "over the account it was issued for.",
     "POST /admin/roles": "the role library is product-wide; a project client edits no part of it.",
     "PATCH /admin/roles/{slug}": "editing the shared role library changes every project pinned to it.",
     "GET /admin/roles/{slug}": "`catalog` serves what a drafting client needs of it.",

@@ -1,22 +1,23 @@
-"""The third principal: a model client acting for the chairman.
+"""The model-client principal: a machine acting for a person.
 
-`yaaf.server.deps` has two principals — the chairman's admin bearer, and the
-short-lived per-run token an agent acts through. This is the third, and the
-first rule about it is what it is *not*: it is never the admin token. The admin
-bearer is unscoped and unattributable, so a model holding it would hold every
-verb the platform exists to deny a model, and the audit trail would record the
-chairman as the one who used them.
+People sign in through `yaaf.server.identity` and agents act through their
+per-run token; this is the third kind of credential, and the first rule about
+it is what it is *not*: it is never the person's own. A session or a personal
+token carries everything its person may do, unattributed to any machine, so a
+model holding one would hold every verb the platform exists to deny a model,
+and the audit trail would record the person as the one who used them. (It was
+the static admin token this paragraph used to be about; that was retired, and
+the rule outlived it.)
 
-So an MCP client presents its own credential, which carries two narrowings the
-admin token cannot express — the scopes it may reach, and the identity it acts
-for, which is written into every record it touches as machine-mediated. What it
-may *see* is not a third narrowing: it is chairmanship, which the chairman
-already decides per project by chairing it.
+So an MCP client presents its own credential, which carries two narrowings a
+person's own credential cannot express — the scopes it may reach, and the
+identity it acts for, which is written into every record it touches as
+machine-mediated. What it may *see* is not a third narrowing: it is the
+projects its person may see, read on every call.
 """
 
 from __future__ import annotations
 
-import hmac
 from dataclasses import dataclass
 
 from fastapi import Depends, HTTPException, Request
@@ -28,6 +29,7 @@ from yaaf.core.config import settings
 from yaaf.core.db import session_factory
 from yaaf.core.models import McpClient, McpToken, Project, utcnow
 from yaaf.core.tokens import hash_token
+from yaaf.server import identity
 
 #: Smallest to largest. `read` is implied by every other scope: a client that
 #: may steer a project can obviously look at it, and a grant that had to list
@@ -122,20 +124,18 @@ def mcp_auth(
         )
     token = credentials.credentials.strip()
     # Named explicitly, and first, so the refusal teaches instead of reading as
-    # a typo. Someone who reaches for the admin token here is not making a
-    # mistake about the value; they are making one about the design.
-    #
-    # Constant-time, for the reason deps.admin_auth gives: `==` on a str leaks
-    # a prefix length through timing, and /mcp is the one path DEPLOYMENT.md
-    # tells you to publish — so this was the internet's way to guess the
-    # unscoped master credential a character at a time.
-    if hmac.compare_digest(token.encode(), settings().admin_token.encode()):
+    # a typo. Someone who reaches for their own personal token here is not
+    # making a mistake about the value; they are making one about the design.
+    # It used to be the admin token this refused; the rule did not change when
+    # that was retired, only the credential a person might mistakenly hand over.
+    if token.startswith(f"{identity.TOKEN_PREFIX}_"):
         raise HTTPException(
             status_code=401,
             detail=(
-                "the admin token is not an MCP principal. Mint a scoped client "
-                "token instead (`yaaf mcp-token mint`) — the chairman's bearer "
-                "is unscoped and unattributable, and a model must hold neither."
+                "a personal token is not an MCP principal. Mint a scoped client "
+                "token instead (`yaaf mcp-token mint`) — your own token carries "
+                "everything you may do, unattributed to any machine, and a model "
+                "must hold neither."
             ),
             headers={"WWW-Authenticate": challenge()},
         )

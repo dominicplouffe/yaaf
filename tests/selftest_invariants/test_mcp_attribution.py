@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 
-from tests.conftest import ADMIN, live_token, make_project
+from tests.conftest import ADMIN, CHAIR_EMAIL, live_token, make_project, person
 from tests.selftest_invariants.test_mcp_auth import mint, rpc
 from tests.selftest_invariants.test_mcp_confirm import call, steerer
 from tests.selftest_invariants.test_requirements import CMD_TEST, deliver_project, propose
@@ -106,9 +106,22 @@ def test_the_browser_path_is_untouched(client):
     confirmed(client, token, "lifecycle",
               {"project": SLUG, "verb": "pause", "reason": "briefly"})
 
+    # The chairman in a browser: the bare person, no door named.
+    chair = person(CHAIR_EMAIL, password="a-long-enough-passphrase")
+    assert client.post("/auth/login", json={"email": CHAIR_EMAIL,
+                                            "password": "a-long-enough-passphrase"}
+                       ).status_code == 200
+    assert client.post(f"/admin/projects/{project['id']}/start",
+                       headers={"Origin": "http://testserver"}).status_code == 200
+    assert audit_rows("project.start")[-1].actor == f"user:{chair['id']}"
+
+    # The same person at a terminal: their token names itself, so a script's
+    # writes never read as clicks either.
+    confirmed(client, token, "lifecycle",
+              {"project": SLUG, "verb": "pause", "reason": "again"})
     assert client.post(f"/admin/projects/{project['id']}/start",
                        headers=ADMIN).status_code == 200
-    assert next(r for r in audit_rows("project.start")[-1:]).actor == "user:admin"
+    assert audit_rows("project.start")[-1].actor == f"user:{chair['id']} via token:suite"
 
 
 def test_a_scope_verdict_through_mcp_is_marked_as_machine_carried(client):

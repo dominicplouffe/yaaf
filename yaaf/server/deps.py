@@ -1,17 +1,17 @@
-"""Auth dependencies.
+"""Auth dependencies for the agent surface, and the request-scoped session.
 
-Two principals exist in M1:
+Principals, in full, are in docs/AUTH.md. This module holds the one an agent
+acts through: the *agent run* — the short-lived per-run token minted by the
+runner. It maps to exactly one run row, and through it one agent and one
+project. Forging one requires the SHA-256 preimage of a value that never leaves
+the sandbox env.
 
-- the *admin* (chairman) — static bearer token from settings; full user auth
-  arrives with the UI milestone
-- an *agent run* — the short-lived per-run token minted by the runner. It maps
-  to exactly one run row, and through it one agent and one project. Forging one
-  requires the SHA-256 preimage of a value that never leaves the sandbox env.
+People sign in through `yaaf.server.identity`. The static admin bearer that
+used to live here was retired: it authenticated a client, never a person.
 """
 
 from __future__ import annotations
 
-import hmac
 from collections.abc import Iterator
 from dataclasses import dataclass
 
@@ -19,14 +19,11 @@ from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
-from yaaf.core.config import settings
 from yaaf.core.db import session_factory
 from yaaf.core.models import Agent, Project, Run, RunKind, RunStatus, utcnow
 from yaaf.core.tokens import hash_token
 
 # Declared security schemes give Swagger UI its global Authorize button.
-admin_bearer = HTTPBearer(auto_error=False, scheme_name="AdminToken",
-                          description="The YAAF_ADMIN_TOKEN value")
 run_bearer = HTTPBearer(auto_error=False, scheme_name="RunToken",
                         description="A per-run agent token (minted by the runner)")
 
@@ -47,18 +44,6 @@ def _bearer(credentials: HTTPAuthorizationCredentials | None) -> str:
     if credentials is None or not credentials.credentials:
         raise HTTPException(status_code=401, detail="missing bearer token")
     return credentials.credentials.strip()
-
-
-def admin_auth(
-    credentials: HTTPAuthorizationCredentials | None = Depends(admin_bearer),
-) -> str:
-    token = _bearer(credentials)
-    # Constant-time: this is the unscoped master credential, and `!=` on a
-    # str leaks a prefix length through timing. api/ws.py has always claimed
-    # this function compared that way; for a while it did not.
-    if not hmac.compare_digest(token.encode(), settings().admin_token.encode()):
-        raise HTTPException(status_code=401, detail="bad admin token")
-    return "admin"
 
 
 @dataclass

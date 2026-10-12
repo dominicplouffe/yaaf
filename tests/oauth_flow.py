@@ -12,7 +12,7 @@ import re
 
 import httpx
 
-from tests.conftest import ADMIN, make_project
+from tests.conftest import CHAIR_EMAIL, make_project, person
 
 REDIRECT = "https://claude.ai/api/mcp/auth_callback"
 PASSWORD = "a-long-enough-passphrase"
@@ -43,11 +43,11 @@ def challenge_for(verifier: str) -> str:
 
 
 def chairman_with_password(client):
+    """The chairman, with a password the consent screen can check. Set in the
+    database, as a setup link would leave it: the consent flow is what these
+    suites attack, not how the password got there."""
     make_project(client, slug="acme")
-    response = client.post("/admin/users/password",
-                           json={"email": "chair@example.com", "password": PASSWORD},
-                           headers=ADMIN)
-    assert response.status_code == 200, response.text
+    person(CHAIR_EMAIL, password=PASSWORD)
 
 
 def register(client, name="claude.ai", uris=(REDIRECT,)) -> dict:

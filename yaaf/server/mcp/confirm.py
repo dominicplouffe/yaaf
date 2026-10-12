@@ -36,7 +36,7 @@ from sqlalchemy.orm import Session
 from yaaf.core import ids
 from yaaf.core.models import McpConfirmation, utcnow
 from yaaf.core.tokens import hash_token, mint_prefixed
-from yaaf.server.api import admin
+from yaaf.server import acting
 from yaaf.server.mcp.auth import Principal, ToolRefusal
 
 #: Long enough to read a preview and decide, short enough that an approval does
@@ -45,23 +45,25 @@ TTL = timedelta(minutes=5)
 
 
 def actor(principal: Principal) -> str:
-    return f"user:{principal.user_id} via mcp:{principal.name}"
+    return acting_for(principal).stamp
+
+
+def acting_for(principal: Principal) -> acting.Actor:
+    return acting.person(principal.user_id, f"mcp:{principal.name}")
 
 
 @contextmanager
 def attributed(principal: Principal):
-    """Make the admin layer's own audit rows name the machine that drove them.
+    """Make the admin layer's own records name the machine that drove them.
 
-    `admin._audit` writes `user:admin` — true when the chairman is holding the
-    bearer, wrong here. Rather than duplicating every handler to pass an actor,
-    the actor is ambient for the duration of the call, and the handlers stay
-    the single definition of what each verb does.
+    A request through the dashboard binds its person on the way in; a tool
+    call reaches the same handlers as plain functions and so has to bind its
+    own actor — the person, via this client. Rather than duplicating every
+    handler to pass an actor, it is ambient for the duration of the call, and
+    the handlers stay the single definition of what each verb does.
     """
-    token = admin.ACTOR.set(actor(principal))
-    try:
+    with acting.acting(acting_for(principal)):
         yield
-    finally:
-        admin.ACTOR.reset(token)
 
 
 def fingerprint(tool: str, arguments: dict) -> str:

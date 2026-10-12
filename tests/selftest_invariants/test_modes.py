@@ -267,7 +267,10 @@ def test_the_29th_is_refused_not_clamped(client):
         "constitution": {"cycle_frequency": "monthly", "cycle_day": 29},
         "teams": [{"role_slug": "worker", "name": "A", "employees": ["E1"]}],
     }, headers=ADMIN)
+    # For the right reason. This used to pass on a 422 about the chairman
+    # account not existing, while the date itself was a 500.
     assert response.status_code == 422
+    assert "cycle_day" in response.json()["detail"]
 
 
 def test_starting_an_operate_project_opens_cycle_one(client):

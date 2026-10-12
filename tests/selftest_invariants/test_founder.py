@@ -1043,8 +1043,8 @@ def test_a_turn_that_ends_mid_read_is_never_reported_half_finished(client, found
     real_thread = founder_api._thread
     held: list[str] = []
 
-    def read_then_let_the_turn_finish(session, wanted_id):
-        row = real_thread(session, wanted_id)
+    def read_then_let_the_turn_finish(session, wanted_id, person):
+        row = real_thread(session, wanted_id, person)
         if not held:
             held.append(wanted_id)
             # The row is in hand and still says "a turn is under way". Now let
