@@ -1,0 +1,2562 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>yaaf Redesign</title>
+<meta name="description" content="A clickable redesign of the yaaf chairman's cockpit: one Inbox, a live org chart, and an Overview that answers three questions in five seconds.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400..700;1,400..700&family=Instrument+Serif&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a calm three-zone shell — nav rail, one working canvas, a right-hand
+   drawer that opens on whatever you clicked. Tokens are yaaf's own, lifted from
+   web/src/styles.css unchanged, so this mockup is a re-architecture, not a repaint. */
+:root {
+  --font: "Instrument Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "Instrument Serif", Georgia, "Times New Roman", serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Mono", Menlo, monospace;
+
+  --t-micro: 12px; --t-small: 13px; --t-body: 14px; --t-lead: 15px;
+  --t-h3: 16px; --t-h2: 19px; --t-h1: 30px; --t-stat: 26px;
+
+  --radius: 10px; --radius-sm: 7px; --radius-lg: 14px;
+  --ease: cubic-bezier(0.2, 0, 0, 1); --fast: 120ms;
+
+  color-scheme: dark;
+  --page: #141312; --surface: #1c1b19; --surface-2: #232120; --sunken: #121110;
+  --rail: #171615;
+  --ink: #f5f3ee; --ink-2: #b5b1a6; --muted: #8c887d;
+  --border: #2e2c28; --border-strong: #413e38;
+  --accent: #8ca0f0; --accent-rgb: 140, 160, 240; --on-accent: #14161f;
+  --accent-2: #c96e48; --accent2-rgb: 201, 110, 72;
+  --good: #4fc48c; --good-rgb: 79, 196, 140;
+  --warning: #e0ac36; --warning-rgb: 224, 172, 54;
+  --serious: #f09055; --serious-rgb: 240, 144, 85;
+  --critical: #f0736b; --critical-rgb: 240, 115, 107;
+  --hover: rgba(255, 255, 255, 0.035); --hover-strong: rgba(255, 255, 255, 0.065);
+  --scrim: rgba(0, 0, 0, 0.6);
+  --e1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --e2: 0 2px 4px rgba(0, 0, 0, 0.3), 0 8px 20px rgba(0, 0, 0, 0.35);
+  --e3: 0 18px 48px rgba(0, 0, 0, 0.55);
+  --c1: #6884ea; --c2: #c96e48; --c3: #1e96a8; --c4: #a98120; --c5: #a570db;
+  --c0: #8c887d;
+  --note: #f2c94c; --note-ink: #1a1917;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+    --page: #faf9f5; --surface: #ffffff; --surface-2: #f7f5ef; --sunken: #f2f0ea;
+    --rail: #f4f2ec;
+    --ink: #1a1917; --ink-2: #56534b; --muted: #757166;
+    --border: #e5e2d9; --border-strong: #d0ccc0;
+    --accent: #3355cc; --accent-rgb: 51, 85, 204; --on-accent: #ffffff;
+    --accent-2: #c2643e; --accent2-rgb: 194, 100, 62;
+    --good: #12704a; --good-rgb: 18, 112, 74;
+    --warning: #8a5a00; --warning-rgb: 138, 90, 0;
+    --serious: #a64118; --serious-rgb: 166, 65, 24;
+    --critical: #b3261e; --critical-rgb: 179, 38, 30;
+    --hover: rgba(26, 25, 23, 0.035); --hover-strong: rgba(26, 25, 23, 0.06);
+    --scrim: rgba(26, 25, 23, 0.4);
+    --e1: 0 1px 2px rgba(26, 25, 23, 0.06), 0 1px 1px rgba(26, 25, 23, 0.04);
+    --e2: 0 2px 4px rgba(26, 25, 23, 0.05), 0 8px 20px rgba(26, 25, 23, 0.07);
+    --e3: 0 18px 48px rgba(26, 25, 23, 0.16);
+    --c1: #3355cc; --c2: #c2643e; --c3: #00a0b0; --c4: #a07a00; --c5: #8e4ec6;
+    --c0: #757166;
+    --note: #8a5a00; --note-ink: #ffffff;
+  }
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --page: #faf9f5; --surface: #ffffff; --surface-2: #f7f5ef; --sunken: #f2f0ea;
+  --rail: #f4f2ec;
+  --ink: #1a1917; --ink-2: #56534b; --muted: #757166;
+  --border: #e5e2d9; --border-strong: #d0ccc0;
+  --accent: #3355cc; --accent-rgb: 51, 85, 204; --on-accent: #ffffff;
+  --accent-2: #c2643e; --accent2-rgb: 194, 100, 62;
+  --good: #12704a; --good-rgb: 18, 112, 74;
+  --warning: #8a5a00; --warning-rgb: 138, 90, 0;
+  --serious: #a64118; --serious-rgb: 166, 65, 24;
+  --critical: #b3261e; --critical-rgb: 179, 38, 30;
+  --hover: rgba(26, 25, 23, 0.035); --hover-strong: rgba(26, 25, 23, 0.06);
+  --scrim: rgba(26, 25, 23, 0.4);
+  --e1: 0 1px 2px rgba(26, 25, 23, 0.06), 0 1px 1px rgba(26, 25, 23, 0.04);
+  --e2: 0 2px 4px rgba(26, 25, 23, 0.05), 0 8px 20px rgba(26, 25, 23, 0.07);
+  --e3: 0 18px 48px rgba(26, 25, 23, 0.16);
+  --c1: #3355cc; --c2: #c2643e; --c3: #00a0b0; --c4: #a07a00; --c5: #8e4ec6;
+  --c0: #757166;
+  --note: #8a5a00; --note-ink: #ffffff;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #141312; --surface: #1c1b19; --surface-2: #232120; --sunken: #121110;
+  --rail: #171615;
+  --ink: #f5f3ee; --ink-2: #b5b1a6; --muted: #8c887d;
+  --border: #2e2c28; --border-strong: #413e38;
+  --accent: #8ca0f0; --accent-rgb: 140, 160, 240; --on-accent: #14161f;
+  --accent-2: #c96e48; --accent2-rgb: 201, 110, 72;
+  --good: #4fc48c; --good-rgb: 79, 196, 140;
+  --warning: #e0ac36; --warning-rgb: 224, 172, 54;
+  --serious: #f09055; --serious-rgb: 240, 144, 85;
+  --critical: #f0736b; --critical-rgb: 240, 115, 107;
+  --hover: rgba(255, 255, 255, 0.035); --hover-strong: rgba(255, 255, 255, 0.065);
+  --scrim: rgba(0, 0, 0, 0.6);
+  --e1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --e2: 0 2px 4px rgba(0, 0, 0, 0.3), 0 8px 20px rgba(0, 0, 0, 0.35);
+  --e3: 0 18px 48px rgba(0, 0, 0, 0.55);
+  --c1: #6884ea; --c2: #c96e48; --c3: #1e96a8; --c4: #a98120; --c5: #a570db;
+  --c0: #8c887d;
+  --note: #f2c94c; --note-ink: #1a1917;
+}
+
+/* ───────────────────────── base ───────────────────────── */
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0; background: var(--page); color: var(--ink);
+  font-family: var(--font); font-size: var(--t-body); line-height: 1.5;
+  -webkit-font-smoothing: antialiased; font-feature-settings: "ss01", "cv11";
+}
+button, input, textarea, select { font: inherit; color: inherit; }
+button { cursor: pointer; background: none; border: 0; padding: 0; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; text-underline-offset: 3px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+h1, h2, h3, h4, p { margin: 0; }
+h1, h2, h3 { text-wrap: balance; }
+.num, .tabular { font-variant-numeric: tabular-nums; }
+.mono { font-family: var(--mono); font-size: 0.92em; }
+.muted { color: var(--muted); }
+.ink2 { color: var(--ink-2); }
+.good { color: var(--good); } .warn { color: var(--warning); }
+.serious { color: var(--serious); } .crit { color: var(--critical); }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+svg.i { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none;
+  stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+svg.i.sm { width: 14px; height: 14px; }
+svg.i.lg { width: 18px; height: 18px; }
+svg.i.xl { width: 22px; height: 22px; }
+
+/* ───────────────────────── shell ───────────────────────── */
+.app { display: grid; grid-template-columns: 252px minmax(0, 1fr); height: 100%; }
+.sidebar {
+  background: var(--rail); border-right: 1px solid var(--border);
+  display: flex; flex-direction: column; min-height: 0; overflow: hidden;
+}
+.sb-scroll { flex: 1; overflow-y: auto; padding: 10px 10px 12px; display: flex; flex-direction: column; gap: 2px; }
+.ws {
+  display: flex; align-items: center; gap: 10px; padding: 12px 14px 10px;
+}
+.logo {
+  width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center;
+  background: var(--ink); color: var(--page); font-weight: 700; font-size: 15px; letter-spacing: -0.04em;
+}
+.logo b { color: var(--accent-2); font-weight: 700; }
+.ws-name { font-weight: 600; font-size: 14px; line-height: 1.2; }
+.ws-sub { font-size: 12px; color: var(--muted); }
+.ws .grow { flex: 1; min-width: 0; }
+.icon-btn {
+  width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center;
+  color: var(--ink-2); flex: none;
+}
+.icon-btn:hover { background: var(--hover-strong); color: var(--ink); }
+.search-btn {
+  display: flex; align-items: center; gap: 8px; margin: 4px 0 8px; padding: 7px 10px;
+  border-radius: 8px; border: 1px solid var(--border); background: var(--surface);
+  color: var(--muted); font-size: 13px; width: 100%; text-align: left;
+}
+.search-btn:hover { border-color: var(--border-strong); color: var(--ink-2); }
+.search-btn .grow { flex: 1; }
+.kbd {
+  font-family: var(--mono); font-size: 11px; color: var(--muted); border: 1px solid var(--border);
+  border-bottom-width: 2px; border-radius: 5px; padding: 0 5px; line-height: 17px; background: var(--surface-2);
+}
+.nav-item {
+  display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: 8px;
+  color: var(--ink-2); font-size: 14px; width: 100%; text-align: left; position: relative;
+}
+.nav-item:hover { background: var(--hover-strong); color: var(--ink); text-decoration: none; }
+.nav-item.on { background: var(--surface-2); color: var(--ink); box-shadow: inset 0 0 0 1px var(--border); }
+.nav-item.on svg.i { color: var(--accent); }
+.nav-item .grow { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nav-badge {
+  font-size: 11px; font-weight: 600; min-width: 20px; height: 18px; padding: 0 6px; border-radius: 9px;
+  display: grid; place-items: center; background: rgba(var(--warning-rgb), 0.18); color: var(--warning);
+}
+.nav-count { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.nav-label {
+  font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted);
+  padding: 16px 10px 6px; display: flex; align-items: center; justify-content: space-between;
+}
+.proj-switch {
+  display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px; width: 100%;
+  border: 1px solid var(--border); background: var(--surface); text-align: left; margin-bottom: 6px;
+}
+.proj-switch:hover { border-color: var(--border-strong); }
+.proj-mark {
+  width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; flex: none;
+  font-size: 12px; font-weight: 700; color: #fff;
+}
+.proj-switch .t { font-weight: 600; font-size: 13.5px; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.proj-switch .s { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+.proj-switch .grow { flex: 1; min-width: 0; }
+.sb-foot { border-top: 1px solid var(--border); padding: 10px; display: flex; align-items: center; gap: 10px; }
+.sb-foot .grow { flex: 1; min-width: 0; }
+.sb-foot .n { font-size: 13px; font-weight: 600; line-height: 1.2; }
+.sb-foot .r { font-size: 12px; color: var(--muted); }
+
+.main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.topbar {
+  height: 52px; flex: none; display: flex; align-items: center; gap: 12px; padding: 0 20px;
+  border-bottom: 1px solid var(--border); background: var(--page);
+}
+.crumbs { display: flex; align-items: center; gap: 6px; font-size: 13.5px; color: var(--muted); min-width: 0; flex: 1; }
+.crumbs b { color: var(--ink); font-weight: 600; white-space: nowrap; }
+.crumbs span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.live { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); white-space: nowrap; }
+.live i { width: 7px; height: 7px; border-radius: 50%; background: var(--good); box-shadow: 0 0 0 3px rgba(var(--good-rgb), 0.18); }
+.content { flex: 1; overflow-y: auto; min-height: 0; scroll-behavior: smooth; }
+.page { max-width: 1240px; margin: 0 auto; padding: 28px 32px 64px; }
+.page.wide { max-width: none; }
+.page.flush { padding: 0; max-width: none; height: 100%; }
+
+/* ───────────────────────── primitives ───────────────────────── */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px; white-space: nowrap;
+  height: 32px; padding: 0 12px; border-radius: 8px; font-size: 13.5px; font-weight: 500;
+  border: 1px solid var(--border-strong); background: var(--surface); color: var(--ink);
+  transition: background var(--fast) var(--ease), border-color var(--fast) var(--ease);
+}
+.btn:hover { background: var(--surface-2); text-decoration: none; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
+.btn.primary:hover { filter: brightness(1.07); }
+.btn.ghost { border-color: transparent; background: transparent; color: var(--ink-2); }
+.btn.ghost:hover { background: var(--hover-strong); color: var(--ink); }
+.btn.danger { color: var(--critical); border-color: rgba(var(--critical-rgb), 0.45); }
+.btn.danger:hover { background: rgba(var(--critical-rgb), 0.1); }
+.btn.good { color: var(--good); border-color: rgba(var(--good-rgb), 0.45); }
+.btn.good:hover { background: rgba(var(--good-rgb), 0.1); }
+.btn.sm { height: 28px; padding: 0 10px; font-size: 13px; border-radius: 7px; }
+.btn.xs { height: 24px; padding: 0 8px; font-size: 12px; border-radius: 6px; gap: 5px; }
+.btn .kbd { margin-left: 2px; }
+.btn.primary .kbd { background: transparent; border-color: rgba(0,0,0,0.2); color: inherit; opacity: 0.75; }
+
+.pill {
+  display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 9px; border-radius: 11px;
+  font-size: 12px; font-weight: 500; white-space: nowrap; background: var(--surface-2);
+  color: var(--ink-2); border: 1px solid var(--border);
+}
+.pill .d { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none; }
+.pill.s-working { color: var(--accent); background: rgba(var(--accent-rgb), 0.1); border-color: rgba(var(--accent-rgb), 0.28); }
+.pill.s-working .d { animation: pulse 1.6s var(--ease) infinite; }
+.pill.s-waiting { color: var(--warning); background: rgba(var(--warning-rgb), 0.1); border-color: rgba(var(--warning-rgb), 0.3); }
+.pill.s-blocked { color: var(--serious); background: rgba(var(--serious-rgb), 0.1); border-color: rgba(var(--serious-rgb), 0.3); }
+.pill.s-good { color: var(--good); background: rgba(var(--good-rgb), 0.1); border-color: rgba(var(--good-rgb), 0.3); }
+.pill.s-crit { color: var(--critical); background: rgba(var(--critical-rgb), 0.1); border-color: rgba(var(--critical-rgb), 0.3); }
+.pill.s-idle { color: var(--muted); }
+.pill.s-idle .d { background: transparent; box-shadow: inset 0 0 0 1.5px currentColor; }
+.pill.s-paused { color: var(--muted); }
+.pill.plain { background: transparent; }
+@keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0.5); } 60% { box-shadow: 0 0 0 5px rgba(var(--accent-rgb), 0); } }
+@media (prefers-reduced-motion: reduce) { .pill.s-working .d, .typing i { animation: none !important; } .content { scroll-behavior: auto; } }
+
+.tag {
+  display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 7px; border-radius: 5px;
+  font-size: 11.5px; font-weight: 500; color: var(--ink-2); background: var(--surface-2); border: 1px solid var(--border);
+  white-space: nowrap;
+}
+.tag.id { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.tag.accent { color: var(--accent); border-color: rgba(var(--accent-rgb), 0.3); background: rgba(var(--accent-rgb), 0.08); }
+
+.av {
+  --sz: 28px; width: var(--sz); height: var(--sz); border-radius: 50%; flex: none; position: relative;
+  display: grid; place-items: center; font-size: calc(var(--sz) * 0.4); font-weight: 600; color: #fff;
+  background: var(--c0); letter-spacing: -0.02em;
+}
+.av.sq { border-radius: 30%; }
+.av.xs { --sz: 20px; } .av.sm { --sz: 24px; } .av.md { --sz: 32px; } .av.lg { --sz: 40px; } .av.xl { --sz: 52px; }
+.av.t1 { background: var(--c1); } .av.t2 { background: var(--c2); } .av.t3 { background: var(--c3); }
+.av.t4 { background: var(--c4); } .av.t5 { background: var(--c5); }
+.av.me { background: var(--ink); color: var(--page); }
+.av .st {
+  position: absolute; right: -1px; bottom: -1px; width: 34%; height: 34%; min-width: 8px; min-height: 8px;
+  border-radius: 50%; border: 2px solid var(--surface); background: var(--muted);
+}
+.av .st.working { background: var(--accent); } .av .st.waiting { background: var(--warning); }
+.av .st.blocked { background: var(--serious); } .av .st.good { background: var(--good); }
+.av .st.idle { background: var(--surface-2); box-shadow: inset 0 0 0 1.5px var(--muted); }
+.av-stack { display: flex; } .av-stack .av { box-shadow: 0 0 0 2px var(--surface); } .av-stack .av + .av { margin-left: -6px; }
+
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); }
+.card-h { display: flex; align-items: center; gap: 10px; padding: 14px 18px 0; }
+.card-h h3 { font-size: 14px; font-weight: 600; letter-spacing: -0.005em; }
+.card-h .grow { flex: 1; }
+.card-h .link { font-size: 13px; color: var(--muted); display: inline-flex; align-items: center; gap: 4px; }
+.card-h .link:hover { color: var(--ink); text-decoration: none; }
+.card-b { padding: 14px 18px 18px; }
+
+.bar { height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; position: relative; }
+.bar > i { position: absolute; inset: 0 auto 0 0; border-radius: 3px; background: var(--accent); }
+.bar.good > i { background: var(--good); } .bar.warn > i { background: var(--warning); }
+.seg-bar { display: flex; gap: 3px; height: 6px; }
+.seg-bar i { flex: 1; border-radius: 2px; background: var(--surface-2); }
+.seg-bar i.met { background: var(--good); } .seg-bar i.prog { background: var(--accent); }
+.seg-bar i.risk { background: var(--serious); }
+
+.seg { display: inline-flex; padding: 2px; border-radius: 9px; background: var(--surface-2); border: 1px solid var(--border); gap: 2px; }
+.seg button { height: 26px; padding: 0 10px; border-radius: 7px; font-size: 13px; color: var(--ink-2); display: inline-flex; align-items: center; gap: 6px; }
+.seg button.on { background: var(--surface); color: var(--ink); box-shadow: var(--e1); }
+.seg button .c { font-size: 11.5px; color: var(--muted); }
+
+.tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); }
+.tabs button { padding: 8px 12px 10px; font-size: 13.5px; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; display: inline-flex; gap: 6px; align-items: center; }
+.tabs button:hover { color: var(--ink); }
+.tabs button.on { color: var(--ink); border-bottom-color: var(--accent); font-weight: 500; }
+
+.input {
+  width: 100%; height: 34px; border-radius: 8px; border: 1px solid var(--border-strong); background: var(--surface);
+  padding: 0 11px; font-size: 13.5px;
+}
+textarea.input { height: auto; padding: 9px 11px; resize: vertical; line-height: 1.45; }
+.input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.18); }
+
+/* term: plain words first, the yaaf word one hover away */
+.term { border-bottom: 1px dashed var(--border-strong); cursor: help; position: relative; }
+[data-tip] { position: relative; }
+[data-tip]:hover::after, [data-tip]:focus-visible::after {
+  content: attr(data-tip); position: absolute; left: 50%; bottom: calc(100% + 8px); transform: translateX(-50%);
+  width: max-content; max-width: 280px; padding: 8px 10px; border-radius: 8px; z-index: 60;
+  background: var(--ink); color: var(--page); font-size: 12px; line-height: 1.45; font-weight: 400;
+  box-shadow: var(--e2); white-space: normal; text-align: left; pointer-events: none; letter-spacing: 0;
+  text-transform: none;
+}
+[data-tip].tip-down:hover::after { bottom: auto; top: calc(100% + 8px); }
+[data-tip].tip-left:hover::after { left: auto; right: 0; transform: none; }
+
+.page-h { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 22px; flex-wrap: wrap; }
+.page-h .grow { flex: 1; min-width: 260px; }
+.page-h h1 { font-family: var(--font-display); font-weight: 400; font-size: var(--t-h1); letter-spacing: -0.01em; line-height: 1.15; }
+.page-h .sub { color: var(--ink-2); font-size: 14.5px; margin-top: 6px; max-width: 72ch; }
+.page-h .actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.eyebrow { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap; }
+
+.empty { text-align: center; padding: 40px 20px; color: var(--muted); }
+.empty .big { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; margin: 0 auto 12px; background: var(--surface-2); color: var(--good); }
+.empty h4 { color: var(--ink); font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+
+.row { display: flex; align-items: center; gap: 10px; }
+.row.top { align-items: flex-start; }
+.grow { flex: 1; min-width: 0; }
+.stack { display: flex; flex-direction: column; }
+.gap4 { gap: 4px; } .gap8 { gap: 8px; } .gap12 { gap: 12px; } .gap16 { gap: 16px; } .gap20 { gap: 20px; }
+.wrap { flex-wrap: wrap; }
+.divider { height: 1px; background: var(--border); }
+.ellipsis { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.small { font-size: 13px; } .micro { font-size: 12px; }
+.strong { font-weight: 600; }
+
+/* ───────────────────────── overlays ───────────────────────── */
+.scrim { position: fixed; inset: 0; background: var(--scrim); z-index: 40; opacity: 0; pointer-events: none; transition: opacity 160ms var(--ease); }
+.scrim.on { opacity: 1; pointer-events: auto; }
+.drawer {
+  position: fixed; top: 0; right: 0; bottom: 0; width: min(560px, 100vw); z-index: 50; background: var(--surface);
+  border-left: 1px solid var(--border); box-shadow: var(--e3); transform: translateX(102%);
+  transition: transform 220ms var(--ease); display: flex; flex-direction: column;
+  padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.drawer.on { transform: none; }
+.drawer-h { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--border); }
+.drawer-b { flex: 1; overflow-y: auto; padding: 20px; }
+
+.cmdk-wrap { position: fixed; inset: 0; z-index: 70; display: none; place-items: start center; padding: 12vh 16px 0; background: var(--scrim); }
+.cmdk-wrap.on { display: grid; }
+.cmdk { width: min(640px, 100%); background: var(--surface); border: 1px solid var(--border-strong); border-radius: 14px; box-shadow: var(--e3); overflow: hidden; }
+.cmdk-in { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--border); }
+.cmdk-in input { flex: 1; border: 0; background: transparent; font-size: 15px; outline: none; }
+.cmdk-list { max-height: 52vh; overflow-y: auto; padding: 6px; }
+.cmdk-g { font-size: 11.5px; color: var(--muted); padding: 10px 10px 4px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+.cmdk-it { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; width: 100%; text-align: left; font-size: 14px; color: var(--ink-2); }
+.cmdk-it .grow { flex: 1; min-width: 0; color: var(--ink); }
+.cmdk-it.sel, .cmdk-it:hover { background: var(--hover-strong); }
+.cmdk-foot { display: flex; gap: 14px; padding: 9px 14px; border-top: 1px solid var(--border); font-size: 12px; color: var(--muted); align-items: center; }
+
+.toast {
+  position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom, 0px)); transform: translate(-50%, 140%);
+  background: var(--ink); color: var(--page); padding: 10px 14px; border-radius: 10px; font-size: 13.5px; z-index: 80;
+  box-shadow: var(--e3); display: flex; gap: 10px; align-items: center; transition: transform 220ms var(--ease), opacity 220ms var(--ease), visibility 220ms; max-width: calc(100vw - 32px);
+}
+.toast:not(.on) { visibility: hidden; opacity: 0; }
+.toast.on { transform: translate(-50%, 0); visibility: visible; opacity: 1; }
+.toast button { color: var(--page); opacity: 0.7; font-weight: 600; }
+
+/* design notes: numbered callouts that explain each decision */
+.dn { display: none; }
+body.notes .dn {
+  display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%;
+  background: var(--note); color: var(--note-ink); font-size: 11px; font-weight: 700; font-family: var(--font);
+  box-shadow: 0 0 0 3px rgba(var(--warning-rgb), 0.25); cursor: help; vertical-align: middle; flex: none;
+  margin: 0 4px; position: relative; z-index: 5; line-height: 1;
+}
+body.notes .dn.abs { position: absolute; top: -9px; right: -9px; margin: 0; }
+.notes-toggle.on { background: rgba(var(--warning-rgb), 0.14); color: var(--warning); border-color: rgba(var(--warning-rgb), 0.4); }
+.notes-panel {
+  display: none; margin-bottom: 22px; border-radius: var(--radius-lg); border: 1px dashed rgba(var(--warning-rgb), 0.55);
+  background: rgba(var(--warning-rgb), 0.06); padding: 16px 18px;
+}
+body.notes .notes-panel { display: block; }
+.notes-panel h4 { font-size: 13px; font-weight: 600; color: var(--warning); margin-bottom: 10px; display: flex; gap: 8px; align-items: center; }
+.notes-panel ol { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+.notes-panel li { display: flex; gap: 10px; font-size: 13px; color: var(--ink-2); line-height: 1.5; }
+.notes-panel li .dn { display: inline-grid; margin: 1px 0 0; }
+.notes-panel li b { color: var(--ink); font-weight: 600; }
+
+/* ───────────────── shared bits ───────────────── */
+.sep { width: 3px; height: 3px; border-radius: 50%; background: var(--border-strong); display: inline-block; flex: none; }
+.count { font-size: 12px; font-weight: 600; min-width: 22px; height: 20px; padding: 0 7px; border-radius: 10px; display: inline-grid; place-items: center; background: var(--surface-2); color: var(--ink-2); }
+.count.warn { background: rgba(var(--warning-rgb), 0.16); color: var(--warning); }
+.amt { font-family: var(--mono); font-size: 12px; font-weight: 500; color: var(--ink); background: var(--surface-2); border: 1px solid var(--border); border-radius: 5px; padding: 1px 6px; white-space: nowrap; }
+.amt.lg { font-size: 15px; padding: 2px 8px; vertical-align: middle; }
+.kind-ic { --k: var(--ink-2); width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; flex: none; color: var(--k);
+  background: color-mix(in srgb, var(--k) 13%, transparent); }
+.chip { height: 28px; padding: 0 11px; border-radius: 14px; border: 1px solid var(--border); background: var(--surface); font-size: 13px; color: var(--ink-2); display: inline-flex; align-items: center; gap: 6px; }
+.chip:hover { border-color: var(--border-strong); color: var(--ink); }
+.chip.on { background: var(--ink); color: var(--page); border-color: var(--ink); }
+.link-btn { color: var(--accent); font-size: inherit; }
+.link-btn:hover { text-decoration: underline; text-underline-offset: 3px; }
+.legend { display: inline-flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.legend .pill { height: 20px; font-size: 11.5px; }
+.team-dot { width: 9px; height: 9px; border-radius: 3px; flex: none; display: inline-block; }
+.ellipsis-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.relay { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--border); color: var(--ink-2); font-size: 13px; margin-bottom: 18px; flex-wrap: wrap; }
+.relay > span { flex: 1; min-width: 200px; }
+.tbl-wrap { overflow-x: auto; }
+.tbl { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+.tbl th { text-align: left; font-weight: 500; font-size: 12px; color: var(--muted); padding: 10px 14px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.tbl td { padding: 11px 14px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.tbl tbody tr:last-child td { border-bottom: 0; }
+.tbl tbody tr[data-go], .tbl tbody tr[data-agent] { cursor: pointer; }
+.tbl tbody tr:hover td { background: var(--hover); }
+.tbl.mini { font-size: 13px; } .tbl.mini td, .tbl.mini th { padding: 7px 10px; }
+.stat-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 18px; }
+.stat-row > div { background: var(--surface-2); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.stat-row b { font-size: 16px; font-weight: 600; }
+.stat-row.tight { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 8px; }
+.stat-row.tight > div { padding: 8px 10px; }
+.kpi-mini { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-top: 1px solid var(--border); }
+.kpi-mini > div { padding: 12px 18px; display: flex; flex-direction: column; gap: 2px; border-right: 1px solid var(--border); min-width: 0; }
+.kpi-mini > div:last-child { border-right: 0; }
+.kpi-mini b { font-size: 15px; font-weight: 600; }
+.kpi-mini.flat { border: 1px solid var(--border); border-radius: 12px; grid-template-columns: repeat(6, minmax(0, 1fr)); margin-bottom: 18px; }
+.case { margin: 0; display: grid; gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+.case > div { display: grid; grid-template-columns: 150px 1fr; gap: 16px; padding: 12px 14px; background: var(--surface); }
+.case dt { font-size: 12.5px; color: var(--muted); font-weight: 500; }
+.case dd { margin: 0; font-size: 14px; line-height: 1.55; }
+.case > div.silence { background: color-mix(in srgb, var(--warning) 7%, var(--surface)); }
+.case > div.silence dt { color: var(--warning); }
+
+/* ───────────────── sidebar live section ───────────────── */
+.live-n { display: inline-flex; align-items: center; gap: 6px; color: var(--accent); }
+.live-n i { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: pulse 1.6s var(--ease) infinite; }
+.live-row { padding: 5px 10px; font-size: 13px; }
+.live-row .ln { color: var(--ink); font-weight: 500; }
+.live-row .ld { color: var(--muted); }
+.live-row .grow { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.live-row .av .st { border-color: var(--rail); }
+
+/* ───────────────── overview ───────────────── */
+.ov-head { margin-bottom: 20px; }
+.ov-head .eyebrow .sep { margin: 0 2px; }
+.ov-title { font-family: var(--font-display); font-weight: 400; font-size: 34px; letter-spacing: -0.01em; line-height: 1.1; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.ov-title .pill { font-family: var(--font); letter-spacing: 0; }
+.ov-goal { color: var(--ink-2); font-size: 15px; margin-top: 8px; max-width: 78ch; }
+.kpis { position: relative; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); margin-bottom: 18px; }
+.kpi { text-align: left; padding: 16px 18px 16px; border-right: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px; min-width: 0; transition: background var(--fast); }
+.kpi:first-of-type { border-radius: var(--radius-lg) 0 0 var(--radius-lg); }
+.kpi:last-child { border-right: 0; border-radius: 0 var(--radius-lg) var(--radius-lg) 0; }
+.kpi:hover { background: var(--hover); }
+.kpi-l { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); font-weight: 500; }
+.kpi-v { font-size: var(--t-stat); font-weight: 600; letter-spacing: -0.02em; line-height: 1.1; }
+.kpi-v .of { font-size: 15px; font-weight: 500; color: var(--muted); letter-spacing: 0; }
+.kpi-s { font-size: 12.5px; color: var(--ink-2); line-height: 1.4; min-height: 2.8em; }
+.kpi-s b { color: var(--ink); font-weight: 600; }
+.kpi .bar, .kpi .seg-bar { margin-top: auto; }
+.kpi .spark { margin-top: auto; width: 100%; height: 26px; }
+.bar-mark { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--ink-2); border-radius: 1px; }
+.bar-proj { position: absolute; top: -3px; bottom: -3px; width: 2px; background: repeating-linear-gradient(var(--ink-2) 0 2px, transparent 2px 4px); }
+.bar { overflow: visible; }
+.bar > i { overflow: hidden; }
+.bar.lg { height: 10px; border-radius: 5px; margin-top: 14px; }
+.bar.lg > i { border-radius: 5px; }
+.tl { position: relative; height: 6px; border-radius: 3px; background: var(--surface-2); margin-top: auto; }
+.tl-done { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px 0 0 3px; background: var(--border-strong); }
+.tl-today, .tl-prom, .tl-proj { position: absolute; top: -4px; width: 2px; height: 14px; border-radius: 1px; }
+.tl-today { background: var(--ink); } .tl-prom { background: var(--ink-2); }
+.tl-proj { background: repeating-linear-gradient(var(--serious) 0 3px, transparent 3px 5px); }
+.tl-k { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); padding: 0 0 0 56%; gap: 6px; }
+.ov-grid { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.needs { padding-top: 6px; padding-bottom: 8px; }
+.need { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-top: 1px solid var(--border); }
+.need:first-child { border-top: 0; }
+.need-t { font-weight: 500; font-size: 14px; }
+.need-t a { color: var(--ink); }
+.need-m { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); margin-top: 3px; flex-wrap: wrap; }
+.need-m span { display: inline-flex; align-items: center; gap: 4px; }
+.need-a { display: flex; gap: 6px; flex: none; }
+.people { padding-top: 6px; padding-bottom: 6px; }
+.person { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; padding: 10px 8px; margin: 0 -8px; width: calc(100% + 16px); border-radius: 10px; }
+.person:hover { background: var(--hover-strong); }
+.person b { font-weight: 600; font-size: 14px; }
+.doing { display: block; font-size: 13px; color: var(--ink-2); margin-top: 1px; }
+.p-right { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex: none; }
+.rm-mini { display: flex; flex-direction: column; }
+.rm-row { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-top: 1px solid var(--border); font-size: 13.5px; }
+.rm-row:first-child { border-top: 0; }
+.ceo-card .card-b { padding-top: 12px; }
+.ceo-msg { font-size: 14px; line-height: 1.6; color: var(--ink); }
+.quick { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px; align-items: center; }
+.agenda { display: flex; flex-direction: column; padding-top: 8px; }
+.ag { display: grid; grid-template-columns: 74px 14px 1fr; gap: 8px; align-items: start; padding: 7px 0; font-size: 13px; position: relative; }
+.ag-d { display: flex; flex-direction: column; line-height: 1.25; }
+.ag-d b { font-weight: 600; font-size: 12.5px; }
+.ag-d span { font-size: 11.5px; color: var(--muted); }
+.ag-dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 4px; background: var(--muted); }
+.ag-you .ag-dot { background: var(--warning); }
+.ag-auto .ag-dot { background: transparent; box-shadow: inset 0 0 0 2px var(--ink-2); }
+.ag-meet .ag-dot { background: var(--accent); }
+.ag-due .ag-dot { background: var(--ink); }
+.ag-proj .ag-dot { background: transparent; box-shadow: inset 0 0 0 2px var(--serious); }
+.ag-proj .grow { color: var(--serious); }
+.ag-key { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); font-size: 11.5px; color: var(--muted); }
+.ag-key span::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; vertical-align: -0.5px; }
+.ag-key .k-you::before { background: var(--warning); } .ag-key .k-auto::before { box-shadow: inset 0 0 0 1.5px var(--ink-2); }
+.ag-key .k-meet::before { background: var(--accent); } .ag-key .k-due::before { background: var(--ink); }
+.hbars { display: flex; flex-direction: column; gap: 9px; padding-top: 12px; }
+.hb { display: grid; grid-template-columns: 74px 1fr 62px; gap: 10px; align-items: center; font-size: 13px; }
+.hb-l { color: var(--ink-2); }
+.hb-t { height: 8px; border-radius: 4px; background: var(--surface-2); position: relative; overflow: hidden; }
+.hb-t i { position: absolute; inset: 0 auto 0 0; border-radius: 4px; }
+.hb-v { text-align: right; font-size: 12.5px; }
+.files-mini { display: flex; flex-direction: column; gap: 2px; padding-top: 8px; }
+.fm { display: flex; align-items: center; gap: 10px; padding: 8px; margin: 0 -8px; border-radius: 9px; color: var(--ink); font-size: 13.5px; }
+.fm:hover { background: var(--hover-strong); text-decoration: none; }
+.f-ic { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; background: var(--surface-2); color: var(--ink-2); flex: none; }
+.health { position: relative; display: flex; align-items: center; gap: 10px; padding: 12px 16px; margin-top: 16px; border: 1px solid var(--border); border-radius: 12px; font-size: 13.5px; flex-wrap: wrap; }
+.h-ok { color: var(--good); display: grid; }
+
+/* ───────────────── inbox ───────────────── */
+.inbox { display: grid; grid-template-columns: 420px minmax(0, 1fr); height: 100%; min-height: 0; }
+.ib-list { border-right: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; background: var(--page); }
+.ib-head { padding: 22px 18px 10px; border-bottom: 1px solid var(--border); }
+.ib-h1 { font-family: var(--font-display); font-weight: 400; font-size: 28px; line-height: 1.1; }
+.ib-tabs { margin-top: 14px; width: 100%; }
+.ib-tabs button { flex: 1; justify-content: center; padding: 0 6px; }
+.ib-proj { margin-top: 10px; }
+.ib-proj .chip { height: 24px; font-size: 12px; padding: 0 9px; }
+.ib-hint { margin-top: 10px; }
+.ib-rows { flex: 1; overflow-y: auto; padding: 6px; }
+.ib-row { display: flex; gap: 12px; align-items: flex-start; padding: 12px; border-radius: 10px; width: 100%; text-align: left; position: relative; }
+.ib-row:hover { background: var(--hover-strong); }
+.ib-row.on { background: var(--surface); box-shadow: inset 0 0 0 1px var(--border-strong); }
+.ib-row.unread::before { content: ""; position: absolute; left: 3px; top: 24px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.ib-r-k { font-size: 12px; font-weight: 600; }
+.ib-r-t { display: block; font-size: 14px; font-weight: 500; margin-top: 2px; line-height: 1.4; }
+.ib-r-s { display: block; font-size: 12.5px; color: var(--muted); margin-top: 3px; }
+.ib-row.watch { cursor: default; }
+.ib-foot { border-top: 1px solid var(--border); padding: 9px 14px; display: flex; gap: 5px; align-items: center; flex-wrap: wrap; }
+.ib-detail { overflow-y: auto; padding: 28px 40px 48px; min-width: 0; }
+.ib-detail-in { max-width: 760px; }
+.ib-title { font-size: 24px; font-weight: 600; letter-spacing: -0.015em; line-height: 1.25; }
+.ib-sum { font-size: 15px; color: var(--ink-2); margin-bottom: 18px; max-width: 70ch; }
+.clock { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 500; color: var(--ink-2); background: var(--surface-2); border: 1px solid var(--border); padding: 3px 9px; border-radius: 999px; }
+.clock.warn { color: var(--warning); background: rgba(var(--warning-rgb), 0.1); border-color: rgba(var(--warning-rgb), 0.3); }
+.ib-ctx { margin-top: 28px; padding-top: 18px; border-top: 1px solid var(--border); }
+.ib-ctx .tag { height: 26px; font-size: 12.5px; cursor: pointer; }
+
+/* ───────────────── home ───────────────── */
+.home-grid { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.pgrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.pcard { text-align: left; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 16px; display: flex; flex-direction: column; gap: 10px; transition: border-color var(--fast); }
+.pcard:hover { border-color: var(--border-strong); }
+.pc-goal { font-size: 13px; color: var(--ink-2); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; min-height: 2.9em; }
+.pc-stats { display: flex; gap: 14px; font-size: 12.5px; color: var(--muted); flex-wrap: wrap; }
+.pc-stats b { color: var(--ink); font-weight: 600; }
+.pc-stats .warn b { color: var(--warning); }
+.brief p { font-size: 13.5px; line-height: 1.55; }
+.brief ul { margin: 10px 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; font-size: 13.5px; color: var(--ink-2); }
+.brief ul b { color: var(--ink); font-weight: 600; }
+.checklist { display: flex; flex-direction: column; gap: 2px; padding-top: 8px; }
+.ck { display: flex; align-items: center; gap: 10px; padding: 8px; margin: 0 -8px; border-radius: 8px; font-size: 13.5px; text-align: left; width: calc(100% + 16px); color: var(--ink); }
+.ck.done { color: var(--muted); text-decoration: line-through; text-decoration-color: var(--border-strong); }
+.ck.done svg { color: var(--good); }
+button.ck:hover { background: var(--hover-strong); }
+button.ck svg:first-child { color: var(--muted); }
+
+/* ───────────────── team / org chart ───────────────── */
+.org-scroll { overflow-x: auto; padding-bottom: 12px; }
+.org { min-width: 1080px; display: flex; flex-direction: column; align-items: center; padding: 8px 4px 0; }
+.org-level { display: flex; justify-content: center; }
+.org-v { width: 2px; height: 26px; background: var(--border-strong); }
+.org-branches { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 16px; width: 100%; position: relative; padding-top: 26px; }
+.org-branches::before { content: ""; position: absolute; top: 0; left: 10%; right: 10%; height: 2px; background: var(--border-strong); }
+.org-branch { position: relative; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.org-branch::before { content: ""; position: absolute; top: -26px; left: 50%; width: 2px; height: 26px; background: var(--border-strong); }
+.team-h { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; font-size: 14px; }
+.team-role { display: flex; gap: 6px; min-height: 22px; align-items: center; flex-wrap: nowrap; overflow: hidden; margin-top: -2px; }
+.team-members { display: flex; flex-direction: column; gap: 8px; }
+.onode { width: 100%; text-align: left; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 14px; display: flex; flex-direction: column; gap: 10px; transition: border-color var(--fast), box-shadow var(--fast); }
+button.onode:hover { border-color: var(--border-strong); box-shadow: var(--e2); }
+.onode.ceo, .onode.me-node { width: 300px; }
+.onode.st-working { border-color: rgba(var(--accent-rgb), 0.35); }
+.onode.st-waiting { border-color: rgba(var(--warning-rgb), 0.45); }
+.on-n { display: block; font-size: 15px; font-weight: 600; }
+.on-r { display: block; font-size: 12.5px; color: var(--muted); }
+.on-s { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.on-d { font-size: 13px; color: var(--ink-2); line-height: 1.45; min-height: 2.9em; }
+.on-f { display: flex; gap: 10px; border-top: 1px solid var(--border); padding-top: 9px; flex-wrap: wrap; }
+.on-x { display: flex; align-items: center; gap: 6px; color: var(--accent); }
+.onode.add { align-items: center; justify-content: center; text-align: center; border-style: dashed; color: var(--muted); min-height: 160px; gap: 6px; background: transparent; }
+.onode.add:hover { color: var(--ink); }
+
+/* agent drawer */
+.cur-task { background: var(--surface-2); border-radius: 12px; padding: 12px 14px; }
+.steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.steps li { display: grid; grid-template-columns: 44px 14px 1fr; gap: 10px; font-size: 13.5px; padding: 6px 0; position: relative; }
+.steps li::after { content: ""; position: absolute; left: 60px; top: 22px; bottom: -6px; width: 2px; background: var(--border); }
+.steps li:last-child::after { display: none; }
+.s-t { font-family: var(--mono); font-size: 11.5px; color: var(--muted); padding-top: 2px; }
+.steps li > i { width: 10px; height: 10px; border-radius: 50%; margin-top: 5px; background: var(--border-strong); position: relative; z-index: 1; }
+.steps .k-live > i { background: var(--accent); animation: pulse 1.6s var(--ease) infinite; }
+.steps .k-live .s-x { color: var(--accent); }
+.steps .k-think .s-x { color: var(--ink-2); font-style: italic; }
+.typing { display: inline-flex; gap: 3px; vertical-align: middle; margin-left: 4px; }
+.typing i { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); animation: blink 1.2s infinite; }
+.typing i:nth-child(2) { animation-delay: 0.2s; } .typing i:nth-child(3) { animation-delay: 0.4s; }
+@keyframes blink { 0%, 80%, 100% { opacity: 0.25; } 40% { opacity: 1; } }
+.tlist-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 13.5px; }
+.drawer-f { border-top: 1px solid var(--border); padding: 12px 16px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+/* ───────────────── chat ───────────────── */
+.chat { display: grid; grid-template-columns: minmax(0, 1fr) 300px; height: 100%; min-height: 0; }
+.chat-main { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+.chat-h { display: flex; align-items: center; gap: 12px; padding: 14px 24px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.chat-scroll { flex: 1; overflow-y: auto; padding: 20px 24px; display: flex; flex-direction: column; gap: 14px; }
+.chat-scroll > * { max-width: 820px; width: 100%; margin-left: auto; margin-right: auto; }
+.day-sep { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--muted); }
+.day-sep::before, .day-sep::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+.msg { display: flex; gap: 12px; align-items: flex-start; }
+.msg.mine { justify-content: flex-end; }
+.bubble-wrap { max-width: min(600px, 86%); display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.msg.mine .bubble-wrap { align-items: flex-end; }
+.m-meta { font-size: 12px; color: var(--muted); font-weight: 500; }
+.m-meta span { font-weight: 400; margin-left: 6px; }
+.bubble { background: var(--surface); border: 1px solid var(--border); border-radius: 4px 14px 14px 14px; padding: 11px 14px; font-size: 14.5px; line-height: 1.55; }
+.msg.mine .bubble { background: var(--accent); color: var(--on-accent); border-color: var(--accent); border-radius: 14px 4px 14px 14px; }
+.mcard { background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: 12px; padding: 10px 12px; font-size: 13.5px; }
+.mcard b { font-weight: 600; }
+.mcard .micro.muted { font-weight: 400; }
+.mcard > .row > div > span.micro { display: block; }
+.mcard.done { color: var(--good); display: flex; gap: 8px; align-items: center; }
+.typing-line { display: flex; align-items: center; gap: 6px; }
+.composer { border-top: 1px solid var(--border); padding: 12px 24px 16px; }
+.composer > * { max-width: 820px; margin-left: auto; margin-right: auto; }
+.composer .quick { margin: 0 auto 10px; }
+.composer .chip { height: 26px; font-size: 12.5px; }
+.comp-box { display: flex; gap: 8px; align-items: flex-end; }
+.comp-box textarea { flex: 1; }
+.chat-side { border-left: 1px solid var(--border); padding: 18px 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 22px; background: var(--rail); }
+.side-sec { display: flex; flex-direction: column; gap: 8px; }
+.side-item { display: flex; gap: 10px; align-items: center; text-align: left; padding: 8px; margin: 0 -8px; border-radius: 9px; font-size: 13px; }
+.side-item:not(.static):hover { background: var(--hover-strong); }
+.side-item.static { background: var(--surface); margin: 0; border: 1px solid var(--border); }
+
+/* ───────────────── roadmap ───────────────── */
+.banner { display: flex; align-items: center; gap: 14px; padding: 14px 16px; border-radius: 12px; border: 1px solid; flex-wrap: wrap; position: relative; }
+.banner > .grow { min-width: 260px; }
+.banner.risk { border-color: rgba(var(--serious-rgb), 0.4); background: rgba(var(--serious-rgb), 0.07); }
+.b-ic { color: var(--serious); display: grid; }
+.burn { width: 100%; min-width: 600px; height: auto; display: block; }
+.legend .lg-i { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); margin-left: 10px; }
+.lg-i i { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
+.lg-i i.dash { height: 0; border-top: 2px dashed; }
+.stage { margin-top: 22px; }
+.stage-h { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.stage-h h3 { font-size: 15px; font-weight: 600; }
+.req { display: flex; align-items: center; gap: 14px; padding: 14px 16px; border-top: 1px solid var(--border); }
+.req:first-child { border-top: 0; }
+.req-t { font-size: 14px; line-height: 1.5; }
+.req-m { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; flex: none; }
+
+/* ───────────────── tasks ───────────────── */
+.board { display: grid; grid-template-columns: repeat(5, minmax(196px, 1fr)); gap: 12px; overflow-x: auto; padding-bottom: 8px; align-items: start; }
+.bcol { background: var(--sunken); border: 1px solid var(--border); border-radius: 14px; padding: 10px; display: flex; flex-direction: column; gap: 8px; min-height: 180px; }
+.bcol-h { display: flex; align-items: center; justify-content: space-between; padding: 2px 4px 4px; }
+.tcard { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.tc-t { font-size: 13.5px; font-weight: 500; line-height: 1.4; }
+.tc-f { border-top: 1px solid var(--border); padding-top: 8px; margin-top: 2px; }
+.tc-f .micro { display: inline-flex; align-items: center; gap: 3px; }
+
+/* ───────────────── deliverables ───────────────── */
+.files { display: grid; grid-template-columns: 380px minmax(0, 1fr); height: 100%; min-height: 0; }
+.f-list { border-right: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; }
+.f-head { padding: 22px 16px 12px; border-bottom: 1px solid var(--border); }
+.f-rows { overflow-y: auto; padding: 6px; flex: 1; }
+.f-day { font-size: 12px; font-weight: 600; color: var(--muted); padding: 12px 10px 6px; }
+.f-row { display: flex; gap: 10px; align-items: center; padding: 9px 10px; border-radius: 9px; width: 100%; text-align: left; font-size: 13.5px; }
+.f-row:hover { background: var(--hover-strong); }
+.f-row.on { background: var(--surface); box-shadow: inset 0 0 0 1px var(--border-strong); }
+.f-reader { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+.f-rhead { display: flex; align-items: center; gap: 10px; padding: 14px 24px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.doc { overflow-y: auto; padding: 28px 40px 60px; max-width: 820px; width: 100%; }
+.doc h2 { font-family: var(--font-display); font-weight: 400; font-size: 30px; line-height: 1.2; margin: 8px 0 14px; }
+.doc h3 { font-size: 16px; font-weight: 600; margin: 22px 0 8px; }
+.doc p { font-size: 15px; line-height: 1.7; color: var(--ink); max-width: 68ch; }
+.proof { display: inline-flex; align-items: center; gap: 3px; font-size: 12px; color: var(--good); background: rgba(var(--good-rgb), 0.1); padding: 0 6px; border-radius: 5px; vertical-align: 1px; }
+.callout { display: flex; gap: 10px; padding: 12px 14px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--border); margin-top: 12px; font-size: 14px; }
+.callout svg { margin-top: 3px; color: var(--accent); }
+
+/* ───────────────── spend ───────────────── */
+.spend-top { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr); gap: 16px; align-items: stretch; }
+.budget { position: relative; }
+.big-num { font-size: 34px; font-weight: 600; letter-spacing: -0.02em; margin-top: 10px; }
+.big-num .of { font-size: 16px; color: var(--muted); font-weight: 500; }
+.policy { display: flex; flex-direction: column; gap: 8px; margin: 16px 0; padding: 12px; background: var(--surface-2); border-radius: 10px; font-size: 13px; color: var(--ink-2); }
+.policy > div { display: flex; gap: 8px; align-items: center; }
+.policy b { color: var(--ink); }
+
+/* ───────────────── reviews ───────────────── */
+.rv-cols { display: grid; grid-template-columns: 1.4fr 1fr; gap: 24px; }
+.decision { display: flex; gap: 10px; padding: 12px; border-radius: 10px; background: rgba(var(--good-rgb), 0.08); border: 1px solid rgba(var(--good-rgb), 0.25); font-size: 13.5px; }
+.decision svg { color: var(--good); margin-top: 3px; }
+.levers { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.lever { text-align: left; border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 2px; background: var(--surface); font-size: 14px; }
+.lever:hover { border-color: var(--border-strong); background: var(--surface-2); }
+
+/* ───────────────── activity ───────────────── */
+.feed { display: flex; flex-direction: column; }
+.feed-row { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-top: 1px solid var(--border); font-size: 13.5px; cursor: pointer; }
+.feed-row:first-child { border-top: 0; }
+.feed-row:hover { background: var(--hover); }
+.feed-t { width: 42px; color: var(--muted); font-size: 11.5px; flex: none; }
+.feed-ic { width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; background: var(--surface-2); color: var(--ink-2); flex: none; }
+.feed-ic.k-fail { color: var(--serious); background: rgba(var(--serious-rgb), 0.12); }
+.feed-ic.k-proof, .feed-ic.k-publish { color: var(--good); background: rgba(var(--good-rgb), 0.12); }
+.feed-ic.k-flag { color: var(--serious); }
+.feed-ic.k-decision { color: var(--accent); background: rgba(var(--accent-rgb), 0.12); }
+.feed-ic.k-ask { color: var(--warning); background: rgba(var(--warning-rgb), 0.12); }
+
+/* ───────────────── settings ───────────────── */
+.settings { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 28px; }
+.set-nav { display: flex; flex-direction: column; gap: 2px; position: sticky; top: 0; align-self: start; }
+.set-nav button { display: flex; flex-direction: column; text-align: left; padding: 8px 12px; border-radius: 8px; font-size: 14px; color: var(--ink-2); }
+.set-nav button:hover { background: var(--hover-strong); }
+.set-nav button.on { background: var(--surface-2); color: var(--ink); box-shadow: inset 0 0 0 1px var(--border); }
+.set-h { font-size: 15px; font-weight: 600; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
+.picks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.picks.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.picks.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.pick { text-align: left; border: 1px solid var(--border); border-radius: 12px; padding: 14px; background: var(--surface); display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
+.pick:hover { border-color: var(--border-strong); }
+.pick.on { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.15); }
+.pick ul { margin: 8px 0 0; padding-left: 16px; font-size: 12.5px; color: var(--ink-2); display: flex; flex-direction: column; gap: 3px; }
+.pick ul:empty { display: none; }
+.role-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.role { padding: 14px; }
+
+/* ───────────────── why ───────────────── */
+.why-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 28px; }
+.why-stats > div { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 16px; display: flex; flex-direction: column; gap: 6px; }
+.why-stats > div > b { font-family: var(--font-display); font-weight: 400; font-size: 44px; line-height: 1; color: var(--accent-2); }
+.why-stats span { font-size: 13px; color: var(--ink-2); }
+.why-stats span b { color: var(--ink); font-weight: 600; }
+.why-sec { margin-bottom: 32px; }
+.why-sec h2 { font-family: var(--font-display); font-weight: 400; font-size: 24px; margin-bottom: 12px; }
+.why-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.why-pat { display: flex; gap: 12px; padding: 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+.why-pat b { font-size: 14px; font-weight: 600; }
+.why-pat p { font-size: 13px; color: var(--ink-2); margin-top: 3px; line-height: 1.5; }
+.why-n { width: 26px; height: 26px; border-radius: 7px; flex: none; display: grid; place-items: center; font-size: 12px; font-weight: 700; background: var(--surface-2); color: var(--ink-2); }
+.why-princ { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 10px; font-size: 14px; max-width: 80ch; color: var(--ink-2); }
+.why-princ b { color: var(--ink); font-weight: 600; }
+.why-keep { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 8px; font-size: 14px; color: var(--ink-2); max-width: 80ch; }
+
+/* ───────────────── responsive ───────────────── */
+.menu-btn { display: none; }
+@media (max-width: 1180px) {
+  .ov-grid, .home-grid { grid-template-columns: minmax(0, 1fr); }
+  .spend-top { grid-template-columns: minmax(0, 1fr); }
+  .chat { grid-template-columns: minmax(0, 1fr); }
+  .chat-side { display: none; }
+}
+@media (max-width: 980px) {
+  .app { grid-template-columns: minmax(0, 1fr); }
+  .sidebar { position: fixed; left: 0; top: 0; bottom: 0; width: 272px; z-index: 45; transform: translateX(-102%); transition: transform 200ms var(--ease); box-shadow: var(--e3); padding-top: env(safe-area-inset-top, 0px); }
+  body.nav-open .sidebar { transform: none; }
+  .menu-btn { display: grid; }
+  .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .kpi:nth-child(odd) { border-right: 1px solid var(--border); }
+  .kpi { border-bottom: 1px solid var(--border); border-radius: 0 !important; }
+  .inbox, .files { grid-template-columns: minmax(0, 1fr); height: auto; }
+  .ib-list, .f-list { border-right: 0; border-bottom: 1px solid var(--border); }
+  .ib-rows { max-height: 46vh; }
+  .ib-detail { padding: 22px 16px 40px; }
+  .doc { padding: 22px 16px 40px; }
+  .why-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .settings { grid-template-columns: minmax(0, 1fr); }
+  .set-nav { flex-direction: row; overflow-x: auto; position: static; }
+  .set-nav button .micro { display: none; }
+  .rv-cols { grid-template-columns: minmax(0, 1fr); }
+  .kpi-mini.flat { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 640px) {
+  .page { padding: 20px 16px 48px; }
+  .topbar { padding: 0 12px; }
+  .live, .topbar .hide-sm { display: none; }
+  .kpis { grid-template-columns: minmax(0, 1fr); }
+  .kpi { border-right: 0 !important; }
+  .pgrid, .why-grid, .why-stats, .picks, .picks.three, .picks.four, .levers { grid-template-columns: minmax(0, 1fr); }
+  .need { flex-wrap: wrap; }
+  .need-a { width: 100%; padding-left: 42px; }
+  .person .p-right .micro { display: none; }
+  .kpi-mini { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .kpi-mini > div:nth-child(2) { border-right: 0; }
+  .kpi-mini.flat { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .case > div { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .stat-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ov-title { font-size: 28px; }
+  .req { flex-wrap: wrap; }
+  .chat-h, .chat-scroll, .composer { padding-left: 16px; padding-right: 16px; }
+  .ib-tabs button { font-size: 12px; }
+  .onode.ceo, .onode.me-node { width: 100%; max-width: 300px; }
+}
+.tl { margin-bottom: 18px; }
+.tl-slip { position: absolute; top: 0; bottom: 0; background: rgba(var(--serious-rgb), 0.55); border-radius: 0 3px 3px 0; }
+.tl-lab { position: absolute; top: 12px; transform: translateX(-50%); font-size: 11px; color: var(--muted); white-space: nowrap; }
+.tl-lab.end { transform: translateX(-100%); }
+.tl-lab.slip { transform: none; color: var(--serious); font-weight: 600; margin-left: 4px; }
+.more-row { display: flex; align-items: center; gap: 6px; padding: 12px 0 2px; border-top: 1px solid var(--border); font-size: 13px; color: var(--muted); }
+.more-row:hover { color: var(--ink); text-decoration: none; }
+@media (hover: none) { .ib-foot { display: none; } }
+
+#sb { display: flex; flex-direction: column; gap: 2px; }
+.wordmark { font-family: var(--font-display); font-size: 26px; line-height: 1; letter-spacing: -0.01em; color: var(--ink); }
+.wordmark b { font-weight: 400; color: var(--accent); }
+
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar" aria-label="Main navigation">
+    <div class="ws">
+      <span class="wordmark">y<b>aa</b>f</span>
+      <span class="grow"></span>
+      <button class="icon-btn" id="help-btn" aria-label="Keyboard shortcuts (?)"><svg class="i " viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg></button>
+    </div>
+    <div class="sb-scroll">
+      <button class="search-btn" id="search-btn"><svg class="i " viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg><span class="grow">Search or jump to…</span><span class="kbd">⌘K</span></button>
+      <nav id="sb"></nav>
+    </div>
+    <div class="sb-foot">
+      <span class="av me sm">DP</span>
+      <span class="grow"><span class="n" style="display:block">Dominic Plouffe</span><span class="r">Chairman · 3 projects</span></span>
+      <button class="icon-btn" id="theme-btn" aria-label="Switch light or dark"></button>
+    </div>
+  </aside>
+  <div class="main">
+    <header class="topbar">
+      <button class="icon-btn menu-btn" id="menu-btn" aria-label="Open navigation"><svg class="i " viewBox="0 0 24 24" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/></svg></button>
+      <nav class="crumbs" id="crumbs" aria-label="Breadcrumb"></nav>
+      <span class="live" data-tip="Every screen updates itself. No refresh button." ><i></i>Live · 11:42</span>
+      <button class="btn sm notes-toggle" id="notes-btn" aria-label="Show design notes"><svg class="i " viewBox="0 0 24 24" aria-hidden="true"><path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/></svg><span class="hide-sm">Design notes</span></button>
+    </header>
+    <main class="content" id="content"><div id="page" class="page"></div></main>
+  </div>
+</div>
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" aria-label="Details"></aside>
+<div class="cmdk-wrap" id="cmdk-wrap" role="dialog" aria-label="Search and commands">
+  <div class="cmdk">
+    <div class="cmdk-in"><svg class="i " viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg><input id="cmdk-q" placeholder="Search people, pages, projects, or type a command…" autocomplete="off" /><span class="kbd">esc</span></div>
+    <div class="cmdk-list" id="cmdk-list"></div>
+    <div class="cmdk-foot"><span><span class="kbd">↑</span> <span class="kbd">↓</span> move</span><span><span class="kbd">↵</span> open</span><span><span class="kbd">?</span> all shortcuts</span></div>
+  </div>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+/* Icons are drawn inline so the mockup works offline and from a file:// path. */
+const ICONS = {
+  inbox: '<polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>',
+  home: '<path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>',
+  dashboard: '<rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/>',
+  chat: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+  org: '<rect x="16" y="16" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="9" y="2" width="6" height="6" rx="1"/><path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3"/><path d="M12 12V8"/>',
+  flag: '<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" x2="4" y1="22" y2="15"/>',
+  target: '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>',
+  kanban: '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M8 7v7"/><path d="M12 7v4"/><path d="M16 7v9"/>',
+  file: '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/>',
+  wallet: '<path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/><path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/>',
+  activity: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
+  history: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>',
+  calendar: '<rect width="18" height="18" x="3" y="4" rx="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/>',
+  calcheck: '<rect width="18" height="18" x="3" y="4" rx="2"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h18"/><path d="m9 16 2 2 4-4"/>',
+  sliders: '<line x1="21" x2="14" y1="4" y2="4"/><line x1="10" x2="3" y1="4" y2="4"/><line x1="21" x2="12" y1="12" y2="12"/><line x1="8" x2="3" y1="12" y2="12"/><line x1="21" x2="16" y1="20" y2="20"/><line x1="12" x2="3" y1="20" y2="20"/><line x1="14" x2="14" y1="2" y2="6"/><line x1="8" x2="8" y1="10" y2="14"/><line x1="16" x2="16" y1="18" y2="22"/>',
+  search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+  bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
+  plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
+  down: '<path d="m6 9 6 6 6-6"/>',
+  right: '<path d="m9 18 6-6-6-6"/>',
+  updown: '<path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/>',
+  play: '<polygon points="6 3 20 12 6 21 6 3"/>',
+  pause: '<rect x="14" y="4" width="4" height="16" rx="1"/><rect x="6" y="4" width="4" height="16" rx="1"/>',
+  stop: '<rect width="14" height="14" x="5" y="5" rx="2"/>',
+  check: '<path d="M20 6 9 17l-5-5"/>',
+  x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+  alert: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+  clock: '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
+  zap: '<path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/>',
+  shield: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/>',
+  eye: '<path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>',
+  help: '<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>',
+  arrow: '<path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>',
+  out: '<path d="M7 7h10v10"/><path d="M7 17 17 7"/>',
+  more: '<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>',
+  filter: '<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>',
+  moon: '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>',
+  send: '<path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>',
+  users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+  user: '<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
+  crown: '<path d="M11.56 3.27a.5.5 0 0 1 .88 0l2.95 5.6a1 1 0 0 0 1.52.29l4.27-3.66a.5.5 0 0 1 .82.5l-2.83 10.25a1 1 0 0 1-.96.75H5.8a1 1 0 0 1-.96-.75L2.01 6a.5.5 0 0 1 .82-.5L7.1 9.16a1 1 0 0 0 1.52-.3z"/><path d="M5 21h14"/>',
+  lock: '<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+  dollar: '<line x1="12" x2="12" y1="2" y2="22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>',
+  checkc: '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/>',
+  book: '<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>',
+  archive: '<rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/>',
+  ext: '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
+  trend: '<polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/>',
+  folder: '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
+  terminal: '<polyline points="4 17 10 11 4 5"/><line x1="12" x2="20" y1="19" y2="19"/>',
+  link: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+  gauge: '<path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/>',
+  meeting: '<path d="M2 3h20"/><path d="M21 3v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V3"/><path d="m7 21 5-5 5 5"/>',
+  layers: '<path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/>',
+  bot: '<path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/>',
+  badge: '<path d="M3.85 8.62a4 4 0 0 1 4.78-4.77 4 4 0 0 1 6.74 0 4 4 0 0 1 4.78 4.78 4 4 0 0 1 0 6.74 4 4 0 0 1-4.77 4.78 4 4 0 0 1-6.75 0 4 4 0 0 1-4.78-4.77 4 4 0 0 1 0-6.76Z"/><path d="m9 12 2 2 4-4"/>',
+  scan: '<path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><circle cx="12" cy="12" r="3"/><path d="m16 16-1.9-1.9"/>',
+  reply: '<polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/>',
+  panel: '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/>',
+  list: '<path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/>',
+  grid: '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 12h18"/><path d="M12 3v18"/>',
+  library: '<path d="m16 6 4 14"/><path d="M12 6v14"/><path d="M8 8v12"/><path d="M4 4v16"/>',
+  refresh: '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>',
+  note: '<path d="M15.5 3H5a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2V8.5L15.5 3Z"/><path d="M15 3v6h6"/>',
+  lightbulb: '<path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/>',
+  hand: '<path d="M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2"/><path d="M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2"/><path d="M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/>',
+  database: '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5V19A9 3 0 0 0 21 19V5"/><path d="M3 12A9 3 0 0 0 21 12"/>',
+  key: '<path d="m15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L19 4"/><path d="m21 2-9.6 9.6"/><circle cx="7.5" cy="15.5" r="5.5"/>',
+  slack: '<rect width="3" height="8" x="13" y="2" rx="1.5"/><path d="M19 8.5V10h1.5A1.5 1.5 0 1 0 19 8.5"/><rect width="3" height="8" x="8" y="14" rx="1.5"/><path d="M5 15.5V14H3.5A1.5 1.5 0 1 0 5 15.5"/><rect width="8" height="3" x="14" y="13" rx="1.5"/><path d="M15.5 19H14v1.5a1.5 1.5 0 1 0 1.5-1.5"/><rect width="8" height="3" x="2" y="8" rx="1.5"/><path d="M8.5 5H10V3.5A1.5 1.5 0 1 0 8.5 5"/>',
+  sparkle: '<path d="M12 3l1.9 5.8L20 10l-6.1 1.9L12 18l-1.9-6.1L4 10l6.1-1.2Z"/>',
+  minus: '<path d="M5 12h14"/>',
+  dot: '<circle cx="12" cy="12" r="3"/>',
+  maximize: '<path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/>',
+  image: '<rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.09-3.09a2 2 0 0 0-2.82 0L6 21"/>',
+  table: '<path d="M12 3v18"/><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M3 15h18"/>',
+  code: '<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>',
+};
+function ic(name, cls = '') {
+  return `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name] || ''}</svg>`;
+}
+
+/* Sample data: the Semis Coverage Desk from yaaf's own screenshots, moved to
+   Monday 12 October 2026. Every figure is an example, not a live reading. */
+const NOW_LABEL = 'Mon 12 Oct, 11:42';
+
+const ME = { name: 'Dominic Plouffe', short: 'Dominic', initials: 'DP', role: 'Chairman' };
+
+const TEAMS = {
+  ceo: { name: 'Leadership', slot: 4 },
+  research: { name: 'Research', slot: 1, role: 'Equity Research Analyst', ver: 'v3' },
+  data: { name: 'Data', slot: 3, role: 'Data Engineer', ver: 'v2' },
+  risk: { name: 'Risk', slot: 2, role: 'Risk Manager', ver: 'v4', behind: 'v5' },
+  review: { name: 'Review', slot: 5, role: 'Compliance Officer', ver: 'v2' },
+};
+
+/* status: working | queued | idle | waiting | blocked | paused */
+const AGENTS = [
+  { id: 'iris', name: 'Iris', initials: 'IR', title: 'Chief Investment Officer', team: 'ceo', ceo: true,
+    status: 'working', doing: 'Re-planning stage 2 after Tobias’s run timed out', since: '3m',
+    today: { runs: 9, closed: 1, spend: 2.31 }, model: 'Opus', next: 'Standup tomorrow 09:00' },
+  { id: 'maya', name: 'Maya', initials: 'MA', title: 'Equity Research Analyst', team: 'research', lead: true,
+    status: 'working', doing: 'Initiation note — AVGO', step: 'Drafting the segment analysis from the FY25 10-K', task: 'T-41', since: '12m',
+    today: { runs: 11, closed: 2, spend: 4.12 }, model: 'Sonnet', next: 'Continues after this run' },
+  { id: 'tobias', name: 'Tobias', initials: 'TO', title: 'Equity Research Analyst', team: 'research',
+    status: 'queued', doing: 'Initiation note — AMD', step: 'Last run timed out at 15 min; retry starts in ~2 min', task: 'T-42', since: '2m',
+    today: { runs: 6, closed: 0, spend: 1.88 }, model: 'Sonnet', next: 'Retry at 11:44' },
+  { id: 'ines', name: 'Ines', initials: 'IN', title: 'Data Engineer', team: 'data', lead: true,
+    status: 'waiting', doing: 'Backfill restated MU fundamentals', step: 'Waiting for your call on the $180 data licence', task: 'T-39', since: '1h',
+    today: { runs: 4, closed: 1, spend: 1.05 }, model: 'Sonnet', next: 'Wakes when you decide' },
+  { id: 'owen', name: 'Owen', initials: 'OW', title: 'Risk Manager', team: 'risk', lead: true,
+    status: 'idle', doing: 'Next: per-name limits from realised volatility', step: 'Ready to start; scheduled wake at 14:00', task: 'T-40', since: '40m',
+    today: { runs: 3, closed: 0, spend: 0.74 }, model: 'Sonnet', next: 'Wakes at 14:00' },
+  { id: 'juno', name: 'Juno', initials: 'JU', title: 'Compliance Officer', team: 'review', lead: true,
+    status: 'working', doing: 'Compliance review — NVDA note v2', step: 'Checking 34 figures against cited filings · 2 FIX items so far', task: 'T-44', since: '6m',
+    today: { runs: 5, closed: 1, spend: 1.30 }, model: 'Sonnet', next: 'Continues after this run' },
+];
+
+const STATUS = {
+  working: { label: 'Working', cls: 's-working', st: 'working' },
+  queued: { label: 'Starting soon', cls: 's-working', st: 'working' },
+  idle: { label: 'Idle', cls: 's-idle', st: 'idle' },
+  waiting: { label: 'Waiting on you', cls: 's-waiting', st: 'waiting' },
+  blocked: { label: 'Blocked', cls: 's-blocked', st: 'blocked' },
+  paused: { label: 'Paused', cls: 's-paused', st: 'idle' },
+};
+
+/* The inbox. `needs` items are the only ones the badge counts: each is
+   something only you can do, and each says what happens if you do nothing. */
+const INBOX = [
+  { id: 'a1', kind: 'approval', sub: 'Spend', project: 'semis', from: 'iris', fromTeam: 'Data',
+    title: 'Licence restated MU history from the vendor', amount: '$180',
+    when: '1h ago', clock: 'Denies itself in 3h 30m', clockTone: 'warn', unread: true,
+    summary: 'Ines needs MU’s restated fundamentals back to 2012. The vendor licence costs $180 for one month.',
+    case: [
+      ['The CEO’s case', 'A free route exists: rebuild the vintages from EDGAR filing dates. It takes about a day of Ines’s time and covers 2018 onward, which is the window the brief asks for. The licence saves that day and adds 2012–2017, which nothing in the plan needs.'],
+      ['CEO recommends', 'Deny. Take the free EDGAR route.'],
+      ['If you approve', '$180 comes out of this month’s $400. Ines resumes within minutes. R-03 projects one day sooner.'],
+      ['If you do nothing', 'It is denied at 15:12. Ines switches to the EDGAR reconstruction.'],
+    ],
+    actions: ['Approve $180', 'Deny'],
+    ctx: [{ agent: 'ines' }, { label: 'T-39' }, { label: 'R-03' }, { go: 'spend', icon: 'wallet', label: '$251.80 left this month' }] },
+  { id: 'q1', kind: 'question', sub: 'Question', project: 'semis', from: 'iris',
+    title: 'Should the AVGO note treat VMware as its own segment?',
+    when: '2h ago', clock: 'Falls back in 6h', clockTone: 'muted', unread: true,
+    summary: 'Broadcom reports VMware inside Infrastructure Software. Splitting it out makes the AVGO note comparable with peers but departs from the filing.',
+    case: [
+      ['Your CEO asks', 'Do you want VMware broken out as its own segment in the AVGO note, or kept the way Broadcom reports it?'],
+      ['If you say nothing', 'Iris keeps the filing’s segments and adds a VMware estimate as a footnote, at 18:00.'],
+    ],
+    reply: true, ctx: [{ agent: 'maya' }, { label: 'T-41' }, { label: 'R-03' }, { go: 'files', icon: 'file', label: 'avgo-initiation.md (draft)' }] },
+  { id: 's1', kind: 'scope', sub: 'Proposed scope', project: 'semis', from: 'iris',
+    title: 'Add R-07: a one-page summary for the investment committee',
+    when: 'Yesterday', clock: 'No deadline', clockTone: 'muted', unread: false,
+    summary: 'The CEO proposes a new requirement. Work on it can’t start until you accept it.',
+    case: [
+      ['Proposed requirement', 'A one-page summary exists for each name: thesis, valuation range, bear case and position limit, sourced to the initiation note.'],
+      ['Estimated cost', '~9 runs · ~$14 · adds about 1 day to the projection.'],
+      ['If you do nothing', 'It stays proposed. Nothing is built for it.'],
+    ],
+    actions: ['Accept', 'Decline'], ctx: [{ agent: 'iris' }, { go: 'roadmap', icon: 'flag', label: 'Roadmap: 2 of 6 met' }] },
+  { id: 'v1', kind: 'verdict', sub: 'Your verdict', project: 'semis', from: 'juno',
+    title: 'Does the NVDA bear case name a real falsifier?',
+    when: '3h ago', clock: 'Expires in 2 days', clockTone: 'muted', unread: false,
+    summary: 'No script can check this one. Read the two paragraphs and say whether it holds.',
+    case: [
+      ['What it had to prove', 'The note states a bear case and names one observable event that would prove the thesis wrong.'],
+      ['What the agent claimed', '“Bear case: hyperscaler capex falls >15% YoY for two quarters. Falsifier: Q1 FY27 data-center revenue below $38bn.”'],
+      ['If you do nothing', 'After 2 days it is recorded as not judged. R-03 stays open.'],
+    ],
+    actions: ['It holds', 'It doesn’t'], ctx: [{ agent: 'maya' }, { agent: 'juno' }, { label: 'T-36' }, { go: 'files', icon: 'file', label: 'nvda-initiation.md v2' }] },
+  { id: 'a2', kind: 'approval', sub: 'Spend', project: 'idea', from: 'ceo2',
+    title: 'Register two domains for the landing-page test', amount: '$24',
+    when: '20m ago', clock: 'Denies itself in 23h', clockTone: 'muted', unread: true,
+    summary: 'Gio wants two domains to A/B the waitlist page.',
+    case: [['If you do nothing', 'It is denied tomorrow at 11:20. The test runs on a subdomain instead.']],
+    actions: ['Approve $24', 'Deny'] },
+  { id: 'q2', kind: 'question', sub: 'Question', project: 'content', from: 'ceo3',
+    title: 'Publish this week’s issue on Tuesday instead of Monday?',
+    when: '4h ago', clock: 'Falls back tomorrow', clockTone: 'muted', unread: false,
+    summary: 'Monday is a US holiday for half the list.',
+    case: [['If you say nothing', 'It ships Monday 09:00 as scheduled.']],
+    reply: true },
+];
+
+const UPDATES = [
+  { id: 'u1', kind: 'flag', project: 'semis', title: 'Your CEO flagged: the plan no longer reaches 30 Oct',
+    body: 'At the measured pace the last requirement lands 3 Nov. Iris proposes moving R-06 (starter book) to a follow-up so the date holds. That goes ahead unless you say otherwise.',
+    when: '35m ago', unread: true, action: 'Noted' },
+  { id: 'u2', kind: 'deliverable', project: 'semis', title: 'Published: Initiation note — NVDA (v2)',
+    body: '2,140 words · satisfies part of R-03 · every figure traced to the FY26 10-K or a 10-Q.', when: '08:12', unread: true, action: 'Open' },
+  { id: 'u3', kind: 'brief', project: 'all', title: 'Your Monday brief',
+    body: 'Over the weekend: 61 runs, $18.40, 2 requirements moved, 1 deliverable published, nothing broke.', when: '07:00', unread: false, action: 'Read' },
+  { id: 'u4', kind: 'run', project: 'semis', title: 'Tobias’s run timed out on the AMD note',
+    body: '1 of 38 runs today ended early. A retry is queued. Under one in five is normal wear.', when: '11:31', unread: false, action: 'See the run' },
+  { id: 'u5', kind: 'review', project: 'semis', title: 'Weekly review #4 opens Friday at 09:00',
+    body: 'The platform brings the numbers, Iris explains the variance, you decide what changes.', when: 'Yesterday', unread: false, action: 'Add to calendar' },
+];
+
+const WATCHING = [
+  { project: 'semis', icon: 'wallet', title: 'Budget on pace for $383 of $400', body: 'Pauses itself at 100%. Resets 1 Nov.', meter: 37 },
+  { project: 'semis', icon: 'target', title: 'Bet expires Sun 18 Oct', body: '“Data-center mix explains most of NVDA’s margin swing” — 1 proof so far.' },
+  { project: 'semis', icon: 'shield', title: 'No outside proof for 14h', body: 'At 24h, new internal-only work is refused until something is verified.', meter: 58 },
+  { project: 'idea', icon: 'layers', title: 'Memory 44 of 50 slots', body: 'The CEO curates it; nothing for you to do.' },
+];
+
+const PROJECTS = {
+  semis: { id: 'semis', name: 'Semis Coverage Desk', mark: 'SC', slot: 1, shape: 'Deliver', status: 'running',
+    goal: 'Produce a decision-ready initiation pack on the five largest US-listed semiconductor names by 30 October: one initiation note per name built from primary filings, a comparable-company table, a risk memo with position limits, and a recommended starter book.',
+    health: 'risk', healthLabel: 'At risk', due: '30 Oct', projected: '3 Nov', spent: 148.2, cap: 400, needs: 4,
+    people: 6, working: 3, progress: [2, 6] },
+  idea: { id: 'idea', name: 'Idea to Customer', mark: 'IC', slot: 3, shape: 'Explore', status: 'running',
+    goal: 'Take money from strangers before 31 December 2026.', health: 'good', healthLabel: 'On track', due: '31 Dec',
+    spent: 61.4, cap: 120, needs: 1, people: 15, working: 4, bets: 3 },
+  content: { id: 'content', name: 'Content Engine', mark: 'CE', slot: 5, shape: 'Operate', status: 'running',
+    goal: 'A weekly market newsletter, researched, edited, reviewed and improved each cycle.', health: 'good', healthLabel: 'On track',
+    due: 'Cycle 6 · Mon', spent: 88.9, cap: 150, needs: 1, people: 5, working: 1 },
+  ads: { id: 'ads', name: 'Always-on Ad Desk', mark: 'AD', slot: 2, shape: 'Operate', status: 'paused',
+    goal: 'A standup each morning and a Monday memo on what to change in the ad account. Never touches anything.', health: 'paused', healthLabel: 'Paused',
+    due: 'Memo · Mon', spent: 200, cap: 200, needs: 0, people: 7, working: 0 },
+};
+
+const REQS = [
+  { id: 'R-01', stage: 1, text: 'A point-in-time fundamentals store covers the five names back to 2018, survivorship-free.', status: 'met', runs: [14, 12], cost: 9.10 },
+  { id: 'R-02', stage: 1, text: 'A comparable-company table exists with every figure carrying its period and a primary-source URL.', status: 'met', runs: [9, 9], cost: 6.40 },
+  { id: 'R-03', stage: 2, text: 'An initiation note exists for each of the five names, built from primary filings, with the bear case and a falsifier.', status: 'progress', done: 1, of: 5, runs: [41, 30], cost: 52.80, fails: 4, team: 'research' },
+  { id: 'R-04', stage: 2, text: 'Every note has passed compliance review with no open FIX items.', status: 'progress', done: 0, of: 5, runs: [7, 12], cost: 8.90, team: 'review' },
+  { id: 'R-05', stage: 3, text: 'A risk memo states per-name and sector position limits, with the arithmetic behind each.', status: 'pending', runs: [3, 8], cost: 2.20, team: 'risk' },
+  { id: 'R-06', stage: 3, text: 'A recommended starter book exists: weights, theses, invalidation levels, review dates.', status: 'pending', runs: [0, 11], cost: 0, team: 'research' },
+];
+
+const TASKS = [
+  { id: 'T-41', title: 'Initiation note — AVGO', team: 'research', who: 'maya', col: 'progress', req: 'R-03', note: 'Segment analysis' },
+  { id: 'T-42', title: 'Initiation note — AMD', team: 'research', who: 'tobias', col: 'progress', req: 'R-03', note: 'Retry queued after timeout', warn: true },
+  { id: 'T-44', title: 'Compliance review — NVDA v2', team: 'review', who: 'juno', col: 'review', req: 'R-04', note: '2 FIX items' },
+  { id: 'T-43', title: 'Initiation note — QCOM', team: 'research', who: null, col: 'ready', req: 'R-03' },
+  { id: 'T-40', title: 'Per-name limits from realised volatility and ADV', team: 'risk', who: 'owen', col: 'ready', req: 'R-05' },
+  { id: 'T-39', title: 'Backfill restated fundamentals for MU', team: 'data', who: 'ines', col: 'blocked', req: 'R-03', note: 'Waiting on your licence decision' },
+  { id: 'T-38', title: 'Initiation note — MU', team: 'research', who: null, col: 'blocked', req: 'R-03', note: 'Waits for T-39' },
+  { id: 'T-36', title: 'Initiation note — NVDA', team: 'research', who: 'maya', col: 'done', req: 'R-03', proof: 'verified' },
+  { id: 'T-31', title: 'Comparable-company table', team: 'data', who: 'ines', col: 'done', req: 'R-02', proof: 'attested' },
+  { id: 'T-29', title: 'Point-in-time fundamentals store', team: 'data', who: 'ines', col: 'done', req: 'R-01', proof: 'attested' },
+];
+
+const FILES = [
+  { name: 'nvda-initiation.md', dir: 'notes/', kind: 'doc', state: 'published', ver: 'v2', req: 'R-03', size: '14 KB', when: 'Today 08:12', by: 'maya' },
+  { name: 'avgo-initiation.md', dir: 'notes/', kind: 'doc', state: 'working', size: '9 KB', when: 'Today 11:20', by: 'maya' },
+  { name: 'nvda-compliance.md', dir: 'review/', kind: 'doc', state: 'working', size: '3 KB', when: 'Today 11:38', by: 'juno' },
+  { name: 'vol-adv-limits.ipynb', dir: 'risk/', kind: 'code', state: 'working', size: '41 KB', when: 'Sun 11 Oct', by: 'owen' },
+  { name: 'comps.csv', dir: 'data/', kind: 'table', state: 'published', ver: 'v1', req: 'R-02', size: '34 rows', when: 'Fri 9 Oct', by: 'ines' },
+  { name: 'fundamentals.parquet', dir: 'data/', kind: 'table', state: 'published', ver: 'v3', req: 'R-01', size: '2.1 MB', when: 'Tue 6 Oct', by: 'ines' },
+];
+
+const SPEND_TEAMS = [
+  { team: 'research', amt: 71.3, runs: 88 },
+  { team: 'data', amt: 31.1, runs: 41 },
+  { team: 'ceo', amt: 22.6, runs: 35 },
+  { team: 'risk', amt: 14.9, runs: 19 },
+  { team: 'review', amt: 8.3, runs: 12 },
+];
+/* spend per day, 1–12 Oct */
+const SPEND_DAYS = [9.8, 12.4, 6.1, 5.2, 14.9, 16.3, 13.8, 15.1, 12.7, 9.4, 9.0, 11.4];
+/* runs per hour today, 00–11 */
+const RUNS_HOURS = [1, 0, 0, 1, 0, 2, 3, 4, 6, 7, 8, 6];
+
+const AGENDA = [
+  { day: 'Today', time: '15:12', kind: 'auto', text: 'MU licence approval denies itself', ref: 'a1' },
+  { day: 'Today', time: '18:00', kind: 'you', text: 'VMware question falls back to Iris’s default', ref: 'q1' },
+  { day: 'Wed 14', time: 'all day', kind: 'auto', text: 'Two spot-checks expire unreviewed' },
+  { day: 'Fri 16', time: '09:00', kind: 'meet', text: 'Weekly review #4 with Iris' },
+  { day: 'Sun 18', time: '23:59', kind: 'auto', text: 'Bet expires: data-center mix' },
+  { day: 'Fri 30', time: '', kind: 'due', text: 'Promised delivery' },
+  { day: 'Tue 3 Nov', time: '', kind: 'proj', text: 'Projected delivery at current pace' },
+];
+
+const CHAT = [
+  { who: 'iris', day: 'Friday', t: '16:05', text: 'Stage 1 is closed. The fundamentals store covers all five names back to 2018 and the comps table is fully sourced — 34 figures, every one resolving to a filing. Notes are underway; NVDA is finished and in your verdict queue.' },
+  { who: 'me', day: 'Friday', t: '17:20', text: 'How confident are you in the 30th?' },
+  { who: 'iris', day: 'Friday', t: '17:21', text: 'Moderately. Stage 1 cost 26 runs against 21 estimated, so I’m pricing the rest 21% higher than my estimate. That still projects to the 2nd with no slack. The thing that would move it is MU’s restated history, which needs a licence tier we don’t have.',
+    card: { kind: 'projection', promised: '30 Oct', projected: '2 Nov', conf: 'Moderate' } },
+  { who: 'me', day: 'Friday', t: '17:24', text: 'Don’t buy anything yet. What’s the free route?' },
+  { who: 'iris', day: 'Today', t: '09:02', text: 'Ines can rebuild the vintages from EDGAR filing dates: about a day of her time, covering 2018 onward, which is the whole window the brief asks for. I’ve still filed the licence as an approval so you can choose; it denies itself at 15:12 if you’d rather not decide.',
+    card: { kind: 'approval', ref: 'a1' } },
+  { who: 'iris', day: 'Today', t: '11:08', text: 'Heads-up: at the measured pace R-06 lands on 3 Nov. I’d move the starter book to a follow-up so the 30th holds. I’ll go ahead with that unless you say otherwise.',
+    card: { kind: 'flag' } },
+];
+
+const ACTIVITY = [
+  { t: '11:41', who: 'juno', kind: 'run', text: 'flagged a FIX item on the NVDA note: gross margin cited to the wrong quarter', tag: 'Review' },
+  { t: '11:38', who: 'iris', kind: 'decision', text: 'moved T-43 (QCOM note) ahead of T-38 (MU note) while MU is blocked', tag: 'CEO decision' },
+  { t: '11:31', who: 'tobias', kind: 'fail', text: 'hit the 15-minute run limit on the AMD note; a retry is queued', tag: 'Ended early' },
+  { t: '11:08', who: 'iris', kind: 'flag', text: 'raised a flag: the plan no longer reaches 30 Oct', tag: 'Flag' },
+  { t: '10:52', who: 'maya', kind: 'run', text: 'pulled AVGO FY25 10-K segment tables (3 tables, 42 figures)', tag: 'Run' },
+  { t: '10:14', who: 'platform', kind: 'proof', text: 'verified a claim: NVDA FY26 10-K p.61, top-four-customer concentration 46%', tag: 'Proof verified' },
+  { t: '09:47', who: 'ines', kind: 'ask', text: 'asked the CEO for a data licence; the CEO filed it as an approval for you', tag: 'Approval filed' },
+  { t: '09:02', who: 'iris', kind: 'msg', text: 'replied to you in the CEO chat', tag: 'Message' },
+  { t: '08:12', who: 'maya', kind: 'publish', text: 'published nvda-initiation.md v2 (satisfies part of R-03)', tag: 'Published' },
+];
+
+/* ───────────── helpers ───────────── */
+const $ = (s, el = document) => el.querySelector(s);
+const $$ = (s, el = document) => [...el.querySelectorAll(s)];
+const agent = (id) => AGENTS.find((a) => a.id === id);
+const teamSlot = (t) => (TEAMS[t] ? TEAMS[t].slot : 0);
+const money = (n) => '$' + n.toFixed(2);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+function av(a, size = '', withStatus = true) {
+  if (a === 'me') return `<span class="av me ${size}">${ME.initials}</span>`;
+  if (a === 'platform') return `<span class="av ${size} sq" style="background:var(--ink-2)">${ic('shield', 'sm')}</span>`;
+  const x = typeof a === 'string' ? agent(a) : a;
+  if (!x) return `<span class="av ${size}">?</span>`;
+  const st = withStatus ? `<i class="st ${STATUS[x.status].st}"></i>` : '';
+  return `<span class="av ${size} t${teamSlot(x.team)}" title="${x.name} · ${STATUS[x.status].label}">${x.initials}${st}</span>`;
+}
+function pill(status, label) {
+  const s = STATUS[status] || { label: status, cls: '' };
+  return `<span class="pill ${s.cls}"><i class="d"></i>${label || s.label}</span>`;
+}
+function dn(n, abs = false) { return `<span class="dn${abs ? ' abs' : ''}" data-tip="See design note ${n} at the top of this page">${n}</span>`; }
+function notesPanel(items) {
+  return `<section class="notes-panel"><h4>${ic('lightbulb', 'sm')} Design notes for this screen</h4><ol>${items
+    .map((t, i) => `<li><span class="dn">${i + 1}</span><span>${t}</span></li>`).join('')}</ol></section>`;
+}
+function projChip(pid) {
+  if (pid === 'all') return `<span class="tag">All projects</span>`;
+  const p = PROJECTS[pid];
+  return `<span class="tag"><i style="width:8px;height:8px;border-radius:2px;background:var(--c${p.slot})"></i>${p.name}</span>`;
+}
+const KIND = {
+  approval: { icon: 'badge', label: 'Approval', tone: 'var(--warning)' },
+  question: { icon: 'help', label: 'Question', tone: 'var(--accent)' },
+  scope: { icon: 'list', label: 'Proposed scope', tone: 'var(--c5)' },
+  verdict: { icon: 'scan', label: 'Your verdict', tone: 'var(--c3)' },
+  flag: { icon: 'flag', label: 'From your CEO', tone: 'var(--serious)' },
+  deliverable: { icon: 'file', label: 'Published', tone: 'var(--good)' },
+  brief: { icon: 'note', label: 'Daily brief', tone: 'var(--ink-2)' },
+  run: { icon: 'alert', label: 'Run ended early', tone: 'var(--serious)' },
+  review: { icon: 'meeting', label: 'Review', tone: 'var(--accent)' },
+};
+function kindIcon(kind, size = 30) {
+  const k = KIND[kind];
+  return `<span class="kind-ic" style="--k:${k.tone};width:${size}px;height:${size}px">${ic(k.icon, 'sm')}</span>`;
+}
+
+/* ───────────── state + routing ───────────── */
+const state = {
+  route: 'overview',
+  inboxTab: 'needs',
+  inboxSel: 'a1',
+  inboxProject: 'all',
+  done: new Set(),
+  teamView: 'chart',
+  taskView: 'board',
+  fileSel: 'nvda-initiation.md',
+  activityFilter: 'all',
+  settingsTab: 'rules',
+};
+const ROUTES = {
+  home: { title: 'Home', crumbs: ['Home'], render: () => viewHome() },
+  inbox: { title: 'Inbox', crumbs: ['Inbox'], render: () => viewInbox(), flush: true },
+  projects: { title: 'Projects', crumbs: ['Projects'], render: () => viewProjects() },
+  overview: { title: 'Overview', project: true, render: () => viewOverview() },
+  chat: { title: 'Chat with Iris', project: true, render: () => viewChat(), flush: true },
+  team: { title: 'Team', project: true, render: () => viewTeam(), wide: true },
+  roadmap: { title: 'Roadmap', project: true, render: () => viewRoadmap() },
+  tasks: { title: 'Tasks', project: true, render: () => viewTasks(), wide: true },
+  files: { title: 'Deliverables', project: true, render: () => viewFiles(), flush: true },
+  spend: { title: 'Spend', project: true, render: () => viewSpend() },
+  reviews: { title: 'Reviews', project: true, render: () => viewReviews() },
+  activity: { title: 'Activity', project: true, render: () => viewActivity() },
+  psettings: { title: 'Settings', project: true, render: () => viewProjectSettings() },
+  roles: { title: 'Role library', crumbs: ['Role library'], render: () => viewRoles() },
+  why: { title: 'Why this design', crumbs: ['Redesign notes'], render: () => viewWhy() },
+};
+
+function needsCount() { return INBOX.filter((i) => !state.done.has(i.id)).length; }
+function needsFor(pid) { return INBOX.filter((i) => i.project === pid && !state.done.has(i.id)); }
+
+function go(route, opts = {}) {
+  if (!ROUTES[route]) route = 'overview';
+  state.route = route;
+  Object.assign(state, opts);
+  try { history.replaceState(null, '', '#' + route); } catch (e) { /* sandboxed frames may refuse */ }
+  render();
+  $('#content').scrollTop = 0;
+  closeDrawer();
+}
+
+function render() {
+  const r = ROUTES[state.route];
+  renderSidebar();
+  const crumbs = r.project ? [PROJECTS.semis.name, r.title] : r.crumbs;
+  $('#crumbs').innerHTML = crumbs.map((c, i) => (i === crumbs.length - 1 ? `<b>${c}</b>` : `<span>${c}</span>`)).join(`${ic('right', 'sm')}`);
+  const page = $('#page');
+  page.className = 'page' + (r.flush ? ' flush' : '') + (r.wide ? ' wide' : '');
+  page.innerHTML = r.render();
+  document.title = `${r.title} · yaaf`;
+  bindPage();
+}
+
+function renderSidebar() {
+  const r = state.route;
+  const n = needsCount();
+  const item = (route, icon, label, extra = '') =>
+    `<a class="nav-item ${r === route ? 'on' : ''}" href="#${route}" data-go="${route}">${ic(icon)}<span class="grow">${label}</span>${extra}</a>`;
+  const p = PROJECTS.semis;
+  $('#sb').innerHTML = `
+    ${item('home', 'home', 'Home')}
+    ${item('inbox', 'inbox', 'Inbox', n ? `<span class="nav-badge" data-tip="Things only you can decide. Each one decides itself if you leave it.">${n}</span>` : '')}
+    ${item('projects', 'grid', 'Projects', `<span class="nav-count">4</span>`)}
+    <div class="nav-label"><span>Project</span></div>
+    <button class="proj-switch" data-cmd="open">
+      <span class="proj-mark" style="background:var(--c${p.slot})">${p.mark}</span>
+      <span class="grow"><span class="t" style="display:block">${p.name}</span>
+        <span class="s"><i style="width:7px;height:7px;border-radius:50%;background:var(--serious)"></i>At risk · due ${p.due}</span></span>
+      ${ic('updown', 'sm')}
+    </button>
+    ${item('overview', 'dashboard', 'Overview')}
+    ${item('chat', 'chat', 'Chat with Iris', `<span class="nav-count" data-tip="Iris is your CEO: the one agent you talk to.">CEO</span>`)}
+    ${item('roadmap', 'flag', 'Roadmap', `<span class="nav-count">2/6</span>`)}
+    ${item('tasks', 'kanban', 'Tasks', `<span class="nav-count">7 open</span>`)}
+    ${item('files', 'folder', 'Deliverables')}
+    ${item('team', 'org', 'Team', `<span class="nav-count">6</span>`)}
+    ${item('spend', 'wallet', 'Spend', `<span class="nav-count">37%</span>`)}
+    ${item('reviews', 'meeting', 'Reviews', `<span class="nav-count">Fri</span>`)}
+    ${item('activity', 'history', 'Activity')}
+    ${item('psettings', 'sliders', 'Settings')}
+    <div class="nav-label"><span>Live now</span><span class="live-n"><i></i>${AGENTS.filter((a) => a.status === 'working').length}</span></div>
+    ${AGENTS.filter((a) => a.status === 'working' || a.status === 'waiting').map((a) => `
+      <button class="nav-item live-row" data-agent-sb="${a.id}">${av(a, 'xs')}<span class="grow"><span class="ln">${a.name}</span> <span class="ld">${a.doing}</span></span></button>`).join('')}
+    <div class="nav-label"><span>Workspace</span></div>
+    ${item('roles', 'library', 'Role library')}
+    ${item('why', 'lightbulb', 'Why this design')}
+  `;
+}
+
+function bindPage() {
+  const pg = $('#page');
+  $$('[data-go]', pg).forEach((el) => el.addEventListener('click', (e) => {
+    e.preventDefault();
+    const extra = {};
+    if (el.dataset.sel) extra.inboxSel = el.dataset.sel;
+    if (el.dataset.tab) extra.inboxTab = el.dataset.tab;
+    go(el.dataset.go, extra);
+  }));
+  $$('[data-agent]', pg).forEach((el) => el.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); openAgent(el.dataset.agent); }));
+  $$('[data-toast]', pg).forEach((el) => el.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); toast(el.dataset.toast); }));
+  $$('[data-resolve]', pg).forEach((el) => el.addEventListener('click', (e) => {
+    e.preventDefault(); e.stopPropagation();
+    const id = el.dataset.resolve;
+    state.done.add(id);
+    const next = INBOX.find((i) => !state.done.has(i.id));
+    if (state.inboxSel === id && next) state.inboxSel = next.id;
+    toast(el.dataset.msg || 'Done', true);
+    render();
+  }));
+  if (typeof bindView === 'function') bindView();
+}
+
+/* ───────────── drawer ───────────── */
+function openDrawer(html) {
+  $('#drawer').innerHTML = html;
+  $('#drawer').classList.add('on');
+  $('#scrim').classList.add('on');
+  $$('#drawer [data-close]').forEach((b) => b.addEventListener('click', closeDrawer));
+  $$('#drawer [data-toast]').forEach((el) => el.addEventListener('click', () => toast(el.dataset.toast)));
+  $$('#drawer [data-agent]').forEach((el) => el.addEventListener('click', () => openAgent(el.dataset.agent)));
+  $$('#drawer [data-go]').forEach((el) => el.addEventListener('click', (e) => { e.preventDefault(); go(el.dataset.go); }));
+  $$('#drawer [data-dtab]').forEach((b) => b.addEventListener('click', () => {
+    $$('#drawer [data-dtab]').forEach((x) => x.classList.toggle('on', x === b));
+    $$('#drawer [data-dpane]').forEach((p) => (p.hidden = p.dataset.dpane !== b.dataset.dtab));
+  }));
+}
+function closeDrawer() { $('#drawer').classList.remove('on'); $('#scrim').classList.remove('on'); }
+
+/* ───────────── toast ───────────── */
+let toastTimer;
+function toast(msg, undo = false) {
+  const t = $('#toast');
+  t.innerHTML = `${ic('check', 'sm')}<span>${msg}</span>${undo ? '<button id="undo">Undo</button>' : ''}`;
+  t.classList.add('on');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('on'), 3200);
+  const u = $('#undo');
+  if (u) u.addEventListener('click', () => { state.done.clear(); render(); t.classList.remove('on'); });
+}
+
+/* ───────────── command palette ───────────── */
+const CMDS = () => [
+  { g: 'Go to', icon: 'inbox', label: 'Inbox', hint: 'G I', run: () => go('inbox') },
+  { g: 'Go to', icon: 'dashboard', label: 'Overview', hint: 'G O', run: () => go('overview') },
+  { g: 'Go to', icon: 'chat', label: 'Chat with Iris (CEO)', hint: 'G C', run: () => go('chat') },
+  { g: 'Go to', icon: 'org', label: 'Team and org chart', hint: 'G T', run: () => go('team') },
+  { g: 'Go to', icon: 'flag', label: 'Roadmap', run: () => go('roadmap') },
+  { g: 'Go to', icon: 'kanban', label: 'Tasks', run: () => go('tasks') },
+  { g: 'Go to', icon: 'folder', label: 'Deliverables', run: () => go('files') },
+  { g: 'Go to', icon: 'wallet', label: 'Spend', run: () => go('spend') },
+  { g: 'Go to', icon: 'history', label: 'Activity', run: () => go('activity') },
+  ...AGENTS.map((a) => ({ g: 'People', avatar: a.id, label: `${a.name} — ${a.title}`, hint: STATUS[a.status].label, run: () => openAgent(a.id) })),
+  ...Object.values(PROJECTS).map((p) => ({ g: 'Projects', mark: p, label: p.name, hint: p.healthLabel, run: () => go('overview') })),
+  { g: 'Actions', icon: 'send', label: 'Message Iris…', run: () => go('chat') },
+  { g: 'Actions', icon: 'badge', label: 'Approve or deny the MU licence ($180)', run: () => go('inbox', { inboxSel: 'a1', inboxTab: 'needs' }) },
+  { g: 'Actions', icon: 'pause', label: 'Pause this project…', run: () => toast('Pause asks for a reason the CEO reads') },
+  { g: 'Actions', icon: 'plus', label: 'Start a new project', run: () => toast('Opens the new-project flow') },
+  { g: 'Actions', icon: 'moon', label: 'Switch light / dark', run: () => toggleTheme() },
+  { g: 'Actions', icon: 'lightbulb', label: 'Show or hide design notes', run: () => toggleNotes() },
+  { g: 'Help', icon: 'book', label: 'What is a requirement?', hint: 'Glossary', run: () => go('why') },
+  { g: 'Help', icon: 'book', label: 'Why does an approval deny itself?', hint: 'Glossary', run: () => go('why') },
+];
+let cmdSel = 0;
+function openCmd() {
+  $('#cmdk-wrap').classList.add('on');
+  const inp = $('#cmdk-q');
+  inp.value = '';
+  cmdSel = 0;
+  drawCmd();
+  setTimeout(() => inp.focus(), 10);
+}
+function closeCmd() { $('#cmdk-wrap').classList.remove('on'); }
+function cmdMatches() {
+  const q = $('#cmdk-q').value.trim().toLowerCase();
+  return CMDS().filter((c) => !q || c.label.toLowerCase().includes(q) || c.g.toLowerCase().includes(q));
+}
+function drawCmd() {
+  const list = cmdMatches();
+  let g = '';
+  let html = '';
+  list.forEach((c, i) => {
+    if (c.g !== g) { g = c.g; html += `<div class="cmdk-g">${g}</div>`; }
+    const lead = c.avatar ? av(c.avatar, 'xs') : c.mark ? `<span class="proj-mark" style="width:20px;height:20px;font-size:9px;border-radius:5px;background:var(--c${c.mark.slot})">${c.mark.mark}</span>` : ic(c.icon);
+    html += `<button class="cmdk-it ${i === cmdSel ? 'sel' : ''}" data-i="${i}">${lead}<span class="grow">${c.label}</span>${c.hint ? `<span class="micro muted">${c.hint}</span>` : ''}</button>`;
+  });
+  $('#cmdk-list').innerHTML = html || `<div class="empty small">Nothing matches. Try “inbox”, “Maya” or “pause”.</div>`;
+  $$('#cmdk-list .cmdk-it').forEach((b) => b.addEventListener('click', () => { closeCmd(); list[+b.dataset.i].run(); }));
+}
+
+/* ───────────── theme + notes ───────────── */
+function currentTheme() {
+  const t = document.documentElement.dataset.theme;
+  if (t) return t;
+  return matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+}
+function toggleTheme() {
+  const next = currentTheme() === 'dark' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem('yaaf-mock-theme', next); } catch (e) { /* storage may be blocked */ }
+  paintThemeBtn();
+}
+function paintThemeBtn() { $('#theme-btn').innerHTML = ic(currentTheme() === 'dark' ? 'sun' : 'moon'); }
+function toggleNotes() {
+  document.body.classList.toggle('notes');
+  $('#notes-btn').classList.toggle('on', document.body.classList.contains('notes'));
+  try { localStorage.setItem('yaaf-mock-notes', document.body.classList.contains('notes') ? '1' : '0'); } catch (e) { /* ignore */ }
+}
+
+/* ───────────── keyboard ───────────── */
+let gPending = false;
+document.addEventListener('keydown', (e) => {
+  const typing = /input|textarea|select/i.test(document.activeElement?.tagName || '');
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); openCmd(); return; }
+  if ($('#cmdk-wrap').classList.contains('on')) {
+    const list = cmdMatches();
+    if (e.key === 'Escape') closeCmd();
+    else if (e.key === 'ArrowDown') { e.preventDefault(); cmdSel = Math.min(cmdSel + 1, list.length - 1); drawCmd(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); cmdSel = Math.max(cmdSel - 1, 0); drawCmd(); }
+    else if (e.key === 'Enter' && list[cmdSel]) { e.preventDefault(); closeCmd(); list[cmdSel].run(); }
+    return;
+  }
+  if (e.key === 'Escape') { closeDrawer(); return; }
+  if (typing) return;
+  if (e.key === '/') { e.preventDefault(); openCmd(); return; }
+  if (gPending) {
+    gPending = false;
+    const map = { i: 'inbox', o: 'overview', c: 'chat', t: 'team', r: 'roadmap', h: 'home', a: 'activity', d: 'files', s: 'spend' };
+    if (map[e.key]) { go(map[e.key]); return; }
+  }
+  if (e.key === 'g') { gPending = true; setTimeout(() => (gPending = false), 900); return; }
+  if (state.route === 'inbox' && (e.key === 'j' || e.key === 'k')) {
+    const list = inboxList();
+    const i = list.findIndex((x) => x.id === state.inboxSel);
+    const n = list[Math.max(0, Math.min(list.length - 1, i + (e.key === 'j' ? 1 : -1)))];
+    if (n) { state.inboxSel = n.id; render(); }
+  }
+});
+
+/* ───────────── boot ───────────── */
+function boot() {
+  try {
+    const t = localStorage.getItem('yaaf-mock-theme');
+    if (t) document.documentElement.dataset.theme = t;
+    if (localStorage.getItem('yaaf-mock-notes') === '1') document.body.classList.add('notes');
+  } catch (e) { /* storage may be blocked */ }
+  $('#notes-btn').classList.toggle('on', document.body.classList.contains('notes'));
+  paintThemeBtn();
+  $('#theme-btn').addEventListener('click', toggleTheme);
+  $('#notes-btn').addEventListener('click', toggleNotes);
+  $('#search-btn').addEventListener('click', openCmd);
+  $('#scrim').addEventListener('click', closeDrawer);
+  $('#cmdk-wrap').addEventListener('click', (e) => { if (e.target.id === 'cmdk-wrap') closeCmd(); });
+  $('#cmdk-q').addEventListener('input', () => { cmdSel = 0; drawCmd(); });
+  $('#menu-btn').addEventListener('click', () => document.body.classList.toggle('nav-open'));
+  $('#sb').addEventListener('click', (e) => {
+    if (e.target.closest('[data-cmd]')) { openCmd(); $('#cmdk-q').value = 'Projects'; drawCmd(); return; }
+    const ag = e.target.closest('[data-agent-sb]');
+    if (ag) { openAgent(ag.dataset.agentSb); document.body.classList.remove('nav-open'); return; }
+    const a = e.target.closest('[data-go]');
+    if (a) { e.preventDefault(); document.body.classList.remove('nav-open'); go(a.dataset.go); }
+  });
+  $('#help-btn').addEventListener('click', openCheatsheet);
+  window.addEventListener('hashchange', () => {
+    const r = (location.hash || '').replace('#', '');
+    if (ROUTES[r] && r !== state.route) go(r);
+  });
+  const h = (location.hash || '').replace('#', '');
+  go(ROUTES[h] ? h : 'overview');
+}
+document.addEventListener('DOMContentLoaded', boot);
+
+/* ═════════════ OVERVIEW ═════════════ */
+function sparkline(vals, w = 120, h = 30, cls = '') {
+  const max = Math.max(...vals, 1);
+  const step = w / (vals.length - 1);
+  const pts = vals.map((v, i) => [i * step, h - 3 - (v / max) * (h - 6)]);
+  const d = pts.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' ');
+  const last = pts[pts.length - 1];
+  return `<svg class="spark ${cls}" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" aria-hidden="true">
+    <path d="${d} L ${w} ${h} L 0 ${h} Z" fill="rgba(var(--accent-rgb),0.14)" stroke="none"/>
+    <path d="${d}" fill="none" stroke="var(--accent)" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="${last[0]}" cy="${last[1]}" r="2.6" fill="var(--accent)"/></svg>`;
+}
+
+function needRow(it, compact = false) {
+  const from = agent(it.from);
+  const acts = it.actions
+    ? `<button class="btn sm ${it.kind === 'approval' ? 'primary' : ''}" data-resolve="${it.id}" data-msg="${esc(it.actions[0])} — recorded with your name">${it.actions[0]}</button>
+       <button class="btn sm ghost" data-resolve="${it.id}" data-msg="${esc(it.actions[1])} — recorded with your name">${it.actions[1]}</button>`
+    : `<button class="btn sm" data-go="inbox" data-sel="${it.id}" data-tab="needs">${ic('reply', 'sm')}Answer</button>`;
+  return `<div class="need">
+    ${kindIcon(it.kind)}
+    <div class="grow">
+      <div class="need-t"><a href="#inbox" data-go="inbox" data-sel="${it.id}" data-tab="needs">${it.title}</a>${it.amount ? ` <span class="amt">${it.amount}</span>` : ''}</div>
+      <div class="need-m">
+        <span>${KIND[it.kind].label}</span><span class="sep"></span>
+        ${from ? `<span class="row" style="gap:5px">${av(from, 'xs', false)}${from.name}</span><span class="sep"></span>` : ''}
+        <span class="${it.clockTone === 'warn' ? 'warn' : ''}">${ic('clock', 'sm')} ${it.clock}</span>
+      </div>
+    </div>
+    <div class="need-a">${acts}</div>
+  </div>`;
+}
+
+function viewOverview() {
+  const p = PROJECTS.semis;
+  const needs = needsFor('semis');
+  const pct = Math.round((p.spent / p.cap) * 100);
+  return `
+  ${notesPanel([
+    '<b>Three questions, five seconds.</b> Is it on track, what needs me, what is the team doing. The four tiles answer the first; the two cards under them answer the rest. Today’s overview is 12 sections and ~16 pollers.',
+    '<b>One list of decisions, same count everywhere.</b> “Needs you” is the Inbox filtered to this project, so the sidebar badge, this card and the Inbox can never disagree (today there are three different counts).',
+    '<b>Agents are people with a current task.</b> Every seat shows a status and the one thing it is doing now. Click any face for the live run.',
+    '<b>The CEO’s latest word sits beside the work,</b> with a reply box, so steering is one step from reading.',
+    '<b>Forward-looking only.</b> “Coming up” is the agenda in plain words, coloured by who resolves it. History lives in Activity.',
+    '<b>Health collapses to one line when healthy.</b> Problems expand in place with a fix button, as yaaf already does.',
+  ])}
+  <header class="ov-head">
+    <div class="eyebrow">
+      <span class="tag"><span style="width:8px;height:8px;border-radius:2px;background:var(--c${p.slot})"></span>Deliver</span>
+      <span>Due Fri 30 Oct</span><span class="sep"></span><span>You chair it</span><span class="sep"></span>
+      <span class="term" data-tip="The CEO accepts its own plan and signs dates. Money, legal and credentials still come to you.">Autonomous</span>
+    </div>
+    <div class="row top wrap gap16">
+      <div class="grow" style="min-width:280px">
+        <h1 class="ov-title">${p.name} ${pill('working', 'Running')}</h1>
+        <p class="ov-goal">${p.goal.split(':')[0]}. <button class="link-btn" data-toast="Opens the full brief every agent works from">Read the brief</button></p>
+      </div>
+      <div class="row gap8 wrap">
+        <div class="av-stack" title="6 people on this project">${AGENTS.slice(0, 6).map((a) => av(a, 'sm')).join('')}</div>
+        <button class="btn" data-toast="Pause asks for a reason. The CEO reads it.">${ic('pause', 'sm')}Pause</button>
+        <button class="btn primary" data-go="chat">${ic('chat', 'sm')}Message Iris</button>
+      </div>
+    </div>
+  </header>
+
+  <section class="kpis" aria-label="Project vitals">
+    ${dn(1, true)}
+    <button class="kpi" data-go="roadmap">
+      <div class="kpi-l">${ic('calendar', 'sm')}Delivery</div>
+      <div class="kpi-v serious">At risk</div>
+      <div class="kpi-s">Projected <b>3 Nov</b> · 4 days past the 30 Oct you signed</div>
+      <div class="tl" aria-hidden="true"><i class="tl-done" style="width:31%"></i><i class="tl-slip" style="left:83%;width:11%"></i><i class="tl-today" style="left:31%"></i><i class="tl-prom" style="left:83%"></i><i class="tl-proj" style="left:94%"></i>
+        <span class="tl-lab" style="left:31%">Today</span><span class="tl-lab end" style="left:83%">30 Oct</span><span class="tl-lab slip" style="left:94%">+4d</span></div>
+    </button>
+    <button class="kpi" data-go="roadmap">
+      <div class="kpi-l">${ic('flag', 'sm')}Progress</div>
+      <div class="kpi-v">2 <span class="of">of 6</span></div>
+      <div class="kpi-s"><span class="term" data-tip="A requirement is a testable outcome. Together they define done. Only the platform can mark one met.">Requirements</span> met · 2 in progress</div>
+      <div class="seg-bar"><i class="met"></i><i class="met"></i><i class="prog"></i><i class="prog"></i><i></i><i></i></div>
+    </button>
+    <button class="kpi" data-go="spend">
+      <div class="kpi-l">${ic('wallet', 'sm')}Spent in October</div>
+      <div class="kpi-v num">$148<span class="of">.20</span> <span class="of">of $400</span></div>
+      <div class="kpi-s">On pace for $383 · pauses itself at 100%</div>
+      <div class="bar"><i style="width:${pct}%"></i><b class="bar-mark" style="left:80%" title="Warns at 80%"></b></div>
+    </button>
+    <button class="kpi" data-go="team">
+      <div class="kpi-l">${ic('activity', 'sm')}Working now</div>
+      <div class="kpi-v">3 <span class="of">of 6</span></div>
+      <div class="kpi-s">38 runs today · 1 ended early</div>
+      ${sparkline(RUNS_HOURS, 220, 26)}
+    </button>
+  </section>
+
+  <div class="ov-grid">
+    <div class="stack gap16" style="min-width:0">
+      <section class="card attn">
+        <div class="card-h">${dn(2)}<h3>Needs you</h3><span class="count warn">${needs.length}</span><span class="grow"></span>
+          <span class="micro muted">Soonest decides itself in 3h 30m</span>
+          <a class="link" href="#inbox" data-go="inbox">Open Inbox ${ic('arrow', 'sm')}</a></div>
+        <div class="card-b needs">${needs.length ? needs.map((i) => needRow(i)).join('') : `<div class="empty"><div class="big">${ic('check', 'lg')}</div><h4>Nothing needs you</h4>3 people are working; the next scheduled wake is at 14:00.</div>`}</div>
+      </section>
+
+      <section class="card">
+        <div class="card-h">${dn(3)}<h3>Team right now</h3><span class="grow"></span>
+          <span class="legend">${pill('working', '3 working')}${pill('waiting', '1 waiting on you')}${pill('idle', '1 idle')}</span>
+          <a class="link" href="#team" data-go="team">Org chart ${ic('arrow', 'sm')}</a></div>
+        <div class="card-b people">
+          ${AGENTS.map((a) => `
+            <button class="person" data-agent="${a.id}">
+              ${av(a, 'md')}
+              <span class="grow">
+                <span class="row" style="gap:6px"><b>${a.name}</b><span class="muted micro ellipsis">${a.ceo ? 'CEO' : TEAMS[a.team].name + (a.lead ? ' lead' : '')}</span></span>
+                <span class="doing ellipsis">${a.doing}</span>
+              </span>
+              <span class="p-right">${pill(a.status)}<span class="micro muted">${a.since}</span></span>
+            </button>`).join('')}
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-h"><h3>Roadmap</h3><span class="micro muted">Stage 2 of 3 is open</span><span class="grow"></span>
+          <a class="link" href="#roadmap" data-go="roadmap">Open roadmap ${ic('arrow', 'sm')}</a></div>
+        <div class="card-b">
+          <div class="rm-mini">
+            ${REQS.map((r) => `
+              <div class="rm-row">
+                <span class="tag id">${r.id}</span>
+                <span class="grow ellipsis">${r.text}</span>
+                ${r.of ? `<span class="micro muted num">${r.done}/${r.of}</span>` : ''}
+                ${r.status === 'met' ? pill('x', 'Met').replace('pill ', 'pill s-good ') : r.status === 'progress' ? pill('working', 'In progress') : `<span class="pill s-idle"><i class="d"></i>Stage ${r.stage}</span>`}
+              </div>`).join('')}
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <aside class="stack gap16" style="min-width:0">
+      <section class="card ceo-card">
+        <div class="card-h">${dn(4)}<h3>Latest from Iris</h3><span class="micro muted">CEO · 11:08</span><span class="grow"></span>
+          <a class="link" href="#chat" data-go="chat">Chat ${ic('arrow', 'sm')}</a></div>
+        <div class="card-b">
+          <div class="row top gap12">
+            ${av('iris', 'md')}
+            <p class="ceo-msg">At the measured pace R-06 lands on <b>3 Nov</b>. I’d move the starter book to a follow-up so the 30th holds. I’ll go ahead with that unless you say otherwise.</p>
+          </div>
+          <div class="quick">
+            <button class="chip" data-toast="Sent to Iris: “Agreed, go ahead.”">Agreed, go ahead</button>
+            <button class="chip" data-toast="Sent to Iris: “Keep R-06. What else could we cut?”">Keep R-06</button>
+            <button class="chip" data-go="chat">Reply…</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-h">${dn(5)}<h3>Coming up</h3><span class="grow"></span><span class="micro muted">New York time</span></div>
+        <div class="card-b agenda">
+          ${AGENDA.map((e) => `
+            <div class="ag ag-${e.kind}">
+              <span class="ag-d"><b>${e.day}</b>${e.time ? `<span>${e.time}</span>` : ''}</span>
+              <i class="ag-dot"></i>
+              <span class="grow">${e.text}</span>
+            </div>`).join('')}
+          <div class="ag-key"><span class="k-you">Needs you</span><span class="k-auto">Decides itself</span><span class="k-meet">Meeting</span><span class="k-due">Deadline</span></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-h"><h3>Where October’s money went</h3><span class="grow"></span>
+          <a class="link" href="#spend" data-go="spend">Spend ${ic('arrow', 'sm')}</a></div>
+        <div class="card-b hbars">
+          ${SPEND_TEAMS.map((s) => `
+            <div class="hb"><span class="hb-l">${s.team === 'ceo' ? 'CEO' : TEAMS[s.team].name}</span>
+              <span class="hb-t"><i style="width:${(s.amt / 71.3) * 100}%;background:var(--c${teamSlot(s.team)})"></i></span>
+              <span class="hb-v num">${money(s.amt)}</span></div>`).join('')}
+          <p class="micro muted" style="margin-top:8px">Research costs more than everyone else combined.</p>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-h"><h3>Latest deliverables</h3><span class="grow"></span>
+          <a class="link" href="#files" data-go="files">All files ${ic('arrow', 'sm')}</a></div>
+        <div class="card-b files-mini">
+          ${FILES.slice(0, 3).map((f) => `
+            <a class="fm" href="#files" data-go="files">
+              <span class="f-ic">${ic(f.kind === 'table' ? 'table' : f.kind === 'code' ? 'code' : 'file', 'sm')}</span>
+              <span class="grow"><span class="ellipsis" style="display:block">${f.name}</span><span class="micro muted">${f.when} · ${agent(f.by).name}</span></span>
+              ${f.state === 'published' ? '<span class="pill s-good"><i class="d"></i>Published</span>' : '<span class="pill s-idle"><i class="d"></i>Draft</span>'}
+            </a>`).join('')}
+        </div>
+      </section>
+    </aside>
+  </div>
+
+  <section class="health">
+    ${dn(6)}
+    <span class="h-ok">${ic('checkc', 'sm')}</span>
+    <span class="grow"><b>Setup is healthy.</b> <span class="muted">11 of 11 checks pass · paying with anthropic-api-key</span></span>
+    <span class="pill">1 role update available</span>
+    <button class="btn xs ghost" data-toast="Shows every check: billing, seats, data sources, role versions…">Details</button>
+  </section>`;
+}
+
+/* ═════════════ INBOX ═════════════ */
+function inboxList() {
+  const pf = (i) => state.inboxProject === 'all' || i.project === state.inboxProject;
+  if (state.inboxTab === 'needs') return INBOX.filter((i) => !state.done.has(i.id) && pf(i));
+  if (state.inboxTab === 'updates') return UPDATES.filter(pf);
+  if (state.inboxTab === 'done') return INBOX.filter((i) => state.done.has(i.id) && pf(i));
+  return [];
+}
+
+function inboxDetail(it) {
+  if (!it) return `<div class="empty" style="margin-top:12vh"><div class="big">${ic('check', 'lg')}</div><h4>You’re all caught up</h4>Nothing else needs a decision from you. 7 people are working across 3 projects.</div>`;
+  if (!INBOX.includes(it)) {
+    return `<div class="ib-detail-in">
+      <div class="row gap8 wrap" style="margin-bottom:14px">${kindIcon(it.kind, 26)}<span class="micro strong" style="color:${KIND[it.kind].tone}">${KIND[it.kind].label}</span>${projChip(it.project)}<span class="micro muted">${it.when}</span></div>
+      <h2 class="ib-title">${it.title}</h2>
+      <p class="ib-sum">${it.body}</p>
+      <div class="row gap8" style="margin-top:20px"><button class="btn primary" data-toast="${it.action} — done">${it.action}</button><button class="btn ghost" data-toast="Marked as read">Mark as read</button></div>
+      <p class="micro muted" style="margin-top:24px">Updates are for reading. Nothing here waits on you, and none of it counts toward the Inbox badge.</p>
+    </div>`;
+  }
+  const from = agent(it.from);
+  const p = PROJECTS[it.project];
+  return `<div class="ib-detail-in">
+    <div class="row gap8 wrap" style="margin-bottom:14px">
+      ${kindIcon(it.kind, 26)}<span class="micro strong" style="color:${KIND[it.kind].tone}">${KIND[it.kind].label}${it.sub && it.sub !== KIND[it.kind].label ? ' · ' + it.sub : ''}</span>
+      ${projChip(it.project)}
+      <span class="grow"></span>
+      <span class="clock ${it.clockTone === 'warn' ? 'warn' : ''}">${ic('clock', 'sm')}${it.clock}</span>
+    </div>
+    <h2 class="ib-title">${it.title}${it.amount ? ` <span class="amt lg">${it.amount}</span>` : ''}</h2>
+    <div class="row gap8 micro muted" style="margin:8px 0 16px">
+      ${from ? `${av(from, 'xs', false)}<span>From <b class="ink2">${from.name}</b>, ${from.ceo ? 'your CEO' : from.title}${it.fromTeam ? ` · on behalf of the ${it.fromTeam} team` : ''}</span>` : `<span>From the ${p.name} CEO</span>`}
+      <span class="sep"></span><span>${it.when}</span>
+    </div>
+    <p class="ib-sum">${it.summary}</p>
+    <dl class="case">${it.case.map(([k, v]) => `<div class="${/do nothing|say nothing/i.test(k) ? 'silence' : ''}"><dt>${k}</dt><dd>${v}</dd></div>`).join('')}</dl>
+    ${it.reply ? `
+      <label class="micro muted" for="ib-reply" style="display:block;margin:18px 0 6px">Your answer goes to ${from ? from.name : 'the CEO'} in the CEO chat</label>
+      <textarea id="ib-reply" class="input" rows="3" placeholder="e.g. Split it out, and footnote the reconciliation to the filing."></textarea>
+      <div class="row gap8" style="margin-top:10px"><button class="btn primary" data-resolve="${it.id}" data-msg="Answer sent to ${from ? from.name : 'the CEO'}">${ic('send', 'sm')}Send answer</button><button class="btn ghost" data-resolve="${it.id}" data-msg="Left to the CEO’s default">Use the default</button></div>`
+    : `
+      <label class="micro muted" for="ib-note" style="display:block;margin:18px 0 6px">Add a note (optional) — the CEO reads it</label>
+      <input id="ib-note" class="input" placeholder="Why you decided this way" />
+      <div class="row gap8 wrap" style="margin-top:10px">
+        <button class="btn ${it.kind === 'approval' ? 'primary' : 'primary'}" data-resolve="${it.id}" data-msg="${esc(it.actions[0])} — recorded with your name and note">${ic('check', 'sm')}${it.actions[0]}<span class="kbd">A</span></button>
+        <button class="btn" data-resolve="${it.id}" data-msg="${esc(it.actions[1])} — recorded with your name and note">${ic('x', 'sm')}${it.actions[1]}<span class="kbd">D</span></button>
+        <span class="grow"></span>
+        <button class="btn ghost sm" data-go="chat">${ic('chat', 'sm')}Discuss with Iris</button>
+      </div>`}
+    ${it.ctx ? `<div class="ib-ctx">
+      <div class="micro muted strong" style="margin-bottom:8px">Context</div>
+      <div class="row gap8 wrap">${it.ctx.map((c) => c.agent
+        ? `<button class="tag" data-agent="${c.agent}">${av(c.agent, 'xs', false)}${agent(c.agent).name} \u00b7 ${agent(c.agent).ceo ? 'CEO' : TEAMS[agent(c.agent).team].name}</button>`
+        : c.go ? `<button class="tag" data-go="${c.go}">${ic(c.icon || 'arrow', 'sm')}${c.label}</button>`
+        : `<span class="tag id">${c.label}</span>`).join('')}</div>
+    </div>` : ''}
+  </div>`;
+}
+
+function viewInbox() {
+  const list = inboxList();
+  if (!list.find((x) => x.id === state.inboxSel)) state.inboxSel = list[0] ? list[0].id : null;
+  const sel = [...INBOX, ...UPDATES].find((x) => x.id === state.inboxSel);
+  const needsN = INBOX.filter((i) => !state.done.has(i.id)).length;
+  const tab = (id, label, n) => `<button class="${state.inboxTab === id ? 'on' : ''}" data-ibtab="${id}">${label}${n !== undefined ? ` <span class="c">${n}</span>` : ''}</button>`;
+  const rows = state.inboxTab === 'watching'
+    ? WATCHING.map((w) => `
+        <div class="ib-row watch">
+          <span class="kind-ic" style="--k:var(--ink-2)">${ic(w.icon, 'sm')}</span>
+          <span class="grow"><span class="ib-r-t">${w.title}</span><span class="ib-r-s">${w.body}</span>
+          ${w.meter ? `<span class="bar" style="margin-top:8px;display:block"><i style="width:${w.meter}%"></i></span>` : ''}</span>
+          ${projChip(w.project)}
+        </div>`).join('')
+    : list.map((it) => `
+        <button class="ib-row ${it.id === state.inboxSel ? 'on' : ''} ${it.unread ? 'unread' : ''}" data-ibsel="${it.id}">
+          ${kindIcon(it.kind)}
+          <span class="grow">
+            <span class="row gap8"><span class="ib-r-k" style="color:${KIND[it.kind].tone}">${KIND[it.kind].label}</span><span class="grow"></span><span class="micro muted">${it.when}</span></span>
+            <span class="ib-r-t">${it.title}${it.amount ? ` <span class="amt">${it.amount}</span>` : ''}</span>
+            <span class="row gap8" style="margin-top:4px">${projChip(it.project)}${it.clock ? `<span class="micro ${it.clockTone === 'warn' ? 'warn' : 'muted'} row" style="gap:4px">${ic('clock', 'sm')}${it.clock}</span>` : ''}</span>
+          </span>
+        </button>`).join('') || `<div class="empty"><div class="big">${ic('check', 'lg')}</div><h4>Nothing here</h4>Decisions you make show up under Done, with your note.</div>`;
+  return `
+  <div class="inbox">
+    <div class="ib-list">
+      <div class="ib-head">
+        <div class="row gap8"><h1 class="ib-h1">Inbox</h1>${dn(1)}<span class="grow"></span>
+          <button class="icon-btn" data-toast="Filter by kind: approvals, questions, scope, verdicts" aria-label="Filter">${ic('filter')}</button></div>
+        <div class="seg ib-tabs">${tab('needs', 'Needs you', needsN)}${tab('updates', 'Updates', UPDATES.filter((u) => u.unread).length)}${tab('watching', 'Watching', WATCHING.length)}${tab('done', 'Done')}</div>
+        <div class="row gap8 wrap ib-proj">${dn(2)}
+          ${['all', 'semis', 'idea', 'content'].map((pid) => `<button class="chip ${state.inboxProject === pid ? 'on' : ''}" data-ibproj="${pid}">${pid === 'all' ? 'All projects' : PROJECTS[pid].name}</button>`).join('')}
+        </div>
+        ${state.inboxTab === 'needs' ? `<p class="micro muted ib-hint">Sorted by what decides itself soonest. Each item says what happens if you do nothing.</p>` : ''}
+        ${state.inboxTab === 'watching' ? `<p class="micro muted ib-hint">Clocks the CEO is handling. Nothing here waits on you.</p>` : ''}
+      </div>
+      <div class="ib-rows">${rows}</div>
+      <div class="ib-foot micro muted"><span class="kbd">J</span><span class="kbd">K</span> move <span class="kbd">A</span> approve <span class="kbd">D</span> deny <span class="kbd">⌘K</span> search</div>
+    </div>
+    <div class="ib-detail">
+      ${notesPanel([
+        '<b>One inbox replaces the Desk, the action strip, the Overview’s decision list and Records → Decisions.</b> The badge counts exactly the “Needs you” tab and nothing else. The Desk’s rule that only you can act on a row still holds.',
+        '<b>Updates and Watching are separate tabs with no badge.</b> You asked for one place to find questions and information. FYIs (the CEO’s flags, published files, the daily brief) live here without inflating the count.',
+        '<b>Every decision reads the same way:</b> what is asked, the CEO’s case, what each choice does, and what silence does. The action sits at the bottom, with an optional note the CEO reads.',
+      ])}
+      ${state.inboxTab === 'watching' ? `<div class="empty" style="margin-top:10vh"><div class="big" style="color:var(--ink-2)">${ic('eye', 'lg')}</div><h4>Watching</h4>Budget pace, bet deadlines, gaps in outside proof and memory pressure.<br/>The CEO resolves these; they are here so nothing is hidden.</div>` : inboxDetail(sel)}
+    </div>
+  </div>`;
+}
+
+/* ═════════════ HOME ═════════════ */
+function projectCard(p) {
+  const tone = p.health === 'risk' ? 'serious' : p.health === 'good' ? 'good' : 'muted';
+  const pct = Math.round((p.spent / p.cap) * 100);
+  return `<button class="pcard" data-go="overview">
+    <div class="row gap10" style="gap:10px"><span class="proj-mark" style="background:var(--c${p.slot})">${p.mark}</span>
+      <span class="grow"><b class="ellipsis" style="display:block">${p.name}</b><span class="micro muted">${p.shape} · ${p.due}</span></span>
+      ${p.status === 'paused' ? pill('paused', 'Paused') : `<span class="pill ${tone === 'serious' ? 's-blocked' : 's-good'}"><i class="d"></i>${p.healthLabel}</span>`}</div>
+    <p class="pc-goal">${p.goal}</p>
+    <div class="pc-stats">
+      <span><b class="num">${p.working}</b>/${p.people} working</span>
+      <span><b class="num">$${Math.round(p.spent)}</b> of $${p.cap}</span>
+      ${p.needs ? `<span class="warn"><b>${p.needs}</b> need you</span>` : '<span class="muted">Nothing needs you</span>'}
+    </div>
+    <div class="bar ${pct >= 100 ? 'warn' : ''}"><i style="width:${Math.min(pct, 100)}%"></i></div>
+    ${p.status === 'paused' ? '<p class="micro muted" style="margin-top:8px">Paused itself at the $200 cap on 9 Oct. Raise the cap or wait for 1 Nov.</p>' : ''}
+  </button>`;
+}
+
+function viewHome() {
+  const all = INBOX.filter((i) => !state.done.has(i.id));
+  return `
+  ${notesPanel([
+    '<b>Home answers “anything for me?” across every project in one sentence,</b> then shows the top decisions and every project’s health side by side.',
+    '<b>Learn by browsing.</b> A short checklist teaches the five ideas you need on day one, each linking to the real screen.',
+  ])}
+  <div class="page-h"><div class="grow">
+    <div class="eyebrow">${NOW_LABEL}</div>
+    <h1>Good morning, ${ME.short}</h1>
+    <p class="sub"><b class="ink">${all.length} things need you across 3 projects.</b> The soonest decides itself in 3h 30m. 8 agents are working right now.</p>
+  </div><div class="actions"><button class="btn" data-toast="Opens the new-project flow: describe it, or fill it in">${ic('plus', 'sm')}New project</button></div></div>
+  <div class="home-grid">
+    <div class="stack gap16" style="min-width:0">
+      <section class="card">
+        <div class="card-h">${dn(1)}<h3>Needs you</h3><span class="count warn">${all.length}</span><span class="grow"></span><a class="link" href="#inbox" data-go="inbox">Inbox ${ic('arrow', 'sm')}</a></div>
+        <div class="card-b needs">${all.slice(0, 4).map((i) => needRow(i)).join('')}
+          ${all.length > 4 ? `<a class="more-row" href="#inbox" data-go="inbox">${all.length - 4} more in your Inbox ${ic('arrow', 'sm')}</a>` : ''}</div>
+      </section>
+      <div class="pgrid">${Object.values(PROJECTS).map(projectCard).join('')}</div>
+    </div>
+    <aside class="stack gap16" style="min-width:0">
+      <section class="card">
+        <div class="card-h"><h3>Your Monday brief</h3><span class="grow"></span><span class="micro muted">07:00</span></div>
+        <div class="card-b brief">
+          <p>Over the weekend your projects ran <b>61 times</b> for <b>$18.40</b>. Nothing broke.</p>
+          <ul>
+            <li><b>Semis Coverage Desk</b> finished the NVDA note and is now 4 days behind its date. Iris has a plan.</li>
+            <li><b>Idea to Customer</b> got its first 31 waitlist sign-ups from the landing-page test.</li>
+            <li><b>Content Engine</b> shipped issue #5; open rate 48%.</li>
+            <li><b>Always-on Ad Desk</b> is still paused at its cap.</li>
+          </ul>
+          <p class="micro muted">Also sent to your email. Change it in Settings → Notifications.</p>
+        </div>
+      </section>
+      <section class="card">
+        <div class="card-h">${dn(2)}<h3>Getting started</h3><span class="grow"></span><span class="micro muted">3 of 5</span></div>
+        <div class="card-b checklist">
+          <div class="ck done">${ic('checkc', 'sm')}<span class="grow">Start a project with a CEO and a team</span></div>
+          <div class="ck done">${ic('checkc', 'sm')}<span class="grow">Say hello to your CEO</span></div>
+          <div class="ck done">${ic('checkc', 'sm')}<span class="grow">Read your first deliverable</span></div>
+          <button class="ck" data-go="inbox">${ic('dot', 'sm')}<span class="grow">Make your first decision in the Inbox</span>${ic('arrow', 'sm')}</button>
+          <button class="ck" data-go="psettings">${ic('dot', 'sm')}<span class="grow">Choose how much your CEO decides alone</span>${ic('arrow', 'sm')}</button>
+        </div>
+      </section>
+    </aside>
+  </div>`;
+}
+
+function viewProjects() {
+  const rows = Object.values(PROJECTS);
+  return `
+  <div class="page-h"><div class="grow"><h1>Projects</h1><p class="sub">Every project has a CEO, a team, a budget and a date. You chair all four.</p></div>
+    <div class="actions"><button class="btn primary" data-toast="Opens the new-project flow">${ic('plus', 'sm')}New project</button></div></div>
+  <div class="tbl-wrap card"><table class="tbl">
+    <thead><tr><th>Project</th><th>Health</th><th>Needs you</th><th>Team</th><th>Spend this month</th><th>Next date</th></tr></thead>
+    <tbody>${rows.map((p) => `<tr data-go="overview">
+      <td><div class="row gap8"><span class="proj-mark" style="background:var(--c${p.slot})">${p.mark}</span><div><b>${p.name}</b><div class="micro muted">${p.shape}</div></div></div></td>
+      <td>${p.status === 'paused' ? pill('paused', 'Paused') : `<span class="pill ${p.health === 'risk' ? 's-blocked' : 's-good'}"><i class="d"></i>${p.healthLabel}</span>`}</td>
+      <td>${p.needs ? `<span class="warn strong">${p.needs}</span>` : '<span class="muted">—</span>'}</td>
+      <td class="num">${p.working} of ${p.people} working</td>
+      <td><div class="row gap8"><span class="num" style="min-width:86px">$${p.spent.toFixed(0)} / $${p.cap}</span><span class="bar" style="width:80px"><i style="width:${Math.min(100, (p.spent / p.cap) * 100)}%"></i></span></div></td>
+      <td>${p.due}</td></tr>`).join('')}</tbody></table></div>`;
+}
+
+/* ═════════════ TEAM / ORG CHART ═════════════ */
+function orgNode(a, extra = '') {
+  return `<button class="onode ${a.ceo ? 'ceo' : ''} st-${a.status}" data-agent="${a.id}">
+    <div class="row gap10" style="gap:10px">${av(a, 'lg')}
+      <span class="grow" style="text-align:left"><b class="on-n">${a.name}</b><span class="on-r ellipsis">${a.title}</span></span></div>
+    <div class="on-s">${pill(a.status)}<span class="micro muted">${a.since}</span></div>
+    <div class="on-d"><span class="ellipsis-2">${a.doing}</span></div>
+    <div class="on-f micro muted"><span>${a.today.runs} runs</span><span>${money(a.today.spend)} today</span>${a.task ? `<span class="mono">${a.task}</span>` : ''}</div>
+    ${extra}
+  </button>`;
+}
+
+function viewTeam() {
+  const ceo = agent('iris');
+  const teams = ['research', 'data', 'risk', 'review'];
+  const chart = `
+    <div class="org-scroll"><div class="org">
+      <div class="org-level">
+        <div class="onode me-node">
+          <div class="row" style="gap:10px">${av('me', 'lg')}<span class="grow" style="text-align:left"><b class="on-n">You</b><span class="on-r">Chairman · 1 co-chair</span></span></div>
+          <div class="on-d micro muted">Decides money, legal, credentials and anything the CEO can’t.</div>
+          <button class="btn xs" data-go="inbox" style="margin-top:8px">${ic('inbox', 'sm')}${needsFor('semis').length} waiting in your Inbox</button>
+        </div>
+      </div>
+      <div class="org-v"></div>
+      <div class="org-level">${orgNode(ceo, `<div class="on-x micro">${ic('chat', 'sm')} The only agent you talk to</div>`)}</div>
+      <div class="org-v"></div>
+      <div class="org-branches">
+        ${teams.map((t) => {
+          const T = TEAMS[t];
+          const members = AGENTS.filter((a) => a.team === t);
+          const open = TASKS.filter((x) => x.team === t && x.col !== 'done').length;
+          return `<div class="org-branch">
+            <div class="team-h">
+              <span class="team-dot" style="background:var(--c${T.slot})"></span><b>${T.name}</b><span class="grow"></span>
+              <span class="micro muted">${open} open</span>
+            </div>
+            <div class="team-role"><span class="tag">${T.role} ${T.ver}</span>${T.behind ? `<span class="tag accent" data-tip="A newer version of this role exists. Adopting it is your call; live teams never change silently.">${T.behind} out</span>` : ''}</div>
+            <div class="team-members">${members.map((m) => orgNode(m)).join('')}</div>
+          </div>`;
+        }).join('')}
+        <div class="org-branch">
+          <div class="team-h"><b class="muted">Add a team</b></div>
+          <div class="team-role"><span class="micro muted">From the role library</span></div>
+          <button class="onode add" data-go="roles">${ic('plus', 'lg')}<span>Hire a team</span><span class="micro muted">Iris sees it in her next plan</span></button>
+        </div>
+      </div>
+    </div></div>`;
+  const list = `
+    <div class="card tbl-wrap"><table class="tbl">
+      <thead><tr><th>Person</th><th>Team</th><th>Status</th><th>Doing now</th><th>Runs today</th><th>Spend today</th></tr></thead>
+      <tbody>${AGENTS.map((a) => `<tr data-agent="${a.id}">
+        <td><div class="row gap8">${av(a, 'sm')}<div><b>${a.name}</b><div class="micro muted">${a.title}</div></div></div></td>
+        <td>${a.ceo ? 'CEO' : TEAMS[a.team].name}${a.lead ? ' <span class="micro muted">lead</span>' : ''}</td>
+        <td>${pill(a.status)}</td><td class="ellipsis" style="max-width:320px">${a.doing}</td>
+        <td class="num">${a.today.runs}</td><td class="num">${money(a.today.spend)}</td></tr>`).join('')}</tbody></table></div>`;
+  return `
+  ${notesPanel([
+    '<b>A real org chart.</b> Today “See the org chart” scrolls to a grid of team cards. Here the hierarchy is literal: you, then the CEO, then each team and its people.',
+    '<b>Every node answers “what are you doing?”</b> Status, the current task, time on it, and today’s runs and spend. Today that takes a trip to Records → Runs.',
+    '<b>The chain of command is shown.</b> You speak to Iris; Iris directs the teams. Opening anyone else gives you “Ask Iris about…”, never a direct message, which keeps yaaf’s boardroom rule.',
+  ])}
+  <div class="page-h">
+    <div class="grow"><h1>Team ${dn(1)}</h1><p class="sub">Iris and 5 people in 4 teams. Click anyone to see their live work.</p></div>
+    <div class="actions">
+      <span class="legend">${pill('working', '3 working')}${pill('waiting', '1 waiting on you')}${pill('idle', '1 idle')}</span>
+      <div class="seg"><button class="${state.teamView === 'chart' ? 'on' : ''}" data-teamview="chart">${ic('org', 'sm')}Chart</button><button class="${state.teamView === 'list' ? 'on' : ''}" data-teamview="list">${ic('list', 'sm')}List</button></div>
+    </div>
+  </div>
+  <div class="relay">${dn(3)}${ic('chat', 'sm')}<span>You direct the team through Iris. To change what someone is doing, tell Iris and she re-plans.</span><button class="btn xs" data-go="chat">Message Iris</button></div>
+  ${state.teamView === 'chart' ? chart : list}`;
+}
+
+const RUN_STEPS = {
+  maya: [
+    ['09:31', 'read', 'Read <span class="mono">filings/avgo-10k-fy25.htm</span> · Item 7, segment note'],
+    ['09:34', 'tool', 'python · extracted 3 segment tables (42 figures)'],
+    ['09:41', 'think', 'Infrastructure Software includes VMware from Q1 FY24; prior years aren’t comparable. Asked the CEO how to present it.'],
+    ['09:47', 'write', 'Drafted §3 Segments in <span class="mono">notes/avgo-initiation.md</span> (1,180 words)'],
+    ['now', 'live', 'Reconciling segment revenue to the consolidated income statement…'],
+  ],
+};
+function openAgent(id) {
+  const a = agent(id);
+  const T = TEAMS[a.team];
+  const steps = RUN_STEPS[id] || [
+    ['now', 'live', a.step || a.doing],
+  ];
+  const tasks = TASKS.filter((t) => t.who === id);
+  openDrawer(`
+    <div class="drawer-h">${av(a, 'lg')}
+      <div class="grow"><div class="row gap8"><b style="font-size:16px">${a.name}</b>${pill(a.status)}</div>
+        <div class="micro muted">${a.title} · ${a.ceo ? 'CEO' : T.name + (a.lead ? ' lead' : '')} · ${a.model}</div></div>
+      <button class="icon-btn" data-close aria-label="Close">${ic('x')}</button>
+    </div>
+    <div class="tabs" style="padding:0 16px">
+      <button class="on" data-dtab="now">Now</button><button data-dtab="work">Work <span class="muted">${tasks.length}</span></button><button data-dtab="runs">Runs</button><button data-dtab="about">About</button>
+    </div>
+    <div class="drawer-b">
+      <div data-dpane="now">
+        ${a.task ? `<div class="cur-task"><span class="micro muted">Current task</span><div class="row gap8" style="margin-top:4px"><span class="tag id">${a.task}</span><b>${a.doing}</b></div><div class="micro muted" style="margin-top:4px">${a.step || ''}</div></div>` : ''}
+        <div class="row" style="margin:18px 0 10px"><span class="micro muted strong grow">${a.status === 'working' ? 'Live run <span class="typing"><i></i><i></i><i></i></span>' : 'Latest run'} <span class="muted" style="font-weight:400">\u00b7 working 12 min \u00b7 4 tool calls</span></span>
+          <div class="seg"><button class="on">Steps</button><button data-toast="The raw transcript: every tool call with its input and output">Raw log</button></div></div>
+        <ol class="steps">${steps.map(([t, k, s]) => `<li class="k-${k}"><span class="s-t">${t}</span><i></i><span class="s-x">${s}</span></li>`).join('')}</ol>
+        <div class="stat-row">
+          <div><span class="micro muted">Runs today</span><b class="num">${a.today.runs}</b></div>
+          <div><span class="micro muted">Tasks closed</span><b class="num">${a.today.closed}</b></div>
+          <div><span class="micro muted">Spend today</span><b class="num">${money(a.today.spend)}</b></div>
+          <div><span class="micro muted">Next</span><b style="font-size:13px">${a.next}</b></div>
+        </div>
+      </div>
+      <div data-dpane="work" hidden>
+        ${tasks.length ? tasks.map((t) => `<div class="tlist-row"><span class="tag id">${t.id}</span><span class="grow">${t.title}</span>${colPill(t.col)}</div>`).join('') : '<p class="muted">Nothing assigned right now.</p>'}
+      </div>
+      <div data-dpane="runs" hidden>
+        ${[['11:30', 'Finished', '14m', '$0.42'], ['10:52', 'Finished', '9m', '$0.31'], ['10:14', 'Finished', '11m', '$0.38'], ['09:31', 'Finished', '16m', '$0.55']].map(([t, s, d, c]) => `<div class="tlist-row"><span class="mono micro muted">${t}</span><span class="grow">${s} · ${d}</span><span class="num">${c}</span>${ic('right', 'sm')}</div>`).join('')}
+        <button class="btn sm ghost" style="margin-top:10px" data-go="activity">All runs in Activity ${ic('arrow', 'sm')}</button>
+      </div>
+      <div data-dpane="about" hidden>
+        <dl class="case">
+          <div><dt>Role</dt><dd>${a.ceo ? 'Chief Investment Officer v2' : T.role + ' ' + T.ver}${T && T.behind ? ` · <a href="#" data-toast="Adopting a new role version is your call; the CEO is told.">${T.behind} available</a>` : ''}</dd></div>
+          <div><dt>Model</dt><dd>Claude ${a.model} · effort medium</dd></div>
+          <div><dt>Wakes</dt><dd>${a.ceo ? 'Daily standup 09:00, planning every 12h' : 'When work is assigned, plus daily at 09:00'}</dd></div>
+          <div><dt>Tools</dt><dd>Read filings, Python sandbox, write to <span class="mono">notes/</span>. No open web.</dd></div>
+          <div><dt>Memory</dt><dd>12 of 20 slots · curated by Iris</dd></div>
+        </dl>
+      </div>
+    </div>
+    <div class="drawer-f">
+      ${a.ceo
+        ? `<button class="btn primary" data-go="chat">${ic('chat', 'sm')}Message Iris</button>`
+        : `<button class="btn primary" data-go="chat">${ic('chat', 'sm')}Ask Iris about ${a.name}</button>
+           <span class="micro muted grow">You direct the team through your CEO.</span>
+           <button class="btn ghost sm" data-toast="Stand down asks for a reason. Iris is told and re-plans.">Stand down ${T.name}…</button>`}
+    </div>`);
+}
+
+/* ═════════════ CHAT WITH THE CEO ═════════════ */
+function chatCard(c) {
+  if (!c) return '';
+  if (c.kind === 'projection') return `<div class="mcard"><div class="row gap16 wrap"><div><span class="micro muted">Promised</span><b>${c.promised}</b></div><div><span class="micro muted">Projected</span><b class="serious">${c.projected}</b></div><div><span class="micro muted">Confidence</span><b>${c.conf}</b></div><span class="grow"></span><button class="btn xs" data-go="roadmap">Roadmap ${ic('arrow', 'sm')}</button></div></div>`;
+  if (c.kind === 'approval') {
+    const it = INBOX.find((x) => x.id === c.ref);
+    if (state.done.has(c.ref)) return `<div class="mcard done">${ic('check', 'sm')} You decided the licence approval.</div>`;
+    return `<div class="mcard"><div class="row gap8">${kindIcon('approval', 26)}<div class="grow"><b>${it.title}</b> <span class="amt">${it.amount}</span><div class="micro warn">${it.clock}</div></div>
+      <button class="btn sm primary" data-resolve="a1" data-msg="Approved $180 — Ines resumes">Approve</button><button class="btn sm" data-resolve="a1" data-msg="Denied — Ines takes the EDGAR route">Deny</button></div></div>`;
+  }
+  if (c.kind === 'flag') return `<div class="mcard"><div class="row gap8">${kindIcon('flag', 26)}<div class="grow"><b>Flag: the plan no longer reaches 30 Oct</b><div class="micro muted">Goes ahead unless you say otherwise. Nothing blocks.</div></div><button class="btn sm" data-toast="Noted — Iris sees your acknowledgement">Noted</button></div></div>`;
+  return '';
+}
+function viewChat() {
+  let day = '';
+  const msgs = CHAT.map((m) => {
+    const sep = m.day !== day ? `<div class="day-sep"><span>${(day = m.day)}</span></div>` : '';
+    const mine = m.who === 'me';
+    return `${sep}<div class="msg ${mine ? 'mine' : ''}">
+      ${mine ? '' : av('iris', 'md', false)}
+      <div class="bubble-wrap"><div class="m-meta">${mine ? 'You' : 'Iris · CEO'} <span>${m.t}</span></div>
+        <div class="bubble">${m.text}</div>${chatCard(m.card)}</div>
+    </div>`;
+  }).join('');
+  return `
+  <div class="chat">
+    <div class="chat-main">
+      <div class="chat-h">
+        ${av('iris', 'md')}
+        <div class="grow"><b>Iris</b> <span class="micro muted">Chief Investment Officer · runs this project</span>
+          <div class="micro muted">Replies in seconds · also in Slack as #semis-boardroom</div></div>
+        ${pill('working', 'Working · 2 runs in flight')}
+      </div>
+      <div class="chat-scroll">${notesPanel([
+        '<b>Same channel, friendlier room.</b> The boardroom keeps its rule (the CEO is the only agent you speak to) but loses its name. Items Iris raises arrive as cards you can act on inside the conversation.',
+        '<b>Starter prompts teach the product.</b> New chairmen don’t know what they’re allowed to ask; the chips show them.',
+      ])}${msgs}<div class="msg"><span class="av md t0" style="opacity:.0"></span><div class="typing-line micro muted"><span class="typing"><i></i><i></i><i></i></span> Iris is reading the AVGO draft</div></div></div>
+      <div class="composer">
+        <div class="quick">${dn(2)}${['Why did the date slip?', 'What’s blocking MU?', 'What would you cut to make the 30th?', 'From now on, never buy data without asking'].map((q) => `<button class="chip" data-toast="Sent to Iris: “${esc(q)}”">${q}</button>`).join('')}</div>
+        <div class="comp-box"><textarea id="chat-in" class="input" rows="2" placeholder="Message Iris — give direction, ask why, or set a rule with “from now on…”"></textarea>
+          <button class="btn primary" data-toast="Sent. Iris typically replies in under 10 seconds.">${ic('send', 'sm')}Send</button></div>
+        <div class="micro muted" style="margin-top:6px">Enter to send · Shift+Enter for a new line · Rules you set here are enforced by the platform, not just remembered.</div>
+      </div>
+    </div>
+    <aside class="chat-side">
+      <div class="side-sec"><div class="micro muted strong">Iris today</div>
+        <div class="stat-row tight"><div><span class="micro muted">Runs</span><b>9</b></div><div><span class="micro muted">Spend</span><b>$2.31</b></div><div><span class="micro muted">Next standup</span><b>09:00</b></div></div></div>
+      <div class="side-sec"><div class="row"><span class="micro muted strong grow">Waiting on you</span><a class="micro" href="#inbox" data-go="inbox">Inbox</a></div>
+        ${needsFor('semis').slice(0, 3).map((i) => `<button class="side-item" data-go="inbox" data-sel="${i.id}">${kindIcon(i.kind, 24)}<span class="grow"><span class="ellipsis" style="display:block">${i.title}</span><span class="micro muted">${i.clock}</span></span></button>`).join('')}</div>
+      <div class="side-sec"><div class="micro muted strong">Bets in play</div>
+        <div class="side-item static"><span class="grow"><span style="display:block">Data-center mix explains most of NVDA’s margin swing</span><span class="micro muted">Expires Sun 18 Oct · 1 proof</span></span></div>
+        <div class="side-item static"><span class="grow"><span style="display:block">EDGAR vintages are good enough for MU</span><span class="micro muted">Expires Fri 23 Oct · 0 proofs</span></span></div>
+      </div>
+    </aside>
+  </div>`;
+}
+
+/* ═════════════ ROADMAP ═════════════ */
+function burnup() {
+  /* x: Oct 1 .. Nov 5 (36 days); y: requirements 0..6 */
+  const W = 1080, H = 250, L = 34, R = 16, T = 22, B = 30;
+  const x = (d) => L + (d / 35) * (W - L - R);
+  const y = (v) => T + (1 - v / 6) * (H - T - B);
+  const actual = [[0, 0], [5, 0], [5, 1], [8, 1], [8, 2], [11, 2]];
+  const dA = actual.map((p, i) => (i ? 'L' : 'M') + x(p[0]) + ' ' + y(p[1])).join(' ');
+  const ticks = [[0, '1 Oct'], [7, '8'], [14, '15'], [21, '22'], [29, '30 Oct'], [33, '3 Nov']];
+  return `<svg viewBox="0 0 ${W} ${H}" class="burn" role="img" aria-label="Burn-up: 2 of 6 requirements met by 12 Oct, projected to finish 3 Nov against a promise of 30 Oct">
+    ${[0, 2, 4, 6].map((v) => `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--border)" stroke-width="1"/><text x="${L - 8}" y="${y(v) + 4}" text-anchor="end" font-size="11" fill="var(--muted)">${v}</text>`).join('')}
+    ${ticks.map(([d, l]) => `<text x="${x(d)}" y="${H - 8}" text-anchor="middle" font-size="11" fill="var(--muted)">${l}</text>`).join('')}
+    <line x1="${x(29)}" x2="${x(29)}" y1="${T}" y2="${H - B}" stroke="var(--ink-2)" stroke-width="1.5"/>
+    <text x="${x(29) - 6}" y="${T + 10}" text-anchor="end" font-size="11" fill="var(--ink-2)">Promised</text>
+    <line x1="${x(33)}" x2="${x(33)}" y1="${T}" y2="${H - B}" stroke="var(--serious)" stroke-width="1.5" stroke-dasharray="4 4"/>
+    <text x="${x(33) - 6}" y="${T + 24}" text-anchor="end" font-size="11" fill="var(--serious)">Projected</text>
+    <line x1="${x(11)}" x2="${x(11)}" y1="${T}" y2="${H - B}" stroke="var(--border-strong)" stroke-width="1"/>
+    <text x="${x(11) + 6}" y="${H - B - 6}" font-size="11" fill="var(--muted)">Today</text>
+    <path d="M${x(11)} ${y(2)} L ${x(33)} ${y(6)}" stroke="var(--serious)" stroke-width="1.6" stroke-dasharray="5 5" fill="none"/>
+    <path d="${dA} L ${x(11)} ${y(0)} L ${x(0)} ${y(0)} Z" fill="rgba(var(--accent-rgb),0.12)"/>
+    <path d="${dA}" stroke="var(--accent)" stroke-width="2.2" fill="none" stroke-linejoin="round"/>
+    <circle cx="${x(11)}" cy="${y(2)}" r="4" fill="var(--accent)"/>
+    <line x1="${L}" x2="${W - R}" y1="${y(6)}" y2="${y(6)}" stroke="var(--muted)" stroke-dasharray="2 4"/>
+    <text x="${W - R}" y="${y(6) - 6}" text-anchor="end" font-size="11" fill="var(--muted)">Scope · 6</text>
+  </svg>`;
+}
+function reqStatus(r) {
+  if (r.status === 'met') return '<span class="pill s-good"><i class="d"></i>Met</span>';
+  if (r.status === 'progress') return pill('working', 'In progress');
+  return '<span class="pill s-idle"><i class="d"></i>Not started</span>';
+}
+function viewRoadmap() {
+  const stages = [1, 2, 3];
+  return `
+  ${notesPanel([
+    '<b>One banner, three verbs.</b> When the projection passes the promise, the page says so in days and puts your options in reach: cut something, move the date, or ask the CEO.',
+    '<b>Requirements read like milestones.</b> Plain status, progress within each, and runs/cost tucked to the right. Levers sit behind a menu on each row, not as red buttons on every line.',
+  ])}
+  <div class="page-h"><div class="grow"><h1>Roadmap</h1><p class="sub">What has to be true for this project to be done, in the order it can happen. Iris proposes requirements; only the platform marks one met.</p></div>
+    <div class="actions"><div class="seg"><button class="on">Stages</button><button data-toast="Dependency graph with the critical path R-03 → R-05 → R-06">Dependencies</button></div></div></div>
+  <div class="banner risk">${dn(1)}
+    <span class="b-ic">${ic('alert')}</span>
+    <div class="grow"><b>At risk: projected 3 Nov, 4 days after the 30 Oct you signed.</b>
+      <div class="micro ink2">At 1.3 requirements a week, the last one lands 3 Nov. Iris proposes moving R-06 to a follow-up. New scope is frozen until the plan fits again.</div></div>
+    <div class="row gap8 wrap"><button class="btn sm" data-toast="Pick a requirement to cut. Your reason is recorded and the CEO reads it.">Cut a requirement</button><button class="btn sm" data-toast="Pick a new date and give a reason. The CEO reads it.">Move the date</button><button class="btn sm primary" data-go="chat">Ask Iris</button></div>
+  </div>
+  <section class="card" style="margin-top:16px">
+    <div class="card-h"><h3>Will it be done by 30 Oct?</h3><span class="micro muted">Requirements met over time</span><span class="grow"></span>
+      <span class="legend micro"><span class="lg-i"><i style="background:var(--accent)"></i>Met</span><span class="lg-i"><i class="dash" style="border-color:var(--serious)"></i>Projection</span></span></div>
+    <div class="card-b" style="overflow-x:auto">${burnup()}</div>
+    <div class="kpi-mini">
+      <div><span class="micro muted">Pace</span><b>1.3 / week</b></div>
+      <div><span class="micro muted">Work left</span><b>~49 runs</b></div>
+      <div><span class="micro muted">Budget buys</span><b>~700 runs</b></div>
+      <div><span class="micro muted">Wasted runs</span><b>8% <span class="micro muted">· worst: R-03</span></b></div>
+    </div>
+  </section>
+  ${stages.map((s) => {
+    const rs = REQS.filter((r) => r.stage === s);
+    const label = s === 1 ? '<span class="pill s-good"><i class="d"></i>Done</span>' : s === 2 ? pill('working', 'Open') : '<span class="pill s-idle"><i class="d"></i>Starts when stage 2 is done</span>';
+    return `<section class="stage"><div class="stage-h"><h3>Stage ${s}</h3>${label}</div>
+      <div class="card">${rs.map((r) => `
+        <div class="req">
+          <span class="tag id">${r.id}</span>
+          <div class="grow"><div class="req-t">${r.text}</div>
+            ${r.of ? `<div class="row gap8" style="margin-top:8px"><span class="bar" style="width:140px"><i style="width:${(r.done / r.of) * 100}%"></i></span><span class="micro muted">${r.done} of ${r.of} names done</span>${r.fails ? `<span class="micro serious">· ${r.fails} failed attempts</span>` : ''}</div>` : ''}
+          </div>
+          <div class="req-m">${reqStatus(r)}<span class="micro muted num">${r.runs[0]}/${r.runs[1]} runs · ${money(r.cost)}</span></div>
+          <button class="icon-btn" data-toast="Accept · Cut · Reword · Reopen · Re-estimate — each asks for a reason" aria-label="Requirement actions">${ic('more')}</button>
+        </div>`).join('')}</div></section>`;
+  }).join('')}
+  <section class="stage"><div class="stage-h"><h3>Proposed</h3><span class="pill s-waiting"><i class="d"></i>Waiting on you</span></div>
+    <div class="card"><div class="req">
+      <span class="tag id">R-07</span><div class="grow"><div class="req-t">A one-page summary exists for each name: thesis, valuation range, bear case and position limit.</div></div>
+      <div class="req-m"><span class="micro muted">~9 runs · ~$14</span></div>
+      <button class="btn sm" data-go="inbox" data-sel="s1" data-tab="needs">Review</button>
+    </div></div></section>`;
+}
+
+/* ═════════════ TASKS ═════════════ */
+function colPill(col) {
+  return ({
+    ready: '<span class="pill s-idle"><i class="d"></i>Ready</span>',
+    progress: pill('working', 'In progress'),
+    review: '<span class="pill" style="color:var(--c5)"><i class="d"></i>In review</span>',
+    blocked: pill('blocked', 'Blocked'),
+    done: '<span class="pill s-good"><i class="d"></i>Done</span>',
+  })[col];
+}
+function viewTasks() {
+  const cols = [['ready', 'Ready'], ['progress', 'In progress'], ['review', 'In review'], ['blocked', 'Blocked'], ['done', 'Done']];
+  return `
+  ${notesPanel([
+    '<b>A board, because everyone already knows how to read one.</b> Same tasks as today’s table, grouped by state, each tied to the requirement it serves.',
+    '<b>Read-only, and it says why in one line, with the way forward.</b> Only the CEO creates tasks; the button you’d look for is “Ask Iris”.',
+    '<b>Spot-checks become a small, optional prompt</b> rather than a scored queue at the top of the page.',
+  ])}
+  <div class="page-h"><div class="grow"><h1>Tasks</h1><p class="sub">Iris creates and assigns tasks; team leads split them up. Every task serves a requirement on the roadmap.</p></div>
+    <div class="actions"><div class="seg"><button class="on">${ic('kanban', 'sm')}Board</button><button data-toast="Same tasks as a sortable table, with CSV export">${ic('list', 'sm')}List</button></div>
+      <button class="btn primary" data-go="chat">${dn(2)}${ic('chat', 'sm')}Ask Iris for a change</button></div></div>
+  <div class="relay">${dn(3)}${ic('scan', 'sm')}<span><b>Spot-check, optional:</b> the platform picked 2 finished tasks for you to check against what they had to prove. About 2 minutes.</span><button class="btn xs" data-toast="Opens the first sample: what it had to prove, beside what the agent claimed">Start</button></div>
+  <div class="board">
+    ${cols.map(([c, label]) => {
+      const ts = TASKS.filter((t) => t.col === c);
+      return `<div class="bcol"><div class="bcol-h">${colPill(c)}<span class="micro muted">${ts.length}</span></div>
+        ${ts.map((t) => `
+          <div class="tcard">
+            <div class="row gap8"><span class="tag id">${t.id}</span><span class="grow"></span><span class="tag id">${t.req}</span></div>
+            <div class="tc-t">${t.title}</div>
+            ${t.note ? `<div class="micro ${t.warn || c === 'blocked' ? 'serious' : 'muted'}">${t.note}</div>` : ''}
+            <div class="row gap8 tc-f"><span class="team-dot" style="background:var(--c${teamSlot(t.team)})"></span><span class="micro muted grow">${TEAMS[t.team].name}</span>
+              ${t.proof ? `<span class="micro ${t.proof === 'verified' ? 'good' : 'muted'}">${ic('shield', 'sm')} ${t.proof}</span>` : ''}
+              ${t.who ? `<button data-agent="${t.who}" aria-label="${agent(t.who).name}">${av(t.who, 'xs')}</button>` : '<span class="micro muted">Unassigned</span>'}</div>
+          </div>`).join('')}
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+
+/* ═════════════ DELIVERABLES ═════════════ */
+function viewFiles() {
+  const f = FILES.find((x) => x.name === state.fileSel) || FILES[0];
+  const groups = {};
+  FILES.forEach((x) => { const d = x.when.startsWith('Today') ? 'Today' : x.when; (groups[d] = groups[d] || []).push(x); });
+  return `
+  <div class="files">
+    <div class="f-list">
+      <div class="f-head">
+        <h1 class="ib-h1">Deliverables</h1>
+        <div class="seg" style="margin-top:12px"><button class="on">All <span class="c">${FILES.length}</span></button><button data-toast="Published files are what you’re paying for: versioned, with a receipt">Published <span class="c">3</span></button><button data-toast="Drafts are the agents’ working files">Drafts <span class="c">3</span></button></div>
+        <input class="input" id="file-q" style="margin-top:10px" placeholder="Search files…  ( / )" />
+      </div>
+      <div class="f-rows">
+        ${Object.entries(groups).map(([d, fs]) => `<div class="f-day">${d}</div>${fs.map((x) => `
+          <button class="f-row ${x.name === f.name ? 'on' : ''}" data-file="${x.name}">
+            <span class="f-ic">${ic(x.kind === 'table' ? 'table' : x.kind === 'code' ? 'code' : 'file', 'sm')}</span>
+            <span class="grow"><span class="ellipsis" style="display:block"><span class="muted">${x.dir}</span>${x.name}</span>
+              <span class="micro muted">${agent(x.by).name} · ${x.size}${x.req ? ' · ' + x.req : ''}</span></span>
+            ${x.state === 'published' ? `<span class="pill s-good"><i class="d"></i>${x.ver}</span>` : '<span class="pill s-idle"><i class="d"></i>Draft</span>'}
+          </button>`).join('')}`).join('')}
+      </div>
+    </div>
+    <div class="f-reader">
+      <div class="f-rhead">
+        <div class="grow"><div class="row gap8"><b>${f.dir}${f.name}</b>${f.state === 'published' ? `<span class="pill s-good"><i class="d"></i>Published ${f.ver}</span>` : '<span class="pill s-idle"><i class="d"></i>Draft</span>'}</div>
+          <div class="micro muted">${f.when} · by ${agent(f.by).name}${f.req ? ` · counts toward ${f.req}` : ''} · ${f.size}</div></div>
+        <div class="seg"><button class="on">Read</button><button data-toast="Raw source with line numbers">Source</button></div>
+        <button class="btn sm" data-toast="Opens the version history: v1 → v2 diff">History</button>
+      </div>
+      <article class="doc">
+        <p class="micro muted">INITIATION NOTE · NVIDIA CORP (NVDA) · v2</p>
+        <h2>NVIDIA: the data-center engine, priced for perfection</h2>
+        <p><b>Rating framework:</b> constructive, with a named falsifier. Every figure below carries its period and links to the filing it came from.</p>
+        <h3>1. What the business is</h3>
+        <p>Data-center revenue was <b>$115.2bn</b> in FY26 (10-K, p.38), 88% of the total. The top four customers made up <b>46%</b> of revenue (10-K, p.61) <span class="proof">${ic('shield', 'sm')} verified</span>.</p>
+        <h3>2. Bear case</h3>
+        <p>Hyperscaler capex falls more than 15% year on year for two consecutive quarters, compressing data-center volumes faster than pricing can offset.</p>
+        <div class="callout">${ic('target', 'sm')}<div><b>Falsifier.</b> Q1 FY27 data-center revenue below $38bn would show the thesis is wrong.</div></div>
+        <h3>3. Comparables</h3>
+        <div class="tbl-wrap"><table class="tbl mini"><thead><tr><th>Name</th><th>EV / Sales FY27e</th><th>Gross margin</th><th>Source</th></tr></thead>
+          <tbody><tr><td>NVDA</td><td class="num">17.4×</td><td class="num">74.9%</td><td><a href="#" data-toast="Opens the cited 10-K page">10-K p.44</a></td></tr>
+          <tr><td>AVGO</td><td class="num">14.1×</td><td class="num">77.2%</td><td><a href="#" data-toast="Opens the cited 10-K page">10-K p.52</a></td></tr>
+          <tr><td>AMD</td><td class="num">7.9×</td><td class="num">53.1%</td><td><a href="#" data-toast="Opens the cited 10-K page">10-K p.47</a></td></tr></tbody></table></div>
+      </article>
+    </div>
+  </div>`;
+}
+
+/* ═════════════ SPEND ═════════════ */
+function viewSpend() {
+  const max = Math.max(...SPEND_DAYS);
+  const W = 640, H = 170, B = 22, gap = 6;
+  const bw = (W - gap * 19) / 20;
+  const bars = SPEND_DAYS.map((v, i) => {
+    const h = (v / 20) * (H - B - 10);
+    return `<rect x="${i * (bw + gap)}" y="${H - B - h}" width="${bw}" height="${h}" rx="3" fill="var(--accent)" ${i === 11 ? '' : 'opacity="0.75"'}><title>${i + 1} Oct: ${money(v)}</title></rect>`;
+  }).join('');
+  const fc = Array.from({ length: 8 }, (_, k) => {
+    const i = 12 + k; const v = 12.2; const h = (v / 20) * (H - B - 10);
+    return `<rect x="${i * (bw + gap)}" y="${H - B - h}" width="${bw}" height="${h}" rx="3" fill="none" stroke="var(--border-strong)" stroke-dasharray="3 3"/>`;
+  }).join('');
+  const labels = [[0, '1 Oct', 'start'], [6, '7', 'middle'], [11, 'Today', 'middle'], [19, '20 Oct', 'end']].map(([i, l, a]) => `<text x="${a === 'start' ? i * (bw + gap) : a === 'end' ? i * (bw + gap) + bw : i * (bw + gap) + bw / 2}" y="${H - 6}" text-anchor="${a}" font-size="11" fill="var(--muted)">${l}</text>`).join('');
+  void max;
+  return `
+  ${notesPanel([
+    '<b>Budget as a policy, not a number.</b> One card states the rule (warns at 80%, pauses at 100%), where you are, and where you’ll land.',
+    '<b>Every chart answers a question in its title.</b> “Where did October’s money go?” rather than “Spend by team”.',
+  ])}
+  <div class="page-h"><div class="grow"><h1>Spend</h1><p class="sub">Every dollar is metered by the platform, per run. The budget is a hard limit agents cannot talk their way past.</p></div>
+    <div class="actions"><div class="seg"><button class="on">This month</button><button data-toast="Last 30 days">30 days</button><button data-toast="Since the project started">All time</button></div><button class="btn sm" data-toast="Downloads every run with its cost as CSV">Export CSV</button></div></div>
+  <div class="spend-top">
+    <section class="card budget">${dn(1, true)}
+      <div class="card-b">
+        <div class="row gap8"><span class="micro muted strong grow">October budget</span><span class="pill s-good"><i class="d"></i>Healthy</span></div>
+        <div class="big-num num">$148.20 <span class="of">of $400</span></div>
+        <div class="bar lg"><i style="width:37%"></i><b class="bar-mark" style="left:80%"></b><b class="bar-proj" style="left:96%"></b></div>
+        <div class="row micro muted" style="justify-content:space-between;margin-top:6px"><span>37% used · 19 days left</span><span>On pace for <b class="ink2">$383</b></span></div>
+        <div class="policy">
+          <div>${ic('bell', 'sm')}<span>Warns you at <b>80%</b> ($320)</span></div>
+          <div>${ic('pause', 'sm')}<span>Pauses the project at <b>100%</b></span></div>
+          <div>${ic('key', 'sm')}<span>Paid with <b>anthropic-api-key</b></span></div>
+        </div>
+        <button class="btn sm" data-toast="Raising the cap asks for a reason; the CEO reads it and it shows at the next review">Change the budget…</button>
+      </div>
+    </section>
+    <section class="card"><div class="card-h"><h3>Spend per day</h3><span class="micro muted">Dashed bars are the forecast at the current pace</span></div>
+      <div class="card-b" style="overflow-x:auto"><svg viewBox="0 0 ${W} ${H}" class="burn" role="img" aria-label="Daily spend, 1 to 12 October, with forecast">
+        ${[5, 10, 15, 20].map((v) => `<line x1="0" x2="${W}" y1="${H - B - (v / 20) * (H - B - 10)}" y2="${H - B - (v / 20) * (H - B - 10)}" stroke="var(--border)"/>`).join('')}
+        ${bars}${fc}${labels}</svg></div>
+      <div class="kpi-mini"><div><span class="micro muted">Today</span><b>$11.40</b></div><div><span class="micro muted">Runs this month</span><b>195</b></div><div><span class="micro muted">Avg per run</span><b>$0.76</b></div><div><span class="micro muted">Ended early</span><b>8% <span class="micro muted">of spend</span></b></div></div>
+    </section>
+  </div>
+  <section class="card" style="margin-top:16px">
+    <div class="card-h">${dn(2)}<h3>Where did October’s money go?</h3><span class="grow"></span><div class="seg"><button class="on">By team</button><button data-toast="Same breakdown per person">By person</button><button data-toast="Same breakdown per model">By model</button></div></div>
+    <div class="card-b"><div class="tbl-wrap"><table class="tbl">
+      <thead><tr><th>Team</th><th style="width:45%">Share</th><th>Runs</th><th>Spend</th><th>Per run</th></tr></thead>
+      <tbody>${SPEND_TEAMS.map((s) => `<tr><td><div class="row gap8"><span class="team-dot" style="background:var(--c${teamSlot(s.team)})"></span>${s.team === 'ceo' ? 'CEO (Iris)' : TEAMS[s.team].name}</div></td>
+        <td><span class="hb-t" style="display:block"><i style="width:${(s.amt / 148.2) * 100}%;background:var(--c${teamSlot(s.team)})"></i></span></td>
+        <td class="num">${s.runs}</td><td class="num strong">${money(s.amt)}</td><td class="num muted">${money(s.amt / s.runs)}</td></tr>`).join('')}</tbody></table></div>
+      <p class="micro muted" style="margin-top:10px">Research costs more than everyone else combined. Worth knowing before you raise the cap.</p></div>
+  </section>`;
+}
+
+/* ═════════════ REVIEWS ═════════════ */
+function viewReviews() {
+  const lever = (t, d) => `<button class="lever" data-toast="${esc(t)}: asks for a reason, shown at the next review beside what it bought"><b>${t}</b><span class="micro muted">${d}</span></button>`;
+  return `
+  ${notesPanel([
+    '<b>A meeting page that looks like a meeting:</b> the agenda, the numbers, the CEO’s explanation, then your decisions. Past decisions sit beside what they bought.',
+  ])}
+  <div class="page-h"><div class="grow"><h1>Reviews</h1><p class="sub">A standing meeting with Iris. The platform brings the numbers, Iris explains the gap, you decide what changes.</p></div>
+    <div class="actions"><span class="pill">${ic('calendar', 'sm')} Next: Fri 16 Oct, 09:00</span></div></div>
+  <section class="card">
+    <div class="card-h">${dn(1)}<h3>Review #3</h3><span class="pill s-good"><i class="d"></i>Closed</span><span class="micro muted">Fri 9 Oct · 22 min</span><span class="grow"></span></div>
+    <div class="card-b">
+      <div class="kpi-mini flat">
+        <div><span class="micro muted">Pace</span><b>1.3 / week</b></div>
+        <div><span class="micro muted">Met since #2</span><b>1 <span class="micro muted">(R-02)</span></b></div>
+        <div><span class="micro muted">Delivery</span><b class="serious">At risk</b></div>
+        <div><span class="micro muted">Budget used</span><b>30%</b></div>
+        <div><span class="micro muted">Spot-checked</span><b>3 of 9</b></div>
+        <div><span class="micro muted">Most wasted runs</span><b>R-03 <span class="micro muted">(4)</span></b></div>
+      </div>
+      <div class="rv-cols">
+        <div><div class="micro muted strong" style="margin-bottom:6px">What Iris said</div>
+          <p class="ceo-msg">Stage 1 closed at 26 runs against 21 estimated. I’ve applied that 1.21× bias to the rest of the plan, which is why the projection moved to 2 Nov. The one real problem is MU: the restated history is licensed. Ines has a free reconstruction from EDGAR filing dates that covers 2018 onward; I intend to take it unless you say otherwise.</p>
+          <p class="micro muted" style="margin-top:8px"><b class="ink2">Recommended:</b> take the free route for MU. No change to scope or date.</p></div>
+        <div><div class="micro muted strong" style="margin-bottom:6px">What you decided</div>
+          <div class="decision">${ic('check', 'sm')}<div><b>Accepted the slip for now</b><div class="micro muted">“Revisit Friday once the AVGO note lands.” · bought: 0 runs, date unchanged</div></div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+  <section class="card" style="margin-top:16px">
+    <div class="card-h"><h3>Review #4 · Fri 16 Oct, 09:00</h3><span class="pill">Upcoming</span><span class="grow"></span></div>
+    <div class="card-b">
+      <p class="small ink2" style="margin-bottom:12px">Opens on schedule even if nothing moved. These are the changes you can make there, or any time from the Roadmap.</p>
+      <div class="levers">
+        ${lever('Cut scope', 'Drop a requirement')}${lever('Add scope', 'Propose a new one')}${lever('Reword', 'Sharpen a requirement')}
+        ${lever('Move the date', 'With a reason')}${lever('Raise the budget', 'With a reason')}${lever('Accept the slip', 'Keep going as is')}
+      </div>
+    </div>
+  </section>`;
+}
+
+/* ═════════════ ACTIVITY ═════════════ */
+function viewActivity() {
+  const f = state.activityFilter;
+  const map = { all: null, runs: ['run', 'fail'], decisions: ['decision', 'flag', 'ask'], proof: ['proof', 'publish'], messages: ['msg'] };
+  const rows = ACTIVITY.filter((a) => !map[f] || map[f].includes(a.kind));
+  const icon = { run: 'terminal', fail: 'alert', decision: 'git', flag: 'flag', proof: 'shield', ask: 'badge', msg: 'chat', publish: 'file' };
+  return `
+  ${notesPanel([
+    '<b>One timeline replaces five record views</b> (Runs, Messages, Memory, Decisions, Evidence) behind pills. Each row reads as a sentence: who did what. Filters narrow it; nothing is hidden on another page.',
+    '<b>Detail on demand.</b> Click a run to open its trace in the side panel: summary first, then each step, then the raw log.',
+  ])}
+  <div class="page-h"><div class="grow"><h1>Activity</h1><p class="sub">Everything that happened on this project, newest first. You can read every channel; you speak only to Iris.</p></div>
+    <div class="actions"><button class="btn sm" data-toast="Downloads the full record as CSV">Export</button></div></div>
+  <div class="row gap8 wrap" style="margin-bottom:14px">${dn(1)}
+    ${[['all', 'Everything'], ['runs', 'Runs'], ['decisions', 'Decisions'], ['proof', 'Proof & files'], ['messages', 'Messages']].map(([k, l]) => `<button class="chip ${f === k ? 'on' : ''}" data-actf="${k}">${l}</button>`).join('')}
+    <span class="grow"></span><span class="micro muted">Today · 38 runs · $11.40</span>
+  </div>
+  <div class="card"><div class="feed">
+    ${rows.map((a) => `
+      <div class="feed-row" ${a.who !== 'platform' ? `data-agent="${a.who}"` : ''}>
+        <span class="feed-t mono">${a.t}</span>
+        <span class="feed-ic k-${a.kind}">${ic(icon[a.kind] === 'git' ? 'layers' : icon[a.kind], 'sm')}</span>
+        <span class="grow"><b>${a.who === 'platform' ? 'The platform' : agent(a.who).name}</b> ${a.text}</span>
+        <span class="tag">${a.tag}</span>
+      </div>`).join('')}
+  </div></div>
+  <p class="micro muted" style="margin-top:12px">${dn(2)}Older activity loads as you scroll. Memory and rule changes are under <a href="#" data-go="psettings">Settings</a>.</p>`;
+}
+
+/* ═════════════ PROJECT SETTINGS ═════════════ */
+function viewProjectSettings() {
+  const t = state.settingsTab;
+  const nav = [['brief', 'Brief', 'Goal and deliverable'], ['rules', 'How it runs', 'Autonomy, pace, quality bar'], ['money', 'Money', 'Budget and billing'], ['people', 'People', 'Chairs and observers'], ['data', 'Data & tools', '2 sources'], ['integrations', 'Integrations', 'Slack connected'], ['danger', 'Pause or stop', '']];
+  const card = (title, sub, on, pts) => `<button class="pick ${on ? 'on' : ''}" data-toast="Picking a card files an amendment with your reason; in force from the next agent call"><div class="row gap8"><b class="grow">${title}</b>${on ? `<span class="pill s-good"><i class="d"></i>In force</span>` : ''}</div><span class="small muted">${sub}</span><ul>${pts.map((p) => `<li>${p}</li>`).join('')}</ul></button>`;
+  return `
+  ${notesPanel([
+    '<b>Settings in plain questions.</b> “Who decides what?”, “How often should it work?”, “How good does it have to be?”. The constitution’s individual rules stay one click away under “All rules”.',
+  ])}
+  <div class="page-h"><div class="grow"><h1>Settings</h1><p class="sub">Changes here are amendments: you give a reason, the CEO is told, and they apply from the next agent call.</p></div></div>
+  <div class="settings">
+    <nav class="set-nav">${nav.map(([k, l, s]) => `<button class="${t === k ? 'on' : ''}" data-settab="${k}"><span>${l}</span>${s ? `<span class="micro muted">${s}</span>` : ''}</button>`).join('')}</nav>
+    <div class="set-body stack gap20">
+      ${t !== 'rules' ? `<section><h3 class="set-h">${nav.find((n) => n[0] === t)[1]}</h3>
+        <div class="card"><div class="empty"><div class="big" style="color:var(--ink-2)">${ic('sliders', 'lg')}</div><h4>Same fields as today, grouped by question</h4>This mockup details <b>How it runs</b>. The other sections keep today\u2019s fields and only change their grouping and labels.</div></div></section>` : `
+      <section><h3 class="set-h">${dn(1)}Who decides what?</h3>
+        <div class="picks">
+          ${card('Autonomous', 'Iris decides and tells you after.', true, ['Accepts her own plan', 'Signs the delivery date', 'Judges work no script can check'])}
+          ${card('Supervised', 'Iris proposes; you decide.', false, ['You accept scope', 'You sign the date', 'You judge unverifiable work'])}
+        </div>
+        <p class="micro muted" style="margin-top:8px">${ic('lock', 'sm')} Always yours at any setting: spending money, legal questions, credentials and tool access.</p></section>
+      <section><h3 class="set-h">How often should it work?</h3>
+        <div class="picks three">
+          ${card('Live', '~150 runs a day', true, ['Wakes as soon as work is ready'])}
+          ${card('Working hours', '~40 runs a day', false, ['09:00–18:00 New York'])}
+          ${card('A few times a day', '~12 runs a day', false, ['Cheapest; slowest'])}
+        </div></section>
+      <section><h3 class="set-h">How good does it have to be?</h3>
+        <div class="picks four">
+          ${card('Full send', 'Speed over polish', false, [])}${card('Balanced', 'The default', false, [])}${card('Keep it cheap', 'Fewer, cheaper runs', false, [])}${card('Show me proof', 'Outside evidence for every claim', true, [])}
+        </div>
+        <button class="btn sm ghost" style="margin-top:10px" data-toast="Every individual rule, grouped by theme, each with its history">All 64 rules ${ic('arrow', 'sm')}</button></section>`}
+    </div>
+  </div>`;
+}
+
+/* ═════════════ ROLE LIBRARY ═════════════ */
+function viewRoles() {
+  const aisles = [
+    ['Research & Analysis', [['Equity Research Analyst', 'v3', 'Builds initiation notes from primary filings', 2], ['Macro Analyst', 'v2', 'Rates, flows and cross-asset context', 0], ['Data Engineer', 'v2', 'Point-in-time datasets, survivorship-free', 1]]],
+    ['Challenge & Control', [['Compliance Officer', 'v2', 'PASS / FIX / ESCALATE on every claim', 1], ['Red Team', 'v4', 'Tries to break the thesis before the market does', 0], ['Risk Manager', 'v5', 'Position limits with the arithmetic shown', 1]]],
+    ['Build & Engineering', [['Full-stack Engineer', 'v6', 'Ships small, tested increments', 0], ['QA Engineer', 'v3', 'Turns requirements into checks', 0]]],
+  ];
+  return `
+  <div class="page-h"><div class="grow"><h1>Role library</h1><p class="sub">Job descriptions you can hire from. Editing a role makes a new version; running teams keep theirs until you adopt it.</p></div>
+    <div class="actions"><input class="input" style="width:220px" placeholder="Search 38 roles…" /><button class="btn primary" data-toast="Opens the role editor">${ic('plus', 'sm')}New role</button></div></div>
+  ${aisles.map(([a, roles]) => `<section style="margin-bottom:22px"><h3 class="set-h">${a}</h3><div class="role-grid">
+    ${roles.map(([n, v, d, used]) => `<div class="card role"><div class="row gap8"><span class="av sm sq t${(n.length % 5) + 1}">${n.split(' ').map((w) => w[0]).join('').slice(0, 2)}</span><b class="grow">${n}</b><span class="tag">${v}</span></div>
+      <p class="small muted" style="margin:8px 0 10px">${d}</p>
+      <div class="row gap8 micro muted"><span class="grow">${used ? `In ${used} project${used > 1 ? 's' : ''}` : 'Not hired yet'}</span><button class="btn xs" data-toast="Adds a team with this role to a project you pick">Hire</button></div></div>`).join('')}
+  </div></section>`).join('')}`;
+}
+
+/* ═════════════ WHY THIS DESIGN ═════════════ */
+function viewWhy() {
+  const pat = (n, t, d) => `<div class="why-pat"><span class="why-n">${n}</span><div><b>${t}</b><p>${d}</p></div></div>`;
+  const vocab = [
+    ['Desk', 'Inbox', 'One place, one count'],
+    ['Boardroom', 'Chat with Iris', 'Name the person, not the room'],
+    ['Progress → The plan', 'Roadmap', 'Requirements keep their name'],
+    ['Progress → Who is doing it', 'Tasks', 'Board, read-only'],
+    ['Progress → What proves it', 'Activity → Proof', 'Evidence lives in one place'],
+    ['Review (behind a banner)', 'Reviews', 'A page of its own'],
+    ['Records (5 pills)', 'Activity', 'One timeline, filters'],
+    ['“Who is on this” cards', 'Team (org chart)', 'Hierarchy + live work'],
+    ['People you can hire', 'Role library', 'Matches the page title'],
+    ['Constitution / Rules in force', 'Settings → How it runs', 'Questions, then all rules'],
+    ['Drought', 'No outside proof for 14h', 'Say what it means'],
+    ['Job / run / task / piece of work', 'Task (work) and Run (one attempt)', 'Two words, never four'],
+  ];
+  return `
+  <div class="page-h"><div class="grow"><div class="eyebrow">Research summary · 12 Oct 2026</div><h1>Why this design</h1>
+    <p class="sub">A redesign of yaaf’s web app, informed by a read-through of Paperclip’s product and source and a screen-by-screen audit of yaaf’s current UI. The domain, the rules and the colour tokens are unchanged; the structure and the words are what move.</p></div></div>
+
+  <div class="why-stats">
+    <div><b>14</b><span>places in today’s UI that show something needing you, with <b>3</b> different counts</span></div>
+    <div><b>12</b><span>sections on today’s Overview, fed by about <b>16</b> separate pollers</span></div>
+    <div><b>0</b><span>screens that show what each agent is doing right now</span></div>
+    <div><b>4</b><span>words for one thing: task, job, run, “piece of work”</span></div>
+  </div>
+
+  <section class="why-sec"><h2>What Paperclip gets right</h2>
+    <p class="ink2 small" style="max-width:72ch;margin-bottom:14px">Paperclip (open source, MIT) describes itself as “a task manager on the outside, an org chart and governance underneath”. Its own design rule is that every screen answers: <i>what is happening, does it need me, what do I do about it</i>. The patterns worth taking:</p>
+    <div class="why-grid">
+      ${pat(1, 'Familiar SaaS nouns first', 'Dashboard, Inbox, Tasks, Projects, Agents, Settings. The machinery (heartbeats, adapters) sits one level down.')}
+      ${pat(2, 'One triage inbox', 'Approvals, failed runs, tasks and alerts in one list with inline verbs, unread dots, j/k keys and “Inbox zero”.')}
+      ${pat(3, 'Liveness is ambient', 'Running agents are listed in the sidebar with pulsing dots; the dashboard opens on live run cards.')}
+      ${pat(4, 'KPI tiles that link', 'Four tiles, each one question, each a link to the filtered page, each with a one-line breakdown.')}
+      ${pat(5, 'Org chart as a view of people', 'A List/Org toggle on the agents page, not a separate silo.')}
+      ${pat(6, 'Detail = conversation + panel', 'Requests for a human decision appear as cards pinned in the thread.')}
+      ${pat(7, '⌘K and a ? cheatsheet', 'Search, jump and act from the keyboard; shortcuts are discoverable.')}
+      ${pat(8, 'Progressive disclosure of runs', 'A summary, then “worked 5m · called 3 tools”, then the raw log.')}
+    </div>
+  </section>
+
+  <section class="why-sec"><h2>Where yaaf should beat it</h2>
+    <div class="why-grid">
+      ${pat('A', 'A ranked “Needs you”, not a count', 'Paperclip’s dashboard shows pending approvals as one tile among four. yaaf’s rule (every row says what happens if you do nothing, ranked by time to consequence) is better and should lead.')}
+      ${pat('B', 'Org chart nodes that show work', 'Paperclip’s nodes show identity only. Ours show status, current task, time on it, runs and spend.')}
+      ${pat('C', 'A delivery date as a first-class idea', 'Paperclip has no project-level promise. yaaf’s promised vs projected date is the most important number on the Overview.')}
+      ${pat('D', 'Stable vocabulary', 'Paperclip churns (task/issue, company/organization, two shells, ~30 flags). We fix one word per concept and keep it.')}
+    </div>
+  </section>
+
+  <section class="why-sec"><h2>Six principles</h2>
+    <ol class="why-princ">
+      <li><b>Every screen answers three questions in order:</b> what is happening, does it need me, what do I do about it.</li>
+      <li><b>One count for “needs you”, everywhere.</b> The badge, the Overview card and the Inbox read one list.</li>
+      <li><b>Plain words in the interface, yaaf’s words one hover away.</b> Dotted underlines explain terms in place; nothing requires the docs.</li>
+      <li><b>Agents are people with a current task.</b> Faces, names, status dots and “doing now” lines everywhere a person appears.</li>
+      <li><b>Layout carries meaning, not paragraphs.</b> Status is a pill, urgency is a clock, consequence is one labelled line. Help text shrinks from ~24 blocks on the Overview to 2.</li>
+      <li><b>The house rules stay visible, not explained.</b> Read-only screens offer the real way forward (“Ask Iris”) in place of the missing button.</li>
+    </ol>
+  </section>
+
+  <section class="why-sec"><h2>Vocabulary map</h2>
+    <div class="card tbl-wrap"><table class="tbl"><thead><tr><th>Today</th><th>Proposed</th><th>Why</th></tr></thead>
+      <tbody>${vocab.map(([a, b, c]) => `<tr><td class="muted">${a}</td><td><b>${b}</b></td><td class="small ink2">${c}</td></tr>`).join('')}</tbody></table></div>
+  </section>
+
+  <section class="why-sec"><h2>What stays exactly as it is</h2>
+    <ul class="why-keep">
+      <li>The chairman speaks only to the CEO. The org chart offers “Ask Iris about Maya”, never a direct message.</li>
+      <li>Only the CEO creates tasks, and only the platform marks a requirement met. The Tasks board is read-only and says so in one line.</li>
+      <li>Silence is a decision: every Inbox item states what happens if you do nothing, and approvals still deny themselves.</li>
+      <li>Every change to money, dates or scope asks for a reason the CEO reads.</li>
+      <li>The design tokens in <span class="mono">web/src/styles.css</span>, including the contrast-checked status colours and team slots.</li>
+    </ul>
+  </section>
+
+  <section class="why-sec"><h2>Suggested order of work</h2>
+    <ol class="why-princ">
+      <li><b>Inbox + one needs-you count.</b> Biggest trust win; mostly unifies existing endpoints (<span class="mono">/observe/desk</span>, approvals, asks, flags).</li>
+      <li><b>Sidebar IA + project switcher + ⌘K.</b> Pages already exist; this is navigation and naming.</li>
+      <li><b>Team page with org chart and agent drawer.</b> Needs a per-agent “current task” field, which the server already has in the board and runs.</li>
+      <li><b>New Overview.</b> Fewer sections and fewer pollers; consider one aggregated <span class="mono">/observe/projects/:id/overview</span> endpoint.</li>
+      <li><b>Activity timeline</b> replacing the Records pills, then the remaining pages.</li>
+    </ol>
+    <p class="micro muted" style="margin-top:10px">Per CLAUDE.md, the Inbox is a new concept: check its footprint against the Desk’s (daily brief, agenda, change stamp, MCP reader, CLI) before calling it done.</p>
+  </section>`;
+}
+
+/* ═════════════ view bindings ═════════════ */
+function bindView() {
+  const page = $('#page');
+  $$('[data-ibtab]', page).forEach((b) => b.addEventListener('click', () => { state.inboxTab = b.dataset.ibtab; state.inboxSel = null; render(); }));
+  $$('[data-ibsel]', page).forEach((b) => b.addEventListener('click', () => { state.inboxSel = b.dataset.ibsel; render(); }));
+  $$('[data-ibproj]', page).forEach((b) => b.addEventListener('click', () => { state.inboxProject = b.dataset.ibproj; state.inboxSel = null; render(); }));
+  $$('[data-teamview]', page).forEach((b) => b.addEventListener('click', () => { state.teamView = b.dataset.teamview; render(); }));
+  $$('[data-file]', page).forEach((b) => b.addEventListener('click', () => { state.fileSel = b.dataset.file; render(); }));
+  $$('[data-actf]', page).forEach((b) => b.addEventListener('click', () => { state.activityFilter = b.dataset.actf; render(); }));
+  $$('[data-settab]', page).forEach((b) => b.addEventListener('click', () => { state.settingsTab = b.dataset.settab; render(); }));
+}
+
+/* ═════════════ shortcuts cheatsheet ═════════════ */
+function openCheatsheet() {
+  const rows = [['⌘ K  or  /', 'Search and jump anywhere'], ['G then I', 'Inbox'], ['G then O', 'Overview'], ['G then C', 'Chat with Iris'], ['G then T', 'Team'], ['J / K', 'Next / previous in the Inbox'], ['A / D', 'Approve / deny the open item'], ['Esc', 'Close a panel'], ['?', 'This list']];
+  openDrawer(`<div class="drawer-h"><b class="grow" style="font-size:16px">Keyboard shortcuts</b><button class="icon-btn" data-close aria-label="Close">${ic('x')}</button></div>
+    <div class="drawer-b"><dl class="case">${rows.map(([k, v]) => `<div><dt><span class="kbd">${k}</span></dt><dd>${v}</dd></div>`).join('')}</dl></div>`);
+}
+document.addEventListener('keydown', (e) => {
+  const typing = /input|textarea|select/i.test(document.activeElement?.tagName || '');
+  if (!typing && e.key === '?') openCheatsheet();
+  if (!typing && state.route === 'inbox' && (e.key === 'a' || e.key === 'd') && !e.metaKey && !e.ctrlKey) {
+    const it = INBOX.find((x) => x.id === state.inboxSel && !state.done.has(x.id));
+    if (it && it.actions) { state.done.add(it.id); const n = inboxList()[0]; state.inboxSel = n ? n.id : null; toast(`${e.key === 'a' ? it.actions[0] : it.actions[1]} — recorded with your name`, true); render(); }
+  }
+});
+
+</script>
+</body>
+</html>
