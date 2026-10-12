@@ -1,75 +1,30 @@
 import { useEffect, useState } from "react";
 import { Navigate, NavLink, Route, Routes, useLocation, useParams } from "react-router-dom";
-import {
-  ApprovalRow,
-  AskRow,
-  Dashboard,
-  get,
-  HealthCheck,
-  HypothesisRow,
-  OrgView,
-  PlanView,
-  post,
-  ProjectHealth,
-} from "../api";
-import { usePoll } from "../hooks";
-import { useProjectLive } from "../ws";
-import { statusBadge } from "./Projects";
-import {
-  budgetOf,
-  clip,
-  clockClass,
-  DecideButtons,
-  fmtLeft,
-  fmtUnit,
-  statusBrief,
-} from "../ui";
-import { Badge, Btn, IconBtn, PageHead, TeamStrip, Term, Vital, VitalsBar } from "../ui/kit";
-import { deliveryVerdict, roster, waitingOnYou, working } from "../ui/project";
+import { Dashboard, HealthCheck, post, ProjectHealth } from "../api";
+import { firstName, ProjectCtx, useProjectFrame } from "../projectCtx";
+import { clip, statusBrief } from "../ui";
+import { Btn, PageHead } from "../ui/kit";
+import { Icon } from "../ui/Icon";
 import Overview from "./project/Overview";
-import Progress from "./project/Progress";
 import Boardroom from "./project/Boardroom";
+import Plan from "./project/Plan";
+import Tasks from "./project/Tasks";
 import Deliverables from "./project/Deliverables";
-import Records from "./project/Records";
+import Team from "./project/Team";
+import Spend from "./project/Spend";
+import Review from "./project/Review";
+import Activity from "./project/Activity";
 import Settings from "./project/Settings";
+import AgentDrawer from "./project/AgentDrawer";
 
-// Five, where there were eight. Plan, Work and Review each answered the same
-// question — will this land, and is any of it real — and a reader had to hold
-// the join between them in their head: a requirement here, the task serving it
-// there, the evidence settling it somewhere else. They are one tab with three
-// lenses now. Review folded in with them because a review is a moment on the
-// plan rather than a place, and a tab that is empty most of the month teaches
-// people to stop opening it. Settings left the row entirely: configuration is
-// something you go and do, not somewhere you live.
-const TABS = [
-  ["", "Overview"],
-  ["boardroom", "Boardroom"],
-  ["progress", "Progress"],
-  ["deliverables", "Deliverables"],
-] as const;
+export type { ProjectCtx } from "../projectCtx";
 
-const UTILITY_TABS = [["records", "Records"]] as const;
-
-/** Everything a project tab needs, polled once in the shell. Before this, four
-    tabs each polled /org on their own schedule and disagreed with each other. */
-export interface ProjectCtx {
-  projectId: string;
-  dash: Dashboard;
-  /** Polled by the shell, not by the tabs. The header needs the commitment to
-      say whether delivery is at risk, and Progress needs all of it — two polls
-      on two clocks is two answers to one question. */
-  plan: PlanView | null;
-  approvals: ApprovalRow[];
-  asks: AskRow[];
-  hypotheses: HypothesisRow[];
-  org: OrgView | null;
-  health: ProjectHealth | null;
-  reload: () => void;
-  reloadApprovals: () => void;
-  reloadOrg: () => void;
-  reloadHealth: () => void;
-  reloadPlan: () => void;
-}
+// Ten pages in the sidebar, where there were four tabs and a utility. The
+// tabs were economical and unlearnable: Progress hid three lenses and a
+// meeting behind a segmented control, Records hid five views behind pills,
+// and Settings hid behind a gear. A reader who has never been told what a
+// "lens" is can now find the Roadmap by reading the word Roadmap. Every old
+// address still lands somewhere — see the redirects at the foot of the routes.
 
 /** Pause wants a recorded reason; stop is terminal and requires typing the
     project's name. In-context confirmation, never a browser dialog. */
@@ -193,180 +148,6 @@ function setupBadge(dash: Dashboard, health: ProjectHealth | null) {
   );
 }
 
-/** The frame every tab of a project sits in.
-
-    Three things, in this order, and they do not move between tabs: who this
-    project is, the four numbers that say whether it is well, and the people
-    doing the work. The strip it replaces crammed four unaligned micro-columns
-    into a header and ended in two unlabelled glyph buttons, one of which was a
-    bare red square that stops a project for good. */
-function ProjectFrame({
-  dash,
-  health,
-  plan,
-  org,
-  approvals,
-  asks,
-  onPause,
-  onStop,
-  onStart,
-}: {
-  dash: Dashboard;
-  health: ProjectHealth | null;
-  plan: PlanView | null;
-  org: OrgView | null;
-  approvals: ApprovalRow[];
-  asks: AskRow[];
-  onPause: () => void;
-  onStop: () => void;
-  onStart: () => void;
-}) {
-  const [brief, setBrief] = useState(false);
-  const { unit, spent, cap, warnRatio, frac } = budgetOf(dash);
-  const verdict = deliveryVerdict(dash, plan);
-  const need = waitingOnYou(dash, approvals, asks, plan);
-  const people = roster(org);
-  const awake = working(people);
-
-  const vitals: Vital[] = [
-    { label: "Delivery", value: verdict.label, sub: verdict.sub, tone: verdict.tone },
-    {
-      label: "Spent this month",
-      value: fmtUnit(spent, unit),
-      sub: `of the ${fmtUnit(cap, unit)} you capped it at`,
-      tone: frac >= 1 ? "critical" : frac >= warnRatio ? "warn" : undefined,
-    },
-    {
-      label: "Waiting on you",
-      value: need.count,
-      sub: need.count === 0
-        ? "nothing needs a decision from you"
-        : need.soonest
-          ? `the soonest decides itself ${fmtLeft(need.soonest).replace(" left", "")} from now`
-          : "nothing else will decide these",
-      tone: need.count === 0 ? undefined : "serious",
-    },
-    {
-      label: "Working right now",
-      value: awake,
-      sub: awake === 0
-        ? dash.runs.queued > 0
-          ? `nobody yet — ${dash.runs.queued} queued to start`
-          : "nobody is working on this at the moment"
-        : `of ${people.length} ${people.length === 1 ? "person" : "people"}${dash.runs.queued > 0 ? ` · ${dash.runs.queued} more queued` : ""}`,
-    },
-  ];
-
-  return (
-    <>
-      <PageHead
-        crumbs={
-          <>
-            <NavLink to="/projects">Projects</NavLink>
-            <span>/</span>
-            <span>{dash.name}</span>
-          </>
-        }
-        title={dash.name}
-        badge={
-          <>
-            {statusBadge(dash.status)}
-            {dash.drought_active && (
-              <Badge tone="serious">
-                <Term means="Nothing outside this project has verified any of its claims for longer than your rules allow. Work carries on; the clock is a warning that none of it has been checked by anything but the team that did it.">
-                  no outside proof lately
-                </Term>
-              </Badge>
-            )}
-            {setupBadge(dash, health)}
-          </>
-        }
-        lede={
-          <>
-            {goalLead(dash.goal)}{" "}
-            <button
-              className="linkish"
-              onClick={() => setBrief(!brief)}
-              aria-expanded={brief}
-              style={{ minHeight: 0, padding: 0, border: 0, background: "none", font: "inherit" }}
-            >
-              {brief ? "hide the brief" : "read the brief"}
-            </button>
-          </>
-        }
-        actions={
-          <>
-            {/* The lifecycle is a decision, and the most prominent buttons on the
-                page — so they are not offered to somebody whose only outcome
-                would be the server's refusal. Absent means an older server,
-                which decided nothing by role. */}
-            {dash.can_steer !== false && dash.status !== "running" && dash.status !== "stopped" && (
-              <Btn kind="primary" icon="play" onClick={onStart}>Start</Btn>
-            )}
-            {dash.can_steer !== false && dash.status === "running" && (
-              <Btn icon="pause" onClick={onPause}>Pause</Btn>
-            )}
-            {dash.can_steer !== false && dash.status !== "stopped" && (
-              <Btn kind="danger" icon="stop" onClick={onStop}>Stop</Btn>
-            )}
-            <NavLink to={`/projects/${dash.id}/settings`} aria-label="Project settings" title="Project settings">
-              <IconBtn icon="gear" label="Project settings" />
-            </NavLink>
-          </>
-        }
-      />
-
-      {brief && (
-        <div className="briefbox">
-          <strong style={{ color: "var(--ink)" }}>The brief every one of them works from</strong>
-          <p style={{ whiteSpace: "pre-wrap", margin: "6px 0 0" }}>{dash.goal}</p>
-        </div>
-      )}
-
-      <VitalsBar vitals={vitals} />
-
-      {people.length > 0 && (
-        <div style={{ display: "flex", alignItems: "center", gap: "var(--s3)", margin: "var(--s4) 0 0", flexWrap: "wrap" }}>
-          <span style={{ fontSize: "var(--t-micro)", color: "var(--muted)" }}>Your team</span>
-          <TeamStrip
-            people={people.slice(0, 8)}
-            note={people.length > 8 ? `and ${people.length - 8} more` : undefined}
-          />
-          <NavLink to={`/projects/${dash.id}`} style={{ fontSize: "var(--t-small)", fontWeight: 600 }}>
-            See the org chart
-          </NavLink>
-        </div>
-      )}
-    </>
-  );
-}
-
-/** Why this one is on the chairman's desk, in a clause.
-
-    It used to read "Nobody else can decide this" for every kind — a claim
-    about the constitution, made without reading it. On a project whose
-    authority dial hands the CEO the plan, the scope and the date, that
-    sentence was false, and false in the most expensive direction: it told a
-    chairman who had deliberately delegated that he was still the bottleneck.
-    Each clause below is true at every dial setting, because each names
-    something the dial does not delegate. */
-function whyItIsYours(kind: string): string {
-  switch (kind) {
-    case "spend":
-      return "Above your approval threshold, so it is never an agent's call.";
-    case "legal":
-      return "Anything with legal weight is yours by rule, at any autonomy setting.";
-    case "tool_request":
-      return "A capability the project does not have — you hold the values.";
-    case "assist":
-      return "A step only a human can take. The platform hands these over, never defeats them.";
-    case "owner_decision":
-      return "The CEO judged this yours rather than its own.";
-    default:
-      return "The constitution routes this kind of decision to you.";
-  }
-}
-
 /** Said once, under the header, to anybody who may read this project but not
     decide on it. The buttons stay where they are: the server refuses a verb
     the reader does not hold, in a sentence that names who does, and the
@@ -387,110 +168,6 @@ function StandingNotice({ dash }: { dash: Dashboard }) {
     <div className="notice-box" style={{ display: "flex", gap: "var(--s2)", alignItems: "baseline", flexWrap: "wrap" }}>
       <span style={{ flex: 1, minWidth: 0 }}>{said}</span>
       <NavLink to={`/projects/${dash.id}/settings?s=people`}>Who chairs it</NavLink>
-    </div>
-  );
-}
-
-/** What a tab cannot do: be seen from the other five. Approvals expire to DENY,
-    so the one thing that must never depend on the chairman opening the right
-    tab is the decision that runs out of time on its own. */
-function ActionStrip({
-  projectId,
-  dash,
-  approvals,
-  hypotheses,
-  onDecided,
-}: {
-  projectId: string;
-  dash: Dashboard;
-  approvals: ApprovalRow[];
-  hypotheses: HypothesisRow[];
-  onDecided: () => void;
-}) {
-  const pending = approvals
-    .filter((a) => a.status === "pending")
-    .sort((a, b) => a.expires_at.localeCompare(b.expires_at));
-  const expiredBets = hypotheses.filter((h) => h.status === "expired" && !h.extended_once);
-  // Proposed scope is the CEO parked on the chairman: its report can say
-  // "waiting on R-01 acceptance" without saying where accepting happens, so
-  // this strip says it from every tab. Explore is excluded — it has no Plan
-  // tab to send anyone to, and proposals are refused there at the door.
-  // …unless the dial gave acceptance to the CEO, in which case a proposal is
-  // the CEO's own inbox and saying "awaits your acceptance" would be a lie
-  // about who is holding the project up.
-  const ceoAcceptsScope = dash.constitution["plan_authority"] === "ceo";
-  const proposedScope = dash.mode !== "explore" && dash.requirements_proposed > 0
-    ? dash.requirements_proposed : 0;
-
-  const scopeNeedsYou = proposedScope > 0 && !ceoAcceptsScope;
-
-  if (pending.length === 0 && expiredBets.length === 0 && !scopeNeedsYou) return null;
-
-  const rest = pending.length - 1 + expiredBets.length + (scopeNeedsYou ? 1 : 0);
-
-  if (pending.length > 0) {
-    const a = pending[0];
-    return (
-      <div className="strip">
-        <span className="chip warn">{a.kind.replaceAll("_", " ")}</span>
-        <div className="grow">
-          <div>
-            <strong>{clip(a.title, 90)}</strong>
-            {a.amount_usd !== null && a.amount_usd > 0 && (
-              <span> — ${a.amount_usd.toLocaleString()}</span>
-            )}
-          </div>
-          <div className="sb">
-            {whyItIsYours(a.kind)} It auto-denies in{" "}
-            <span className={`clock ${clockClass(a.expires_at)}`}>
-              {fmtLeft(a.expires_at).replace(" left", "")}
-            </span>
-            {rest > 0 && ` · ${rest} more waiting on you`}
-          </div>
-        </div>
-        <DecideButtons approvalId={a.id} onDone={onDecided} />
-        <NavLink to={`/projects/${projectId}/records/decisions`}>the full case →</NavLink>
-      </div>
-    );
-  }
-
-  if (scopeNeedsYou) {
-    return (
-      <div className="strip">
-        <span className="chip warn">scope proposed</span>
-        <div className="grow">
-          <div>
-            <strong>
-              {proposedScope === 1
-                ? "A requirement awaits your acceptance"
-                : `${proposedScope} requirements await your acceptance`}
-            </strong>
-          </div>
-          <div className="sb">
-            The CEO proposed what “done” should mean and can create no work for it
-            until you accept or cut each one
-            {expiredBets.length > 0 && ` · ${expiredBets.length} more waiting on you`}
-          </div>
-        </div>
-        <NavLink to={`/projects/${projectId}/plan`}>decide on the Plan tab →</NavLink>
-      </div>
-    );
-  }
-
-  const h = expiredBets[0];
-  return (
-    <div className="strip serious">
-      <span className="chip serious">bet expired</span>
-      <div className="grow">
-        <div>
-          <strong>“{clip(h.statement, 90)}”</strong> reached its kill date
-        </div>
-        <div className="sb">
-          You hold the one extension — or let it stand and the CEO pivots
-          {rest > 0 && ` · ${rest} more waiting on you`}
-        </div>
-      </div>
-      <NavLink to={`/projects/${projectId}/work`}>decide →</NavLink>
     </div>
   );
 }
@@ -562,109 +239,111 @@ function StatusBriefBox({ dash, projectId }: { dash: Dashboard; projectId: strin
   );
 }
 
-export default function ProjectPage() {
-  const { projectId = "" } = useParams();
-  const location = useLocation();
-  const { data: dash, error, at, reload } = usePoll(
-    () => get<Dashboard>(`/observe/projects/${projectId}`),
-    6000,
+/** A review opens on a schedule, costs nothing to run, and is the one meeting
+    the platform holds whether or not the board has anything on it — so when
+    one is open it is said on the pages it is about, not only on its own. */
+function ReviewBanner({ projectId, number }: { projectId: string; number: number }) {
+  return (
+    <div className="strip" style={{ marginTop: 0, marginBottom: "var(--s4)" }}>
+      <Icon name="meeting" size={18} />
+      <div className="grow">
+        <strong>Your standing review with the CEO is open.</strong>
+        <div className="sb">
+          The platform's numbers frozen at the moment it opened, the CEO's account of why they
+          are what they are, and the six things you can do about it.
+        </div>
+      </div>
+      <NavLink to={`/projects/${projectId}/reviews`}>
+        <Btn kind="primary">Open review #{number}</Btn>
+      </NavLink>
+    </div>
   );
-  // Latency hint over the 6s poll above: a change stamp on the socket pulls
-  // the same reload forward. The poll stays — it is the source of truth, and
-  // the UI works identically (just staler) if the socket never connects.
-  useProjectLive(projectId, reload);
+}
 
-  // Polled once here, handed down. The strip needs approvals and bets on every
-  // tab anyway, so the tabs stop fetching them a second time on their own clock.
-  const { data: approvals, reload: reloadApprovals } = usePoll(
-    () => get<ApprovalRow[]>(`/observe/projects/${projectId}/approvals`),
-    6000,
-  );
-  const { data: asks } = usePoll(
-    () => get<AskRow[]>(`/observe/projects/${projectId}/asks`),
-    6000,
-  );
-  const { data: hypotheses } = usePoll(
-    () => get<HypothesisRow[]>(`/observe/projects/${projectId}/hypotheses`),
-    15000,
-  );
-  const { data: org, reload: reloadOrg } = usePoll(
-    () => get<OrgView>(`/observe/projects/${projectId}/org`),
-    15000,
-  );
-  const { data: health, reload: reloadHealth } = usePoll(
-    () => get<ProjectHealth>(`/observe/projects/${projectId}/health`),
-    10000,
-  );
-  const { data: plan, reload: reloadPlan } = usePoll(
-    () => get<PlanView>(`/observe/projects/${projectId}/plan`),
-    8000,
-  );
-
-  const [confirming, setConfirming] = useState<"pause" | "stop" | null>(null);
-  const onOverview = location.pathname.replace(/\/$/, "") === `/projects/${projectId}`;
-
-  // A failed poll must not blank the page. The last good numbers stay on screen
-  // with their timestamp; the banner says they've stopped refreshing.
-  if (!dash) {
-    return error ? <div className="error">{error}</div> : <p className="subtitle">Loading…</p>;
+/** Each page's name, and — only where the page does not already say it —
+    one sentence on what it is for. A page that explains itself twice is a
+    page that was not sure the first explanation worked. */
+function pageHead(path: string, ctx: ProjectCtx): { title: string; lede?: string } {
+  const ceo = firstName(ctx.ceoName);
+  switch (path) {
+    case "chat":
+      return {
+        title: `Chat with ${ceo}`,
+        lede: `${ceo} runs this project and is the one agent you speak to. Give direction, ask why, `
+          + "or set a rule with “from now on…”. Don't ask for decisions it already holds.",
+      };
+    case "roadmap":
+      return {
+        title: "Roadmap",
+        lede: `What has to be true for this project to be done, in the order it can happen. ${ceo} `
+          + "proposes each requirement; only the platform can mark one met.",
+      };
+    case "tasks":
+      return { title: "Tasks" };
+    case "deliverables":
+      return { title: "Deliverables" };
+    case "team": {
+      const people = ctx.seats.filter((s) => s.state !== "stood_down").length;
+      const teams = ctx.org?.teams.length ?? 0;
+      return {
+        title: "Team",
+        lede: `${people} ${people === 1 ? "person" : "people"} across ${teams} ${teams === 1 ? "team" : "teams"}. `
+          + "Click anyone to see what they are doing right now.",
+      };
+    }
+    case "spend":
+      return {
+        title: "Spend",
+        lede: "Every run is metered by the platform. The budget is a hard limit no agent can talk "
+          + "its way past: it warns, then pauses the project.",
+      };
+    case "reviews":
+      return { title: "Reviews" };
+    case "activity":
+      return {
+        title: "Activity",
+        lede: `Everything that happened on this project. You can read every channel; you speak only to ${ceo}.`,
+      };
+    case "settings":
+      return { title: "Settings" };
+    default:
+      return { title: ctx.dash.name };
   }
+}
 
-  const ctx: ProjectCtx = {
-    projectId,
-    dash,
-    approvals: approvals ?? [],
-    asks: asks ?? [],
-    hypotheses: hypotheses ?? [],
-    org,
-    health,
-    plan,
-    reload,
-    reloadApprovals,
-    reloadOrg,
-    reloadHealth,
-    reloadPlan,
-  };
+/** An old address, kept working: everything after the old prefix lands in
+    the same place under the new one. */
+function Moved({ to }: { to: string }) {
+  const { "*": rest = "" } = useParams();
+  return <Navigate to={rest ? `${to}/${rest}` : to} replace />;
+}
 
-  const tabClass = ({ isActive }: { isActive: boolean }) => "tab" + (isActive ? " active" : "");
-  const utilClass = ({ isActive }: { isActive: boolean }) =>
-    "tab util" + (isActive ? " active" : "");
+export default function ProjectPage() {
+  const frame = useProjectFrame();
+  const location = useLocation();
+  const [confirming, setConfirming] = useState<"pause" | "stop" | null>(null);
+
+  // Leaving a project's page closes the drawer of someone on it.
+  const ctx = frame?.ctx ?? null;
+  const openAgent = ctx?.openAgent;
+  useEffect(() => {
+    if (openAgent) openAgent(null);
+  }, [location.pathname, openAgent]);
+
+  if (!ctx) {
+    return frame?.error ? <div className="error">{frame.error}</div> : <p className="subtitle">Loading…</p>;
+  }
+  const { projectId, dash } = ctx;
+  const base = `/projects/${projectId}`;
+  const sub = location.pathname.slice(base.length).replace(/^\//, "").split("/")[0];
+  const onOverview = sub === "";
+  const head = pageHead(sub, ctx);
 
   return (
     <>
-      <ProjectFrame
-        dash={dash}
-        health={health}
-        plan={plan}
-        org={org}
-        approvals={ctx.approvals}
-        asks={ctx.asks}
-        onStart={async () => {
-          await post(`/admin/projects/${projectId}/start`);
-          reload();
-        }}
-        onPause={() => setConfirming("pause")}
-        onStop={() => setConfirming("stop")}
-      />
+      {!onOverview && <PageHead title={head.title} lede={head.lede} />}
 
       <StandingNotice dash={dash} />
-
-      {/* Everywhere except Overview, which lists these in full a few hundred
-          pixels below. The strip exists so a decision that expires on its own
-          is visible from the tab you happen to be on — not so it is visible
-          twice on the one tab that already leads with it. */}
-      {!onOverview && (
-        <ActionStrip
-          projectId={projectId}
-          dash={dash}
-          approvals={ctx.approvals}
-          hypotheses={ctx.hypotheses}
-          onDecided={() => {
-            reloadApprovals();
-            reload();
-          }}
-        />
-      )}
 
       {confirming && (
         <LifecycleConfirm
@@ -674,65 +353,60 @@ export default function ProjectPage() {
           onConfirm={async (reason) => {
             await post(`/admin/projects/${projectId}/${confirming}`, { reason });
             setConfirming(null);
-            reload();
+            ctx.reload();
           }}
         />
       )}
-      {/* One answer to "why is nothing happening?", on every tab — a chairman
-          who opens Work to see four tasks sitting still should not have to go
-          to Overview to learn the project ran out of runs at 01:22. */}
+      {/* One answer to "why is nothing happening?", on every page — a chairman
+          who opens Tasks to see four of them sitting still should not have to
+          go to the Overview to learn the project ran out of runs at 01:22. */}
       <StatusBriefBox dash={dash} projectId={projectId} />
-      {error && (
+      {ctx.error && (
         <div className="error">
-          Not refreshing — {error}. The numbers below are the last that landed.
+          Not refreshing — {ctx.error}. The numbers below are the last that landed.
         </div>
       )}
-
-      <nav className="tabs">
-        {/* Explore keeps Progress. It has no requirements by design, but it
-            very much has work and proof, and those are two of the three lenses
-            — the tab drops the one that does not apply rather than vanishing. */}
-        {TABS.map(([path, label]) => (
-          <NavLink
-            key={path}
-            to={path === "" ? `/projects/${projectId}` : `/projects/${projectId}/${path}`}
-            end={path === ""}
-            className={tabClass}
-          >
-            {label}
-          </NavLink>
-        ))}
-        <span className="sp" />
-        <span className="div" />
-        {UTILITY_TABS.map(([path, label]) => (
-          <NavLink key={path} to={`/projects/${projectId}/${path}`} className={utilClass}>
-            {label}
-          </NavLink>
-        ))}
-      </nav>
+      {ctx.reviews?.open && (onOverview || sub === "roadmap") && (
+        <ReviewBanner projectId={projectId} number={ctx.reviews.open.number} />
+      )}
 
       <Routes>
-        <Route index element={<Overview ctx={ctx} asOf={at} error={error} />} />
-        <Route path="boardroom" element={<Boardroom projectId={projectId} dash={dash} org={org} />} />
-        <Route path="progress/*" element={<Progress ctx={ctx} />} />
+        <Route index element={
+          <Overview ctx={ctx} onPause={() => setConfirming("pause")} onStop={() => setConfirming("stop")}
+            setupBadge={setupBadge(dash, ctx.health)} goalLead={goalLead(dash.goal)} />
+        } />
+        <Route path="chat" element={<Boardroom projectId={projectId} dash={dash} org={ctx.org} />} />
+        <Route path="roadmap" element={<Plan ctx={ctx} />} />
+        <Route path="tasks" element={<Tasks ctx={ctx} />} />
         <Route path="deliverables" element={<Deliverables projectId={projectId} />} />
-        <Route path="records/*" element={<Records ctx={ctx} />} />
-        <Route path="settings" element={<Settings projectId={projectId} dash={dash} org={org} reload={reload} />} />
+        <Route path="team" element={<Team ctx={ctx} />} />
+        <Route path="spend" element={<Spend ctx={ctx} />} />
+        <Route path="reviews" element={<Review ctx={ctx} />} />
+        <Route path="activity/*" element={<Activity ctx={ctx} />} />
+        <Route path="settings" element={<Settings projectId={projectId} dash={dash} org={ctx.org} reload={ctx.reload} />} />
 
-        {/* Old bookmarks and links from outside the app. Every tab that moved
-            keeps working; nobody has to relearn a URL they had written down. */}
-        <Route path="plan" element={<Navigate to={`/projects/${projectId}/progress`} replace />} />
-        <Route path="work" element={<Navigate to={`/projects/${projectId}/progress/board`} replace />} />
-        <Route path="review" element={<Navigate to={`/projects/${projectId}/progress/review`} replace />} />
-        <Route path="board" element={<Navigate to={`/projects/${projectId}/progress/board`} replace />} />
-        <Route path="tasks" element={<Navigate to={`/projects/${projectId}/progress/board`} replace />} />
-        <Route path="evidence" element={<Navigate to={`/projects/${projectId}/progress/proof`} replace />} />
-        <Route path="files" element={<Navigate to={`/projects/${projectId}/deliverables`} replace />} />
-        <Route path="approvals" element={<Navigate to={`/projects/${projectId}/records/decisions`} replace />} />
-        <Route path="runs" element={<Navigate to={`/projects/${projectId}/records/runs`} replace />} />
-        <Route path="channels" element={<Navigate to={`/projects/${projectId}/records/messages`} replace />} />
-        <Route path="memory" element={<Navigate to={`/projects/${projectId}/records/memory`} replace />} />
+        {/* Old bookmarks, emails and links from outside the app. Every page
+            that moved keeps working; nobody relearns a URL they wrote down. */}
+        <Route path="boardroom" element={<Navigate to={`${base}/chat`} replace />} />
+        <Route path="progress" element={<Navigate to={`${base}/roadmap`} replace />} />
+        <Route path="progress/board" element={<Navigate to={`${base}/tasks`} replace />} />
+        <Route path="progress/proof" element={<Navigate to={`${base}/activity/evidence`} replace />} />
+        <Route path="progress/review" element={<Navigate to={`${base}/reviews`} replace />} />
+        <Route path="records/*" element={<Moved to={`${base}/activity`} />} />
+        <Route path="plan" element={<Navigate to={`${base}/roadmap`} replace />} />
+        <Route path="work" element={<Navigate to={`${base}/tasks`} replace />} />
+        <Route path="board" element={<Navigate to={`${base}/tasks`} replace />} />
+        <Route path="review" element={<Navigate to={`${base}/reviews`} replace />} />
+        <Route path="evidence" element={<Navigate to={`${base}/activity/evidence`} replace />} />
+        <Route path="files" element={<Navigate to={`${base}/deliverables`} replace />} />
+        <Route path="approvals" element={<Navigate to={`${base}/activity/decisions`} replace />} />
+        <Route path="runs" element={<Navigate to={`${base}/activity/runs`} replace />} />
+        <Route path="channels" element={<Navigate to={`${base}/activity/messages`} replace />} />
+        <Route path="memory" element={<Navigate to={`${base}/activity/memory`} replace />} />
+        <Route path="*" element={<Navigate to={base} replace />} />
       </Routes>
+
+      {ctx.agentOpen && <AgentDrawer ctx={ctx} agentId={ctx.agentOpen} onClose={() => ctx.openAgent(null)} />}
     </>
   );
 }

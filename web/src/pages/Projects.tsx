@@ -4,7 +4,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { DeskProject, DeskView, get } from "../api";
 import { usePoll } from "../hooks";
 import { AsOf, Skeleton, clip, fmtAgo, fmtUnit } from "../ui";
-import { needsYouCount } from "./Desk";
+import { needsYouCount } from "../desk";
 
 export function statusBadge(status: string) {
   const cls =
@@ -30,7 +30,7 @@ function isTerminal(p: DeskProject): boolean {
     deliberately not counted — a card that shouts "1 waiting on you" when the
     honest answer is "nothing is" teaches the reader to stop reading the number.
 
-    This page does not decide any of that: the Desk does, and this asks it (see
+    This page does not decide any of that: the Inbox does, and this asks it (see
     `needsYouCount`). It used to count for itself and got two things wrong that
     the chip's own link exposed — a paused project counted as one decision
     because it was paused, and its parked approvals counted too, so a portfolio
@@ -144,7 +144,7 @@ function needsIn(items: DeskProject[]): number {
 }
 
 /** The portfolio directory: what projects exist and how each is doing — the
-    Desk answers "what needs me now?"; this page answers "what do I own?".
+    Inbox answers "what needs me now?"; this page answers "what do I own?".
     Scope, search and sort live in the URL so a particular reading of the
     portfolio is a link you can send; the card/compact choice is a preference
     about your own eyes, so it lives in this browser. */
@@ -290,7 +290,7 @@ export default function Projects() {
                 </span>
               ))}
               {waiting > 0 && (
-                <Link to="/desk"><span className="chip warn">{waiting} waiting on you</span></Link>
+                <Link to="/inbox"><span className="chip warn">{waiting} waiting on you</span></Link>
               )}
             </div>
           )}
@@ -437,7 +437,7 @@ function WaitingChip({ p }: { p: DeskProject }) {
   const { needs, terminal } = vitals(p);
   if (needs === 0 || terminal) return null;
   return (
-    <Link to="/desk"><span className="chip warn">{needs} waiting on you</span></Link>
+    <Link to={`/inbox?project=${p.id}`}><span className="chip warn">{needs} waiting on you</span></Link>
   );
 }
 
@@ -483,8 +483,8 @@ function ProjectCard({ p }: { p: DeskProject }) {
 
       <div style={{ display: "flex", gap: 16, marginTop: 10, fontSize: 12.5 }}>
         <Link to={`/projects/${p.id}`}>Overview →</Link>
-        <Link to={`/projects/${p.id}/boardroom`}>Boardroom →</Link>
-        <Link to={`/projects/${p.id}/progress/board`}>Work →</Link>
+        <Link to={`/projects/${p.id}/chat`}>Chat →</Link>
+        <Link to={`/projects/${p.id}/tasks`}>Tasks →</Link>
         <Link to={`/projects/${p.id}/settings`}>Settings →</Link>
       </div>
     </div>

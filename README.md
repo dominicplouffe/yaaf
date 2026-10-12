@@ -41,7 +41,7 @@ true at once — [PLAN.md](docs/PLAN.md) says which claims are load-bearing and
 what would falsify them, and [SECURITY.md](SECURITY.md) says what contains an
 agent and what does not.
 
-<img src="docs/screenshots/cockpit-overview.png" alt="The chairman's cockpit: is it working, the deliverable, the plan, spend against the cap broken down by team, the setup health line, and the org roster">
+<img src="docs/screenshots/cockpit-overview.png" alt="A project's Overview: delivery against the promised date, progress, spend against the cap and who is working now; the decisions waiting on the chairman with their buttons; each agent's status and what it is doing; the CEO's latest message and flags; what is coming up; and spend by team">
 
 A CEO sets the priorities. Teams of specialists argue with each other. A budget
 stops itself and a delivery date nobody can quietly move. **You are the
@@ -62,7 +62,7 @@ approving, cutting, rescheduling, auditing; and setting up teams, data sources
 and rules.
 No dashboard needed day to day.
 
-<img src="docs/screenshots/boardroom.png" alt="The Boardroom tab: the chairman asks the CEO how confident it is in the 30th; the CEO answers with the estimate-to-actual ratio, its re-projection, and what would move it">
+<img src="docs/screenshots/boardroom.png" alt="Chat with the CEO: the chairman asks how confident it is in the 30th; the CEO answers with the estimate-to-actual ratio, its re-projection, and what would move it — with the question it is asking and the approval waiting beside the conversation">
 
 You pick the scopes when you connect:
 
@@ -192,9 +192,9 @@ behaviour is held by golden transcripts of a scripted backend plus one opt-in
 paid check. The rules are the part an agent argues with, so the rules are the
 part under attack.
 
-<img src="docs/screenshots/plan-and-promise.png" alt="The Plan tab: the commitment at risk with its two levers, pace and waste, the burn-up against the committed and projected dates, and requirements in stages with dependencies">
+<img src="docs/screenshots/plan-and-promise.png" alt="The Roadmap: the commitment with its levers, pace and waste, the burn-up against the committed and projected dates, and requirements in stages with dependencies">
 
-<img src="docs/screenshots/work-and-proof.png" alt="The Work tab: the platform's sampled close waiting on the chairman, the read-only board, and every piece of evidence with its verification status including a failed check">
+<img src="docs/screenshots/work-and-proof.png" alt="Tasks: a read-only board — ready, in progress, being checked, stuck, done — with each task's team, holder and the bet it serves, and a button to ask the CEO for a change">
 
 **How much you decide is a setting.** *Supervised*: you accept scope, sign the
 date, judge the closes a script can't check. *Autonomous*: the CEO does all

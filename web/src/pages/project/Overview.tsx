@@ -1,54 +1,55 @@
-import { useState } from "react";
-import { Link } from "react-router-dom";
+import { ReactNode, useEffect, useMemo, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import {
-  ActivitySeat,
-  ActivityView,
+  AgendaView,
+  ChannelRow,
   Dashboard,
   get,
   HealthCheck,
-  OrgView,
+  MessageRow,
   post,
   RunRow,
-  SpendBucket,
-  SpendReport,
-  TaskRow,
 } from "../../api";
+import Agenda from "../../agenda";
+import { ItemActions, itemsFor, needsYou, soonestClock, useDesk } from "../../desk";
 import { fmtWhen, usePoll } from "../../hooks";
+import Markdown from "../../Markdown";
+import { firstName, ProjectCtx } from "../../projectCtx";
 import {
   AsOf,
   budgetOf,
   clip,
-  clockClass,
-  DecideButtons,
   earlyRunSentence,
   fmtLeft,
+  fmtSoon,
   fmtUnit,
   fmtWhenShort,
-  hoursSince,
-  idleSentence,
   NoteAction,
-  downloadCsv,
   paceDate,
   runHealth,
-  Skeleton,
-  spentOf,
 } from "../../ui";
-import { BarChart, ChartHead, EmptyState, Person, Term, Verdict } from "../../ui/kit";
+import { Avatar, Badge, Btn, Term, Verdict } from "../../ui/kit";
+import { Icon } from "../../ui/Icon";
 import { chairmanDecides, deliveryVerdict, flagPlain, fmtDate, fullyAutonomous } from "../../ui/project";
-import Agenda from "../../agenda";
-import { PlanMeter } from "../../llmCredentials";
-import { HirePanel, gapsFor, needsOf, useRoleLibrary } from "../../roles";
-import type { ProjectCtx } from "../Project";
+import { heldFor, SeatState } from "../../ui/team";
+import { statusBadge } from "../Projects";
+import { SpendByTeam } from "./Spend";
+import { SeatPill } from "./Team";
 
-/** A deliverable as the files index sends it: the newest version of a name,
-    with its receipt when one was written. */
-interface ShelfRow {
-  key: string;
-  name: string;
-  size: number;
-  at: string | null;
-  receipt: { key: string } | null;
-}
+/** The first page of a project answers three questions, in the order a
+    chairman asks them, in about five seconds:
+
+      is it on track?            four tiles — delivery, progress, money, people
+      does anything need me?     the decisions only you can make, with their clocks
+      what is the team doing?    every person, and the one thing each is on
+
+    It used to be a twelve-section scroll fed by sixteen pollers, each section
+    with its own visual grammar, and the reader assembled the answer. The
+    sections that were really other pages went to them — the roster to Team,
+    the money to Spend, the records to Activity — and what stayed is what you
+    open the project to find out. Everything here links to where its detail
+    lives. */
+
 /** An obligation to speak, opened by the platform from arithmetic or a failed
     check — never by the CEO deciding the news was worth your time. */
 interface FlagRow {
@@ -64,15 +65,14 @@ interface FlagRow {
   acknowledged_at: string | null;
   acknowledgement: string | null;
 }
-interface FlagsView {
-  unraised: number;
-  flags: FlagRow[];
-}
+interface FlagsView { unraised: number; flags: FlagRow[] }
 
-interface ShelfView {
-  matched: number;
-  rows: ShelfRow[];
-}
+/** A deliverable as the files index sends it: the newest version of a name,
+    with its receipt when one was written. */
+interface ShelfRow { key: string; name: string; size: number; at: string | null; receipt: { key: string } | null }
+interface ShelfView { matched: number; rows: ShelfRow[] }
+
+const SEAT_ORDER: SeatState[] = ["working", "waiting", "blocked", "next", "idle", "paused"];
 
 function fmtSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -80,286 +80,170 @@ function fmtSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-/** Setup & health. A healthy project gets one quiet affirmative line — silence
-    is ambiguous with a broken health check, and the ambiguity costs more than
-    the pixels. Failing rows keep their plain-language fixes. */
-function HealthLine({ ctx }: { ctx: ProjectCtx }) {
-  const { projectId, health: data, reloadHealth, reloadOrg } = ctx;
-  const [show, setShow] = useState(false);
-  if (!data) return null;
-
-  if (data.all_ok && !show) {
-    return (
-      <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "14px 0", fontSize: 13 }}>
-        <span className="badge good">healthy</span>
-        <span className="help">All {data.checks.length} health checks passing.</span>
-        <button className="small" onClick={() => setShow(true)}>show</button>
-      </div>
-    );
+/** Who holds which verb, in one word for the header. */
+function autonomyWord(dash: Dashboard): { word: string; means: string } {
+  if (fullyAutonomous(dash)) {
+    return { word: "Autonomous", means: "Your CEO accepts its own plan, signs dates and judges unverifiable work, and tells you after. Money, legal questions and credentials are always yours." };
   }
-  const badge = (status: HealthCheck["status"]) => (
-    <span className={`badge ${status === "fail" ? "critical" : status === "warn" ? "warn" : "good"}`}>
-      {status}
-    </span>
-  );
+  const all = (["plan_authority", "scope_authority", "commitment_authority", "verdict_policy", "capability_authority"] as const)
+    .every((r) => chairmanDecides(dash, r));
+  return all
+    ? { word: "Supervised", means: "You accept scope, sign the delivery date and judge work no script can check. Your CEO proposes." }
+    : { word: "Mixed autonomy", means: "Some decisions are yours and some are your CEO's — Settings → How it runs says which." };
+}
+
+/** Runs started per hour today, for the sparkline under "Working now". */
+function runsByHour(runs: RunRow[]): number[] {
+  const now = new Date();
+  const hours = new Array(now.getHours() + 1).fill(0);
+  for (const r of runs) {
+    if (!r.started_at) continue;
+    const at = new Date(r.started_at);
+    if (at.toDateString() === now.toDateString()) hours[at.getHours()] += 1;
+  }
+  return hours.length > 1 ? hours : [0, ...hours];
+}
+
+function Sparkline({ values }: { values: number[] }) {
+  const w = 200;
+  const h = 28;
+  const max = Math.max(...values, 1);
+  const step = w / Math.max(values.length - 1, 1);
+  const pts = values.map((v, i) => [i * step, h - 3 - (v / max) * (h - 6)] as const);
+  const d = pts.map((p, i) => `${i ? "L" : "M"}${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join(" ");
+  const last = pts[pts.length - 1];
   return (
-    <div className="card" style={{ margin: "14px 0" }}>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-        <strong>Setup &amp; health</strong>
-        <div className="spacer" />
-        {data.all_ok && <button className="small" onClick={() => setShow(false)}>hide</button>}
-      </div>
-      {!data.all_ok && (
-        <p className="subtitle" style={{ margin: "4px 0 8px" }}>
-          The project tells you what it needs, instead of failing quietly at 9am. Fix the rows
-          below and this collapses back to one green line.
-        </p>
-      )}
-      {data.checks.map((check) => (
-        <div
-          key={check.key}
-          style={{
-            display: "flex",
-            gap: 10,
-            alignItems: "baseline",
-            padding: "4px 0",
-            ...(check.status === "ok" ? { opacity: 0.5 } : {}),
-          }}
-        >
-          {badge(check.status)}
-          <span style={{ flex: 1, fontSize: 13 }}>{check.detail}</span>
-          {check.action?.kind === "repin" ? (
-            <button
-              className="small"
-              onClick={async () => {
-                await post(`/admin/teams/${check.action!.team_id}/repin`, {});
-                reloadHealth();
-                // The team card below names the pinned version; adopting from
-                // here has to move it too, or the two rows disagree.
-                reloadOrg();
-              }}
-            >
-              adopt latest role version
-            </button>
-          ) : check.status !== "ok" && WHERE_TO[check.where ?? ""] ? (
-            <Link to={`/projects/${projectId}/${check.where}`}>
-              {WHERE_TO[check.where!]} →
-            </Link>
-          ) : null}
-        </div>
-      ))}
+    <svg className="spark" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" aria-hidden="true">
+      <path d={`${d} L ${w} ${h} L 0 ${h} Z`} fill="var(--accent-fill)" stroke="none" />
+      <path d={d} fill="none" stroke="var(--accent)" strokeWidth="1.6" vectorEffect="non-scaling-stroke" />
+      <circle cx={last[0]} cy={last[1]} r="2.4" fill="var(--accent)" />
+    </svg>
+  );
+}
+
+/** Today, the promise, and the projection on one line — so "at risk" is a
+    picture of a gap and not only a word. */
+function Timeline({ start, promised, projected }: { start: string; promised: string; projected: string | null }) {
+  const t0 = new Date(start).getTime();
+  const tp = new Date(promised).getTime();
+  const tj = projected ? new Date(projected).getTime() : tp;
+  const end = Math.max(tp, tj) + (Math.max(tp, tj) - t0) * 0.06;
+  const pos = (t: number) => `${Math.min(100, Math.max(0, ((t - t0) / (end - t0)) * 100))}%`;
+  const late = tj > tp;
+  return (
+    <div className="tl" aria-hidden="true">
+      <i className="tl-done" style={{ width: pos(Date.now()) }} />
+      {late && <i className="tl-slip" style={{ left: pos(tp), width: `calc(${pos(tj)} - ${pos(tp)})` }} />}
+      <i className="tl-mark today" style={{ left: pos(Date.now()) }} />
+      <i className="tl-mark promised" style={{ left: pos(tp) }} />
+      {projected && <i className="tl-mark projected" style={{ left: pos(tj) }} />}
+      <span className="tl-lab" style={{ left: pos(Date.now()) }}>Today</span>
+      <span className={`tl-lab${late ? " end" : ""}`} style={{ left: pos(tp) }}>{fmtDate(promised)}</span>
     </div>
   );
 }
 
-/** Where a health check says the fix lives. A check that names a destination
-    the reader cannot click is a check that gets read once and then skipped:
-    before this, only `settings` was linked, so drift reported against the plan
-    or the roster arrived as a sentence with nowhere to go. */
-const WHERE_TO: Record<string, string> = {
-  settings: "fix in Settings",
-  plan: "open the Plan",
-  boardroom: "open the boardroom",
-};
-
-/** Budget meter with pace: position is a fact, the projected cap date is the
-    decision aid — a fuel gauge vs a range estimate. */
-function BudgetMeter({ ctx }: { ctx: ProjectCtx }) {
-  const { dash } = ctx;
-  const { usdMode, unit, spent, cap, warnRatio, frac } = budgetOf(dash);
-  const capped = Math.min(frac, 1);
-  const cls = frac >= 1 ? "over" : frac >= warnRatio ? "warn" : "";
+function Kpis({ ctx }: { ctx: ProjectCtx }) {
+  const { dash, plan, seats, projectId, hypotheses } = ctx;
+  const verdict = deliveryVerdict(dash, plan);
+  const c = plan?.commitment;
+  const { unit, spent, cap, warnRatio, frac } = budgetOf(dash);
   const pace = paceDate(spent, cap);
-  const state =
-    frac >= 1
-      ? "✖ exhausted — auto-paused"
-      : frac >= warnRatio
-        ? "⚠ past the warning threshold"
-        : "✓ within budget";
-  return (
-    <div className="tile" style={{ border: "none", padding: 0, background: "none" }}>
-      <div className="label">Monthly budget ({usdMode ? "USD" : "tokens"})</div>
-      <div className="value">
-        {fmtUnit(spent, unit)}{" "}
-        <span style={{ fontSize: 14, color: "var(--muted)" }}>/ {fmtUnit(cap, unit)}</span>
-      </div>
-      <div className="meter">
-        <div className="track">
-          <div className={`fill ${cls}`} style={{ width: `${capped * 100}%` }} />
-          <div className="tick" style={{ left: `${warnRatio * 100}%` }} />
-        </div>
-        <div className="legend">
-          <span>
-            {state}
-            {pace && frac < 1 && (
-              <> · on pace to hit the cap {fmtWhenShort(pace.toISOString())} — before the month ends</>
-            )}
-          </span>
-          <span>warn at {Math.round(warnRatio * 100)}%</span>
-        </div>
-        <div className="legend" style={{ marginTop: 2 }}>
-          <span>
-            {dash.billing_secret_name
-              ? `paying with: ${dash.billing_secret_name} (${usdMode ? "API key" : "Claude subscription"})`
-              : "⚠ no payment credential connected — real runs will fail (Settings)"}
-            {(dash.credentials ?? []).filter((c) => !c.billing).map((c) =>
-              ` · ${c.label}: ${c.name}`).join("")}
-          </span>
-        </div>
-        <PlanMeter credentialId={dash.billing_secret_id} mode={dash.billing_mode} />
-      </div>
-    </div>
-  );
-}
-
-/** Who is spending it. One series, named rows, sorted — the question is
-    "which team costs me money", and a 14-day time series cannot answer it.
-
-    These rows are the meter above them, broken out: same ledger, same
-    month-to-date window, same unit, so they add up to it. They are worth
-    nothing otherwise — a reader who catches a card contradicting itself is
-    right to stop believing the rest of the page. */
-function SpendByTeam({ projectId, usdMode }: { projectId: string; usdMode: boolean }) {
-  const { data, at } = usePoll(
-    () => get<SpendReport>(`/observe/projects/${projectId}/spend?group_by=team&window=month`),
-    30000,
-  );
-  const unit = usdMode ? ("usd" as const) : ("tokens" as const);
-  const spent = (r: SpendBucket) => spentOf(r, usdMode);
-  const rows = [...(data?.rows ?? [])].sort((a, b) => spent(b) - spent(a));
-  if (rows.length === 0) return null;
-  const total = rows.reduce((sum, r) => sum + spent(r), 0);
-  const top = rows[0];
-  const rest = total - spent(top);
-  const month = new Date().toLocaleDateString(undefined, { month: "long", year: "numeric" });
+  const health = runHealth(ctx.runs ?? []);
+  const people = seats.filter((s) => s.state !== "stood_down");
+  const busy = people.filter((s) => s.state === "working").length;
+  const reqs = (plan?.requirements ?? []).filter((r) => r.status !== "cut");
+  const explore = dash.mode === "explore";
+  const bets = hypotheses.filter((h) => h.status === "active");
+  const base = `/projects/${projectId}`;
+  const tone = verdict.tone === "good" ? "good" : verdict.tone;
 
   return (
-    <div className="card" style={{ marginTop: "var(--s5)" }}>
-      {/* A chart states its own question, its window, its unit and the moment
-          it was true. This reader keeps their own records and will check. */}
-      <ChartHead
-        question={`Where did this month's ${fmtUnit(total, unit)} go?`}
-        meta={`By team · ${month} · ${unit === "usd" ? "US dollars" : "tokens"}${at ? ` · as of ${at.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}` : ""}`}
-        onExport={() =>
-          downloadCsv(
-            "spend-by-team.csv",
-            ["Team", unit === "usd" ? "Spent (USD)" : "Spent (tokens)", "Share", "Pieces of work"],
-            rows.map((r) => [
-              r.label,
-              spent(r),
-              `${Math.round((spent(r) / (total || 1)) * 100)}%`,
-              r.runs,
-            ]),
-          )
-        }
-      />
-      <BarChart
-        bars={rows.map((r) => ({
-          label: r.label,
-          value: spent(r),
-          display: fmtUnit(spent(r), unit),
-          team: r.label,
-        }))}
-        total={fmtUnit(total, unit)}
-        unit={fmtUnit(Math.max(...rows.map(spent)), unit)}
-      />
-      {rows.length > 1 && spent(top) > rest && (
-        <p className="help" style={{ margin: "var(--s3) 0 0" }}>
-          {top.label} costs more than the other {rows.length - 1} put together — worth knowing
-          before you raise the cap.
-        </p>
-      )}
-    </div>
-  );
-}
-
-/** The paragraph under the verdict: the arithmetic behind the sentence, so a
-    reader who keeps their own records can check it rather than take it.
-    Everything here is a number the platform already computed — the point is
-    that it is said in one place, in a sentence, instead of being spread over
-    six tiles the reader has to assemble themselves. */
-function verdictBody(
-  dash: Dashboard,
-  ctx: ProjectCtx,
-  daysLate: number | null,
-  waiting: number,
-) {
-  const v = ctx.plan?.velocity;
-  const c = ctx.plan?.commitment;
-  // The server's own count, not `scope_total - remaining`: those two exclude
-  // different things, so this sentence used to run ahead by the number of open
-  // metric requirements — and disagree with the chart below it.
-  const settled = ctx.plan?.burnup ? ctx.plan.burnup.settled : null;
-
-  if (daysLate !== null && c?.projected_done_at) {
-    // Name the date. "8 days past the date you signed" left the reader to go
-    // and look up which date that was, in a sentence whose whole job was to
-    // tell him he had missed it — and quoted a pace without it, so "32 a week
-    // and 3 left" read like good news attached to a complaint.
-    const yours = chairmanDecides(dash, "scope_authority")
-      || chairmanDecides(dash, "commitment_authority");
-    return (
-      <>
-        {v && v.pace_known && v.remaining > 0 ? (
-          <>
-            <b>{v.remaining}</b> requirement{v.remaining === 1 ? " is" : "s are"} still open, and at{" "}
-            <b>{v.per_week_3w.toFixed(1)} a week</b> {v.remaining === 1 ? "it lands" : "they land"}{" "}
-            around <b>{fmtDate(c.projected_done_at)}</b> — {daysLate} day
-            {daysLate === 1 ? "" : "s"} past the <b>{fmtDate(c.deliver_by)}</b> you signed.{" "}
-          </>
-        ) : (
-          <>
-            The work still open looks like finishing around <b>{fmtDate(c.projected_done_at)}</b>,
-            which is {daysLate} day{daysLate === 1 ? "" : "s"} past the{" "}
-            <b>{fmtDate(c.deliver_by)}</b> you signed.{" "}
-          </>
+    <section className="kpis" aria-label="Is it on track?">
+      <Link className="kpi" to={explore ? `${base}/tasks` : `${base}/roadmap`}>
+        <span className="kpi-l"><Icon name="calendar" size={14} />Delivery</span>
+        <span className={`kpi-v ${tone}`}>{verdict.label}</span>
+        <span className="kpi-s">{verdict.sub}</span>
+        {c?.deliver_by && (
+          <Timeline start={c.accepted_at ?? dash.created_at} promised={c.deliver_by} projected={c.projected_done_at} />
         )}
-        {yours
-          ? "Nothing new goes into the plan until you choose, and the work already under way carries on either way."
-          : "You left scope and dates to your CEO, so it will cut something or move the date itself and tell you what it did. The work already under way carries on either way."}
-      </>
-    );
-  }
-
-  if (dash.status === "paused" || dash.status === "stopped") {
-    return <>{dash.status_reason ?? "No reason was recorded."}</>;
-  }
-
-  return (
-    <>
-      {settled !== null && ctx.plan?.burnup ? (
-        <>
-          <b>{settled}</b> of <b>{ctx.plan.burnup.scope_total}</b> requirements are settled
-          {v && v.per_week_3w > 0 ? <>, at {v.per_week_3w.toFixed(2)} a week</> : null}.{" "}
-        </>
-      ) : null}
-      {waiting === 0
-        ? "Nothing is waiting on a decision from you."
-        : `${waiting} thing${waiting === 1 ? "" : "s"} below need${waiting === 1 ? "s" : ""} a decision from you.`}
-    </>
+      </Link>
+      {explore ? (
+        <Link className="kpi" to={`${base}/tasks`}>
+          <span className="kpi-l"><Icon name="target" size={14} />Bets in play</span>
+          <span className="kpi-v">{bets.length}</span>
+          <span className="kpi-s">
+            {dash.ceo_judgment.tasks_with_verified_external} of {dash.ceo_judgment.tasks_created} bets
+            ever proven outside the project
+          </span>
+        </Link>
+      ) : (
+        <Link className="kpi" to={`${base}/roadmap`}>
+          <span className="kpi-l"><Icon name="flag" size={14} />Progress</span>
+          <span className="kpi-v">
+            {plan?.burnup?.settled ?? reqs.filter((r) => r.status === "met").length}
+            <span className="kpi-of"> of {plan?.burnup?.scope_total ?? reqs.length}</span>
+          </span>
+          <span className="kpi-s">
+            <Term means="A requirement is a testable outcome; together they define done. Only the platform can mark one met.">
+              requirements
+            </Term>{" "}met
+            {reqs.some((r) => r.status === "in_progress") && ` · ${reqs.filter((r) => r.status === "in_progress").length} in progress`}
+            {dash.requirements_proposed > 0 && ` · ${dash.requirements_proposed} proposed`}
+          </span>
+          {reqs.length > 0 && (
+            <span className="segbar">
+              {reqs.map((r) => (
+                <i key={r.id} className={r.status === "met" ? "met" : r.status === "in_progress" ? "prog" : r.status === "proposed" ? "prop" : ""}
+                  title={`${r.key} — ${r.status.replaceAll("_", " ")}`} />
+              ))}
+            </span>
+          )}
+        </Link>
+      )}
+      <Link className="kpi" to={`${base}/spend`}>
+        <span className="kpi-l"><Icon name="wallet" size={14} />Spent this month</span>
+        <span className="kpi-v">{fmtUnit(spent, unit)}<span className="kpi-of"> of {fmtUnit(cap, unit)}</span></span>
+        <span className="kpi-s">
+          {frac >= 1 ? "the cap is reached — the project is paused"
+            : pace ? `on pace to reach the cap ${fmtWhenShort(pace.toISOString())}`
+              : "on pace to finish the month under the cap"}
+        </span>
+        <span className="meterline">
+          <i className={frac >= 1 ? "over" : frac >= warnRatio ? "warn" : ""} style={{ width: `${Math.min(frac, 1) * 100}%` }} />
+          <b style={{ left: `${warnRatio * 100}%` }} title={`Warns at ${Math.round(warnRatio * 100)}%`} />
+        </span>
+      </Link>
+      <Link className="kpi" to={`${base}/team`}>
+        <span className="kpi-l"><Icon name="users" size={14} />Working now</span>
+        <span className="kpi-v">{busy}<span className="kpi-of"> of {people.length}</span></span>
+        <span className="kpi-s">
+          {dash.activity.daily_runs.used} of {dash.activity.daily_runs.cap} runs today
+          {health.early.length > 0 && ` · ${health.early.length} ended early`}
+        </span>
+        <Sparkline values={runsByHour(ctx.runs ?? [])} />
+      </Link>
+    </section>
   );
 }
 
-/** The first tab answers the daily question in order: needs you → is it
-    working → what came out → what to watch → the money → the org. */
 /** The mode-shaped fact, one per mode: Explore counts its window down,
     Deliver offers the completion gate the moment everything is true, Operate
     names the turn of the rhythm it is on. */
-function ModeStrip({ dash, reload }: { dash: import("../../api").Dashboard;
-  reload: () => void }) {
+function ModeStrip({ dash, reload }: { dash: Dashboard; reload: () => void }) {
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   if (dash.mode === "deliver" && dash.delivery_outstanding !== null
       && dash.delivery_outstanding.length === 0) {
     return (
-      <div className="strip" style={{ marginTop: 12, borderLeftColor: "var(--good)" }}>
+      <div className="strip good">
         <div className="grow">
           <b>Everything is true. This delivery is ready for your confirmation.</b>
           <div className="sb">
-            Completing writes the receipt — including which requirements failed before
-            they passed — and closes the project down cleanly. Until you do, it keeps
-            running and spending.
+            Completing writes the receipt — including which requirements failed before they
+            passed — and closes the project down cleanly. Until you do, it keeps running and
+            spending.
           </div>
           {error && <div className="error">{error}</div>}
         </div>
@@ -370,31 +254,25 @@ function ModeStrip({ dash, reload }: { dash: import("../../api").Dashboard;
                 await post(`/admin/projects/${dash.id}/complete`);
                 reload();
               } catch (e) { setError((e as Error).message); }
-            }}>✓ Yes, complete it</button>
-            <button className="small" onClick={() => setConfirming(false)}>not yet</button>
+            }}>Yes, complete it</button>
+            <button className="small" onClick={() => setConfirming(false)}>Not yet</button>
           </>
         ) : (
-          <button className="small primary" onClick={() => setConfirming(true)}>
-            Complete the project…
-          </button>
+          <button className="small primary" onClick={() => setConfirming(true)}>Complete the project…</button>
         )}
       </div>
     );
   }
   if (dash.mode === "explore" && dash.deadline) {
-    const daysLeft = Math.ceil(
-      (new Date(dash.deadline).getTime() - Date.now()) / 86_400_000);
+    const daysLeft = Math.ceil((new Date(dash.deadline).getTime() - Date.now()) / 86_400_000);
     return (
-      <div className={`strip${daysLeft <= 0 ? " serious" : ""}`} style={{ marginTop: 12 }}>
+      <div className={`strip${daysLeft <= 0 ? " serious" : ""}`}>
         <div className="grow">
-          <b>{daysLeft > 0
-            ? `${daysLeft} day${daysLeft === 1 ? "" : "s"} left in the window.`
-            : "The window has closed."}</b>
+          <b>{daysLeft > 0 ? `${daysLeft} day${daysLeft === 1 ? "" : "s"} left in the window.` : "The window has closed."}</b>
           <div className="sb">
             Open scope, bounded time — {daysLeft > 0
               ? "what exists by then is what this project is judged on."
-              : "the judgment is yours: stop it, set a new date in Settings, or " +
-                "convert what worked into a Deliver project."}
+              : "the judgment is yours: stop it, set a new date in Settings, or convert what worked into a Deliver project."}
           </div>
         </div>
       </div>
@@ -404,23 +282,17 @@ function ModeStrip({ dash, reload }: { dash: import("../../api").Dashboard;
     const c = dash.cycle;
     // With a date in play the honest question is not "when did this open" but
     // "does the work reach it". That answer is arithmetic — the same the
-    // dispatcher gates on — so it is stated here rather than left to be asked
-    // for in the boardroom and answered from memory.
+    // dispatcher gates on — so it is stated rather than left to be asked.
     if (c.due_at && c.capacity) {
       const cap = c.capacity;
       return (
-        <div className={`strip${cap.feasible ? "" : " serious"}`} style={{ marginTop: 12 }}>
+        <div className={`strip${cap.feasible ? "" : " serious"}`}>
           <div className="grow">
-            <b>
-              Cycle {c.ordinal} is due {fmtWhen(c.due_at)} —{" "}
-              {cap.feasible ? "the work fits." : "the work does not fit."}
-            </b>
+            <b>Cycle {c.ordinal} is due {fmtWhen(c.due_at)} — {cap.feasible ? "the work fits." : "the work does not fit."}</b>
             <div className="sb">
               {c.goal ? <>{clip(c.goal)}<br /></> : null}
               {cap.why}. {cap.basis}.
-              {cap.retry_reserve > 0 && (
-                <> Holding back {cap.retry_reserve} run(s) for retries.</>
-              )}
+              {cap.retry_reserve > 0 && <> Holding back {cap.retry_reserve} run(s) for retries.</>}
               {c.due_source?.kind === "data" && c.due_source.url && (
                 <> Date read from <span className="mono">{c.due_source.url}</span>.</>
               )}
@@ -430,106 +302,267 @@ function ModeStrip({ dash, reload }: { dash: import("../../api").Dashboard;
       );
     }
     return (
-      <p className="help" style={{ margin: "12px 0 0" }}>
+      <p className="help">
         Cycle {c.ordinal}, open since {fmtWhen(c.opened_at)}
-        {c.goal ? <> — {clip(c.goal)}</> : <> — each cycle plans fresh, and the CEO opens
-        it by reading the last three cycles' narratives.</>}
+        {c.goal ? <> — {clip(c.goal)}</> : <> — each cycle plans fresh, and the CEO opens it by reading the last three cycles' narratives.</>}
       </p>
     );
   }
   return null;
 }
 
-export default function Overview({
-  ctx,
-  asOf,
-  error,
-}: {
-  ctx: ProjectCtx;
-  asOf: Date | null;
-  error: string | null;
-}) {
-  const { projectId, dash, approvals, hypotheses, org, reload, reloadApprovals, reloadOrg } = ctx;
-  const { data: tasks } = usePoll(
-    () => get<TaskRow[]>(`/observe/projects/${projectId}/board`),
-    10000,
+/** The arithmetic behind "at risk", with the levers beside it — only when the
+    date is actually in trouble, and only the levers the dial left with you. */
+function LateBanner({ ctx }: { ctx: ProjectCtx }) {
+  const { dash, plan, projectId } = ctx;
+  const verdict = deliveryVerdict(dash, plan);
+  if (verdict.daysLate === null) return null;
+  const v = plan?.velocity;
+  const c = plan?.commitment;
+  const scope = chairmanDecides(dash, "scope_authority");
+  const date = chairmanDecides(dash, "commitment_authority");
+  return (
+    <Verdict
+      tone={verdict.tone === "good" ? undefined : verdict.tone}
+      headline={verdict.headline}
+      actions={scope || date ? (
+        <>
+          {scope && <Link to={`/projects/${projectId}/roadmap`}><button className="primary">Drop something from the plan</button></Link>}
+          {date && <Link to={`/projects/${projectId}/roadmap`}><button>Move the delivery date</button></Link>}
+        </>
+      ) : (
+        <Link to={`/projects/${projectId}/chat`}><button>Ask {firstName(ctx.ceoName)} what it is doing about it</button></Link>
+      )}
+    >
+      <p>
+        {v && v.pace_known && v.remaining > 0 && c?.projected_done_at ? (
+          <>
+            <b>{v.remaining}</b> requirement{v.remaining === 1 ? " is" : "s are"} still open, and at{" "}
+            <b>{v.per_week_3w.toFixed(1)} a week</b> {v.remaining === 1 ? "it lands" : "they land"} around{" "}
+            <b>{fmtDate(c.projected_done_at)}</b>.{" "}
+          </>
+        ) : null}
+        {scope || date
+          ? "Nothing new goes into the plan until you choose, and the work already under way carries on either way."
+          : "You left scope and dates to your CEO, so it will cut something or move the date itself and tell you what it did."}
+      </p>
+    </Verdict>
   );
-  const { data: runs } = usePoll(
-    () => get<RunRow[]>(`/observe/projects/${projectId}/runs?limit=200`),
-    8000,
-  );
-  // Three rows and a count, asked of the same index the Deliverables tab
-  // reads. This card used to fetch every file the project had — the whole
-  // workspace walk, every twenty seconds — to show three of them.
-  const { data: shelf } = usePoll(
-    () => get<ShelfView>(
-      `/observe/projects/${projectId}/files/browse/rows?state=published&sort=at&desc=true&limit=3`,
-    ),
-    20000,
-  );
-  const { data: flagsView, reload: reloadFlags } = usePoll(
-    () => get<FlagsView>(`/observe/projects/${projectId}/flags`),
-    8000,
-  );
-  // Today, in the project's own timezone — not a rolling 24 hours. The roster
-  // card named the people and said nothing about what any of them had done,
-  // which is the question anyone reading a roster is actually asking.
-  const { data: activity } = usePoll(
-    () => get<ActivityView>(`/observe/projects/${projectId}/activity?since=today`),
-    15000,
-  );
-  const today = new Map((activity?.seats ?? []).map((s) => [s.agent_id, s]));
-  const [repinMsg, setRepinMsg] = useState<string | null>(null);
+}
 
-  const pending = approvals.filter((a) => a.status === "pending");
-  const expiredBets = hypotheses.filter((h) => h.status === "expired" && !h.extended_once);
-  const blocked = (tasks ?? []).filter((t) => t.status === "blocked");
-  const killSoon = hypotheses.filter(
-    (h) => h.status === "active" && hoursSince(h.kill_date) > -7 * 24 && hoursSince(h.kill_date) < 0,
+/** The CEO's last word, and anything the platform made it bring you — the
+    news, beside the work, one step from answering it. */
+function CeoCard({ ctx, news }: { ctx: ProjectCtx; news: ReactNode[] }) {
+  const { projectId } = ctx;
+  const navigate = useNavigate();
+  const [channelId, setChannelId] = useState<string | null>(null);
+  useEffect(() => {
+    get<ChannelRow[]>(`/observe/projects/${projectId}/channels`)
+      .then((cs) => setChannelId(cs.find((c) => c.kind === "boardroom")?.id ?? null))
+      .catch(() => setChannelId(null));
+  }, [projectId]);
+  const { data: tail } = usePoll(
+    () => channelId ? get<MessageRow[]>(`/observe/channels/${channelId}/messages?limit=6`) : Promise.resolve([] as MessageRow[]),
+    15000, [channelId],
   );
-
-  const health = runs ? runHealth(runs) : null;
-  const usdMode = dash.billing_mode === "api_key";
-
-  // Newest version per name — the same deliverable republished by a later run
-  // is a version of one thing, not two unrelated files — and the count is of
-  // names, because the Deliverables tab counts names and the two numbers sit
-  // side by side: counting every version once read three deliverables
-  // republished fifty times as 156 of them.
-  const latestArtifacts = shelf?.rows ?? [];
-  const deliverableCount = shelf?.matched ?? 0;
-
-  // ── needs you ──
-  const rawFlags = flagsView?.flags ?? [];
-  const needs: React.ReactNode[] = [];
-  for (const a of pending) {
-    needs.push(
-      <div className="arow" key={a.id}>
-        <span className="chip accent">{a.kind.replaceAll("_", " ")}</span>
-        <div className="grow">
-          <div className="tt">
-            {a.title}
-            {a.amount_usd !== null && <span className="mono"> — ${a.amount_usd.toLocaleString()}</span>}
-          </div>
-          <div className="sb">the CEO's full case is one click away</div>
+  const last = [...(tail ?? [])].reverse().find((m) => !m.from_user);
+  const ceo = firstName(ctx.ceoName);
+  return (
+    <section className="card ov-card">
+      <div className="card-h">
+        <h3>From {ceo}</h3>
+        {last && <span className="help">{fmtWhen(last.at)}</span>}
+        <span className="grow" />
+        <Link className="card-link" to={`/projects/${projectId}/chat`}>Chat <Icon name="arrow" size={13} /></Link>
+      </div>
+      {last ? (
+        <div className="ceo-last">
+          <Avatar name={ctx.ceoName} team="leadership" />
+          <div className="ceo-body"><Markdown>{clip(last.body, 420)}</Markdown></div>
         </div>
-        <span className={`clock ${clockClass(a.expires_at)}`}>
-          Denies itself in {fmtLeft(a.expires_at).replace(" left", "")}
-        </span>
-        <DecideButtons approvalId={a.id} onDone={reloadApprovals} />
-        <Link to={`/projects/${projectId}/records/decisions`}>context →</Link>
-      </div>,
+      ) : (
+        <p className="help">
+          {ceo} hasn't said anything yet. Open with the goal, the constraints, and how you want to work.
+        </p>
+      )}
+      {news.length > 0 && <div className="ov-news">{news}</div>}
+      <div className="quick">
+        <button className="qchip" onClick={() => navigate(`/projects/${projectId}/chat`)}>
+          <Icon name="reply" size={13} /> Reply…
+        </button>
+        <button className="qchip" onClick={() => navigate(`/projects/${projectId}/chat`, { state: { draft: "What changed since we last spoke, and what is next?" } })}>
+          What changed?
+        </button>
+        <button className="qchip" onClick={() => navigate(`/projects/${projectId}/chat`, { state: { draft: "What is the biggest risk to the date right now?" } })}>
+          Biggest risk?
+        </button>
+      </div>
+    </section>
+  );
+}
+
+/** The calendar, as a list: what happens next, coloured by who resolves it.
+    The full strip — rhythms, every wake, the notes that explain its blanks —
+    is one press away rather than half a screen of the first page. */
+function ComingUp({ projectId }: { projectId: string }) {
+  const [full, setFull] = useState(false);
+  const { data } = usePoll(() => get<AgendaView>(`/observe/projects/${projectId}/agenda?days=14`), 60000);
+  const now = Date.now();
+  const events = (data?.events ?? []).filter((e) => new Date(e.at).getTime() >= now - 3_600_000).slice(0, 7);
+  return (
+    <section className="card ov-card">
+      <div className="card-h">
+        <h3>Coming up</h3>
+        {data && <span className="help">{data.timezone}</span>}
+        <span className="grow" />
+        <button className="card-link" onClick={() => setFull(!full)}>{full ? "Hide the calendar" : "Full calendar"}</button>
+      </div>
+      {full ? <Agenda projectId={projectId} /> : events.length ? (
+        <ul className="agenda-list">
+          {events.map((e, i) => (
+            <li key={`${e.at}-${i}`} className={`ag-${e.tone}`}>
+              <span className="ag-when">
+                <b>{new Date(e.at).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })}</b>
+                <span>{new Date(e.at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}</span>
+              </span>
+              <i className="ag-dot" />
+              <span className="ag-what">{e.label}{e.detail && <span className="help"> — {clip(e.detail, 90)}</span>}</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="help">{data ? (data.notes[0] ?? "Nothing is scheduled in the next fourteen days.") : "Loading…"}</p>
+      )}
+      {!full && (
+        <div className="ag-key">
+          <span className="k-consequence">Decides itself</span>
+          <span className="k-deadline">Deadline</span>
+          <span className="k-meeting">Meeting</span>
+          <span className="k-projection">Projection</span>
+        </div>
+      )}
+    </section>
+  );
+}
+
+/** Setup & health. A healthy project gets one quiet affirmative line — silence
+    is ambiguous with a broken health check, and the ambiguity costs more than
+    the pixels. Failing rows keep their plain-language fixes. */
+function HealthLine({ ctx }: { ctx: ProjectCtx }) {
+  const { projectId, health: data, reloadHealth, reloadOrg } = ctx;
+  const [show, setShow] = useState(false);
+  if (!data) return null;
+  if (data.all_ok && !show) {
+    return (
+      <div className="health-line">
+        <span className="good"><Icon name="check" size={15} strokeWidth={2.2} /></span>
+        <b>Setup is healthy.</b>
+        <span className="help">All {data.checks.length} checks pass.</span>
+        <span className="grow" />
+        <button className="small" onClick={() => setShow(true)}>Details</button>
+      </div>
     );
   }
-  for (const h of expiredBets) {
-    needs.push(
-      <div className="arow" key={h.id}>
-        <span className="chip serious">bet expired</span>
-        <div className="grow">
-          <div className="tt">“{clip(h.statement)}” hit its kill date {fmtWhenShort(h.kill_date)}</div>
-          <div className="sb">you hold the one extension — or let it stand and the CEO pivots</div>
+  const badge = (status: HealthCheck["status"]) => (
+    <span className={`badge ${status === "fail" ? "critical" : status === "warn" ? "warn" : "good"}`}>
+      {status === "fail" ? "broken" : status === "warn" ? "check" : "ok"}
+    </span>
+  );
+  return (
+    <section className="card ov-card" style={{ marginTop: "var(--s4)" }}>
+      <div className="card-h">
+        <h3>Setup &amp; health</h3>
+        <span className="grow" />
+        {data.all_ok && <button className="small" onClick={() => setShow(false)}>Hide</button>}
+      </div>
+      {!data.all_ok && (
+        <p className="help" style={{ margin: "0 0 8px" }}>
+          The project tells you what it needs instead of failing quietly at 9am. Fix the rows below
+          and this collapses back to one line.
+        </p>
+      )}
+      {data.checks.map((check) => (
+        <div key={check.key} className={`hrow${check.status === "ok" ? " ok" : ""}`}>
+          {badge(check.status)}
+          <span className="grow">{check.detail}</span>
+          {check.action?.kind === "repin" ? (
+            <button className="small" onClick={async () => {
+              await post(`/admin/teams/${check.action!.team_id}/repin`, {});
+              reloadHealth();
+              reloadOrg();
+            }}>adopt the latest role version</button>
+          ) : check.status !== "ok" && WHERE_TO[check.where ?? ""] ? (
+            <Link to={`/projects/${projectId}/${WHERE_TO[check.where!][0]}`}>{WHERE_TO[check.where!][1]} →</Link>
+          ) : null}
         </div>
-        <Link to={`/projects/${projectId}/progress/board`}>decide →</Link>
+      ))}
+    </section>
+  );
+}
+
+/** Where a health check says the fix lives — a check that names a place the
+    reader cannot click is read once and then skipped. */
+const WHERE_TO: Record<string, [string, string]> = {
+  settings: ["settings", "fix in Settings"],
+  plan: ["roadmap", "open the Roadmap"],
+  boardroom: ["chat", "open the chat"],
+};
+
+export default function Overview({
+  ctx, onPause, onStop, setupBadge, goalLead,
+}: {
+  ctx: ProjectCtx;
+  onPause: () => void;
+  onStop: () => void;
+  setupBadge: ReactNode;
+  goalLead: string;
+}) {
+  const { projectId, dash, seats, hypotheses } = ctx;
+  const navigate = useNavigate();
+  const desk = useDesk();
+  const [brief, setBrief] = useState(false);
+  const { data: flagsView, reload: reloadFlags } = usePoll(
+    () => get<FlagsView>(`/observe/projects/${projectId}/flags`), 15000);
+  // Three rows and a count, asked of the same index the Deliverables page
+  // reads — not the whole workspace walk, every twenty seconds, to show three.
+  const { data: shelf } = usePoll(
+    () => get<ShelfView>(`/observe/projects/${projectId}/files/browse/rows?state=published&sort=at&desc=true&limit=3`),
+    20000);
+
+  // The same rows the Inbox and the sidebar badge count, for this project. A
+  // paused project is not counted there (pausing is a state, not a request),
+  // but its own page still lists what is parked on it.
+  const deskProject = desk.data?.projects.find((p) => p.id === projectId);
+  const items = useMemo(
+    () => (deskProject ? itemsFor(deskProject, desk.reload) : []),
+    [deskProject, desk.reload],
+  );
+  const soonest = soonestClock(items.filter(needsYou));
+  const health = runHealth(ctx.runs ?? []);
+  const ceo = firstName(ctx.ceoName);
+  const auto = autonomyWord(dash);
+  const base = `/projects/${projectId}`;
+
+  // ── needs you ──
+  // Only what decides itself against you if ignored, and nothing that merely
+  // wants reading. It is the Inbox, filtered to this project, so the count
+  // here, the count in the sidebar and the count in the Inbox are one count.
+  const rawFlags = flagsView?.flags ?? [];
+  const needs: React.ReactNode[] = [];
+  for (const it of items.filter(needsYou)) {
+    needs.push(
+      <div className="need" key={it.key}>
+        <span className={`kind-ic k-${it.type}`}><Icon name={KIND_ICON[it.type]} size={15} /></span>
+        <div className="grow">
+          <Link className="need-t" to={`/inbox?item=${encodeURIComponent(it.key)}`}>{it.what}</Link>
+          <div className="need-m">
+            <span>{it.kind}</span>
+            <span className={it.clocked && it.at - Date.now() < 6 * 3_600_000 ? "warn" : ""}>
+              <Icon name="clock" size={12} /> {it.consequence}
+            </span>
+          </div>
+        </div>
+        <div className="need-a"><ItemActions item={it} /></div>
       </div>,
     );
   }
@@ -538,83 +571,66 @@ export default function Overview({
   //
   // A raised flag is the CEO bringing you something with a proposal. It does
   // not block, it does not expire, and it proceeds on that proposal whether or
-  // not you answer — which is the exact test the `watch` zone below was
-  // written around: "nothing expires, nothing breaks, and no agent is waiting
-  // on it, so putting it beside an approval that auto-denies in 6 hours
-  // teaches the chairman that the needs-you count is padded".
-  //
-  // It sat under "Waiting on you" anyway, with a sentence underneath admitting
-  // it did not belong there. On an autonomous project that was the whole of
-  // the desk: a count of 1, a heading claiming it was his, and nothing he
-  // could do that would change anything. Reading is a real thing to ask of a
-  // chairman. It is not deciding, and the heading now says which one it is.
+  // not you answer — so it reads beside the CEO's last word, never under the
+  // heading that says a decision is waiting on you.
   const news: React.ReactNode[] = [];
   for (const f of rawFlags.filter((f) => f.status === "raised" && !f.acknowledged_at)) {
     const plain = flagPlain(f.kind);
     news.push(
-      <div className="arow" key={f.id}>
-        <span className="chip serious">to read</span>
-        <div className="grow">
-          <div className="tt">{plain.title}</div>
-          <div className="sb">{plain.means}</div>
-          <div className="sb help">
-            Your CEO proposes: {f.proposal ? clip(f.proposal) : "nothing yet"}. It goes ahead on
-            that unless you say otherwise — nothing here blocks or expires.
-          </div>
-          <div className="sb help">In the platform's own words: {clip(f.summary)}</div>
+      <div className="flag" key={f.id}>
+        <div className="flag-t"><Icon name="flag" size={14} /> <b>{plain.title}</b></div>
+        <div className="help">
+          {ceo} proposes: {f.proposal ? clip(f.proposal, 200) : "nothing yet"}. That goes ahead unless
+          you say otherwise.
         </div>
-        <NoteAction
-          label="Noted"
-          className="small"
-          placeholder="Anything to say back? — the CEO reads this"
-          confirmLabel="✓ noted"
-          onSubmit={async (note) => {
-            await post(`/admin/flags/${f.id}/ack`, { note });
-            reloadFlags();
-          }}
-        />
-        <Link to={`/projects/${projectId}/boardroom`}>the CEO's case →</Link>
+        <div className="flag-a">
+          <NoteAction
+            label="Noted"
+            className="small"
+            placeholder={`Anything to say back? — ${ceo} reads this`}
+            confirmLabel="Noted"
+            onSubmit={async (note) => {
+              await post(`/admin/flags/${f.id}/ack`, { note });
+              reloadFlags();
+            }}
+          />
+          <Link to={`${base}/chat`}>talk it through →</Link>
+        </div>
       </div>,
     );
   }
 
-  // ── watch ──
-  // Auditing lives here and not under "Needs you" on purpose. Nothing expires,
-  // nothing breaks, and no agent is waiting on it — so putting it beside an
-  // approval that auto-denies in 6 hours teaches the chairman that the
-  // needs-you count is padded, and then he stops trusting the count that
-  // matters. It is the most valuable optional thing on the page; it is still
-  // optional.
-  const watch: React.ReactNode[] = [];
-  // An UNRAISED flag is different in kind from everything else on this page:
-  // nothing is waiting on you, and there is nothing to decide. It is the one
-  // signal that your CEO has news it has not brought you — which is the whole
-  // reason flags exist. The failure this was built for was a CEO that had
-  // written "run ration is the binding constraint" in its own notes and then
-  // told its chairman "solid progress". Drawn here, cheerfulness in the
-  // boardroom is self-refuting rather than something you have to catch.
-  const unraised = rawFlags.filter((f) => f.status === "open");
-  for (const f of unraised) {
+  // ── watching ──
+  // Clocks the CEO resolves: shown so nothing happens silently, never counted
+  // as needing you. The project-wide ones come from the same rows the Inbox
+  // shows under Watching; the two below exist only here.
+  const watch: ReactNode[] = items.filter((i) => !needsYou(i)).map((it) => (
+    <div className="wrow" key={it.key}>
+      <span className="badge">{it.kind}</span>
+      <div className="grow">{it.what} <span className="help">{it.consequence}</span></div>
+      <Link to={it.to}>{it.toLabel} →</Link>
+    </div>
+  ));
+  // An UNRAISED flag: your CEO has news it has not yet brought you. Drawn
+  // here, cheerfulness in the chat is self-refuting rather than something
+  // you have to catch.
+  for (const f of rawFlags.filter((f) => f.status === "open")) {
     watch.push(
       <div className="wrow" key={f.id}>
         <span className="badge serious">not yet raised</span>
         <div className="grow">
           <b>{flagPlain(f.kind).title}</b>{" "}
           <span className="help">
-            — the platform opened this{f.opened_at ? ` ${fmtWhenShort(f.opened_at)}` : ""}; your
-            CEO is required to bring it to the boardroom with a proposal, and the reporting
-            cadence does not hold it back. In its own words: {clip(f.summary)}
+            — the platform opened this{f.opened_at ? ` ${fmtWhenShort(f.opened_at)}` : ""}; {ceo} is
+            required to bring it to you with a proposal. In its own words: {clip(f.summary)}
           </span>
         </div>
-        <Link to={`/projects/${projectId}/boardroom`}>ask about it →</Link>
+        <Link to={`${base}/chat`}>ask about it →</Link>
       </div>,
     );
   }
-  // Acknowledged, and still true. A moment closes when you answer it — a
-  // missed cycle cannot un-miss, so your word is the end of it. A state cannot:
-  // the forecast is still negative, and saying so does not turn it. Rather than
-  // let the card vanish as if answering had fixed it, it drops here under your
-  // own note until the arithmetic turns and the platform resolves it.
+  // Acknowledged, and still true: your word ended the conversation, not the
+  // condition, so it waits here under your note until the arithmetic turns.
   for (const f of rawFlags.filter((f) => f.status === "raised" && f.acknowledged_at)) {
     watch.push(
       <div className="wrow" key={f.id}>
@@ -622,737 +638,271 @@ export default function Overview({
         <div className="grow">
           <b>{flagPlain(f.kind).title}</b>{" "}
           <span className="help">
-            — still true. You noted this
-            {f.acknowledged_at ? ` ${fmtWhenShort(f.acknowledged_at)}` : ""}
-            {f.acknowledgement ? `: “${clip(f.acknowledgement, 100)}”` : ""}; it clears when the
-            numbers do, not when you answer.
+            — still true. You noted it{f.acknowledged_at ? ` ${fmtWhenShort(f.acknowledged_at)}` : ""}
+            {f.acknowledgement ? `: “${clip(f.acknowledgement, 100)}”` : ""}; it clears when the numbers do.
           </span>
         </div>
-        <Link to={`/projects/${projectId}/boardroom`}>take it up →</Link>
+        <Link to={`${base}/chat`}>take it up →</Link>
       </div>,
     );
   }
-  {
-    const { unit, spent, cap, warnRatio, frac } = budgetOf(dash);
-    const pace = usdMode ? paceDate(spent, cap) : null;
-    if (frac < 1 && (frac >= warnRatio || pace)) {
-      watch.push(
-        <div className="wrow" key="budget">
-          <span className="badge warn">budget {Math.round(frac * 100)}%</span>
-          <div className="grow">
-            {fmtUnit(spent, unit)} of {fmtUnit(cap, unit)}
-            {pace && (
-              <>
-                {" "}— on pace to hit the cap <strong>{fmtWhenShort(pace.toISOString())}</strong>. The
-                platform pauses the project at 100%.
-              </>
-            )}
-          </div>
-          <Link to={`/projects/${projectId}/settings`}>amend budget →</Link>
-        </div>,
-      );
-    }
-    const windowH = Number(dash.constitution["drought_hours"] ?? 24);
-    const applies = hoursSince(dash.created_at) >= windowH;
-    // Tracked rather than inferred, because the row below suppresses itself
-    // when a drought is already speaking for this project — and "did the
-    // drought draw?" is two branches, not one boolean on the dashboard.
-    let droughtShown = false;
-    if (dash.drought_active) {
-      droughtShown = true;
-      watch.push(
-        <div className="wrow" key="drought">
-          <span className="badge serious">drought</span>
-          <div className="grow">
-            No verified external evidence in {windowH}h — the platform is refusing new internal
-            work until proof lands.
-          </div>
-          <Link to={`/projects/${projectId}/progress/board`}>see the proof →</Link>
-        </div>,
-      );
-    } else if (applies && dash.last_countable_evidence_at) {
-      const elapsed = hoursSince(dash.last_countable_evidence_at);
-      if (elapsed >= windowH * 0.5) {
-        droughtShown = true;
-        watch.push(
-          <div className="wrow" key="drought">
-            <span className="badge warn">drought {Math.floor(elapsed)}h / {windowH}h</span>
-            <div className="grow">
-              No verified external evidence for {Math.floor(elapsed)} hours — at {windowH}h, new
-              internal work gets refused until proof lands.
-            </div>
-            <Link to={`/projects/${projectId}/progress/board`}>see the proof →</Link>
-          </div>,
-        );
-      }
-    }
-    // Money moved and nothing outside the project confirmed anything. Distinct
-    // from the drought, which counts hours rather than dollars, so it is
-    // suppressed while a drought row is already saying the same thing louder.
-    // USD only: a zero here in token billing means "not priced in dollars",
-    // not "spent nothing".
-    if (usdMode && !droughtShown && dash.spend_24h >= 1 && dash.evidence_24h === 0) {
-      watch.push(
-        <div className="wrow" key="spend-noproof">
-          <span className="badge">no proof</span>
-          <div className="grow">
-            <b>
-              ${dash.spend_24h.toLocaleString(undefined, { maximumFractionDigits: 2 })} spent in
-              the last 24h
-            </b>{" "}
-            and nothing verified by anyone outside the project. The work may be real — but
-            only the agents say so.
-          </div>
-          <Link to={`/projects/${projectId}/progress/board`}>see what it bought →</Link>
-        </div>,
-      );
-    }
-    for (const h of killSoon) {
-      watch.push(
-        <div className="wrow" key={h.id}>
-          <span className="badge warn">kill date {fmtLeft(h.kill_date).replace(" left", "")}</span>
-          <div className="grow">“{clip(h.statement)}” — {fmtWhenShort(h.kill_date)}</div>
-          <Link to={`/projects/${projectId}/progress/board`}>see the bet →</Link>
-        </div>,
-      );
-    }
-    // A full memory is an outage that looks like nothing: writes are refused,
-    // runs die on the refusal cap, and the only symptom is a spend chart that
-    // keeps climbing. It earns a row before it gets there.
-    for (const m of dash.memory?.scopes ?? []) {
-      if (m.live < m.cap * (dash.memory?.warn_ratio ?? 0.85)) continue;
-      const full = m.live >= m.cap;
-      watch.push(
-        <div className="wrow" key={`memory:${m.scope}:${m.team_id ?? ""}`}>
-          <span className={`badge ${full ? "serious" : "warn"}`}>
-            memory {m.live}/{m.cap}
-          </span>
-          <div className="grow">
-            {m.name} {full ? "is full" : "is nearly full"} —{" "}
-            {full
-              ? "new entries there are being refused, and only "
-              : "at the cap, new entries get refused until "}
-            {m.scope === "project" ? "the CEO" : (m.curator ?? "a lead nobody has named")} can
-            fold entries to make room.
-          </div>
-          <Link to={`/projects/${projectId}/records/memory`}>see what it keeps →</Link>
-        </div>,
-      );
-    }
+  // A full memory is an outage that looks like nothing: writes are refused,
+  // runs die on the refusal cap, and the only symptom is a climbing bill.
+  for (const m of dash.memory?.scopes ?? []) {
+    if (m.live < m.cap * (dash.memory?.warn_ratio ?? 0.85)) continue;
+    const full = m.live >= m.cap;
+    watch.push(
+      <div className="wrow" key={`memory:${m.scope}:${m.team_id ?? ""}`}>
+        <span className={`badge ${full ? "serious" : "warn"}`}>memory {m.live}/{m.cap}</span>
+        <div className="grow">
+          {m.name} {full ? "is full" : "is nearly full"} —{" "}
+          {full ? "new entries there are being refused, and only " : "at the cap, new entries get refused until "}
+          {m.scope === "project" ? "the CEO" : (m.curator ?? "a lead nobody has named")} can fold entries to make room.
+        </div>
+        <Link to={`${base}/activity/memory`}>see what it keeps →</Link>
+      </div>,
+    );
   }
 
-  const runningRuns = (runs ?? []).filter((r) => r.status === "running");
-  const soonestApproval = pending.length > 0 ? pending.reduce((a, b) => (a.expires_at < b.expires_at ? a : b)) : null;
-
-  const verdict = deliveryVerdict(dash, ctx.plan);
+  const people = [...seats].filter((s) => s.state !== "stood_down")
+    .sort((a, b) => SEAT_ORDER.indexOf(a.state) - SEAT_ORDER.indexOf(b.state));
+  const reqs = (ctx.plan?.requirements ?? []).filter((r) => r.status !== "cut");
+  const rank: Record<string, number> = { in_progress: 0, proposed: 1, accepted: 2, pending: 3, met: 4 };
+  const shownReqs = [...reqs].sort((a, b) => (rank[a.status] ?? 3) - (rank[b.status] ?? 3) || a.stage - b.stage).slice(0, 7);
+  const bets = hypotheses.filter((h) => h.status === "active" || h.status === "expired")
+    .sort((a, b) => a.kill_date.localeCompare(b.kill_date)).slice(0, 5);
+  const usdMode = dash.billing_mode === "api_key";
 
   return (
     <>
-      {/* The answer, before the evidence for it. This page used to open with a
-          list and leave the reader to work out whether any of it was bad. */}
-      <div style={{ marginTop: "var(--s5)" }}>
-        <Verdict
-          tone={verdict.tone === "good" ? undefined : verdict.tone}
-          headline={verdict.headline}
-          actions={
-            // Two imperatives for a decision the dial may have handed to the
-            // CEO. On an autonomous project the CEO resets its own date and
-            // cuts its own scope, so these buttons asked the chairman to do a
-            // job that was not his and that doing would not have helped.
-            verdict.daysLate === null ? undefined
-              : chairmanDecides(dash, "commitment_authority")
-                  || chairmanDecides(dash, "scope_authority") ? (
-                <>
-                  {chairmanDecides(dash, "scope_authority") && (
-                    <Link to={`/projects/${projectId}/progress`}>
-                      <button className="primary">Drop something from the plan</button>
-                    </Link>
-                  )}
-                  {chairmanDecides(dash, "commitment_authority") && (
-                    <Link to={`/projects/${projectId}/progress`}>
-                      <button>Move the delivery date</button>
-                    </Link>
-                  )}
-                </>
-              ) : (
-                <Link to={`/projects/${projectId}/progress`}>
-                  <button>See what your CEO is doing about it</button>
-                </Link>
-              )
-          }
-        >
-          <p>{verdictBody(dash, ctx, verdict.daysLate, needs.length)}</p>
-        </Verdict>
+      <header className="ov-head">
+        <div className="eyebrow">
+          <span className="chip">{dash.mode === "deliver" ? "Deliver" : dash.mode === "operate" ? "Operate" : "Explore"}</span>
+          {ctx.plan?.commitment?.deliver_by && <span>Due {fmtDate(ctx.plan.commitment.deliver_by)}</span>}
+          {!ctx.plan?.commitment?.deliver_by && dash.deadline && <span>Window closes {fmtDate(dash.deadline)}</span>}
+          <span className="term-plain"><Term means={auto.means}>{auto.word}</Term></span>
+          {dash.my_role && <span>You are {dash.my_role === "chairman" ? "the chairman" : dash.my_role === "co_chair" ? "a co-chair" : "an observer"}</span>}
+        </div>
+        <div className="ov-title-row">
+          <div className="grow">
+            <h1 className="ov-title">
+              {dash.name} {statusBadge(dash.status)}
+              {dash.drought_active && (
+                <Badge tone="serious">
+                  <Term means="Nothing outside this project has verified any of its claims for longer than your rules allow. Work carries on; new internal-only work is refused until proof lands.">
+                    no outside proof lately
+                  </Term>
+                </Badge>
+              )}
+              {setupBadge}
+            </h1>
+            <p className="ov-goal">
+              {goalLead}{" "}
+              <button className="linkish inline" onClick={() => setBrief(!brief)} aria-expanded={brief}>
+                {brief ? "Hide the brief" : "Read the brief"}
+              </button>
+            </p>
+          </div>
+          <div className="ov-acts">
+            <button className="avstack" onClick={() => navigate(`${base}/team`)} title="The team">
+              {people.slice(0, 6).map((s) => (
+                <Avatar key={s.id} name={s.name} team={s.ceo ? "leadership" : s.team} size="sm" />
+              ))}
+            </button>
+            {dash.can_steer !== false && dash.status !== "running" && dash.status !== "stopped" && (
+              <Btn kind="primary" icon="play" onClick={async () => { await post(`/admin/projects/${projectId}/start`); ctx.reload(); }}>Start</Btn>
+            )}
+            {dash.can_steer !== false && dash.status === "running" && <Btn icon="pause" onClick={onPause}>Pause</Btn>}
+            {dash.can_steer !== false && dash.status !== "stopped" && <Btn kind="danger" icon="stop" onClick={onStop}>Stop</Btn>}
+            <Link to={`${base}/chat`} className="btnlink primary"><Icon name="message" size={15} />Message {ceo}</Link>
+          </div>
+        </div>
+        {brief && (
+          <div className="briefbox">
+            <strong style={{ color: "var(--ink)" }}>The brief every one of them works from</strong>
+            <p style={{ whiteSpace: "pre-wrap", margin: "6px 0 0" }}>{dash.goal}</p>
+          </div>
+        )}
+      </header>
+
+      <Kpis ctx={ctx} />
+      <ModeStrip dash={dash} reload={ctx.reload} />
+      <LateBanner ctx={ctx} />
+
+      <div className="ov-grid">
+        <div className="ov-col">
+          <section className="card ov-card">
+            <div className="card-h">
+              <h3>Needs you</h3>
+              {needs.length > 0 && <span className="count warn">{needs.length}</span>}
+              <span className="grow" />
+              {soonest && <span className="help">soonest decides itself {fmtSoon(new Date(soonest.at).toISOString())}</span>}
+              <Link className="card-link" to="/inbox">Inbox <Icon name="arrow" size={13} /></Link>
+            </div>
+            {needs.length > 0 ? <div className="needs">{needs}</div> : (
+              <div className="quiet-line">
+                <span className="good"><Icon name="check" size={16} strokeWidth={2.2} /></span>
+                <span>
+                  <b>Nothing needs a decision from you.</b>{" "}
+                  <span className="help">
+                    {fullyAutonomous(dash)
+                      ? `You set this project to run itself, so scope, dates and verdicts are ${ceo}'s to call.`
+                      : dash.runs.running > 0
+                        ? `${dash.runs.running} ${dash.runs.running === 1 ? "run is" : "runs are"} in flight right now.`
+                        : dash.runs.queued > 0
+                          ? `${dash.runs.queued} ${dash.runs.queued === 1 ? "run is" : "runs are"} queued to start.`
+                          : "Nobody is working at this moment — Coming up says when the next thing wakes."}
+                  </span>
+                </span>
+              </div>
+            )}
+          </section>
+
+          <section className="card ov-card">
+            <div className="card-h">
+              <h3>Team right now</h3>
+              <span className="grow" />
+              <Link className="card-link" to={`${base}/team`}>Org chart <Icon name="arrow" size={13} /></Link>
+            </div>
+            {people.length === 0 ? <p className="help">Nobody is on this project yet.</p> : (
+              <div className="people">
+                {people.slice(0, 8).map((s) => (
+                  <button key={s.id} className="person-row" onClick={() => ctx.openAgent(s.id)}>
+                    <span className="av-wrap">
+                      <Avatar name={s.name} team={s.ceo ? "leadership" : s.team} />
+                      <span className={`seat-dot ring ${s.state}`} />
+                    </span>
+                    <span className="grow">
+                      <span className="pr-name"><b>{s.name}</b> <span className="help">{s.ceo ? "CEO" : `${s.team}${s.lead ? " lead" : ""}`}</span></span>
+                      <span className="pr-doing">{s.doing}</span>
+                    </span>
+                    <span className="pr-right">
+                      <SeatPill state={s.state} />
+                      {s.since && <span className="help">{heldFor(s.since)}</span>}
+                    </span>
+                  </button>
+                ))}
+                {people.length > 8 && <Link className="more-row" to={`${base}/team`}>and {people.length - 8} more on the org chart</Link>}
+              </div>
+            )}
+          </section>
+
+          {dash.mode === "explore" ? (
+            <section className="card ov-card">
+              <div className="card-h">
+                <h3>Bets</h3>
+                <span className="help">hunches with a deadline</span>
+                <span className="grow" />
+                <Link className="card-link" to={`${base}/tasks?view=list`}>All bets <Icon name="arrow" size={13} /></Link>
+              </div>
+              {bets.length === 0 ? <p className="help">No live bets.</p> : bets.map((h) => (
+                <div className="rm-row" key={h.id}>
+                  <Icon name="target" size={14} />
+                  <span className="grow">{clip(h.statement, 140)}</span>
+                  <span className={`badge${h.status === "expired" ? " serious" : ""}`}>
+                    {h.status === "expired" ? "expired" : `ends ${fmtLeft(h.kill_date).replace(" left", "")}`}
+                  </span>
+                </div>
+              ))}
+            </section>
+          ) : (
+            <section className="card ov-card">
+              <div className="card-h">
+                <h3>Roadmap</h3>
+                {ctx.plan?.open_stage !== undefined && <span className="help">stage {ctx.plan.open_stage} is open</span>}
+                <span className="grow" />
+                <Link className="card-link" to={`${base}/roadmap`}>Open the roadmap <Icon name="arrow" size={13} /></Link>
+              </div>
+              {shownReqs.length === 0 ? (
+                <p className="help">No requirements yet — {ceo} proposes what “done” means once it has planned.</p>
+              ) : shownReqs.map((r) => (
+                <div className="rm-row" key={r.id}>
+                  <span className="mono rm-key">{r.key}</span>
+                  <span className="grow rm-st">{r.statement}</span>
+                  <span className={`badge${r.status === "met" ? " good" : r.status === "in_progress" ? " accent" : r.status === "proposed" ? " warn" : ""}`}>
+                    {r.status === "met" ? "Met" : r.status === "in_progress" ? "In progress" : r.status === "proposed" ? "Proposed" : `Stage ${r.stage}`}
+                  </span>
+                </div>
+              ))}
+              <p className="rm-foot help">
+                {dash.open_tasks} of {dash.queue_ceiling} tasks open at once ·{" "}
+                <Term means="Of the bets the CEO has placed, how many produced proof from outside the project.">
+                  how often the CEO is right
+                </Term>
+                : {dash.ceo_judgment.conversion === null ? "—" : `${Math.round(dash.ceo_judgment.conversion * 100)}%`}
+              </p>
+            </section>
+          )}
+        </div>
+
+        <aside className="ov-col">
+          <CeoCard ctx={ctx} news={news} />
+          <ComingUp projectId={projectId} />
+          <section className="card ov-card">
+            <div className="card-h">
+              <h3>Where this month's money went</h3>
+              <span className="grow" />
+              <Link className="card-link" to={`${base}/spend`}>Spend <Icon name="arrow" size={13} /></Link>
+            </div>
+            <SpendByTeam projectId={projectId} usdMode={usdMode} compact />
+          </section>
+          <section className="card ov-card">
+            <div className="card-h">
+              <h3>Latest deliverables</h3>
+              <span className="grow" />
+              <Link className="card-link" to={`${base}/deliverables`}>All {shelf?.matched ?? ""} <Icon name="arrow" size={13} /></Link>
+            </div>
+            {(shelf?.rows ?? []).length === 0 ? (
+              <p className="help">
+                Nothing published yet. Deliverables appear here the moment a team publishes one.
+              </p>
+            ) : (shelf?.rows ?? []).map((a) => (
+              <Link className="file-row" key={a.key} to={`${base}/deliverables?open=${encodeURIComponent(a.key)}`}>
+                <span className="file-ic"><Icon name="file" size={15} /></span>
+                <span className="grow">
+                  <span className="file-n">{a.name}</span>
+                  <span className="help">{fmtSize(a.size)} · {a.at ? fmtWhen(a.at) : "—"}</span>
+                </span>
+                {a.receipt ? <span className="badge good">published</span> : <span className="badge warn">no receipt</span>}
+              </Link>
+            ))}
+          </section>
+        </aside>
       </div>
 
-      {needs.length > 0 ? (
-        <>
-          <h2 className="zone hot">
-            Needs a decision from you <span className="cnt">{needs.length}</span>
-          </h2>
-          {/* What every row here has in common, said once at the top rather
-              than argued row by row: leave it alone and it decides itself,
-              against you. Nothing that merely wants reading belongs under this
-              heading. */}
-          <p className="help" style={{ margin: "0 0 var(--s3)" }}>
-            Each of these decides itself if you leave it — an approval denies itself, a question
-            falls back to your CEO's stated default. Everything else on this page is yours to
-            read, not to answer.
-          </p>
-          <div className="arows">{needs}</div>
-        </>
-      ) : (
-        <div style={{ marginTop: "var(--s5)" }}>
-          {/* Proves it is quiet rather than asserting it. "Nothing waiting on
-              you" over a screen that cannot say whether anything is running is
-              the sentence that teaches people to stop believing the screen. */}
-          <EmptyState good title="Nothing needs a decision from you.">
-            {fullyAutonomous(dash)
-              ? "You set this project to run itself, so scope, dates and verdicts are your CEO's "
-                + "to call. It will still bring you anything the platform makes it bring you — "
-                + "that appears below, to read rather than to answer."
-              : dash.runs.running > 0
-                ? `${dash.runs.running} ${dash.runs.running === 1 ? "person is" : "people are"} working on this right now.`
-                : dash.runs.queued > 0
-                  ? `${dash.runs.queued} ${dash.runs.queued === 1 ? "piece" : "pieces"} of work are queued to start.`
-                  : "Nobody is working on it at this moment — the calendar below says when the next thing wakes up."}
-          </EmptyState>
+      {health.early.length > 0 && (
+        <div className={`strip${health.ratio >= 0.2 ? " serious" : ""}`} style={{ marginTop: "var(--s4)" }}>
+          <div className="grow">
+            <b>{earlyRunSentence(health)}</b>
+            <div className="sb">
+              {health.faults.length === 0
+                ? "Every one of them was stopped on purpose, so nothing points at a fault — though their tokens were still spent."
+                : health.ratio >= 0.2
+                  ? "Under one in five is normal wear. This much means something is in the way — a dead tool mount, a wrong credential, or work an agent cannot do."
+                  : "That is within normal wear for unattended work."}
+            </div>
+          </div>
+          <Link to={`${base}/activity/runs`}>see what happened →</Link>
         </div>
       )}
 
-      {news.length > 0 && (
-        <>
-          <h2 className="zone">
-            Your CEO is telling you <span className="cnt">{news.length}</span>
-          </h2>
-          <div className="arows">{news}</div>
-        </>
-      )}
-
-      <h2 className="zone">What you are paying for</h2>
-      <div className="wbox">
-        {latestArtifacts.length === 0 ? (
-          <div className="wrow">
-            <span className="badge">none yet</span>
-            <div className="grow help">
-              Nothing published. Deliverables appear here the moment a team publishes one — drafts
-              included, so you can read the work as it takes shape.
-            </div>
-          </div>
-        ) : (
-          <>
-            {latestArtifacts.map((a) => (
-              <div className="wrow" key={a.key}>
-                {/* A key with no receipt behind it is in the store but was
-                    never formally published. */}
-                {!a.receipt ? (
-                  <span className="chip warn">no receipt</span>
-                ) : (
-                  <span className="chip ok">published</span>
-                )}
-                <div className="grow">
-                  <div className="tt mono">{a.name}</div>
-                  <div className="sb">
-                    {fmtSize(a.size)} · {a.at ? fmtWhen(a.at) : "—"}
-                  </div>
-                </div>
-                <Link
-                  to={`/projects/${projectId}/deliverables?open=${encodeURIComponent(a.key)}`}
-                >
-                  open →
-                </Link>
-              </div>
-            ))}
-            <div className="wrow">
-              <div className="grow help">
-                {deliverableCount} deliverable{deliverableCount === 1 ? "" : "s"} in total.
-              </div>
-              <Link to={`/projects/${projectId}/deliverables`}>all deliverables →</Link>
-            </div>
-          </>
-        )}
-      </div>
-
-      <ModeStrip dash={dash} reload={reload} />
-
-      {/* Is it working? The question a chairman asks first and the product
-          answered nowhere: runs that ended early were a grey aside on a tab
-          three clicks away, in the same weight as everything else. */}
-      <h2 className="zone">Is it working?</h2>
-      {!health ? (
-        <Skeleton rows={2} />
-      ) : (
-        <>
-          <div className="tiles" style={{ margin: 0 }}>
-            {/* Same source as the project bar. Two live counters polled on
-                different clocks will disagree, and a reader who spots two
-                numbers for one fact stops trusting both. */}
-            <div className="tile">
-              <div className="label">Working right now</div>
-              <div className="value">{dash.runs.running}</div>
-              <div className="sub">
-                {dash.runs.running === 0
-                  ? dash.runs.queued > 0
-                    ? `${dash.runs.queued} waiting to start`
-                    : // A paused or stopped project is not idle, it is off. The
-                      // brief above the tabs carries the reason; repeating a
-                      // cap here would explain the wrong wall.
-                      dash.status !== "running"
-                      ? `project is ${dash.status}`
-                      : idleSentence(dash.activity)
-                  : runningRuns.length === dash.runs.running
-                    ? runningRuns.map((r) => r.agent_name ?? "—").join(" · ")
-                    : // The roster comes from a slower poll than the count. Rather
-                      // than print a list that contradicts the number beside it,
-                      // say nothing until the two agree — one tick at most.
-                      "…"}
-              </div>
-            </div>
-            {/* The denominator is the whole point: 55 means nothing on its own,
-                and showing it without "of 55" is exactly how a project that had
-                spent its entire day's allowance read as a busy one.
-
-                Three separate gates count runs — the day, the trailing hour,
-                and the slice reserved for governance — and any of them can be
-                the reason this tile is the answer. */}
-            <div
-              className={`tile${
-                ["daily_runs", "pacing", "governance_reserve"].includes(
-                  dash.activity.blocked_by ?? "",
-                )
-                  ? " alert"
-                  : ""
-              }`}
-            >
-              <div className="label">Jobs run today</div>
-              <div className="value">
-                {dash.activity.daily_runs.used}
-                <span className="mono" style={{ fontSize: "0.6em", opacity: 0.7 }}>
-                  {" "}/ {dash.activity.daily_runs.cap}
-                </span>
-              </div>
-              <div className="sub">
-                {dash.activity.blocked_by === "daily_runs"
-                  ? `capped — resets at ${dash.activity.daily_runs.resets_at.slice(11, 16)} UTC`
-                  : dash.activity.blocked_by === "pacing"
-                    ? `pacing — ${dash.activity.pacing.used} of ${dash.activity.pacing.cap} this hour`
-                    : dash.activity.blocked_by === "governance_reserve"
-                      ? `ordinary work done — last ${dash.activity.governance_reserve.reserved} reserved`
-                      : `${health.clean} finished cleanly`}
-                {/* Never let a cap read as a total. */}
-                {(runs ?? []).length >= 200 && " · newest 200 runs"}
-              </div>
-            </div>
-            <div className={`tile${health.ratio >= 0.2 ? " alert" : ""}`}>
-              <div className="label">Stopped part-way</div>
-              <div className="value">{health.early.length}</div>
-              <div className="sub">
-                {health.todays.length === 0
-                  ? "—"
-                  : health.faults.length === 0
-                    ? "none broke — those were stopped on purpose"
-                    : `${Math.round(health.ratio * 100)}% of what you paid for`}
-              </div>
-            </div>
-            <div className="tile">
-              <div className="label">Spent today</div>
-              <div className="value">
-                {usdMode ? `$${health.usd.toFixed(2)}` : fmtUnit(health.tokens, "tokens")}
-              </div>
-              <div className="sub">
-                {(() => {
-                  const { cap } = budgetOf(dash);
-                  const share = cap > 0 ? (usdMode ? health.usd : health.tokens) / cap : 0;
-                  return `${Math.round(share * 100)}% of the monthly cap`;
-                })()}
-              </div>
-            </div>
-          </div>
-
-          {health.early.length > 0 && (
-            <div className="card" style={{ marginTop: 12 }}>
-              <div style={{ fontSize: 13.5, lineHeight: 1.6 }}>
-                <strong>{earlyRunSentence(health)}</strong>{" "}
-                {health.faults.length === 0
-                  ? "Every one of them was stopped on purpose, so nothing here points at a fault — though their tokens were still spent."
-                  : health.ratio >= 0.2
-                    ? "Under one in five is normal wear. This much means something is standing in the way — a dead tool mount, a wrong credential, or work an agent cannot actually do."
-                    : "That is within normal wear for unattended work."}
-              </div>
-              <div className="actions" style={{ marginTop: 10 }}>
-                <Link to={`/projects/${projectId}/records/runs`}>see what happened →</Link>
-              </div>
-            </div>
-          )}
-        </>
-      )}
-
-      {/* What came out. The point of the project, previously seven tabs away. */}
-      {/* The schedule the platform will actually run — the wakes, the standing
-          meeting, the rhythm, the clocks that decide themselves, and the
-          promise with the projection beside it. An autonomous project that
-          will not show you its calendar is a haunted one. */}
-      <h2 className="zone">What happens next</h2>
-      <Agenda projectId={projectId} />
-
       {watch.length > 0 && (
         <>
-          <h2 className="zone">Watch <span className="cnt">{watch.length}</span></h2>
+          <h2 className="zone">Watching <span className="cnt">{watch.length}</span></h2>
+          <p className="help" style={{ margin: "0 0 var(--s3)" }}>
+            Clocks {ceo} is handling. Nothing here waits on you; it is here so nothing happens silently.
+          </p>
           <div className="wbox">{watch}</div>
         </>
       )}
 
-      <h2 className="zone">The plan</h2>
-      <div className="wbox">
-        <div className="wrow">
-          <span className="badge accent">
-            {hypotheses.filter((h) => h.status === "active").length}{" "}
-            <Term means="A hunch the team is acting on, with a date attached. If nothing outside the project has proved it by then, it is dropped rather than quietly carried.">
-              live bets
-            </Term>
-          </span>
-          <div className="grow">
-            {dash.open_tasks} of {dash.queue_ceiling} jobs open at once
-            {blocked.length > 0 && <> · <span className="chip serious">{blocked.length} blocked</span></>}
-            {" · "}
-            {dash.external_evidence_in_window} claim
-            {dash.external_evidence_in_window === 1 ? "" : "s"} checked against the outside world in
-            the last {String(dash.constitution["drought_hours"] ?? 24)} hours
-          </div>
-          <Link to={`/projects/${projectId}/progress/board`}>see the work →</Link>
-        </div>
-        <div className="wrow">
-          <span className="badge">
-            How often the CEO is right{" "}
-            {dash.ceo_judgment.conversion === null
-              ? "—"
-              : `${Math.round(dash.ceo_judgment.conversion * 100)}%`}
-          </span>
-          <div className="grow help">
-            {dash.ceo_judgment.tasks_with_verified_external} of {dash.ceo_judgment.tasks_created}{" "}
-            bets it has placed ever produced proof from outside the project.
-          </div>
-          {soonestApproval && (
-            <span className={`clock ${clockClass(soonestApproval.expires_at)}`}>
-              next decision expires {fmtLeft(soonestApproval.expires_at)}
-            </span>
-          )}
-        </div>
-      </div>
-
-      <h2 className="zone">The money</h2>
-      <div className="card">
-        <BudgetMeter ctx={ctx} />
-        <SpendByTeam projectId={projectId} usdMode={usdMode} />
-      </div>
-
       <HealthLine ctx={ctx} />
-
-      <h2 className="zone">Who is on this</h2>
-      {repinMsg && <div className="notice-box">{repinMsg}</div>}
-      <div className="list-grid">
-        <div className="card">
-          <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
-            <strong>CEO</strong>
-            <div className="spacer" />
-            {org?.ceo?.role_name && (
-              <span className="chip" title={org.ceo.role_slug ?? undefined}>
-                {org.ceo.role_name}
-              </span>
-            )}
-          </div>
-          {org?.ceo ? (
-            <div className="seatrow">
-              <Person
-                name={org.ceo.name}
-                role={org.ceo.status === "running" ? "working now" : "ready"}
-                team="leadership"
-              />
-              <SeatDay seat={today.get(org.ceo.id)} />
-            </div>
-          ) : (
-            <span className="help">—</span>
-          )}
-          <p className="help" style={{ marginBottom: 0 }}>
-            The only agent that speaks to you (boardroom) and the only one that creates tasks.
-          </p>
-        </div>
-        {(org?.teams ?? []).map((team) => {
-          const teamTasks = (tasks ?? []).filter((t) => t.team_id === team.id);
-          const open = teamTasks.filter(
-            (t) => ["ready", "claimed", "checking", "review"].includes(t.status)).length;
-          const stuck = teamTasks.filter((t) => t.status === "blocked").length;
-          const behind = team.role_version !== null
-            && team.role_latest_version !== null
-            && team.role_version < team.role_latest_version;
-          return (
-            <div className="card" key={team.id}>
-              <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
-                <strong>{team.name}</strong>
-                <div className="spacer" />
-                {/* Which charter these people work from. A team is a role plus
-                    its people, and the people were the only half on the card. */}
-                {team.role_name && (
-                  <span className="chip" title={team.role_slug ?? undefined}>
-                    {team.role_name} v{team.role_version}
-                  </span>
-                )}
-                {behind && <span className="chip warn">behind</span>}
-                {!team.running && <span className="chip warn">stood down</span>}
-              </div>
-              {/* A person, not a status chip with a surname in it. This card
-                  is the closest thing the product has to the org chart you
-                  hired, and it rendered its people as coloured pills. */}
-              {team.agents.map((agent) => (
-                <div className="seatrow" key={agent.id}>
-                  <Person
-                    name={agent.name}
-                    team={team.name}
-                    role={[
-                      team.lead_agent_id === agent.id ? "lead" : null,
-                      agent.status === "running"
-                        ? "working now"
-                        : agent.status === "active"
-                          ? "ready"
-                          : agent.status,
-                    ].filter(Boolean).join(" · ")}
-                  />
-                  <SeatDay seat={today.get(agent.id)} />
-                </div>
-              ))}
-              <p className="help" style={{ margin: "8px 0 0" }}>
-                {teamTasks.length === 0
-                  ? "no work on its board"
-                  : `${open} open${stuck > 0 ? `, ${stuck} blocked` : ""}`}
-                {team.stand_down_when && (
-                  <> · stands down when {conditionWords(team.stand_down_when)}</>
-                )}
-              </p>
-              <StaffingActions team={team} onDone={reloadOrg} />
-              {/* Teams pin their role version at creation; edited roles apply
-                  only when the chairman explicitly adopts them. The button is
-                  here only when there is something to adopt — five cards each
-                  offering to move a team to the version it already runs is
-                  five buttons that teach the reader to ignore the row. */}
-              {behind && (
-                <div className="actions" style={{ marginTop: 8 }}>
-                  <button
-                    className="small"
-                    onClick={async () => {
-                      const result = await post<{ changed: boolean; version: number }>(
-                        `/admin/teams/${team.id}/repin`, {});
-                      setRepinMsg(result.changed
-                        ? `${team.name} now runs ${team.role_name ?? team.role_slug} v${result.version}; effective on the next run.`
-                        : `${team.name} is already on the latest role version (v${result.version}).`);
-                      reloadOrg();
-                    }}
-                  >
-                    adopt v{team.role_latest_version}
-                  </button>
-                </div>
-              )}
-            </div>
-          );
-        })}
-        <AddTeam projectId={projectId} org={org} onAdded={reloadOrg} />
-      </div>
-
-      <AsOf at={asOf} error={error} />
+      <AsOf at={ctx.asOf} error={ctx.error} />
     </>
   );
 }
 
-/** The staffing controls, which lived only behind an admin curl until now.
-
-    Both verbs take a reason. A roster change without one is unreadable six
-    weeks later, and "we took the designer off after the template shipped" is a
-    sentence somebody has to be able to find. */
-function StaffingActions({ team, onDone }: {
-  team: OrgView["teams"][number];
-  onDone: () => void;
-}) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const verb = team.running ? "stand_down" : "recall";
-
-  async function go() {
-    const reason = window.prompt(
-      team.running
-        ? `Why is ${team.name}'s job finished? (Its channel, memory and history are kept.)`
-        : `Why is ${team.name} coming back?`);
-    if (!reason || reason.trim().length < 10) {
-      if (reason !== null) setError("Give a reason of at least ten characters.");
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    try {
-      await post(`/admin/teams/${team.id}/${verb}`, { reason });
-      onDone();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div className="actions" style={{ marginTop: 8 }}>
-      <button className="small" disabled={busy} onClick={go}>
-        {team.running ? "stand down" : "recall"}
-      </button>
-      {error && <span className="help warn" style={{ marginLeft: 8 }}>{error}</span>}
-    </div>
-  );
-}
-
-/** The condition in the words the boardroom uses, so the card and the message
-    the chairman already read say the same thing. */
-function conditionWords(when: NonNullable<OrgView["teams"][number]["stand_down_when"]>) {
-  return when.kind === "requirement_met"
-    ? `${(when.keys ?? []).join(" and ")} are met`
-    : `every requirement at or below stage ${when.stage} has settled`;
-}
-
-/** One seat's day, under its name.
-
-    Runs first because runs are the rationed thing and the number people argue
-    about; tasks closed second because a seat that spends and closes nothing is
-    the shape worth noticing. Silent when the seat has not run — an empty row
-    under every name on a quiet morning teaches the reader to skip the line. */
-function SeatDay({ seat }: { seat: ActivitySeat | undefined }) {
-  if (!seat || seat.runs === 0) return null;
-  const tokens = seat.tokens_in + seat.tokens_out + seat.cache_creation + seat.cache_read;
-  const parts = [`${seat.runs} run${seat.runs === 1 ? "" : "s"} today`];
-  if (seat.tasks_completed) parts.push(`${seat.tasks_completed} closed`);
-  if (seat.holding) parts.push(`${seat.holding} in hand`);
-  if (tokens) parts.push(`${(tokens / 1e6).toFixed(1)}M tok`);
-  if (seat.usd) parts.push(`$${seat.usd.toFixed(2)}`);
-  return (
-    <div className="help" style={{ fontSize: 12, marginTop: 2 }}>{parts.join(" · ")}</div>
-  );
-}
-
-/** Hiring onto a project that already exists.
-
-    The other door into the same panel. Here the chairman is not browsing —
-    they know the symptom ("nothing gets checked", "nobody writes it up"), so
-    this one opens on the gaps its own roster implies before it offers the
-    library. */
-function AddTeam({ projectId, org, onAdded }: {
-  projectId: string;
-  org: OrgView | null;
-  onAdded: () => void;
-}) {
-  const { roles, crews, loaded, error: libraryError } = useRoleLibrary();
-  const [open, setOpen] = useState(false);
-  const [picked, setPicked] = useState<string[]>([]);
-  const [teamName, setTeamName] = useState("");
-  const [employees, setEmployees] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  const roleSlug = picked[0] ?? "";
-  const role = roles.find((r) => r.slug === roleSlug);
-
-  // Which roles this project already runs, and under which team name — shown
-  // on the row so hiring a second Data Analyst is a choice, not an accident.
-  const alreadyOn: Record<string, string> = {};
-  for (const team of org?.teams ?? []) {
-    if (team.role_slug) alreadyOn[team.role_slug] = team.name;
-  }
-  const roster = roles.filter((r) => r.slug in alreadyOn);
-  const gaps = gapsFor(roster).filter(
-    (gap) => gap.suggest.some((slug) => !(slug in alreadyOn)));
-
-  // One role at a time here: a team is a role plus its people, and the names
-  // are the part only the chairman can supply.
-  function toggle(slug: string) {
-    setPicked((prev) => (prev[0] === slug ? [] : [slug]));
-    const next = roles.find((r) => r.slug === slug);
-    if (next && !teamName.trim()) setTeamName(next.name.split(" / ")[0]);
-  }
-
-  async function submit() {
-    setBusy(true);
-    setError(null);
-    try {
-      await post(`/admin/projects/${projectId}/teams`, {
-        role_slug: roleSlug,
-        name: teamName.trim(),
-        employees: employees.split(",").map((s) => s.trim()).filter(Boolean),
-      });
-      setTeamName("");
-      setEmployees("");
-      setPicked([]);
-      onAdded();
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div className="card">
-      <strong>＋ Add a team</strong>
-      {error && <div className="error">{error}</div>}
-      {gaps.length > 0 && !roleSlug && (
-        <p className="help" style={{ margin: "6px 0 0" }}>
-          {gaps[0].sentence}
-        </p>
-      )}
-      <div className="actions" style={{ marginTop: 8 }}>
-        <button className="small" onClick={() => setOpen(true)}>
-          {role ? `Role: ${role.name} — change` : "Choose a role…"}
-        </button>
-      </div>
-      {role && (
-        <>
-          <label className="field">Team name</label>
-          <input value={teamName} onChange={(e) => setTeamName(e.target.value)}
-            placeholder="Content" />
-          <label className="field">
-            Employees (comma-separated names; first is lead if several)
-          </label>
-          <input value={employees} onChange={(e) => setEmployees(e.target.value)}
-            placeholder="Blogger" />
-          {needsOf(role.secret_scopes ?? []).length > 0 && (
-            <p className="help" style={{ marginTop: 6 }}>
-              {role.name} needs{" "}
-              {needsOf(role.secret_scopes ?? []).map((n) => n.words).join(" and ")} —
-              add it in Settings → Credentials, scoped to this role, or its runs
-              will fail asking for it.
-            </p>
-          )}
-          <div className="actions">
-            <button
-              className="primary small"
-              disabled={busy || !roleSlug || !teamName.trim() || !employees.trim()}
-              onClick={submit}
-            >
-              Add team
-            </button>
-            <span className="help">
-              The CEO sees the new team in its next context and can plan for it.
-            </span>
-          </div>
-        </>
-      )}
-      {open && (
-        <HirePanel
-          roles={roles}
-          crews={crews}
-          loaded={loaded}
-          error={libraryError}
-          selected={picked}
-          onToggle={toggle}
-          onClose={() => setOpen(false)}
-          alreadyOn={alreadyOn}
-          gaps={gaps}
-          title="Who's missing?"
-        />
-      )}
-    </div>
-  );
-}
+const KIND_ICON = {
+  approval: "check", ask: "help", scope: "list", commitment: "calendar", verdict: "eye",
+  bet: "target", frozen: "alert", kill: "target", drought: "shield", budget: "wallet", noproof: "shield",
+} as const;

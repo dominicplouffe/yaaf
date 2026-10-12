@@ -53,7 +53,7 @@ function Block({ title, children, clampable = true }: {
     a project sat silent for two hours behind a start time nobody could see:
     the row said work was in hand, and it was — just not yet claimable by
     anyone. "scheduled" is the honest word for it. */
-function taskBadge(status: string, notBefore?: string | null) {
+export function taskBadge(status: string, notBefore?: string | null) {
   if (status === "ready" && notBefore && new Date(notBefore) > new Date())
     return <span className="badge warn">scheduled</span>;
   const cls =
@@ -144,7 +144,7 @@ interface AuditSampleRow {
 /** The sampled audit's desk. The platform drew these observable closes at the
     rate the constitution sets; unanswered ones expire to "not reviewed" and
     never block — the buttons are the whole ceremony. */
-function AuditSamples({ projectId }: { projectId: string }) {
+export function AuditSamples({ projectId }: { projectId: string }) {
   const { data, reload } = usePoll(
     () => get<{ pending: AuditSampleRow[] }>(
       `/observe/projects/${projectId}/audit_samples`),
@@ -356,11 +356,6 @@ export default function Work({ ctx }: { ctx: ProjectCtx }) {
 
   return (
     <>
-      <p className="subtitle">
-        The plan and whether it has been proven. Bets set the direction, tasks do the work, and
-        evidence decides whether any of it counted.
-      </p>
-
       {/* ── the human layer: prompted, measured, still random ──
           Two audits used to sit at opposite ends of this page, separated by
           the whole task board, asking the chairman the same question. One
@@ -539,7 +534,7 @@ export default function Work({ ctx }: { ctx: ProjectCtx }) {
                 <div className="empty">
                   Nothing is assigned to this bet
                   {h && h.status === "active" && <> — and it dies {fmtWhenShort(h.kill_date)}</>}.{" "}
-                  <Link to={`/projects/${projectId}/boardroom`}>ask the CEO why →</Link>
+                  <Link to={`/projects/${projectId}/chat`}>ask the CEO why →</Link>
                 </div>
               ) : (
                 <table>
@@ -575,13 +570,13 @@ export default function Work({ ctx }: { ctx: ProjectCtx }) {
       )}
       <p className="help" style={{ marginTop: 12 }}>
         Read-only by design: only the CEO creates tasks, only leads decompose, only the platform
-        marks command-tested work done. Redirect the plan from the{" "}
-        <Link to={`/projects/${projectId}/boardroom`}>Boardroom →</Link>
+        marks command-tested work done. Redirect the plan by{" "}
+        <Link to={`/projects/${projectId}/chat`}>telling the CEO →</Link>
       </p>
 
       <p className="help" style={{ marginTop: 12 }}>
         Every claim the agents made and what the platform could check about it is the record in{" "}
-        <Link to={`/projects/${projectId}/records/evidence`}>Records → Evidence →</Link>
+        <Link to={`/projects/${projectId}/activity/evidence`}>Activity → Proof →</Link>
       </p>
     </>
   );

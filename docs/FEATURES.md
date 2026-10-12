@@ -324,7 +324,7 @@ Outside Explore mode the root object is not the task, it is the
 - **Explicit verbs**: `supersede` (1→1, replace an entry), `compact`
   (many→1, fold entries together), `forget`. All recorded.
 - **Searchable** by agents at run time, and readable by you under
-  **Records → Memory**.
+  **Activity → Memory**.
 
 ## 11. Everything on the record
 
@@ -364,10 +364,12 @@ four tables in Records by hand.
 per project: scope that settled, work that closed, proof the platform verified
 or refused, deliverables published, what it cost, what decided itself in your
 absence, what the CEO decided on its own authority, what you decided, and what
-that leaves waiting on you. It reads from `yaaf briefing`, over MCP, and — with
-`brief_daily_at` set — in your inbox every morning. It is deliberately not a
-panel on the Desk or the Overview: both of those screens are the present tense,
-and a narrative sitting on top of them restated their own counts back at them.
+that leaves waiting on you. It reads in the app under **Inbox → Updates** and
+**Activity → What happened**, from `yaaf briefing`, over MCP, and — with
+`brief_daily_at` set — in your email every morning. It is deliberately not a
+panel on the Overview or the Inbox's Needs-you tab: both of those are the
+present tense, and a narrative sitting on top of them restated their own counts
+back at them. It has a tab of its own beside them instead.
 
 - **Composed from the record at zero tokens.** No run, no wake, no model call.
   Which is why it still arrives on a project the platform paused for an

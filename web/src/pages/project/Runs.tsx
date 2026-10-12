@@ -4,7 +4,7 @@ import { Dashboard, get, getText, RunRow, SpendReport } from "../../api";
 import { fmtUsd, fmtWhen, usePoll } from "../../hooks";
 import { AsOf, downloadCsv, ExportCsv, fmtAgo, fmtUnit, runHealth, spentOf } from "../../ui";
 
-interface LedgerRow {
+export interface LedgerRow {
   id: string;
   kind: string;
   tokens_in: number;
@@ -96,7 +96,7 @@ function ContextView({ text }: { text: string }) {
 
 /** Fourteen plain bars, one series, today emphasized — readable in five
     seconds. This and the budget meter are the only charts the product needs. */
-function SpendBars({ ledger, usdMode }: { ledger: LedgerRow[]; usdMode: boolean }) {
+export function SpendBars({ ledger, usdMode }: { ledger: LedgerRow[]; usdMode: boolean }) {
   const days: { key: string; label: string; value: number }[] = [];
   for (let i = 13; i >= 0; i--) {
     const d = new Date();
@@ -143,7 +143,7 @@ function SpendBars({ ledger, usdMode }: { ledger: LedgerRow[]; usdMode: boolean 
 /** Where the money goes: a 30-day rollup by model, team, or agent. `Input` is
     only the uncached remainder — the cache columns are the rest of the real
     input bill. */
-function SpendBreakdown({ projectId, usdMode }: { projectId: string; usdMode: boolean }) {
+export function SpendBreakdown({ projectId, usdMode }: { projectId: string; usdMode: boolean }) {
   const [groupBy, setGroupBy] = useState<"model" | "team" | "agent">("model");
   const { data, reload } = usePoll(
     () => get<SpendReport>(`/observe/projects/${projectId}/spend?group_by=${groupBy}&days=30`),
@@ -201,10 +201,6 @@ export default function Runs({ projectId, dash }: { projectId: string; dash: Das
     () => get<RunRow[]>(`/observe/projects/${projectId}/runs?limit=50`),
     5000,
   );
-  const { data: ledger } = usePoll(
-    () => get<LedgerRow[]>(`/observe/projects/${projectId}/ledger?limit=500`),
-    15000,
-  );
   // Traces are fetched once per run (plain text, can be large) and cached here;
   // the toggle only shows/hides the cached copy after that.
   const [traces, setTraces] = useState<Record<string, string>>({});
@@ -254,11 +250,6 @@ export default function Runs({ projectId, dash }: { projectId: string; dash: Das
   const todayRuns = health.todays;
   const todayUsd = health.usd;
   const todayTokens = health.tokens;
-  // The 14-day chart is 13 empty bars on a project a day old — it reads as
-  // "nothing is happening" when the truth is "there is no history yet".
-  const daysOfHistory = new Set(
-    (ledger ?? []).map((row) => new Date(row.at).toDateString()),
-  ).size;
   const weekAgo = Date.now() - 7 * 86_400_000;
   const storms = (runs ?? []).filter(
     (r) =>
@@ -314,20 +305,12 @@ export default function Runs({ projectId, dash }: { projectId: string; dash: Das
         </div>
       </div>
 
-      {daysOfHistory >= 3 ? (
-        <div style={{ margin: "16px 0" }}>
-          <SpendBars ledger={ledger ?? []} usdMode={usdMode} />
-        </div>
-      ) : (
-        (ledger ?? []).length > 0 && (
-          <p className="help" style={{ margin: "12px 0" }}>
-            Spend over time appears once this project has three days of history — there is nothing
-            for a trend line to say yet.
-          </p>
-        )
-      )}
-
-      <SpendBreakdown projectId={projectId} usdMode={usdMode} />
+      {/* Money over time has a page of its own now, beside the budget it is
+          spending against; this one stays about the runs themselves. */}
+      <p className="help" style={{ margin: "12px 0 16px" }}>
+        Spend per day and by model, team or person is on the{" "}
+        <Link to={`/projects/${projectId}/spend`}>Spend page →</Link>
+      </p>
 
       {/* Patterns become sentences: the platform knows these share a cause —
           and names the wall, so "give direction" means something to type. */}
@@ -375,7 +358,7 @@ export default function Runs({ projectId, dash }: { projectId: string; dash: Das
           {storms.some((r) => (r.last_refusal ?? "").startsWith("Memory cap")) ? (
             <Link to={`/projects/${projectId}/settings`}>give it more room →</Link>
           ) : (
-            <Link to={`/projects/${projectId}/boardroom`}>give direction →</Link>
+            <Link to={`/projects/${projectId}/chat`}>give direction →</Link>
           )}
         </div>
       )}

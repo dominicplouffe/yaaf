@@ -88,7 +88,7 @@ export default function Setup() {
     try {
       await post("/auth/setup", { token, password });
       await refresh();
-      navigate("/desk");
+      navigate("/home");
     } catch (err) {
       // The link can die between reading it and using it — another tab, a newer
       // link issued in the meantime. Say so in the same place it would have

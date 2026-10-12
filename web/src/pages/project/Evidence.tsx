@@ -110,7 +110,7 @@ export default function Evidence({ projectId }: { projectId: string }) {
         Only verified or platform-attested external evidence counts toward the drought and the
         external floor — agent claims are fetched, hashed and checked by the platform, never
         taken at their word. Read-only: nothing here is waiting on you, and the platform's own
-        sampled audit is on the <Link to={`/projects/${projectId}/progress/board`}>Work tab</Link>.
+        sampled audit is on the <Link to={`/projects/${projectId}/tasks`}>Tasks page</Link>.
       </p>
       <Coverage rows={rows} />
       {/* Failed proof is not a footnote: the platform fetched what an agent
@@ -202,10 +202,10 @@ export default function Evidence({ projectId }: { projectId: string }) {
                     <dt>ask about it</dt>
                     <dd>
                       <Link
-                        to={`/projects/${projectId}/boardroom`}
+                        to={`/projects/${projectId}/chat`}
                         state={{ draft: askAbout(row) }}
                       >
-                        take this to the boardroom →
+                        take this to Chat →
                       </Link>
                     </dd>
                   </dl>

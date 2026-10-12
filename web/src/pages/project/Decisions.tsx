@@ -304,7 +304,7 @@ function AskCard({ ask, to }: { ask: AskRow; to: string }) {
         {live ? "If you say nothing, it will: " : "Its stated default was: "}
         <strong>{ask.default_action}</strong>
       </p>
-      <Link className="act pri" to={`${to}/boardroom`}>
+      <Link className="act pri" to={`${to}/chat`}>
         {live ? "Answer in the boardroom" : "Read the thread"}
       </Link>
     </div>

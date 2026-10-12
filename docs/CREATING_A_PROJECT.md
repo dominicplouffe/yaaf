@@ -396,11 +396,11 @@ or replace it with your own. From that moment the promise is watched: if the
 projection slips past it, new scope freezes and you are told, with the
 arithmetic in front of you.
 
-In an Explore project there is no plan and no Plan tab. The CEO states a
+In an Explore project there is no plan and no Roadmap page. The CEO states a
 falsifiable bet with a kill date instead, and the evidence rules do the rest.
 
-You can watch all of it in **Plan** and **Work**, and in **Records** when you
-want the receipts.
+You can watch all of it in **Roadmap**, **Tasks** and **Team**, and in
+**Activity** when you want the receipts.
 
 ## Your job from here (it's small, on purpose)
 
@@ -455,6 +455,6 @@ project pauses itself rather than burning money against a wall.
 3. (Or later: Settings → Data sources → `ppc` + the MCP URL + engineer
    role → Save, auto-tested.)
 4. Overview → fix anything the health card names → card disappears.
-5. Boardroom → brief the CEO.
-6. Plan → accept the requirements you want, cut the rest, sign the date.
+5. Chat → brief the CEO.
+6. Roadmap → accept the requirements you want, cut the rest, sign the date.
 7. Done. Check back in the morning.

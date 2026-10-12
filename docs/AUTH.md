@@ -171,7 +171,7 @@ Said here rather than waiting to be found:
   instance admin owns those credentials and decides who has an account; per-person
   grants on a credential are not built.
 - **Notices go to the chairman.** The email ration is one person's, so co-chairs
-  read decisions on the Desk rather than in their inbox (`yaaf.server.notify`).
+  read decisions in the app's Inbox rather than in their email (`yaaf.server.notify`).
 - **Slack trusts one person.** Inbound Slack maps one Slack user per box to the
   chairman; a co-chair speaks through the dashboard, the CLI or a model client.
 - **The export is a read, the backup is not.** Any member may export a project's

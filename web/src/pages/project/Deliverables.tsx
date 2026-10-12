@@ -958,17 +958,20 @@ export default function Deliverables({ projectId }: { projectId: string }) {
 
   // "/" is the search box everywhere else on the web; it should be here too —
   // except while the reader is open, where the keyboard belongs to the file.
+  // Captured, so it is claimed before the app-wide "/" (the palette) sees it.
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (loaded) return;
       if (e.key !== "/" || e.metaKey || e.ctrlKey || e.altKey) return;
       const el = document.activeElement;
       if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return;
+      // No files, no search box — and then "/" is the palette's, as everywhere.
+      if (!searchRef.current) return;
       e.preventDefault();
-      searchRef.current?.focus();
+      searchRef.current.focus();
     }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
   }, [loaded]);
 
   // An object URL is a live reference into the tab's memory; a reader who

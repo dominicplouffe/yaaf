@@ -30,7 +30,7 @@ export default function Login() {
     try {
       await post("/auth/login", { email: email.trim(), password });
       await refresh();
-      navigate("/desk");
+      navigate("/home");
     } catch (err) {
       // A wrong password and an address with no account get the same sentence,
       // because the server gives them the same answer: the form is not a way
