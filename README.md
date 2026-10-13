@@ -224,7 +224,7 @@ curl -fsSL https://get.docker.com | sh          # if docker isn't there yet
 sudo usermod -aG docker "$USER"                 # then log out and back in
 
 git clone <your-yaaf-remote> yaaf && cd yaaf
-./deploy_single_server.sh --admin-email you@example.com
+deploy/deploy_single_server.sh --admin-email you@example.com
 ```
 
 Secrets, images, Postgres, migrations, the role library, and — on a first
@@ -247,7 +247,7 @@ public hostname and connects through a consent screen instead of a pasted token
 — publish only the MCP and sign-in paths and close everything else:
 **[DEPLOYMENT](docs/DEPLOYMENT.md#exposing-the-mcp-server-to-claudeai)**.
 
-Afterwards: `./update_single_server.sh` to upgrade, `./kill_single_server.sh` to
+Afterwards: `deploy/update_single_server.sh` to upgrade, `deploy/kill_single_server.sh` to
 stop and keep the data.
 
 > **Billing:** agents pay with an LLM credential you create once under

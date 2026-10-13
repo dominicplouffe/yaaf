@@ -10,12 +10,12 @@
 # than trusting that it did.
 #
 # Usage:
-#   ./update_single_server.sh                # pull, back up, rebuild, verify
-#   ./update_single_server.sh --no-pull      # rebuild what is already checked out
-#   ./update_single_server.sh --no-backup    # skip the pg_dump (not advised)
-#   ./update_single_server.sh --keep-chat    # leave resident chat sessions running
-#   ./update_single_server.sh --skip-roles   # do not load roles new to the checkout
-#   ./update_single_server.sh --admin-email you@example.com
+#   deploy/update_single_server.sh                # pull, back up, rebuild, verify
+#   deploy/update_single_server.sh --no-pull      # rebuild what is already checked out
+#   deploy/update_single_server.sh --no-backup    # skip the pg_dump (not advised)
+#   deploy/update_single_server.sh --keep-chat    # leave resident chat sessions running
+#   deploy/update_single_server.sh --skip-roles   # do not load roles new to the checkout
+#   deploy/update_single_server.sh --admin-email you@example.com
 #                                            # the first update after people
 #                                            # arrived: make this account the admin
 #
@@ -35,7 +35,10 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-. "$(dirname "$0")/deploy/_common.sh"
+# Everything below speaks in paths from the checkout root, wherever this was
+# run from.
+cd "$(dirname "$0")/.."
+. deploy/_common.sh
 
 say "Checking where we are"
 require_repo_root; ok "in the repository root ($REPO)"

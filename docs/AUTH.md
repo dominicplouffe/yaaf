@@ -144,8 +144,8 @@ docker compose -f deploy/docker-compose.yml exec api \
 
 `bootstrap` works only while the box has no admin. It promotes the account with
 that email if one exists — the chairman you have been all along, with every
-project you founded — or creates it, and prints a setup link. `deploy_single_server.sh`
-and `update_single_server.sh` run it for you from `YAAF_ADMIN_EMAIL` in
+project you founded — or creates it, and prints a setup link. `deploy/deploy_single_server.sh`
+and `deploy/update_single_server.sh` run it for you from `YAAF_ADMIN_EMAIL` in
 `deploy/.env`, and use a ten-minute personal token for the library sync they
 used to do with the admin token.
 

@@ -86,7 +86,7 @@ curl -fsSL https://get.docker.com | sh          # if docker isn't there yet
 sudo usermod -aG docker "$USER"                 # then log out and back in
 
 git clone <your-yaaf-remote> yaaf && cd yaaf
-./deploy_single_server.sh
+deploy/deploy_single_server.sh
 ```
 
 That is the whole install. The script is idempotent — re-run it after a
@@ -139,8 +139,8 @@ Worth knowing, because when something breaks you debug these, not the script:
 ### Living with it
 
 ```bash
-./update_single_server.sh    # pull, back up, rebuild, migrate, verify
-./kill_single_server.sh      # stop, keep data      (--wipe destroys the database)
+deploy/update_single_server.sh    # pull, back up, rebuild, migrate, verify
+deploy/kill_single_server.sh      # stop, keep data      (--wipe destroys the database)
 ```
 
 **Updating, including updates that carry migrations, needs no special step.**
@@ -210,7 +210,7 @@ container entrypoints already do.
 
 ## Reaching a server you SSH into
 
-`./deploy_single_server.sh` binds the dashboard to `127.0.0.1` precisely so
+`deploy/deploy_single_server.sh` binds the dashboard to `127.0.0.1` precisely so
 that a remote box does not publish it. Nothing listens on the network, so
 there is nothing to firewall. Reach it by forwarding the port from your
 laptop:
@@ -294,7 +294,7 @@ is the check: exactly one `published: "8080"`, carrying `host_ip: 127.0.0.1`.
 
 **`docker compose exec api yaaf seed-roles roles/` looks like it works and
 does nothing.** The image has no `roles/` directory, and the command globs an
-empty path, prints nothing, and exits 0. `./deploy_single_server.sh` loads them
+empty path, prints nothing, and exits 0. `deploy/deploy_single_server.sh` loads them
 over HTTP; by hand it is the loop above, or from a checkout with the CLI
 installed:
 `YAAF_API=http://localhost:8080 yaaf login && yaaf seed-roles roles/` (an
@@ -310,7 +310,7 @@ itself with either.
 
 **A library seeded once does not grow by itself.** Both scripts load only the
 slugs the library is missing, so a role added to the repository after your
-first deploy arrives on the next `./update_single_server.sh`, and no role you
+first deploy arrives on the next `deploy/update_single_server.sh`, and no role you
 already have is re-versioned. By hand it is
 `yaaf seed-roles roles/ --only-missing`.
 
@@ -353,7 +353,7 @@ admin until one is made — the chairman's own email keeps every project they
 chair:
 
 ```bash
-./update_single_server.sh --admin-email you@example.com
+deploy/update_single_server.sh --admin-email you@example.com
 ```
 
 A forgotten password is a fresh setup link, from a shell on the box:
@@ -361,7 +361,7 @@ A forgotten password is a fresh setup link, from a shell on the box:
 Ten wrong passwords for one address lock that address for fifteen minutes.
 
 **The role pickers are empty when creating a project.** The library was never
-seeded. Re-run `./deploy_single_server.sh` — it seeds only when the library is
+seeded. Re-run `deploy/deploy_single_server.sh` — it seeds only when the library is
 empty, so this is safe.
 
 **A run starts and immediately dies.** Usually the sandbox image is missing or
@@ -527,7 +527,7 @@ these polling floors, never a replacement for them.
 Everything that matters is in **Postgres** (`pgdata` volume) plus the
 **artifacts** directory. Back up both.
 
-`./update_single_server.sh` dumps the database into `backups/` before every
+`deploy/update_single_server.sh` dumps the database into `backups/` before every
 upgrade, which covers the "that migration was a mistake" case but is not an
 offsite backup — `backups/` lives on the same disk as the volume it came from.
 
@@ -542,7 +542,7 @@ git be the durable copy.
 ### Upgrades
 
 ```bash
-./update_single_server.sh
+deploy/update_single_server.sh
 ```
 
 Pull, back up, rebuild both images, apply migrations, verify. **An update that
@@ -558,7 +558,7 @@ docker build -f deploy/sandbox/Dockerfile -t yaaf-sandbox:latest .   # sandbox i
 cd deploy && docker compose up --build -d                             # control plane
 ```
 
-Take a dump first if you do it that way — `update_single_server.sh` refuses to
+Take a dump first if you do it that way — `deploy/update_single_server.sh` refuses to
 migrate without one, and a migration that applies cleanly can still be one you
 want to undo:
 
@@ -668,7 +668,7 @@ roles/          starter role library — thirty-two roles in six hiring aisles:
                 general, tutor, adversary, markets desk, game studio,
                 data-science bench
 crews/          fourteen pre-staffed teams the hiring desk offers
-deploy/         Dockerfiles and compose
+deploy/         Dockerfiles, compose, and the install/update/stop scripts
 evals/          golden-transcript evals — regression-gate for prompt edits
 tests/          invariant suite over HTTP, chaos tests, eval checks
 migrations/     Alembic

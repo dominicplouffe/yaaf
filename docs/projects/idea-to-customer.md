@@ -293,7 +293,7 @@ The role — `roles/designer.json`, Product / UI Designer — is new, and genera
 enough to hire anywhere: the library had a games UX designer and a games art
 director, and nothing at all for the ordinary case of a web product that has to
 look like somebody cared. Seed it before you create the project (a fresh
-`./update_single_server.sh` does it), or the hiring desk will show the Design
+`deploy/update_single_server.sh` does it), or the hiring desk will show the Design
 team's role blank.
 
 ---

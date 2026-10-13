@@ -10,12 +10,12 @@
 # EXTERNAL-DB below.
 #
 # Usage:
-#   ./deploy_single_server.sh --admin-email you@example.com   # first install
-#   ./deploy_single_server.sh                  # dashboard on 127.0.0.1:8080
-#   ./deploy_single_server.sh --bind 0.0.0.0   # publish it (see the warning)
-#   ./deploy_single_server.sh --bind 127.0.0.1 --bind 192.168.0.5   # both
-#   ./deploy_single_server.sh --port 9090
-#   ./deploy_single_server.sh --skip-roles
+#   deploy/deploy_single_server.sh --admin-email you@example.com   # first install
+#   deploy/deploy_single_server.sh                  # dashboard on 127.0.0.1:8080
+#   deploy/deploy_single_server.sh --bind 0.0.0.0   # publish it (see the warning)
+#   deploy/deploy_single_server.sh --bind 127.0.0.1 --bind 192.168.0.5   # both
+#   deploy/deploy_single_server.sh --port 9090
+#   deploy/deploy_single_server.sh --skip-roles
 #
 set -euo pipefail
 
@@ -35,7 +35,10 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-. "$(dirname "$0")/deploy/_common.sh"
+# Everything below speaks in paths from the checkout root, wherever this was
+# run from.
+cd "$(dirname "$0")/.."
+. deploy/_common.sh
 
 # ── 1. preflight ──────────────────────────────────────────────────────────────
 say "Checking where we are and what we have"

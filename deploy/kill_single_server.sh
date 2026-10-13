@@ -4,7 +4,7 @@
 #
 # By default this stops and removes the containers but KEEPS your data: the
 # Postgres volume, deploy/.env, workspaces and artifacts all survive, so
-# ./deploy_single_server.sh brings the same project back.
+# deploy/deploy_single_server.sh brings the same project back.
 #
 # It also removes the sandbox containers the runner launched. Those are
 # siblings, not compose services, so `docker compose down` leaves them behind —
@@ -15,11 +15,11 @@
 # opts out).
 #
 # Usage:
-#   ./kill_single_server.sh                    # stop everything, keep the data
-#   ./kill_single_server.sh --wipe             # ALSO destroy the database volume
-#   ./kill_single_server.sh --wipe --yes       # no confirmation prompt
-#   ./kill_single_server.sh --sandboxes        # only clean up leaked sandboxes
-#   ./kill_single_server.sh --keep-sandboxes   # leave sandbox containers alone
+#   deploy/kill_single_server.sh                    # stop everything, keep the data
+#   deploy/kill_single_server.sh --wipe             # ALSO destroy the database volume
+#   deploy/kill_single_server.sh --wipe --yes       # no confirmation prompt
+#   deploy/kill_single_server.sh --sandboxes        # only clean up leaked sandboxes
+#   deploy/kill_single_server.sh --keep-sandboxes   # leave sandbox containers alone
 #
 set -euo pipefail
 
@@ -36,7 +36,10 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-. "$(dirname "$0")/deploy/_common.sh"
+# Everything below speaks in paths from the checkout root, wherever this was
+# run from.
+cd "$(dirname "$0")/.."
+. deploy/_common.sh
 
 say "Checking where we are"
 require_repo_root; ok "in the repository root ($REPO)"
@@ -85,14 +88,14 @@ if [ "$WIPE" = "yes" ]; then
 cat <<EOF
 
   Everything is gone except deploy/.env and the checkout.
-  Start fresh with:  ./deploy_single_server.sh
+  Start fresh with:  deploy/deploy_single_server.sh
 
 EOF
 else
 cat <<EOF
 
   Data kept: the Postgres volume, deploy/.env, /var/lib/yaaf/{workspaces,artifacts}.
-  Bring it back with:  ./deploy_single_server.sh
+  Bring it back with:  deploy/deploy_single_server.sh
 
 EOF
 fi

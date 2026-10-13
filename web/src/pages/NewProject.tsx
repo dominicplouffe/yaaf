@@ -999,7 +999,7 @@ export default function NewProject() {
         throw new Error(
           `This install's role library has no ${missingRoleSlugs.join(", ")}. ` +
             "Load them from your checkout with `yaaf seed-roles roles/ --only-missing` " +
-            "(or ./update_single_server.sh), then reload this page — or pick roles this " +
+            "(or deploy/update_single_server.sh), then reload this page — or pick roles this " +
             "install already has.",
         );
       }
@@ -1453,7 +1453,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             install does not have: <strong>{missingRoleSlugs.join(", ")}</strong>. The examples
             hire from the role library by slug rather than carrying their prompts, so a role
             added to the repository after this install was seeded is not here yet. Load the
-            missing ones from your checkout — <code>./update_single_server.sh</code>, or{" "}
+            missing ones from your checkout — <code>deploy/update_single_server.sh</code>, or{" "}
             <code>yaaf seed-roles roles/ --only-missing</code> — then reload this page and load
             the file again. Until then, pick a role this install does have for each team.
             {missingRoleSlugs.includes(bundleCeoSlug) && (

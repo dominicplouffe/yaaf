@@ -37,7 +37,7 @@ deploy/proxy/generated/
 # Session handoff notes for Claude — local only
 HANDOFF.md
 
-# Database dumps taken by update_single_server.sh
+# Database dumps taken by deploy/update_single_server.sh
 backups/
 .venv/
 

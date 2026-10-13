@@ -1,5 +1,5 @@
-# Shared by deploy_single_server.sh, update_single_server.sh and
-# kill_single_server.sh. Sourced, never run on its own.
+# Shared by deploy/deploy_single_server.sh, deploy/update_single_server.sh and
+# deploy/kill_single_server.sh. Sourced, never run on its own.
 #
 # shellcheck shell=bash
 
@@ -32,7 +32,7 @@ require_repo_root() {
   for marker in pyproject.toml deploy/docker-compose.yml deploy/Dockerfile \
                 deploy/sandbox/Dockerfile roles migrations; do
     [ -e "$marker" ] \
-      || die "no ./$marker here — run this from the root of the yaaf checkout (you are in $PWD)"
+      || die "no ./$marker here — this script must live in deploy/ of a yaaf checkout (looked in $PWD)"
   done
   REPO="$PWD"
 }
@@ -64,7 +64,7 @@ resolve_docker() {
 compose() { ( cd "$REPO/deploy" && $DOCKER compose "$@" ); }
 
 load_env() {
-  [ -f "$REPO/deploy/.env" ] || die "no deploy/.env — run ./deploy_single_server.sh first"
+  [ -f "$REPO/deploy/.env" ] || die "no deploy/.env — run deploy/deploy_single_server.sh first"
   set -a; . "$REPO/deploy/.env"; set +a
   warn_retired_token
 }
