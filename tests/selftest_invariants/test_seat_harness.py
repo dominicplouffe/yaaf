@@ -1,8 +1,9 @@
 """Invariant selftests: a seat chooses its harness, and no door seats one that cannot run.
 
-docs/RUNTIMES.md M1. The choice lives where the model does — on the role
-version, and per seat beside `model_override` — and every door a seat comes
-through runs one check (yaaf.runtimes.seats.refusal): the harness must exist,
+docs/RUNTIMES.md M1. The choice lives on the seat, beside `model_override` —
+a role names no harness, because a harness serves one provider and a role
+serves any — and every door a seat comes through runs one check
+(yaaf.runtimes.seats.refusal): the harness must exist,
 serve the seat's model, be able to take away what the role withholds (R2), and
 authenticate with the project's credential (R1).
 
@@ -87,17 +88,13 @@ def test_the_picker_offers_every_harness_a_seat_may_run_on_and_not_the_test_swit
             "codex_cli", "gemini_cli", "opencode"} <= offered
 
 
-def test_a_role_on_the_cli_runs_its_seats_on_the_cli(client):
-    """The whole of M1 from the outside: name the harness on the role, and the
-    seat's runs are leased onto it, pinned as it, and executed by its backend.
-    The CEO's role, because the CEO is the seat that wakes when a project
-    starts."""
+def test_a_seat_on_the_cli_runs_on_the_cli(client):
+    """The whole of M1 from the outside: name the harness on the seat, and its
+    runs are leased onto it, pinned as it, and executed by its backend. The
+    CEO's seat, because the CEO is the seat that wakes when a project starts."""
     make_project(client, start=False)  # the chairman and the base roles
-    assert _role(client, "ceo", is_ceo_role=True, harness="claude_cli").status_code == 200
-    assert client.get("/admin/roles/ceo", headers=ADMIN).json()["harness"] == "claude_cli"
-    # Created directly: make_project re-seeds the roles, which would pin a
-    # fresh version that names no harness.
-    created = client.post("/admin/projects", headers=ADMIN, json=_project_body("on-the-cli"))
+    created = client.post("/admin/projects", headers=ADMIN, json=_project_body(
+        "on-the-cli", ceo_harness_override="claude_cli"))
     assert created.status_code == 200, created.text
     project = created.json()
     assert client.post(f"/admin/projects/{project['id']}/start",
@@ -138,12 +135,25 @@ def test_a_seat_can_be_put_on_another_harness_than_its_role(client):
 
 
 @pytest.mark.parametrize("harness", ["no-such-harness", "mock"])
-def test_a_role_cannot_name_a_harness_a_seat_cannot_run_on(client, harness):
+def test_a_seat_cannot_be_put_on_a_harness_it_cannot_run_on(client, harness):
     """`mock` is the project-wide test switch, never a seat's choice: a seat on
     it would be a scripted agent in a real project."""
-    refused = _role(client, "worker", harness=harness)
+    make_project(client, start=False)
+    refused = client.post("/admin/projects", headers=ADMIN, json=_project_body(
+        "nowhere", ceo_harness_override=harness))
     assert refused.status_code == 422
     assert "unknown harness" in refused.text
+
+
+def test_a_role_that_still_names_a_harness_is_told_it_is_not_kept(client):
+    """An old seed folder or bundle names one. It loads — refusing it would
+    strand every file written before — and says what it did not keep, rather
+    than dropping it where nobody looks."""
+    make_project(client, start=False)
+    loaded = _role(client, "worker", harness="claude_cli")
+    assert loaded.status_code == 200, loaded.text
+    assert "harness" in loaded.json()["ignored"]
+    assert "harness" not in client.get("/admin/roles/worker", headers=ADMIN).json()
 
 
 def test_an_override_for_somebody_not_on_the_team_is_refused(client):
@@ -158,13 +168,18 @@ def test_an_override_for_somebody_not_on_the_team_is_refused(client):
 
 
 def test_a_role_without_a_shell_cannot_be_put_on_a_harness_that_always_has_one(client, picky):
-    refused = _role(client, "scribe", harness="always_shell",
-                    tool_permissions={"files": True, "web": True})
+    make_project(client, start=False)
+    body = _project_body("shell", teams=[{"role_slug": "scribe", "name": "Words",
+                                          "employees": ["Ada"],
+                                          "harness_overrides": {"Ada": "always_shell"}}])
+    assert _role(client, "scribe", tool_permissions={"files": True, "web": True}).status_code == 200
+    refused = client.post("/admin/projects", headers=ADMIN, json=body)
     assert refused.status_code == 422
     assert "cannot run without bash" in refused.text
     # Granting the shell is the honest fix, and it is accepted.
-    assert _role(client, "scribe", harness="always_shell",
+    assert _role(client, "scribe",
                  tool_permissions={"files": True, "bash": True}).status_code == 200
+    assert client.post("/admin/projects", headers=ADMIN, json=body).status_code == 200
 
 
 def test_a_seat_override_cannot_widen_its_role_either(client, picky):
@@ -219,26 +234,38 @@ def test_a_team_added_later_and_a_hire_by_the_ceo_meet_the_same_check(client, pi
         "role_slug": "worker", "name": "Beta", "employees": ["Kit"],
         "harness_overrides": {"Kit": "key_only"}})
     assert added.status_code == 422, added.text
-    # The CEO cannot name a harness, but it hires a role, and the role can.
-    assert _role(client, "keyed", harness="key_only").status_code == 200
-    _, token = live_token(project["id"], project["ceo_agent_id"])
+    # The CEO names no harness and no model, but it hires a role, and a role's
+    # grants can be what the project's harness cannot honour: Codex always
+    # hands its models a file editor, so a role without files cannot sit on it.
+    login = client.post(CREDENTIALS, headers=ADMIN, json={
+        "name": "ChatGPT", "provider": "openai", "mode": "subscription",
+        "value": '{"tokens": {"access_token": "a", "refresh_token": "r"}}'}).json()["id"]
+    on_codex = make_project(client, slug="codex-hires", billing_secret_id=login)
+    assert _role(client, "talker", tool_permissions={"files": False}).status_code == 200
+    _, token = live_token(on_codex["id"], on_codex["ceo_agent_id"])
     hired = client.post("/agent/teams", headers=bearer(token), json={
-        "role_slug": "keyed", "name": "Gamma", "employees": ["Ivy"],
+        "role_slug": "talker", "name": "Gamma", "employees": ["Ivy"],
         "reason": "A second desk for the fortnight the build half runs long."})
     assert hired.status_code == 422, hired.text
+    assert "cannot run without files" in hired.text
 
 
-def test_a_repin_cannot_move_seats_onto_a_harness_their_credential_cannot_pay(client, picky):
+def test_a_repin_cannot_move_seats_onto_a_role_their_harness_cannot_honour(client):
+    """A new role version is a door too: it can withhold what the seats'
+    harness cannot take away — files, on Codex."""
     make_project(client, start=False)
-    subscription = _credential(client, "Plan", "subscription")
-    project = make_project(client, slug="repinned", billing_secret_id=subscription)
+    login = client.post(CREDENTIALS, headers=ADMIN, json={
+        "name": "ChatGPT", "provider": "openai", "mode": "subscription",
+        "value": '{"tokens": {"access_token": "a", "refresh_token": "r"}}'}).json()["id"]
+    project = make_project(client, slug="repinned", billing_secret_id=login)
     team_id = project["teams"][0]["id"]
-    assert _role(client, "worker", harness="key_only").status_code == 200
+    assert _role(client, "worker", tool_permissions={"files": False}).status_code == 200
     refused = client.post(f"/admin/teams/{team_id}/repin", headers=ADMIN)
-    assert refused.status_code == 422
+    assert refused.status_code == 422 and "cannot run without files" in refused.text
     with db_session() as session:
         pinned = session.get(RoleVersion, session.get(Team, team_id).role_version_id)
-        assert pinned.harness is None, "the refused repin still moved the team"
+        assert (pinned.tool_permissions or {}).get("files", True), \
+            "the refused repin still moved the team"
 
 
 def test_a_seat_changed_behind_every_door_is_failed_at_lease_not_run(client, picky):
@@ -302,25 +329,25 @@ def test_a_model_with_no_price_cannot_be_hired_onto_a_harness_that_prices_runs(c
     """R3. The loop meters every call by the catalog's price, so a model the
     catalog cannot price is a run the per-run cap cannot stop."""
     make_project(client, start=False)
-    refused = _role(client, "mystery", model="claude-mystery-9", harness="anthropic_api")
+    team = {"role_slug": "worker", "name": "Odd", "employees": ["Ann"],
+            "model_overrides": {"Ann": "claude-mystery-9"}}
+    refused = client.post("/admin/projects", headers=ADMIN, json=_project_body(
+        "unpriced-seat", teams=[{**team, "harness_overrides": {"Ann": "anthropic_api"}}]))
     assert refused.status_code == 422
+    assert "Ann" in refused.text
     assert "claude-mystery-9 has no price on this install" in refused.text
     assert "Settings → Model prices" in refused.text
     # A harness that reports its own bill is not metered by the catalog.
-    assert _role(client, "mystery", model="claude-mystery-9",
-                 harness="claude_cli").status_code == 200
-    # And the seat cannot be moved onto the loop either.
-    moved = client.post("/admin/projects", headers=ADMIN, json=_project_body(
-        "unpriced-seat", teams=[{"role_slug": "mystery", "name": "Odd", "employees": ["Ann"],
-                                 "harness_overrides": {"Ann": "anthropic_api"}}]))
-    assert moved.status_code == 422 and "Ann" in moved.text
+    assert client.post("/admin/projects", headers=ADMIN, json=_project_body(
+        "self-billed", teams=[{**team, "harness_overrides": {"Ann": "claude_cli"}}])
+    ).status_code == 200
 
 
 def test_a_seat_on_the_api_loop_is_leased_with_its_price_and_runs_on_its_entrypoint(client):
     make_project(client, start=False)
-    assert _role(client, "ceo", is_ceo_role=True, harness="anthropic_api").status_code == 200
     created = client.post("/admin/projects", headers=ADMIN, json=_project_body(
-        "on-the-loop", billing_secret_id=_credential(client, "Key", "api_key")))
+        "on-the-loop", billing_secret_id=_credential(client, "Key", "api_key"),
+        ceo_harness_override="anthropic_api"))
     assert created.status_code == 200, created.text
     project = created.json()
     assert client.post(f"/admin/projects/{project['id']}/start",

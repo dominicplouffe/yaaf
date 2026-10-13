@@ -419,6 +419,10 @@ export interface Dashboard {
   /** What pays each provider, the billing credential first. Never a value. */
   credentials?: { provider: string; label: string; credential_id: string; name: string;
                   bills: string; billing: boolean }[];
+  /** The project's own tier → model, over its provider's lineup. */
+  seat_models?: Record<string, string>;
+  /** The provider the billing credential pays — the one its seats run on. */
+  provider?: string;
   /** Drought-clock anchors: the UI counts toward the refusal. */
   created_at: string;
   last_countable_evidence_at: string | null;
@@ -991,7 +995,9 @@ export interface RoleSummary {
   /** Which worlds it knows. A filter in the hiring desk, never a folder. */
   domains: string[];
   latest_version: number;
-  model: string | null;
+  /** How hard, never on what: light | standard | strong. The project's
+      provider answers it with a model (docs/RUNTIMES.md). */
+  tier: string | null;
   effort: string | null;
   description: string;
   tools: string[];
@@ -1035,10 +1041,12 @@ export interface BundleRole {
   domains?: string[];
   description: string;
   system_prompt: string;
-  model: string;
+  /** light | standard | strong. Absent in a file written when roles named a
+      model, which the server reads as that model's tier. */
+  tier?: string;
+  /** What a role named before tiers; read as its tier, never stored. */
+  model?: string;
   effort: string;
-  /** What drives the model; absent is the provider's default. */
-  harness?: string | null;
   tool_permissions: Record<string, unknown>;
   secret_scopes: string[];
 }
@@ -1076,10 +1084,14 @@ export interface ProjectBundle {
     billing_secret_name?: string | null;
     /** What pays each other provider, by credential name: {deepseek: "DeepSeek key"}. */
     credential_names?: Record<string, string>;
+    /** The model each role tier runs on, over the billing provider's lineup:
+        {standard: "mistral/mistral-large-latest"}. */
+    seat_models?: Record<string, string>;
     ceo_role_slug: string;
     ceo_name: string;
     ceo_daily_at?: string | null;
     ceo_model_override?: string | null;
+    ceo_tier_override?: string | null;
     ceo_effort_override?: string | null;
     ceo_harness_override?: string | null;
     teams: {
@@ -1091,6 +1103,8 @@ export interface ProjectBundle {
       schedules?: Record<string, string>;
       /** Per-agent model overrides, keyed by employee name. */
       model_overrides?: Record<string, string>;
+      /** Per-agent tier overrides — what `stakes: high` stamps — by name. */
+      tier_overrides?: Record<string, string>;
       /** Per-agent reasoning-effort overrides, keyed by employee name. */
       effort_overrides?: Record<string, string>;
       /** Per-agent harness overrides, keyed by employee name (docs/RUNTIMES.md). */

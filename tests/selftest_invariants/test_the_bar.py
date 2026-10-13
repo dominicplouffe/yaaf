@@ -31,16 +31,11 @@ CHAIR = {"email": "chair@example.com", "display_name": "Chair"}
 def _library(client) -> None:
     """A small library with one role in each category the lift cares about."""
     client.post("/admin/users", json=CHAIR, headers=ADMIN)
-    seed_role(client, "ceo", is_ceo=True, category="leadership",
-              model="claude-opus-5-5", effort="high")
-    seed_role(client, "scribe", category="content",
-              model="claude-sonnet-5-5", effort="high")
-    seed_role(client, "digger", category="research",
-              model="claude-sonnet-5-5", effort="high")
-    seed_role(client, "hawker", category="growth",
-              model="claude-sonnet-5-5", effort="high")
-    seed_role(client, "reader", category="challenge",
-              model="claude-sonnet-5-5", effort="xhigh")
+    seed_role(client, "ceo", is_ceo=True, category="leadership", tier="strong", effort="high")
+    seed_role(client, "scribe", category="content", tier="standard", effort="high")
+    seed_role(client, "digger", category="research", tier="standard", effort="high")
+    seed_role(client, "hawker", category="growth", tier="standard", effort="high")
+    seed_role(client, "reader", category="challenge", tier="standard", effort="xhigh")
 
 
 def _create(client, slug: str, *, constitution: dict, teams: list[dict]):
@@ -50,10 +45,19 @@ def _create(client, slug: str, *, constitution: dict, teams: list[dict]):
     }, headers=ADMIN)
 
 
-def _seats(project_id: str) -> dict[str, tuple[str | None, str | None]]:
+#: What a seat carries when nobody — chairman or dial — has said anything.
+UNTOUCHED = (None, None, None)
+#: What the lift stamps: the strongest rung of the project's own lineup, and
+#: deeper reasoning. A tier, not a model, so it follows the project to
+#: whatever provider it pays.
+LIFTED = (None, "strong", "xhigh")
+
+
+def _seats(project_id: str) -> dict[str, tuple[str | None, str | None, str | None]]:
+    """(model, tier, effort) overrides by name."""
     with db_session() as session:
         return {
-            a.name: (a.model_override, a.effort_override)
+            a.name: (a.model_override, a.tier_override, a.effort_override)
             for a in session.query(Agent).filter_by(project_id=project_id)
         }
 
@@ -73,11 +77,11 @@ def test_high_stakes_hires_the_producing_seats_better_and_leaves_the_rest(client
     assert created.status_code == 200, created.text
     seats = _seats(created.json()["id"])
 
-    assert seats["Ada"] == ("claude-opus-5-5", "xhigh"), "the seat he actually reads"
-    assert seats["Rey"] == ("claude-opus-5-5", "xhigh")
-    # Already at xhigh in the library, so only the model moves — never downward.
-    assert seats["Juno"] == ("claude-opus-5-5", None)
-    assert seats["Sol"] == (None, None), "outreach is not the deliverable"
+    assert seats["Ada"] == LIFTED, "the seat he actually reads"
+    assert seats["Rey"] == LIFTED
+    # Already at xhigh in the library, so only the tier moves — never downward.
+    assert seats["Juno"] == (None, "strong", None)
+    assert seats["Sol"] == UNTOUCHED, "outreach is not the deliverable"
 
 
 def test_normal_stakes_changes_nothing_at_all(client):
@@ -88,7 +92,7 @@ def test_normal_stakes_changes_nothing_at_all(client):
         {"role_slug": "scribe", "name": "Editorial", "employees": ["Ada"]},
     ])
     assert created.status_code == 200, created.text
-    assert _seats(created.json()["id"])["Ada"] == (None, None)
+    assert _seats(created.json()["id"])["Ada"] == UNTOUCHED
 
 
 def test_what_the_chairman_named_survives_the_lift(client):
@@ -102,8 +106,8 @@ def test_what_the_chairman_named_survives_the_lift(client):
     ])
     assert created.status_code == 200, created.text
     seats = _seats(created.json()["id"])
-    assert seats["Kit"] == ("claude-haiku-4-5", "low"), "his answer wins"
-    assert seats["Ada"] == ("claude-opus-5-5", "xhigh"), "the silence is filled"
+    assert seats["Kit"] == ("claude-haiku-4-5", None, "low"), "his answer wins"
+    assert seats["Ada"] == LIFTED, "the silence is filled"
 
 
 def test_the_shared_role_library_never_moves(client):
@@ -115,7 +119,7 @@ def test_the_shared_role_library_never_moves(client):
         {"role_slug": "scribe", "name": "Editorial", "employees": ["Ada"]},
     ]).status_code == 200
     role = client.get("/admin/roles/scribe", headers=ADMIN).json()
-    assert (role["model"], role["effort"]) == ("claude-sonnet-5-5", "high")
+    assert (role["tier"], role["effort"]) == ("standard", "high")
 
 
 def test_a_team_added_later_is_hired_on_the_same_terms(client):
@@ -135,8 +139,8 @@ def test_a_team_added_later_is_hired_on_the_same_terms(client):
     assert added.status_code == 200, added.text
 
     seats = _seats(project_id)
-    assert seats["Ada"] == ("claude-opus-5-5", "xhigh"), "the lift reaches a later team"
-    assert seats["Kit"] == ("claude-haiku-4-5", "xhigh"), "and his model still wins"
+    assert seats["Ada"] == LIFTED, "the lift reaches a later team"
+    assert seats["Kit"] == ("claude-haiku-4-5", None, "xhigh"), "and his model still wins"
     with db_session() as session:
         assert session.query(Agent).filter_by(
             project_id=project_id, name="Ada").one().daily_at == "09:30"
@@ -317,12 +321,12 @@ def test_an_install_that_says_nothing_is_byte_identical(client):
     assert created.status_code == 200, created.text
     project_id = created.json()["id"]
 
-    assert all(seat == (None, None) for seat in _seats(project_id).values()), \
+    assert all(seat == UNTOUCHED for seat in _seats(project_id).values()), \
         "no seat may be re-hired by a rule the chairman never set"
     with db_session() as session:
         ceo = session.query(Agent).filter_by(project_id=project_id,
                                              kind=AgentKind.CEO).one()
-        assert (ceo.model_override, ceo.effort_override) == (None, None)
+        assert (ceo.model_override, ceo.tier_override, ceo.effort_override) == UNTOUCHED
         assert session.get(Project, project_id).status == "draft"
 
 
@@ -332,37 +336,44 @@ def test_an_install_that_says_nothing_is_byte_identical(client):
 def test_the_lift_never_lowers_a_seat_the_library_already_placed_higher(client):
     """The model check was `!= CRAFT_MODEL`, so a role the library deliberately
     put on something stronger was stamped back DOWN to the craft model by a
-    dial whose entire promise is that it raises. The effort check next to it
-    already compared ranks; this one now does too."""
+    dial whose entire promise is that it raises. It compares rungs now, as the
+    effort check beside it compares ranks: a role already on the strong tier
+    is left there."""
     client.post("/admin/users", json=CHAIR, headers=ADMIN)
     seed_role(client, "ceo", is_ceo=True, category="leadership")
-    seed_role(client, "reader", category="challenge", model="claude-fable-5-1",
-              effort="xhigh")
-    seed_role(client, "scribe", category="content", model="claude-sonnet-5-5",
-              effort="high")
+    seed_role(client, "reader", category="challenge", tier="strong", effort="xhigh")
+    seed_role(client, "scribe", category="content", tier="standard", effort="high")
     created = _create(client, "no-demotion", constitution={"stakes": "high"}, teams=[
         {"role_slug": "reader", "name": "Review", "employees": ["Juno"]},
         {"role_slug": "scribe", "name": "Editorial", "employees": ["Ada"]},
     ])
     assert created.status_code == 200, created.text
     seats = _seats(created.json()["id"])
-    assert seats["Juno"] == (None, None), "a stronger seat was demoted by the lift"
-    assert seats["Ada"] == ("claude-opus-5-5", "xhigh")
+    assert seats["Juno"] == UNTOUCHED, "a stronger seat was demoted by the lift"
+    assert seats["Ada"] == LIFTED
 
 
-def test_a_seat_on_last_generations_opus_is_lifted_not_left(client):
-    """When the craft model moved to Opus 5.5, Opus 5 vanished from the rank
-    table, ranked 0 and was lifted by luck. With it ranked equal to Opus it
-    would have been left behind, paying more per token for the older model."""
+def test_a_role_written_on_last_generations_opus_is_read_as_strong(client):
+    """A seed folder or a bundle from before roles named tiers still names a
+    model. Opus 5 is off the lineup, between Sonnet 5.5 and Opus 5.5 by rank;
+    read as the nearer rung with ties going up, it is the strong role its
+    author meant — and running on Opus 5.5, not left on the older model at a
+    higher price per token."""
     client.post("/admin/users", json=CHAIR, headers=ADMIN)
     seed_role(client, "ceo", is_ceo=True, category="leadership")
-    seed_role(client, "scribe", category="content", model="claude-opus-5",
-              effort="xhigh")
+    legacy = client.post("/admin/roles", headers=ADMIN, json={
+        "slug": "scribe", "name": "Scribe", "category": "content", "description": "an old role",
+        "system_prompt": "You write.", "model": "claude-opus-5", "effort": "xhigh"})
+    assert legacy.json()["read_as"] == "model claude-opus-5 is read as tier strong"
+    assert client.get("/admin/roles/scribe", headers=ADMIN).json()["tier"] == "strong"
     created = _create(client, "old-opus", constitution={"stakes": "high"}, teams=[
         {"role_slug": "scribe", "name": "Editorial", "employees": ["Ada"]},
     ])
     assert created.status_code == 200, created.text
-    assert _seats(created.json()["id"])["Ada"] == ("claude-opus-5-5", None)
+    assert _seats(created.json()["id"])["Ada"] == UNTOUCHED
+    seat = client.get(f"/observe/agents/{created.json()['teams'][0]['agents'][0]['id']}",
+                      headers=ADMIN).json()["runs_on"]
+    assert seat["model"] == "claude-opus-5-5"
 
 
 def test_an_empty_roster_cannot_hold_a_rule_it_never_staffs(client):
@@ -428,7 +439,7 @@ def test_amending_stakes_actually_re_hires_the_seats(client):
         {"role_slug": "hawker", "name": "Growth", "employees": ["Sol"]},
     ])
     project_id = created.json()["id"]
-    assert _seats(project_id)["Ada"] == (None, None)
+    assert _seats(project_id)["Ada"] == UNTOUCHED
 
     amended = client.post(f"/admin/projects/{project_id}/amendments", headers=ADMIN,
                           json={"reason": "this turned out to matter",
@@ -437,8 +448,8 @@ def test_amending_stakes_actually_re_hires_the_seats(client):
     assert "Ada" in amended.json()["note"], "say whose hire changed"
 
     seats = _seats(project_id)
-    assert seats["Ada"] == ("claude-opus-5-5", "xhigh")
-    assert seats["Sol"] == (None, None), "the lift is still aimed, not blanket"
+    assert seats["Ada"] == LIFTED
+    assert seats["Sol"] == UNTOUCHED, "the lift is still aimed, not blanket"
 
 
 def test_amending_stakes_does_not_overwrite_an_answer_somebody_gave(client):
@@ -456,12 +467,12 @@ def test_amending_stakes_does_not_overwrite_an_answer_somebody_gave(client):
     client.post(f"/admin/projects/{project_id}/amendments", headers=ADMIN,
                 json={"reason": "raising the bar", "changes": {"stakes": "high"}})
     seats = _seats(project_id)
-    assert seats["Kit"] == ("claude-haiku-4-5", None), "his answer survived"
-    assert seats["Ada"] == ("claude-opus-5-5", "xhigh")
+    assert seats["Kit"] == ("claude-haiku-4-5", None, None), "his answer survived"
+    assert seats["Ada"] == LIFTED
 
     client.post(f"/admin/projects/{project_id}/amendments", headers=ADMIN,
                 json={"reason": "back down", "changes": {"stakes": "low"}})
-    assert _seats(project_id)["Ada"] == ("claude-opus-5-5", "xhigh"), \
+    assert _seats(project_id)["Ada"] == LIFTED, \
         "lowering the dial must not silently demote a seat"
 
 

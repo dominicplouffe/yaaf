@@ -1,11 +1,13 @@
 """Which credential pays which provider, for one project.
 
 A project's billing credential (`Project.billing_secret_id`) pays whichever
-provider it is for, and sets the project's meter. A project whose seats run on
-a second provider holds a credential for it beside the first
-(`ProjectLlmCredential`, docs/RUNTIMES.md M3). Every reader — the seat doors,
-the lease, the health checklist, the credential screens — asks here, so "who
-pays for this seat" has one answer.
+provider it is for, sets the project's meter, and decides what its seats run
+on: the provider it pays is the project's provider, and that provider's lineup
+— or the project's own (`Project.seat_models`) — answers each role's tier. A
+project with a seat on a second provider holds a credential for it beside the
+first (`ProjectLlmCredential`, docs/RUNTIMES.md M3). Every reader — the seat
+doors, the lease, the health checklist, the credential screens — asks here, so
+"what does this seat run on, and who pays for it" has one answer.
 """
 
 from __future__ import annotations
@@ -14,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from yaaf.core.models import Project, ProjectLlmCredential, Secret
+from yaaf.runtimes import catalog
 from yaaf.runtimes.providers import DEFAULT_PROVIDER
 
 
@@ -32,6 +35,20 @@ def held(session: Session, project: Project) -> dict[str, Secret]:
         if billing is not None:
             out[billing.provider or DEFAULT_PROVIDER] = billing
     return out
+
+
+def provider_of(session: Session, project: Project) -> str:
+    """The project's provider: the one its billing credential pays. A draft
+    with no credential yet reads as the default provider's, which is what it
+    will run on if the credential it is given pays that one."""
+    billing = session.get(Secret, project.billing_secret_id) if project.billing_secret_id else None
+    return (billing.provider if billing is not None else None) or DEFAULT_PROVIDER
+
+
+def project_lineup(session: Session, project: Project) -> dict[str, str | None]:
+    """The model each role tier runs on in this project — the one place a
+    caller gets the `lineup` yaaf.runtimes.seats.seat_for resolves against."""
+    return catalog.lineup(provider_of(session, project), project.seat_models)
 
 
 def credential_for(session: Session, project: Project, provider: str) -> Secret | None:

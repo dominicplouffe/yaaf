@@ -49,13 +49,14 @@ export function domainShort(id: string): string {
 
 /** What a hire costs in time and money, in the chairman's terms.
 
-    A practice manager does not need to know what Opus is; they need to know
-    this one thinks longer and costs about four times as much. The model and
-    effort stay one click away, in the detail pane, for anyone who wants them. */
-export function depthOf(model: string | null, effort: string | null):
+    A practice manager does not need to know what a strong tier is on each
+    vendor; they need to know this one thinks longer and costs about four times
+    as much. The tier and effort stay one click away, in the detail pane, for
+    anyone who wants them — the model is the project's, not the role's. */
+export function depthOf(tier: string | null, effort: string | null):
   { band: string; dollars: string; rank: number } {
-  const deep = (model ?? "").includes("opus");
-  const light = (model ?? "").includes("haiku");
+  const deep = tier === "strong";
+  const light = tier === "light";
   const hard = effort === "xhigh" || effort === "max";
   if (deep) return { band: "Deepest", dollars: "$$$$", rank: 4 };
   if (light) return { band: "Light", dollars: "$", rank: 1 };
@@ -69,7 +70,7 @@ export function depthOf(model: string | null, effort: string | null):
 const MONTHLY_BY_RANK: Record<number, number> = { 1: 8, 2: 26, 3: 52, 4: 140 };
 export function roughMonthly(roles: RoleSummary[]): number {
   return roles.reduce(
-    (sum, r) => sum + (MONTHLY_BY_RANK[depthOf(r.model, r.effort).rank] ?? 26), 0);
+    (sum, r) => sum + (MONTHLY_BY_RANK[depthOf(r.tier, r.effort).rank] ?? 26), 0);
 }
 
 const TOOL_WORDS: Record<string, string> = {
@@ -341,13 +342,13 @@ export function HirePanel({
   function exportLibrary() {
     downloadCsv(
       "role-library.csv",
-      ["slug", "name", "category", "domains", "depth", "cost", "model", "effort",
+      ["slug", "name", "category", "domains", "depth", "cost", "tier", "effort",
         "can_do", "needs", "teams_running_it", "description"],
       workers.map((r) => {
-        const d = depthOf(r.model, r.effort);
+        const d = depthOf(r.tier, r.effort);
         return [
           r.slug, r.name, r.category ?? "uncategorised", (r.domains ?? []).join(" "),
-          d.band, d.dollars, r.model ?? "", r.effort ?? "",
+          d.band, d.dollars, r.tier ?? "", r.effort ?? "",
           canDo(r.tools).join(" "), (r.secret_scopes ?? []).join(" "),
           String(r.usage?.length ?? 0), r.description,
         ];
@@ -403,7 +404,7 @@ export function HirePanel({
                       <button type="button" className="small" key={r!.slug}
                         onClick={() => onToggle(r!.slug)}>
                         {selected.includes(r!.slug) ? "✓ " : "+ "}{r!.name}{" "}
-                        <span className="chip">{depthOf(r!.model, r!.effort).dollars}</span>
+                        <span className="chip">{depthOf(r!.tier, r!.effort).dollars}</span>
                       </button>
                     ))}
                 </div>
@@ -508,7 +509,7 @@ export function HirePanel({
                           onClick={() => onToggle(r.slug)}>
                           <span className="rc-top">
                             <strong>{r.name}</strong>
-                            <span className="chip">{depthOf(r.model, r.effort).dollars}</span>
+                            <span className="chip">{depthOf(r.tier, r.effort).dollars}</span>
                           </span>
                           <span className="rd">{clip(r.description, 120)}</span>
                           <span className="pill-row">
@@ -523,7 +524,7 @@ export function HirePanel({
                       ))}
                     </div>
                   ) : group.rows.map((r) => {
-                    const depth = depthOf(r.model, r.effort);
+                    const depth = depthOf(r.tier, r.effort);
                     const on = alreadyOn?.[r.slug];
                     return (
                       <div key={r.slug}
@@ -620,10 +621,11 @@ export function HirePanel({
               <div className="dv">{detailRole.description || "No description yet."}</div>
               <div className="dl">Depth</div>
               <div className="dv">
-                {depthOf(detailRole.model, detailRole.effort).band}{" "}
-                <span className="chip">{depthOf(detailRole.model, detailRole.effort).dollars}</span>
+                {depthOf(detailRole.tier, detailRole.effort).band}{" "}
+                <span className="chip">{depthOf(detailRole.tier, detailRole.effort).dollars}</span>
                 <div className="help" style={{ marginTop: 3 }}>
-                  {detailRole.model ?? "default model"} · {detailRole.effort ?? "default"} effort
+                  {detailRole.tier ?? "standard"} tier · {detailRole.effort ?? "default"} effort —
+                  the model is the project&apos;s, from the provider it pays
                 </div>
               </div>
               <div className="dl">Can do</div>

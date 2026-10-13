@@ -14,8 +14,10 @@ state change. An agent can't be argued out of a rule it never held.
 ## 1. The org
 
 **Roles → teams → agents.** A *role* is a reusable template (system prompt,
-model, effort, tool permissions, secret scopes) versioned in a platform-wide
-library. A *project* hires teams by pinning a role version; each team has
+tier, effort, tool permissions, secret scopes) versioned in a platform-wide
+library. A role names how hard, never on what: a project runs it on the model
+its own provider lists for the role's tier, so one library serves any vendor's
+key. A *project* hires teams by pinning a role version; each team has
 employees and a lead. The CEO is the only agent that plans.
 
 - A starter library ships in [`roles/`](../roles), in four families: the

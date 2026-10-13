@@ -22,7 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from yaaf.core import credential_files, ids, platform, prices
+from yaaf.core import credential_files, ids, platform
 from yaaf.core.constitution import (
     GROUP_THEMES,
     THEME_ORDER,
@@ -88,9 +88,9 @@ from yaaf.core.naming import env_var_name, is_reserved
 from yaaf.founder import doctrine
 from yaaf.runtimes import catalog
 from yaaf.runtimes import providers as runtime_providers
-from yaaf.runtimes.catalog import DEFAULT_EFFORT, DEFAULT_MODEL
+from yaaf.runtimes.catalog import DEFAULT_EFFORT, DEFAULT_TIER, EFFORTS, TIERS, tier_of
 from yaaf.runtimes.seats import choosable
-from yaaf.runtimes.seats import refusal as seat_refusal
+from yaaf.runtimes.seats import searches as seat_searches
 from yaaf.server import acting, authority, briefing, policy
 from yaaf.server.api.agent import WAKE_CHANNEL
 from yaaf.server.deps import db
@@ -436,12 +436,12 @@ ROLE_CATEGORIES = (
 )
 ROLE_DOMAINS = ("general", "markets", "data", "games", "education")
 
-#: How hard the model thinks, as the Agent SDK names it. A closed set, so a
-#: typo is worth a 422 here rather than a container that starts, spends the
-#: claim, and dies inside the sandbox where the chairman sees only "the run
-#: failed".
-EFFORTS = ("low", "medium", "high", "xhigh", "max")
+#: How hard the model thinks (catalog.EFFORTS), and which rung of the
+#: project's lineup it runs on (catalog.TIERS). Closed sets, so a typo is worth
+#: a 422 here rather than a container that starts, spends the claim, and dies
+#: inside the sandbox where the chairman sees only "the run failed".
 _EFFORT_PATTERN = f"^({'|'.join(EFFORTS)})$"
+_TIER_PATTERN = f"^({'|'.join(TIERS)})$"
 
 
 class RoleIn(BaseModel):
@@ -454,10 +454,16 @@ class RoleIn(BaseModel):
     domains: list[str] = Field(default_factory=list)
     description: str
     system_prompt: str
-    model: str = DEFAULT_MODEL
+    # How hard, never on what: the project's provider answers the tier with a
+    # model (yaaf.runtimes.catalog.lineup). Absent is standard.
+    tier: str | None = Field(default=None, pattern=_TIER_PATTERN)
     effort: str = Field(default=DEFAULT_EFFORT, pattern=_EFFORT_PATTERN)
-    # What drives the model (yaaf.runtimes.harnesses); absent is the provider's
-    # default, which is what every role written before there was a choice says.
+    # What a role said when roles named a model — an old seed folder, an
+    # exported bundle. Read as the tier that model holds in its provider's
+    # lineup, so nothing written before this refuses to load; never stored.
+    model: str | None = None
+    # Likewise: what drove the model. A role no longer says — a harness serves
+    # one provider, and a role serves any — so a seat that needs one names it.
     harness: str | None = None
     tool_permissions: dict = Field(default_factory=dict)
     secret_scopes: list[str] = Field(default_factory=list)
@@ -488,13 +494,11 @@ def create_role(body: RoleIn, session: Session = Depends(db)) -> dict:
             detail=f"unknown domain {', '.join(unknown_domains)} — "
                    f"pick from {', '.join(ROLE_DOMAINS)}",
         )
-    # A role whose grants its harness cannot honour, or whose model it cannot
-    # serve, is refused here — at the version, before any project pins it.
-    problem = seat_refusal(body.harness, body.model, body.tool_permissions,
-                           priced=prices.covered(session, body.model), effort=body.effort,
-                           converses=body.is_ceo_role)
-    if problem:
-        raise HTTPException(status_code=422, detail=f"role '{body.slug}': {problem}")
+    # Nothing about a seat is checked here: a role names no model and no
+    # harness, so whether a seat on it can run is a question about the project
+    # it is hired onto, asked at every door a seat comes through
+    # (refuse_unrunnable_seats).
+    tier = body.tier or (tier_of(body.model) if body.model else DEFAULT_TIER)
     role = session.execute(select(Role).where(Role.slug == body.slug)).scalar_one_or_none()
     if role is None:
         role = Role(
@@ -524,14 +528,19 @@ def create_role(body: RoleIn, session: Session = Depends(db)) -> dict:
         version=version,
         description=body.description,
         system_prompt=body.system_prompt,
-        model=body.model,
+        tier=tier,
         effort=body.effort,
-        harness=body.harness,
         tool_permissions=body.tool_permissions,
         secret_scopes=body.secret_scopes,
     )
     session.add(row)
-    return {"role_id": role.id, "role_version_id": row.id, "version": version}
+    out = {"role_id": role.id, "role_version_id": row.id, "version": version, "tier": tier}
+    if body.model and not body.tier:
+        out["read_as"] = f"model {body.model} is read as tier {tier}"
+    if body.harness:
+        out["ignored"] = ("harness: a role no longer names what drives its model — "
+                          "a seat that needs one sets it as an override")
+    return out
 
 
 @router.get("/roles/{slug}", dependencies=[authority.SIGNED_IN])
@@ -554,9 +563,8 @@ def get_role(slug: str, session: Session = Depends(db)) -> dict:
         "version": latest.version,
         "description": latest.description,
         "system_prompt": latest.system_prompt,
-        "model": latest.model,
+        "tier": latest.tier,
         "effort": latest.effort,
-        "harness": latest.harness,
         "tool_permissions": latest.tool_permissions,
         "secret_scopes": latest.secret_scopes,
     }
@@ -646,9 +654,8 @@ def list_roles(session: Session = Depends(db)) -> list[dict]:
                 "category": role.category,
                 "domains": role.domains or [],
                 "latest_version": latest.version if latest else 0,
-                "model": latest.model if latest else None,
+                "tier": latest.tier if latest else None,
                 "effort": latest.effort if latest else None,
-                "harness": latest.harness if latest else None,
                 "description": latest.description if latest else "",
                 "tools": sorted(
                     k for k, v in (latest.tool_permissions or {}).items()
@@ -777,11 +784,12 @@ class TeamSpec(BaseModel):
     lead: str | None = None  # employee name; defaults to first when >1
     # Per-employee settings keyed by employee name, so a setup file rebuilds
     # the people it describes and not just their names: "HH:MM" daily wakes
-    # and per-agent model overrides. A key naming nobody on the team is
-    # refused rather than dropped — a wake schedule that silently fails to
-    # attach is missed at 09:00 every day, with no error anywhere.
+    # and per-agent model, tier and effort overrides. A key naming nobody on
+    # the team is refused rather than dropped — a wake schedule that silently
+    # fails to attach is missed at 09:00 every day, with no error anywhere.
     schedules: dict[str, str] = Field(default_factory=dict)
     model_overrides: dict[str, str] = Field(default_factory=dict)
+    tier_overrides: dict[str, str] = Field(default_factory=dict)
     effort_overrides: dict[str, str] = Field(default_factory=dict)
     harness_overrides: dict[str, str] = Field(default_factory=dict)
 
@@ -816,8 +824,13 @@ class ProjectCreate(BaseModel):
     ceo_name: str = "CEO"
     ceo_daily_at: str | None = Field(default=None, pattern=_DAILY_AT_PATTERN)
     ceo_model_override: str | None = None
+    ceo_tier_override: str | None = Field(default=None, pattern=_TIER_PATTERN)
     ceo_effort_override: str | None = Field(default=None, pattern=_EFFORT_PATTERN)
     ceo_harness_override: str | None = None
+    # The model each role tier runs on, over the lineup of the provider the
+    # billing credential pays: {"standard": "mistral/mistral-large-latest"}.
+    # Empty is that provider's lineup; one that ships none needs "standard".
+    seat_models: dict[str, str] = Field(default_factory=dict)
     # What pays each provider the billing credential does not, by provider:
     # {"deepseek": "<credential id>"}. One per provider, every one metered in
     # the billing credential's unit (R4); a seat on a provider with none is
@@ -857,11 +870,16 @@ def _project_agents(session: Session, project_id: str) -> list[Agent]:
                             Agent.status != AgentStatus.STOOD_DOWN)).scalars())
 
 
-def refuse_unrunnable_seats(session: Session, project: Project, agents: list[Agent]) -> None:
-    """Refuse, before anything commits, a seat that could not run: a harness
-    that cannot serve its model, cannot take away a grant its role withholds,
-    or cannot pay with the project's credential (yaaf.runtimes.seats.refusal)
-    — or a seat on a provider the project holds no credential for at all (R5).
+def refuse_unrunnable_seats(session: Session, project: Project, agents: list[Agent],
+                            typed: set[str] = frozenset()) -> None:
+    """Refuse, before anything commits, a seat that could not run: a tier the
+    project's lineup has no model for, a harness that cannot serve its model,
+    cannot take away a grant its role withholds, or cannot pay with the
+    project's credential (yaaf.runtimes.seats.refusal) — or a seat on a
+    provider the project holds no credential for at all (R5).
+
+    `typed` is the ids of seats whose effort override this request named: R6
+    holds those to what the model takes. Every other effort is fitted.
 
     One check behind every door a seat comes through — creation, a team added,
     a hire, a repin, a new credential, the start — so no door is the one that
@@ -869,7 +887,7 @@ def refuse_unrunnable_seats(session: Session, project: Project, agents: list[Age
     has built yet."""
     from yaaf.server.seat_checks import seat_problem
 
-    problem = seat_problem(session, project, agents)
+    problem = seat_problem(session, project, agents, typed=typed)
     if problem:
         raise HTTPException(status_code=422, detail=problem)
 
@@ -918,11 +936,18 @@ def attach_provider_credential(session: Session, project: Project, provider_name
     return row
 
 
-def _settle_provider_credentials(session: Session, project: Project) -> None:
+def _settle_provider_credentials(session: Session, project: Project, *,
+                                 keep_lineup: bool = False) -> list[str]:
     """After the billing credential moved: a row for the provider it now pays
-    is shadowed by it, so it goes; and every row left must still meter in the
+    is shadowed by it, so it goes; every row left must still meter in the
     project's unit (R4) — the money moved, and the other credentials did not
-    move with it."""
+    move with it; and a tier of the project's own lineup on a provider it no
+    longer pays goes back to the new provider's. That last is the point of
+    tiers: a project moved from a Claude key to an OpenAI one moves its seats
+    with it. Returns the tiers that went back — none when the same request
+    named the lineup (`keep_lineup`): that is the chairman's answer, and R5
+    holds it to what the project pays rather than this quietly undoing it."""
+    from yaaf.core import project_credentials
     from yaaf.core.llm_credentials import bills
 
     billing = session.get(Secret, project.billing_secret_id) if project.billing_secret_id else None
@@ -941,6 +966,29 @@ def _settle_provider_credentials(session: Session, project: Project) -> None:
                 f"{'dollars' if project.billing_mode == 'api_key' else 'tokens'} — remove "
                 f"it from the project first"))
     session.flush()
+    if keep_lineup:
+        return []
+    paid = set(project_credentials.held(session, project))
+    own = dict(project.seat_models or {})
+    dropped = sorted(t for t, m in own.items() if catalog.provider_of(m) not in paid)
+    if dropped:
+        project.seat_models = {t: m for t, m in own.items() if t not in dropped} or None
+    return dropped
+
+
+def _clean_seat_models(seat_models: dict[str, str]) -> dict[str, str] | None:
+    """A project's own lineup, as stored: tiers only, a model each. Which
+    provider each model belongs to is R5's question, asked at the door with
+    the rest of the seat rules (yaaf.server.seat_checks)."""
+    unknown = sorted(set(seat_models) - set(TIERS))
+    if unknown:
+        raise HTTPException(status_code=422, detail=(
+            f"seat_models names {', '.join(unknown)} — the tiers are {', '.join(TIERS)}"))
+    too_long = next((m for m in seat_models.values() if m and len(m) > 64), None)
+    if too_long:
+        raise HTTPException(status_code=422, detail=f"'{too_long}' is not a model name")
+    out = {t: m.strip() for t, m in seat_models.items() if m and m.strip()}
+    return out or None
 
 
 def provider_credentials_view(session: Session, project: Project) -> list[dict]:
@@ -1009,7 +1057,11 @@ def list_providers() -> list[dict]:
     return [{"name": p.name, "label": p.label, "default_harness": p.default_harness,
              "kinds": [{"mode": k.mode, "meter": k.meter, "bills": k.bills} for k in p.kinds],
              "credential_base_url": p.credential_base_url, "search": p.search,
-             "reports_cost": p.reports_cost}
+             "searches": seat_searches(None, p.name),
+             "reports_cost": p.reports_cost,
+             # The model each role tier runs on, unless a project names its
+             # own; None for a provider that ships none.
+             "lineup": dict(zip(TIERS, p.lineup, strict=True)) if p.lineup else None}
             for p in runtime_providers.PROVIDERS.values()]
 
 
@@ -1034,6 +1086,7 @@ def _check_team_people(spec: TeamSpec) -> None:
     """
     for field_name, mapping in (("schedules", spec.schedules),
                                 ("model_overrides", spec.model_overrides),
+                                ("tier_overrides", spec.tier_overrides),
                                 ("effort_overrides", spec.effort_overrides),
                                 ("harness_overrides", spec.harness_overrides)):
         unknown = sorted(set(mapping) - set(spec.employees))
@@ -1058,10 +1111,16 @@ def _check_team_people(spec: TeamSpec) -> None:
             detail=f"team '{spec.name}' effort '{bad_effort}' is not one of "
                    f"{', '.join(EFFORTS)}",
         )
+    bad_tier = next((v for v in spec.tier_overrides.values() if v not in TIERS), None)
+    if bad_tier is not None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"team '{spec.name}' tier '{bad_tier}' is not one of {', '.join(TIERS)}",
+        )
 
 #: Whose work IS the deliverable, or is the check on it. `growth` is outreach
 #: and support triage and `leadership` plans rather than writes, so neither is
-#: lifted — the CEO is already the only Opus seat in most rosters and its
+#: lifted — the CEO is already the only strong-tier seat in most rosters and its
 #: output is not what the chairman keeps.
 CRAFT_CATEGORIES = ("content", "research", "build", "challenge")
 
@@ -1166,11 +1225,13 @@ def _check_review_seat(session: Session, doc: ConstitutionDoc, teams: list[TeamS
         return
     _refuse_without_review_seat(session, {spec.role_slug for spec in teams})
 
-#: What "this matters" buys a producing seat in effort. Only ever upward: a
-#: role already at or above it keeps what it has. The model half is the seat's
-#: own provider's `craft_model`, ranked by the catalog's tiers — weakest to
-#: strongest, where a model this install has never heard of ranks 0, so it is
-#: lifted rather than left: an unknown string is not evidence of strength.
+#: What "this matters" buys a producing seat. Only ever upward: a role already
+#: at or above it keeps what it has. The tier is the strongest rung of the
+#: project's own lineup — Opus on an Anthropic key, gpt-6-astra on an OpenAI
+#: one — so the lift follows the project to whatever provider it pays and
+#: never moves a seat to another vendor: a dial labelled "how much this
+#: matters" that did would be two decisions wearing one label.
+CRAFT_TIER = TIERS[-1]
 CRAFT_EFFORT = "xhigh"
 _EFFORT_RANK = {name: i for i, name in enumerate(EFFORTS)}
 
@@ -1178,7 +1239,7 @@ _EFFORT_RANK = {name: i for i, name in enumerate(EFFORTS)}
 def _craft_lift(
     session: Session, slug: str, version: RoleVersion, cons: ConstitutionDoc
 ) -> tuple[str | None, str | None]:
-    """The model and effort a high-stakes project hires this seat on.
+    """The tier and effort a high-stakes project hires this seat on.
 
     Resolved HERE, at hire, and stamped onto the agent row — not read at
     dispatch. Three reasons. The runner stays a lookup with no policy in it;
@@ -1190,19 +1251,19 @@ def _craft_lift(
     Returns what to stamp, or (None, None) to leave the role's own answer
     alone. Never returns something weaker than the role already has: a dial
     labelled "how much this matters" that could quietly downgrade a seat would
-    be a trap.
+    be a trap. The effort is stamped as asked and fitted to the model like any
+    role's (catalog.fit_effort) — nobody typed it for this seat.
     """
     if cons.stakes != "high":
         return None, None
     role = session.execute(select(Role).where(Role.slug == slug)).scalar_one_or_none()
     if role is None or role.category not in CRAFT_CATEGORIES:
         return None, None
-    craft_model = runtime_providers.provider(catalog.provider_of(version.model)).craft_model
-    model = (None if craft_model is None
-             or catalog.tier(version.model) >= catalog.tier(craft_model) else craft_model)
+    held = TIERS.index(version.tier) if version.tier in TIERS else 0
+    tier = None if held >= TIERS.index(CRAFT_TIER) else CRAFT_TIER
     at_least = _EFFORT_RANK.get(CRAFT_EFFORT, 0)
     effort = (None if _EFFORT_RANK.get(version.effort, 0) >= at_least else CRAFT_EFFORT)
-    return model, effort
+    return tier, effort
 
 
 def _founding_chairman(session: Session, named: str | None) -> User:
@@ -1343,6 +1404,7 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
         name=body.ceo_name,
         role_version_id=ceo_role_version.id,
         model_override=body.ceo_model_override,
+        tier_override=body.ceo_tier_override,
         effort_override=body.ceo_effort_override,
         harness_override=body.ceo_harness_override,
         daily_at=body.ceo_daily_at,
@@ -1353,10 +1415,11 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
     session.add(Channel(id=ids.new_id(ids.CHANNEL), project_id=project.id,
                         kind=ChannelKind.LEADERSHIP))
 
+    typed = {ceo.id} if body.ceo_effort_override else set()
     team_out = []
     for spec in body.teams:
         role_version = _latest_role_version(session, spec.role_slug)
-        lift_model, lift_effort = _craft_lift(session, spec.role_slug, role_version, doc)
+        lift_tier, lift_effort = _craft_lift(session, spec.role_slug, role_version, doc)
         team = Team(
             id=ids.new_id(ids.TEAM),
             project_id=project.id,
@@ -1378,12 +1441,16 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
                 # only fills a silence. Someone who deliberately put one seat on
                 # a cheaper model must not have it undone by a dial about the
                 # project as a whole.
-                model_override=spec.model_overrides.get(employee_name) or lift_model,
+                model_override=spec.model_overrides.get(employee_name),
+                tier_override=spec.tier_overrides.get(employee_name)
+                or (None if employee_name in spec.model_overrides else lift_tier),
                 effort_override=spec.effort_overrides.get(employee_name) or lift_effort,
                 harness_override=spec.harness_overrides.get(employee_name),
             )
             session.add(agent)
             agents.append(agent)
+            if employee_name in spec.effort_overrides:
+                typed.add(agent.id)
         session.flush()
         if len(agents) > 1:
             lead_name = spec.lead or spec.employees[0]
@@ -1398,7 +1465,8 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
                          "agents": [{"id": a.id, "name": a.name} for a in agents]})
     for provider_name, credential_id in body.credentials.items():
         attach_provider_credential(session, project, provider_name, credential_id)
-    refuse_unrunnable_seats(session, project, _project_agents(session, project.id))
+    project.seat_models = _clean_seat_models(body.seat_models)
+    refuse_unrunnable_seats(session, project, _project_agents(session, project.id), typed)
 
     # The boardroom on day one, when the chairman has already told us the
     # workspace. The ask behind app-wide Slack settings is "I made a project —
@@ -1488,9 +1556,8 @@ def export_project(project_id: str, include_values: bool = False,
             "domains": role.domains or [],
             "description": version.description,
             "system_prompt": version.system_prompt,
-            "model": version.model,
+            "tier": version.tier,
             "effort": version.effort,
-            "harness": version.harness,
             # Roles no longer own MCP servers; strip the key from any old
             # pinned version so importing the role never 422s.
             "tool_permissions": {
@@ -1524,6 +1591,8 @@ def export_project(project_id: str, include_values: bool = False,
             "schedules": {a.name: a.daily_at for a in members if a.daily_at},
             "model_overrides": {a.name: a.model_override
                                 for a in members if a.model_override},
+            "tier_overrides": {a.name: a.tier_override
+                               for a in members if a.tier_override},
             "effort_overrides": {a.name: a.effort_override
                                  for a in members if a.effort_override},
             "harness_overrides": {a.name: a.harness_override
@@ -1630,8 +1699,11 @@ def export_project(project_id: str, include_values: bool = False,
             "ceo_name": ceo.name,
             "ceo_daily_at": ceo.daily_at,
             "ceo_model_override": ceo.model_override,
+            "ceo_tier_override": ceo.tier_override,
             "ceo_effort_override": ceo.effort_override,
             "ceo_harness_override": ceo.harness_override,
+            # The project's own tier → model, over its provider's lineup.
+            "seat_models": dict(project.seat_models or {}),
             "teams": teams,
             "solo": ceo.team_id is not None,
         },
@@ -1812,6 +1884,7 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
                 role_version_id=source_ceo.role_version_id,
                 status=source_ceo.status,
                 model_override=source_ceo.model_override,
+                tier_override=source_ceo.tier_override,
                 effort_override=source_ceo.effort_override,
                 harness_override=source_ceo.harness_override,
                 daily_at=source_ceo.daily_at)
@@ -1841,6 +1914,7 @@ def clone_project(project_id: str, body: ProjectCloneIn, session: Session = Depe
                           role_version_id=source_agent.role_version_id,
                           status=source_agent.status,
                           model_override=source_agent.model_override,
+                          tier_override=source_agent.tier_override,
                           effort_override=source_agent.effort_override,
                           harness_override=source_agent.harness_override,
                           daily_at=source_agent.daily_at)
@@ -1981,7 +2055,7 @@ def add_team(project_id: str, body: TeamSpec, session: Session = Depends(db)) ->
     # carried them, this route ignored them — so a team added on Tuesday came
     # back without the wakes and models its spec named.
     cons = effective(session, project.id)
-    lift_model, lift_effort = _craft_lift(session, body.role_slug, role_version, cons)
+    lift_tier, lift_effort = _craft_lift(session, body.role_slug, role_version, cons)
     # The one route that can satisfy the review rule after creation, so it is
     # also the one that must not leave a project able to satisfy it and still
     # not doing so. Checked AFTER this team is counted, since adding the
@@ -2009,14 +2083,17 @@ def add_team(project_id: str, body: TeamSpec, session: Session = Depends(db)) ->
             kind=AgentKind.EMPLOYEE,
             name=employee_name,
             daily_at=body.schedules.get(employee_name),
-            model_override=body.model_overrides.get(employee_name) or lift_model,
+            model_override=body.model_overrides.get(employee_name),
+            tier_override=body.tier_overrides.get(employee_name)
+            or (None if employee_name in body.model_overrides else lift_tier),
             effort_override=body.effort_overrides.get(employee_name) or lift_effort,
             harness_override=body.harness_overrides.get(employee_name),
         )
         session.add(agent)
         agents.append(agent)
     session.flush()
-    refuse_unrunnable_seats(session, project, agents)
+    refuse_unrunnable_seats(session, project, agents,
+                            {a.id for a in agents if a.name in body.effort_overrides})
     if len(agents) > 1:
         lead_name = body.lead or body.employees[0]
         lead = next((a for a in agents if a.name == lead_name), agents[0])
@@ -2650,6 +2727,9 @@ class ProjectPatch(BaseModel):
     deadline: datetime | None = None
     deadline_source: dict | None = None
     clear_deadline: bool = False
+    # The project's own tier → model, replacing what it held; {} goes back to
+    # the provider's lineup. Every seat is checked against it before it lands.
+    seat_models: dict[str, str] | None = None
 
 
 #: What a date can be. `external` is a fact the world imposes — a booking
@@ -2763,13 +2843,19 @@ def patch_project(project_id: str, body: ProjectPatch, session: Session = Depend
 
         secret = assigned_credential(session, body.billing_secret_id)
         if body.billing_mode is not None and body.billing_mode != secret.llm_mode:
-            detail = _billing_shape_error(body.billing_mode, decrypt(secret.ciphertext))
+            detail = _billing_shape_error(body.billing_mode, decrypt(secret.ciphertext),
+                                          secret.provider)
             raise HTTPException(status_code=422,
                                 detail=detail or "billing mode must match the selected credential")
         project.billing_secret_id = secret.id
         project.billing_mode = secret.llm_mode
         changed["billing_secret_id"] = secret.id
         changed["billing_mode"] = secret.llm_mode
+    # Before the money is checked, so a project moving to a provider that ships
+    # no lineup can name its models in the same request.
+    if body.seat_models is not None:
+        project.seat_models = _clean_seat_models(body.seat_models)
+        changed["seat_models"] = dict(project.seat_models or {})
     # Validate the (mode, credential) pair whenever either side moved.
     if (body.billing_mode is not None or body.billing_secret_id is not None) \
             and project.billing_secret_id:
@@ -2782,12 +2868,20 @@ def patch_project(project_id: str, body: ProjectPatch, session: Session = Depend
                                        "assign another in Settings")
         if attached.llm_mode and project.billing_mode != attached.llm_mode:
             raise HTTPException(status_code=422, detail="billing mode must match the selected credential")
-        shape_error = _billing_shape_error(project.billing_mode, decrypt(attached.ciphertext))
+        # In the credential's own provider's words: a ChatGPT login is not a
+        # malformed Claude token.
+        shape_error = _billing_shape_error(project.billing_mode, decrypt(attached.ciphertext),
+                                           attached.provider)
         if shape_error:
             raise HTTPException(status_code=422, detail=shape_error)
         # A credential every seat already on the project can pay with — R1
         # from the other side: the seats stayed put and the money moved.
-        _settle_provider_credentials(session, project)
+        dropped = _settle_provider_credentials(session, project,
+                                               keep_lineup=body.seat_models is not None)
+        if dropped:
+            changed["seat_models_reset"] = dropped
+        refuse_unrunnable_seats(session, project, _project_agents(session, project.id))
+    elif body.seat_models is not None:
         refuse_unrunnable_seats(session, project, _project_agents(session, project.id))
     if body.controlled_domains is not None:
         project.controlled_domains = body.controlled_domains
@@ -3244,7 +3338,7 @@ def _carry_library_roles(session: Session, spec: dict) -> dict:
             "domains": role.domains or [],
             "description": version.description,
             "system_prompt": version.system_prompt,
-            "model": version.model,
+            "tier": version.tier,
             "effort": version.effort,
             # Roles no longer own MCP servers; an old pinned version carrying
             # the key would 422 on the way into the drill's library.
@@ -3956,11 +4050,11 @@ def _apply_craft_lift(session: Session, project_id: str, cons: ConstitutionDoc) 
         .where(Agent.project_id == project_id, Agent.kind != AgentKind.CEO)
     ).all()
     for agent, slug, version in rows:
-        if agent.model_override or agent.effort_override:
+        if agent.model_override or agent.tier_override or agent.effort_override:
             continue
-        model, effort = _craft_lift(session, slug, version, cons)
-        if model or effort:
-            agent.model_override = model
+        tier, effort = _craft_lift(session, slug, version, cons)
+        if tier or effort:
+            agent.tier_override = tier
             agent.effort_override = effort
             lifted.append(agent.name)
     return sorted(lifted)

@@ -201,9 +201,14 @@ def _materialize(session: Session, queued: RunQueue, project: Project) -> RunJob
         run.summary = f"seat cannot run: {problem}"
         run.finished_at = utcnow()
         return None
-    _pin_seat(session, run, job, seat_for(agent, role_version,
-                                          runtime=(project.integrations or {}).get("runtime")))
+    from yaaf.core.project_credentials import project_lineup
+
+    seat = seat_for(agent, role_version, project_lineup(session, project),
+                    runtime=(project.integrations or {}).get("runtime"))
+    _pin_seat(session, run, job, seat)
     job.tool_permissions = dict(role_version.tool_permissions) if role_version else {}
+    if job.tool_permissions.get("web") and not seat.searches:
+        job.system_prompt += FETCH_ONLY_PROMPT
     job.agent_kind = agent.kind
     source_specs = _merge_project_data_sources(session, project, role_version, job)
     role_secrets = _role_secret_env(session, project, role_version)
@@ -217,6 +222,18 @@ def _materialize(session: Session, queued: RunQueue, project: Project) -> RunJob
     job.system_prompt += credentials_prompt(*announced_credentials(role_secrets))
     job.system_prompt += _data_source_prompt(source_specs, job.harness)
     return job
+
+
+#: A `web` grant on a seat whose provider and harness cannot search (R2's
+#: other half, decided: fetch only, and said). Said to the agent too, so it
+#: does not spend its run looking for a search tool it was never handed.
+FETCH_ONLY_PROMPT = (
+    "\n\nWEB: you can fetch any page by its URL, but this seat has no web search — "
+    "the model it runs on does not offer one. Work from addresses you know or "
+    "can derive (official sites, documentation, APIs, sources already in the "
+    "workspace), and say so in your result when an answer needed a search you "
+    "could not run.\n"
+)
 
 
 def _seat_problem(session: Session, project: Project, agent: Agent) -> str | None:

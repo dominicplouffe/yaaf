@@ -7,7 +7,7 @@
     "games"
   ],
   "description": "Art director for AI-generated game art: defines the game's visual identity, then writes precise, reproducible image-generation prompts and asset specs so every sprite, background, icon, and UI element comes out consistent and usable in-engine.",
-  "model": "claude-sonnet-5-5",
+  "tier": "standard",
   "effort": "high",
   "tool_permissions": {
     "files": true,

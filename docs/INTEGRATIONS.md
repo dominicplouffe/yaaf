@@ -40,11 +40,15 @@ a project with a seat on a second provider's model pays that provider too,
 under its **Settings → Money → Other providers**, with a credential metered in
 the same unit — one project, one meter, one cap. A seat on a provider the
 project does not pay is refused when it is created, not when it first runs. A
-credential pays one provider, and seats run on their roles' models: a
-DeepSeek key over Claude roles is refused for that reason. **New Project →
-Run every seat on** moves every seat onto one of the paid providers' models
-in one step (price it first under Settings → Model prices), or pay the
-roles' provider too.
+role names no provider — only a tier (light, standard, strong) and an effort —
+so the billing credential's provider runs every seat, on its model for each
+tier: a DeepSeek key over the library's roles runs them all on DeepSeek, with
+nothing moved by hand. **New Project → Models** (and **Settings → Money →
+Models** after creation) shows that lineup and lets you name your own model
+for any tier; a provider that ships none — OpenRouter, a custom server, Kimi,
+Qwen, Mistral, Grok — needs one named, and one for Standard serves every
+tier. A seat only runs on a second provider when you name it onto one of that
+provider's models, and that provider is then paid as above.
 Models yaaf ships no price for are priced under **Settings → Model prices**
 (zero is a price, for your own server); see [RUNTIMES.md](RUNTIMES.md).
 

@@ -318,29 +318,53 @@ def test_an_unpriced_model_never_starts_the_cli(run):
 # ── 6. the doors: what the registry says it can and cannot do ───────────────────
 
 
-def test_a_role_granted_the_web_is_refused_for_it(client):
+def _on_opencode(client, slug: str, credential: str, **fields) -> object:
+    """A project whose one seat, Oz, is put on the OpenCode CLI by name."""
+    return client.post("/admin/projects", headers=ADMIN, json={
+        "slug": slug, "name": slug.title(), "chairman_email": "chair@example.com",
+        "goal": "Prove the framework works end to end.", "ceo_role_slug": "ceo",
+        "ceo_name": "CEO", "billing_secret_id": credential,
+        "teams": [{"role_slug": "researcher", "name": "Look", "employees": ["Oz"],
+                   "harness_overrides": {"Oz": "opencode"}}], **fields})
+
+
+def _key(client, provider: str) -> str:
+    return client.post("/admin/settings/llm-credentials", headers=ADMIN, json={
+        "name": f"{provider} key", "provider": provider, "mode": "api_key",
+        "value": f"test-{provider}-credential"}).json()["id"]
+
+
+def test_a_seat_granted_the_web_fetches_on_it_and_says_so(client):
+    """OpenCode searches only through its own hosted service, so a seat on it
+    whose role grants `web` fetches and does not search — shown on the seat
+    rather than refused, since the role names no harness to refuse."""
     make_project(client, start=False)
     client.put("/admin/settings/model-prices/deepseek-chat", headers=ADMIN,
                json={"input": 0.28, "output": 0.42})
-    body = {"slug": "researcher", "name": "Researcher", **ROLE_MIN, "model": "deepseek-chat",
-            "harness": "opencode"}
-    refused = client.post("/admin/roles", headers=ADMIN, json={
-        **body, "tool_permissions": {"files": True, "web": True}})
-    assert refused.status_code == 422 and "OpenCode CLI cannot search the web" in refused.text
     assert client.post("/admin/roles", headers=ADMIN, json={
-        **body, "tool_permissions": {"files": True, "bash": True}}).status_code == 200
+        "slug": "researcher", "name": "Researcher", **ROLE_MIN,
+        "tool_permissions": {"files": True, "web": True}}).status_code == 200
+    created = _on_opencode(client, "fetches", _key(client, "deepseek"))
+    assert created.status_code == 200, created.text
+    oz = created.json()["teams"][0]["agents"][0]["id"]
+    seat = client.get(f"/observe/agents/{oz}", headers=ADMIN).json()["runs_on"]
+    assert (seat["harness"], seat["web"]) == ("opencode", "fetch")
 
 
 def test_openrouter_is_not_among_its_providers(client):
     make_project(client, start=False)
-    refused = client.post("/admin/roles", headers=ADMIN, json={
-        "slug": "router", "name": "Router", **ROLE_MIN, "model": "openrouter/qwen/qwen3-coder",
-        "harness": "opencode", "tool_permissions": {"files": True}})
+    assert client.post("/admin/roles", headers=ADMIN, json={
+        "slug": "researcher", "name": "Researcher", **ROLE_MIN,
+        "tool_permissions": {"files": True}}).status_code == 200
+    refused = _on_opencode(client, "routed", _key(client, "openrouter"),
+                           seat_models={"standard": "openrouter/qwen/qwen3-coder"})
     assert refused.status_code == 422 and "OpenCode CLI cannot run" in refused.text
 
 
-def test_the_image_pins_the_version_the_driver_preseeds():
-    from yaaf.runner.opencode_cli_entry import VERSION
+def test_the_image_pins_the_version_the_driver_preseeds(run):
+    # Through the staged module: the driver imports `sandbox_entry` by bare
+    # name, which only a staged run puts in place on a fresh worker.
+    VERSION = run.opencode.VERSION
 
     dockerfile = (FIXTURES.parents[2].parent / "deploy" / "sandbox" / "Dockerfile").read_text()
     assert f"opencode-ai@{VERSION}" in dockerfile

@@ -329,7 +329,7 @@ A role is a JSON file in [`roles/`](../roles):
   "name": "Software Engineer",
   "is_ceo_role": false,
   "description": "Builds and runs everything technical. Decides how, never what.",
-  "model": "claude-sonnet-5-5",
+  "tier": "standard",
   "effort": "xhigh",
   "tool_permissions": {"files": true, "bash": true,
                        "data_processing": true, "web": true},
@@ -338,24 +338,24 @@ A role is a JSON file in [`roles/`](../roles):
 }
 ```
 
-- `model` / `effort` — per role, so your writer isn't paying engineer prices.
-- `harness` (optional) — what drives the model in the sandbox: `claude_agent_sdk`,
-  `claude_cli`, `anthropic_api` — yaaf's own loop on the Messages API, API
-  keys only — `openai_compatible`, the same loop for DeepSeek, OpenRouter
-  and a custom server, `codex_cli`, OpenAI's Codex CLI, `gemini_cli`,
-  Google's Gemini CLI, or `opencode`, the
-  OpenCode CLI for any provider on the OpenAI-compatible chat API
-  ([RUNTIMES.md](RUNTIMES.md)). A `model` the catalog does
-  not list names its provider first: `openrouter/qwen/qwen3-coder`,
-  `custom/llama3.1:8b`. A role granting `web` cannot run on a provider that
-  does not search (nor on OpenCode, which searches for nobody); a role
-  withholding `files` cannot run on Codex, which hands
-  its models a file editor regardless; and an `effort` the model does not take
-  is refused with the list it does. Absent is the model's provider
-  default. It changes how a run is driven, never what the role may do; a
-  harness that cannot take away a grant this role withholds is refused here,
-  and so is a model `anthropic_api` has no price for, because it meters every
-  call by the price.
+- `tier` / `effort` — per role, so your writer isn't paying engineer prices.
+  A role says how hard, never on what: `light`, `standard` or `strong`, which
+  each project answers with a model of the provider its billing credential
+  pays — Haiku / Sonnet / Opus on an Anthropic key, `gpt-5.6-luna` /
+  `gpt-6-sol` / `gpt-6-astra` on an OpenAI one, the project's own pick on a
+  provider that ships no lineup ([RUNTIMES.md](RUNTIMES.md)). The same role
+  runs on any vendor's key. An `effort` the model does not take runs at the
+  nearest one it does, and the seat shows it; a model with no effort dial (the
+  OpenAI-compatible loop, DeepSeek) runs without. A file written when roles
+  named a `model` still loads: the model is read as the tier it holds in its
+  provider's lineup, and a `harness` is not kept — a harness serves one
+  provider and a role any, so a seat that needs one names it as an override.
+  A role granting `web` on a seat that cannot search (DeepSeek and most
+  OpenAI-compatible hosts, or OpenCode, which searches for nobody) fetches
+  pages and is told it has no search; a role withholding `files` cannot sit on
+  Codex, which hands its models a file editor regardless — both are decided
+  per seat, at the door it comes through, since that is where the provider is
+  known.
 - `tool_permissions` — `files`, `bash`, `data_processing`, `web`.
   `data_processing` grants the same shell
   `bash` does; it is separate so that a role which has one in order to aggregate

@@ -204,7 +204,7 @@ def _craft_findings(project_id: str, cons_doc: dict) -> list[str]:
                 .join(Team, Team.id == Agent.team_id)
                 .where(Agent.project_id == project_id, Agent.kind != AgentKind.CEO)
             )
-            if agent.model_override or agent.effort_override
+            if agent.model_override or agent.tier_override or agent.effort_override
         })
     if not categories:
         return findings
@@ -247,8 +247,8 @@ def _craft_findings(project_id: str, cons_doc: dict) -> list[str]:
     if cons_doc.get("stakes") == "high" and lifted:
         findings.append(
             f"Stakes are high, so {', '.join(lifted)} were hired above what the "
-            "shared role library says — a stronger model, deeper reasoning, or "
-            "both, for this project only. That is the point of the setting and it "
+            "shared role library says — the strongest model the project's provider "
+            "offers, deeper reasoning, or both, for this project only. That is the point of the setting and it "
             "is also what it costs.")
     return findings
 

@@ -268,7 +268,7 @@ A role you write yourself can be left unfiled; it sits under **Uncategorised**
 at the bottom of every list and is never filtered away.
 
 Each role shows its current version, its
-system prompt, model, effort and harness, tool permissions, secret scopes — and its
+system prompt, tier and effort, tool permissions, secret scopes — and its
 **blast radius**: which projects run it, at which version.
 
 Editing a role creates a **new version**. Live teams keep the version they
@@ -699,7 +699,12 @@ Data; everything after is occasional.
   credential draws from the same windows, and at 100% Anthropic refuses calls
   until the window resets. The budget in force is shown read-only: the numbers
   themselves are constitution rules, so the card links to Rules in force rather
-  than offering a second editor for them.
+  than offering a second editor for them. Below it, **Models**: every seat runs
+  on the paying provider's model for its role's tier (light, standard, strong),
+  and the card shows that lineup and lets you name your own model for any
+  tier — required for a provider that ships none. It says when the provider
+  cannot search (web seats fetch only), and each seat's drawer says what it
+  runs on, including an effort fitted to what its model takes.
 - **Data & credentials** — MCP data sources (one form: name, URL, roles, Save,
   plus a live check) and scoped variables/credentials for your teams.
 

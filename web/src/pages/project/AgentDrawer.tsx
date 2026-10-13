@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { getText, post } from "../../api";
+import { get, getText, post } from "../../api";
 import { fmtUsd, fmtWhen } from "../../hooks";
 import { firstName, ProjectCtx } from "../../projectCtx";
 import { clip, fmtAgo } from "../../ui";
@@ -23,6 +23,24 @@ import { taskBadge } from "./Work";
     refused. */
 
 type Tab = "now" | "work" | "runs" | "about";
+
+/** What a seat resolves to now (GET /observe/agents/{id}.runs_on). */
+interface RunsOn {
+  model: string | null; tier: string; from: "override" | "project" | "provider";
+  effort: string | null; effort_asked: string; harness: string; web: "search" | "fetch" | null;
+}
+
+/** "gpt-6-astra · strong tier · high (its role asks xhigh) · fetches, no search": every
+    fitting the resolution did, said rather than done quietly. */
+function runsOnLine(r: RunsOn): string {
+  if (!r.model) return `nothing yet — the project names no model for the ${r.tier} tier`;
+  const where = r.from === "override" ? "named for this seat" : `${r.tier} tier`;
+  const effort = r.effort === null ? "no effort dial"
+    : r.effort === r.effort_asked ? `${r.effort} effort`
+      : `${r.effort} effort (its role asks ${r.effort_asked})`;
+  const web = r.web === "fetch" ? " · fetches pages, no web search" : "";
+  return `${r.model} · ${where} · ${effort}${web}`;
+}
 
 function Trace({ runId }: { runId: string }) {
   const [text, setText] = useState<string | null>(null);
@@ -91,6 +109,11 @@ function PauseAction({ ctx, agentId, name, paused }: {
 export default function AgentDrawer({ ctx, agentId, onClose }: {
   ctx: ProjectCtx; agentId: string; onClose: () => void;
 }) {
+  const [runsOn, setRunsOn] = useState<RunsOn | null>(null);
+  useEffect(() => {
+    get<{ runs_on: RunsOn }>(`/observe/agents/${agentId}`)
+      .then((d) => setRunsOn(d.runs_on)).catch(() => setRunsOn(null));
+  }, [agentId]);
   const navigate = useNavigate();
   const [tab, setTab] = useState<Tab>("now");
   const seat = ctx.seats.find((s) => s.id === agentId);
@@ -216,6 +239,12 @@ export default function AgentDrawer({ ctx, agentId, onClose }: {
                 : `${team?.role_name ?? seat.title}${team?.role_version ? ` v${team.role_version}` : ""}`}
                 {team && team.role_latest_version && team.role_version && team.role_latest_version > team.role_version
                   ? ` · v${team.role_latest_version} available` : ""}</dd>
+              {runsOn && (
+                <>
+                  <dt>Runs on</dt>
+                  <dd>{runsOnLine(runsOn)}</dd>
+                </>
+              )}
               <dt>Reports to</dt>
               <dd>{seat.ceo ? "You, the chair" : seat.lead ? ceo : `${team?.agents.find((a) => a.id === team.lead_agent_id)?.name ?? ceo}, who reports to ${ceo}`}</dd>
               <dt>Talks to you</dt>

@@ -35,6 +35,13 @@ def add_column_if_missing(table: str, column: sa.Column) -> None:
         op.add_column(table, column)
 
 
+def drop_column_if_present(table: str, column: str) -> None:
+    """`op.drop_column`, skipped when the column is not there — a fresh
+    install's create_all never built a column the models no longer carry."""
+    if has_column(table, column):
+        op.drop_column(table, column)
+
+
 def has_table(table: str) -> bool:
     return sa.inspect(op.get_bind()).has_table(table)
 

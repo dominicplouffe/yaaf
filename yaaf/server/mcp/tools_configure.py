@@ -49,14 +49,21 @@ def _schema(required_args: list[str], **properties) -> dict:
         "The project's outward wiring: name, goal, deadline, controlled domains, which "
         "stored credential it bills against. Rules are not here — those are `amend`, "
         "with a reason. verb `add_team` hires a team; `repin` moves a team to the "
-        "library's current version of its role; `pay_provider` pays a second provider "
-        "(provider, credential — a stored credential's name) for seats on its models; "
-        "`stop_paying_provider` removes one."
+        "library's current version of its role; `set_models` names the model each "
+        "role tier runs on here (light, standard, strong — any left out is the "
+        "provider's own; none at all goes back to the provider's lineup); "
+        "`pay_provider` pays a second provider (provider, credential — a stored "
+        "credential's name) for seats on its models; `stop_paying_provider` removes one."
     ),
     input_schema=_schema([],
                          verb={"type": "string", "enum": ["settings", "add_team", "repin",
-                                                          "pay_provider",
+                                                          "set_models", "pay_provider",
                                                           "stop_paying_provider"]},
+                         seat_models={"type": "object",
+                                      "description": "set_models: {tier: model}, e.g. "
+                                                     "{\"standard\": \"mistral/mistral-"
+                                                     "large-latest\"}",
+                                      "additionalProperties": {"type": "string"}},
                          provider={"type": "string",
                                    "description": "pay_provider / stop_paying_provider: "
                                                   "e.g. openai, google, deepseek, "
@@ -100,6 +107,16 @@ def project_configure(principal: Principal, session: Session, arguments: dict) -
                                             employees=employees,
                                             lead=arguments.get("lead")),
                         session=session)
+    elif verb == "set_models":
+        seat_models = {k: v for k, v in (arguments.get("seat_models") or {}).items()
+                       if isinstance(v, str)}
+        preview = confirm.gate(session, principal, "project_configure", arguments, {
+            "verb": verb, "project": project.slug, "seat_models": seat_models,
+            "warning": "Every seat on a tier you name runs on that model from its next run."})
+        if preview:
+            return preview
+        outcome = _call(principal, admin.patch_project, project_id=project.id,
+                        body=admin.ProjectPatch(seat_models=seat_models), session=session)
     elif verb in ("pay_provider", "stop_paying_provider"):
         provider_name = required(arguments, "provider")
         named = None

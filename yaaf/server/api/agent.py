@@ -607,9 +607,9 @@ def hire(body: HireIn, ctx: RunContext = Depends(run_auth),
     Rides `admin.add_team`, so a team the CEO hires is hired on exactly the same
     terms as one the chairman hires: the same role-version pin, the same craft
     lift at high stakes, the same per-employee checks, the same review-seat
-    rule, its own team channel. One implementation, or the two doors drift and
-    the difference shows up as a team that quietly came back without the model
-    its role asked for.
+    rule, its own team channel, the same model for its role's tier. One
+    implementation, or the two doors drift and the difference shows up as a
+    team that quietly came back on something other than what its role asked for.
     """
     _require_ceo(ctx, "hiring")
     from yaaf.server import staffing

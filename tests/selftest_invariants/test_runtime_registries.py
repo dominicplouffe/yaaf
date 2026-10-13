@@ -50,7 +50,7 @@ def test_every_model_is_served_by_a_registered_provider_and_a_harness():
     for model in catalog.MODELS:
         assert model.provider in providers.PROVIDERS, model.id
         assert any(model.provider in h.providers for h in REAL_HARNESSES), model.id
-        assert model.tier > 0, f"{model.id}: tier 0 means 'never heard of it'"
+        assert model.rank > 0, f"{model.id}: rank 0 means 'never heard of it'"
 
 
 def test_the_defaults_name_things_that_exist():
@@ -58,19 +58,24 @@ def test_the_defaults_name_things_that_exist():
     assert providers.DEFAULT_PROVIDER in providers.PROVIDERS
 
 
-def test_each_provider_lifts_within_itself():
-    """`stakes: high` moves a seat to its own provider's craft model — never to
-    another vendor's, and never to one the catalog cannot rank. A provider with
-    no ladder of its own (OpenRouter's hundreds of models, a custom server)
-    names none, and its seats stay where the chairman put them."""
+def test_each_provider_answers_every_tier_within_itself():
+    """A role names a tier and the project's provider answers it, so a
+    provider's lineup is its own models, one per tier, and never weaker going
+    up — `stakes: high` lifts to the strong one, and a dial labelled "how much
+    this matters" must not move a seat to another vendor or down a rung. A
+    provider with no lineup of its own (OpenRouter's hundreds of models, a
+    custom server) ships none, and its projects name their models; one with
+    catalog models to rank ships one."""
     for provider in providers.PROVIDERS.values():
-        if provider.craft_model is None:
+        if provider.lineup is None:
             assert not any(m.provider == provider.name for m in catalog.MODELS), (
-                f"{provider.name} has catalog models to climb; name its craft model")
+                f"{provider.name} has catalog models to rank; ship its lineup")
             continue
-        craft = catalog.model(provider.craft_model)
-        assert craft is not None, provider.name
-        assert craft.provider == provider.name
+        assert len(provider.lineup) == len(catalog.TIERS), provider.name
+        rows = [catalog.model(m) for m in provider.lineup]
+        assert all(r is not None and r.provider == provider.name for r in rows), provider.name
+        ranks = [r.rank for r in rows]
+        assert ranks == sorted(ranks), f"{provider.name}'s lineup gets weaker going up"
 
 
 def test_each_provider_runs_on_a_harness_that_can_take_its_credentials():
@@ -116,7 +121,7 @@ def test_a_mode_nobody_registered_is_read_as_the_api_key():
 
 def test_an_unknown_model_is_served_by_the_default_provider():
     assert catalog.provider_of("a-model-nobody-listed") == providers.DEFAULT_PROVIDER
-    assert catalog.tier("a-model-nobody-listed") == 0
+    assert catalog.rank("a-model-nobody-listed") == 0
 
 
 def test_the_project_runtime_overrides_the_seat_and_nothing_else():

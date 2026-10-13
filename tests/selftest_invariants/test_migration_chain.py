@@ -86,6 +86,10 @@ RUNTIMES_COLUMNS = (
     ("runs", "priced_usd"),
     # 0044: the first providers that are not Anthropic.
     ("secrets", "base_url"),
+    # 0047: a role says how hard, the project says on what.
+    ("role_versions", "tier"),
+    ("agents", "tier_override"),
+    ("projects", "seat_models"),
 )
 RUNTIMES_TABLES = ("project_llm_credentials", "model_prices")
 # 0046: people (docs/AUTH.md).
@@ -231,3 +235,87 @@ def test_the_guarded_helpers_make_the_chain_rerunnable(scratch_db):
 
     live, models = _live_schema(engine), _model_schema()
     assert set(models) <= set(live), "the chain destroyed tables the baseline had built"
+
+
+def test_roles_lose_their_models_and_no_seat_changes_what_it_runs_on(scratch_db):
+    """0047 takes the model and the harness off the role version and reads a
+    tier off the model instead. The promise is that no running seat moves: a
+    seat whose role named something its tier does not resolve to keeps it as
+    an override, a role's harness lands on its seats, and an override that
+    already equals what its tier resolves to becomes a tier override so it
+    follows the project from now on."""
+    from sqlalchemy.orm import Session
+
+    from yaaf.core.models import Agent, Project, Role, RoleVersion, Secret, Team, User
+
+    engine = sa.create_engine(scratch_db)
+    Base.metadata.create_all(engine)
+    # Flushed group by group, parents first: Postgres holds the foreign keys
+    # SQLite lets slide, and the models declare no relationships to order by.
+    with Session(engine) as session, session.begin():
+        session.add(User(id="u1", email="chair@example.com", display_name="Chair"))
+        session.flush()
+        session.add_all([Secret(id="s_ant", name="Claude key", ciphertext="x", provider="anthropic"),
+                         Secret(id="s_ds", name="DeepSeek key", ciphertext="x",
+                                provider="deepseek")])
+        session.flush()
+        session.add_all([Project(id="p1", slug="claude", name="Claude", goal="g" * 12,
+                                 chairman_user_id="u1", billing_secret_id="s_ant"),
+                         Project(id="p2", slug="deep", name="Deep", goal="g" * 12,
+                                 chairman_user_id="u1", billing_secret_id="s_ds")])
+        session.add(Role(id="r1", slug="r", name="R"))
+        session.flush()
+        for version, rv in enumerate(("opus", "fable", "deepseek", "cli", "sonnet"), start=1):
+            session.add(RoleVersion(id=f"rv_{rv}", role_id="r1", version=version,
+                                    description="d", system_prompt="p"))
+        session.flush()
+        session.add_all([Team(id=f"t_{p}_{rv}", project_id=p, role_version_id=f"rv_{rv}",
+                              name=rv)
+                         for p, rv in (("p1", "fable"), ("p1", "deepseek"), ("p1", "cli"),
+                                       ("p1", "sonnet"), ("p2", "sonnet"))])
+        session.flush()
+        session.add_all([
+            Agent(id="a_ceo", project_id="p1", kind="ceo", name="CEO", role_version_id="rv_opus"),
+            Agent(id="a_fable", project_id="p1", team_id="t_p1_fable", kind="employee", name="F"),
+            Agent(id="a_ds", project_id="p1", team_id="t_p1_deepseek", kind="employee", name="D"),
+            Agent(id="a_cli", project_id="p1", team_id="t_p1_cli", kind="employee", name="C"),
+            Agent(id="a_lifted", project_id="p1", team_id="t_p1_sonnet", kind="employee",
+                  name="L", model_override="claude-opus-5-5"),
+            Agent(id="a_moved", project_id="p2", team_id="t_p2_sonnet", kind="employee", name="M"),
+        ])
+    # Back to the shape 0046 left: models and harnesses on the role version.
+    with engine.begin() as conn:
+        conn.execute(sa.text("ALTER TABLE role_versions DROP COLUMN tier"))
+        conn.execute(sa.text("ALTER TABLE agents DROP COLUMN tier_override"))
+        conn.execute(sa.text("ALTER TABLE projects DROP COLUMN seat_models"))
+        conn.execute(sa.text("ALTER TABLE role_versions ADD COLUMN model VARCHAR(64)"))
+        conn.execute(sa.text("ALTER TABLE role_versions ADD COLUMN harness VARCHAR(32)"))
+        for rv, model, harness in (("opus", "claude-opus-5-5", None),
+                                   ("fable", "claude-fable-5-1", None),
+                                   ("deepseek", "deepseek-chat", None),
+                                   ("cli", "claude-sonnet-5-5", "claude_cli"),
+                                   ("sonnet", "claude-sonnet-5-5", None)):
+            conn.execute(sa.text("UPDATE role_versions SET model = :m, harness = :h "
+                                 "WHERE id = :id"), {"m": model, "h": harness, "id": f"rv_{rv}"})
+
+    config = _alembic_config(scratch_db)
+    command.stamp(config, "0046")
+    command.upgrade(config, "head")
+
+    with engine.connect() as conn:
+        assert {"model", "harness"}.isdisjoint(
+            c["name"] for c in sa.inspect(conn).get_columns("role_versions"))
+        tiers = dict(conn.execute(sa.text("SELECT id, tier FROM role_versions")).all())
+        assert tiers == {"rv_opus": "strong", "rv_fable": "strong", "rv_deepseek": "standard",
+                         "rv_cli": "standard", "rv_sonnet": "standard"}
+        seats = {row.id: (row.model_override, row.tier_override, row.harness_override)
+                 for row in conn.execute(sa.text(
+                     "SELECT id, model_override, tier_override, harness_override FROM agents"))}
+    assert seats == {
+        "a_ceo": (None, None, None),                      # Opus is the strong tier already
+        "a_fable": ("claude-fable-5-1", None, None),      # off the lineup: kept by name
+        "a_ds": ("deepseek-chat", None, None),            # another vendor: kept by name
+        "a_cli": (None, None, "claude_cli"),              # the role's harness, on the seat
+        "a_lifted": (None, "strong", None),               # now follows the project
+        "a_moved": ("claude-sonnet-5-5", None, None),     # a DeepSeek project's Claude seat
+    }

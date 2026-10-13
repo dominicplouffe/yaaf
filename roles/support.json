@@ -7,7 +7,7 @@
     "general"
   ],
   "description": "Answers real users, reproduces their problems, and routes what they reveal back into the plan.",
-  "model": "claude-haiku-4-5",
+  "tier": "light",
   "effort": "high",
   "tool_permissions": {
     "files": true,

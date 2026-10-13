@@ -450,6 +450,25 @@ def pay_provider(project: str, provider: str, credential_id: str) -> None:
 
 
 @app.command()
+def set_models(
+    project: str,
+    light: str = typer.Option(None, "--light", help="The model the light tier runs on"),
+    standard: str = typer.Option(None, "--standard",
+                                 help="The model the standard tier runs on — and every "
+                                      "tier, on a provider that ships no lineup"),
+    strong: str = typer.Option(None, "--strong", help="The model the strong tier runs on"),
+) -> None:
+    """Name the model each role tier runs on in a project, over the lineup of
+    the provider its billing credential pays. Name none to go back to that
+    lineup."""
+    seat_models = {t: m for t, m in (("light", light), ("standard", standard),
+                                     ("strong", strong)) if m}
+    with _client() as client:
+        project_id = _resolve_project(client, project)
+        _show(client.patch(f"/admin/projects/{project_id}", json={"seat_models": seat_models}))
+
+
+@app.command()
 def set_model_price(model: str, input_usd: float, output_usd: float,
                     cache_read_usd: float = typer.Option(0.0, "--cache-read")) -> None:
     """Price a model on this install, USD per million tokens — how a model yaaf

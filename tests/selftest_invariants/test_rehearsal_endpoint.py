@@ -40,7 +40,7 @@ def test_a_spec_that_hires_from_the_library_leaves_with_those_definitions(client
     roles = by_slug(out)
     assert set(roles) == {"ceo", "researcher"}
     # Enough to seed the drill's own library: /admin/roles refuses less.
-    assert roles["researcher"]["system_prompt"] and roles["researcher"]["model"]
+    assert roles["researcher"]["system_prompt"] and roles["researcher"]["tier"]
     assert roles["ceo"]["is_ceo_role"] is True
 
 
@@ -153,8 +153,7 @@ def test_the_drill_says_what_the_bundle_asks_of_the_work(client):
     # lift, so this needs a project the lift really ran on: an edited category
     # after the fact hires nobody, and a report that announced a lift there
     # would be describing arithmetic instead of the roster.
-    seed_role(client, "scribe", category="content", model="claude-sonnet-5-5",
-              effort="high")
+    seed_role(client, "scribe", category="content", tier="standard", effort="high")
     high = client.post("/admin/projects", json={
         "slug": "matters", "name": "Matters",
         "goal": "Ship one briefing note the committee can act on.",
@@ -170,11 +169,10 @@ def test_the_drill_says_what_the_bundle_asks_of_the_work(client):
     assert "Ada" in lifted[0] and "Editorial" in lifted[0], \
         "name the seat and its team, not just the rule"
 
-    # A seat the library already placed at or above the craft model is NOT
+    # A seat the library already placed on the strong tier is NOT
     # announced: the lift leaves it alone, and a finding that says otherwise is
     # the drill contradicting the thing it is describing.
-    seed_role(client, "sage", category="research", model="claude-fable-5-1",
-              effort="xhigh")
+    seed_role(client, "sage", category="research", tier="strong", effort="xhigh")
     already = client.post("/admin/projects", json={
         "slug": "already", "name": "Already",
         "goal": "Ship one briefing note the committee can act on.",

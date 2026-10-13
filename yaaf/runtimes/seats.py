@@ -15,10 +15,23 @@ from yaaf.runtimes.harnesses import HARNESSES, LEGACY_RUNTIME
 
 @dataclass(frozen=True)
 class Seat:
-    model: str
+    #: None when the seat's tier has no model in the project's lineup — a
+    #: project on a provider that ships none, which named none. It cannot run,
+    #: and every door says so (yaaf.server.seat_checks).
+    model: str | None
     effort: str
     provider: str
     harness: str
+    tier: str = catalog.DEFAULT_TIER
+    #: What the role (or the seat's override) asked for, where `effort` is the
+    #: nearest the harness and model take. Shown wherever the two differ.
+    effort_asked: str = catalog.DEFAULT_EFFORT
+    #: Whether the effort reaches the model at all: a harness with no dial,
+    #: or a model that refuses one, runs without.
+    effort_dial: bool = True
+    #: Whether a `web` grant gets search here, or only fetch (R2's other half,
+    #: decided: fetch only, and shown).
+    searches: bool = True
 
 
 def effective_harness(seat_harness: str | None, runtime: str | None) -> str:
@@ -33,24 +46,46 @@ def effective_harness(seat_harness: str | None, runtime: str | None) -> str:
     return seat_harness or providers.provider(None).default_harness
 
 
-def seat_for(agent, role_version, runtime: str | None = None) -> Seat:
-    """`agent` is an Agent row; `role_version` the RoleVersion it is pinned to,
-    or None; `runtime` the project's `integrations.runtime`, when the caller is
-    about to execute. Pinned onto the Run at lease time, never at finalize, so
-    a reaped or killed run stays attributed to what actually ran.
+def searches(harness: str | None, provider: str) -> bool:
+    """Whether a seat on `harness` serving `provider` can search the web: the
+    harness's own search, or the provider's under yaaf's loop. Fetch is yaaf's
+    on every harness that takes `web`; search is not."""
+    found = HARNESSES.get(harness or providers.provider(provider).default_harness)
+    if found is None or found.search == "own":
+        return True
+    return found.search == "provider" and providers.provider(provider).search
 
-    The harness resolves like the model beside it: the seat's own override,
-    then the role's, then whatever the model's provider runs on by default."""
-    model = agent.model_override or (role_version.model if role_version
-                                     else catalog.DEFAULT_MODEL)
-    effort = agent.effort_override or (role_version.effort if role_version
-                                       else catalog.DEFAULT_EFFORT)
+
+def seat_for(agent, role_version, lineup: dict, runtime: str | None = None) -> Seat:
+    """`agent` is an Agent row; `role_version` the RoleVersion it is pinned to,
+    or None; `lineup` the project's tier → model (catalog.lineup, which the
+    control plane reads through yaaf.core.project_credentials.project_lineup);
+    `runtime` the project's `integrations.runtime`, when the caller is about to
+    execute. Pinned onto the Run at lease time, never at finalize, so a reaped
+    or killed run stays attributed to what actually ran.
+
+    The role says how hard — a tier and an effort — and never on what: the
+    model is the seat's own override, else the project's for the role's tier.
+    The harness is the seat's own, else whatever that model's provider runs
+    on by default."""
+    tier = (getattr(agent, "tier_override", None)
+            or (getattr(role_version, "tier", None) if role_version else None)
+            or catalog.DEFAULT_TIER)
+    model = agent.model_override or lineup.get(tier)
+    asked = agent.effort_override or (role_version.effort if role_version
+                                      else catalog.DEFAULT_EFFORT)
     provider = catalog.provider_of(model)
     chosen = (getattr(agent, "harness_override", None)
-              or (getattr(role_version, "harness", None) if role_version else None)
               or providers.provider(provider).default_harness)
-    return Seat(model=model, effort=effort, provider=provider,
-                harness=effective_harness(chosen, runtime))
+    found = HARNESSES.get(chosen)
+    row = catalog.model(model)
+    taken = catalog.efforts_taken(found.efforts if found else None, model)
+    return Seat(model=model, effort=catalog.fit_effort(asked, found.efforts if found else None,
+                                                       model),
+                provider=provider, harness=effective_harness(chosen, runtime), tier=tier,
+                effort_asked=asked,
+                effort_dial=taken != () and (row is None or row.effort),
+                searches=searches(chosen, provider))
 
 
 def choosable() -> list:
@@ -92,10 +127,12 @@ def refusal(harness: str | None, model: str, tool_permissions: dict | None,
     paying with `credential` — (provider, mode), when one is known — or None
     when it can. `priced` is whether the install can meter `model` in dollars
     (yaaf.core.prices.covered, which reads the install's own prices); a
-    caller with no database reads the shipped catalog. `converses` is whether
-    the seat holds the boardroom conversation — the CEO's, where the chat is
-    on. Every rule here reads the registries and none names a harness
-    (docs/RUNTIMES.md, "The rules this adds")."""
+    caller with no database reads the shipped catalog. `effort` is one
+    somebody typed for this seat, held to R6; a role's effort is never passed,
+    because it is fitted to the model instead (catalog.fit_effort). `converses`
+    is whether the seat holds the boardroom conversation — the CEO's, where
+    the chat is on. Every rule here reads the registries and none names a
+    harness (docs/RUNTIMES.md, "The rules this adds")."""
     provider = catalog.provider_of(model)
     name = harness or providers.provider(provider).default_harness
     found = HARNESSES.get(name)
@@ -118,18 +155,12 @@ def refusal(harness: str | None, model: str, tool_permissions: dict | None,
         grant = unwithholdable[0]
         return (f"{found.label} cannot run without {grant}, and this role does not "
                 f"grant it — grant {grant} on the role, or run this seat on another harness")
-    # R2, the other way round — a grant the harness cannot honour. The web
-    # is fetch and search, and search is the harness's own, the provider's
-    # (yaaf's loop), or nobody's: a seat with none cannot give a role that
-    # grants `web` what it was hired with. Refused rather than quietly halved
-    # (docs/RUNTIMES.md, open question 6).
+    # R2's other half — a `web` grant on a seat that cannot search — is not a
+    # refusal: the seat fetches, and every place it is shown says it does not
+    # search (Seat.searches; docs/RUNTIMES.md, open question 6). A role names
+    # no provider, so refusing here refused the role on whichever provider the
+    # project happened to pay.
     seller = providers.provider(provider)
-    if (tool_permissions or {}).get("web") and (
-            found.search == "none" or (found.search == "provider" and not seller.search)):
-        where = f" on {seller.label}" if found.search == "provider" else ""
-        return (f"{found.label} cannot search the web{where}, and this role grants web — "
-                f"run this seat on a harness or a provider that searches, or leave web "
-                f"off the role")
     # R3 — a model the harness would have to price, with no price to price it
     # by. A run nobody can price is a run the budget cannot stop. Only under a
     # dollar meter: a credential metered in tokens is stopped in tokens.
@@ -139,9 +170,10 @@ def refusal(harness: str | None, model: str, tool_permissions: dict | None,
         return (f"{found.label} prices every run, and {model} has no price on this "
                 f"install — set one in Settings → Model prices, or run this seat on a "
                 f"harness that reports its own cost")
-    # R6 — an effort the harness cannot express, or the model does not take.
-    # Never mapped silently, in either direction: "max" sent as "high" is a
-    # seat run cheaper than it was hired at, and the other way round dearer.
+    # R6 — an effort somebody named for this seat that the harness cannot
+    # express, or the model does not take. Refused rather than fitted: a
+    # chairman who typed "max" for one seat said something about that seat,
+    # and running it at "high" would be quietly overruling him.
     if effort and found.efforts:
         if effort not in found.efforts:
             return (f"{found.label} has no effort '{effort}' — it takes "

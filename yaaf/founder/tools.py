@@ -68,11 +68,9 @@ def _role_row(session: Session, role: Role) -> dict:
     if version is not None:
         out.update({
             "description": version.description,
-            "model": version.model,
+            # How hard, never on what: the project's provider answers the tier.
+            "tier": version.tier,
             "effort": version.effort,
-            # Only when the role names one: every role that does not runs on
-            # its provider's default, and saying so on each would be noise.
-            **({"harness": version.harness} if version.harness else {}),
             # The chairman has to supply these before this role can work, which
             # is a fact about hiring it — surfaced here rather than discovered
             # when a run fails asking for one.
@@ -118,7 +116,8 @@ def search_crews(session: Session, *, query: str | None = None) -> dict:
 
 
 def list_credentials(session: Session, *, with_plan: bool = False) -> dict:
-    """What a project can pay Claude with: names and modes, never values.
+    """What a project can pay a provider with: names, modes and providers,
+    never values.
 
     A draft that names no credential is created unable to start, and a draft
     that names the wrong one spends the wrong person's money. Either is worse
@@ -126,30 +125,36 @@ def list_credentials(session: Session, *, with_plan: bool = False) -> dict:
     ask about rather than fill in.
     """
     from yaaf.core import llm_credentials
-    from yaaf.runtimes.providers import DEFAULT_PROVIDER
+    from yaaf.runtimes import catalog
+    from yaaf.runtimes.providers import PROVIDERS
 
     rows = llm_credentials.choices(session, with_plan=with_plan)
-    # The billing credential pays the provider the seats run on by default;
-    # the count that decides "ask or not" is of those. Another provider's
-    # credentials are for seats on its models, and ride in `credentials`.
-    claude = [r for r in rows if (r.get("provider") or DEFAULT_PROVIDER) == DEFAULT_PROVIDER]
-    if not claude:
+    # Any of them can be the billing credential: the provider it pays is the
+    # provider every seat runs on, so each row says what its seats would run.
+    for row in rows:
+        lineup = catalog.lineup(row.get("provider"))
+        seller = PROVIDERS.get(row.get("provider") or "")
+        row["seats_run_on"] = (
+            lineup if any(lineup.values()) else
+            f"nothing until the draft names seat_models — "
+            f"{seller.label if seller else row.get('provider')} ships no lineup")
+    if not rows:
         note = ("None yet. The project can still be drafted and created; it cannot start "
                 "until an administrator adds a credential in Settings and assigns it. "
                 "Say so in your cover note.")
-    elif len(claude) == 1:
+    elif len(rows) == 1:
         note = (f"Exactly one: put its id in the draft's billing_secret_id and say in your "
-                f"cover note that the project pays with {claude[0]['name']!r}.")
+                f"cover note that the project pays with {rows[0]['name']!r}.")
     else:
         note = ("More than one. Ask the chairman which should pay — this is a question "
                 "worth one of your three — and leave billing_secret_id unset until they "
                 "answer. Never guess: it is the one field in the draft that spends "
                 "somebody's money.")
-    if len(claude) < len(rows):
-        note += (" Each credential names the provider it pays. A seat on another "
-                 "provider's model (deepseek-chat, openrouter/…, custom/…) needs that "
-                 "provider paid too: put {provider: id} in the draft's `credentials`, "
-                 "under the same rule — one per provider, or ask.")
+    if len({r.get("provider") for r in rows}) > 1:
+        note += (" Each credential names the provider it pays, and `seats_run_on` says "
+                 "which model each tier gets on it. A seat put on a second provider's "
+                 "model needs that provider paid too: put {provider: id} in the draft's "
+                 "`credentials`, under the same rule — one per provider, or ask.")
     return {"credentials": rows, "note": note}
 
 
@@ -476,41 +481,58 @@ def billing_problems(project: dict, session: Session) -> list[str]:
 
 
 def seat_payment_problems(project: dict, session: Session, billing_provider: str | None) -> list[str]:
-    """R5 on a draft: every seat's model is a provider the draft pays — the
-    billing credential's, or one named in `credentials`. The create endpoint
-    refuses the same project; caught here, the Founder fixes the draft rather
-    than handing the chairman one that cannot be built (a DeepSeek key over a
-    roster of Claude roles was exactly that)."""
+    """Every seat in a draft has a model, and a provider the draft pays for
+    it: the billing credential's provider answers each role's tier with its
+    lineup (or the draft's `seat_models`), and a seat put on another
+    provider's model needs that one in `credentials` (R5). The create
+    endpoint refuses the same project; caught here, the Founder fixes the
+    draft rather than handing the chairman one that cannot be built."""
     from yaaf.runtimes import catalog
-    from yaaf.server.seat_checks import unpaid
+    from yaaf.runtimes.providers import DEFAULT_PROVIDER
+    from yaaf.server.seat_checks import no_model, unpaid
 
     if (project.get("integrations") or {}).get("runtime") == "mock":
         return []
-    paid = sorted({billing_provider or "anthropic", *(project.get("credentials") or {})})
-    seats = [("the CEO", project.get("ceo_model_override")
-              or _role_model(session, project.get("ceo_role_slug")))]
+    paying = billing_provider or DEFAULT_PROVIDER
+    paid = sorted({paying, *(project.get("credentials") or {})})
+    own = project.get("seat_models") or {}
+    lineup = catalog.lineup(paying, own)
+    problems = [unpaid(f"the {tier} tier", model, paid,
+                       fix="name one of a provider the draft pays in seat_models")
+                for tier, model in sorted(own.items())
+                if model and catalog.provider_of(model) not in paid]
+    seats = [("the CEO", project.get("ceo_model_override"), project.get("ceo_tier_override"),
+              project.get("ceo_role_slug"))]
     for team in project.get("teams") or []:
-        overrides = team.get("model_overrides") or {}
-        for person in team.get("employees") or []:
-            seats.append((f"{person} ({team.get('name')})",
-                          overrides.get(person) or _role_model(session, team.get("role_slug"))))
-    return [unpaid(who, model, paid) + " — in a draft: ceo_model_override, or a team's "
-            "model_overrides keyed by name, or a `credentials` entry for it"
-            for who, model in seats
-            if model and catalog.provider_of(model) not in paid]
+        models = team.get("model_overrides") or {}
+        tiers = team.get("tier_overrides") or {}
+        seats += [(f"{person} ({team.get('name')})", models.get(person), tiers.get(person),
+                   team.get("role_slug")) for person in team.get("employees") or []]
+    for who, override, tier, slug in seats:
+        tier = tier or _role_tier(session, slug)
+        model = override or lineup.get(tier)
+        if model is None:
+            problems.append(no_model(who, tier, paying))
+        elif catalog.provider_of(model) not in paid:
+            problems.append(unpaid(who, model, paid) + " — in a draft: ceo_model_override, "
+                            "or a team's model_overrides keyed by name, or a `credentials` "
+                            "entry for it")
+    return problems
 
 
-def _role_model(session: Session, slug: str | None) -> str | None:
-    """The model a role's latest version runs on — what a seat hired on it
-    runs on unless the draft overrides it."""
+def _role_tier(session: Session, slug: str | None) -> str:
+    """The tier a role's latest version asks for — what a seat hired on it
+    runs at unless the draft overrides it."""
+    from yaaf.runtimes.catalog import DEFAULT_TIER
+
     role = session.execute(select(Role).where(Role.slug == slug)).scalar_one_or_none() \
         if slug else None
     if role is None:
-        return None
+        return DEFAULT_TIER
     version = session.execute(
         select(RoleVersion).where(RoleVersion.role_id == role.id)
         .order_by(RoleVersion.version.desc())).scalars().first()
-    return version.model if version is not None else None
+    return version.tier if version is not None else DEFAULT_TIER
 
 
 def _provider_credential_problems(project: dict, session: Session) -> list[str]:

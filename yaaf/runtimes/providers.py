@@ -43,11 +43,13 @@ class Provider:
     default_harness: str
     #: Ordered: the first is what a mode nobody registered is read as.
     kinds: tuple[CredentialKind, ...]
-    #: What `stakes: high` lifts a producing seat to — within this provider,
-    #: never across one. A dial labelled "how much this matters" that moved a
-    #: seat to another vendor would be two decisions wearing one label. None
-    #: for a provider with no catalog of its own to rank: it lifts nothing.
-    craft_model: str | None
+    #: The model each role tier runs on, light / standard / strong
+    #: (yaaf.runtimes.catalog.TIERS) — what a project paying this provider runs
+    #: unless it names its own. `stakes: high` lifts a producing seat to the
+    #: strong one: within this provider, never across one. None for a provider
+    #: whose lineup moves monthly or is the chairman's own (OpenRouter's
+    #: hundreds of models, a custom server): its project names the models.
+    lineup: tuple[str, str, str] | None
     #: Lower-case fragments that mean the credential is dead rather than the
     #: run unlucky. The daemon pauses a project on three in a row.
     failure_markers: tuple[str, ...]
@@ -105,7 +107,7 @@ ANTHROPIC = Provider(
                        bills="Claude subscription, metered in tokens",
                        shape_error=_anthropic_subscription_shape),
     ),
-    craft_model="claude-opus-5-5",
+    lineup=("claude-haiku-4-5", "claude-sonnet-5-5", "claude-opus-5-5"),
     # The Messages API's own server tool (yaaf's loop offers it as web_search).
     search=True,
     failure_markers=(
@@ -161,7 +163,8 @@ DEEPSEEK = Provider(
     kinds=(CredentialKind(mode="api_key", meter="usd", env_var="DEEPSEEK_API_KEY",
                           bills="DeepSeek API key, billed in USD",
                           shape_error=_not_anthropic),),
-    craft_model="deepseek-reasoner",
+    # Two models: the chat one does the everyday work, the reasoner the hard part.
+    lineup=("deepseek-chat", "deepseek-chat", "deepseek-reasoner"),
     failure_markers=("authentication fails", "insufficient balance"),
     base_url="https://api.deepseek.com/v1",
 )
@@ -174,8 +177,8 @@ OPENROUTER = Provider(
                           bills="OpenRouter API key, billed in USD",
                           shape_error=_not_anthropic),),
     # Hundreds of models from every vendor behind one key: there is no one
-    # ladder to climb, so the stakes dial leaves an OpenRouter seat where it is.
-    craft_model=None,
+    # lineup to ship, so a project on it names its own.
+    lineup=None,
     failure_markers=("no auth credentials found", "insufficient credits"),
     base_url="https://openrouter.ai/api/v1",
     # It states each call's cost, so its models need no row of their own.
@@ -190,7 +193,7 @@ CUSTOM = Provider(
                           bills="Custom endpoint key, priced in USD at the rates set in "
                                 "Settings",
                           shape_error=_no_shape),),
-    craft_model=None,
+    lineup=None,
     failure_markers=("custom endpoint rejected the credential",),
     # A local Ollama or vLLM server: its address is the chairman's to give.
     credential_base_url=True,
@@ -198,8 +201,8 @@ CUSTOM = Provider(
 
 #: The long tail (docs/RUNTIMES.md, M5): each speaks the OpenAI shape, so each
 #: is a row and nothing else. None ships a model: their lineups move monthly
-#: and no price could be checked, so a seat names `<provider>/<model>` and the
-#: install prices it. Each address is the vendor's international one; a key
+#: and no price could be checked, so a project names `<provider>/<model>` for
+#: its seats and the install prices it. Each address is the vendor's international one; a key
 #: issued for another region (Moonshot's and Alibaba's China hosts) is a
 #: custom endpoint at that region's address.
 MOONSHOT = Provider(
@@ -209,7 +212,7 @@ MOONSHOT = Provider(
     kinds=(CredentialKind(mode="api_key", meter="usd", env_var="MOONSHOT_API_KEY",
                           bills="Moonshot (Kimi) API key, billed in USD",
                           shape_error=_not_anthropic),),
-    craft_model=None,
+    lineup=None,
     failure_markers=("invalid authentication",),
     base_url="https://api.moonshot.ai/v1",
 )
@@ -221,7 +224,7 @@ QWEN = Provider(
     kinds=(CredentialKind(mode="api_key", meter="usd", env_var="DASHSCOPE_API_KEY",
                           bills="Alibaba Model Studio (DashScope) API key, billed in USD",
                           shape_error=_not_anthropic),),
-    craft_model=None,
+    lineup=None,
     failure_markers=("incorrect api key provided", "invalid_api_key"),
     base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
 )
@@ -233,7 +236,7 @@ MISTRAL = Provider(
     kinds=(CredentialKind(mode="api_key", meter="usd", env_var="MISTRAL_API_KEY",
                           bills="Mistral API key, billed in USD",
                           shape_error=_not_anthropic),),
-    craft_model=None,
+    lineup=None,
     # Mistral's 401 is a bare {"message": "Unauthorized"}.
     failure_markers=("http 401: unauthorized",),
     base_url="https://api.mistral.ai/v1",
@@ -246,7 +249,7 @@ XAI = Provider(
     kinds=(CredentialKind(mode="api_key", meter="usd", env_var="XAI_API_KEY",
                           bills="xAI API key, billed in USD",
                           shape_error=_not_anthropic),),
-    craft_model=None,
+    lineup=None,
     # Its search is a Responses API tool; the chat API this loop speaks has none.
     failure_markers=("incorrect api key provided", "no credits"),
     base_url="https://api.x.ai/v1",
@@ -287,7 +290,7 @@ GOOGLE = Provider(
                        bills="Google account login (Gemini CLI), metered in tokens",
                        shape_error=_google_login_shape),
     ),
-    craft_model="gemini-3.1-pro-preview",
+    lineup=("gemini-3-flash-preview", "gemini-3.8-flash", "gemini-3.1-pro-preview"),
     failure_markers=("api key not valid", "request had invalid authentication credentials",
                      "manual authorization is required"),
     # Its OpenAI-compatible chat API, for what runs in yaaf's own process on
@@ -312,7 +315,7 @@ OPENAI = Provider(
                        bills="ChatGPT plan (Codex login), metered in tokens",
                        shape_error=_chatgpt_login_shape),
     ),
-    craft_model="gpt-6-astra",
+    lineup=("gpt-5.6-luna", "gpt-6-sol", "gpt-6-astra"),
     failure_markers=("incorrect api key provided", "unexpected status 401",
                      "unexpected status 403"),
     # Its chat API, for what runs in yaaf's own process on an API key — the

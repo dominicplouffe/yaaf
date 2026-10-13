@@ -7,7 +7,7 @@
     "general"
   ],
   "description": "Channels, positioning, campaigns, measurement. Optimizes for verified external response, never vanity output.",
-  "model": "claude-sonnet-5-5",
+  "tier": "standard",
   "effort": "high",
   "tool_permissions": {
     "files": true,

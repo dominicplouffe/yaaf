@@ -7,7 +7,7 @@
     "general"
   ],
   "description": "Tries to break the team's own work before anyone outside does. A finding is real only when it comes with the input that reproduces it; 'I could not break it' is a complete deliverable.",
-  "model": "claude-sonnet-5-5",
+  "tier": "standard",
   "effort": "xhigh",
   "tool_permissions": {
     "files": true,

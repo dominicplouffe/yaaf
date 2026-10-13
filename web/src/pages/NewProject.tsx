@@ -1,4 +1,4 @@
-import { CredentialPicker, resolveCredential, useProviders } from "../llmCredentials";
+import { CredentialPicker, resolveCredential, SeatModels, useProviders } from "../llmCredentials";
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { CrewSummary, get, McpServerEntry, post, ProjectBundle,
@@ -176,18 +176,11 @@ export default function NewProject() {
   const [otherCredentials, setOtherCredentials] = useState<Record<string, string>>({});
   const [otherProvider, setOtherProvider] = useState("");
   const registry = useProviders();
-  // Which provider the billing credential pays, and — when the roles run on
-  // another provider's models — the one model every seat is moved to. Never
-  // chosen for the chairman: a key that pays DeepSeek under a roster of
-  // Claude roles is a choice between moving the seats and paying Anthropic
-  // too, and both are his to make.
+  // Which provider the billing credential pays — the one every seat runs on,
+  // each role's tier answered by its lineup — and any model the chairman names
+  // for a tier instead.
   const [billingProvider, setBillingProvider] = useState("anthropic");
-  const [seatModel, setSeatModel] = useState("");
-  const [modelTable, setModelTable] = useState<{
-    model: string; provider: string; shipped: object | null; own: object | null }[]>([]);
-  useEffect(() => {
-    get<typeof modelTable>("/admin/settings/model-prices").then(setModelTable).catch(() => {});
-  }, []);
+  const [seatModels, setSeatModels] = useState<Record<string, string>>({});
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [mode, setMode] = useState("explore");
   // Set when a loaded setup file could not answer the shape question itself —
@@ -589,6 +582,7 @@ export default function NewProject() {
       // from an export. Either is resolved against what exists now; a name
       // that matches nothing leaves the picker empty, and the step says so.
       setBillingCredentialId("");
+      setSeatModels(p.seat_models ?? {});
       const pick = ++billingPick.current;
       resolveCredential(p.billing_secret_id, p.billing_secret_name).then((found) => {
         if (found && pick === billingPick.current) {
@@ -811,31 +805,6 @@ export default function NewProject() {
     }
   }
 
-  /** The provider a model belongs to, as the server reads it: the catalog's,
-      else a `provider/model` prefix, else Anthropic. */
-  function providerOf(model: string): string {
-    return modelTable.find((r) => r.model === model)?.provider
-      ?? registry.find((r) => model.startsWith(`${r.name}/`))?.name ?? "anthropic";
-  }
-
-  /** Every seat on the form and the model it would run on — its role's, or
-      the override a setup file carries. */
-  function seatModels(): { who: string; model: string }[] {
-    const chosenCeo = bundle?.project.ceo_role_slug ?? ceoSlug ?? ceoRole?.slug;
-    const ceoModel = bundle?.project.ceo_model_override
-      ?? roles.find((r) => r.slug === chosenCeo)?.model ?? "";
-    const out = [{ who: "the CEO", model: ceoModel }];
-    for (const t of teams) {
-      if (!t.role_slug) continue;
-      const fromBundle = bundle?.project.teams.find((bt) => bt.name === t.name.trim());
-      for (const person of t.employees.split(",").map((s) => s.trim()).filter(Boolean)) {
-        out.push({ who: person, model: fromBundle?.model_overrides?.[person]
-          ?? roles.find((r) => r.slug === t.role_slug)?.model ?? "" });
-      }
-    }
-    return out;
-  }
-
   /** The project exactly as it will be POSTed — extracted so the fire drill
       can run the SAME object the submit button would send. A second copy
       assembled for the rehearsal would be a rehearsal of a different
@@ -891,9 +860,11 @@ export default function NewProject() {
           ceo_role_slug: chosenCeo,
           ceo_name: bundle?.project.ceo_name ?? "CEO",
           ...(bundle?.project.ceo_daily_at ? { ceo_daily_at: bundle.project.ceo_daily_at } : {}),
-          ...(seatModel ? { ceo_model_override: seatModel }
-            : bundle?.project.ceo_model_override
-              ? { ceo_model_override: bundle.project.ceo_model_override } : {}),
+          ...(bundle?.project.ceo_model_override
+            ? { ceo_model_override: bundle.project.ceo_model_override } : {}),
+          ...(bundle?.project.ceo_tier_override
+            ? { ceo_tier_override: bundle.project.ceo_tier_override } : {}),
+          ...(Object.keys(seatModels).length ? { seat_models: seatModels } : {}),
           ...(bundle?.project.ceo_effort_override
             ? { ceo_effort_override: bundle.project.ceo_effort_override } : {}),
           ...(bundle?.project.ceo_harness_override
@@ -914,10 +885,8 @@ export default function NewProject() {
               // file wins when both are present, because loading one is the more
               // deliberate act.
               const schedules = keep({ ...t.schedules, ...fromBundle?.schedules });
-              // "Run every seat on" moves every seat, the file's choices too.
-              const modelOverrides = seatModel
-                ? Object.fromEntries(employees.map((n) => [n, seatModel]))
-                : keep(fromBundle?.model_overrides);
+              const modelOverrides = keep(fromBundle?.model_overrides);
+              const tierOverrides = keep(fromBundle?.tier_overrides);
               const effortOverrides = keep(fromBundle?.effort_overrides);
               const harnessOverrides = keep(fromBundle?.harness_overrides);
               return {
@@ -928,6 +897,8 @@ export default function NewProject() {
                 ...(Object.keys(schedules).length ? { schedules } : {}),
                 ...(Object.keys(modelOverrides).length
                   ? { model_overrides: modelOverrides } : {}),
+                ...(Object.keys(tierOverrides).length
+                  ? { tier_overrides: tierOverrides } : {}),
                 ...(Object.keys(effortOverrides).length
                   ? { effort_overrides: effortOverrides } : {}),
                 ...(Object.keys(harnessOverrides).length
@@ -1574,40 +1545,10 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
               {registry.filter((r) => !(r.name in otherCredentials))
                 .map((r) => <option key={r.name} value={r.name}>{r.label}</option>)}
             </select></label>
-          {(() => {
-            const labelOf = (p: string) => registry.find((r) => r.name === p)?.label ?? p;
-            const paid = [billingProvider, ...Object.entries(otherCredentials)
-              .filter(([, id]) => id).map(([p]) => p)];
-            const choices = modelTable.filter((r) => paid.includes(r.provider));
-            const priced = (m: string) => {
-              const row = modelTable.find((r) => r.model === m);
-              return !!(row?.own || row?.shipped)
-                || !!registry.find((r) => r.name === row?.provider)?.reports_cost;
-            };
-            const unpaid = seatModel || runtime === "mock" || !billingCredentialId ? []
-              : seatModels().filter((s) => s.model && !paid.includes(providerOf(s.model)));
-            return <>
-              <label className="field" style={{ maxWidth: 380 }}>Run every seat on
-                <select value={seatModel} onChange={(e) => setSeatModel(e.target.value)}>
-                  <option value="">each role&apos;s own model</option>
-                  {choices.map((r) => <option key={r.model} value={r.model}>
-                    {r.model} — {labelOf(r.provider)}{priced(r.model) ? "" : " · no price yet"}
-                  </option>)}
-                </select></label>
-              {seatModel && !priced(seatModel) && <p className="help">
-                {seatModel} has no price on this install, and a seat metered in dollars
-                needs one: set it under <Link to="/settings?section=prices" target="_blank"
-                rel="noreferrer">Settings → Model prices ↗</Link> first.</p>}
-              {unpaid.length > 0 && <p className="notice-box">
-                This project pays {paid.map(labelOf).join(" and ")}, and{" "}
-                {unpaid.slice(0, 4).map((s) => `${s.who} (${s.model})`).join(", ")}
-                {unpaid.length > 4 ? ` and ${unpaid.length - 4} more` : ""} run on{" "}
-                {[...new Set(unpaid.map((s) => labelOf(providerOf(s.model))))].join(" and ")}{" "}
-                models it does not pay. Run every seat on one of {labelOf(billingProvider)}&apos;s
-                models above, or pay {[...new Set(unpaid.map((s) => labelOf(providerOf(s.model))))]
-                  .join(" and ")} too.</p>}
-            </>;
-          })()}
+          {runtime !== "mock" && <SeatModels provider={billingProvider}
+            paid={[billingProvider, ...Object.entries(otherCredentials)
+              .filter(([, id]) => id).map(([p]) => p)]}
+            value={seatModels} onChange={setSeatModels} />}
           <button type="button" className="small" style={{ marginTop: 4 }}
             onClick={() => setShowAdvanced((v) => !v)}>
             {showAdvanced ? "hide advanced" : "advanced…"}

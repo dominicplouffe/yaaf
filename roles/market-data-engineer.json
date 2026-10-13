@@ -8,7 +8,7 @@
     "data"
   ],
   "description": "Owns the data the desk reasons from: ingestion, corporate actions, point-in-time correctness, validation, and the pipeline that reruns without a human.",
-  "model": "claude-sonnet-5-5",
+  "tier": "standard",
   "effort": "xhigh",
   "tool_permissions": {
     "files": true,

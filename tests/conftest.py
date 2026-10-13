@@ -64,7 +64,7 @@ ADMIN = {"Authorization": f"Bearer {CHAIR_TOKEN}"}
 ROLE_MIN = {
     "description": "test role",
     "system_prompt": "You are a test agent.",
-    "model": "claude-sonnet-5-5",
+    "tier": "standard",
 }
 
 

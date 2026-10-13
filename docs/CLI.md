@@ -34,6 +34,7 @@ Every command that takes a project accepts **either a slug or an id**.
 | `yaaf set-secret NAME --from-file PATH [--filename NAME]` | Store a credential that **is a file** — a service-account key, a PEM, a kubeconfig. No prompt: a key file is not something anyone retypes. Granted roles receive its *path*, not its contents; `--filename` names it inside the sandbox and defaults to the file's own name. |
 | `yaaf llm-credentials [--include-hidden]` | List named LLM credentials and project assignments (no values). Each project says whether it is still live, and the credential says whether any of them are. |
 | `yaaf create-llm-credential NAME [--mode api_key\|subscription] [--provider P] [--base-url URL]` | Create a managed credential; value is prompted. `--provider` names who it pays (`anthropic` by default; `deepseek`, `openrouter`, `moonshot`, `qwen`, `mistral`, `xai`, `custom`, `openai` — whose `subscription` kind is the ChatGPT login `codex login` writes, pasted whole — and `google`, whose `subscription` kind is the `oauth_creds.json` the Gemini CLI writes), and a `custom` server takes its `--base-url`. |
+| `yaaf set-models PROJECT [--light M] [--standard M] [--strong M]` | Name the model each role tier runs on in a project, over the lineup of the provider its billing credential pays; name none to go back to that lineup. A provider that ships no lineup (OpenRouter, a custom server, Kimi, Qwen, Mistral, Grok) needs `--standard`, which then serves every tier. |
 | `yaaf pay-provider PROJECT PROVIDER CREDENTIAL_ID` | Pay a second provider on a project, for seats on its models — metered in the project's unit, against its one cap ([RUNTIMES.md](RUNTIMES.md)). |
 | `yaaf set-model-price MODEL INPUT OUTPUT [--cache-read X]` | Price a model on this install, USD per million tokens — how a model yaaf ships no price for can be hired onto a harness that meters by price. |
 | `yaaf edit-llm-credential ID NAME [--rotate]` | Rename a credential; optionally replace its value for all assigned projects. |
@@ -96,15 +97,23 @@ Every command that takes a project accepts **either a slug or an id**.
   Slack mapping, data sources. Anything that caps or paces an agent lives in
   the constitution. `runtime: mock` puts every seat on the scripted backend;
   otherwise each seat runs on its own harness.
-- A team's `model_overrides`, `effort_overrides` and `harness_overrides` are
-  per person, keyed by name; `ceo_model_override`, `ceo_effort_override` and
-  `ceo_harness_override` are the CEO's. A harness (`claude_agent_sdk`,
-  `claude_cli`, `anthropic_api`, `openai_compatible`, `codex_cli`, `gemini_cli`, `opencode` — see
-  [RUNTIMES.md](RUNTIMES.md)) is what drives the seat's model; absent, it is the role's, and the role's absent is
-  the model's provider default. A seat whose harness cannot serve its model,
-  take away a grant its role withholds, pay with the project's credential, or
-  price its model when it meters by price is refused at creation, with the
-  reason.
+- Every seat runs on the provider the billing credential pays: its role
+  names a tier (`light`, `standard`, `strong`), and that provider's lineup —
+  or the project's own `seat_models`, `{"standard": "mistral/mistral-large-latest"}`
+  — answers it. A provider that ships no lineup needs `seat_models`; one for
+  `standard` serves every tier.
+- A team's `model_overrides`, `tier_overrides`, `effort_overrides` and
+  `harness_overrides` are per person, keyed by name; `ceo_model_override`,
+  `ceo_tier_override`, `ceo_effort_override` and `ceo_harness_override` are
+  the CEO's. A model override is the one way a seat leaves the project's
+  provider. A harness (`claude_agent_sdk`, `claude_cli`, `anthropic_api`,
+  `openai_compatible`, `codex_cli`, `gemini_cli`, `opencode` — see
+  [RUNTIMES.md](RUNTIMES.md)) is what drives the seat's model; absent, it is
+  the model's provider default. A seat whose tier has no model, whose harness
+  cannot serve its model, take away a grant its role withholds, pay with the
+  project's credential, or price its model when it meters by price is refused
+  at creation, with the reason — and so is an effort override its model does
+  not take. A role's own effort is fitted to the nearest the model takes.
 - `credentials` pays each provider the billing credential does not, as
   `{"deepseek": "<credential id>"}` — one per provider, metered in the billing
   credential's unit. A seat on a provider the project does not pay is refused.

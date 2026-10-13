@@ -12,10 +12,10 @@ interface RoleDetail {
   version: number;
   description: string;
   system_prompt: string;
-  model: string;
+  // How hard, never on what: the project's provider answers the tier with a
+  // model, so the same role runs on any vendor's key (docs/RUNTIMES.md).
+  tier: string;
   effort: string;
-  // What drives the model; null is the provider's default (docs/RUNTIMES.md).
-  harness: string | null;
   // Booleans for the sandbox tools — unknown keys
   // are preserved verbatim on save (the proxy generator reads this dict too).
   tool_permissions: Record<string, unknown>;
@@ -23,10 +23,12 @@ interface RoleDetail {
 }
 
 
-/** "claude-opus-5-5" → "opus-5": the family is the choice; the vendor prefix is noise. */
-function shortModel(model: string | null): string {
-  return (model ?? "—").replace(/^claude-/, "");
-}
+/** The three rungs a role can ask for, and what each means on any provider. */
+const TIERS = [
+  { value: "light", label: "Light — the provider's fast, cheap model" },
+  { value: "standard", label: "Standard — its balanced model" },
+  { value: "strong", label: "Strong — its most capable model" },
+] as const;
 
 const EMPTY: RoleDetail = {
   slug: "",
@@ -37,9 +39,8 @@ const EMPTY: RoleDetail = {
   version: 0,
   description: "",
   system_prompt: "",
-  model: "claude-sonnet-5-5",
+  tier: "standard",
   effort: "high",
-  harness: null,
   tool_permissions: { files: true, bash: false, data_processing: true, web: true },
   secret_scopes: [],
 };
@@ -74,18 +75,10 @@ export default function Roles() {
   const [saved, setSaved] = useState<string | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
 
-  // The harnesses a seat may run on, from the registry rather than a list
-  // written into this page — the next one arrives without editing it.
-  const [harnesses, setHarnesses] = useState<{ name: string; label: string }[]>([]);
   function refresh() {
     get<RoleSummary[]>("/admin/roles").then(setRoles).catch((e: Error) => setError(e.message));
   }
   useEffect(refresh, []);
-  useEffect(() => {
-    get<{ name: string; label: string }[]>("/admin/harnesses")
-      .then(setHarnesses)
-      .catch(() => setHarnesses([]));
-  }, []);
   useEffect(() => {
     if (editing) formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [editing?.slug]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -122,9 +115,8 @@ export default function Roles() {
         domains: editing.domains,
         description: editing.description,
         system_prompt: editing.system_prompt,
-        model: editing.model,
+        tier: editing.tier,
         effort: editing.effort,
-        harness: editing.harness || null,
         tool_permissions: editing.tool_permissions,
         secret_scopes: editing.secret_scopes,
       });
@@ -162,13 +154,13 @@ export default function Roles() {
   function exportLibrary() {
     downloadCsv(
       "role-library.csv",
-      ["slug", "name", "category", "domains", "depth", "cost", "model", "effort",
+      ["slug", "name", "category", "domains", "depth", "cost", "tier", "effort",
         "can_do", "needs", "version", "teams_running_it", "description"],
       roles.map((r) => {
-        const d = depthOf(r.model, r.effort);
+        const d = depthOf(r.tier, r.effort);
         return [
           r.slug, r.name, r.category ?? "uncategorised", (r.domains ?? []).join(" "),
-          d.band, d.dollars, r.model ?? "", r.effort ?? "",
+          d.band, d.dollars, r.tier ?? "", r.effort ?? "",
           canDo(r.tools).join(" "), (r.secret_scopes ?? []).join(" "),
           r.latest_version, r.usage.length, r.description,
         ];
@@ -259,7 +251,7 @@ export default function Roles() {
                 {role.description ? clip(role.description, 110) : <span className="help">no description yet</span>}
               </p>
               <div className="pill-row" style={{ marginTop: 8 }}>
-                <span className="chip accent">{shortModel(role.model)}</span>
+                <span className="chip accent">{role.tier ?? "standard"}</span>
                 {role.effort && <span className="chip">{role.effort} effort</span>}
                 {role.tools
                   .filter((tool) => tool !== "egress_unrestricted")
@@ -391,14 +383,12 @@ export default function Roles() {
             <div className="fs-h">Brain</div>
             <div className="row">
               <div>
-                <label className="field">Model</label>
+                <label className="field">Tier</label>
                 <select
-                  value={editing.model}
-                  onChange={(e) => setEditing({ ...editing, model: e.target.value })}
+                  value={editing.tier}
+                  onChange={(e) => setEditing({ ...editing, tier: e.target.value })}
                 >
-                  <option value="claude-opus-5-5">claude-opus-5-5 (most capable)</option>
-                  <option value="claude-sonnet-5-5">claude-sonnet-5-5 (balanced)</option>
-                  <option value="claude-haiku-4-5">claude-haiku-4-5 (cheap/fast)</option>
+                  {TIERS.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
                 </select>
               </div>
               <div>
@@ -412,22 +402,12 @@ export default function Roles() {
                   ))}
                 </select>
               </div>
-              <div>
-                <label className="field">Harness</label>
-                <select
-                  value={editing.harness ?? ""}
-                  onChange={(e) => setEditing({ ...editing, harness: e.target.value || null })}
-                >
-                  <option value="">Default for the model</option>
-                  {harnesses.map((h) => (
-                    <option key={h.name} value={h.name}>{h.label}</option>
-                  ))}
-                </select>
-              </div>
             </div>
             <p className="help">
-              The harness is what drives the model in the sandbox. It changes how a run is
-              driven, never what it may do — every rule is the server's, on every harness.
+              A role says how hard, never on what: each project runs it on the model its own
+              provider lists for this tier — Opus on an Anthropic key, gpt-6-astra on an
+              OpenAI one — and a project can name its own (Settings → Models). An effort the
+              model does not take runs at the nearest one it does, and the seat says so.
             </p>
           </div>
 

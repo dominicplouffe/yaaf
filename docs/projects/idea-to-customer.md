@@ -212,23 +212,25 @@ games specialists and have no business here. Of the seventeen left, this project
 hires **every role whose domain is `general`** — all twelve, the CEO among them
 — plus the one data role that earns its seat:
 
-| Team | Role | Who | Model | What it is for |
+| Team | Role | Who | Tier | What it is for |
 |---|---|---|---|---|
-| **Research** | `researcher` | Ida (lead), Ravi | Sonnet · high | The bake-off. Two of them because five candidates researched serially is three weeks; in parallel it is one. |
-| **Numbers** | `data-analyst` | Nadia | Sonnet · high | Market sizing whose arithmetic someone else can re-derive, then the funnel: visits, signups, conversion, churn. Every number out of a committed script. |
-| **Red Team** | `adversary` | Vic | Sonnet · xhigh | Attacks the surviving idea before the market does, then breaks the product before customers do. "I could not break it" is a complete deliverable. |
-| **Dry Run** | `operator` | Otto | **Opus · xhigh** | The person who has to make it work on Monday morning. Turns "we'll launch on X" into every object, field and value resolved, and refuses what cannot be executed as written. The seat that catches a go-to-market plan that is a wish. |
-| **Design** | `designer` | Dara | Sonnet · high | Owns how it looks: the design system first, then screens and specs an engineer can build without guessing. Judges the rendered page at both widths and in both themes, and holds everyone else to the same bar. New role — see below. |
-| **Build** | `engineer` | Mika (lead), Sam | Sonnet · xhigh | The product, the infrastructure, the deploys, the payment integration. Decides how, never what. |
-| **Go-to-Market** | `gtm` | Gio | Sonnet · high | Offer, price, packaging, channel, outreach. Puts something payable in front of someone. |
-| **Marketing** | `marketer` | Elena | Sonnet · high | Positioning, channels, campaigns, and the measurement that says which one worked. Optimises for verified external response, not output. |
-| **Copy** | `writer` | Wren | Sonnet · high | Landing page, onboarding, docs, launch posts. Craft-first. |
-| **Blog** | `blog-writer` | Bea | Sonnet · high | The owned channel: researched, sourced posts aimed at a search intent. Wants a WordPress credential; see §6. |
-| **Sales** | `sales` | Sol | Sonnet · high | Works the conversations the others start to a close: follow-ups, objections, payment links. |
-| **Support** | `support` | Suki | **Haiku** · high | Answers real users, reproduces their problems, and routes what they reveal back into the plan. The cheapest seat and, once there are customers, one of the most valuable. |
+| **Research** | `researcher` | Ida (lead), Ravi | Standard · high | The bake-off. Two of them because five candidates researched serially is three weeks; in parallel it is one. |
+| **Numbers** | `data-analyst` | Nadia | Standard · high | Market sizing whose arithmetic someone else can re-derive, then the funnel: visits, signups, conversion, churn. Every number out of a committed script. |
+| **Red Team** | `adversary` | Vic | Standard · xhigh | Attacks the surviving idea before the market does, then breaks the product before customers do. "I could not break it" is a complete deliverable. |
+| **Dry Run** | `operator` | Otto | **Strong · xhigh** | The person who has to make it work on Monday morning. Turns "we'll launch on X" into every object, field and value resolved, and refuses what cannot be executed as written. The seat that catches a go-to-market plan that is a wish. |
+| **Design** | `designer` | Dara | Standard · high | Owns how it looks: the design system first, then screens and specs an engineer can build without guessing. Judges the rendered page at both widths and in both themes, and holds everyone else to the same bar. New role — see below. |
+| **Build** | `engineer` | Mika (lead), Sam | Standard · xhigh | The product, the infrastructure, the deploys, the payment integration. Decides how, never what. |
+| **Go-to-Market** | `gtm` | Gio | Standard · high | Offer, price, packaging, channel, outreach. Puts something payable in front of someone. |
+| **Marketing** | `marketer` | Elena | Standard · high | Positioning, channels, campaigns, and the measurement that says which one worked. Optimises for verified external response, not output. |
+| **Copy** | `writer` | Wren | Standard · high | Landing page, onboarding, docs, launch posts. Craft-first. |
+| **Blog** | `blog-writer` | Bea | Standard · high | The owned channel: researched, sourced posts aimed at a search intent. Wants a WordPress credential; see §6. |
+| **Sales** | `sales` | Sol | Standard · high | Works the conversations the others start to a close: follow-ups, objections, payment links. |
+| **Support** | `support` | Suki | **Light** · high | Answers real users, reproduces their problems, and routes what they reveal back into the plan. The cheapest seat and, once there are customers, one of the most valuable. |
 
-Plus the **CEO** ("Founder", role `ceo`, Opus · high) — the only agent you ever
-talk to, and the only one that creates top-level tasks.
+Plus the **CEO** ("Founder", role `ceo`, Strong · high) — the only agent you ever
+talk to, and the only one that creates top-level tasks. A tier is the role's and the model
+the project's: on an Anthropic key, light, standard and strong are Haiku, Sonnet
+and Opus; on any other key, that provider's lineup.
 
 **Fifteen agents in twelve teams.** Two things to know about that number:
 
@@ -246,7 +248,7 @@ roster because the roster is the answer to "who is in this project", and the
 seats you have not filled are the work that quietly does not get done.
 
 **The four roles deliberately left out**, so the omissions are on the record:
-`data-scientist` and `data-skeptic` (Opus · xhigh both — a rigour this project
+`data-scientist` and `data-skeptic` (Strong · xhigh both — a rigour this project
 cannot afford and, on a funnel with forty visitors, cannot use),
 `exec-communicator` (it builds decks for an executive audience, and there isn't
 one), and `tutor` (education). `compliance-officer` is markets-only, but if the

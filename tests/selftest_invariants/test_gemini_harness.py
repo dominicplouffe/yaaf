@@ -386,20 +386,45 @@ def test_a_google_login_is_metered_in_tokens_and_needs_no_price(stage):
 
 
 def test_a_gemini_seat_runs_on_the_gemini_cli_and_its_efforts_are_held(client):
+    """A role's effort is fitted to what the Gemini CLI and the model take, and
+    shown beside what it asked for; an effort typed for one seat is held to
+    them instead (R6)."""
     make_project(client, start=False)
     client.put("/admin/settings/model-prices/gemini-2.5-pro", headers=ADMIN,
                json={"input": 1.25, "output": 10})
     client.put("/admin/settings/model-prices/gemini-3.1-pro-preview", headers=ADMIN,
                json={"input": 2, "output": 12})
-    role = {"slug": "analyst", "name": "Analyst", **ROLE_MIN, "tool_permissions": {"files": True}}
-    medium = client.post("/admin/roles", headers=ADMIN, json={
-        **role, "model": "gemini-3.1-pro-preview", "effort": "medium"})
-    assert medium.status_code == 422 and "Gemini CLI has no effort 'medium'" in medium.text
-    low_on_25 = client.post("/admin/roles", headers=ADMIN, json={
-        **role, "model": "gemini-2.5-pro", "effort": "low"})
-    assert low_on_25.status_code == 422 and "gemini-2.5-pro takes the efforts high" in low_on_25.text
     assert client.post("/admin/roles", headers=ADMIN, json={
-        **role, "model": "gemini-3.1-pro-preview", "effort": "low"}).status_code == 200
+        "slug": "analyst", "name": "Analyst", **ROLE_MIN, "effort": "medium",
+        "tool_permissions": {"files": True}}).status_code == 200
+    key = client.post("/admin/settings/llm-credentials", headers=ADMIN, json={
+        "name": "Gemini key", "provider": "google", "mode": "api_key",
+        "value": "AIzaSy-test-not-real"}).json()["id"]
+
+    def body(slug: str, **team) -> dict:
+        return {"slug": slug, "name": slug.title(), "chairman_email": "chair@example.com",
+                "goal": "Prove the framework works end to end.", "ceo_role_slug": "ceo",
+                "ceo_name": "CEO", "billing_secret_id": key,
+                "seat_models": {"standard": "gemini-3.1-pro-preview"},
+                "teams": [{"role_slug": "analyst", "name": "Desk", "employees": ["Ana"],
+                           **team}]}
+
+    created = client.post("/admin/projects", headers=ADMIN, json=body("fitted"))
+    assert created.status_code == 200, created.text
+    ana = created.json()["teams"][0]["agents"][0]["id"]
+    seat = client.get(f"/observe/agents/{ana}", headers=ADMIN).json()["runs_on"]
+    assert (seat["harness"], seat["effort"], seat["effort_asked"]) == (
+        "gemini_cli", "high", "medium")
+
+    medium = client.post("/admin/projects", headers=ADMIN, json=body(
+        "typed-medium", effort_overrides={"Ana": "medium"}))
+    assert medium.status_code == 422 and "Gemini CLI has no effort 'medium'" in medium.text
+    low_on_25 = client.post("/admin/projects", headers=ADMIN, json=body(
+        "typed-low", effort_overrides={"Ana": "low"}, model_overrides={"Ana": "gemini-2.5-pro"}))
+    assert low_on_25.status_code == 422
+    assert "gemini-2.5-pro takes the efforts high" in low_on_25.text
+    assert client.post("/admin/projects", headers=ADMIN, json=body(
+        "typed-ok", effort_overrides={"Ana": "low"})).status_code == 200
     from yaaf.runtimes.providers import provider
 
     assert provider("google").default_harness == "gemini_cli"

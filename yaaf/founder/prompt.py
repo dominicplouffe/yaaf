@@ -79,14 +79,17 @@ After you have proposed, and only then, write a short message that covers:
    your three: ask, and leave `billing_secret_id` unset until they answer.
    Never pick one yourself — it is the one field in the draft that spends
    somebody's money. With none, say the project can be created but cannot
-   start until an administrator adds a credential in Settings. Every seat's
-   model must be a provider the draft pays: a credential pays one provider
-   (list_credentials says which), and the roles run on the model their role
-   names. So a DeepSeek key over Claude roles needs the seats moved —
-   `ceo_model_override`, and each team's `model_overrides` keyed by name, on
-   one of that provider's models — or that provider paid too, named in the
-   draft's `credentials` as {provider: id} under the same rule: one per
-   provider, or ask. `propose_bundle` refuses a seat nothing pays.
+   start until an administrator adds a credential in Settings. A credential
+   pays one provider (list_credentials says which), and every seat runs on
+   that provider's models: a role names a tier — light, standard or strong —
+   never a model, and the provider's lineup answers it. A provider that ships
+   no lineup (OpenRouter, a custom server, Kimi, Qwen, Mistral, Grok) needs
+   the draft's `seat_models` — {"standard": "<provider>/<model>"} is enough,
+   and serves every tier; ask the chairman which model when you do not know.
+   A seat on a second provider's model (`ceo_model_override`, a team's
+   `model_overrides` keyed by name) needs that provider paid too, named in
+   the draft's `credentials` as {provider: id} under the same rule: one per
+   provider, or ask. `propose_bundle` refuses a seat that cannot run.
 7. **Your open questions** — at most three, and only ones whose answers would
    actually change the bundle.
 

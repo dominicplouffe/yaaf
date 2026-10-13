@@ -33,7 +33,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-from yaaf.runtimes.catalog import DEFAULT_EFFORT, DEFAULT_MODEL
+from yaaf.runtimes.catalog import DEFAULT_EFFORT, DEFAULT_TIER
 from yaaf.runtimes.providers import DEFAULT_PROVIDER
 
 JSONVariant = JSON().with_variant(JSONB(), "postgresql")
@@ -673,6 +673,11 @@ class Project(Base):
     # "api_key" | "subscription" — decides the budget's native unit (usd vs tokens)
     billing_mode: Mapped[str] = mapped_column(String(16), default="api_key")
     billing_secret_id: Mapped[str | None] = mapped_column(ForeignKey("secrets.id"))
+    # The model each role tier runs on here, {"light"|"standard"|"strong":
+    # model}, over the lineup of the provider the billing credential pays
+    # (yaaf.runtimes.catalog.lineup). NULL, or a tier missing, is that
+    # provider's own; a provider that ships none needs at least "standard".
+    seat_models: Mapped[dict | None] = mapped_column(JSONVariant)
     # Domains/accounts the project controls; evidence from these can never be external.
     controlled_domains: Mapped[list] = mapped_column(JSONVariant, default=list)
     github_repo: Mapped[str | None] = mapped_column(String(255))
@@ -807,11 +812,12 @@ class RoleVersion(Base):
     version: Mapped[int] = mapped_column(Integer)
     description: Mapped[str] = mapped_column(Text)
     system_prompt: Mapped[str] = mapped_column(Text)
-    model: Mapped[str] = mapped_column(String(64), default=DEFAULT_MODEL)
+    # How hard, never on what: a tier (yaaf.runtimes.catalog.TIERS) the
+    # project's provider answers with a model, and an effort on one ladder.
+    # A role that named a model was a role for that model's vendor only.
+    tier: Mapped[str] = mapped_column(String(16), default=DEFAULT_TIER,
+                                      server_default=DEFAULT_TIER)
     effort: Mapped[str] = mapped_column(String(8), default=DEFAULT_EFFORT)
-    # What drives the model (yaaf.runtimes.harnesses). NULL is the provider's
-    # default — which is every role written before there was a choice.
-    harness: Mapped[str | None] = mapped_column(String(32))
     # {"bash": true, "web": true, "github": false}
     tool_permissions: Mapped[dict] = mapped_column(JSONVariant, default=dict)
     secret_scopes: Mapped[list] = mapped_column(JSONVariant, default=list)
@@ -889,19 +895,27 @@ class Agent(Base):
     # Pinned role for the CEO; employees inherit their team's pinned role version.
     role_version_id: Mapped[str | None] = mapped_column(String(40))
     status: Mapped[str] = mapped_column(String(16), default=AgentStatus.ACTIVE)
-    # This seat's model and reasoning effort, when the role library's answer is
-    # not the right one for this project. Both null means "whatever the role
-    # says", which is the case for almost every seat.
+    # This seat's model and reasoning effort, when the role's tier and effort,
+    # answered by the project's lineup, are not the right ones for this seat.
+    # All null means exactly that answer, which is the case for almost every
+    # seat.
     #
     # `effort_override` arrived late and its absence was load-bearing: a
     # project could buy a better model for the seat whose output the chairman
     # actually reads and could not buy it more thinking, because effort was
     # readable only from the role version every project on the install shares.
     # Raising it in the library would have raised it everywhere.
+    #
+    # `model_override` names one model for this seat — any provider the project
+    # pays, which is how a risk seat runs on another vendor than the research
+    # it vetoes. `tier_override` moves it up or down the project's own lineup
+    # instead, so it follows the project to whatever provider it pays; it is
+    # what `stakes: high` stamps.
     model_override: Mapped[str | None] = mapped_column(String(64))
+    tier_override: Mapped[str | None] = mapped_column(String(16))
     effort_override: Mapped[str | None] = mapped_column(String(16))
     # The same for what drives the model (yaaf.runtimes.harnesses): null is the
-    # role's harness, and the role's null is its provider's default.
+    # model's provider's default.
     harness_override: Mapped[str | None] = mapped_column(String(32))
     # Per-agent daily wake, "HH:MM" in the constitution's timezone (stage E).
     # The CEO's standup generalized: a support agent that checks the inbox

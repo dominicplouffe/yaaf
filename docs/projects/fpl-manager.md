@@ -178,14 +178,14 @@ is no coordination overhead and no meeting simulation.
                           you, weekly
 ```
 
-| Diagram box | Role slug | Team | Model / effort |
+| Diagram box | Role slug | Team | Tier / effort |
 |---|---|---|---|
-| Chief Strategist | `fpl-chief-strategist` | *(CEO)* | `claude-opus-5-5` / high |
-| Performance Agent | `fpl-performance-analyst` | Performance | `claude-sonnet-5-5` / high |
-| Fixture Agent | `fpl-fixture-analyst` | Fixtures | `claude-sonnet-5-5` / high |
-| Value Agent | `fpl-value-analyst` | Value | `claude-sonnet-5-5` / high |
-| Squad Optimizer | `fpl-squad-optimizer` | Optimizer | `claude-sonnet-5-5` / xhigh |
-| *(added)* Availability | `fpl-team-news` | Team News | `claude-sonnet-5-5` / high |
+| Chief Strategist | `fpl-chief-strategist` | *(CEO)* | `strong` / high |
+| Performance Agent | `fpl-performance-analyst` | Performance | `standard` / high |
+| Fixture Agent | `fpl-fixture-analyst` | Fixtures | `standard` / high |
+| Value Agent | `fpl-value-analyst` | Value | `standard` / high |
+| Squad Optimizer | `fpl-squad-optimizer` | Optimizer | `standard` / xhigh |
+| *(added)* Availability | `fpl-team-news` | Team News | `standard` / high |
 
 **The one addition to your diagram.** Team News is a sixth role because availability is the
 largest single source of avoidable FPL point loss, *and* because it is time-critical in a way
@@ -219,7 +219,7 @@ hedging, no "consider X or Y", and no claiming a transfer was made.
   "name": "FPL Chief Strategist",
   "is_ceo_role": true,
   "description": "Owns the season plan, the chip calendar, the risk posture and the weekly decision memo. The only agent that speaks to the chairman and the only one that decides what to recommend.",
-  "model": "claude-opus-5-5",
+  "tier": "strong",
   "effort": "high",
   "tool_permissions": {"files": true, "bash": false, "web": true},
   "secret_scopes": [],
@@ -239,7 +239,7 @@ number without its sample size.
   "name": "FPL Performance Analyst",
   "is_ceo_role": false,
   "description": "Measures whether a player's returns are repeatable: expected goals and assists, shot and chance volume, defensive-contribution rates, bonus-point accrual, and minutes reliability. Separates signal from variance and never recommends a transfer.",
-  "model": "claude-sonnet-5-5",
+  "tier": "standard",
   "effort": "high",
   "tool_permissions": {"files": true, "bash": false, "web": true},
   "secret_scopes": [],
@@ -259,7 +259,7 @@ actually decides picks.
   "name": "FPL Fixture Analyst",
   "is_ceo_role": false,
   "description": "Owns the calendar: six-gameweek fixture runs scored on separate attacking and defensive axes from rolling opponent expected goals, plus congestion, rotation drivers, fixture swings, and the blank/double gameweek forecast the chip plan depends on.",
-  "model": "claude-sonnet-5-5",
+  "tier": "standard",
   "effort": "high",
   "tool_permissions": {"files": true, "bash": false, "web": true},
   "secret_scopes": [],
@@ -278,7 +278,7 @@ to show that *not* owning a template premium is a bet you take every week.
   "name": "FPL Value Analyst",
   "is_ceo_role": false,
   "description": "Owns price mechanics, team value, squad structure and bench cost, plus the effective-ownership arithmetic and template tracking that turn a good player into a good pick. Names value traps out loud.",
-  "model": "claude-sonnet-5-5",
+  "tier": "standard",
   "effort": "high",
   "tool_permissions": {"files": true, "bash": false, "web": true},
   "secret_scopes": [],
@@ -297,7 +297,7 @@ short of the player it needed. It must never return a single answer.
   "name": "FPL Squad Optimizer",
   "is_ceo_role": false,
   "description": "Solves the constrained squad and transfer problem as a real optimization: 15 players, 100.0m, 2/5/5/3, max 3 per club, legal XI, maximizing expected points over a horizon. Returns the optimum plus scored alternatives, the hit arithmetic, and auto-sub-aware bench order.",
-  "model": "claude-sonnet-5-5",
+  "tier": "standard",
   "effort": "xhigh",
   "tool_permissions": {"files": true, "bash": true, "web": true},
   "secret_scopes": [],
@@ -316,7 +316,7 @@ start. The timestamp requirement is the point: team news decays in hours.
   "name": "FPL Team News & Availability",
   "is_ceo_role": false,
   "description": "Establishes who will actually be on the pitch: injuries, suspensions, press-conference comments, expected lineups, rotation risk, new signings, managerial changes, and the set-piece and penalty hierarchy for all twenty clubs. Every claim timestamped.",
-  "model": "claude-sonnet-5-5",
+  "tier": "standard",
   "effort": "high",
   "tool_permissions": {"files": true, "bash": false, "web": true},
   "secret_scopes": [],

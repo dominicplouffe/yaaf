@@ -41,9 +41,11 @@ from yaaf.core.models import (
     RunStatus,
     utcnow,
 )
+from yaaf.core.project_credentials import project_lineup
 from yaaf.core.tokens import mint
 from yaaf.runner import sandbox
 from yaaf.runner.daemon import (
+    FETCH_ONLY_PROMPT,
     _billing_env,
     _data_source_prompt,
     _merge_project_data_sources,
@@ -209,13 +211,13 @@ def _supervise_project(session: Session, project: Project) -> tuple[dict | None,
             _end_session(session, project, live_run, "chat session ended: no active CEO")
         return None, None
 
-    if not converses(session, project, ceo):
+    cannot = converses(session, project, ceo)
+    if cannot:
         # R7's backstop, for a seat changed by a door that does not ask it:
         # no session at all, so the boardroom is answered by queued runs, the
         # way it is wherever there is no container lane.
         if live_run is not None or running_ids:
-            _end_session(session, project, live_run,
-                         "chat session ended: the CEO's harness cannot hold a conversation")
+            _end_session(session, project, live_run, f"chat session ended: {cannot}")
         return None, None
 
     if live_run is not None:
@@ -289,14 +291,19 @@ def _supervise_project(session: Session, project: Project) -> tuple[dict | None,
     return _prepare_session(session, project, ceo)
 
 
-def converses(session: Session, project: Project, ceo: Agent) -> bool:
-    """Whether the CEO's seat runs on a harness that can hold the boardroom
-    conversation (R7) — the harness its work runs on, which is the one its
-    talk runs on too."""
-    seat = seat_for(ceo, role_version_for(session, ceo),
+def converses(session: Session, project: Project, ceo: Agent) -> str | None:
+    """Why the CEO's seat cannot hold the boardroom conversation, or None when
+    it can: it runs on a harness that resumes a session (R7) — the harness its
+    work runs on, which is the one its talk runs on too — on a model the
+    project's lineup names for its tier."""
+    seat = seat_for(ceo, role_version_for(session, ceo), project_lineup(session, project),
                     (project.integrations or {}).get("runtime"))
+    if seat.model is None:
+        return f"the project names no model for the CEO's {seat.tier} tier"
     found = HARNESSES.get(seat.harness)
-    return found is not None and (found.conversation or found.family == "mock")
+    if found is None or not (found.conversation or found.family == "mock"):
+        return "the CEO's harness cannot hold a conversation"
+    return None
 
 
 def _end_session(session: Session, project: Project, live_run: Run | None,
@@ -377,13 +384,16 @@ def _prepare_session(session: Session, project: Project, ceo: Agent) -> tuple[di
     # its provider's credential — like any run of that seat (docs/RUNTIMES.md,
     # M6). The harness's own entry holds the conversation; the SDK's entry
     # is the SDK's resident client.
-    seat = seat_for(ceo, role_version, (project.integrations or {}).get("runtime"))
+    seat = seat_for(ceo, role_version, project_lineup(session, project),
+                    (project.integrations or {}).get("runtime"))
     _pin_seat(session, run, job, seat)
     job.provider_spec = _provider_spec(session, project, seat.provider)
     from yaaf.runner.backends import get_backend
 
     chat_entry = getattr(get_backend(seat.harness), "entrypoint", "sandbox_entry.py")
     job.tool_permissions = dict(role_version.tool_permissions) if role_version else {}
+    if job.tool_permissions.get("web") and not seat.searches:
+        job.system_prompt += FETCH_ONLY_PROMPT
     # Same sources, same cost lesson: the chat lane mounts them exactly as a run
     # does, so it gets the same paragraph describing them.
     job.system_prompt += _data_source_prompt(

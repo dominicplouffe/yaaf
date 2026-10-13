@@ -88,18 +88,43 @@ hardwired to Anthropic. They come apart cleanly:
 | **Provider** | Who sells the tokens: credential kinds, how a credential is checked, prices, the plan meter. | `anthropic`, `openai`, `google`, `openrouter` |
 | **Credential kind** | One way to pay a provider, and the unit it meters in. | `anthropic:api_key` (USD), `anthropic:subscription` (tokens), `openai:api_key` (USD), `openai:chatgpt` (tokens) |
 | **Harness** | What runs the agent loop inside the sandbox, and what it can and cannot do. | `claude_agent_sdk`, `claude_cli`, `anthropic_api`, `codex_cli`, `gemini_cli`, `opencode` |
-| **Model** | The weights, the price per token, and the tier "high stakes" lifts to. | `claude-opus-5-5`, `gpt-…`, `gemini-…` |
+| **Model** | The weights and the price per token. Named by the project, never by a role (below). | `claude-opus-5-5`, `gpt-…`, `gemini-…` |
+
+**A role names none of these.** It names a **tier** — `light`, `standard` or
+`strong` — and an **effort**: how hard, never on what. A role that named
+`claude-opus-5-5` was an Anthropic role whatever its prompt said, and a
+project on any other vendor's key was refused seat by seat until somebody
+moved each one by hand. The project's provider — the one its billing
+credential pays — answers the tier with its **lineup** (`Provider.lineup`:
+Haiku / Sonnet / Opus on Anthropic, `gpt-5.6-luna` / `gpt-6-sol` /
+`gpt-6-astra` on OpenAI, …), and a project may name its own model for any
+tier (`Project.seat_models`; Settings → Models). A provider that ships no
+lineup (OpenRouter, a custom server, Kimi, Qwen, Mistral, Grok) needs one
+model named; one for `standard` serves every tier.
 
 A seat resolves at lease time:
 
 ```
-agent.model_override ?? role_version.model           → model    → provider
-agent.harness_override ?? role_version.harness
-    ?? provider.default_harness                      → harness
-project credential for that provider                 → credential (kind)
-check: harness serves provider, harness accepts kind, model is priced
-       (if the kind meters in USD), harness honours the role's permissions
+project provider = billing credential's provider ?? the default provider
+lineup[tier]     = project.seat_models[tier] ?? provider.lineup[tier]
+                   ?? project.seat_models["standard"]
+agent.model_override
+    ?? lineup[agent.tier_override ?? role_version.tier]  → model    → provider
+agent.harness_override ?? provider.default_harness      → harness
+agent.effort_override ?? role_version.effort, fitted    → effort
+project credential for that provider                    → credential (kind)
+check: a model for the tier, harness serves provider, harness accepts kind,
+       model is priced (if the kind meters in USD), harness honours the
+       role's permissions
 ```
+
+An effort is a rung on one ladder (`catalog.EFFORTS`), and a model that does
+not take the one a role asks for runs at the nearest one it does, ties going
+up (`catalog.fit_effort`) — shown on the seat beside what it asked for. An
+effort somebody *typed* for one seat is held to R6 instead. A `web` grant on a
+seat that cannot search fetches only, and the agent and the seat both say so
+(open question 6). A seat moves to a second provider only by being named onto
+one of its models (`model_override`), and that provider is then paid (R5).
 
 `integrations.runtime` survives only as a project-wide force-override, and only
 for `mock`: the fire drill and the goldens keep pointing every seat at the
@@ -334,9 +359,13 @@ search tool version), because a harness that builds its own requests needs
 it and nothing else does. The daemon hands both to the sandbox with the run
 (`YAAF_PRICE`, `YAAF_MODEL_FLAGS`): the sandbox cannot import the catalog.
 
-`tier` is what `stakes: high` lifts a seat to — the top tier **of the seat's
-own provider**. A dial labelled "how much this matters" that silently moved a
-Codex seat onto Opus would be two decisions wearing one label.
+`rank` orders a provider's own models, weakest first, and is only ever
+compared within one provider. Each provider's `lineup` names one model per
+role tier, never weaker going up; `stakes: high` lifts a producing seat to the
+`strong` tier — the strongest rung **of the project's own provider**, stamped
+as a tier rather than a model so it follows the project to whatever it pays.
+A dial labelled "how much this matters" that silently moved a Codex seat onto
+Opus would be two decisions wearing one label.
 
 Prices are in the repo and dated, and an install prices any model itself in
 Settings → Model prices (`yaaf.core.prices`), which wins over the shipped row —
@@ -380,12 +409,12 @@ All of them read manifests and the catalog; none names a harness.
 | # | Rule | Where it fires |
 |---|---|---|
 | R1 | **A credential the seat's harness cannot accept is refused** — a subscription token on `anthropic_api`, a ChatGPT login on a Gemini seat. | creation, add-team, hire, repin, credential change, recall; lease backstop; health (built in M1) |
-| R2 | **A harness that cannot withhold a tool the role does not grant is refused for that role** — and, from M3, one that cannot *honour* a grant: a role granting `web` on yaaf's loop needs a provider that searches (open question 6). Codex always offers its own file edits; a role without `files` cannot be hired onto it. Widening a role's tools silently because the transport is clumsy is exactly what the role version exists to prevent; halving them silently is its mirror. | the role version itself, and every door R1 is at (built in M1; the web half in M3) |
-| R3 | **A model with no price is refused on a harness that prices its runs, under a dollar meter.** A run nobody can price is a run the budget cannot stop. A harness that reports its own bill (both CLI harnesses) is not metered by the catalog and takes any model; a provider that states each call's cost (OpenRouter) needs no price; a credential metered in tokens is stopped in tokens. The price is the install's (Settings → Model prices) over the shipped catalog. | the role version, and every door R1 is at; lease backstop; the loop itself refuses to make a call it cannot price (built in M2; install prices in M3) |
+| R2 | **A harness that cannot withhold a tool the role does not grant is refused for that seat.** Codex always offers its own file edits; a role without `files` cannot be hired onto it. Widening a role's tools silently because the transport is clumsy is exactly what the role version exists to prevent. Its mirror — a grant the harness cannot *honour*, `web` on a seat whose provider and harness cannot search — is not refused: the seat fetches, and the agent and the seat both say it does not search (open question 6). | every door R1 is at (built in M1; the web half in M3, made fetch-only and shown when roles stopped naming providers) |
+| R3 | **A model with no price is refused on a harness that prices its runs, under a dollar meter.** A run nobody can price is a run the budget cannot stop. A harness that reports its own bill (both CLI harnesses) is not metered by the catalog and takes any model; a provider that states each call's cost (OpenRouter) needs no price; a credential metered in tokens is stopped in tokens. The price is the install's (Settings → Model prices) over the shipped catalog. | every door R1 is at; lease backstop; the loop itself refuses to make a call it cannot price (built in M2; install prices in M3) |
 | R4 | **One project, one meter.** All of a project's credentials meter in USD or all in tokens. Two units cannot share one cap, and inventing an exchange rate between them is inventing a number. (Open question 1.) | project creation, a provider's credential attached, the billing credential changed (built in M3) |
 | R5 | **A seat whose provider has no credential on the project cannot be hired, and a project with such a seat cannot start.** It fails at the door, not at 3am. | every door R1 is at, the start, removing a provider's credential; lease backstop; health (built in M3) |
-| R6 | **An effort the model does not support is refused**, with the list it does. Never mapped silently, in either direction. The harness's list first (a loop on the OpenAI shape has no dial at all), then the model's. | the role version, hire, repin, override, and every door R1 is at; lease backstop (built in M4) |
-| R7 | **A CEO seat holding the boardroom chat must be on a harness with `conversation`.** Every harness registered today has it; a new one has it only once it is shown to resume a session turn after turn. | the CEO role version, every door R1 is at for the CEO's seat while the chat is on, the door that turns the chat on; health; the chat supervisor holds no session for one that slipped past (built in M6) |
+| R6 | **An effort somebody typed for a seat that its model does not support is refused**, with the list it does — fitting it would quietly overrule the person who typed it. The harness's list first (a loop on the OpenAI shape has no dial at all), then the model's. A *role's* effort is a rung on one ladder and is fitted to the nearest the model takes instead, ties going up, and shown on the seat. | the doors that take a typed override: creation, a team added, a hire (built in M4; fitting role efforts when roles stopped naming models) |
+| R7 | **A CEO seat holding the boardroom chat must be on a harness with `conversation`.** Every harness registered today has it; a new one has it only once it is shown to resume a session turn after turn. | every door R1 is at for the CEO's seat while the chat is on, the door that turns the chat on; health; the chat supervisor holds no session for one that slipped past (built in M6) |
 
 Every one of them also shows in the health checklist and the fire drill's
 "where it stopped", because both read the same functions.
@@ -531,8 +560,10 @@ touches, and whether a new provider edits it:
 | Surface | Change | Per provider? |
 |---|---|---|
 | Settings → LLM credentials, New Project picker, Founder's list, MCP `catalog`/`create_project` | provider + kind from the registry, via `llm_credentials.choices` | no |
-| Role editor, `roles/*.json`, `seed-roles` | `harness` beside `model`; pickers and validation from manifests and the catalog | no |
-| Roster / agent overrides | `harness_override` beside `model_override` | no |
+| Role editor, `roles/*.json`, `seed-roles` | a `tier` and an `effort`, never a model or a harness; an old file's `model` is read as its tier | no |
+| Roster / agent overrides | `harness_override` and `tier_override` beside `model_override` | no |
+| New Project, Settings → Models, MCP `set_models`, `yaaf set-models` | the project's own tier → model, over its provider's lineup | **yes — a lineup per provider, when it has one** |
+| Agent drawer (`GET /observe/agents/{id}.runs_on`) | what the seat resolves to: model, fitted effort, fetch-only web | no |
 | Project Settings → runtime | per seat; project-wide only for `mock` | no |
 | Health checklist, fire drill | R1–R7 as findings | no |
 | Lease (`daemon.py`, `chat.py`) | seat resolution; `RunSpec` | no |
@@ -540,8 +571,8 @@ touches, and whether a new provider edits it:
 | Plan meter, "Check now" | provider capability | no |
 | Billing check | `provider.live_check` | no |
 | Credential-failure pause | `error_kind`, provider markers | no |
-| Craft lift (`stakes: high`) | catalog tier, within the provider | no |
-| Export / clone | role version `harness`; credentials by name per provider | no |
+| Craft lift (`stakes: high`) | the `strong` tier of the project's provider | no |
+| Export / clone | role version `tier`; `seat_models`; tier overrides; credentials by name per provider | no |
 | Context pack, data-source paragraph | tool names through `Harness.tool_ref` (built in M5: the Gemini CLI and OpenCode name MCP tools their own way) | no |
 | Sandbox image | one pinned install line and one `COPY` per harness | **yes — one file** |
 | Goldens | unchanged: they run `mock` | no |
@@ -930,7 +961,8 @@ What M4 found on the way — each now configured against, with a test:
    it now carries four CLIs (Claude's, Codex, Gemini's, OpenCode) beside the
    loop; split when the size hurts.
 4. **Can the CEO pick a seat's harness when it hires?** As built: no. The CEO
-   hires roles; a role carries its harness; changing it is a role edit or a
+   hires roles; a role carries no harness and no model — the seat runs on its
+   project provider's default harness and lineup — and changing either is a
    chairman override. Hiring stays free because it buys no new *kind* of spend.
 5. **A served model weaker than the hired one.** As built, a run is priced on
    the model it was hired on — the sandbox holds that one price. Where a
@@ -953,9 +985,15 @@ What M4 found on the way — each now configured against, with a test:
    - **search as a data source** — the chairman connects a search MCP server
      and grants it to roles. Works today, but `web` stops meaning one thing.
 
-   **Decided in M3: refuse** — R2's other half, built and attacked. The
-   second answer waits for the first loop provider without search that is
-   actually wanted on a seat that needs it.
+   **Decided in M3: refuse** — R2's other half, built and attacked. **Then
+   re-decided: fetch only, and say so.** Refusing was honest while a role
+   named its provider; once roles named a tier and the project chose the
+   vendor, the refusal fell on the role wherever the project happened to pay
+   DeepSeek or Mistral — 35 of the 38 shipped roles grant `web`. A seat that
+   cannot search keeps fetch, the agent is told it has no search
+   (`daemon.FETCH_ONLY_PROMPT`), and the seat says so wherever it is shown.
+   The second answer still waits for the first loop provider without search
+   that is actually wanted on a seat that needs it.
 
 ## Appendix — invocation notes, to verify against pinned versions
 

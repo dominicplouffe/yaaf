@@ -135,7 +135,11 @@ def _heading(title: str) -> None:
 
 def _agent_model(session: Session, agent: Agent) -> str:
     """The runner's own model pick (yaaf.runtimes.seats), not a copy of it."""
-    return seat_for(agent, role_version_for(session, agent)).model
+    from yaaf.core.models import Project
+    from yaaf.core.project_credentials import project_lineup
+
+    lineup = project_lineup(session, session.get(Project, agent.project_id))
+    return seat_for(agent, role_version_for(session, agent), lineup).model or "(no model)"
 
 
 def _run_model(run, model_by_agent: dict[str, str]) -> tuple[str, bool]:

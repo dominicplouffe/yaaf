@@ -58,7 +58,12 @@ export interface ProviderInfo {
   kinds: { mode: string; meter: string; bills: string }[];
   credential_base_url: boolean;
   search: boolean;
+  /** Whether a seat on its default harness can search the web, or only fetch. */
+  searches: boolean;
   reports_cost: boolean;
+  /** The model each role tier runs on, unless a project names its own; null
+      for a provider that ships none (a project on it names its models). */
+  lineup: Record<string, string> | null;
 }
 
 let providerCache: Promise<ProviderInfo[]> | null = null;
@@ -1138,6 +1143,75 @@ export function PlanMeterCompact({ credentialId, mode, auto = true, onRotate, on
       <span>{check}</span>
     </span>
   );
+}
+
+// ── what a project's seats run on ───────────────────────────────────────────────
+//
+// A role names a tier — light, standard, strong — and never a model, so one
+// library serves a project on any vendor's key. The provider the billing
+// credential pays answers each tier with its lineup; a project may name its
+// own model for any tier, and must name one for a provider that ships none.
+
+export const TIERS = ["light", "standard", "strong"] as const;
+
+export function SeatModels({ provider, paid, value, onChange }: {
+  /** The provider the billing credential pays. */
+  provider: string;
+  /** Every provider the project pays — the models offered are theirs. */
+  paid: string[];
+  value: Record<string, string>;
+  onChange: (next: Record<string, string>) => void;
+}) {
+  const registry = useProviders();
+  const [table, setTable] = useState<ModelPriceRow[]>([]);
+  useEffect(() => { get<ModelPriceRow[]>(PRICES).then(setTable).catch(() => {}); }, []);
+  const seller = registry.find((r) => r.name === provider);
+  const label = seller?.label ?? provider;
+  const lineup = seller?.lineup ?? null;
+  const priced = (model: string) => {
+    const row = table.find((r) => r.model === model);
+    return !!(row?.own || row?.shipped)
+      || !!registry.find((r) => r.name === (row?.provider ?? model.split("/")[0]))?.reports_cost;
+  };
+  const resolved = (tier: string) => value[tier] || lineup?.[tier] || value.standard || "";
+  const unpriced = [...new Set(TIERS.map(resolved).filter((m) => m && !priced(m)))];
+  const set = (tier: string, model: string) => {
+    const next = { ...value, [tier]: model.trim() };
+    if (!next[tier]) delete next[tier];
+    onChange(next);
+  };
+  return <div className="fs" aria-label="Models">
+    <div className="fs-h">Models</div>
+    <p className="help" style={{ marginTop: 0 }}>Every seat runs on {label}&apos;s model for its
+      role&apos;s tier. Leave a tier blank for {lineup ? `${label}'s own` : "the standard one"};
+      name any model of a provider this project pays — <code>provider/model</code> for one
+      the list does not know.</p>
+    <div className="row">
+      {TIERS.map((tier) => (
+        <label className="field" key={tier}>{tier[0].toUpperCase() + tier.slice(1)}
+          <input list="seat-model-choices" value={value[tier] ?? ""}
+            placeholder={lineup?.[tier] ?? (tier === "standard" ? "name a model" : value.standard
+              || "same as standard")}
+            onChange={(e) => set(tier, e.target.value)} />
+        </label>
+      ))}
+    </div>
+    <datalist id="seat-model-choices">
+      {table.filter((r) => paid.includes(r.provider))
+        .map((r) => <option key={r.model} value={r.model} />)}
+    </datalist>
+    {!lineup && !value.standard && <p className="notice-box">{label} ships no model lineup, so
+      this project cannot start until you name the model its seats run on — one for Standard
+      serves every tier.</p>}
+    {unpriced.length > 0 && <p className="help">{unpriced.join(", ")}{" "}
+      {unpriced.length === 1 ? "has" : "have"} no price on this install, and a seat metered in
+      dollars needs one: set it under <Link to="/settings?section=prices" target="_blank"
+      rel="noreferrer">Settings → Model prices ↗</Link>.</p>}
+    {seller && !seller.searches && <p className="help">{label} does not search the web: a seat
+      whose role grants the web fetches pages but cannot search, and is told so.</p>}
+    <p className="help">An effort a model does not take runs at the nearest one it does; each
+      seat shows what it asked for and what it runs at.</p>
+  </div>;
 }
 
 // ── model prices ────────────────────────────────────────────────────────────────

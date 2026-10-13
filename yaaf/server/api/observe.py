@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
-from yaaf.core import artifacts
+from yaaf.core import artifacts, project_credentials
 from yaaf.core.constitution import effective, tempo_for, tempo_name
 from yaaf.core.models import (
     Agent,
@@ -609,6 +609,10 @@ def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
         # Every credential the project pays with, by provider — the billing
         # one first. Never a value.
         "credentials": provider_credentials_view(session, project),
+        # What the seats run on: the project's own tier → model, over the
+        # lineup of the provider its billing credential pays.
+        "seat_models": dict(project.seat_models or {}),
+        "provider": project_credentials.provider_of(session, project),
         # Drought-clock anchors: the UI counts toward the refusal, not just
         # reporting it after the fact.
         "created_at": (
@@ -696,7 +700,6 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
                 "settings")
     # And what pays each other provider: named, so a chairman reading the
     # checklist sees the whole of who pays for what.
-    from yaaf.core import project_credentials
     from yaaf.runtimes.providers import PROVIDERS
 
     for provider_name, secret in project_credentials.held(session, project).items():
@@ -724,14 +727,18 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
     # Prices: a seat on a harness yaaf prices itself is metered by the model
     # catalog, so its budget is only as right as the catalog. The bills the
     # self-reporting harnesses send for the same model are the check on it.
+    from yaaf.core.project_credentials import project_lineup
     from yaaf.runtimes import catalog
     from yaaf.runtimes.harnesses import HARNESSES
     from yaaf.runtimes.seats import seat_for
     from yaaf.server.contextpack import role_version_for
 
     metered: dict[str, set[str]] = {}
+    lineup = project_lineup(session, project)
     for agent in _project_agents(session, project.id):
-        seat = seat_for(agent, role_version_for(session, agent))
+        seat = seat_for(agent, role_version_for(session, agent), lineup)
+        if seat.model is None:
+            continue  # the seat check above names it
         harness = HARNESSES.get(seat.harness or "")
         if harness is not None and harness.cost == "priced":
             metered.setdefault(seat.model, set()).add(harness.label)
@@ -2339,9 +2346,14 @@ def agent_detail(agent_id: str, session: Session = Depends(db)) -> dict:
     recent = session.execute(
         select(Run).where(Run.agent_id == agent.id).order_by(Run.created_at.desc()).limit(20)
     ).scalars()
+    from yaaf.server.seat_checks import runs_on
+
     return {
         "id": agent.id, "name": agent.name, "kind": agent.kind, "team_id": agent.team_id,
         "status": agent.status,
+        # The model, effort and web this seat resolves to now — where any of
+        # them was fitted rather than taken as asked, this is where it shows.
+        "runs_on": runs_on(session, session.get(Project, agent.project_id), agent),
         "recent_runs": [
             {"id": r.id, "status": r.status, "trigger": r.trigger,
              "tokens_out": r.tokens_out, "summary": r.summary}

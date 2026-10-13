@@ -2,12 +2,15 @@
 
 A seat on DeepSeek, OpenRouter or a custom OpenAI-compatible server runs on
 yaaf's own loop, pays with its own provider's credential, and is metered in the
-same unit as everything else on its project. Each of those is a refusal at a
-door, attacked here:
+same unit as everything else on its project. A role names no provider: the
+billing credential's provider runs every seat, and a seat moves to a second
+provider only by being named onto one of its models. Each of those is a
+refusal at a door, attacked here:
 
 - R3 — a model with no price is refused on a harness that meters by price, and
   an install's own price (Settings → Model prices) is what lifts the refusal;
-- R2 — a role granting `web` is refused on a provider that cannot search;
+- R2 — a role granting `web` on a provider that cannot search fetches only,
+  and says so to the agent and on the seat;
 - R4 — one project, one meter: no credential metered in another unit;
 - R5 — no seat on a provider the project holds no credential for.
 
@@ -60,19 +63,28 @@ def _price(client, model: str, **rates):
 
 
 def _body(slug: str, **fields) -> dict:
+    """A project whose critic, Dee, is put on DeepSeek by name — the one way a
+    seat leaves the project's own provider."""
     return {"slug": slug, "name": slug.title(), "goal": "Prove the framework works end to end.",
             "chairman_email": "chair@example.com", "ceo_role_slug": "ceo", "ceo_name": "CEO",
-            "teams": [{"role_slug": "critic", "name": "Red", "employees": ["Dee"]}], **fields}
+            "teams": [{"role_slug": "critic", "name": "Red", "employees": ["Dee"],
+                       "model_overrides": {"Dee": "deepseek-chat"}}], **fields}
 
 
 @pytest.fixture()
 def critic(client):
     """The chairman, the base roles, a priced DeepSeek model and a critic role
-    on it that does not need the web."""
+    that does not need the web."""
     make_project(client, start=False)
     assert _price(client, "deepseek-chat").status_code == 200
-    created = _role(client, "critic", model="deepseek-chat", tool_permissions=OFFLINE)
+    created = _role(client, "critic", tool_permissions=OFFLINE)
     assert created.status_code == 200, created.text
+
+
+def _seat(client, project: dict, name: str) -> dict:
+    """What the seat runs on, as the agent drawer reads it."""
+    return client.get(f"/observe/agents/{agent_by_name(project, name)}",
+                      headers=ADMIN).json()["runs_on"]
 
 
 # ── a model is named with its provider ──────────────────────────────────────────
@@ -96,29 +108,45 @@ def test_a_model_the_catalog_does_not_list_names_its_provider(model, provider, a
 
 def test_a_model_with_no_price_cannot_be_hired_until_the_install_prices_it(client):
     make_project(client, start=False)
-    refused = _role(client, "critic", model="deepseek-reasoner", tool_permissions=OFFLINE)
+    assert _role(client, "critic", tool_permissions=OFFLINE).status_code == 200
+    deepseek = _id(_credential(client, "DeepSeek key", provider="deepseek"))
+    body = _body("unpriced", billing_secret_id=deepseek,
+                 teams=[{"role_slug": "critic", "name": "Red", "employees": ["Dee"],
+                         "tier_overrides": {"Dee": "strong"}}])
+    refused = client.post("/admin/projects", headers=ADMIN, json=body)
     assert refused.status_code == 422
-    assert "deepseek-reasoner has no price on this install" in refused.text
+    assert "CEO" in refused.text and "deepseek-chat has no price on this install" in refused.text
+    assert _price(client, "deepseek-chat").status_code == 200
+    refused = client.post("/admin/projects", headers=ADMIN, json=body)
+    assert refused.status_code == 422
+    assert "Dee" in refused.text and "deepseek-reasoner has no price on this install" in refused.text
     assert _price(client, "deepseek-reasoner", input=0.55, output=2.19).status_code == 200
-    assert _role(client, "critic", model="deepseek-reasoner",
-                 tool_permissions=OFFLINE).status_code == 200
+    created = client.post("/admin/projects", headers=ADMIN, json=body)
+    assert created.status_code == 200, created.text
     listed = {row["model"]: row for row in client.get(PRICES, headers=ADMIN).json()}
     assert listed["deepseek-reasoner"]["own"]["output"] == 2.19
     assert listed["deepseek-reasoner"]["shipped"] is None
     assert listed["claude-opus-5-5"]["shipped"]["output"] == 20.0
 
 
-def test_a_price_can_be_zero_and_a_local_model_named_freely(client):
-    make_project(client, start=False)
+def test_a_price_can_be_zero_and_a_local_model_named_freely(client, critic):
     assert _price(client, "custom/llama3.1:8b", input=0, output=0).json()["provider"] == "custom"
-    assert _role(client, "local", model="custom/llama3.1:8b",
-                 tool_permissions=OFFLINE).status_code == 200
+    ollama = _id(_credential(client, "Ollama", provider="custom",
+                             base_url="http://ollama:11434/v1"))
+    created = client.post("/admin/projects", headers=ADMIN, json=_body(
+        "local", billing_secret_id=ollama, seat_models={"standard": "custom/llama3.1:8b"},
+        teams=[{"role_slug": "critic", "name": "Red", "employees": ["Dee"]}]))
+    assert created.status_code == 200, created.text
+    assert _seat(client, created.json(), "Dee")["model"] == "custom/llama3.1:8b"
 
 
-def test_a_provider_that_states_its_costs_needs_no_price(client):
-    make_project(client, start=False)
-    assert _role(client, "router", model="openrouter/qwen/qwen3-coder",
-                 tool_permissions=OFFLINE).status_code == 200
+def test_a_provider_that_states_its_costs_needs_no_price(client, critic):
+    router = _id(_credential(client, "OpenRouter key", provider="openrouter"))
+    created = client.post("/admin/projects", headers=ADMIN, json=_body(
+        "routed", billing_secret_id=router,
+        seat_models={"standard": "openrouter/qwen/qwen3-coder"},
+        teams=[{"role_slug": "critic", "name": "Red", "employees": ["Dee"]}]))
+    assert created.status_code == 200, created.text
 
 
 def test_an_install_price_wins_over_the_catalog_for_the_lease(client):
@@ -134,19 +162,41 @@ def test_an_install_price_wins_over_the_catalog_for_the_lease(client):
 # ── R2: a grant the harness cannot honour ───────────────────────────────────────
 
 
-def test_a_role_that_needs_the_web_cannot_be_hired_onto_a_provider_that_cannot_search(client):
+def test_a_role_that_needs_the_web_fetches_on_a_provider_that_cannot_search(client):
     """DeepSeek runs no search of its own, and yaaf's loop offers search only
-    where the provider does — so a role granting `web` would get half of what
-    it was hired with. Refused, not quietly halved (open question 6)."""
+    where the provider does. A role names no provider, so refusing the role
+    here refused it on whichever key the project happened to hold: instead the
+    seat fetches, and says so — to the agent, so it does not hunt for a tool it
+    was never handed, and on the seat, so the chairman sees it (open
+    question 6, decided)."""
     make_project(client, start=False)
     _price(client, "deepseek-chat")
-    refused = _role(client, "critic", model="deepseek-chat",
-                    tool_permissions={"files": True, "web": True})
-    assert refused.status_code == 422
-    assert "cannot search the web on DeepSeek" in refused.text
-    # On Anthropic's API the same grant is honoured: it searches.
-    assert _role(client, "researcher", model="claude-sonnet-5-5", harness="anthropic_api",
+    assert _role(client, "researcher",
                  tool_permissions={"files": True, "web": True}).status_code == 200
+    deepseek = _id(_credential(client, "DeepSeek key", provider="deepseek"))
+    project = client.post("/admin/projects", headers=ADMIN, json=_body(
+        "fetches", billing_secret_id=deepseek,
+        teams=[{"role_slug": "researcher", "name": "Look", "employees": ["Rae"]}]))
+    assert project.status_code == 200, project.text
+    project = project.json()
+    assert _seat(client, project, "Rae")["web"] == "fetch"
+    client.post(f"/admin/projects/{project['id']}/start", headers=ADMIN)
+    from yaaf.core import ids
+    from yaaf.core.models import RunQueue
+
+    with db_session() as session:
+        session.add(RunQueue(id=ids.new_id(ids.RUN), project_id=project["id"],
+                             agent_id=agent_by_name(project, "Rae"), kind="agent_run",
+                             trigger={"type": "test"}))
+    job = next(j for j in lease_and_prepare(limit=20)
+               if j.agent_id == agent_by_name(project, "Rae"))
+    assert "this seat has no web search" in job.system_prompt
+    # On Anthropic's key the same grant searches, and nothing is said.
+    claude = _id(_credential(client, "Claude key"))
+    searched = client.post("/admin/projects", headers=ADMIN, json=_body(
+        "searches", billing_secret_id=claude,
+        teams=[{"role_slug": "researcher", "name": "Look", "employees": ["Rae"]}])).json()
+    assert _seat(client, searched, "Rae")["web"] == "search"
 
 
 # ── credentials name their provider ─────────────────────────────────────────────
@@ -323,20 +373,22 @@ def test_a_long_tail_provider_is_a_row_and_nothing_else(client, provider, key_en
     seat on one is hired, paid with its own key, and leased onto the loop at
     its vendor's address — through the doors DeepSeek's seat goes through."""
     make_project(client, start=False)
+    assert _role(client, "critic", tool_permissions=OFFLINE).status_code == 200
     model = f"{provider}/some-model"
-    refused = _role(client, "critic", model=model, tool_permissions=OFFLINE)
-    assert refused.status_code == 422 and "no price on this install" in refused.text  # R3
-    assert _price(client, model).status_code == 200
-    assert _role(client, "critic", model=model, tool_permissions=OFFLINE).status_code == 200
+    team = [{"role_slug": "critic", "name": "Red", "employees": ["Dee"],
+             "model_overrides": {"Dee": model}}]
     claude = _id(_credential(client, "Claude key", value="sk-ant-api03-claude-test"))
     project = client.post("/admin/projects", headers=ADMIN, json=_body(
-        "unpaid", billing_secret_id=claude))
+        "unpaid", billing_secret_id=claude, teams=team))
     label = providers.provider(provider).label
     assert project.status_code == 422 and f"no {label} credential" in project.text  # R5
     theirs = _id(_credential(client, f"{provider} key", provider=provider,
                              value=f"key-for-{provider}"))
-    project = client.post("/admin/projects", headers=ADMIN, json=_body(
-        "paid", billing_secret_id=claude, credentials={provider: theirs})).json()
+    paid = _body("paid", billing_secret_id=claude, credentials={provider: theirs}, teams=team)
+    refused = client.post("/admin/projects", headers=ADMIN, json=paid)
+    assert refused.status_code == 422 and "no price on this install" in refused.text  # R3
+    assert _price(client, model).status_code == 200
+    project = client.post("/admin/projects", headers=ADMIN, json=paid).json()
     client.post(f"/admin/projects/{project['id']}/start", headers=ADMIN)
     from yaaf.core import ids
     from yaaf.core.models import RunQueue
@@ -371,15 +423,19 @@ def test_a_custom_servers_address_comes_from_its_credential(client):
 
 
 def test_a_project_paid_entirely_by_another_provider_needs_no_anthropic_key(client, critic):
-    """The billing credential pays whichever provider it is for: a DeepSeek-only
-    project bills DeepSeek with it and holds nothing else."""
+    """The billing credential pays whichever provider it is for, and that
+    provider runs every seat: a DeepSeek-only project bills DeepSeek with it,
+    holds nothing else, and needs no seat moved by hand."""
     _price(client, "deepseek-reasoner", input=0.55, output=2.19)
-    assert _role(client, "ceo", is_ceo_role=True, model="deepseek-reasoner",
+    assert _role(client, "ceo", is_ceo_role=True, tier="strong",
                  tool_permissions=OFFLINE).status_code == 200
     deepseek = _id(_credential(client, "DeepSeek key", provider="deepseek"))
-    created = client.post("/admin/projects", headers=ADMIN,
-                          json=_body("deepseek-only", billing_secret_id=deepseek))
+    created = client.post("/admin/projects", headers=ADMIN, json=_body(
+        "deepseek-only", billing_secret_id=deepseek,
+        teams=[{"role_slug": "critic", "name": "Red", "employees": ["Dee"]}]))
     assert created.status_code == 200, created.text
+    assert _seat(client, created.json(), "CEO")["model"] == "deepseek-reasoner"
+    assert _seat(client, created.json(), "Dee")["model"] == "deepseek-chat"
 
 
 # ── the done-when: two providers, one cap, one receipt ──────────────────────────
@@ -457,42 +513,64 @@ def test_what_pays_each_provider_travels_with_the_project(client, critic):
 # ── M4: OpenAI on the Codex CLI, and R6 ─────────────────────────────────────────
 
 
-def test_an_effort_the_model_does_not_take_is_refused_with_the_ones_it_does(client):
-    """R6. Codex hands the API whatever effort it is given, so the list is the
-    model's — read off the presets of the Codex CLI the image pins."""
-    make_project(client, start=False)
-    refused = _role(client, "coder", model="gpt-5.5", effort="max")
-    assert refused.status_code == 422
-    assert "gpt-5.5 takes the efforts low, medium, high, xhigh — not 'max'" in refused.text
-    assert _role(client, "coder", model="gpt-6-sol", effort="max").status_code == 200
-    # A Claude seat names efforts yaaf's way; nothing to refuse there.
-    assert _role(client, "writer", model="claude-opus-5-5", effort="max").status_code == 200
+#: A ChatGPT plan: metered in tokens, so an unpriced OpenAI model runs on it.
+CHATGPT = '{"tokens": {"access_token": "a", "refresh_token": "r"}}'
 
 
-def test_an_effort_override_meets_the_same_check(client):
+def test_a_role_effort_the_model_does_not_take_runs_at_the_nearest_it_does(client):
+    """A role's effort is a rung on one ladder, not a vendor's word: a role
+    asking `max` of a model that stops at `xhigh` runs at `xhigh`, and the seat
+    says what it asked for beside what it runs at. Read off the presets of the
+    Codex CLI the image pins."""
     make_project(client, start=False)
-    assert _role(client, "coder", model="gpt-5.5", effort="high").status_code == 200
+    assert _role(client, "coder", effort="max").status_code == 200
+    login = _id(_credential(client, "ChatGPT", provider="openai", mode="subscription",
+                            value=CHATGPT))
+    project = client.post("/admin/projects", headers=ADMIN, json=_body(
+        "fitted", billing_secret_id=login, seat_models={"standard": "gpt-5.5"},
+        teams=[{"role_slug": "coder", "name": "Build", "employees": ["Ned"]}]))
+    assert project.status_code == 200, project.text
+    seat = _seat(client, project.json(), "Ned")
+    assert (seat["model"], seat["effort"], seat["effort_asked"]) == ("gpt-5.5", "xhigh", "max")
+
+
+def test_an_effort_typed_for_one_seat_is_refused_with_the_ones_the_model_takes(client):
+    """R6, where it still holds: an effort somebody named for this seat. Fitting
+    it would be quietly overruling the person who typed it."""
+    make_project(client, start=False)
+    assert _role(client, "coder", effort="high").status_code == 200
+    login = _id(_credential(client, "ChatGPT", provider="openai", mode="subscription",
+                            value=CHATGPT))
     refused = client.post("/admin/projects", headers=ADMIN, json=_body(
-        "effort-over", teams=[{"role_slug": "coder", "name": "Build", "employees": ["Ned"],
-                               "effort_overrides": {"Ned": "max"}}]))
-    assert refused.status_code == 422 and "Ned" in refused.text and "not 'max'" in refused.text
+        "effort-over", billing_secret_id=login, seat_models={"standard": "gpt-5.5"},
+        teams=[{"role_slug": "coder", "name": "Build", "employees": ["Ned"],
+                "effort_overrides": {"Ned": "max"}}]))
+    assert refused.status_code == 422 and "Ned" in refused.text
+    assert "gpt-5.5 takes the efforts low, medium, high, xhigh — not 'max'" in refused.text
 
 
 def test_a_role_that_withholds_files_cannot_run_on_codex(client):
     """Codex hands the models it knows best a file editor whatever the config
-    says, so a role that leaves files off is refused rather than widened."""
+    says, so a seat on it whose role leaves files off is refused rather than
+    widened — at the project's door, now that the role names no provider."""
     make_project(client, start=False)
-    refused = _role(client, "talker", model="gpt-6-sol", tool_permissions={"files": False})
+    login = _id(_credential(client, "ChatGPT", provider="openai", mode="subscription",
+                            value=CHATGPT))
+    team = [{"role_slug": "talker", "name": "Talk", "employees": ["Tam"]}]
+    assert _role(client, "talker", tool_permissions={"files": False}).status_code == 200
+    refused = client.post("/admin/projects", headers=ADMIN,
+                          json=_body("no-files", billing_secret_id=login, teams=team))
     assert refused.status_code == 422 and "cannot run without files" in refused.text
-    assert _role(client, "talker", model="gpt-6-sol",
-                 tool_permissions={"files": True}).status_code == 200
+    assert _role(client, "talker", tool_permissions={"files": True}).status_code == 200
+    created = client.post("/admin/projects", headers=ADMIN,
+                          json=_body("files", billing_secret_id=login, teams=team))
+    assert created.status_code == 200, created.text
 
 
 def test_an_openai_seat_needs_a_price_only_under_a_dollar_meter(client):
     """R3 is about stopping a run in dollars. A ChatGPT plan is metered in
     tokens, so an unpriced model runs on it; an API key is not."""
     make_project(client, start=False)
-    assert _role(client, "ceo", is_ceo_role=True, model="gpt-6-sol").status_code == 200
     key = _id(_credential(client, "OpenAI key", provider="openai", value="sk-proj-test-value"))
     login = _id(_credential(client, "ChatGPT", provider="openai", mode="subscription",
                             value='{"tokens": {"access_token": "a", "refresh_token": "r"}}'))
@@ -519,8 +597,7 @@ def test_a_chatgpt_plan_reaches_the_sandbox_as_the_login_file_codex_reads(client
     from yaaf.runner.daemon import _billing_env
 
     make_project(client, start=False)
-    assert _role(client, "ceo", is_ceo_role=True, model="gpt-6-sol").status_code == 200
-    login = '{"tokens": {"access_token": "a", "refresh_token": "r"}}'
+    login = CHATGPT
     credential = _id(_credential(client, "ChatGPT", provider="openai", mode="subscription",
                                  value=login))
     project = client.post("/admin/projects", headers=ADMIN, json=_body(
@@ -532,12 +609,12 @@ def test_a_chatgpt_plan_reaches_the_sandbox_as_the_login_file_codex_reads(client
     assert get_backend("codex_cli").entrypoint == "codex_cli_entry.py"
 
 
-def test_a_key_for_another_provider_over_claude_roles_says_both_ways_out(client):
-    """The case a chairman met: a DeepSeek key picked for a project whose
-    roles run on Claude. Refused — nothing pays Anthropic — in a sentence that
-    says what the key does pay and both moves; then created once every seat
-    is moved onto a DeepSeek model, as the New Project form's "Run every seat
-    on" sends it."""
+def test_a_key_for_another_provider_runs_the_same_roles_on_that_provider(client):
+    """The case a chairman met: a DeepSeek key picked for a project of the
+    library's roles. It used to be refused — the roles named Claude models —
+    and the fix was moving every seat by hand. A role names a tier now, so the
+    key's provider answers it: the same roster is created, and each seat runs
+    on DeepSeek's model for its tier, priced like any other."""
     make_project(client, start=False)
     deepseek = _id(_credential(client, "DeepSeek key", provider="deepseek"))
     body = {"slug": "on-deepseek", "name": "On DeepSeek", "chairman_email": "chair@example.com",
@@ -546,13 +623,12 @@ def test_a_key_for_another_provider_over_claude_roles_says_both_ways_out(client)
             "teams": [{"role_slug": "worker", "name": "Alpha", "employees": ["Ada", "Lin"]}]}
     refused = client.post("/admin/projects", headers=ADMIN, json=body)
     assert refused.status_code == 422
-    assert "an Anthropic model, and this project holds no Anthropic credential" in refused.text
-    assert "it pays DeepSeek" in refused.text and "or pay Anthropic too" in refused.text
+    assert "Anthropic" not in refused.text  # nothing asks for Claude any more
+    assert "deepseek-chat has no price on this install" in refused.text  # R3, the only bar
     assert _price(client, "deepseek-chat").status_code == 200
-    moved = {**body, "ceo_model_override": "deepseek-chat",
-             "teams": [{**body["teams"][0],
-                        "model_overrides": {"Ada": "deepseek-chat", "Lin": "deepseek-chat"}}]}
-    created = client.post("/admin/projects", headers=ADMIN, json=moved)
+    created = client.post("/admin/projects", headers=ADMIN, json=body)
     assert created.status_code == 200, created.text
     assert client.post(f"/admin/projects/{created.json()['id']}/start",
                        headers=ADMIN).status_code == 200
+    assert {_seat(client, created.json(), n)["model"] for n in ("CEO", "Ada", "Lin")} == {
+        "deepseek-chat"}

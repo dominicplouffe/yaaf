@@ -7,7 +7,7 @@
     "general"
   ],
   "description": "Answers well-scoped questions with sourced findings: market scans, technical evaluations, competitive analysis, data digging.",
-  "model": "claude-sonnet-5-5",
+  "tier": "standard",
   "effort": "high",
   "tool_permissions": {
     "files": true,

@@ -61,11 +61,16 @@ MAX_DRILL_DAYS = 90
     description=(
         "Search the role and crew library — who you can hire, and the pre-built teams. "
         "Roles carry the credentials they will need, which is a fact about hiring one "
-        "rather than something to discover when a run fails. `credentials` lists what "
-        "a project can pay Claude with — names and billing modes, never values — so "
-        "you can ask the chairman which one before `create_project`. `harnesses` lists "
-        "what can drive a seat's model; name one in a team's `harness_overrides` only "
-        "when the chairman asks for it — absent, a seat runs on its role's default."
+        "rather than something to discover when a run fails. A role names a tier "
+        "(light, standard, strong) and an effort, never a model: a seat runs on the "
+        "model the project's provider — the one its billing credential pays — lists "
+        "for that tier. `credentials` lists what a project can pay with — names, "
+        "providers and billing modes, never values — and what each would run every "
+        "seat on, so you can ask the chairman which one before `create_project`. "
+        "`providers` gives each provider's lineup; one with none needs the spec's "
+        "`seat_models`. `harnesses` lists what can drive a seat's model; name one in "
+        "a team's `harness_overrides` only when the chairman asks for it — absent, a "
+        "seat runs on its model's provider's default."
     ),
     input_schema={
         "type": "object",
@@ -235,8 +240,9 @@ def rehearse(principal: Principal, session: Session, arguments: dict) -> dict:
         "which dial you are about to get. "
         "Two rules decide how good the work will be, and silence on them is also an "
         "answer. `stakes` (low|normal|high) buys money AND craft: at high, the seats "
-        "that write and check the deliverable are hired on the strongest model at the "
-        "deepest reasoning rather than on whatever the shared role library says. "
+        "that write and check the deliverable are hired on the strong tier — the "
+        "strongest model of the project's own provider — at the deepest reasoning, "
+        "rather than on whatever the shared role library says. "
         "`deliverable_review` set to 'independent_read' means the work is read by an "
         "agent that did not write it — and a roster asking for that with no seat in "
         "the `challenge` discipline is refused here, not quietly ignored. Say which "

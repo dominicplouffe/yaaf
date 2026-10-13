@@ -1069,29 +1069,45 @@ def test_a_turn_that_ends_mid_read_is_never_reported_half_finished(client, found
     assert not (state["running"] is False and state["interrupted"] is True)
 
 
-def test_a_draft_paid_by_another_provider_moves_its_seats_or_is_refused(client, founder):
-    """A DeepSeek key over a roster of Claude roles is a project the create
-    endpoint refuses — every seat runs on a model nothing pays. The draft is
-    refused the same way, saying both moves, so the Founder fixes it rather
-    than handing the chairman a project that cannot be built."""
+def test_a_draft_paid_by_another_provider_runs_its_roles_there(client, founder):
+    """A DeepSeek key over the library's roles used to be a draft the create
+    endpoint refused — the roles named Claude models. A role names a tier now,
+    and the key's provider answers it, so the same draft is fine. What a draft
+    can still get wrong is refused with the field that fixes it: a seat put on
+    a provider nothing in it pays, and a provider that ships no lineup with no
+    model named for it."""
     deepseek = _llm_credential(client, "DeepSeek key", value="sk-deepseek-founder-x",
                                provider="deepseek")
     calls = founder(tool_calls=[("propose_bundle", {"project": {
         **PROJECT, "billing_secret_id": deepseek["id"]}})])
     thread = start(client, "run it on my DeepSeek key")
+    assert _tool_payload(calls[-1])["ok"] is True
+
+    calls = founder(tool_calls=[("propose_bundle", {"project": {
+        **PROJECT, "billing_secret_id": deepseek["id"], "ceo_model_override": "claude-opus-5-5"}})])
+    start(client, "but put the CEO on Opus", thread["id"])
     refused = _tool_payload(calls[-1])
     assert refused["ok"] is False
-    assert any("the CEO: runs on" in p and "it pays DeepSeek" in p
+    assert any("the CEO: runs on claude-opus-5-5" in p and "it pays DeepSeek" in p
                and "ceo_model_override" in p for p in refused["problems"])
-    assert any(p.startswith("Mika (Build): runs on") for p in refused["problems"])
+
+    mistral = _llm_credential(client, "Mistral key", value="mistral-founder-x",
+                              provider="mistral")
+    calls = founder(tool_calls=[("propose_bundle", {"project": {
+        **PROJECT, "billing_secret_id": mistral["id"]}})])
+    start(client, "run it on Mistral instead")
+    refused = _tool_payload(calls[-1])
+    assert refused["ok"] is False
+    assert any(p.startswith("the CEO: its role asks for the standard tier")
+               and "seat_models" in p for p in refused["problems"])
+    calls = founder(tool_calls=[("propose_bundle", {"project": {
+        **PROJECT, "billing_secret_id": mistral["id"],
+        "seat_models": {"standard": "mistral/mistral-large-latest"}}})])
+    start(client, "mistral-large for everyone")
+    assert _tool_payload(calls[-1])["ok"] is True
 
     client.put("/admin/settings/model-prices/deepseek-chat", headers=ADMIN,
                json={"input": 0.28, "output": 0.42})
-    moved = {**PROJECT, "billing_secret_id": deepseek["id"], "ceo_model_override": "deepseek-chat",
-             "teams": [{**PROJECT["teams"][0], "model_overrides": {"Mika": "deepseek-chat"}}]}
-    calls = founder(tool_calls=[("propose_bundle", {"project": moved})])
-    thread = start(client, "move them all to deepseek-chat", thread["id"])
-    assert _tool_payload(calls[-1])["ok"] is True
     created = client.post("/admin/projects", headers=ADMIN, json={
         **thread["draft_bundle"]["project"], "chairman_email": "chair@example.com"})
     assert created.status_code == 200, created.text

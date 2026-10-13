@@ -639,6 +639,36 @@ difference. Three things are worth knowing:
 There is no downgrade: the migration refuses to move shared credentials back
 into projects. Take the dump first, as above.
 
+#### What the provider-free roles release does to projects that already exist
+
+Migration `0047` takes the model and the harness off every role version and
+reads a **tier** off the model instead (Haiku → light, Sonnet → standard,
+Opus and Fable → strong; another vendor's model by its place in that vendor's
+lineup). From now on a seat runs on the provider its project's billing
+credential pays, on that provider's model for its role's tier
+([RUNTIMES.md](RUNTIMES.md)). **No running seat changes model on upgrade:**
+
+- **A Claude project is untouched.** Anthropic's lineup is Haiku / Sonnet /
+  Opus 5.5, which is what the shipped library named, so every seat resolves
+  to what it ran on before.
+- **A seat whose role named something its tier does not resolve to keeps it
+  by name.** A custom role on Fable, last generation's Opus, or a DeepSeek
+  model hired onto a Claude project is stamped as that seat's model override.
+  The same goes for a role version's harness: it lands on its seats as a
+  harness override.
+- **An override that already equals its tier's model becomes a tier
+  override** — what a `stakes: high` lift stamped as `claude-opus-5-5` is now
+  "strong", so the seat follows the project if its money moves to another
+  provider.
+
+Two things change their answer. A role file or bundle that still names a
+`model` loads, read as its tier, and one naming a `harness` loads without it —
+the response says so. And changing a project's billing credential to another
+provider now moves every seat with it; a seat somebody named onto a model of
+the old provider by hand is refused by name until it is moved or that
+provider is paid too. The downgrade puts the models back from the tiers on
+Anthropic's lineup, and keeps the stamped overrides.
+
 ### Scaling
 
 Add runners, not API servers. Runs are leased with a TTL heartbeat, so several

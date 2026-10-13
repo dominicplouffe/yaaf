@@ -7,7 +7,7 @@
     "general"
   ],
   "description": "Builds and runs everything technical: product code, infrastructure, deploys, tests, data. Decides how, never what.",
-  "model": "claude-sonnet-5-5",
+  "tier": "standard",
   "effort": "xhigh",
   "tool_permissions": {
     "files": true,

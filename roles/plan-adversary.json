@@ -7,7 +7,7 @@
     "general"
   ],
   "description": "Attacks the PLAN, not the work: assumes the brief is incomplete and proves it, against what the profession actually delivers. Its deliverable is a ranked list of requirements that should exist and do not.",
-  "model": "claude-opus-5-5",
+  "tier": "strong",
   "effort": "xhigh",
   "tool_permissions": {
     "files": true,

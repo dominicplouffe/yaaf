@@ -4,7 +4,7 @@ boardroom chat held on the CEO's own seat, on any harness that can hold one.
 The rule under attack is R7: a CEO seat holding the boardroom chat must be on
 a harness with `conversation`. Every harness registered today can hold one, so
 the rule is attacked against a registered harness that cannot — it reads the
-registry, never a name — at the role version, the start, the door that turns
+registry, never a name — at the seat's own door, the start, the door that turns
 the chat on, the health checklist, and the supervisor's own backstop.
 
 And the lane itself: the session is pinned to, priced for and paid by the
@@ -67,13 +67,23 @@ def _fake_sandbox(monkeypatch) -> list[dict]:
 # ── R7: the CEO's seat must be able to hold a conversation ──────────────────────
 
 
-def test_a_ceo_role_cannot_be_written_onto_a_harness_that_cannot_converse(client, one_shot):
+def test_a_ceo_seat_cannot_be_hired_onto_a_harness_that_cannot_converse(client, one_shot):
+    """R7 at the door the seat comes through. It used to fire at the role
+    version too, when a role named its harness; a role serves any provider and
+    a harness one, so the seat names it now, and the seat is refused."""
     make_project(client, start=False)
-    refused = _role(client, "ceo", is_ceo_role=True, harness="one_shot")
+    body = {"slug": "one-shot", "name": "One Shot", "chairman_email": "chair@example.com",
+            "goal": "Prove the framework works end to end.", "ceo_role_slug": "ceo",
+            "ceo_name": "CEO", "billing_secret_id": _credential(client),
+            "teams": [{"role_slug": "worker", "name": "Alpha", "employees": ["Lead"]}]}
+    refused = client.post("/admin/projects", headers=ADMIN,
+                          json={**body, "ceo_harness_override": "one_shot"})
     assert refused.status_code == 422
-    assert "cannot hold the boardroom conversation" in refused.text
+    assert "CEO: One-shot harness cannot hold the boardroom conversation" in refused.text
     # Any other seat may run there: R7 is about the chairman's real-time room.
-    assert _role(client, "worker", harness="one_shot").status_code == 200
+    allowed = client.post("/admin/projects", headers=ADMIN, json={**body, "teams": [
+        {**body["teams"][0], "harness_overrides": {"Lead": "one_shot"}}]})
+    assert allowed.status_code == 200, allowed.text
 
 
 def test_a_project_whose_ceo_cannot_converse_does_not_start_with_the_chat_on(
@@ -162,16 +172,14 @@ def test_a_deepseek_ceo_talks_on_deepseek_priced_and_paid_as_its_runs_are(
     make_project(client, start=False)
     assert client.put("/admin/settings/model-prices/deepseek-chat", headers=ADMIN,
                       json={"input": 0.28, "output": 0.42}).status_code == 200
-    assert _role(client, "ceo", is_ceo_role=True, model="deepseek-chat",
-                 tool_permissions=OFFLINE).status_code == 200
+    assert _role(client, "ceo", is_ceo_role=True, tool_permissions=OFFLINE).status_code == 200
     deepseek = _credential(client, "DeepSeek key", provider="deepseek",
                            value="sk-deepseek-test-value")
     created = client.post("/admin/projects", headers=ADMIN, json={
         "slug": "deepseek-ceo", "name": "DeepSeek CEO", "chairman_email": "chair@example.com",
         "goal": "Prove the framework works end to end.", "ceo_role_slug": "ceo",
         "ceo_name": "CEO", "billing_secret_id": deepseek,
-        "teams": [{"role_slug": "worker", "name": "Alpha", "employees": ["Lead"],
-                   "model_overrides": {"Lead": "deepseek-chat"}}]})
+        "teams": [{"role_slug": "worker", "name": "Alpha", "employees": ["Lead"]}]})
     assert created.status_code == 200, created.text
     started = client.post(f"/admin/projects/{created.json()['id']}/start", headers=ADMIN)
     assert started.status_code == 200, started.text

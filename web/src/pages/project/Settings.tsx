@@ -1,4 +1,4 @@
-import { CredentialPicker, PlanMeter, ProviderCredentials } from "../../llmCredentials";
+import { CredentialPicker, PlanMeter, ProviderCredentials, SeatModels } from "../../llmCredentials";
 import { plainStatus } from "../../ui/kit";
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -1194,6 +1194,40 @@ function CredentialsManager({
  *  projects only. The old page *hid* the unused USD cap, which is the same
  *  mistake as a hand-kept editable list: a rule you cannot see is a rule you
  *  cannot change. These stay on screen, dimmed, saying why they are asleep. */
+/** What this project's seats run on: its provider's lineup, or its own model
+    for a tier. Saved through the same PATCH the money uses, so every seat is
+    checked against it before it lands. */
+function ProjectSeatModels({ projectId, dash, reload }: {
+  projectId: string; dash: Dashboard; reload: () => void;
+}) {
+  const saved = dash.seat_models ?? {};
+  const [value, setValue] = useState<Record<string, string>>(saved);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => { setValue(dash.seat_models ?? {}); }, [dash.seat_models]);
+  const provider = dash.provider ?? "anthropic";
+  const paid = (dash.credentials ?? []).map((c) => c.provider);
+  const changed = JSON.stringify(value) !== JSON.stringify(saved);
+  async function save() {
+    setBusy(true); setError("");
+    try { await patch(`/admin/projects/${projectId}`, { seat_models: value }); reload(); }
+    catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  }
+  return <div className="card" style={{ marginTop: 10 }}>
+    <SeatModels provider={provider} paid={paid.length ? paid : [provider]} value={value}
+      onChange={setValue} />
+    {error && <p className="error" role="alert">{error}</p>}
+    <div className="actions">
+      <button className="primary" disabled={busy || !changed} onClick={save}>Save models</button>
+      {changed && <button disabled={busy} onClick={() => setValue(saved)}>Revert</button>}
+    </div>
+    <p className="help">Applies from each seat&apos;s next run. Changing the credential above to
+      another provider moves every seat to that provider&apos;s models; a seat somebody put on a
+      model by name keeps it, and is refused if nothing here pays its provider.</p>
+  </div>;
+}
+
 function dormantReason(key: string, dash: Dashboard): string | null {
   if (key === "monthly_usd_cap" && dash.billing_mode !== "api_key")
     return "Not enforced right now — this project bills by subscription, so the token cap is the live budget.";
@@ -1951,15 +1985,16 @@ export default function Settings({
       </Section>
 
       <Section on={section === "money"}>
-      <h2>How agents pay for Claude</h2>
+      <h2>How agents pay for their models</h2>
       <div className="card">
         <p className="help" style={{ marginTop: 0 }}>
-          Every agent run calls Claude, and that call needs a credential. Currently:{" "}
+          Every agent run calls a model, and that call needs a credential — the one assigned
+          here pays the provider every seat runs on. Currently:{" "}
           {billingReady ? (
             <strong>
               {dash.billing_secret_name} — {dash.billing_mode === "subscription"
-                ? "your Claude subscription (uses your plan's rate limits; no per-call charges)"
-                : "an API key (each call bills your Anthropic account in dollars)"}
+                ? "a subscription or login (uses your plan's rate limits; no per-call charges)"
+                : "an API key (each call bills the provider's account in dollars)"}
             </strong>
           ) : (
             <strong>none connected</strong>
@@ -1980,6 +2015,7 @@ export default function Settings({
           title={`Plan usage for ${dash.billing_secret_name ?? "this credential"}`} />
         <ProviderCredentials projectId={projectId} disabled={busy} />
       </div>
+      <ProjectSeatModels projectId={projectId} dash={dash} reload={reload} />
 
       </Section>
 
