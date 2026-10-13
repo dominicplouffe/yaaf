@@ -95,10 +95,11 @@ def test_artifact_put_refuses_escapes_missing_files_and_oversize(
     absent = _put(sandbox_entry, {"path": "never-written.md"})
     assert absent["status"] == 404
 
-    (workspace / "big.bin").write_bytes(b"x" * (5 * 1024 * 1024 + 1))
+    monkeypatch.setattr(sandbox_entry, "ARTIFACT_MAX_BYTES", 1024 * 1024)
+    (workspace / "big.bin").write_bytes(b"x" * (1024 * 1024 + 1))
     too_big = _put(sandbox_entry, {"path": "big.bin"})
     assert too_big["status"] == 413
-    assert "5 MB" in too_big["body"]["error"]
+    assert "1 MB" in too_big["body"]["error"]
 
 
 def test_artifact_put_inline_fallback_still_works_and_is_validated(

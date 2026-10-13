@@ -203,7 +203,7 @@ def test_artifact_get_refuses_other_projects_and_missing_bytes(client):
         assert session.get(Run, my_run).refusal_count == before
 
 
-def test_agent_artifact_put_refuses_traversal_and_oversize(client):
+def test_agent_artifact_put_refuses_traversal_and_oversize(client, monkeypatch):
     project = make_project(client)
     _, ceo_token = live_token(project["id"], project["ceo_agent_id"])
     payload = base64.b64encode(b"attack").decode()
@@ -216,13 +216,17 @@ def test_agent_artifact_put_refuses_traversal_and_oversize(client):
     assert traversal.status_code == 422
     assert "path" in traversal.json()["error"]
 
-    oversize = base64.b64encode(b"x" * (5 * 1024 * 1024 + 1)).decode()
+    # The real ceiling is 100 MB; a test should not allocate that to prove it.
+    from yaaf.server.api import agent
+    monkeypatch.setattr(agent, "MAX_ARTIFACT_BYTES", 1024 * 1024)
+    oversize = base64.b64encode(b"x" * (1024 * 1024 + 1)).decode()
     too_big = client.post(
         "/agent/artifacts",
         json={"filename": "big.bin", "content_base64": oversize},
         headers=bearer(ceo_token),
     )
     assert too_big.status_code == 413
+    assert "1 MB" in too_big.json()["error"]
 
 
 def test_stash_trace_writes_store_uri_and_observe_serves_it(client, tmp_path):

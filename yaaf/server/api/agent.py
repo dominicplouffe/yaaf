@@ -3410,8 +3410,8 @@ def side_effect_finish(
 # ── artifacts (durable deliverables) ────────────────────────────────────────────
 
 
-MAX_ARTIFACT_BYTES = 5 * 1024 * 1024
-# One read returns a slice, not the file. A deliverable can be 5 MB; a run's
+MAX_ARTIFACT_BYTES = 100 * 1024 * 1024
+# One read returns a slice, not the file. A deliverable can be 100 MB; a run's
 # context cannot. offset pages through the rest, and the sha256 on every
 # response is of the WHOLE file — so a verifier reading one page can still
 # state exactly which bytes it read a page of.
@@ -3477,7 +3477,8 @@ def artifact_put(
         raise Refusal("content_base64 is not valid base64.", status_code=422) from None
     if len(data) > MAX_ARTIFACT_BYTES:
         raise Refusal(
-            f"artifact is {len(data)} bytes; the limit is 5 MB. Store large deliverables "
+            f"artifact is {len(data)} bytes; the limit is "
+            f"{MAX_ARTIFACT_BYTES // (1024 * 1024)} MB. Store large deliverables "
             "somewhere addressable and record the URL as evidence instead.",
             status_code=413,
         )

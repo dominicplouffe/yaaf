@@ -2038,8 +2038,8 @@ def project_file_content(
             data = artifacts.store().get_bytes(artifact)
         except (FileNotFoundError, ValueError):
             raise HTTPException(status_code=404, detail="no such artifact") from None
-        # Buffered, and safely so: `artifact_put` refuses anything over 5 MB,
-        # so nothing in the store is big enough to be worth streaming. The
+        # Buffered, and safely so: `artifact_put` refuses anything over 100 MB,
+        # so the worst case is one 100 MB read held in memory per download. The
         # workspace below has no such ceiling — it is where agents actually
         # work, and a render lands there at its real size.
         return _as_download(data, artifact.rsplit("/", 1)[-1])

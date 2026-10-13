@@ -67,6 +67,9 @@ PROVIDER = json.loads(os.environ.get("YAAF_PROVIDER") or "{}")
 
 WORKSPACE = Path("/workspace")
 STAGING = Path("/workspace/.yaaf")
+#: Mirrors MAX_ARTIFACT_BYTES in server/api/agent.py, checked here so an
+#: oversize file is refused before it is read and base64-encoded.
+ARTIFACT_MAX_BYTES = 100 * 1024 * 1024
 
 # ── file-shaped credentials ────────────────────────────────────────────────────
 #
@@ -1119,7 +1122,7 @@ async def t_side_effect_finish(args):
     "write it to the workspace and hand over the path. filename optionally renames "
     "the artifact (plain name, no path separators; defaults to the file's own name). "
     "content_base64 is a fallback for small payloads you have in hand and nowhere on "
-    "disk; filename is required with it. Max 5 MB decoded either way. satisfies "
+    "disk; filename is required with it. Max 100 MB decoded either way. satisfies "
     "lists the requirement keys (R-03) this file delivers on. Returns the "
     "artifact's uri, key, size and sha256 — cite the uri in evidence, task "
     "completions and messages. The uri is NOT a path in your sandbox: read it back "
@@ -1143,9 +1146,10 @@ async def t_artifact_put(args):
                 "error": f"{path!r} is not a file in your workspace. Write the "
                          "deliverable to disk first, then pass its path."}})
         size = resolved.stat().st_size
-        if size > 5 * 1024 * 1024:
+        if size > ARTIFACT_MAX_BYTES:
             return _text({"status": 413, "body": {
-                "error": f"{path!r} is {size} bytes; the limit is 5 MB. Store large "
+                "error": f"{path!r} is {size} bytes; the limit is "
+                         f"{ARTIFACT_MAX_BYTES // (1024 * 1024)} MB. Store large "
                          "deliverables somewhere addressable and record the URL as "
                          "evidence instead."}})
         encoded = base64.b64encode(resolved.read_bytes()).decode()

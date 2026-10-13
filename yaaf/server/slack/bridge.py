@@ -115,9 +115,9 @@ def _post_message(token: str, channel: str, text: str) -> str:
 
 
 #: Slack's upload flow tops out well above this; the artifact route caps a
-#: deliverable at 5 MB, so anything larger cannot exist. Kept as its own name
+#: deliverable at 100 MB, so anything larger cannot exist. Kept as its own name
 #: so the fallback below has something to say when it trips.
-MAX_SLACK_UPLOAD_BYTES = 5 * 1024 * 1024
+MAX_SLACK_UPLOAD_BYTES = 100 * 1024 * 1024
 
 
 def _upload_file(token: str, channel: str, filename: str, data: bytes,
