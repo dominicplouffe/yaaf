@@ -940,9 +940,11 @@ def test_the_plan_adversary_role_attacks_scope_not_output():
     assert "COMPLETE deliverable" in prompt
 
 
-def _llm_credential(client, name, value="sk-ant-api03-test-not-real", mode="api_key"):
+def _llm_credential(client, name, value="sk-ant-api03-test-not-real", mode="api_key",
+                    provider="anthropic"):
     response = client.post("/admin/settings/llm-credentials", headers=ADMIN,
-                           json={"name": name, "mode": mode, "value": value})
+                           json={"name": name, "mode": mode, "value": value,
+                                 "provider": provider})
     assert response.status_code == 201, response.text
     return response.json()
 
@@ -1065,3 +1067,31 @@ def test_a_turn_that_ends_mid_read_is_never_reported_half_finished(client, found
     # Either answer is honest on its own. The pair is not: a turn reported
     # finished must never come back looking abandoned.
     assert not (state["running"] is False and state["interrupted"] is True)
+
+
+def test_a_draft_paid_by_another_provider_moves_its_seats_or_is_refused(client, founder):
+    """A DeepSeek key over a roster of Claude roles is a project the create
+    endpoint refuses — every seat runs on a model nothing pays. The draft is
+    refused the same way, saying both moves, so the Founder fixes it rather
+    than handing the chairman a project that cannot be built."""
+    deepseek = _llm_credential(client, "DeepSeek key", value="sk-deepseek-founder-x",
+                               provider="deepseek")
+    calls = founder(tool_calls=[("propose_bundle", {"project": {
+        **PROJECT, "billing_secret_id": deepseek["id"]}})])
+    thread = start(client, "run it on my DeepSeek key")
+    refused = _tool_payload(calls[-1])
+    assert refused["ok"] is False
+    assert any("the CEO: runs on" in p and "it pays DeepSeek" in p
+               and "ceo_model_override" in p for p in refused["problems"])
+    assert any(p.startswith("Mika (Build): runs on") for p in refused["problems"])
+
+    client.put("/admin/settings/model-prices/deepseek-chat", headers=ADMIN,
+               json={"input": 0.28, "output": 0.42})
+    moved = {**PROJECT, "billing_secret_id": deepseek["id"], "ceo_model_override": "deepseek-chat",
+             "teams": [{**PROJECT["teams"][0], "model_overrides": {"Mika": "deepseek-chat"}}]}
+    calls = founder(tool_calls=[("propose_bundle", {"project": moved})])
+    thread = start(client, "move them all to deepseek-chat", thread["id"])
+    assert _tool_payload(calls[-1])["ok"] is True
+    created = client.post("/admin/projects", headers=ADMIN, json={
+        **thread["draft_bundle"]["project"], "chairman_email": "chair@example.com"})
+    assert created.status_code == 200, created.text

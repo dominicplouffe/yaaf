@@ -472,7 +472,45 @@ def billing_problems(project: dict, session: Session) -> list[str]:
     project["billing_secret_id"] = row.id
     project["billing_secret_name"] = row.name
     project["billing_mode"] = row.llm_mode
-    return problems
+    return problems + seat_payment_problems(project, session, row.provider)
+
+
+def seat_payment_problems(project: dict, session: Session, billing_provider: str | None) -> list[str]:
+    """R5 on a draft: every seat's model is a provider the draft pays — the
+    billing credential's, or one named in `credentials`. The create endpoint
+    refuses the same project; caught here, the Founder fixes the draft rather
+    than handing the chairman one that cannot be built (a DeepSeek key over a
+    roster of Claude roles was exactly that)."""
+    from yaaf.runtimes import catalog
+    from yaaf.server.seat_checks import unpaid
+
+    if (project.get("integrations") or {}).get("runtime") == "mock":
+        return []
+    paid = sorted({billing_provider or "anthropic", *(project.get("credentials") or {})})
+    seats = [("the CEO", project.get("ceo_model_override")
+              or _role_model(session, project.get("ceo_role_slug")))]
+    for team in project.get("teams") or []:
+        overrides = team.get("model_overrides") or {}
+        for person in team.get("employees") or []:
+            seats.append((f"{person} ({team.get('name')})",
+                          overrides.get(person) or _role_model(session, team.get("role_slug"))))
+    return [unpaid(who, model, paid) + " — in a draft: ceo_model_override, or a team's "
+            "model_overrides keyed by name, or a `credentials` entry for it"
+            for who, model in seats
+            if model and catalog.provider_of(model) not in paid]
+
+
+def _role_model(session: Session, slug: str | None) -> str | None:
+    """The model a role's latest version runs on — what a seat hired on it
+    runs on unless the draft overrides it."""
+    role = session.execute(select(Role).where(Role.slug == slug)).scalar_one_or_none() \
+        if slug else None
+    if role is None:
+        return None
+    version = session.execute(
+        select(RoleVersion).where(RoleVersion.role_id == role.id)
+        .order_by(RoleVersion.version.desc())).scalars().first()
+    return version.model if version is not None else None
 
 
 def _provider_credential_problems(project: dict, session: Session) -> list[str]:

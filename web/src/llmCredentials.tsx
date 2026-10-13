@@ -97,7 +97,8 @@ export async function resolveCredential(id?: string | null, name?: string | null
 }
 
 export function CredentialPicker({ value, onChange, disabled = false, provider, label = "LLM credential" }: {
-  value: string; onChange: (id: string, mode: string) => void; disabled?: boolean;
+  value: string; onChange: (id: string, mode: string, provider: string) => void;
+  disabled?: boolean;
   /** Only credentials paying this provider — for a project's second provider. */
   provider?: string; label?: string;
 }) {
@@ -110,7 +111,7 @@ export function CredentialPicker({ value, onChange, disabled = false, provider, 
     <label className="field">{label}
       <select value={value} disabled={disabled || rows === null} onChange={e => {
         const row = rows?.find(r => r.id === e.target.value);
-        onChange(row?.id ?? "", row?.mode ?? "api_key");
+        onChange(row?.id ?? "", row?.mode ?? "api_key", row?.provider ?? "anthropic");
       }}>
         <option value="">{rows === null ? "Loading credentials…" : "Select a credential"}</option>
         {rows?.map(row => <option key={row.id} value={row.id}>{row.name} — {modeLabel(row)}</option>)}
