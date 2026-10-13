@@ -202,6 +202,15 @@ def create_app() -> FastAPI:
 
     dist = _web_dist()
     if dist is not None:
+        # Registered before the mount so it wins. The mount's own trailing-
+        # slash redirect is absolute and built from the scheme uvicorn sees,
+        # which behind a TLS-terminating proxy is http — so /app sent the
+        # browser to http://host/app/, a plain-http hop on an https site. A
+        # relative Location keeps whatever scheme the browser is already on.
+        @app.get("/app", include_in_schema=False)
+        def app_slash() -> RedirectResponse:
+            return RedirectResponse("/app/")
+
         app.mount("/app", StaticFiles(directory=dist, html=True), name="app")
 
         # The SPA shell must never be cached: hashed assets change every build,
