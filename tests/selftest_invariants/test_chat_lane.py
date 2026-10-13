@@ -827,3 +827,40 @@ def test_a_work_run_does_not_stamp_a_chat_heartbeat(client):
 
     with db_session() as session:
         assert session.get(Run, run_id).heartbeat_at == before
+
+
+def test_a_new_billing_credential_restarts_the_chat_session(client, monkeypatch):
+    """The live failure: the chairman swapped an exhausted subscription for a
+    funded one and the boardroom kept answering "session limit" — the resident
+    container had the old key in its env and nothing ever replaced it. A new
+    credential must end the session deliberately (KILLED, outside the restart
+    backstop) and start one that pays with it."""
+    from yaaf.runner import chat
+
+    state = _fake_sandbox(monkeypatch)
+    project = make_project(client)
+    _attach_billing(client, project["id"])
+    chat.chat_supervisor_once()
+    with db_session() as session:
+        first = session.query(Run).filter_by(kind="chat_session",
+                                             status=RunStatus.RUNNING).one().id
+
+    chat.chat_supervisor_once()  # nothing moved: adopted, not rebuilt
+    assert state["started"] == [project["id"]]
+
+    funded = client.post("/admin/settings/llm-credentials",
+                         json={"name": "funded-key", "value": "sk-ant-api03-funded",
+                               "mode": "api_key"}, headers=ADMIN).json()
+    client.patch(f"/admin/projects/{project['id']}",
+                 json={"billing_mode": "api_key", "billing_secret_id": funded["id"]},
+                 headers=ADMIN)
+    chat.chat_supervisor_once()
+    assert state["stopped"] == [project["id"]]
+    with db_session() as session:
+        ended = session.get(Run, first)
+        assert ended.status == RunStatus.KILLED
+        assert "credential changed" in (ended.summary or "")
+        replacement = session.query(Run).filter_by(kind="chat_session",
+                                                   status=RunStatus.RUNNING).one()
+    assert state["containers"][project["id"]] == replacement.id
+    assert state["started"] == [project["id"], project["id"]]

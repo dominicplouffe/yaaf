@@ -16,6 +16,7 @@ boot-looping session cannot burn the box.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from datetime import timedelta
@@ -219,6 +220,21 @@ def _supervise_project(session: Session, project: Project) -> tuple[dict | None,
         return None, None
 
     if live_run is not None:
+        # The credential is baked into the container's env at start, so a
+        # session outlives any change to it. Swapping an exhausted key for a
+        # funded one left the boardroom answering "session limit" on the old
+        # one for as long as the container lived — while every work run, which
+        # boots fresh, paid with the new one. A deliberate end, so KILLED and
+        # outside the restart backstop; the new session answers the backlog.
+        seat = seat_for(ceo, role_version_for(session, ceo),
+                        (project.integrations or {}).get("runtime"))
+        if (live_run.trigger or {}).get("credential") != _credential_mark(
+                session, project, seat.provider):
+            _end_session(session, project, live_run,
+                         "chat session restarted: the CEO's model credential changed")
+            live_run, running_ids = None, set()
+
+    if live_run is not None:
         if live_run.token_revoked:
             _end_session(session, project, live_run, "chat session ended: token revoked")
             say_session_broke(session, project, "its access token was revoked")
@@ -340,17 +356,35 @@ def say_session_broke(session: Session, project: Project, why: str) -> None:
     log.warning("boardroom left unanswered in %s: %s", project.slug, why)
 
 
+def _credential_mark(session: Session, project: Project, provider: str) -> str | None:
+    """Which credential, in which mode and with which value, pays the CEO's
+    seat — hashed, because it rides on the run row the Runs page shows."""
+    from yaaf.core import project_credentials
+
+    secret = project_credentials.credential_for(session, project, provider)
+    if secret is None:
+        return None
+    mode = project.billing_mode if secret.id == project.billing_secret_id else secret.llm_mode
+    return hashlib.sha256(f"{secret.id}:{mode}:{secret.ciphertext}".encode()).hexdigest()[:16]
+
+
 def _prepare_session(session: Session, project: Project, ceo: Agent) -> tuple[dict, str]:
     """Everything a session start needs EXCEPT the container start: the run
     row, token, staged prompt, and launch kwargs. The caller starts the
     container after this transaction commits."""
     role_version = role_version_for(session, ceo)
+    # The boardroom is held on the CEO's own seat — its model, its harness,
+    # its provider's credential — like any run of that seat (docs/RUNTIMES.md,
+    # M6). The harness's own entry holds the conversation; the SDK's entry
+    # is the SDK's resident client.
+    seat = seat_for(ceo, role_version, (project.integrations or {}).get("runtime"))
     run = Run(
         id=ids.new_id(ids.RUN),
         project_id=project.id,
         agent_id=ceo.id,
         kind=RunKind.CHAT_SESSION,
-        trigger={"type": "chat_session"},
+        trigger={"type": "chat_session",
+                 "credential": _credential_mark(session, project, seat.provider)},
         status=RunStatus.RUNNING,
         worker=settings().worker_name,
         started_at=utcnow(),
@@ -373,11 +407,6 @@ def _prepare_session(session: Session, project: Project, ceo: Agent) -> tuple[di
         api_token=token_plain,
     )
     job.system_prompt = build_system_prompt(session, ceo, project, lane="chat") + CHAT_ADDENDUM
-    # The boardroom is held on the CEO's own seat — its model, its harness,
-    # its provider's credential — like any run of that seat (docs/RUNTIMES.md,
-    # M6). The harness's own entry holds the conversation; the SDK's entry
-    # is the SDK's resident client.
-    seat = seat_for(ceo, role_version, (project.integrations or {}).get("runtime"))
     _pin_seat(session, run, job, seat)
     job.provider_spec = _provider_spec(session, project, seat.provider)
     from yaaf.runner.backends import get_backend
