@@ -39,7 +39,12 @@ is used). A project's billing credential pays whichever provider it is for;
 a project with a seat on a second provider's model pays that provider too,
 under its **Settings → Money → Other providers**, with a credential metered in
 the same unit — one project, one meter, one cap. A seat on a provider the
-project does not pay is refused when it is created, not when it first runs.
+project does not pay is refused when it is created, not when it first runs. A
+credential pays one provider, and seats run on their roles' models: a
+DeepSeek key over Claude roles is refused for that reason. **New Project →
+Run every seat on** moves every seat onto one of the paid providers' models
+in one step (price it first under Settings → Model prices), or pay the
+roles' provider too.
 Models yaaf ships no price for are priced under **Settings → Model prices**
 (zero is a price, for your own server); see [RUNTIMES.md](RUNTIMES.md).
 

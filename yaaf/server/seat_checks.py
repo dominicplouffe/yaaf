@@ -13,8 +13,24 @@ from sqlalchemy.orm import Session
 
 from yaaf.core import prices, project_credentials
 from yaaf.core.models import Agent, Project
+from yaaf.runtimes import catalog
 from yaaf.runtimes.providers import provider as seller
 from yaaf.runtimes.seats import refusal, seat_for
+
+
+def unpaid(who: str, model: str, paid: list[str]) -> str:
+    """R5's sentence: a seat on a provider nothing on the project pays. Names
+    what the project does pay, because the fix is one of two moves — run the
+    seat on one of those providers' models, or pay this one too — and a
+    chairman who picked a DeepSeek key for a project of Claude roles needs to
+    see that the key paid DeepSeek and the roles ran on Claude."""
+    label = seller(catalog.provider_of(model)).label
+    article = "an" if label[:1].lower() in "aeiou" else "a"
+    pays = ", ".join(seller(p).label for p in paid) or "nothing yet"
+    return (f"{who}: runs on {model}, {article} {label} model, and this project holds no "
+            f"{label} credential — it pays {pays}. Run this seat on a model of a provider "
+            f"the project pays (a model override, or a role on that model), or pay {label} "
+            f"too with one of its credentials")
 
 
 def seat_problem(session: Session, project: Project, agents: list[Agent], *,
@@ -38,10 +54,8 @@ def seat_problem(session: Session, project: Project, agents: list[Agent], *,
         credential = project_credentials.seat_credential(session, project, seat.provider)
         if credential is None and pays:
             # R5 — it fails at the door, not at 3am.
-            label = seller(seat.provider).label
-            return (f"{agent.name}: runs on {seat.model}, a {label} model, and this "
-                    f"project holds no {label} credential — add one in the project's "
-                    f"Settings, or put this seat on a model the project can pay for")
+            return unpaid(agent.name, seat.model,
+                          sorted(project_credentials.held(session, project)))
         problem = refusal(seat.harness, seat.model,
                           role_version.tool_permissions if role_version else {},
                           credential, priced=prices.covered(session, seat.model),

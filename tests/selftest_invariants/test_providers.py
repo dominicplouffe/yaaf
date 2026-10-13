@@ -530,3 +530,29 @@ def test_a_chatgpt_plan_reaches_the_sandbox_as_the_login_file_codex_reads(client
         assert _billing_env(session, session.get(Project, project["id"]), "openai") == {
             "CODEX_AUTH_JSON": login}
     assert get_backend("codex_cli").entrypoint == "codex_cli_entry.py"
+
+
+def test_a_key_for_another_provider_over_claude_roles_says_both_ways_out(client):
+    """The case a chairman met: a DeepSeek key picked for a project whose
+    roles run on Claude. Refused — nothing pays Anthropic — in a sentence that
+    says what the key does pay and both moves; then created once every seat
+    is moved onto a DeepSeek model, as the New Project form's "Run every seat
+    on" sends it."""
+    make_project(client, start=False)
+    deepseek = _id(_credential(client, "DeepSeek key", provider="deepseek"))
+    body = {"slug": "on-deepseek", "name": "On DeepSeek", "chairman_email": "chair@example.com",
+            "goal": "Prove the framework works end to end.", "ceo_role_slug": "ceo",
+            "ceo_name": "CEO", "billing_secret_id": deepseek,
+            "teams": [{"role_slug": "worker", "name": "Alpha", "employees": ["Ada", "Lin"]}]}
+    refused = client.post("/admin/projects", headers=ADMIN, json=body)
+    assert refused.status_code == 422
+    assert "an Anthropic model, and this project holds no Anthropic credential" in refused.text
+    assert "it pays DeepSeek" in refused.text and "or pay Anthropic too" in refused.text
+    assert _price(client, "deepseek-chat").status_code == 200
+    moved = {**body, "ceo_model_override": "deepseek-chat",
+             "teams": [{**body["teams"][0],
+                        "model_overrides": {"Ada": "deepseek-chat", "Lin": "deepseek-chat"}}]}
+    created = client.post("/admin/projects", headers=ADMIN, json=moved)
+    assert created.status_code == 200, created.text
+    assert client.post(f"/admin/projects/{created.json()['id']}/start",
+                       headers=ADMIN).status_code == 200
