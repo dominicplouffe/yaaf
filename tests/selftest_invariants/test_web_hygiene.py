@@ -146,3 +146,61 @@ def test_nothing_that_only_wants_reading_sits_under_the_decision_heading():
         "does not block and does not expire — it belongs with the news, which "
         "is the `news` array below it."
     )
+
+
+def _css_rule(css: str, selector: str) -> str:
+    match = re.search(re.escape(selector) + r"\s*\{([^{}]*)\}", css)
+    assert match, f"styles.css no longer has a `{selector}` rule"
+    return match.group(1)
+
+
+def _relative_luminance(rgb: tuple[float, ...]) -> float:
+    def channel(c: float) -> float:
+        c /= 255
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+    r, g, b = (channel(c) for c in rgb)
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def _contrast(a: tuple[float, ...], b: tuple[float, ...]) -> float:
+    hi, lo = sorted((_relative_luminance(a), _relative_luminance(b)), reverse=True)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def test_your_own_chat_bubble_is_readable_in_both_themes():
+    """The bubble you send is painted with --accent, which makes it a ground of
+    its own — and everything inside it was still coloured for the page. "You"
+    and the time were --muted on the accent: 1.4:1 dark, 1.3:1 light. Every
+    link was --accent on --accent: 1:1, there in the DOM and invisible on the
+    screen. The header of `styles.css` promises 4.5:1 against each colour's
+    own ground; nothing checked it here, and the chairman found it by not
+    being able to read their own messages to the CEO.
+    """
+    css = (WEB_SRC / "styles.css").read_text()
+
+    body = _css_rule(css, ".msg.me .body")
+    assert re.search(r"--accent:\s*var\(--on-accent\)", body), (
+        "inside your own bubble a link is painted --accent, which is the "
+        "bubble's own colour — re-ground --accent for `.msg.me .body`"
+    )
+
+    meta = _css_rule(css, ".msg.me .who, .msg.me .when")
+    alpha = re.search(r"color:\s*rgba\(var\(--on-accent-rgb\),\s*([\d.]+)\)", meta)
+    assert alpha, "the bubble's name and time are no longer drawn from --on-accent"
+
+    themes = re.findall(r"\{([^{}]*--on-accent:[^{}]*)\}", css)
+    assert len(themes) == 3, "expected the dark, OS-light and chosen-light token sets"
+    for theme in themes:
+        tokens = dict(re.findall(r"(--[\w-]+):\s*([^;]+);", theme))
+        ground = tuple(int(tokens["--accent"][i : i + 2], 16) for i in (1, 3, 5))
+        ink = tuple(int(tokens["--on-accent"][i : i + 2], 16) for i in (1, 3, 5))
+        assert ink == tuple(int(c) for c in tokens["--on-accent-rgb"].split(",")), (
+            "--on-accent-rgb has drifted from --on-accent"
+        )
+        a = float(alpha.group(1))
+        meta_ink = tuple(a * i + (1 - a) * g for i, g in zip(ink, ground))
+        ratio = _contrast(meta_ink, ground)
+        assert ratio >= 4.5, (
+            f"the bubble's name and time are {ratio:.2f}:1 on {tokens['--accent']}"
+        )

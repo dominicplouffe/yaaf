@@ -50,6 +50,7 @@
   --accent: #8ca0f0;
   --accent-rgb: 140, 160, 240;
   --on-accent: #14161f;
+  --on-accent-rgb: 20, 22, 31;
   --accent-2: #c96e48;
   --accent2-rgb: 201, 110, 72;
 
@@ -92,6 +93,7 @@
   --accent: #3355cc;
   --accent-rgb: 51, 85, 204;
   --on-accent: #ffffff;
+  --on-accent-rgb: 255, 255, 255;
   --accent-2: #c2643e;
   --accent2-rgb: 194, 100, 62;
 
@@ -131,6 +133,7 @@
   --accent: #3355cc;
   --accent-rgb: 51, 85, 204;
   --on-accent: #ffffff;
+  --on-accent-rgb: 255, 255, 255;
   --accent-2: #c2643e;
   --accent2-rgb: 194, 100, 62;
 
@@ -484,6 +487,21 @@ button.eye:hover { color: var(--ink); }
 .msg .who { font-size: var(--t-micro); color: var(--muted); margin-bottom: 3px; }
 .msg .body { word-break: break-word; }
 .msg .when { font-size: var(--t-micro); color: var(--muted); margin-top: 4px; text-align: right; }
+/* Your own bubble is painted with the accent, so it is a ground of its own and
+   the page's tokens are wrong on it: --muted put "You" and the time at 1.3:1,
+   and every link is --accent — the bubble itself, 1:1. So the tokens are
+   re-grounded for what sits inside it, and anything the markdown draws there
+   (links, code, quotes, rules) follows. A link the same colour as the text
+   around it keeps its underline. */
+.msg.me .who, .msg.me .when { color: rgba(var(--on-accent-rgb), 0.85); }
+.msg.me .body {
+  --accent: var(--on-accent);
+  --ink-2: var(--on-accent);
+  --surface-2: rgba(var(--on-accent-rgb), 0.12);
+  --border: rgba(var(--on-accent-rgb), 0.3);
+  --grid: rgba(var(--on-accent-rgb), 0.3);
+}
+.msg.me .body a { text-decoration: underline; }
 /* The head of the scroller: the sentinel that pulls older messages in, and the
    cap that says there is nothing above it. Both are quiet — the reader should
    be reading the conversation, not the paging. */
