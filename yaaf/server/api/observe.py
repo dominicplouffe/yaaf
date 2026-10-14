@@ -1413,6 +1413,9 @@ def inbox(project_id: str, session: Session = Depends(db)) -> dict:
             "unread": len(unread),
             "messages": [
                 {"id": m.id, "channel_id": m.channel_id, "channel": where(channel),
+                 # Which party wrote it, not only a name: the MCP reader wraps
+                 # agent text and leaves the chairman's words as they are.
+                 "from_agent": m.sender_agent_id, "from_user": m.sender_user_id,
                  "from_name": ((authority.speaker(session, project, m.sender_user_id)
                                 or "chairman") if m.sender_user_id
                                else names.get(m.sender_agent_id)),

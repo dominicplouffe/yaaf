@@ -256,8 +256,8 @@ export interface InboxView {
     kind: string;
     team_name: string | null;
     unread: number;
-    messages: { id: string; channel_id: string; channel: string; from_name: string | null;
-                body: string; at: string }[];
+    messages: { id: string; channel_id: string; channel: string; from_agent: string | null;
+                from_user: string | null; from_name: string | null; body: string; at: string }[];
   }[];
 }
 

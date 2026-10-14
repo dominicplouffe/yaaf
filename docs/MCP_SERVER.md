@@ -371,6 +371,7 @@ Status column tracks implementation. `M1`…`M4` are the milestones below.
 | `receipt` | Whole-life cost beside what the platform verified. `format=text` returns the pasteable block. No envelope, because it carries no agent prose. | `GET /observe/projects/{id}/receipt` | **done** |
 | `org` | Teams, agents, schedules, one agent's detail, the board — and what each seat actually did in a window (`since`: `today`, `yesterday`, `7d`, a date). | `GET /observe/projects/{id}/org` `/board` `/activity`, `/observe/agents/{id}` | **done** (M1) |
 | `channels` | Channel list and messages. **Wraps agent text.** | `GET /observe/projects/{id}/channels`, `/observe/channels/{id}/messages` | **done** (M1) |
+| `inbox` | Each agent's unread messages and the inbox-read allowance — what the dashboard's inbox banner counts. `agent` for one. **Wraps agent text.** | `GET /observe/projects/{id}/inbox` | **done** |
 | `files` | Workspace listing and file content. **Wraps agent text.** Long files walk by `offset`. | `GET /observe/projects/{id}/files` `/files/content` | **done** (M1) |
 | `record` | The judgement record. `view`: `decisions` \| `reviews` \| `cycles` \| `hypotheses` \| `suggestions` \| `memories` \| `approvals`. | `GET /observe/projects/{id}/ceo_decisions` and siblings | **done** (M1) |
 
