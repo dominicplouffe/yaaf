@@ -144,6 +144,7 @@ yaaf stop  my-slug --reason "shipped"
 | `yaaf board PROJECT` | The task board. |
 | `yaaf org PROJECT` | Teams, leads, employees, who's awake, and which teams have a declared end. |
 | `yaaf channels PROJECT` | Channels and their ids. |
+| `yaaf inbox PROJECT` | Each agent's unread messages, newest first, and how many inbox reads the project has left — the messages the dashboard's inbox banner counts. |
 | `yaaf tail CHANNEL_ID [--limit 30]` | Recent messages, formatted, frozen threads marked. |
 | `yaaf runs PROJECT [--limit 20]` | Recent runs: agent, wake reason, cost, status. |
 | `yaaf activity PROJECT [--since today]` | Who spent the runs: one row a seat, with runs, wake reasons, tokens, money and tasks closed. `--since` takes `today` (the run day, which starts at 00:00 UTC when the ration resets), `yesterday`, `7d`, a date in the project's timezone, or an ISO timestamp. |

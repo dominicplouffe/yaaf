@@ -50,6 +50,7 @@
   --accent: #8ca0f0;
   --accent-rgb: 140, 160, 240;
   --on-accent: #14161f;
+  --on-accent-rgb: 20, 22, 31;
   --accent-2: #c96e48;
   --accent2-rgb: 201, 110, 72;
 
@@ -92,6 +93,7 @@
   --accent: #3355cc;
   --accent-rgb: 51, 85, 204;
   --on-accent: #ffffff;
+  --on-accent-rgb: 255, 255, 255;
   --accent-2: #c2643e;
   --accent2-rgb: 194, 100, 62;
 
@@ -131,6 +133,7 @@
   --accent: #3355cc;
   --accent-rgb: 51, 85, 204;
   --on-accent: #ffffff;
+  --on-accent-rgb: 255, 255, 255;
   --accent-2: #c2643e;
   --accent2-rgb: 194, 100, 62;
 
@@ -453,6 +456,30 @@ button.eye:hover { color: var(--ink); }
   display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
 }
 .brief-head > button { flex: none; }
+/* The inbox brief's two ways out, and the explainer under them. */
+.brief-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
+.brief-actions a:hover { text-decoration: none; }
+.inbox-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.inbox-confirm-actions { display: inline-flex; gap: 6px; }
+.inbox-help { margin-top: 8px; }
+.inbox-help summary { cursor: pointer; color: var(--accent); font-size: var(--t-small); width: fit-content; }
+.inbox-help dl { margin: 4px 0 0; max-width: 72ch; }
+.inbox-help dt { font-weight: 600; color: var(--ink); margin-top: 10px; }
+.inbox-help dd { margin: 2px 0 0; color: var(--ink-2); }
+.inbox-help .help { margin: 10px 0 0; }
+/* The agent inbox: one card per agent that is holding mail. */
+.inbox-summary, .inbox-agent { margin-top: var(--s3); }
+.inbox-who { display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; }
+.inbox-name {
+  background: none; border: 0; padding: 0; min-height: 0; font: inherit; font-weight: 600;
+  color: var(--ink); cursor: pointer;
+}
+.inbox-name:hover { color: var(--accent); background: none; }
+.inbox-list { list-style: none; margin: var(--s3) 0 0; padding: 0; }
+.inbox-list li { padding: var(--s2) 0; border-top: 1px solid var(--border); }
+.inbox-meta { font-size: var(--t-small); color: var(--muted); }
+.inbox-meta b { color: var(--ink); font-weight: 600; }
+.inbox-body { margin-top: 2px; }
 .working-dot {
   width: 8px; height: 8px; border-radius: 50%; background: var(--accent);
   flex: none; animation: working-pulse 1.6s ease-in-out infinite;
@@ -484,6 +511,21 @@ button.eye:hover { color: var(--ink); }
 .msg .who { font-size: var(--t-micro); color: var(--muted); margin-bottom: 3px; }
 .msg .body { word-break: break-word; }
 .msg .when { font-size: var(--t-micro); color: var(--muted); margin-top: 4px; text-align: right; }
+/* Your own bubble is painted with the accent, so it is a ground of its own and
+   the page's tokens are wrong on it: --muted put "You" and the time at 1.3:1,
+   and every link is --accent — the bubble itself, 1:1. So the tokens are
+   re-grounded for what sits inside it, and anything the markdown draws there
+   (links, code, quotes, rules) follows. A link the same colour as the text
+   around it keeps its underline. */
+.msg.me .who, .msg.me .when { color: rgba(var(--on-accent-rgb), 0.85); }
+.msg.me .body {
+  --accent: var(--on-accent);
+  --ink-2: var(--on-accent);
+  --surface-2: rgba(var(--on-accent-rgb), 0.12);
+  --border: rgba(var(--on-accent-rgb), 0.3);
+  --grid: rgba(var(--on-accent-rgb), 0.3);
+}
+.msg.me .body a { text-decoration: underline; }
 /* The head of the scroller: the sentinel that pulls older messages in, and the
    cap that says there is nothing above it. Both are quiet — the reader should
    be reading the conversation, not the paging. */

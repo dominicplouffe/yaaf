@@ -333,6 +333,9 @@ decision, and configuration change. The dashboard surfaces it as:
 
 - **Runs** — every model call: which agent, which team, why it woke, what it
   cost, its full trace.
+- **Agent inbox** — each agent's unread messages, and how many wakes the
+  project may spend just reading them (`inbox_runs_per_project_per_day`; the
+  quieter tempo cards set it to 0, so agents read on their next work wake).
 - **Messages** — every channel, including ones you can read but not speak in.
 - **Memory** — what the project chose to remember.
 - **Decisions** — everything you decided, and everything that decided itself

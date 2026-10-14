@@ -127,7 +127,7 @@ def test_an_observer_reads_everything_and_decides_nothing(cast):
     page = client.get(f"/observe/projects/{pid}", headers=obs)
     assert page.status_code == 200
     assert page.json()["my_role"] == "observer" and page.json()["can_steer"] is False
-    for path in ("plan", "spend", "org", "runs", "approvals", "requirements"):
+    for path in ("plan", "spend", "org", "runs", "approvals", "requirements", "inbox"):
         prefix = "/admin" if path == "requirements" else "/observe"
         assert client.get(f"{prefix}/projects/{pid}/{path}", headers=obs).status_code == 200, path
 

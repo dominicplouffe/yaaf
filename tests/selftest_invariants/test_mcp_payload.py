@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 
-from tests.conftest import ADMIN, bearer, channel_of, live_token, make_project
+from tests.conftest import ADMIN, agent_by_name, bearer, channel_of, live_token, make_project
 from tests.selftest_invariants.test_mcp_auth import foreign_project, mint, rpc
 
 SLUG = "acme"
@@ -68,6 +68,7 @@ def test_every_read_tool_stays_inside_the_default_budget(client):
         ("org", {"project": SLUG}),
         ("channels", {"project": SLUG}),
         ("channels", {"project": SLUG, "channel": project["channel"]}),
+        ("inbox", {"project": SLUG}),
         ("files", {"project": SLUG}),
         ("record", {"project": SLUG}),
     ]
@@ -77,6 +78,25 @@ def test_every_read_tool_stays_inside_the_default_budget(client):
         for name, arguments in calls
     }
     assert not {k: v for k, v in oversized.items() if v > DEFAULT_CEILING}, oversized
+
+
+def test_a_full_inbox_fits_and_says_what_it_left_out(client):
+    """Every message lands in each reader's inbox, so a chatty room multiplies:
+    sixty long messages are sixty per teammate. The default call still has to
+    fit, and still has to say it was cut."""
+    project = make_project(client, slug=SLUG)
+    team_room = channel_of(client, project["id"], "team")
+    _, token = live_token(project["id"], agent_by_name(project, "Lead"))
+    for n in range(60):
+        posted = client.post("/agent/messages", headers=bearer(token), json={
+            "channel_id": team_room, "body": f"Update {n}: " + ("detail. " * 120)})
+        assert posted.status_code == 200, posted.text
+    reader = mint(client)
+
+    text = text_of(client, reader["token"], "inbox", {"project": SLUG})
+    assert len(text) <= DEFAULT_CEILING, len(text)
+    body = json.loads(text)
+    assert body["unread"] >= 60 and body["truncated"] is True
 
 
 def test_a_cut_is_always_declared(client):

@@ -558,11 +558,97 @@ def test_a_spent_reading_allowance_is_a_gate_with_a_name(client):
     assert state["waiting"]["unread"] >= 1
     assert state["blocked_by"] == "inbox_runs", state["brief"]
     assert state["brief"]["tone"] == "serious"
-    assert "reading allowance is spent" in state["brief"]["headline"]
+    # Zero is reading switched off, not an allowance spent: no refill is
+    # coming at midnight, so the banner must not promise one.
+    said = state["brief"]["headline"] + " " + state["brief"]["detail"]
+    assert "1 unread message is waiting" in state["brief"]["headline"]
+    assert "doesn't wake agents just to read" in state["brief"]["headline"]
+    assert "spent" not in said and "00:00" not in said, said
 
     # And the dispatcher agrees, which is the property the sentence claims.
     with db_session() as session:
         assert dispatcher.dispatch_once(session) == 0
+
+
+def test_the_banner_button_turns_reading_back_on(client):
+    """The inbox banner's button sends one amendment: the working-hours card's
+    reading allowance, 12 a day and 4 an hour (`nextInboxStep` in
+    web/src/inbox.tsx). On a project with reading switched off at BOTH
+    ceilings — what the few-times-daily card ships — the daily number alone
+    would change nothing, so this checks the pair lands and that the wake it
+    promises is actually bought."""
+    project = make_project(client, constitution={"inbox_runs_per_project_per_day": 0,
+                                                 "inbox_runs_per_project_per_hour": 0})
+    _drain()
+    team_room = channel_of(client, project["id"], "team")
+    with db_session() as session:
+        session.add(Message(
+            id=ids.new_id(ids.MESSAGE), project_id=project["id"],
+            channel_id=team_room, sender_agent_id=agent_by_name(project, "Lead"),
+            body="can somebody check the totals before I send this",
+            created_at=utcnow() - timedelta(minutes=30)))
+    assert _activity(project)["blocked_by"] == "inbox_runs"
+
+    response = client.post(
+        f"/admin/projects/{project['id']}/amendments", headers=ADMIN,
+        json={"reason": "Let agents wake up to read their messages (from the inbox banner).",
+              "changes": {"inbox_runs_per_project_per_day": 12,
+                          "inbox_runs_per_project_per_hour": 4}})
+    assert response.status_code == 200, response.text
+
+    state = _activity(project)
+    assert state["blocked_by"] != "inbox_runs", state["brief"]
+    assert state["inbox_runs"]["cap_today"] == 12
+    with db_session() as session:
+        assert dispatcher.dispatch_once(session) >= 1
+
+
+def test_the_inbox_lists_exactly_what_the_banner_counts(client):
+    """"20 messages unread" with nowhere to read them is a number nobody can
+    check. The inbox is that number opened up: the same rows, under the agents
+    who have not read them — and never under the agent who wrote one."""
+    project = make_project(client, constitution={"inbox_runs_per_project_per_day": 0})
+    _drain()
+    team_room = channel_of(client, project["id"], "team")
+    lead = agent_by_name(project, "Lead")
+    with db_session() as session:
+        session.add(Message(
+            id=ids.new_id(ids.MESSAGE), project_id=project["id"],
+            channel_id=team_room, sender_agent_id=lead,
+            body="the numbers in section four do not add up",
+            created_at=utcnow() - timedelta(minutes=30)))
+
+    inbox = client.get(f"/observe/projects/{project['id']}/inbox", headers=ADMIN).json()
+    assert inbox["unread"] == _activity(project)["waiting"]["unread"] >= 1
+    assert inbox["reading"]["cap_today"] == 0
+
+    holding = [a for a in inbox["agents"] if a["unread"]]
+    assert holding and lead not in {a["id"] for a in holding}
+    for seat in holding:
+        message = seat["messages"][0]
+        assert message["body"] == "the numbers in section four do not add up"
+        assert message["from_name"] == "Lead"
+        assert message["channel"].endswith("team room")
+    lead_seat = next(a for a in inbox["agents"] if a["id"] == lead)
+    assert lead_seat["unread"] == 0 and lead_seat["messages"] == []
+
+
+def test_a_used_up_reading_allowance_says_when_it_comes_back():
+    """The other half of the inbox rung: a real allowance, all of it used. This
+    one does refill, so it names the moment — and the hourly brake, which
+    clears continuously, must not borrow midnight from the daily one."""
+    daily = _synthetic("inbox_runs")
+    brief = dispatcher._activity_brief(daily)
+    assert brief["headline"] == (
+        "4 unread messages are waiting, and today's 40 inbox reads are used up.")
+    assert brief["detail"].startswith("Inbox reads reset at 00:00 UTC.")
+
+    hourly = _synthetic("inbox_runs")
+    hourly["inbox_runs"] = {"used_today": 10, "cap_today": 40,
+                            "used_this_hour": 8, "cap_this_hour": 8}
+    brief = dispatcher._activity_brief(hourly)
+    assert "this hour's 8 inbox reads are used up" in brief["headline"]
+    assert "00:00" not in brief["detail"]
 
 
 def test_a_quiet_board_does_not_claim_nobody_has_mail(client):

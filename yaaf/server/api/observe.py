@@ -27,6 +27,7 @@ from yaaf.core.models import (
     AuditSample,
     AuditSampleStatus,
     Channel,
+    ChannelKind,
     Commitment,
     Evidence,
     EvidenceKind,
@@ -72,7 +73,13 @@ from yaaf.server import (
 )
 from yaaf.server import asks as ask_lib
 from yaaf.server.deps import db
-from yaaf.server.dispatcher import activity_state, chat_session_live
+from yaaf.server.dispatcher import (
+    activity_state,
+    chat_session_live,
+    day_start,
+    inbox_runs_used,
+    unread_messages_for,
+)
 from yaaf.server.identity import Person, person_auth, signed_in
 from yaaf.server.receipt import receipt as receipt_projection
 from yaaf.server.rows import approval_row
@@ -1359,6 +1366,75 @@ def channels(project_id: str, session: Session = Depends(db)) -> list[dict]:
             select(Channel).where(Channel.project_id == project.id)
         ).scalars()
     ]
+
+
+#: Enough to read what is waiting without turning an agent that has fallen far
+#: behind into a page of thousands of rows. The count above it stays exact.
+INBOX_MESSAGES_PER_AGENT = 50
+
+
+@router.get("/projects/{project_id}/inbox", dependencies=[authority.READ])
+def inbox(project_id: str, session: Session = Depends(db)) -> dict:
+    """Every agent's unread messages, newest first, and the reading allowance.
+
+    The banner could say "20 messages unread" and the only place to look was a
+    per-channel log with no idea who had read what — so the number was an
+    assertion nobody could check. These are the rows the dispatcher counts
+    (`unread_messages_for`), so the inbox and the banner agree by construction.
+    """
+    project = _project(session, project_id)
+    cons = effective(session, project.id)
+    now = utcnow()
+    _, teams = _name_maps(session, project.id)
+    agents = list(session.execute(
+        select(Agent).where(Agent.project_id == project.id,
+                            Agent.status == AgentStatus.ACTIVE)
+    ).scalars())
+
+    def where(channel: Channel | None) -> str:
+        if channel is None:
+            return "a channel"
+        if channel.kind == ChannelKind.TEAM:
+            return f"{teams.get(channel.team_id) or 'Team'} team room"
+        return channel.kind.capitalize()
+
+    seats = []
+    for agent in agents:
+        unread = sorted(unread_messages_for(session, project, agent),
+                        key=lambda pair: (pair[0].created_at, pair[0].id), reverse=True)
+        senders = {m.sender_agent_id for m, _ in unread[:INBOX_MESSAGES_PER_AGENT]
+                   if m.sender_agent_id}
+        names = ({a.id: a.name for a in session.execute(
+            select(Agent.id, Agent.name).where(Agent.id.in_(senders))).all()}
+            if senders else {})
+        seats.append({
+            "id": agent.id, "name": agent.name, "kind": agent.kind,
+            "team_name": teams.get(agent.team_id),
+            "unread": len(unread),
+            "messages": [
+                {"id": m.id, "channel_id": m.channel_id, "channel": where(channel),
+                 # Which party wrote it, not only a name: the MCP reader wraps
+                 # agent text and leaves the chairman's words as they are.
+                 "from_agent": m.sender_agent_id, "from_user": m.sender_user_id,
+                 "from_name": ((authority.speaker(session, project, m.sender_user_id)
+                                or "chairman") if m.sender_user_id
+                               else names.get(m.sender_agent_id)),
+                 "body": m.body, "at": m.created_at.isoformat()}
+                for m, channel in unread[:INBOX_MESSAGES_PER_AGENT]
+            ],
+        })
+    seats.sort(key=lambda s: (-s["unread"], s["name"]))
+    return {
+        "unread": sum(s["unread"] for s in seats),
+        # The same counts `activity_state` reports, from the same function.
+        "reading": {
+            "used_today": inbox_runs_used(session, project, day_start(now)),
+            "cap_today": cons.inbox_runs_per_project_per_day,
+            "used_this_hour": inbox_runs_used(session, project, now - timedelta(hours=1)),
+            "cap_this_hour": cons.inbox_runs_per_project_per_hour,
+        },
+        "agents": seats,
+    }
 
 
 @router.get("/channels/{channel_id}/typing", dependencies=[authority.READ])

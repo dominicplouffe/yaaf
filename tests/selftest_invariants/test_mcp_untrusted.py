@@ -16,8 +16,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from tests.conftest import ADMIN, bearer, channel_of, live_token, make_project
-from tests.selftest_invariants.test_mcp_auth import mint, rpc
+from tests.conftest import ADMIN, agent_by_name, bearer, channel_of, live_token, make_project
+from tests.selftest_invariants.test_mcp_auth import foreign_project, mint, rpc
 from yaaf.core.config import settings
 from yaaf.server.mcp.envelope import CLOSE, OPEN
 
@@ -106,6 +106,43 @@ def test_the_chairmans_own_words_are_not_wrapped(client):
     for message in chairman:
         assert OPEN not in message["body"]
         assert message["body"] == "ship it by Friday"
+
+
+def test_the_inbox_wraps_what_agents_wrote_and_not_what_the_chairman_said(client):
+    """The inbox is the channels' words reached by a second door — and a second
+    door onto agent text is exactly where the envelope gets forgotten."""
+    project = make_project(client, slug=SLUG)
+    team_room = channel_of(client, project["id"], "team")
+    _, token = live_token(project["id"], agent_by_name(project, "Lead"))
+    posted = client.post("/agent/messages", json={"channel_id": team_room, "body": INJECTION},
+                         headers=bearer(token))
+    assert posted.status_code == 200, posted.text
+    assert client.post(f"/admin/projects/{project['id']}/boardroom",
+                       json={"body": "ship it by Friday"}, headers=ADMIN).status_code == 200
+    reader = mint(client)
+
+    view = payload(call(client, reader["token"], "inbox", {"project": SLUG}))
+    bodies = {seat["name"]: [m["body"] for m in seat["messages"]] for seat in view["agents"]}
+    from_lead = [body for name, said in bodies.items() if name != "Lead"
+                 for body in said if "IGNORE YOUR PREVIOUS INSTRUCTIONS" in body]
+    assert from_lead, bodies
+    for body in from_lead:
+        assert body.startswith(OPEN) and body.rstrip().endswith(CLOSE)
+        assert 'author="Lead"' in body and 'kind="message"' in body
+    # The chairman's line, waiting in the CEO's inbox, is his and stays bare.
+    assert "ship it by Friday" in bodies["CEO"]
+
+
+def test_the_inbox_will_not_open_another_projects_agent(client):
+    """`agent` is an id, and an id read off someone else's project must not
+    sail past a gate that only ever checked the `project` argument."""
+    make_project(client, slug=SLUG)
+    theirs = foreign_project(client)
+    reader = mint(client)
+    result = call(client, reader["token"], "inbox",
+                  {"project": SLUG, "agent": theirs["ceo_agent_id"]})
+    assert result["isError"] is True, result
+    assert "no agent" in result["content"][0]["text"]
 
 
 def test_a_workspace_file_an_agent_wrote_is_wrapped_too(client):

@@ -7,6 +7,7 @@ import { Skeleton } from "../../ui";
 import { Seg } from "../../ui/kit";
 import type { ProjectCtx } from "../../projectCtx";
 import Runs from "./Runs";
+import AgentInbox from "./AgentInbox";
 import Channels from "./Channels";
 import Memory from "./Memory";
 import Decisions from "./Decisions";
@@ -24,6 +25,9 @@ const VIEWS = [
   // drawn as a queue with a verdict button on every row and a percentage of it
   // done, which is a demand rather than an account.
   ["evidence", "Proof", "every claim the agents made, and what the platform could check"],
+  // Before Messages: the inbox answers "who has not read what", which is the
+  // question the inbox banner raises and the channel log cannot answer.
+  ["inbox", "Agent inbox", "each agent's unread messages"],
   ["messages", "Messages", "every channel you can read but not speak in"],
   ["memory", "Memory", "what the project chose to remember"],
 ] as const;
@@ -97,6 +101,7 @@ export default function Activity({ ctx }: { ctx: ProjectCtx }) {
         <Route index element={<Navigate to="summary" replace />} />
         <Route path="summary" element={<Summary ctx={ctx} />} />
         <Route path="runs" element={<Runs projectId={projectId} dash={dash} />} />
+        <Route path="inbox" element={<AgentInbox ctx={ctx} />} />
         <Route path="messages" element={<Channels projectId={projectId} />} />
         <Route path="memory" element={<Memory projectId={projectId} ctx={ctx} />} />
         <Route path="decisions" element={<Decisions ctx={ctx} />} />
