@@ -31,7 +31,7 @@ The lines these tests hold:
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -568,7 +568,7 @@ def test_the_capacity_forecast_moves_with_the_tempo(client):
 # ── the hazard that had to be checked rather than assumed ───────────────────────
 
 
-def test_a_quiet_project_out_of_runs_is_not_reported_as_stalled(client):
+def test_a_quiet_project_out_of_runs_is_not_reported_as_stalled(client, monkeypatch):
     """`stall_hours` is deliberately NOT a tempo rule, and this is why.
 
     The watchdog tells the chairman when a project with work on its board has
@@ -583,8 +583,28 @@ def test_a_quiet_project_out_of_runs_is_not_reported_as_stalled(client):
     Deliberately slow: this drives the real janitor over a real board, because
     the thing under test is the interaction between three subsystems and a
     mocked one of them would prove nothing.
+
+    It runs at noon UTC, not on the wall clock. The board it builds — the
+    day's whole allowance spent, every run of it older than the watchdog's
+    window — cannot exist before 03:00, when nothing from today is three hours
+    old yet, because the run day starts at midnight UTC. On the wall clock the
+    runs landed on yesterday, the ceiling read as unspent, and this failed
+    every night between midnight and five.
     """
+    from yaaf.core import models
     from yaaf.server import dispatcher, janitor
+
+    noon = dispatcher.day_start(utcnow()) + timedelta(hours=12)
+
+    class _AtNoon(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return noon
+
+    # Every clock read on this path is `models.utcnow()`, column defaults
+    # included, and that reads `datetime` from its own module.
+    monkeypatch.setattr(models, "datetime", _AtNoon)
+    assert utcnow() == noon
 
     project = make_project(client, mode="operate",
                            constitution={"cycle_frequency": "weekly"})
