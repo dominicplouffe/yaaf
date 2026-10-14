@@ -237,6 +237,30 @@ export interface ActivityBrief {
   clears_at: string | null;
 }
 
+/** How many wakes that only read messages the project may spend, and has. */
+export interface InboxReading {
+  used_today: number;
+  cap_today: number;
+  used_this_hour: number;
+  cap_this_hour: number;
+}
+
+/** GET /observe/projects/:id/inbox — every agent's unread messages, newest
+    first. The same rows the dispatcher counts, so this and the banner agree. */
+export interface InboxView {
+  unread: number;
+  reading: InboxReading;
+  agents: {
+    id: string;
+    name: string;
+    kind: string;
+    team_name: string | null;
+    unread: number;
+    messages: { id: string; channel_id: string; channel: string; from_name: string | null;
+                body: string; at: string }[];
+  }[];
+}
+
 /** Why work is or isn't starting — the dispatcher's own gates, read-only.
     `blocked_by` names the first gate stopping a run, and is null only when
     there is genuinely nothing to do. Prefer `brief` for anything you render;
@@ -263,6 +287,7 @@ export interface Activity {
     | "checking"
     | "review_owed"
     | "delivery_ready"
+    | "inbox_runs"
     | null;
   brief: ActivityBrief;
   daily_runs: { used: number; cap: number; resets_at: string };
@@ -276,6 +301,8 @@ export interface Activity {
   /** Notices and messages waiting for a third, or for the oldest to age out. */
   coalescing: { ripe_at: string | null; agents_held: number };
   concurrency: { in_flight: number; cap: number };
+  /** The reading lane: wakes that only read messages, on their own ceiling. */
+  inbox_runs: InboxReading;
   waiting: {
     /** claimable + gated. Kept because "how much is open" is still a question;
         never render it as "ready to run" — that was the original lie. */
@@ -290,6 +317,8 @@ export interface Activity {
     checking_tasks: number;
     reviewing_tasks: number;
     notices: number;
+    /** Messages agents would wake to read — the rows the agent inbox lists. */
+    unread: number;
     agents_with_work: number;
   };
   /** Work that exists but the dispatcher cannot reach. */

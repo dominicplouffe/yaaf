@@ -199,7 +199,7 @@ def test_your_own_chat_bubble_is_readable_in_both_themes():
             "--on-accent-rgb has drifted from --on-accent"
         )
         a = float(alpha.group(1))
-        meta_ink = tuple(a * i + (1 - a) * g for i, g in zip(ink, ground))
+        meta_ink = tuple(a * i + (1 - a) * g for i, g in zip(ink, ground, strict=True))
         ratio = _contrast(meta_ink, ground)
         assert ratio >= 4.5, (
             f"the bubble's name and time are {ratio:.2f}:1 on {tokens['--accent']}"

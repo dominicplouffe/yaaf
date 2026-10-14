@@ -479,17 +479,16 @@ def _utc(value):
     return value
 
 
-def _unread_detail_for(
+def unread_messages_for(
     session: Session, project: Project, agent: Agent
-) -> tuple[int, object | None, bool]:
-    """Messages this agent would wake for, plus the two facts the coalescing
-    window turns on: when the oldest of them arrived, and whether any is urgent
-    enough to skip the window entirely.
+) -> list[tuple[Message, Channel | None]]:
+    """The messages this agent would wake to read, each with its channel.
 
     Mirrors the filter in _wake_reasons (not self-authored, not under a frozen
     root, boardroom skipped for a CEO whose chat session is live) minus the
     pair-breaker, which is a trip detector rather than a filter and cannot run
-    from a read path.
+    from a read path. The project inbox lists exactly these, and the banner
+    counts exactly these, so the two cannot name different numbers.
     """
     skip: set[str] = set()
     if agent.kind == AgentKind.CEO and chat_session_live(session, project):
@@ -499,9 +498,7 @@ def _unread_detail_for(
                                       Channel.kind == ChannelKind.BOARDROOM)
             ).scalars()
         }
-    total = 0
-    oldest = None
-    urgent = False
+    unread: list[tuple[Message, Channel | None]] = []
     for channel_id in policy.agent_channel_ids(session, agent):
         if channel_id in skip:
             continue
@@ -519,16 +516,29 @@ def _unread_detail_for(
             root = session.get(Message, message.thread_id or message.id)
             if root is not None and root.frozen_at is not None:
                 continue
-            total += 1
-            # Same urgency rule as _wake_reasons: the chairman never waits out
-            # a batching window, and neither does anything said in his room.
-            if (message.sender_user_id is not None
-                    or (channel is not None and channel.kind == ChannelKind.BOARDROOM)):
-                urgent = True
-            at = _utc(message.created_at)
-            if oldest is None or at < oldest:
-                oldest = at
-    return total, oldest, urgent
+            unread.append((message, channel))
+    return unread
+
+
+def _unread_detail_for(
+    session: Session, project: Project, agent: Agent
+) -> tuple[int, object | None, bool]:
+    """How many messages this agent would wake for, plus the two facts the
+    coalescing window turns on: when the oldest of them arrived, and whether
+    any is urgent enough to skip the window entirely."""
+    unread = unread_messages_for(session, project, agent)
+    oldest = None
+    urgent = False
+    for message, channel in unread:
+        # Same urgency rule as _wake_reasons: the chairman never waits out
+        # a batching window, and neither does anything said in his room.
+        if (message.sender_user_id is not None
+                or (channel is not None and channel.kind == ChannelKind.BOARDROOM)):
+            urgent = True
+        at = _utc(message.created_at)
+        if oldest is None or at < oldest:
+            oldest = at
+    return len(unread), oldest, urgent
 
 
 def _unread_for(session: Session, project: Project, agent: Agent) -> int:
@@ -861,20 +871,36 @@ def _activity_brief(state: dict) -> dict:
 
     if gate == "inbox_runs":
         i = state["inbox_runs"]
+        n = waiting["unread"]
+        unread = f"{n} unread message{'' if n == 1 else 's'}"
+        are = "is" if n == 1 else "are"
+        # A ceiling of zero is not a spent allowance — it is reading switched off,
+        # which the quieter tempo cards do on purpose. Calling it "spent" and
+        # promising midnight sent chairmen looking for a fault, and midnight
+        # changes nothing: zero refills to zero.
+        if i["cap_today"] == 0 or i["cap_this_hour"] == 0:
+            return brief(
+                "serious", "inbox",
+                f"{unread} waiting, inbox reads are off",
+                f"{unread.capitalize()} {are} waiting. This project doesn't wake "
+                "agents just to read messages.",
+                "Agents will read them the next time they wake up for real work, "
+                "like a task or the CEO's scheduled check-in. To have messages read "
+                "sooner, allow some inbox reads per day.",
+                sig=None)
         daily = i["used_today"] >= i["cap_today"]
-        which = (f"{i['used_today']} of {i['cap_today']} today"
-                 if daily else f"{i['used_this_hour']} of {i['cap_this_hour']} this hour")
+        used = (f"today's {i['cap_today']} inbox reads are used up" if daily
+                else f"this hour's {i['cap_this_hour']} inbox reads are used up")
         return brief(
-            "serious", "inbox full",
-            f"nobody can read their mail ({which})",
-            "Everyone with something to do has only unread mail, and the reading "
-            "allowance is spent.",
-            f"Reading has its own ceiling so it cannot crowd out working — {which}. "
-            f"Right now it is the only thing anyone has, so the project is stopped "
-            f"until {'00:00 UTC' if daily else 'the ceiling rolls off within the hour'}."
-            f"{queue} If a project genuinely talks this much, raise 'Inbox runs per "
-            "day, whole project' in Settings — or look at why it is talking instead "
-            "of working.",
+            "serious", "inbox",
+            f"{unread} waiting, {used}",
+            f"{unread.capitalize()} {are} waiting, and {used}.",
+            ("Inbox reads reset at 00:00 UTC." if daily
+             else "More inbox reads free up within the hour.")
+            + " Until then, agents read messages only when they wake up for real "
+            "work. Reading has its own limit so chatter can't use up the runs "
+            "meant for work. If this project needs to talk more, allow more inbox "
+            "reads per day.",
             sig=None)
 
     if gate == "governance_reserve":

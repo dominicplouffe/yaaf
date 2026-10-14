@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Navigate, NavLink, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { Dashboard, HealthCheck, post, ProjectHealth } from "../api";
+import { InboxExplainer, RaiseInboxReads } from "../inbox";
 import { firstName, ProjectCtx, useProjectFrame } from "../projectCtx";
 import { clip, statusBrief } from "../ui";
 import { Btn, PageHead } from "../ui/kit";
@@ -185,10 +186,15 @@ function StandingNotice({ dash }: { dash: Dashboard }) {
 
     Kept in sessionStorage, per project and per condition: a dismissal is a
     reading of right now, not a preference worth surviving a browser restart. */
-function StatusBriefBox({ dash, projectId }: { dash: Dashboard; projectId: string }) {
+function StatusBriefBox({ dash, projectId, reload }: {
+  dash: Dashboard; projectId: string; reload: () => void;
+}) {
   const brief = statusBrief(dash);
   const key = brief?.sig ? `yaaf.brief.${projectId}.${brief.sig}` : null;
   const [, tick] = useState(0);
+  // The inbox page carries the same button and explainer at its head; the
+  // banner over it says the sentence and leaves the rest to the page.
+  const onInbox = useLocation().pathname.endsWith("/activity/inbox");
 
   // The hide expires on a wall clock, so the box has to re-check itself even
   // when no poll lands — otherwise a brief could stay hidden past its moment.
@@ -235,6 +241,21 @@ function StatusBriefBox({ dash, projectId }: { dash: Dashboard; projectId: strin
       <div className="help" style={{ marginTop: 4 }}>
         {brief.detail}
       </div>
+      {/* The one brief whose cure is a setting the reader may not know exists,
+          and whose subject — the messages — had nowhere to be read. */}
+      {dash.status === "running" && dash.activity.blocked_by === "inbox_runs" && !onInbox && (
+        <>
+          <div className="brief-actions">
+            {dash.can_steer && (
+              <RaiseInboxReads projectId={projectId} reading={dash.activity.inbox_runs} onDone={reload} />
+            )}
+            <NavLink to={`/projects/${projectId}/activity/inbox`}>
+              <Btn small icon="inbox">See the unread messages</Btn>
+            </NavLink>
+          </div>
+          <InboxExplainer projectId={projectId} reading={dash.activity.inbox_runs} />
+        </>
+      )}
     </div>
   );
 }
@@ -360,7 +381,7 @@ export default function ProjectPage() {
       {/* One answer to "why is nothing happening?", on every page — a chairman
           who opens Tasks to see four of them sitting still should not have to
           go to the Overview to learn the project ran out of runs at 01:22. */}
-      <StatusBriefBox dash={dash} projectId={projectId} />
+      <StatusBriefBox dash={dash} projectId={projectId} reload={ctx.reload} />
       {ctx.error && (
         <div className="error">
           Not refreshing — {ctx.error}. The numbers below are the last that landed.
@@ -402,6 +423,7 @@ export default function ProjectPage() {
         <Route path="approvals" element={<Navigate to={`${base}/activity/decisions`} replace />} />
         <Route path="runs" element={<Navigate to={`${base}/activity/runs`} replace />} />
         <Route path="channels" element={<Navigate to={`${base}/activity/messages`} replace />} />
+        <Route path="inbox" element={<Navigate to={`${base}/activity/inbox`} replace />} />
         <Route path="memory" element={<Navigate to={`${base}/activity/memory`} replace />} />
         <Route path="*" element={<Navigate to={base} replace />} />
       </Routes>

@@ -816,6 +816,27 @@ def channels(project: str) -> None:
 
 
 @app.command()
+def inbox(project: str) -> None:
+    """Each agent's unread messages, newest first — what the inbox banner counts."""
+    with _client() as client:
+        response = client.get(f"/observe/projects/{_resolve_project(client, project)}/inbox")
+        if response.status_code >= 400:
+            _show(response)
+        view = response.json()
+        reading = view["reading"]
+        typer.echo(f"{view['unread']} unread · inbox reads {reading['used_today']}/"
+                   f"{reading['cap_today']} today, {reading['used_this_hour']}/"
+                   f"{reading['cap_this_hour']} this hour")
+        for seat in view["agents"]:
+            if not seat["unread"]:
+                continue
+            typer.echo(f"\n{seat['name']} — {seat['unread']} unread")
+            for message in seat["messages"]:
+                typer.echo(f"  [{message['at']}] {message['from_name'] or '?'} in "
+                           f"{message['channel']}: {message['body']}")
+
+
+@app.command()
 def tail(channel_id: str, limit: int = typer.Option(30, "--limit")) -> None:
     with _client() as client:
         response = client.get(f"/observe/channels/{channel_id}/messages",
