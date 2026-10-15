@@ -833,6 +833,18 @@ def _activity_brief(state: dict) -> dict:
         return {"tone": tone, "chip": chip, "short": short, "headline": headline,
                 "detail": detail, "banner": banner, "sig": sig, "clears_at": clears_at}
 
+    # A banner is for something the chairman has to do, or has to know about
+    # because it will not fix itself. Pacing, the wake ceiling, a batching
+    # window and a start time the CEO set are none of those: each clears on
+    # its own within the hour or at a moment already chosen, and each said so
+    # in its own words — "nothing here needs you". Raising a box for them put
+    # one over a project doing exactly what it was told, most of the day, and
+    # a box that is always up is a box nobody reads. They keep their sentence
+    # and their clearing time, which the Overview prints as a quiet line.
+    def quiet_wait(chip, short, headline, detail, *, sig, clears_at):
+        return brief("ok", chip, short, headline, detail, banner=False,
+                     sig=sig, clears_at=clears_at)
+
     if gate == "delivery_ready":
         return brief(
             "ok", "delivered",
@@ -865,8 +877,8 @@ def _activity_brief(state: dict) -> dict:
 
     if gate == "pacing":
         p = state["pacing"]
-        return brief(
-            "serious", "pacing",
+        return quiet_wait(
+            "pacing",
             f"pacing itself ({p['used']} of {p['cap']} this hour), next run "
             f"{_hhmm(p['frees_at'])}",
             f"Pacing itself — {p['used']} of {p['cap']} runs used in the last hour.",
@@ -931,8 +943,8 @@ def _activity_brief(state: dict) -> dict:
 
     if gate == "wake_ceiling":
         w = state["wake_ceiling"]
-        return brief(
-            "serious", "throttled",
+        return quiet_wait(
+            "throttled",
             f"every agent with work has hit its hourly wake ceiling, clearing "
             f"{_hhmm(w['frees_at'])}",
             f"Every agent with work has hit its hourly wake ceiling ({w['cap']}/hour).",
@@ -943,8 +955,8 @@ def _activity_brief(state: dict) -> dict:
 
     if gate == "coalescing":
         c = state["coalescing"]
-        return brief(
-            "warn", "batching",
+        return quiet_wait(
+            "batching",
             f"batching a wake until it is worth a run, due {_hhmm(c['ripe_at'])}",
             f"Holding a wake until it is worth the run — due {_hhmm(c['ripe_at'])}.",
             "Waking an agent costs a full-price run, so one or two notices wait for a "
@@ -953,8 +965,8 @@ def _activity_brief(state: dict) -> dict:
             sig="coalescing", clears_at=c["ripe_at"])
 
     if gate == "scheduled":
-        return brief(
-            "warn", "scheduled",
+        return quiet_wait(
+            "scheduled",
             f"the ready work is gated until {_hhmm(board['next_gate_at'])}",
             f"The only work on the board is scheduled for {_hhmm(board['next_gate_at'])}.",
             f"{board['gated']} task(s) carry a start time the CEO set, so nobody may "

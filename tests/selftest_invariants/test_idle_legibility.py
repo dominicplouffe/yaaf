@@ -86,6 +86,12 @@ FINE = {"concurrency", "agents_busy", "checking", "review_owed", "awaiting_ceo"}
 # in it reads as a permanent fault.
 WAITS = {"daily_runs", "pacing", "governance_reserve", "wake_ceiling",
          "coalescing", "scheduled"}
+# The waits that clear on their own within the hour, or at a moment the CEO
+# already chose, and need nothing from anybody. Stopped, but not a banner:
+# their own sentences say "nothing here needs you", and a box raised for them
+# was up over a resting project most of the day. The two day-long waits stay
+# loud — the project is idle until midnight and the cure is the chairman's.
+QUIET_WAITS = {"pacing", "wake_ceiling", "coalescing", "scheduled"}
 
 
 def _drain(max_rounds: int = 6) -> None:
@@ -172,11 +178,19 @@ def test_every_gate_the_ladder_can_name_has_a_sentence():
 def test_only_stopped_gates_raise_the_banner():
     """Concurrency, busy agents and checks in flight mean the project is
     *working*. A banner that fires when things are fine is how a reader learns
-    to stop reading it."""
-    for gate in (*FINE, None):
-        assert dispatcher._activity_brief(_synthetic(gate))["banner"] is False
-    for gate in sorted(GATES - FINE):
-        assert dispatcher._activity_brief(_synthetic(gate))["banner"] is True
+    to stop reading it.
+
+    And a stop is a banner only when somebody has to act on it, or it will not
+    end by itself. This said "every stopped gate" until the chairman named the
+    scheduled box useless: it, pacing, the wake ceiling and batching all clear
+    on their own and say so, so they print as a quiet line instead."""
+    for gate in (*FINE, *QUIET_WAITS, None):
+        assert dispatcher._activity_brief(_synthetic(gate))["banner"] is False, gate
+    for gate in sorted(GATES - FINE - QUIET_WAITS):
+        assert dispatcher._activity_brief(_synthetic(gate))["banner"] is True, gate
+    # Quiet is not silent: each still names the moment it ends.
+    for gate in QUIET_WAITS:
+        assert dispatcher._activity_brief(_synthetic(gate))["clears_at"], gate
 
 
 def test_a_task_scheduled_for_later_is_not_counted_as_ready(client):
@@ -513,7 +527,12 @@ def test_one_broken_project_does_not_stop_every_other_one(client):
 
 def test_the_health_page_carries_the_same_sentence(client):
     """One reader asking one question deserves one answer. The health check
-    used to re-write three of the gates by hand and knew nothing of the rest."""
+    used to re-write three of the gates by hand and knew nothing of the rest.
+
+    It carries the sentence for exactly the gates that raise the banner. A
+    scheduled start used to be the example here; it is a quiet wait now, and a
+    quiet wait on the health card would light the header badge over a project
+    doing what it was told — the same box by another door."""
     project = make_project(client)
     _drain()
     team_id = project["teams"][0]["id"]
@@ -528,11 +547,25 @@ def test_the_health_page_carries_the_same_sentence(client):
             created_at=utcnow(), updated_at=utcnow(),
         ))
 
-    health = client.get(f"/observe/projects/{project['id']}/health",
-                        headers=ADMIN).json()
-    activity = [c for c in health["checks"] if c["key"] == "activity"]
+    def activity_checks() -> list[dict]:
+        health = client.get(f"/observe/projects/{project['id']}/health",
+                            headers=ADMIN).json()
+        return [c for c in health["checks"] if c["key"] == "activity"]
+
+    assert _activity(project)["blocked_by"] == "scheduled"
+    assert activity_checks() == []
+
+    # A team nobody may claim for does not end by itself: banner, and the
+    # health card says it in the dispatcher's words.
+    with db_session() as session:
+        session.get(Team, team_id).lead_agent_id = None
+        session.query(Task).filter(Task.project_id == project["id"]).update(
+            {Task.not_before: None})
+    state = _activity(project)
+    assert state["blocked_by"] == "no_lead"
+    activity = activity_checks()
     assert len(activity) == 1
-    assert "scheduled for" in activity[0]["detail"]
+    assert state["brief"]["headline"] in activity[0]["detail"]
 
 
 def test_a_spent_reading_allowance_is_a_gate_with_a_name(client):

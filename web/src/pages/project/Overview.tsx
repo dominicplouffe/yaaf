@@ -222,6 +222,14 @@ function Kpis({ ctx }: { ctx: ProjectCtx }) {
           {health.early.length > 0 && ` · ${health.early.length} ended early`}
           {dash.activity.waiting.unread > 0 &&
             ` · ${dash.activity.waiting.unread} unread message${dash.activity.waiting.unread === 1 ? "" : "s"}`}
+          {/* A wait that ends by itself — a start time the CEO set, pacing, a
+              batching window — is said here and nowhere louder. The full
+              sentence is one hover away for a reader who wants the why. */}
+          {dash.status === "running" && !dash.activity.brief.banner && dash.activity.brief.clears_at && (
+            <span title={`${dash.activity.brief.headline} ${dash.activity.brief.detail}`}>
+              {` · resumes ${fmtSoon(dash.activity.brief.clears_at)}`}
+            </span>
+          )}
         </span>
         <Sparkline values={runsByHour(ctx.runs ?? [])} />
       </Link>
