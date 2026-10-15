@@ -278,7 +278,9 @@ def test_an_expired_approval_notifies_with_its_row(client, monkeypatch):
     _, token = live_token(project["id"], agent_by_name(project, "Lead"))
     filed = client.post("/agent/approvals", headers=bearer(token),
                         json={"kind": "spend", "title": "Buy a data pull",
-                              "body": "Two months.", "amount_usd": 40})
+                              "body": "Two months.",
+                              "if_declined": "We forecast from last year's data.",
+                              "amount_usd": 40})
     assert filed.status_code == 200, filed.text
     with db_session() as session:
         session.get(Approval, filed.json()["id"]).expires_at = utcnow() - timedelta(minutes=1)

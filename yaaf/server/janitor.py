@@ -84,7 +84,7 @@ from yaaf.server import asks as ask_lib
 from yaaf.server import briefing, metrics, policy, staffing
 from yaaf.server.notify import Attention, boardroom_line, chairman_notify
 from yaaf.server.policy import Refusal
-from yaaf.server.rows import approval_row
+from yaaf.server.rows import approval_row, chairman_time, requirement_name
 from yaaf.server.verifier import verify_pending_evidence
 
 log = logging.getLogger("yaaf.janitor")
@@ -166,7 +166,7 @@ def _janitor_project(session: Session, project: Project) -> None:
     nag_approvals(session, project, cons)
     expire_approvals(session, project, cons)
     answer_asks(session, project)
-    nag_asks(session, project)
+    nag_asks(session, project, cons)
     expire_asks(session, project)
     enforce_budget(session, project, cons)
     release_dead_claims(session, project, cons)
@@ -1854,12 +1854,18 @@ def nag_approvals(session: Session, project: Project, cons: ConstitutionDoc) -> 
             Approval.nag_sent_at.is_(None),
         )
     ).scalars():
+        # The case first and the clock last, in his timezone and in words:
+        # "expires at 2026-10-16 19:00 UTC, the timeout decision is DENY" was
+        # true and made him do a sum and a translation before he could tell
+        # whether it was tonight, and what silence would mean.
+        silence = "yes" if cons.approval_timeout_decision == "approve" else "no"
         chairman_notify(
             session, project,
             f"approval expiring: {approval.title}",
-            f"'{approval.title}' expires at {approval.expires_at:%Y-%m-%d %H:%M} UTC and "
-            f"the timeout decision is {cons.approval_timeout_decision.upper()}. "
-            f"Decide it in the approvals inbox.\n\n{approval.body[:2000]}",
+            f"{approval.body[:4000]}\n\n"
+            f"If you have not decided by {chairman_time(approval.expires_at, cons.timezone)}, "
+            f"the answer is {silence} — that is what this project's rules say. "
+            "Decide it on the Decisions screen.",
             kind="approval_expiring", data={"approval": approval_row(approval)},
             attention=Attention.ACTION,
         )
@@ -1935,7 +1941,7 @@ def answer_asks(session: Session, project: Project) -> int:
     return ask_lib.mark_answered(session, project.id, boardroom.id)
 
 
-def nag_asks(session: Session, project: Project) -> int:
+def nag_asks(session: Session, project: Project, cons: ConstitutionDoc) -> int:
     """Chase him once, partway through the window he was given."""
     now = utcnow()
     nagged = 0
@@ -1948,9 +1954,10 @@ def nag_asks(session: Session, project: Project) -> int:
         chairman_notify(
             session, project,
             f"your CEO is waiting on you: {ask.title}",
-            f"Asked {ask.created_at:%Y-%m-%d %H:%M} UTC; it stops waiting at "
-            f"{ask.answer_by:%Y-%m-%d %H:%M} UTC.\n\n{ask.body[:2000]}\n\n"
-            f"If you say nothing, it will: {ask.default_action}",
+            f"Your CEO asked you this on {chairman_time(ask.created_at, cons.timezone)}:"
+            f"\n\n{ask.body[:4000]}\n\n"
+            f"Answer in the boardroom by {chairman_time(ask.answer_by, cons.timezone)}. "
+            f"If you say nothing, your CEO will: {ask.default_action}",
             attention=Attention.ACTION,
         )
         ask.nag_sent_at = now
@@ -2597,13 +2604,20 @@ def nag_observable_requirements(
     # bulk, and eight emails for eight requirements is how a chairman learns to
     # filter the sender. The verdict nag was the last per-item one left, and it
     # was the worst of them — it fires once a day, forever, until he rules.
+    # Named the way he would name them, with the checker's sentence underneath
+    # as what he is actually ruling on — the key told him nothing, and was the
+    # only name the subject line had.
     detail = "\n\n".join(
-        f"  {req.key} — {req.statement}\n"
-        f"  test: {(req.acceptance_test or {}).get('target', 'an observable outcome')}"
+        f"  {requirement_name(req)}\n"
+        + (f"  What has to be true: {req.statement}\n"
+           if requirement_name(req) != req.statement else "")
+        + f"  How to check: "
+          f"{(req.acceptance_test or {}).get('target', 'look at what was produced')}"
         + ("" if first_for[req.id] else "\n  (a repeat — waiting since it entered checking)")
         for req in due
     )
-    subject = (f"{due[0].key} is waiting on your verdict" if len(due) == 1
+    subject = (f"waiting on your verdict: {_clip(requirement_name(due[0]), 80)}"
+               if len(due) == 1
                else f"{len(due)} requirements are waiting on your verdict")
     chairman_notify(
         session, project, subject,
@@ -2615,6 +2629,10 @@ def nag_observable_requirements(
     )
     log.info("nagged chairman on %d observable requirement(s) (%s)",
              len(due), project.slug)
+
+
+def _clip(text: str, limit: int) -> str:
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
 def _plural_reqs(n: int) -> str:
@@ -2690,8 +2708,8 @@ def nag_awaiting_chairman(
         recent, ever = _nagged_within(session, project, "scope.proposal_nag",
                                       project.id, PROPOSAL_NAG_HOURS)
         if not recent:
-            keys = ", ".join(r.key for r in proposed[:10])
-            more = "" if len(proposed) <= 10 else f" (+{len(proposed) - 10} more)"
+            more = ("" if len(proposed) <= 10
+                    else f"\n  … and {len(proposed) - 10} more on the Plan tab")
             session.add(AuditLog(
                 id=ids.new_id(ids.AUDIT), project_id=project.id, actor="system:janitor",
                 action="scope.proposal_nag", entity="project", entity_id=project.id,
@@ -2700,8 +2718,9 @@ def nag_awaiting_chairman(
             chairman_notify(
                 session, project,
                 f"{len(proposed)} requirement(s) waiting on you to accept",
-                f"The CEO proposed {len(proposed)} requirement(s): {keys}{more}.\n\n"
-                + "\n".join(f"  {r.key} — {r.statement[:200]}" for r in proposed[:10])
+                f"The CEO proposed {len(proposed)} requirement(s):\n\n"
+                + "\n".join(f"  - {_clip(requirement_name(r), 200)}" for r in proposed[:10])
+                + more
                 + "\n\nProposed scope is not scope. No work can be created against any "
                   "of these until you accept them, so the plan they belong to cannot "
                   "start. Open the Plan tab to accept, reword, or decline."

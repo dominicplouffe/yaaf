@@ -103,6 +103,7 @@ def test_only_a_need_is_fulfillable_with_a_credential(client):
     spend = client.post("/agent/approvals", headers=bearer(token(project)),
                         json={"kind": "spend", "title": "a big buy",
                               "body": "Recommended for the launch.",
+                              "if_declined": "The launch goes ahead smaller.",
                               "amount_usd": 300.0})
     refused = client.post(f"/admin/approvals/{spend.json()['id']}/fulfill",
                           json={"secret_name": "x-key", "value": "v",

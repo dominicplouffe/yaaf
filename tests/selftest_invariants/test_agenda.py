@@ -186,6 +186,7 @@ def test_an_approval_lands_on_the_day_it_decides_itself(client):
     filed = client.post("/agent/approvals",
                         json={"kind": "spend", "title": "buy the data feed",
                               "body": "we need the quotes for the model",
+                              "if_declined": "the model runs on yesterday's quotes",
                               "amount_usd": 200.0},
                         headers=bearer(token))
     assert filed.status_code == 200, filed.text
@@ -421,6 +422,7 @@ def test_a_question_to_him_is_a_date_on_the_strip(client):
     asked = client.post("/agent/asks", headers=bearer(token), json={
         "title": "which candidate for the launch post",
         "body": "Five ranked, my pick is first. Your call before we write.",
+        "why": "The launch post goes out Friday and the writing takes two days.",
         "answer_by_hours": 30,
         "default_action": "Take the top-ranked one and tell you I did."})
     assert asked.status_code == 200, asked.text

@@ -4311,7 +4311,8 @@ def list_requirements(project_id: str, session: Session = Depends(db)) -> list[d
     ).scalars()
     return [
         {
-            "id": r.id, "key": r.key, "statement": r.statement, "status": r.status,
+            "id": r.id, "key": r.key, "statement": r.statement, "meta": r.meta,
+            "status": r.status,
             "stage": r.stage, "acceptance_test": r.acceptance_test,
             "est_runs": r.est_runs, "actual_runs": r.actual_runs,
             "failure_load": r.failure_load,

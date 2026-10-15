@@ -538,3 +538,51 @@ def test_a_paused_agent_shows_in_the_roster_the_ceo_reads(client):
     _, ceo = live_token(project["id"], project["ceo_agent_id"])
     roster = client.get("/agent/context", headers=bearer(ceo)).json()["roster"]
     assert roster, "the roster is how a CEO learns the ids it must pass to task_create"
+
+
+def test_the_ceo_writes_to_the_chairman_for_a_reader_with_no_context(client):
+    """The boardroom read like "a robot talking to a robot that has nothing else
+    to do": short, as the house style asked, and impossible to follow without
+    the project open. Nothing said a message must stand on its own, and the
+    CEO's whole world is described to it in words the chairman does not use —
+    so "no jargon" never fired.
+
+    Scoped on purpose to what a PERSON reads. The chairman was explicit that
+    the abstraction between agents is not what he minds, so employees do not get
+    this section and the team rooms are named as outside it."""
+    from yaaf.core.models import Agent as AgentRow
+    from yaaf.runner.chat import CHAT_ADDENDUM
+    from yaaf.server.contextpack import build_system_prompt
+
+    project = make_project(client, constitution={"timezone": "America/New_York"})
+    with db_session() as session:
+        row = session.get(Project, project["id"])
+        ceo = session.get(AgentRow, project["ceo_agent_id"])
+        employee = session.get(AgentRow, agent_by_name(project, "Emp2"))
+        ceo_prompts = {
+            "ceo run": build_system_prompt(session, ceo, row),
+            "ceo chat": build_system_prompt(session, ceo, row, lane="chat"),
+        }
+        employee_prompt = build_system_prompt(session, employee, row)
+
+    for who, prompt in ceo_prompts.items():
+        section = prompt[prompt.index("HOW YOU WRITE TO THE CHAIRMAN"):]
+        # Read cold, by somebody who does not speak the platform.
+        assert "read cold" in section, who
+        assert "NAME THINGS BY WHAT THEY ARE" in section and "R-07" in section, who
+        assert "America/New_York" in section, f"{who}: times in his own zone"
+        # A decision carries what he needs to make it.
+        for part in ("the options", "what you recommend", "if he says nothing"):
+            assert part in section, f"{who}: a decision message must give {part}"
+        # Only for him — the team keeps its shared vocabulary.
+        assert "does NOT apply to the team and leadership rooms" in section, who
+        # Read before the house style, and winning where they differ.
+        assert prompt.index("HOW YOU WRITE TO THE CHAIRMAN") < prompt.index(
+            "HOW YOU WRITE, IN MESSAGES AND CHAT"), who
+        assert "this section wins" in section, who
+
+    assert "HOW YOU WRITE TO THE CHAIRMAN" not in employee_prompt, (
+        "agent-to-agent writing is out of scope: employees do not speak to him")
+    # The live chat's own rules defer to it for a decision rather than
+    # squeezing one into three sentences.
+    assert "HOW YOU WRITE TO THE CHAIRMAN" in CHAT_ADDENDUM

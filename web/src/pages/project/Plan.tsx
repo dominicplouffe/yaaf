@@ -6,6 +6,7 @@ import {
   PlanCommitment,
   PlanRequirement,
   PlanView,
+  requirementName,
 } from "../../api";
 import { usePoll } from "../../hooks";
 import { AsOf, ConfirmModal, ExportCsv, NoteAction, Skeleton, clip, downloadCsv } from "../../ui";
@@ -70,7 +71,7 @@ function RejectVerdict({ r, onDone }: { r: PlanRequirement; onDone: () => void }
   }
   return (
     <ConfirmModal
-      title={`${r.key} does not hold`}
+      title={`Not done: ${clip(requirementName(r), 60)}`}
       confirmLabel="✗ Not met — send it back"
       danger
       busy={busy || !note.trim()}
@@ -255,7 +256,10 @@ function RequirementCard({ r, onCritical, onDone, names }: {
           background: "none", border: "none", padding: 0, font: "inherit",
           color: "var(--ink)", cursor: "pointer" }}
           onClick={() => setOpen(!open)}>
-          {r.statement}
+          {requirementName(r)}
+          {r.meta?.description && (
+            <span className="help" style={{ display: "block" }}>{r.meta.description}</span>
+          )}
         </button>
         {statusBadge(r.status)}
         {r.failure_load > 0 && (
@@ -300,6 +304,11 @@ function RequirementCard({ r, onCritical, onDone, names }: {
       )}
       {open && (
         <div style={{ marginTop: 8, fontSize: 13, color: "var(--ink-2)" }}>
+          {requirementName(r) !== r.statement && (
+            <div style={{ marginBottom: 6 }}>
+              <span className="help">what has to be true: </span>{r.statement}
+            </div>
+          )}
           <div style={{ fontFamily: "var(--mono, monospace)", fontSize: 12 }}>
             {r.test_kind === "command" ? "$ " : ""}{testLine(r)}
           </div>
@@ -881,7 +890,7 @@ function Graph({ reqs, critical }: { reqs: PlanRequirement[]; critical: string[]
                 fill="var(--ink)">
                 {r.key}
                 <tspan fontWeight={400} fill="var(--ink-2)">
-                  {"  "}{r.statement.length > 14 ? r.statement.slice(0, 14) + "…" : r.statement}
+                  {"  "}{clip(requirementName(r), 15)}
                 </tspan>
               </text>
               <text x={p.x + 12} y={p.y + 35} fontSize={11} fill={
@@ -976,7 +985,7 @@ export default function Plan({ ctx }: { ctx: ProjectCtx }) {
   const plan = data.plan!;
   const reqs = data.requirements ?? [];
   const critical = data.critical_path?.keys ?? [];
-  const reqNames = new Map(reqs.map((r) => [r.key, r.statement]));
+  const reqNames = new Map(reqs.map((r) => [r.key, requirementName(r)]));
   const sums = plan.arithmetic;
   const stages = [...new Set(reqs.map((r) => r.stage))].sort((a, b) => a - b);
   const commitment = data.commitment ?? null;
@@ -1206,10 +1215,11 @@ export default function Plan({ ctx }: { ctx: ProjectCtx }) {
             onClick={() =>
               downloadCsv(
                 "the-plan.csv",
-                ["Order", "What has to be true", "State", "Stage", "Jobs used",
+                ["Order", "Name", "What has to be true", "State", "Stage", "Jobs used",
                  "Jobs estimated", "Spent (USD)", "Failed checks", "Waits for", "Settled"],
                 reqs.map((r) => [
                   r.key,
+                  requirementName(r),
                   r.statement,
                   plainStatus(r.status),
                   r.stage,

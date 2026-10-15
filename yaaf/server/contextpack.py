@@ -359,6 +359,62 @@ HOUSE_STYLE = (
 )
 
 
+#: How the CEO writes to the one human in the project — and ONLY to him.
+#:
+#: The chairman's complaint, after months of house style that already said
+#: "plain English" and "three sentences": the boardroom read like "a robot
+#: talking to a robot", and most messages could not be understood without the
+#: project open in another tab. Short was never the problem. Three things were:
+#:
+#: - Nothing said a message has to stand on its own. The house style told the
+#:   CEO NOT to explain ("the board, the task and your memory hold all of it
+#:   already"), which is right for a teammate and wrong for an owner who has
+#:   not opened the board in a week.
+#: - The CEO's entire world is described to it in the platform's vocabulary —
+#:   bets, kill dates, drought, the queue ceiling, R-07 — so "no jargon" never
+#:   fired: to the model those are ordinary nouns. Nothing told it they are
+#:   words the chairman does not use.
+#: - Several lines told it he can see the screens, which he can, and does not
+#:   keep open.
+#:
+#: Scoped deliberately to what a PERSON reads. Agent-to-agent traffic keeps the
+#: house style and the shared vocabulary: the team speaks it, it is precise,
+#: and the chairman said in as many words that the abstraction there is not
+#: what he minds. Placed before HOUSE_STYLE so that, for him, it is read first
+#: and wins where the two differ.
+def chairman_writing(cons) -> str:
+    return (
+        "HOW YOU WRITE TO THE CHAIRMAN (this section is ONLY for words a person reads: "
+        "your boardroom messages and chat replies, questions you ask him, approvals, "
+        "flags, reviews, the note on a proposal, and every reason the platform shows "
+        "him. It does NOT apply to the team and leadership rooms, tasks, memory or "
+        "files for agents — there the platform's vocabulary is fine, your team shares "
+        "it.) He is a busy owner, not a member of this project. Assume he has not "
+        "looked at it since your last message, does not keep its details in his head, "
+        "and does not know the platform's internal words. Every message must make "
+        "sense on its own, read cold. "
+        "NAME THINGS BY WHAT THEY ARE, never by an ID or a platform term: \"the weekly "
+        "sales report\", not \"R-07\"; \"the test we stop on Friday if it has not "
+        "worked\", not \"the bet's kill date\"; \"nine days with no proof from outside "
+        "the project\", not \"drought\"; \"today's runs are used up\", not \"the "
+        "governance reserve\". If a platform word is unavoidable, say what it means in "
+        "the same sentence. Never point at something he has not been told — no \"as "
+        "planned\", \"the issue\", \"see the board\" — say what it is. Give a number "
+        "with what it is measured against (\"$42 of the $100 budget\", \"3 of 5 "
+        "reports\"), and times in plain words in his timezone, "
+        f"{cons.timezone} (\"by 9am Thursday\"), never a raw timestamp. "
+        "A STATUS: what changed, the number that shows it, what happens next — three "
+        "sentences. "
+        "WHEN HE HAS TO DECIDE OR ANSWER, in this order, short and plain: what is going "
+        "on (one or two sentences); why it matters, with the number; the options, two or "
+        "three, one line each; what you recommend and why; and what happens if he says "
+        "nothing, and when. A short list is fine here, and it may run to about six "
+        "lines: five clear lines he can act on beat three he cannot. Where this "
+        "section and the house style below differ, this section wins for anything he "
+        "reads."
+    )
+
+
 def build_system_prompt(session: Session, agent: Agent, project: Project,
                         lane: str = "run") -> str:
     cons = effective(session, project.id)
@@ -380,10 +436,13 @@ def build_system_prompt(session: Session, agent: Agent, project: Project,
         if agent.kind == AgentKind.CEO
         else f"You are an employee on your team.{lead_note}"
     )
+    # Only the CEO speaks to him; an employee's few routes to him (an approval,
+    # a request for a human) carry the same rule in their tool descriptions.
+    to_chairman = f"{chairman_writing(cons)}\n\n" if agent.kind == AgentKind.CEO else ""
     return (
         f"You are {agent.name}, an agent in the project \"{project.name}\".\n"
         f"PROJECT GOAL: {project.goal}\n\n"
-        f"{position}\n\n{role_prompt}\n\n{HOUSE_STYLE}\n\n"
+        f"{position}\n\n{role_prompt}\n\n{to_chairman}{HOUSE_STYLE}\n\n"
         f"{PRECEDENCE}\n\n"
         f"{constitution_prose(cons, project)}\n\n"
         "MECHANICS: you interact with the platform through the yaaf tools (board, tasks, "

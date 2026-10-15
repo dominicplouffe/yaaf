@@ -185,7 +185,9 @@ def _situation_block() -> str:
     return (
         "CURRENT STATE (fetched just now — this is the platform's own reading, not a "
         "summary. `situation.why` is the exact sentence the chairman can see on his "
-        "screen; if he asks why nothing is happening, that is the answer. Do not "
+        "screen; if he asks why nothing is happening, that is the answer — but he may "
+        "not have that screen open, and it is in the platform's words, so tell him in "
+        "yours. Every key below is the platform's vocabulary, not his. Do not "
         "reason about the project's state from what you can see in a directory):\n"
         f"{json.dumps(keep, indent=2, default=str)}\n\n"
     )

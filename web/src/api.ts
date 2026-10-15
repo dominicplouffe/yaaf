@@ -715,6 +715,42 @@ export interface ApprovalRow {
   decided_at: string | null;
   /** The chairman's note — the agent reads it, so history shows it. */
   decision_note: string | null;
+  /** What a data change would do, filed with it: every before → after, how
+      much it touches, an estimate, whether it can be undone, the case against.
+      Null on every kind but a data write, and on one filed without it. */
+  disclosure?: ApprovalDisclosure | null;
+  /** Set on a data write: the one call approving it buys. A need for a
+      credential is also a tool_request, and carries none. */
+  grant?: { source: string; tool: string; arguments_sha256: string } | null;
+}
+
+/** The platform files "what happens without it" as the last line of every
+    request it composes (approval_request, capacity_request). Split off, it
+    goes under "if you say no" in the CEO's own words, instead of sitting at
+    the foot of the case beside a generic sentence that guessed at it. */
+const WITHOUT = "What happens without it: ";
+
+export function splitWithout(body: string): [string, string | null] {
+  const at = body.lastIndexOf(WITHOUT);
+  if (at < 0) return [body, null];
+  return [body.slice(0, at).trimEnd(), body.slice(at + WITHOUT.length).trim()];
+}
+
+type Cell = string | number | boolean | null;
+
+export interface ApprovalDisclosure {
+  category?: string | null;
+  change_set?: { entity: string; field: string; before: Cell; after: Cell }[];
+  scope_counts?: Record<string, number>;
+  evidence?: {
+    columns: string[]; rows: Cell[][];
+    period_start?: string | null; period_end?: string | null;
+    currency?: string | null; as_of?: string | null;
+  } | null;
+  estimate?: { label: string; value: string; basis?: string } | null;
+  reversible?: boolean | null;
+  counter_case?: string;
+  spend_affected_usd_month?: number | null;
 }
 
 // ── the Desk: cross-project attention, one request ─────────────────────────────
@@ -778,7 +814,9 @@ export interface DeskProject {
       project because the CEO decides these rather than parking them. */
   awaiting_you: {
     plan: number;
-    verdicts: { key: string; statement: string }[];
+    /** `name` is what the owner calls it — the CEO's title for him when it
+        wrote one, the statement otherwise. */
+    verdicts: { key: string; statement: string; name: string }[];
     commitment: { id: string; deliver_by: string; scope_count: number } | null;
   };
   evidence_7d: number;
@@ -1188,10 +1226,28 @@ export interface PlanTask {
   failed_checks: number;
 }
 
+/** The owner's copy of a requirement, written by the CEO "for the person who
+    hired you". The statement is the checker's sentence; this is his. */
+export interface RequirementMeta {
+  title?: string;
+  description?: string;
+  cadence?: string | null;
+  due?: string | null;
+  lands?: string;
+}
+
+/** What the owner calls a requirement: the title the CEO wrote for him, when
+    it wrote one. The statement is the checker's sentence — it stays on screen
+    as what has to be true, it just stopped being the only name the work had. */
+export function requirementName(r: { statement: string; meta?: RequirementMeta | null }): string {
+  return r.meta?.title?.trim() || r.statement;
+}
+
 export interface PlanRequirement {
   id: string;
   key: string;
   statement: string;
+  meta: RequirementMeta | null;
   status: string;
   stage: number;
   test_kind: string | null;

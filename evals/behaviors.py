@@ -410,6 +410,8 @@ def losing_ceo(api: AgentApi, job: RunJob) -> str:
         "body": "Closing a 15-point gap costs more runs than the light cycle allows. "
                 "I would rather overspend the month and be wrong than underspend and "
                 "be certain.",
+        "why": "Two more gameweeks at this gap and the season is out of reach; the "
+               "deadline for this week's transfers is Friday.",
         "answer_by_hours": 48,
         "default_action": "If you say nothing I will spend into the deficit and report "
                           "the overrun with the arithmetic attached.",

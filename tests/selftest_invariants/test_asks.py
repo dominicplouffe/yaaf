@@ -74,6 +74,7 @@ def _ask(client, project: dict, **overrides):
     payload = {
         "title": "Which of the five candidates do you want?",
         "body": "Five researched to equal depth, ranked. My pick is #1.",
+        "why": "The launch post goes out Friday and the writing takes two days.",
         "answer_by_hours": 6,
         "default_action": "Take the top-ranked candidate and tell you I did.",
     }
@@ -184,6 +185,7 @@ def test_only_the_ceo_asks_him(client):
     denied = client.post("/agent/asks", headers=bearer(token), json={
         "title": "Should we use the blue one?",
         "body": "It is a question about a colour and I am not the CEO.",
+        "why": "The signup button ships with the release tonight.",
         "answer_by_hours": 4,
         "default_action": "Use the blue one and mention it in the handoff.",
     })

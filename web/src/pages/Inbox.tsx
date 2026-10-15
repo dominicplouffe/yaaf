@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { ApprovalRow, AskRow, DeskProject, get, post } from "../api";
+import { ApprovalRow, AskRow, DeskProject, get, post, splitWithout } from "../api";
 import { BriefBody, DeskBrief, ProjectBrief } from "../briefing";
 import { isLive, Item, ItemType, needsYou, soonestClock, useDesk } from "../desk";
 import { fmtWhen, usePoll } from "../hooks";
@@ -69,10 +69,12 @@ function ApprovalCase({ item }: { item: Item }) {
     () => get<ApprovalRow[]>(`/observe/projects/${item.project.id}/approvals`), 30000,
     [item.project.id]);
   const row = data?.find((a) => a.id === item.approvalId);
+  const [theCase, without] = row ? splitWithout(row.body) : ["", null];
   return (
     <dl className="case">
       <div><dt>Why it is yours</dt><dd>{whyYours(item.kind.toLowerCase())}</dd></div>
-      <div><dt>The case</dt><dd className="pre">{row ? row.body || "No case was written." : "Loading…"}</dd></div>
+      <div><dt>The case</dt><dd className="pre">{row ? theCase || "No case was written." : "Loading…"}</dd></div>
+      {without && <div><dt>If you say no</dt><dd className="pre">{without}</dd></div>}
       {item.amountUsd !== null && item.amountUsd !== undefined && (
         <div><dt>Amount</dt><dd>${item.amountUsd.toLocaleString()}</dd></div>
       )}

@@ -1,12 +1,16 @@
 import { useState } from "react";
-import { Decision, get, post, ReviewNumbers, ReviewRow, ReviewsView } from "../../api";
+import {
+  Decision, get, post, requirementName, RequirementMeta, ReviewNumbers, ReviewRow, ReviewsView,
+} from "../../api";
 import { fmtWhen, usePoll } from "../../hooks";
-import { AsOf, ExportCsv, NoteAction, Skeleton, downloadCsv } from "../../ui";
+import { AsOf, ExportCsv, NoteAction, Skeleton, clip, downloadCsv } from "../../ui";
 import { fmtDate, fullyAutonomous } from "../../ui/project";
 import type { ProjectCtx } from "../Project";
 
 
-interface RequirementOption { id: string; key: string; statement: string; status: string }
+interface RequirementOption {
+  id: string; key: string; statement: string; meta: RequirementMeta | null; status: string;
+}
 
 const LEVER_LABELS: Record<string, string> = {
   cut: "Cut scope",
@@ -106,7 +110,7 @@ function LeverForm({ review, kind, requirements, hasCommitment, unit, onDone }: 
           <option value="">— pick the requirement —</option>
           {openReqs.map((r) => (
             <option key={r.id} value={r.id}>
-              {r.key} · {r.statement.slice(0, 80)}
+              {r.key} · {clip(requirementName(r), 80)}
             </option>
           ))}
         </select>

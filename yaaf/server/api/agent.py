@@ -19,7 +19,7 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from yaaf.core import ids
-from yaaf.core.constitution import effective, propose_amendment
+from yaaf.core.constitution import ConstitutionDoc, effective, propose_amendment
 from yaaf.core.db import notify
 from yaaf.core.models import (
     Account,
@@ -70,7 +70,7 @@ from yaaf.server.contextpack import _speaker
 from yaaf.server.deps import RunContext, db, run_auth
 from yaaf.server.notify import Attention, chairman_notify
 from yaaf.server.policy import Refusal
-from yaaf.server.rows import approval_row
+from yaaf.server.rows import approval_row, chairman_time
 
 
 async def _the_agent_acts(ctx: RunContext = Depends(run_auth)) -> None:
@@ -638,11 +638,11 @@ def hire(body: HireIn, ctx: RunContext = Depends(run_auth),
     ))
     _boardroom_system_line(
         session, ctx.project.id,
-        f"👤 HIRED: {body.name} ({body.role_slug}) — {body.reason[:400]}\n"
+        f"👤 HIRED: {body.name} — {body.reason[:400]}\n"
         + (f"Standing down when {_condition_words(condition)}. "
            if condition else "No stand-down condition set. ")
-        + "Your CEO staffs this project inside the `max_teams` rule; stand a role "
-          "down yourself on the Overview roster if you disagree.")
+        + "Your CEO decides who to hire, up to the number of teams this project "
+          "allows; if you disagree, stand the team down on the Overview roster.")
     session.flush()
     chairman_notify(
         session, ctx.project, f"The project hired {body.name} ({body.role_slug})",
@@ -2261,6 +2261,11 @@ class ApprovalRequest(BaseModel):
     kind: str
     title: str = Field(min_length=4, max_length=300)
     body: str = Field(min_length=10)
+    # Required for the reason a capacity request spells out "what happens
+    # without it": the default on most projects is no, so the one thing he must
+    # know to decide is what "no" costs — and it is the line a request written
+    # from inside the work leaves out, because to its author it is obvious.
+    if_declined: str = Field(min_length=10, max_length=2000)
     amount_usd: float | None = None
 
 
@@ -2273,8 +2278,10 @@ def approval_request(
     # it. Filing one for something the dial already put in the CEO's hands is
     # the one way an autonomous project can still stall on its chairman.
     policy.check_approval_request(cons, body.kind)
-    row = _file_approval(session, ctx, body.kind, body.title, body.body,
-                         body.amount_usd)
+    row = _file_approval(
+        session, ctx, body.kind, body.title,
+        f"{body.body.strip()}\n\nWhat happens without it: {body.if_declined.strip()}",
+        body.amount_usd)
     return {
         "id": row.id,
         "expires_at": row.expires_at.isoformat(),
@@ -2292,16 +2299,51 @@ def approval_request(
 class AskIn(BaseModel):
     title: str = Field(min_length=4, max_length=300)
     body: str = Field(min_length=10)
+    # Required, because the question alone is what kept reaching him: a line
+    # that made sense to the CEO, who had just spent a run inside the work,
+    # and to nobody who had not. Why it matters now is the half only the asker
+    # knows; the platform cannot add it afterwards.
+    why: str = Field(min_length=20, max_length=2000)
+    # Optional: a question of fact has no options and nothing to recommend,
+    # and a required field that is sometimes meaningless gets filled with
+    # "n/a". When there IS a choice, these are what make it answerable in one
+    # reading instead of a round trip.
+    options: list[str] = Field(default_factory=list, max_length=4)
+    recommendation: str | None = Field(default=None, min_length=10, max_length=2000)
     answer_by_hours: float = Field(gt=0)
     # Long enough that "decide later" does not fit. The value of this field is
     # that it is written before the answer is known; a placeholder would make
     # the whole mechanism ceremonial.
     default_action: str = Field(min_length=20, max_length=2000)
 
+    @field_validator("options")
+    @classmethod
+    def _options_are_short(cls, options: list[str]) -> list[str]:
+        if any(len(o) > 300 for o in options):
+            raise ValueError("each option is one line he can pick — 300 characters at most")
+        return options
+
 
 class AskCloseIn(BaseModel):
     ask_id: str
     message_id: str
+
+
+def _ask_case(body: AskIn) -> str:
+    """The question as he reads it, labelled, wherever it reaches him.
+
+    One string, stored as the ask's body, so the boardroom, the desk, the
+    Decisions screen and the email chase all show the same case in the same
+    order — the same way a capacity request spells out what it buys, what it
+    costs and what happens without it.
+    """
+    parts = [body.body.strip(), f"Why it matters: {body.why.strip()}"]
+    options = [o.strip() for o in body.options if o.strip()]
+    if options:
+        parts.append("The options:\n" + "\n".join(f"- {o}" for o in options))
+    if body.recommendation:
+        parts.append(f"What I recommend: {body.recommendation.strip()}")
+    return "\n\n".join(parts)
 
 
 @router.post("/asks")
@@ -2331,13 +2373,14 @@ def ask_chairman(
         raise Refusal("This project has no boardroom.", status_code=404)
 
     answer_by = utcnow() + timedelta(hours=body.answer_by_hours)
+    case = _ask_case(body)
     message = Message(
         id=ids.new_id(ids.MESSAGE),
         project_id=ctx.project.id,
         channel_id=boardroom.id,
         sender_agent_id=ctx.agent.id,
-        body=(f"**{body.title}**\n\n{body.body}\n\n"
-              f"_Answer by {answer_by.isoformat(timespec='minutes')}. "
+        body=(f"**{body.title}**\n\n{case}\n\n"
+              f"_Answer by {chairman_time(answer_by, cons.timezone)}. "
               f"If I have not heard from you: {body.default_action}_"),
     )
     session.add(message)
@@ -2346,7 +2389,7 @@ def ask_chairman(
         project_id=ctx.project.id,
         asked_by_agent_id=ctx.agent.id,
         title=body.title,
-        body=body.body,
+        body=case,
         answer_by=answer_by,
         default_action=body.default_action.strip(),
         asked_in_message_id=message.id,
@@ -3000,11 +3043,13 @@ def capacity_request(
         )
 
     shared = body.rule in SHARED_CAPACITY
+    # The settings page's own label for the dial, so the request names it the
+    # way the screen he changes it on does — not by its field name.
+    dial = ConstitutionDoc.model_fields[body.rule].title or body.rule
     detail = [
-        f"Raise {body.rule} from {current} to {body.to:g}.",
+        f"Raise “{dial}” from {current:g} to {body.to:g}.",
         f"What it buys: {body.buys}",
         f"What it costs: {body.costs}",
-        f"What happens without it: {body.without}",
     ]
     if shared:
         detail.append(
@@ -3012,13 +3057,16 @@ def capacity_request(
             "box shares. Granting it takes headroom from the others, which is not "
             "true of the rest of this list."
         )
+    # Last, as on every approval: the Decisions screen reads the final line as
+    # what happens if he says no.
+    detail.append(f"What happens without it: {body.without}")
     approval = _file_approval(
         session, ctx, ApprovalKind.CAPACITY,
-        f"Capacity: {body.rule} {current} -> {body.to:g}", "\n".join(detail))
+        f"More room: {dial}, {current:g} → {body.to:g}", "\n".join(detail))
     _boardroom_system_line(
         session, ctx.project.id,
-        f"📈 CAPACITY: raise {body.rule} from {current} to {body.to:g}"
-        f"{' (shared across the box)' if shared else ''} — {body.buys[:400]}\n"
+        f"📈 MORE ROOM: your CEO asks to raise “{dial}” from {current:g} to {body.to:g}"
+        f"{' (shared with your other projects)' if shared else ''} — {body.buys[:400]}\n"
         f"Decide it on the Decisions screen. Unanswered, it expires to no in "
         f"{cons.approval_timeout_days} days and the cap stays where it is.")
     session.add(AuditLog(
@@ -3029,8 +3077,8 @@ def capacity_request(
     ))
     session.flush()
     chairman_notify(
-        session, ctx.project, f"The project is asking for more {body.rule}",
-        f"{body.buys[:300]}",
+        session, ctx.project, f"Your CEO asks for more room: {dial}",
+        "\n".join(detail),
         kind="approval_requested",
         data={"approval": approval_row(approval)},
         attention=Attention.ACTION,
@@ -3080,9 +3128,9 @@ def need_request(
     _boardroom_system_line(
         session, ctx.project.id,
         f"📋 NEED: {body.title}{cost} — {body.why[:400]}\n"
-        f"Fulfill it on the Decisions screen (one motion: value stored, "
-        f"roles scoped, need approved), or decline it there. Unanswered, "
-        f"it expires to no in {cons.approval_timeout_days} days.")
+        f"Give it on the Decisions screen — you paste the key or login once and "
+        f"the right people get it — or decline it there. Unanswered, it expires "
+        f"to no in {cons.approval_timeout_days} days.")
     session.add(AuditLog(
         id=ids.new_id(ids.AUDIT), project_id=ctx.project.id,
         actor=f"agent:{ctx.agent.id}", action="need.request",
@@ -3093,8 +3141,8 @@ def need_request(
     session.flush()
     chairman_notify(
         session, ctx.project, f"The project needs: {body.title}",
-        "\n".join(detail_lines) + "\n\nFulfill or decline it on the Decisions screen "
-        "— fulfilling stores the credential and scopes the roles in one motion.",
+        "\n".join(detail_lines) + "\n\nGive it or decline it on the Decisions screen "
+        "— you paste the key or login once and the right people get it.",
         kind="approval_requested", data={"approval": approval_row(approval)},
         attention=Attention.ACTION,
     )

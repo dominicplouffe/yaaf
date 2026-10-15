@@ -103,7 +103,7 @@ def test_approval_expires_to_deny_and_wakes_requester(client):
     approval = client.post(
         "/agent/approvals",
         json={"kind": "spend", "title": "Big spend", "body": "I recommend it strongly.",
-              "amount_usd": 500},
+              "if_declined": "We keep the old supplier.", "amount_usd": 500},
         headers=bearer(ceo_token),
     ).json()
 
@@ -136,7 +136,7 @@ def test_ending_a_project_voids_its_pending_approvals(client):
     approval = client.post(
         "/agent/approvals",
         json={"kind": "spend", "title": "Data licence", "body": "I recommend it strongly.",
-              "amount_usd": 4800},
+              "if_declined": "We keep the old supplier.", "amount_usd": 4800},
         headers=bearer(ceo_token),
     ).json()
 
@@ -178,7 +178,7 @@ def test_ending_a_project_never_approves_what_it_was_asking_for(client):
     approval = client.post(
         "/agent/approvals",
         json={"kind": "spend", "title": "Data licence", "body": "I recommend it strongly.",
-              "amount_usd": 4800},
+              "if_declined": "We keep the old supplier.", "amount_usd": 4800},
         headers=bearer(ceo_token),
     ).json()
 
