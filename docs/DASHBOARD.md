@@ -399,7 +399,11 @@ controls: **Start**, **Pause**, **Stop**, and **Message** the CEO.
   An Explore project shows **Bets in play** instead.
 - **Spent this month** — against the cap, with the warning line marked.
 - **Working now** — seats running this minute, with runs per hour today as a
-  sparkline under it.
+  sparkline under it. When the project is waiting out something that ends by
+  itself — a start time the CEO set, the hourly pacing brake, a batching window
+  — the card says when it resumes ("resumes in 2 hours"), with the reason on
+  hover. Those waits never raise a banner; a banner over the project is for
+  something you have to do, or something that will not end on its own.
 
 When the projection lands past the promised date, a banner under the numbers
 says so in days, with your two levers right there: cut scope, or move the date.
