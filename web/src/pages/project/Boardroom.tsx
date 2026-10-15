@@ -86,16 +86,21 @@ function dayLabel(iso: string): string {
 /** A message from a person, with that person's face on it. It used to be an
     unlabelled dark box over the word "CEO" — which is a job title, not
     somebody you are talking to. */
+/** A line nobody typed — an assist, a capacity case, a need — is the
+    platform's, and says so. It used to sit under the CEO's name and face, so
+    the chairman read the platform's wording as the CEO talking. */
 const MessageBubble = memo(function MessageBubble(
-  { body, at, mine, who, team }: {
-    body: string; at: string; mine: boolean; who: string; team: string | null;
+  { body, at, mine, platform, who, team }: {
+    body: string; at: string; mine: boolean; platform: boolean; who: string;
+    team: string | null;
   },
 ) {
+  const name = platform ? "Platform notice" : who;
   return (
     <div className={"msgrow" + (mine ? " me" : "")}>
-      {!mine && <Avatar name={who} team={team} />}
-      <div className={"msg" + (mine ? " me" : "")}>
-        <div className="who">{mine ? "You" : who}</div>
+      {!mine && <Avatar name={platform ? "Platform" : who} team={platform ? null : team} />}
+      <div className={"msg" + (mine ? " me" : "") + (platform ? " sys" : "")}>
+        <div className="who">{mine ? "You" : name}</div>
         <div className="body">
           <Markdown>{body}</Markdown>
         </div>
@@ -345,7 +350,8 @@ export default function Boardroom({ projectId, dash, org }: {
   const rows = useMemo(() => {
     type Row =
       | { kind: "day"; key: string; label: string }
-      | { kind: "msg"; key: string; body: string; at: string; mine: boolean };
+      | { kind: "msg"; key: string; body: string; at: string; mine: boolean;
+          platform: boolean };
     const out: Row[] = [];
     let day = "";
     for (const m of loaded) {
@@ -354,7 +360,8 @@ export default function Boardroom({ projectId, dash, org }: {
         day = label;
         out.push({ kind: "day", key: `day-${m.id}`, label });
       }
-      out.push({ kind: "msg", key: m.id, body: m.body, at: m.at, mine: !!m.from_user });
+      out.push({ kind: "msg", key: m.id, body: m.body, at: m.at, mine: !!m.from_user,
+        platform: !m.from_user && !m.from_agent });
     }
     return out;
   }, [loaded]);
@@ -461,6 +468,7 @@ export default function Boardroom({ projectId, dash, org }: {
                   body={row.body}
                   at={row.at}
                   mine={row.mine}
+                  platform={row.platform}
                   who={ceoName}
                   team="leadership"
                 />

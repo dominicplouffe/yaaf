@@ -174,7 +174,9 @@ def test_an_approval_that_timed_out_is_reported_as_having_decided_itself(client)
     token = ceo_token(project)
     filed = client.post("/agent/approvals",
                         json={"kind": "spend", "title": "buy the data feed",
-                              "body": "we need the quotes", "amount_usd": 200.0},
+                              "body": "we need the quotes",
+                              "if_declined": "the model runs on yesterday's quotes",
+                              "amount_usd": 200.0},
                         headers=bearer(token))
     assert filed.status_code == 200, filed.text
 
@@ -212,6 +214,7 @@ def test_a_question_that_ran_out_of_time_is_named_here_too(client):
     asked = client.post("/agent/asks", headers=bearer(token), json={
         "title": "which candidate for the launch post",
         "body": "Five ranked, my pick is first. Your call before we write.",
+        "why": "The launch post goes out Friday and the writing takes two days.",
         "answer_by_hours": 6,
         "default_action": "Take the top-ranked one and tell you I did."})
     assert asked.status_code == 200, asked.text

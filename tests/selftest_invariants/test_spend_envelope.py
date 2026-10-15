@@ -67,6 +67,7 @@ def approve_spend(client, project: dict, usd: float) -> str:
     response = client.post("/agent/approvals", headers=bearer(token(project)),
                            json={"kind": "spend", "title": "a bigger purchase",
                                  "body": "Recommended: it unblocks the launch.",
+                                 "if_declined": "The launch waits a month.",
                                  "amount_usd": usd})
     assert response.status_code == 200, response.text
     approval_id = response.json()["id"]

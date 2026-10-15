@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
 import { plainStatus } from "../../ui/kit";
 import { Link } from "react-router-dom";
-import { AmendmentRow, ApprovalRow, AskRow, CeoDecisionRow, get, post } from "../../api";
+import {
+  AmendmentRow, ApprovalDisclosure, ApprovalRow, AskRow, CeoDecisionRow, get, post,
+  splitWithout,
+} from "../../api";
 import { fmtUsd, fmtWhen, usePoll } from "../../hooks";
 import { grantRoles, RoleGrants } from "../../roles";
 import { clockClass, downloadCsv, ExportCsv, fmtLeft } from "../../ui";
@@ -25,6 +28,77 @@ function whyYours(kind: string): string {
     default:
       return "The constitution routes this kind of decision to the chairman.";
   }
+}
+
+const SHOWN_CHANGES = 12;
+
+function cell(v: string | number | boolean | null): string {
+  return v === null ? "—" : String(v);
+}
+
+/** What a data change would actually do. The CEO is told to fill this "ALWAYS
+    — it is what he decides on", and it was stored on the row and drawn
+    nowhere, so he decided on the paragraph instead. */
+function DisclosureRows({ d }: { d: ApprovalDisclosure }) {
+  const changes = d.change_set ?? [];
+  const counts = Object.entries(d.scope_counts ?? {});
+  return (
+    <>
+      {(changes.length > 0 || counts.length > 0) && (
+        <>
+          <dt>What changes</dt>
+          <dd>
+            {counts.length > 0 && (
+              <div className="help">{counts.map(([k, n]) => `${n} ${k.replaceAll("_", " ")}`).join(" · ")}</div>
+            )}
+            {changes.length > 0 && (
+              <table style={{ marginTop: 4 }}>
+                <tbody>
+                  {changes.slice(0, SHOWN_CHANGES).map((c, i) => (
+                    <tr key={i}>
+                      <td>{c.entity}</td>
+                      <td>{c.field.replaceAll("_", " ")}</td>
+                      <td>{cell(c.before)} → <b>{cell(c.after)}</b></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            {changes.length > SHOWN_CHANGES && (
+              <div className="help">and {changes.length - SHOWN_CHANGES} more changes like these</div>
+            )}
+          </dd>
+        </>
+      )}
+      {d.estimate && (
+        <>
+          <dt>Expected effect</dt>
+          <dd>
+            {d.estimate.label}: <b>{d.estimate.value}</b>{" "}
+            <span className="help">(an estimate{d.estimate.basis ? ` — ${d.estimate.basis}` : ""})</span>
+          </dd>
+        </>
+      )}
+      {d.spend_affected_usd_month != null && (
+        <>
+          <dt>Spend it touches</dt>
+          <dd>{fmtUsd(d.spend_affected_usd_month)} a month</dd>
+        </>
+      )}
+      {d.reversible != null && (
+        <>
+          <dt>Can it be undone?</dt>
+          <dd>{d.reversible ? "Yes" : <b>No — this cannot be undone</b>}</dd>
+        </>
+      )}
+      {d.counter_case && (
+        <>
+          <dt>The case against</dt>
+          <dd style={{ whiteSpace: "pre-wrap" }}>{d.counter_case}</dd>
+        </>
+      )}
+    </>
+  );
 }
 
 function outcomeBadge(a: ApprovalRow) {
@@ -62,21 +136,25 @@ function DecisionCard({
   const [secretName, setSecretName] = useState("");
   const [secretValue, setSecretValue] = useState("");
   const [roles, setRoles] = useState<string[]>([]);
+  // A data write files as a tool_request too, but what it needs is a yes, not
+  // a key: it carries the call it would make, and a need carries none.
+  const isNeed = approval.kind === "tool_request" && !approval.grant;
 
   // The agent that filed the need is on a team, and that team's role is the
   // answer nine times out of ten. Proposing it makes this a confirmation
   // rather than a question — the same relationship the CEO has with him.
   useEffect(() => {
-    if (approval.kind !== "tool_request" || roles.length > 0 || !org) return;
+    if (!isNeed || roles.length > 0 || !org) return;
     const asked = grantRoles(org, approval.requested_by).find((r) => r.asked);
     if (asked) setRoles([asked.slug]);
-  }, [org, approval.kind, approval.requested_by]);
+  }, [org, isNeed, approval.requested_by]);
 
   const usdMode = dash.billing_mode === "api_key";
   const spent = dash.month_to_date.usd;
   const cap = dash.caps.monthly_usd_cap;
   const after = spent + (approval.amount_usd ?? 0);
   const overruns = usdMode && approval.amount_usd !== null && after > cap;
+  const [theCase, without] = splitWithout(approval.body);
 
   async function decide(approved: boolean) {
     if (!approved && note.trim().length === 0) {
@@ -112,9 +190,12 @@ function DecisionCard({
       <h3 style={{ margin: "10px 0 8px", fontSize: 15 }}>{approval.title}</h3>
       <dl className="kv">
         <dt>The CEO's case</dt>
-        <dd style={{ whiteSpace: "pre-wrap" }}>{approval.body}</dd>
+        <dd style={{ whiteSpace: "pre-wrap" }}>{theCase}</dd>
+        {approval.disclosure && <DisclosureRows d={approval.disclosure} />}
         <dt>Why it's yours</dt>
-        <dd>{whyYours(approval.kind)}</dd>
+        <dd>{approval.grant
+          ? "It changes your live account. The platform lets the agents read it on their own; a change is always yours."
+          : whyYours(approval.kind)}</dd>
         {usdMode && approval.amount_usd !== null && approval.amount_usd > 0 && (
           <>
             <dt>If you approve</dt>
@@ -129,12 +210,19 @@ function DecisionCard({
           </>
         )}
         <dt>If you deny or stay silent</dt>
-        <dd>
-          The request is refused and the CEO re-plans around it. Silence counts as a denial when
-          the clock runs out — a vacationing chairman degrades the project, never deadlocks it.
-        </dd>
+        {without ? (
+          <dd>
+            <span style={{ whiteSpace: "pre-wrap" }}>{without}</span>
+            <div className="help">Silence counts as a denial when the clock runs out.</div>
+          </dd>
+        ) : (
+          <dd>
+            The request is refused and the CEO re-plans around it. Silence counts as a denial when
+            the clock runs out — a vacationing chairman degrades the project, never deadlocks it.
+          </dd>
+        )}
       </dl>
-      {approval.kind === "tool_request" && (
+      {isNeed && (
         <div style={{ marginTop: 12, padding: "10px 12px", borderRadius: 8,
           border: "1px solid var(--border)", background: "var(--surface)" }}>
           <div style={{ fontWeight: 650, fontSize: 13, marginBottom: 6 }}>
@@ -295,7 +383,7 @@ function AskCard({ ask, to }: { ask: AskRow; to: string }) {
         <span className={`badge ${live ? "warn" : "good"}`}>{ask.status}</span>
         {live && (
           <span className="help">
-            stops waiting {new Date(ask.answer_by).toLocaleString()}
+            stops waiting {fmtWhen(ask.answer_by)}
           </span>
         )}
       </div>

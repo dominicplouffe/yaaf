@@ -404,6 +404,7 @@ def test_asking_is_not_an_override_and_the_cadence_never_held_it(client):
     asked = client.post("/agent/asks", headers=bearer(token), json={
         "title": "Audit deck in French too?",
         "body": "Costs one extra pass. Your call before we typeset.",
+        "why": "Typesetting starts tomorrow and a second language doubles it.",
         "answer_by_hours": 6,
         "default_action": "Ship English only and offer French as a follow-up.",
     })

@@ -8,6 +8,7 @@ import {
   HealthCheck,
   MessageRow,
   post,
+  requirementName,
   RunRow,
 } from "../../api";
 import Agenda from "../../agenda";
@@ -375,7 +376,9 @@ function CeoCard({ ctx, news }: { ctx: ProjectCtx; news: ReactNode[] }) {
     () => channelId ? get<MessageRow[]>(`/observe/channels/${channelId}/messages?limit=6`) : Promise.resolve([] as MessageRow[]),
     15000, [channelId],
   );
-  const last = [...(tail ?? [])].reverse().find((m) => !m.from_user);
+  // The CEO's own words only: a line the platform posted has no sender, and
+  // under a "From <CEO>" heading it read as the CEO saying it.
+  const last = [...(tail ?? [])].reverse().find((m) => !!m.from_agent);
   const ceo = firstName(ctx.ceoName);
   return (
     <section className="card ov-card">
@@ -864,7 +867,7 @@ export default function Overview({
               ) : shownReqs.map((r) => (
                 <div className="rm-row" key={r.id}>
                   <span className="mono rm-key">{r.key}</span>
-                  <span className="grow rm-st">{r.statement}</span>
+                  <span className="grow rm-st">{requirementName(r)}</span>
                   <span className={`badge${r.status === "met" ? " good" : r.status === "in_progress" ? " accent" : r.status === "proposed" ? " warn" : ""}`}>
                     {r.status === "met" ? "Met" : r.status === "in_progress" ? "In progress" : r.status === "proposed" ? "Proposed" : `Stage ${r.stage}`}
                   </span>

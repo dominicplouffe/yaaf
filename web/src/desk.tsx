@@ -177,11 +177,13 @@ export function itemsFor(p: DeskProject, reload: () => void): Item[] {
     items.push({
       key: `${p.id}-verdict-${v.key}`, type: "verdict", tier: 1, at: 0, yours: true, project: p,
       kind: "Your verdict",
-      title: `Does ${v.key} hold? “${clip(v.statement, 80)}”`,
+      title: `Is this done? “${clip(v.name, 80)}”`,
       what: (
         <>
-          <b>{v.key}</b> has no work left open, and its acceptance test is something no script
-          can check: “{clip(v.statement, 200)}”
+          <b>{clip(v.name, 80)}</b> has no work left open, and whether it is done is something
+          no script can check{v.name !== v.statement
+            ? <>. What has to be true: “{clip(v.statement, 200)}”</>
+            : "."}
         </>
       ),
       consequence: "It stays open. Nobody on the project can mark it met.",

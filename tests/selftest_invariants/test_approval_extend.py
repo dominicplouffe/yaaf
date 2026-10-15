@@ -19,7 +19,9 @@ def _filed(client, project: dict) -> str:
     _, token = live_token(project["id"], agent_by_name(project, "Lead"))
     response = client.post("/agent/approvals", headers=bearer(token),
                            json={"kind": "spend", "title": "Buy a data pull",
-                                 "body": "Two months of category data.", "amount_usd": 40})
+                                 "body": "Two months of category data.",
+                                 "if_declined": "We forecast from last year's data.",
+                                 "amount_usd": 40})
     assert response.status_code == 200, response.text
     return response.json()["id"]
 

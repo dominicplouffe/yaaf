@@ -7,6 +7,9 @@ treat it exactly as a listing row, so there is one function and no second shape.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
+
 from yaaf.core.models import Approval
 
 
@@ -53,3 +56,38 @@ def seat_row(agent, *, team=None, role_slug: str | None = None) -> dict:
         # team's; only the CEO carries one of its own.
         "role_slug": role_slug,
     }
+
+
+def chairman_time(at: datetime, timezone: str | None) -> str:
+    """One rendering of a moment for a person: "Thu 16 Oct, 3:00 pm EDT".
+
+    Every clock he is held to — when a question stops waiting, when an approval
+    decides itself — used to reach him as `2026-10-16T19:00+00:00`, or as
+    "19:00 UTC" in an email. Both are correct and both make him do arithmetic
+    before he can tell whether it is tonight. His constitution already names
+    his timezone; the platform is the one that should do the sum.
+    """
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=UTC)
+    try:
+        zone = ZoneInfo(timezone or "UTC")
+    except Exception:  # pragma: no cover - the rule validates this on write
+        zone = ZoneInfo("UTC")
+    local = at.astimezone(zone)
+    hour = local.hour % 12 or 12
+    half = "am" if local.hour < 12 else "pm"
+    return f"{local:%a} {local.day} {local:%b}, {hour}:{local:%M} {half} {local:%Z}"
+
+
+def requirement_name(req) -> str:
+    """What a person calls a requirement: the owner's title when the CEO wrote
+    one, the statement when it did not.
+
+    The statement is written for the checker and the key for agents and
+    directives; `meta.title` is the one the CEO is told to write "for the person
+    who hired you". It was stored, returned on the plan view, and rendered
+    nowhere, so every email and screen named the work by its key and its
+    checker's sentence instead.
+    """
+    title = ((req.meta or {}).get("title") or "").strip()
+    return title or req.statement

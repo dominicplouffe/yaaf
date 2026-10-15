@@ -44,13 +44,16 @@
     "name": "accounts_list"
   },
   {
-    "description": "Put a decision to the chairman as a recommendation you would defend \u2014 never an open question. kind: spend|legal|owner_decision|tool_request. Unanswered approvals expire to DENIED. An approval BLOCKS on a human, so it is the wrong tool for anything the constitution already put in your hands: where the authority dial grants you the plan, the scope and the date, an owner_decision is refused and names the verb to use instead. To want his opinion without blocking, use ask_chairman and keep going.",
+    "description": "Put a decision to the chairman as a recommendation you would defend \u2014 never an open question. kind: spend|legal|owner_decision|tool_request. Unanswered approvals expire to DENIED. An approval BLOCKS on a human, so it is the wrong tool for anything the constitution already put in your hands: where the authority dial grants you the plan, the scope and the date, an owner_decision is refused and names the verb to use instead. To want his opinion without blocking, use ask_chairman and keep going. He decides it cold, often from an email: title says what he is approving in plain words; body is what it is, why now, and the number that justifies it, with everything named by what it is rather than by an ID; if_declined is what happens if he says no or lets it expire \u2014 required, because on most projects that is the default.",
     "input_schema": {
       "properties": {
         "amount_usd": {
           "type": "number"
         },
         "body": {
+          "type": "string"
+        },
+        "if_declined": {
           "type": "string"
         },
         "kind": {
@@ -63,7 +66,8 @@
       "required": [
         "kind",
         "title",
-        "body"
+        "body",
+        "if_declined"
       ],
       "type": "object"
     },
@@ -131,7 +135,7 @@
     "name": "artifact_put"
   },
   {
-    "description": "Put a question to the chairman that your next move depends on. The reporting cadence does not hold this \u2014 a question is not a status. It does NOT block: keep working while you wait. answer_by_hours is when you stop waiting; default_action is exactly what you will do if he has not answered by then, and you are held to it, so write the real thing rather than 'decide later'. If the window passes you are woken to do it and to tell him you did. Use this instead of sitting on something he needs to see \u2014 a question nobody knows is waiting is how a project spends a day idle.",
+    "description": "Put a question to the chairman that your next move depends on. The reporting cadence does not hold this \u2014 a question is not a status. It does NOT block: keep working while you wait. answer_by_hours is when you stop waiting; default_action is exactly what you will do if he has not answered by then, and you are held to it, so write the real thing rather than 'decide later'. If the window passes you are woken to do it and to tell him you did. Use this instead of sitting on something he needs to see \u2014 a question nobody knows is waiting is how a project spends a day idle. He reads it cold, often from an email, so write each field for someone who has not opened the project: plain words, things named by what they are (never an ID like R-07), numbers with what they compare to. title is the question in one line. body is what is going on. why is why it matters now, with the number that shows it \u2014 required. options (up to four, one line each, with the cost or effect of each) and recommendation (which you would pick and why) when there is a choice; leave both out for a plain question of fact.",
     "input_schema": {
       "properties": {
         "answer_by_hours": {
@@ -143,13 +147,26 @@
         "default_action": {
           "type": "string"
         },
+        "options": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "recommendation": {
+          "type": "string"
+        },
         "title": {
+          "type": "string"
+        },
+        "why": {
           "type": "string"
         }
       },
       "required": [
         "title",
         "body",
+        "why",
         "answer_by_hours",
         "default_action"
       ],
@@ -177,7 +194,7 @@
     "name": "ask_close"
   },
   {
-    "description": "Any agent. A step only a HUMAN can do is blocking you \u2014 a captcha, a 2FA code, a KYC form, a signature, an account only the chairman can touch. Never try to defeat a security challenge; hand it over. Before calling: save your session state to the workspace (playwright storage_state / cookies, the URL you were on, what remains to do) \u2014 the workspace persists across runs, so the next run resumes where you stopped. Say exactly WHAT you need ('the 6-digit code SMS'd to your phone', 'solve the captcha at this URL and tell me done') and WHERE. His answer arrives verbatim in the decision that wakes you; unanswered it expires to no, so also plan the work that does not depend on it.",
+    "description": "Any agent. A step only a HUMAN can do is blocking you \u2014 a captcha, a 2FA code, a KYC form, a signature, an account only the chairman can touch. Never try to defeat a security challenge; hand it over. Before calling: save your session state to the workspace (playwright storage_state / cookies, the URL you were on, what remains to do) \u2014 the workspace persists across runs, so the next run resumes where you stopped. Say exactly WHAT you need ('the 6-digit code SMS'd to your phone', 'solve the captcha at this URL and tell me done') and WHERE, naming the site and the account in full. It goes straight to the chairman, not through your team, and he reads it cold, so write it for a person who has not opened the project: plain words, things named by what they are rather than by an ID, numbers with what they compare to. His answer arrives verbatim in the decision that wakes you; unanswered it expires to no, so also plan the work that does not depend on it.",
     "input_schema": {
       "properties": {
         "what": {
@@ -205,7 +222,7 @@
     "name": "board"
   },
   {
-    "description": "CEO only. Put a case to the chairman for MORE of a capacity dial \u2014 runs a day, runs an hour, concurrency, queue depth, the month's money. This is the verb for the constraint that is actually binding: if you have worked out that the run ration is what paces you, say so here with the arithmetic rather than describing it in the boardroom, where it is a remark nobody can act on. rule is the constitution field; `to` is the number you want. All three of buys / costs / without are required and are the point \u2014 what more room BUYS in outcomes, what it COSTS in money and runs, and what happens WITHOUT it. A request without them is a wish. It does not block and it does not move the dial: keep working at the cap you have, plan for it, and treat a yes as upside. Unanswered it expires to no, which is the same as today. You may not request a lower bar, a change to who decides, or less auditing \u2014 those are his judgement about the project, not its throughput.",
+    "description": "CEO only. Put a case to the chairman for MORE of a capacity dial \u2014 runs a day, runs an hour, concurrency, queue depth, the month's money. This is the verb for the constraint that is actually binding: if you have worked out that the run ration is what paces you, say so here with the arithmetic rather than describing it in the boardroom, where it is a remark nobody can act on. rule is the constitution field; `to` is the number you want. All three of buys / costs / without are required and are the point \u2014 what more room BUYS in outcomes, what it COSTS in money and runs, and what happens WITHOUT it. A request without them is a wish, and he reads it cold, so write it for a person who has not opened the project: plain words, things named by what they are rather than by an ID, numbers with what they compare to. It does not block and it does not move the dial: keep working at the cap you have, plan for it, and treat a yes as upside. Unanswered it expires to no, which is the same as today. You may not request a lower bar, a change to who decides, or less auditing \u2014 those are his judgement about the project, not its throughput.",
     "input_schema": {
       "properties": {
         "buys": {
@@ -245,7 +262,7 @@
     "name": "channels"
   },
   {
-    "description": "CEO only. Ask to commit to a delivery date. You do not and cannot write the date: the platform stamps its own projection from pace and scope, and the chairman accepts it (with that date or his own) or declines. Nothing binds until he does. Optional note travels with the proposal.",
+    "description": "CEO only. Ask to commit to a delivery date. You do not and cannot write the date: the platform stamps its own projection from pace and scope, and the chairman accepts it (with that date or his own) or declines. Nothing binds until he does. The optional note travels with the proposal to him \u2014 what the date rests on; he reads it cold, so write it for a person who has not opened the project: plain words, things named by what they are rather than by an ID, numbers with what they compare to.",
     "input_schema": {
       "properties": {
         "note": {
@@ -258,7 +275,7 @@
     "name": "commitment_propose"
   },
   {
-    "description": "CEO only, and only where the constitution grants you commitment_authority. Reset a promise that has stopped holding to the platform's CURRENT projection. You still cannot write a date \u2014 the only date you can reset to is the arithmetic's, so this buys no slack the pace has not already spent. Refused while the promise still holds. Every reset is audited, disclosed to the chairman with a running count of how many times you have done it, and reversible by him. Reach for it when the honest answer is that the date cannot hold; reach for cutting scope first when the honest answer is that the scope is too big.",
+    "description": "CEO only, and only where the constitution grants you commitment_authority. Reset a promise that has stopped holding to the platform's CURRENT projection. You still cannot write a date \u2014 the only date you can reset to is the arithmetic's, so this buys no slack the pace has not already spent. Refused while the promise still holds. Every reset is audited, disclosed to the chairman with a running count of how many times you have done it, and reversible by him; the reason is what he reads, and he reads it cold, so write it for a person who has not opened the project: plain words, things named by what they are rather than by an ID, numbers with what they compare to. Reach for it when the honest answer is that the date cannot hold; reach for cutting scope first when the honest answer is that the scope is too big.",
     "input_schema": {
       "properties": {
         "reason": {
@@ -273,7 +290,7 @@
     "name": "commitment_reset"
   },
   {
-    "description": "CEO only, and only where the constitution grants capability_authority: ceo \u2014 otherwise a 403 naming the paths (file a need, or the chairman's boardroom order as a directive). Delegate an existing credential across your team: add_roles / remove_roles by role slug, with a reason. The value never moves \u2014 only who receives it at run time. Audited and sent to the chairman; effective on each role's next run.",
+    "description": "CEO only, and only where the constitution grants capability_authority: ceo \u2014 otherwise a 403 naming the paths (file a need, or the chairman's boardroom order as a directive). Delegate an existing credential across your team: add_roles / remove_roles by role slug, with a reason. The value never moves \u2014 only who receives it at run time. Audited and sent to the chairman with your reason \u2014 he reads it cold, so write it for a person who has not opened the project: plain words, things named by what they are rather than by an ID, numbers with what they compare to. Effective on each role's next run.",
     "input_schema": {
       "properties": {
         "add_roles": {
@@ -359,7 +376,7 @@
     "name": "data_write_outcome"
   },
   {
-    "description": "Ask the chairman to approve ONE call your data source's allowlist refuses \u2014 a change to his live account, not a read. Pass the arguments you intend to send, exactly: he decides on those, the platform records their fingerprint, and the approval is spendable on nothing else. Approved, it buys exactly one call \u2014 a second change needs a second approval, so batch with the tool's own bulk arguments rather than filing twenty requests. Say WHY in terms of what it does to his numbers, not what it does to your task. Unanswered it expires to no; plan the work that does not need it. ALWAYS fill `disclosure` \u2014 it is what he decides on: `change_set` as [{entity, field, before, after}] for every thing that changes; `scope_counts` like {campaigns: 3, keywords: 14}; `evidence` as {columns, rows (the ones that matter, 200 at most), period_start, period_end, currency, as_of}; `estimate` as {label, value, basis} labelled as an estimate; `reversible` true/false; `counter_case` \u2014 the honest reason he might say no; `spend_affected_usd_month`; and `category` (one of: bids, budgets, targeting, negative_keywords, campaign_state, placements, other). A request without a disclosure is a paragraph with buttons.",
+    "description": "Ask the chairman to approve ONE call your data source's allowlist refuses \u2014 a change to his live account, not a read. Pass the arguments you intend to send, exactly: he decides on those, the platform records their fingerprint, and the approval is spendable on nothing else. Approved, it buys exactly one call \u2014 a second change needs a second approval, so batch with the tool's own bulk arguments rather than filing twenty requests. Say WHY in terms of what it does to his numbers, not what it does to your task \u2014 he reads it cold, so write it for a person who has not opened the project: plain words, things named by what they are rather than by an ID, numbers with what they compare to. Unanswered it expires to no; plan the work that does not need it. ALWAYS fill `disclosure` \u2014 it is what he decides on: `change_set` as [{entity, field, before, after}] for every thing that changes; `scope_counts` like {campaigns: 3, keywords: 14}; `evidence` as {columns, rows (the ones that matter, 200 at most), period_start, period_end, currency, as_of}; `estimate` as {label, value, basis} labelled as an estimate; `reversible` true/false; `counter_case` \u2014 the honest reason he might say no; `spend_affected_usd_month`; and `category` (one of: bids, budgets, targeting, negative_keywords, campaign_state, placements, other). A request without a disclosure is a paragraph with buttons.",
     "input_schema": {
       "properties": {
         "arguments": {
@@ -409,7 +426,7 @@
     "name": "decision_add"
   },
   {
-    "description": "CEO: turn something the chairman said in the boardroom into something the platform does, citing the message he wrote it in. Two shapes, pass exactly one. `changes` files reporting policy the moment he changes how or how often he wants to be reported to \u2014 a rule kept in memory does not survive into the next run. Settable: chairman_report_interval_hours (0 disables), chairman_report_window_local ('09:00-20:00'), timezone (IANA name). `action` EXECUTES a plan order he gave \u2014 'cut R-07', 'reopen R-04', 'move R-02 to stage 1', 'accept R-09', 'that estimate should be 12 runs', 'reword R-03 to \u2026', 'R-05 should not wait on R-02' \u2014 as {\"kind\": \"accept|cut|reopen|restage|reestimate|reword|unsequence\", \"requirement_key\": \"R-07\", and for restage \"stage\", for reestimate \"est_runs\", for reword \"statement\", for unsequence \"depends_on_key\"}. It runs on HIS cited authority through the same machinery as his own buttons, and is echoed back to him threaded to his message \u2014 use it the moment he gives an order instead of asking him to click it himself.",
+    "description": "CEO: turn something the chairman said in the boardroom into something the platform does, citing the message he wrote it in. Two shapes, pass exactly one. `changes` files reporting policy the moment he changes how or how often he wants to be reported to \u2014 a rule kept in memory does not survive into the next run. Settable: chairman_report_interval_hours (0 disables), chairman_report_window_local ('09:00-20:00'), timezone (IANA name). `action` EXECUTES a plan order he gave \u2014 'cut R-07', 'reopen R-04', 'move R-02 to stage 1', 'accept R-09', 'that estimate should be 12 runs', 'reword R-03 to \u2026', 'R-05 should not wait on R-02' \u2014 as {\"kind\": \"accept|cut|reopen|restage|reestimate|reword|unsequence\", \"requirement_key\": \"R-07\", and for restage \"stage\", for reestimate \"est_runs\", for reword \"statement\", for unsequence \"depends_on_key\"}. It runs on HIS cited authority through the same machinery as his own buttons, and is echoed back to him threaded to his message, with your reason \u2014 he reads it cold, so write it for a person who has not opened the project: plain words, things named by what they are rather than by an ID, numbers with what they compare to. Use it the moment he gives an order instead of asking him to click it himself.",
     "input_schema": {
       "properties": {
         "action": {
@@ -468,7 +485,7 @@
     "name": "evidence_add"
   },
   {
-    "description": "Close a flag by having TOLD the chairman, with what you propose doing about it. Two steps, in this order: message_post the news in the boardroom, then flag_raise with that message_id \u2014 the message is the proof he was told, which is why saying it in the boardroom does not close the flag on its own and why nothing else can. flag_id comes from the flags in your context pack. The proposal is required: a flag without one is anxiety forwarded to his desk, and what you add over a monitoring alert is the sentence AFTER the bad news \u2014 what broke, the arithmetic, the ways out, the one you would pick, and what you need from him. Closing it dismissively is legitimate and expected: 'the cycle boundary caused it, no action needed' is this verb working exactly as intended. What is not available is leaving it open while telling him everything is fine.",
+    "description": "Close a flag by having TOLD the chairman, with what you propose doing about it. Two steps, in this order: message_post the news in the boardroom, then flag_raise with that message_id \u2014 the message is the proof he was told, which is why saying it in the boardroom does not close the flag on its own and why nothing else can. flag_id comes from the flags in your context pack. The proposal is required: a flag without one is anxiety forwarded to his desk, and what you add over a monitoring alert is the sentence AFTER the bad news \u2014 what broke, the arithmetic, the ways out, the one you would pick, and what you need from him \u2014 and he reads it cold, so write it for a person who has not opened the project: plain words, things named by what they are rather than by an ID, numbers with what they compare to. Closing it dismissively is legitimate and expected: 'the cycle boundary caused it, no action needed' is this verb working exactly as intended. What is not available is leaving it open while telling him everything is fine.",
     "input_schema": {
       "properties": {
         "flag_id": {
@@ -500,7 +517,7 @@
     "name": "flags_list"
   },
   {
-    "description": "CEO only. Put a role on this project \u2014 yours to decide, no approval needed. `role_slug` comes from roles_list, `employees` are the names these people will work under, `reason` says what work this seat is for. Optionally set stand_down_when now, in the same shape stand_down_when takes. Hiring does not buy you runs: the daily ration and the monthly wall belong to the PROJECT, so another seat spreads the same allowance thinner and adds wake-ups of its own. Hire because work needs doing that nobody here can do, never because a seat would be nice to have.",
+    "description": "CEO only. Put a role on this project \u2014 yours to decide, no approval needed. `role_slug` comes from roles_list, `employees` are the names these people will work under, `reason` says what work this seat is for \u2014 it is posted to the boardroom for the chairman, and he reads it cold, so write it for a person who has not opened the project: plain words, things named by what they are rather than by an ID, numbers with what they compare to. Optionally set stand_down_when now, in the same shape stand_down_when takes. Hiring does not buy you runs: the daily ration and the monthly wall belong to the PROJECT, so another seat spreads the same allowance thinner and adds wake-ups of its own. Hire because work needs doing that nobody here can do, never because a seat would be nice to have.",
     "input_schema": {
       "properties": {
         "employees": {
@@ -724,7 +741,7 @@
     "name": "memory_supersede"
   },
   {
-    "description": "Post to one of your channels. THREE SENTENCES. Lead with the answer or the ask, add the number that carries it, stop \u2014 no narration of what you did or decided, which the board and your memory already hold. Anything that genuinely needs more room goes in a file or a task, and you post the line that points at it: this body is re-read by every recipient on every wake, a file is read once by whoever needs it. Boardroom: CEO<->chairman. Leadership: CEO+leads. Team room: your team. Use thread_id to reply in a thread. An unprompted boardroom status is refused between the chairman's cadence slots (see the `chairman` block in your context); set override to 'blocker', 'budget' or 'approval' only when it truly cannot wait \u2014 overrides are recorded and he sees them. Asking him something is NOT a status and is not an override: that is ask_chairman, which this gate has never held.",
+    "description": "Post to one of your channels. THREE SENTENCES. Lead with the answer or the ask, add the number that carries it, stop \u2014 no narration of what you did or decided, which the board and your memory already hold. Anything that genuinely needs more room goes in a file or a task, and you post the line that points at it: this body is re-read by every recipient on every wake, a file is read once by whoever needs it. Boardroom: CEO<->chairman, and he reads it cold, so write it for a person who has not opened the project: plain words, things named by what they are rather than by an ID, numbers with what they compare to. Leadership: CEO+leads. Team room: your team. Use thread_id to reply in a thread. An unprompted boardroom status is refused between the chairman's cadence slots (see the `chairman` block in your context); set override to 'blocker', 'budget' or 'approval' only when it truly cannot wait \u2014 overrides are recorded and he sees them. Asking him something is NOT a status and is not an override: that is ask_chairman, which this gate has never held.",
     "input_schema": {
       "properties": {
         "body": {
@@ -767,7 +784,7 @@
     "name": "messages_read"
   },
   {
-    "description": "CEO only. File a NEED with the chairman: a capability the project lacks \u2014 'I need AWS access, give me a key', 'we need a Stripe account', 'SMTP credentials for the writer'. It reaches him where he reads (boardroom, Slack, email) and he fulfills it in one motion: the credential lands as an env var for the roles you name, and you are woken with the decision. Unanswered, it expires to no \u2014 plan the work that does not depend on it rather than waiting. Say WHY (what work it unblocks), suggest a credential name, name the roles, and estimate monthly cost honestly.",
+    "description": "CEO only. File a NEED with the chairman: a capability the project lacks \u2014 'I need AWS access, give me a key', 'we need a Stripe account', 'SMTP credentials for the writer'. It reaches him where he reads (boardroom, Slack, email) and he fulfills it in one motion: the credential lands as an env var for the roles you name, and you are woken with the decision. Unanswered, it expires to no \u2014 plan the work that does not depend on it rather than waiting. Say WHY (what work it unblocks), suggest a credential name, name the roles, and estimate monthly cost honestly. The title and why are what he reads; he reads it cold, so write it for a person who has not opened the project: plain words, things named by what they are rather than by an ID, numbers with what they compare to.",
     "input_schema": {
       "properties": {
         "est_usd_per_month": {
@@ -855,7 +872,7 @@
     "name": "purchase_finish"
   },
   {
-    "description": "CEO only. Bring a stood-down role back, with its channel, memory and history intact \u2014 cheaper and better than hiring a replacement. A seat the CHAIRMAN paused is not yours to recall.",
+    "description": "CEO only. Bring a stood-down role back, with its channel, memory and history intact \u2014 cheaper and better than hiring a replacement. A seat the CHAIRMAN paused is not yours to recall. The reason is posted to the boardroom for the chairman, and he reads it cold, so write it for a person who has not opened the project: plain words, things named by what they are rather than by an ID, numbers with what they compare to.",
     "input_schema": {
       "properties": {
         "reason": {
@@ -928,7 +945,7 @@
     "name": "requirement_propose"
   },
   {
-    "description": "CEO only, when a review is open (see the `review` block in your context). File your variance narrative for the standing status meeting: what moved against the plan since the last review, the SINGLE largest cause named (a requirement key, a dead bet, a failure storm \u2014 something with a handle), and in `recommended`, what you would cut or move. The platform's numbers are already on the review \u2014 explain them, do not restate them. The chairman's decisions come back to you as notices with his reasons.",
+    "description": "CEO only, when a review is open (see the `review` block in your context). File your variance narrative for the standing status meeting: what moved against the plan since the last review, the SINGLE largest cause named (a piece of work, a bet that failed, a run of failures \u2014 named by what it is, not by its key), and in `recommended`, what you would cut or move. The platform's numbers are already on the review \u2014 explain them, do not restate them. The chairman reads this at the meeting, and he reads it cold, so write it for a person who has not opened the project: plain words, things named by what they are rather than by an ID, numbers with what they compare to. His decisions come back to you as notices with his reasons.",
     "input_schema": {
       "properties": {
         "narrative": {
@@ -971,7 +988,7 @@
     "name": "roster_activity"
   },
   {
-    "description": "CEO only, and only where the constitution's authority dial grants it (your constitution prose says which verbs you hold; everything you don't hold is a 403 with the legitimate path named). Exercise a scope verb as YOUR OWN authority: {\"kind\": \"accept|cut|reopen|restage|reestimate|reword|unsequence|verdict\", \"requirement_key\": \"R-07\", plus for restage \"stage\", for reestimate \"est_runs\", for reword \"statement\", for unsequence \"depends_on_key\", for verdict \"ok\" (bool)}. verdict is for an UNVERIFIABLE observable in checking \u2014 judge it honestly and keep going; every self-judgment is disclosed to the chairman in full. Every use is audited and sent to the chairman; all of it is reversible. Spend this authority the way you would want it audited. This is not the tool for executing a chairman boardroom order \u2014 that is directive_file, citing his message, and works in every mode.",
+    "description": "CEO only, and only where the constitution's authority dial grants it (your constitution prose says which verbs you hold; everything you don't hold is a 403 with the legitimate path named). Exercise a scope verb as YOUR OWN authority: {\"kind\": \"accept|cut|reopen|restage|reestimate|reword|unsequence|verdict\", \"requirement_key\": \"R-07\", plus for restage \"stage\", for reestimate \"est_runs\", for reword \"statement\", for unsequence \"depends_on_key\", for verdict \"ok\" (bool)}. verdict is for an UNVERIFIABLE observable in checking \u2014 judge it honestly and keep going; every self-judgment is disclosed to the chairman in full. Every use is audited and sent to the chairman with your reason \u2014 he reads it cold, so write it for a person who has not opened the project: plain words, things named by what they are rather than by an ID, numbers with what they compare to. All of it is reversible. Spend this authority the way you would want it audited. This is not the tool for executing a chairman boardroom order \u2014 that is directive_file, citing his message, and works in every mode.",
     "input_schema": {
       "properties": {
         "action": {
@@ -1059,7 +1076,7 @@
     "name": "spend_book"
   },
   {
-    "description": "CEO only. Stop a role whose job is finished \u2014 yours to decide, no approval needed. Its seats stop waking, stop reading, and stop costing; the team's channel, memory and history all stay. THIS IS NOT A PAUSE and it is not a punishment: it is the normal end of a role that was needed for the front half of a project. An idle seat is not free \u2014 it wakes to read its channels and it counts as a mover in your capacity forecast. Refused if the team is holding open work (finish it, kill it or move it first) and refused for your last challenge seat, which is not yours to remove.",
+    "description": "CEO only. Stop a role whose job is finished \u2014 yours to decide, no approval needed. Its seats stop waking, stop reading, and stop costing; the team's channel, memory and history all stay. THIS IS NOT A PAUSE and it is not a punishment: it is the normal end of a role that was needed for the front half of a project. An idle seat is not free \u2014 it wakes to read its channels and it counts as a mover in your capacity forecast. Refused if the team is holding open work (finish it, kill it or move it first) and refused for your last challenge seat, which is not yours to remove. The reason is posted to the boardroom for the chairman, and he reads it cold, so write it for a person who has not opened the project: plain words, things named by what they are rather than by an ID, numbers with what they compare to.",
     "input_schema": {
       "properties": {
         "reason": {

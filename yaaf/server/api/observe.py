@@ -85,7 +85,7 @@ from yaaf.server.dispatcher import (
 )
 from yaaf.server.identity import Person, person_auth, signed_in
 from yaaf.server.receipt import receipt as receipt_projection
-from yaaf.server.rows import approval_row
+from yaaf.server.rows import approval_row, requirement_name
 from yaaf.server.velocity import (
     commitment_projection,
     countable_scope,
@@ -195,7 +195,8 @@ def _awaiting_chairman(session: Session, project: Project, cons) -> dict:
     commitment = waiting["commitment"]
     return {
         "plan": len(waiting["plan"]),
-        "verdicts": [{"key": r.key, "statement": r.statement} for r in waiting["verdicts"]],
+        "verdicts": [{"key": r.key, "statement": r.statement, "name": requirement_name(r)}
+                     for r in waiting["verdicts"]],
         "commitment": None if commitment is None else {
             "id": commitment.id,
             "deliver_by": commitment.deliver_by.isoformat(),

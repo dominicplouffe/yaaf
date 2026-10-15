@@ -82,7 +82,7 @@ def test_approval_nag_fires_once_before_expiry(client):
     approval = client.post(
         "/agent/approvals",
         json={"kind": "spend", "title": "Conference booth", "body": "Worth it for the leads.",
-              "amount_usd": 400},
+              "if_declined": "We find leads online instead.", "amount_usd": 400},
         headers=bearer(ceo_token),
     ).json()
 
@@ -112,7 +112,7 @@ def test_approval_timeout_honors_constitution_decision(client):
     approval = client.post(
         "/agent/approvals",
         json={"kind": "spend", "title": "Small spend", "body": "Routine renewal, low risk.",
-              "amount_usd": 300},
+              "if_declined": "The licence lapses.", "amount_usd": 300},
         headers=bearer(ceo_token),
     ).json()
     with db_session() as session:

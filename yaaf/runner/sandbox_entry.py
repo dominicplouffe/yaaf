@@ -476,6 +476,15 @@ async def t_messages_read(args):
                                "limit": args.get("limit") or 50}))
 
 
+#: Said wherever a tool's text lands in front of the chairman, and only there.
+#: Agents reading each other's tasks and rooms share the platform's vocabulary
+#: and are well served by it; he does not share it, and reads these cold — from
+#: an email, between other things, without the run that produced them.
+FOR_HIM = ("he reads it cold, so write it for a person who has not opened the project: "
+           "plain words, things named by what they are rather than by an ID, numbers "
+           "with what they compare to")
+
+
 @tool(
     "message_post",
     "Post to one of your channels. THREE SENTENCES. Lead with the answer or the ask, "
@@ -483,7 +492,7 @@ async def t_messages_read(args):
     "which the board and your memory already hold. Anything that genuinely needs more "
     "room goes in a file or a task, and you post the line that points at it: this body "
     "is re-read by every recipient on every wake, a file is read once by whoever needs "
-    "it. Boardroom: CEO<->chairman. Leadership: CEO+leads. "
+    "it. Boardroom: CEO<->chairman, and " + FOR_HIM + ". Leadership: CEO+leads. "
     "Team room: your team. Use thread_id to reply in a thread. An unprompted boardroom "
     "status is refused between the chairman's cadence slots (see the `chairman` block in "
     "your context); set override to 'blocker', 'budget' or 'approval' only when it truly "
@@ -510,15 +519,29 @@ async def t_message_post(args):
     "exactly what you will do if he has not answered by then, and you are held to it, so "
     "write the real thing rather than 'decide later'. If the window passes you are woken "
     "to do it and to tell him you did. Use this instead of sitting on something he needs "
-    "to see — a question nobody knows is waiting is how a project spends a day idle.",
-    {"title": str, "body": str, "answer_by_hours": float, "default_action": str},
+    "to see — a question nobody knows is waiting is how a project spends a day idle. "
+    "He reads it cold, often from an email, so write each field for someone who has not "
+    "opened the project: plain words, things named by what they are (never an ID like "
+    "R-07), numbers with what they compare to. title is the question in one line. body "
+    "is what is going on. why is why it matters now, with the number that shows it — "
+    "required. options (up to four, one line each, with the cost or effect of each) and "
+    "recommendation (which you would pick and why) when there is a choice; leave both "
+    "out for a plain question of fact.",
+    _schema({"title": str, "body": str, "why": str, "options": list[str],
+             "recommendation": str, "answer_by_hours": float, "default_action": str},
+            optional=("options", "recommendation")),
 )
 async def t_ask_chairman(args):
-    return _text(_call("POST", "/agent/asks", {
-        "title": args["title"], "body": args["body"],
+    payload = {
+        "title": args["title"], "body": args["body"], "why": args["why"],
         "answer_by_hours": args["answer_by_hours"],
         "default_action": args["default_action"],
-    }))
+    }
+    if args.get("options"):
+        payload["options"] = args["options"]
+    if args.get("recommendation"):
+        payload["recommendation"] = args["recommendation"]
+    return _text(_call("POST", "/agent/asks", payload))
 
 
 @tool(
@@ -549,8 +572,8 @@ async def t_ask_close(args):
     '"requirement_key": "R-07", and for restage "stage", for reestimate "est_runs", '
     'for reword "statement", for unsequence "depends_on_key"}. '
     "It runs on HIS cited authority through the same machinery as his own buttons, and is "
-    "echoed back to him threaded to his message — use it the moment he gives an order "
-    "instead of asking him to click it himself.",
+    "echoed back to him threaded to his message, with your reason — " + FOR_HIM + ". "
+    "Use it the moment he gives an order instead of asking him to click it himself.",
     _schema({"from_message_id": str, "changes": dict, "action": dict, "reason": str},
             optional=("changes", "action")),
 )
@@ -573,7 +596,8 @@ async def t_directive_file(args):
     'for reword "statement", for unsequence "depends_on_key", for verdict "ok" (bool)}. '
     "verdict is for an UNVERIFIABLE observable in checking — judge it honestly and keep "
     "going; every self-judgment is disclosed to the chairman in full. Every use is "
-    "audited and sent to the chairman; all of it is reversible. Spend this authority "
+    "audited and sent to the chairman with your reason — " + FOR_HIM + ". All of it is "
+    "reversible. Spend this authority "
     "the way you would want it audited. This is not the tool for executing a chairman "
     "boardroom order — that is directive_file, citing his message, and works in every "
     "mode.",
@@ -589,7 +613,8 @@ async def t_scope_act(args):
     "CEO only. Ask to commit to a delivery date. You do not and cannot write the date: "
     "the platform stamps its own projection from pace and scope, and the chairman "
     "accepts it (with that date or his own) or declines. Nothing binds until he does. "
-    "Optional note travels with the proposal.",
+    "The optional note travels with the proposal to him — what the date rests on; "
+    + FOR_HIM + ".",
     _schema({"note": str}, optional=("note",)),
 )
 async def t_commitment_propose(args):
@@ -606,7 +631,8 @@ async def t_commitment_propose(args):
     "cannot write a date — the only date you can reset to is the arithmetic's, so this "
     "buys no slack the pace has not already spent. Refused while the promise still "
     "holds. Every reset is audited, disclosed to the chairman with a running count of "
-    "how many times you have done it, and reversible by him. Reach for it when the "
+    "how many times you have done it, and reversible by him; the reason is what he "
+    "reads, and " + FOR_HIM + ". Reach for it when the "
     "honest answer is that the date cannot hold; reach for cutting scope first when the "
     "honest answer is that the scope is too big.",
     {"reason": str},
@@ -682,10 +708,12 @@ async def t_evidence_add(args):
     "review_narrative",
     "CEO only, when a review is open (see the `review` block in your context). File your "
     "variance narrative for the standing status meeting: what moved against the plan since "
-    "the last review, the SINGLE largest cause named (a requirement key, a dead bet, a "
-    "failure storm — something with a handle), and in `recommended`, what you would cut or "
-    "move. The platform's numbers are already on the review — explain them, do not restate "
-    "them. The chairman's decisions come back to you as notices with his reasons.",
+    "the last review, the SINGLE largest cause named (a piece of work, a bet that "
+    "failed, a run of failures — named by what it is, not by its key), and in "
+    "`recommended`, what you would cut or move. The platform's numbers are already on "
+    "the review — explain them, do not restate them. The chairman reads this at the "
+    "meeting, and " + FOR_HIM + ". His decisions come back to you as notices with his "
+    "reasons.",
     _schema({"narrative": str, "recommended": str}, optional=("recommended",)),
 )
 async def t_review_narrative(args):
@@ -722,7 +750,8 @@ async def t_hypothesis_kill(args):
     "flag_id comes from the flags in your context pack. The proposal is required: a "
     "flag without one is anxiety forwarded to his desk, and what you add over a "
     "monitoring alert is the sentence AFTER the bad news — what broke, the arithmetic, "
-    "the ways out, the one you would pick, and what you need from him. Closing it "
+    "the ways out, the one you would pick, and what you need from him — and " + FOR_HIM
+    + ". Closing it "
     "dismissively is legitimate and expected: 'the cycle boundary caused it, no action "
     "needed' is this verb working exactly as intended. What is not available is leaving "
     "it open while telling him everything is fine.",
@@ -748,7 +777,8 @@ async def t_roles_list(args):
     "hire",
     "CEO only. Put a role on this project — yours to decide, no approval needed. "
     "`role_slug` comes from roles_list, `employees` are the names these people will "
-    "work under, `reason` says what work this seat is for. Optionally set "
+    "work under, `reason` says what work this seat is for — it is posted to the "
+    "boardroom for the chairman, and " + FOR_HIM + ". Optionally set "
     "stand_down_when now, in the same shape stand_down_when takes. "
     "Hiring does not buy you runs: the daily ration and the monthly wall belong to the "
     "PROJECT, so another seat spreads the same allowance thinner and adds wake-ups of "
@@ -771,7 +801,8 @@ async def t_hire(args):
     "a project. An idle seat is not free — it wakes to read its channels and it counts "
     "as a mover in your capacity forecast. Refused if the team is holding open work "
     "(finish it, kill it or move it first) and refused for your last challenge seat, "
-    "which is not yours to remove.",
+    "which is not yours to remove. The reason is posted to the boardroom for the "
+    "chairman, and " + FOR_HIM + ".",
     {"team_id": str, "reason": str},
 )
 async def t_stand_down(args):
@@ -783,7 +814,8 @@ async def t_stand_down(args):
     "recall",
     "CEO only. Bring a stood-down role back, with its channel, memory and history "
     "intact — cheaper and better than hiring a replacement. A seat the CHAIRMAN paused "
-    "is not yours to recall.",
+    "is not yours to recall. The reason is posted to the boardroom for the chairman, "
+    "and " + FOR_HIM + ".",
     {"team_id": str, "reason": str},
 )
 async def t_recall(args):
@@ -855,8 +887,14 @@ async def t_decision_add(args):
     "to DENIED. An approval BLOCKS on a human, so it is the wrong tool for anything the "
     "constitution already put in your hands: where the authority dial grants you the "
     "plan, the scope and the date, an owner_decision is refused and names the verb to "
-    "use instead. To want his opinion without blocking, use ask_chairman and keep going.",
-    _schema({"kind": str, "title": str, "body": str, "amount_usd": float},
+    "use instead. To want his opinion without blocking, use ask_chairman and keep going. "
+    "He decides it cold, often from an email: title says what he is approving in plain "
+    "words; body is what it is, why now, and the number that justifies it, with "
+    "everything named by what it is rather than by an ID; if_declined is what happens if "
+    "he says no or lets it expire — required, because on most projects that is the "
+    "default.",
+    _schema({"kind": str, "title": str, "body": str, "if_declined": str,
+             "amount_usd": float},
             optional=("amount_usd",)),
 )
 async def t_approval_request(args):
@@ -894,7 +932,8 @@ async def t_spend_book(args):
     "buys exactly one call — a second change needs a second approval, so batch "
     "with the tool's own bulk arguments rather than filing twenty requests. "
     "Say WHY in terms of what it does to his numbers, not what it does to your "
-    "task. Unanswered it expires to no; plan the work that does not need it. "
+    "task — " + FOR_HIM + ". Unanswered it expires to no; plan the work that does not "
+    "need it. "
     "ALWAYS fill `disclosure` — it is what he decides on: `change_set` as "
     "[{entity, field, before, after}] for every thing that changes; "
     "`scope_counts` like {campaigns: 3, keywords: 14}; `evidence` as {columns, "
@@ -943,7 +982,9 @@ async def t_data_write_outcome(args):
     "workspace (playwright storage_state / cookies, the URL you were on, what remains "
     "to do) — the workspace persists across runs, so the next run resumes where you "
     "stopped. Say exactly WHAT you need ('the 6-digit code SMS'd to your phone', "
-    "'solve the captcha at this URL and tell me done') and WHERE. His answer arrives "
+    "'solve the captcha at this URL and tell me done') and WHERE, naming the site and "
+    "the account in full. It goes straight to the chairman, not through your team, and "
+    + FOR_HIM + ". His answer arrives "
     "verbatim in the decision that wakes you; unanswered it expires to no, so also "
     "plan the work that does not depend on it.",
     {"what": str, "where": str},
@@ -993,7 +1034,7 @@ async def t_accounts_list(args):
     "rule is the constitution field; `to` is the number you want. All three of buys / "
     "costs / without are required and are the point — what more room BUYS in outcomes, "
     "what it COSTS in money and runs, and what happens WITHOUT it. A request without "
-    "them is a wish. "
+    "them is a wish, and " + FOR_HIM + ". "
     "It does not block and it does not move the dial: keep working at the cap you have, "
     "plan for it, and treat a yes as upside. Unanswered it expires to no, which is the "
     "same as today. You may not request a lower bar, a change to who decides, or less "
@@ -1012,7 +1053,8 @@ async def t_capacity_request(args):
     "it in one motion: the credential lands as an env var for the roles you name, and "
     "you are woken with the decision. Unanswered, it expires to no — plan the work "
     "that does not depend on it rather than waiting. Say WHY (what work it unblocks), "
-    "suggest a credential name, name the roles, and estimate monthly cost honestly.",
+    "suggest a credential name, name the roles, and estimate monthly cost honestly. "
+    "The title and why are what he reads; " + FOR_HIM + ".",
     _schema({"title": str, "why": str, "est_usd_per_month": float,
              "suggested_secret_name": str, "roles": list},
             optional=("suggested_secret_name",)),
@@ -1039,8 +1081,8 @@ async def t_credentials_list(args):
     "otherwise a 403 naming the paths (file a need, or the chairman's boardroom order "
     "as a directive). Delegate an existing credential across your team: add_roles / "
     "remove_roles by role slug, with a reason. The value never moves — only who "
-    "receives it at run time. Audited and sent to the chairman; effective on each "
-    "role's next run.",
+    "receives it at run time. Audited and sent to the chairman with your reason — "
+    + FOR_HIM + ". Effective on each role's next run.",
     _schema({"name": str, "add_roles": list, "remove_roles": list, "reason": str},
             optional=("add_roles", "remove_roles")),
 )
@@ -2049,10 +2091,12 @@ def run_prompt(context: dict) -> str:
         "WORK QUIETLY. Prose you write between tool calls goes nowhere: it is not a "
         "message, not the deliverable, and no other run ever reads it. Do not announce "
         "what you are about to do, restate what a tool just returned, or narrate your "
-        "reasoning as you go. Finish with ONE short paragraph — what you did, and "
-        "anything the next run needs to know. That paragraph is the only prose here "
-        "worth writing: it is what the chairman sees on the Runs page when something "
-        "has gone wrong, and it is the whole of what this run leaves behind in words."
+        "reasoning as you go. Finish with ONE short paragraph — what you did and what "
+        "came of it. That paragraph is the only prose here worth writing: it is what "
+        "the chairman sees on the Runs page when something has gone wrong, and it is "
+        "the whole of what this run leaves behind in words. Write it for him, not for "
+        "another agent: plain words, things named by what they are rather than by an "
+        "ID, readable by someone who has never seen your task."
     )
 
 

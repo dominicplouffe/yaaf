@@ -412,6 +412,7 @@ def test_may_post_status_now_never_disagrees_with_the_endpoint(client):
     _, token = live_token(project["id"], project["ceo_agent_id"])
     asked = client.post("/agent/asks", headers=bearer(token), json={
         "title": "Which candidate?", "body": "Five ranked; my pick is first.",
+        "why": "The launch post goes out Friday and the writing takes two days.",
         "answer_by_hours": 6,
         "default_action": "Take the top-ranked one and tell you I did."})
     assert asked.status_code == 200, asked.text
