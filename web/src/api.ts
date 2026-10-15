@@ -930,7 +930,7 @@ export interface OrgView {
   ceo: {
     id: string; name: string; status: string;
     role_slug: string | null; role_name: string | null;
-  } | null;
+  } & Dormancy | null;
   teams: {
     id: string;
     name: string;
@@ -950,10 +950,18 @@ export interface OrgView {
         platform. `{kind: "requirement_met", keys: [...]}` or
         `{kind: "stage_cleared", stage: n}`. */
     stand_down_when: { kind: string; keys?: string[]; stage?: number } | null;
-    agents: {
+    agents: ({
       id: string; name: string; status: string; stood_down_reason: string | null;
-    }[];
+    } & Dormancy)[];
   }[];
+}
+
+/** An active seat with no run in a week — the same definition the health
+    card's "dormant-seats" finding reads. `dormant_days` is null for a seat
+    that never ran at all. */
+export interface Dormancy {
+  dormant: boolean;
+  dormant_days: number | null;
 }
 
 /** What each seat actually did in a window — the work half of the roster.

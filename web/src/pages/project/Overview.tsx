@@ -220,6 +220,8 @@ function Kpis({ ctx }: { ctx: ProjectCtx }) {
         <span className="kpi-s">
           {dash.activity.daily_runs.used} of {dash.activity.daily_runs.cap} runs today
           {health.early.length > 0 && ` · ${health.early.length} ended early`}
+          {dash.activity.waiting.unread > 0 &&
+            ` · ${dash.activity.waiting.unread} unread message${dash.activity.waiting.unread === 1 ? "" : "s"}`}
         </span>
         <Sparkline values={runsByHour(ctx.runs ?? [])} />
       </Link>
@@ -506,6 +508,7 @@ const WHERE_TO: Record<string, [string, string]> = {
   settings: ["settings", "fix in Settings"],
   plan: ["roadmap", "open the Roadmap"],
   boardroom: ["chat", "open the chat"],
+  team: ["team", "open the Team"],
 };
 
 export default function Overview({

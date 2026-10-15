@@ -17,6 +17,12 @@ export function readingOff(r: InboxReading): boolean {
   return r.cap_today === 0 || r.cap_this_hour === 0;
 }
 
+/** No wake may be bought just to read right now: reading is off, or today's
+    or this hour's reads are used. Mail alone moves nobody until it clears. */
+export function readingBlocked(r: InboxReading): boolean {
+  return readingOff(r) || r.used_today >= r.cap_today || r.used_this_hour >= r.cap_this_hour;
+}
+
 /** One line: how much reading the project may do, and how much it has. */
 export function readingLine(r: InboxReading): string {
   if (readingOff(r)) return "Inbox reads are off: agents read messages only when they wake up for work.";

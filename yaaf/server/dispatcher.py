@@ -484,11 +484,12 @@ def unread_messages_for(
 ) -> list[tuple[Message, Channel | None]]:
     """The messages this agent would wake to read, each with its channel.
 
-    Mirrors the filter in _wake_reasons (not self-authored, not under a frozen
-    root, boardroom skipped for a CEO whose chat session is live) minus the
-    pair-breaker, which is a trip detector rather than a filter and cannot run
-    from a read path. The project inbox lists exactly these, and the banner
-    counts exactly these, so the two cannot name different numbers.
+    Mirrors the filter in _wake_reasons (not self-authored, not a sender-less
+    platform line, not under a frozen root, boardroom skipped for a CEO whose
+    chat session is live) minus the pair-breaker, which is a trip detector
+    rather than a filter and cannot run from a read path. The project inbox
+    lists exactly these, and the banner counts exactly these, so the two cannot
+    name different numbers.
     """
     skip: set[str] = set()
     if agent.kind == AgentKind.CEO and chat_session_live(session, project):
@@ -512,6 +513,11 @@ def unread_messages_for(
             stmt = stmt.where(Message.created_at > cursor.last_read_at)
         for message in session.execute(stmt).scalars():
             if message.sender_agent_id == agent.id:
+                continue
+            # A platform boardroom line is addressed to the chairman and never
+            # wakes anyone. Counting it here put "1 unread" on a CEO the
+            # dispatcher would never wake for it — a number with no wake behind it.
+            if message.sender_agent_id is None and message.sender_user_id is None:
                 continue
             root = session.get(Message, message.thread_id or message.id)
             if root is not None and root.frozen_at is not None:
@@ -878,16 +884,23 @@ def _activity_brief(state: dict) -> dict:
         # which the quieter tempo cards do on purpose. Calling it "spent" and
         # promising midnight sent chairmen looking for a fault, and midnight
         # changes nothing: zero refills to zero.
+        #
+        # Nor is it a banner. Measured across five such projects, unread mail was
+        # the only thing waiting most of the time (95% on one), 62% of it status
+        # updates, with no task stuck behind it and one message-only wake in a
+        # fortnight — the setting doing what it says. A box that is up whenever
+        # the project rests is a box the chairman learns to stop reading. The
+        # long waits it seemed to warn about were seats that never run, which
+        # the health check now names on its own.
         if i["cap_today"] == 0 or i["cap_this_hour"] == 0:
             return brief(
-                "serious", "inbox",
-                f"{unread} waiting, inbox reads are off",
-                f"{unread.capitalize()} {are} waiting. This project doesn't wake "
-                "agents just to read messages.",
-                "Agents will read them the next time they wake up for real work, "
-                "like a task or the CEO's scheduled check-in. To have messages read "
-                "sooner, allow some inbox reads per day.",
-                sig=None)
+                "ok", "inbox",
+                f"quiet; {unread} wait for the next work wake",
+                f"Quiet. {unread.capitalize()} {are} waiting for the next work wake.",
+                "This project doesn't wake agents just to read messages, so they read "
+                "them the next time they wake up for real work, like a task or the "
+                "CEO's scheduled check-in.",
+                banner=False, sig=None)
         daily = i["used_today"] >= i["cap_today"]
         used = (f"today's {i['cap_today']} inbox reads are used up" if daily
                 else f"this hour's {i['cap_this_hour']} inbox reads are used up")

@@ -456,7 +456,8 @@ says so in days, with your two levers right there: cut scope, or move the date.
   anything. Nothing here is waiting on a click from you.
 - **Setup & health** — anything misconfigured, in plain language, with a fix
   link: dead billing, a credential of the wrong shape, an untested data source,
-  a team on an outdated role version. **A healthy project collapses this to one
+  a team on an outdated role version, a seat that hasn't run in over a week.
+  **A healthy project collapses this to one
   green line.**
 
 **What happened** — the narrative of a window you missed — is not on the
@@ -552,7 +553,10 @@ under you, and each team under the CEO with its lead and its seats. Every seat
 wears its state as a coloured word — **Working**, **Up next**, **Waiting on
 you**, **Blocked**, **Idle**, **Paused**, **Stood down** — and says in one line
 what it is doing: the task it holds, what woke it, or the approval it is
-waiting on. **List** shows the same seats as a table with each seat's runs and
+waiting on. A seat with only unread mail on a project that doesn't wake agents
+just to read is **Idle**, not up next — it reads that mail on its next work
+wake. An active seat with no run in a week carries a **No run in N days** (or
+**Never run**) marker, the same seats the health card names. **List** shows the same seats as a table with each seat's runs and
 spend today, in the project's own unit. The same numbers reach the CEO, from the same producer, so you and it cannot be reading
 different answers to the same question.
 

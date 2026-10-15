@@ -710,6 +710,10 @@ pre.block {
 }
 .pills a { text-decoration: none; display: inline-block; line-height: 1.5; }
 .pills a:hover { text-decoration: none; border-color: var(--muted); }
+.pills .pill-n {
+  margin-left: 6px; padding: 0 6px; border-radius: 999px; font-size: var(--t-micro);
+  background: var(--surface-2); color: var(--ink-2);
+}
 .pills button.active, .pills a.active {
   color: var(--accent); border-color: rgba(var(--accent-rgb), 0.5);
   background: rgba(var(--accent-rgb), 0.1);

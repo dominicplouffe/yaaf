@@ -8,6 +8,7 @@
     and the agent drawer cannot each work it out differently. */
 
 import { ActivitySeat, ApprovalRow, Dashboard, OrgView, RunRow, TaskRow } from "../api";
+import { readingBlocked, readingOff } from "../inbox";
 
 /** The vocabulary, and the only one. A seat is in exactly one of these. */
 export type SeatState = "working" | "next" | "waiting" | "blocked" | "idle" | "paused" | "stood_down";
@@ -53,6 +54,9 @@ export interface Seat {
   /** When the current state began, for "12m" beside it. */
   since: string | null;
   today: ActivitySeat | undefined;
+  /** "No run in 9 days" / "Never run" for an active seat that has gone a week
+      without running, else null. */
+  dormant: string | null;
 }
 
 /** What woke a run, in words. The trigger is the dispatcher's own record. */
@@ -68,13 +72,16 @@ function heldBy(tasks: TaskRow[], agentId: string): TaskRow[] {
 }
 
 function seatOf(
-  base: { id: string; name: string; status: string; stood_down_reason?: string | null },
+  base: { id: string; name: string; status: string; stood_down_reason?: string | null;
+          dormant?: boolean; dormant_days?: number | null },
   where: { team: string; teamId: string | null; title: string; ceo: boolean; lead: boolean },
   ctx: {
     tasks: TaskRow[];
     runs: RunRow[];
     approvals: ApprovalRow[];
-    busy: Map<string, { busy: boolean; pending: number }>;
+    busy: Map<string, { busy: boolean; pending: number; mailOnly: number }>;
+    /** Why mail alone would not wake anyone right now, or null if it would. */
+    reading: "off" | "used" | null;
     today: Map<string | null, ActivitySeat>;
   },
 ): Seat {
@@ -92,6 +99,8 @@ function seatOf(
   const seat = (state: SeatState, doing: string, task: TaskRow | null, since: string | null): Seat => ({
     id: base.id, name: base.name, ...where, state, doing, task, run, since,
     today: ctx.today.get(base.id),
+    dormant: !base.dormant ? null
+      : base.dormant_days == null ? "Never run" : `No run in ${base.dormant_days} days`,
   });
 
   if (base.stood_down_reason || base.status === "stood_down") {
@@ -110,6 +119,16 @@ function seatOf(
   }
   if ((live?.pending ?? 0) > 0) {
     const task = claimed ?? ready ?? null;
+    // "Up next" over mail the project will not wake anyone to read was a
+    // promise nobody kept: on a zero-read project it sat in Live now for days.
+    // Mail alone is a quiet seat with messages waiting, read on its next wake.
+    if (!task && live?.mailOnly && ctx.reading) {
+      const n = live.mailOnly;
+      const unread = `${n} unread message${n === 1 ? "" : "s"}`;
+      return seat("idle", ctx.reading === "off"
+        ? `${unread}, read on its next work wake`
+        : `${unread}, read when inbox reads free up`, null, null);
+    }
     return seat("next", task ? task.title : "Has new messages to read", task, null);
   }
   if (claimed) return seat("idle", `Holding: ${claimed.title}`, claimed, null);
@@ -130,8 +149,15 @@ export function seatsOf(input: {
 }): Seat[] {
   const { org } = input;
   if (!org) return [];
-  const busy = new Map(input.dash.activity.agents.map((a) => [a.id, { busy: a.busy, pending: a.pending }]));
+  const busy = new Map(input.dash.activity.agents.map((a) => {
+    const d = a.pending_detail;
+    const mailOnly = d && !d.work && !d.notices && !d.heartbeat ? d.unread : 0;
+    return [a.id, { busy: a.busy, pending: a.pending, mailOnly }];
+  }));
+  const reading = input.dash.activity.inbox_runs;
   const ctx = {
+    reading: !reading || !readingBlocked(reading) ? null
+      : readingOff(reading) ? "off" as const : "used" as const,
     tasks: input.tasks ?? [],
     runs: input.runs ?? [],
     approvals: input.approvals,
