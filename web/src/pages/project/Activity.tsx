@@ -93,6 +93,11 @@ export default function Activity({ ctx }: { ctx: ProjectCtx }) {
             className={({ isActive }) => (isActive ? "active" : "")}
           >
             {label}
+            {/* Where the inbox banner's number lives now: on the door to it,
+                not over every page of a project that is resting as designed. */}
+            {path === "inbox" && dash.activity.waiting.unread > 0 && (
+              <span className="pill-n">{dash.activity.waiting.unread}</span>
+            )}
           </NavLink>
         ))}
       </div>

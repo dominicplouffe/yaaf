@@ -6,7 +6,9 @@ completions. In M1 this backs the CLI; the SPA consumes the same endpoints."""
 
 from __future__ import annotations
 
+import hashlib
 import random
+import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -72,6 +74,7 @@ from yaaf.server import (
     typing_state,
 )
 from yaaf.server import asks as ask_lib
+from yaaf.server.briefing import reading_member
 from yaaf.server.deps import db
 from yaaf.server.dispatcher import (
     activity_state,
@@ -1060,6 +1063,21 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
                     f"{brief['headline']} {brief['detail']}",
                     "settings")
 
+        dormant = _dormant_seats(session, project)
+        if dormant:
+            names, _ = _name_maps(session, project.id)
+            each = [f"{names.get(agent_id, agent_id)} "
+                    f"({'never' if days is None else f'{days} days'})"
+                    for agent_id, days in sorted(dormant.items(),
+                                                 key=lambda kv: names.get(kv[0], ""))]
+            seats = "1 seat hasn't" if len(each) == 1 else f"{len(each)} seats haven't"
+            add("dormant-seats", "warn",
+                f"{seats} run in over a week: {', '.join(each)}. A seat that never "
+                "wakes isn't doing its part, and messages to it pile up unread. Ask "
+                "the CEO to give it work or stand it down, or pause it from the Team "
+                "page.",
+                "team")
+
     # Connectors: controlled GitHub accounts registered but webhooks unprovisioned.
     if any(str(d).startswith("github:") for d in (project.controlled_domains or [])) \
             and not integrations.get("github_webhook_secret"):
@@ -1068,11 +1086,34 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
             "provisioned — GitHub events cannot become attested evidence yet",
             "settings")
 
+    # Each finding gets a name that outlives its numbers, so a suggestion the
+    # reader has put away stays away while "9 days" becomes "10", and comes back
+    # the moment it is about something new (another seat, another gate).
+    member = reading_member(session, project)
+    put_away = (member.health_acks or {}) if member is not None else {}
+    for check in checks:
+        check["sig"] = health_sig(check["key"], check["detail"])
+        ack = put_away.get(check["sig"]) if check["status"] == "warn" else None
+        check["acked_at"] = ack.get("at") if ack else None
+
     return {
         "ok": not any(c["status"] == "fail" for c in checks),
         "all_ok": all(c["status"] == "ok" for c in checks) if checks else True,
         "checks": checks,
     }
+
+
+def health_sig(key: str, detail: str) -> str:
+    """A health finding's identity: its kind and its words, numbers masked.
+
+    The header badge was lit on every project, every day, by advice the
+    chairman had already read — "founded under an older doctrine" says in its
+    own words that nothing is broken, and it never goes away. Putting one away
+    needs a name for it that a count ticking over does not change, and that a
+    different finding of the same kind does.
+    """
+    masked = re.sub(r"\d+(?:[.,]\d+)*", "#", detail)
+    return hashlib.sha1(f"{key}|{masked}".encode()).hexdigest()[:12]
 
 
 @router.get("/projects/{project_id}/plan", dependencies=[authority.READ])
@@ -1256,9 +1297,18 @@ def plan_view(project_id: str, session: Session = Depends(db)) -> dict:
     }
 
 
+def _dormancy(dormant: dict[str, int | None], agent_id: str) -> dict:
+    """`dormant`: no run in a week. `dormant_days`: since the last one, or null
+    for a seat that never ran — the two cases need different sentences."""
+    return {"dormant": agent_id in dormant, "dormant_days": dormant.get(agent_id)}
+
+
 @router.get("/projects/{project_id}/org", dependencies=[authority.READ])
 def org(project_id: str, session: Session = Depends(db)) -> dict:
     project = _project(session, project_id)
+    # The same helper the health finding reads, so the Team page can never mark
+    # a seat the Overview does not name, or the other way round.
+    dormant = _dormant_seats(session, project)
     teams = []
     for team in session.execute(select(Team).where(Team.project_id == project.id)).scalars():
         members = policy.team_agents(session, team.id)
@@ -1297,7 +1347,8 @@ def org(project_id: str, session: Session = Depends(db)) -> dict:
                 "stand_down_when": team.stand_down_when,
                 "agents": [
                     {"id": a.id, "name": a.name, "status": a.status,
-                     "stood_down_reason": a.stood_down_reason}
+                     "stood_down_reason": a.stood_down_reason,
+                     **_dormancy(dormant, a.id)}
                     for a in members
                 ],
             }
@@ -1310,6 +1361,7 @@ def org(project_id: str, session: Session = Depends(db)) -> dict:
     ceo_version = session.get(RoleVersion, ceo.role_version_id) if ceo else None
     ceo_role = session.get(Role, ceo_version.role_id) if ceo_version else None
     return {"ceo": {"id": ceo.id, "name": ceo.name, "status": ceo.status,
+                    **_dormancy(dormant, ceo.id),
                     "role_slug": ceo_role.slug if ceo_role else None,
                     # Named like a team's, for the same reason. No version:
                     # only teams can be repinned, and a version number beside
@@ -1317,6 +1369,48 @@ def org(project_id: str, session: Session = Depends(db)) -> dict:
                     # cannot answer.
                     "role_name": ceo_role.name if ceo_role else None} if ceo else None,
             "teams": teams}
+
+
+#: A seat with no run in this long is not resting, it is absent. A week is
+#: past every cadence the tempo cards ship — the slowest card wakes the CEO
+#: daily — so no seat that is doing its job reaches it by schedule alone.
+DORMANT_SEAT_DAYS = 7
+
+
+def _dormant_seats(session: Session, project: Project) -> dict[str, int | None]:
+    """{agent_id: whole days since its last run, or None if it never ran}, for
+    every active seat that has gone a week without one.
+
+    Measured on five live projects, the long unread waits blamed on the inbox
+    were seats like this: one hired and never run, one holding eighteen of its
+    project's twenty unread messages. Nothing reported them — an idle seat costs
+    nothing, so no ceiling ever fired, and "active" was true the whole time. A
+    seat hired inside the window has not had a week to run and is left out.
+    """
+    now = utcnow()
+    cutoff = now - timedelta(days=DORMANT_SEAT_DAYS)
+    agents = list(session.execute(
+        select(Agent).where(Agent.project_id == project.id,
+                            Agent.status == AgentStatus.ACTIVE)
+    ).scalars())
+    last = dict(session.execute(
+        select(Run.agent_id, func.max(Run.created_at))
+        .where(Run.project_id == project.id, Run.agent_id.is_not(None))
+        .group_by(Run.agent_id)
+    ).all())
+    def utc(dt: datetime | None) -> datetime | None:
+        # SQLite hands timestamps back naive; comparing one to `now` raises.
+        return dt.replace(tzinfo=UTC) if dt is not None and dt.tzinfo is None else dt
+
+    dormant: dict[str, int | None] = {}
+    for agent in agents:
+        ran = utc(last.get(agent.id))
+        if ran is not None:
+            if ran < cutoff:
+                dormant[agent.id] = (now - ran).days
+        elif utc(agent.created_at) < cutoff:
+            dormant[agent.id] = None
+    return dormant
 
 
 def _name_maps(session: Session, project_id: str) -> tuple[dict, dict]:

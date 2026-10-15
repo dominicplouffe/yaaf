@@ -557,17 +557,45 @@ def test_a_spent_reading_allowance_is_a_gate_with_a_name(client):
     state = _activity(project)
     assert state["waiting"]["unread"] >= 1
     assert state["blocked_by"] == "inbox_runs", state["brief"]
-    assert state["brief"]["tone"] == "serious"
     # Zero is reading switched off, not an allowance spent: no refill is
-    # coming at midnight, so the banner must not promise one.
+    # coming at midnight, so the sentence must not promise one.
     said = state["brief"]["headline"] + " " + state["brief"]["detail"]
-    assert "1 unread message is waiting" in state["brief"]["headline"]
-    assert "doesn't wake agents just to read" in state["brief"]["headline"]
+    assert "1 unread message is waiting for the next work wake" in state["brief"]["headline"]
     assert "spent" not in said and "00:00" not in said, said
+    # And it is a quiet, not a stop. This was "serious" with a banner until the
+    # chairman measured five zero-allowance projects: the box was up whenever
+    # they rested, over mail that was mostly status updates, with nothing stuck
+    # behind it. A setting doing what it says is not news on every page — and
+    # not a health finding either, which is the same box by another door.
+    assert state["brief"]["tone"] == "ok"
+    assert state["brief"]["banner"] is False
+    health = client.get(f"/observe/projects/{project['id']}/health", headers=ADMIN).json()
+    assert not [c for c in health["checks"] if c["key"] == "activity"], health["checks"]
 
     # And the dispatcher agrees, which is the property the sentence claims.
     with db_session() as session:
         assert dispatcher.dispatch_once(session) == 0
+
+
+def test_a_platform_line_is_nobodys_unread_mail(client):
+    """A need or assist the platform announces in the boardroom has no sender
+    and is addressed to the chairman; `_wake_reasons` never wakes anyone for
+    it. Counting it as the CEO's unread mail put a number on the inbox with no
+    wake behind it, which is the one thing the inbox exists not to do."""
+    project = make_project(client, constitution={"inbox_runs_per_project_per_day": 0})
+    _drain()
+    boardroom = channel_of(client, project["id"], "boardroom")
+    with db_session() as session:
+        session.add(Message(
+            id=ids.new_id(ids.MESSAGE), project_id=project["id"], channel_id=boardroom,
+            body="The CEO needs a credential for the analytics API.",
+            created_at=utcnow() - timedelta(minutes=30)))
+
+    assert _activity(project)["waiting"]["unread"] == 0
+    inbox = client.get(f"/observe/projects/{project['id']}/inbox", headers=ADMIN).json()
+    assert inbox["unread"] == 0
+    ceo = next(a for a in inbox["agents"] if a["id"] == project["ceo_agent_id"])
+    assert ceo["messages"] == []
 
 
 def test_the_banner_button_turns_reading_back_on(client):

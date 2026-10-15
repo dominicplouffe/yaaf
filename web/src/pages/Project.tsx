@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Navigate, NavLink, Route, Routes, useLocation, useParams } from "react-router-dom";
-import { Dashboard, HealthCheck, post, ProjectHealth } from "../api";
+import { Dashboard, post, ProjectHealth } from "../api";
 import { InboxExplainer, RaiseInboxReads } from "../inbox";
 import { firstName, ProjectCtx, useProjectFrame } from "../projectCtx";
 import { clip, statusBrief } from "../ui";
@@ -108,44 +108,46 @@ function goalLead(goal: string): string {
 // already draws the line — `ok` is false only on a real failure — so the badge
 // respects it, and names the thing rather than counting it. "5 role updates"
 // tells you what you are looking at; "5 to fix" tells you that you are late.
-const WARN_LABELS: Record<string, [one: string, many: string]> = {
-  "role-drift": ["role update", "role updates"],
-  "data-source": ["data source to check", "data sources to check"],
-  connectors: ["connector to finish", "connectors to finish"],
-  activity: ["activity notice", "activity notices"],
-  chat: ["chat notice", "chat notices"],
-  slack: ["Slack notice", "Slack notices"],
-  billing: ["billing notice", "billing notices"],
-};
-
-function warnLabel(warned: HealthCheck[]): string {
-  // Every check key is either "kind" or "kind:instance"; a single kind can be
-  // named, a mixture cannot honestly be.
-  const kinds = new Set(warned.map((c) => c.key.split(":")[0]));
-  const named = kinds.size === 1 ? WARN_LABELS[[...kinds][0]] : undefined;
-  if (!named) return "to review";
-  return warned.length === 1 ? named[0] : named[1];
+/** Take the reader to Setup & health and mark it, so the badge is a way to the
+    list rather than a word to wonder about. It sits at the foot of the
+    Overview, which is the only page that draws this badge. */
+function showHealth() {
+  const card = document.getElementById("setup-health");
+  if (!card) return;
+  card.scrollIntoView({ behavior: "smooth", block: "center" });
+  card.classList.remove("flash");
+  void card.offsetWidth; // restart the animation on a second click
+  card.classList.add("flash");
 }
 
-/** The header's verdict on setup: red only when something is actually broken,
-    and always a link to the list that explains it. */
-function setupBadge(dash: Dashboard, health: ProjectHealth | null) {
+/** The header's verdict on Setup & health, in the card's own two words.
+
+    It used to say "3 to review", "1 activity notice", "2 role updates" — a
+    vocabulary of its own that the card below never used — looked clickable,
+    and linked to the page it was already on. Nobody could tell what it
+    counted, where the items were, or whether any of them mattered. Now it
+    says which of two things it is counting: problems (red, something is
+    broken) or suggestions (amber, advice), and it goes to the list. Advice
+    the reader has put away no longer counts. */
+function setupBadge(health: ProjectHealth | null) {
   if (!health) return <span className="help">checking…</span>;
-  const failed = health.checks.filter((c) => c.status === "fail");
-  const warned = health.checks.filter((c) => c.status === "warn");
-  if (!failed.length && !warned.length) {
+  const problems = health.checks.filter((c) => c.status === "fail");
+  const advice = health.checks.filter((c) => c.status === "warn" && !c.acked_at);
+  if (!problems.length && !advice.length) {
     return <span className="badge good">healthy</span>;
   }
-  const critical = failed.length > 0;
-  const shown = critical ? failed : warned;
+  const shown = problems.length ? problems : advice;
+  const n = shown.length;
+  const word = problems.length ? "problem" : "suggestion";
   return (
-    <NavLink
-      to={`/projects/${dash.id}`}
-      className={`badge ${critical ? "critical" : "warn"}`}
-      title={shown.map((c) => c.detail).join("\n")}
+    <button
+      type="button"
+      className={`badge ${problems.length ? "critical" : "warn"}`}
+      title={`${shown.map((c) => c.detail).join("\n\n")}\n\nClick to see them in Setup & health.`}
+      onClick={showHealth}
     >
-      {shown.length} {critical ? "to fix" : warnLabel(warned)}
-    </NavLink>
+      {n} {word}{n === 1 ? "" : "s"}
+    </button>
   );
 }
 
@@ -394,7 +396,7 @@ export default function ProjectPage() {
       <Routes>
         <Route index element={
           <Overview ctx={ctx} onPause={() => setConfirming("pause")} onStop={() => setConfirming("stop")}
-            setupBadge={setupBadge(dash, ctx.health)} goalLead={goalLead(dash.goal)} />
+            setupBadge={setupBadge(ctx.health)} goalLead={goalLead(dash.goal)} />
         } />
         <Route path="chat" element={<Boardroom projectId={projectId} dash={dash} org={ctx.org} />} />
         <Route path="roadmap" element={<Plan ctx={ctx} />} />

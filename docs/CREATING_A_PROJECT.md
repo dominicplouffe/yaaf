@@ -366,7 +366,9 @@ Go to the project's **Overview**. If anything about the setup is wrong or
 missing, a **Setup & health** card sits at the top naming each problem in
 plain English with a link to fix it — a dead or missing billing credential, a credential that
 should be a URL but isn't, a team running an outdated role version. Fix the
-red rows; when the card disappears, the project is properly configured.
+red **problem** rows; amber **suggestion** rows are advice you can act on or
+put away with **Got it**. When the card collapses to one green line, the project
+is properly configured.
 That's the rule to remember: **no card = ready.**
 
 ## Step 5 — Say hello

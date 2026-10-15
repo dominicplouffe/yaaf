@@ -339,8 +339,13 @@ def test_openrouter_is_not_among_its_providers(client):
     assert refused.status_code == 422 and "OpenCode CLI cannot run" in refused.text
 
 
-def test_the_image_pins_the_version_the_driver_preseeds():
-    from yaaf.runner.opencode_cli_entry import VERSION
+def test_the_image_pins_the_version_the_driver_preseeds(run):
+    # Through `run`, like every other test here: the driver imports its base as
+    # the image lays them out (`import sandbox_entry`), and that base reads its
+    # environment on import. A bare import passed only when a staged test had
+    # already loaded the driver in the same worker, and failed whenever the CI
+    # shards were rebalanced so that none had.
+    VERSION = run.opencode.VERSION
 
     dockerfile = (FIXTURES.parents[2].parent / "deploy" / "sandbox" / "Dockerfile").read_text()
     assert f"opencode-ai@{VERSION}" in dockerfile

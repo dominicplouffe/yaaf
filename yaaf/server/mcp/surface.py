@@ -81,6 +81,12 @@ REACHED = {
 #: Routes no tool reaches, and the reason. A reason is required: "we did not
 #: get to it" is a fine answer, but it has to be written down as one.
 WITHHELD = {
+    "POST /admin/projects/{project_id}/health/ack":
+        "putting a health suggestion away tidies one person's card and nothing "
+        "else — every finding still reaches a model through `project` view=health, "
+        "with its put-away state beside it. A model clearing warnings off the "
+        "chairman's card on his behalf is the one use this verb has that he did "
+        "not ask for.",
     "POST /admin/projects/{project_id}/regrade-goal":
         "grading goal prose calls a model, so this verb spends every time it is "
         "used — and unlike the rest of the drift picture it answers a question "

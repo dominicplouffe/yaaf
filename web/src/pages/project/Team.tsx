@@ -56,6 +56,7 @@ function SeatNode({ seat, onOpen, wide, extra }: {
       </span>
       <span className="on-doing">{seat.doing}</span>
       <span className="on-foot">
+        {seat.dormant && <span className="chip warn">{seat.dormant}</span>}
         <span>{t?.runs ?? 0} run{(t?.runs ?? 0) === 1 ? "" : "s"} today</span>
         {t && t.usd > 0 && <span>${t.usd.toFixed(2)}</span>}
         {t && t.tasks_completed > 0 && <span>{t.tasks_completed} closed</span>}
@@ -345,7 +346,7 @@ function SeatTable({ ctx }: { ctx: ProjectCtx }) {
               <td><span className="person-cell"><Avatar name={s.name} team={s.ceo ? "leadership" : s.team} size="sm" />
                 <span><b>{s.name}</b><span className="help">{s.title}</span></span></span></td>
               <td>{s.ceo ? "CEO" : s.team}{s.lead && !s.ceo ? " · lead" : ""}</td>
-              <td><SeatPill state={s.state} /></td>
+              <td><SeatPill state={s.state} />{s.dormant && <> <span className="chip warn">{s.dormant}</span></>}</td>
               <td className="doing-cell">{s.doing}</td>
               <td className="num">{s.today?.runs ?? 0}</td>
               <td className="num">{spent(s.today) ? fmtUnit(spent(s.today), usdMode ? "usd" : "tokens") : "—"}</td>
