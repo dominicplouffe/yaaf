@@ -6,7 +6,9 @@ completions. In M1 this backs the CLI; the SPA consumes the same endpoints."""
 
 from __future__ import annotations
 
+import hashlib
 import random
+import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -72,6 +74,7 @@ from yaaf.server import (
     typing_state,
 )
 from yaaf.server import asks as ask_lib
+from yaaf.server.briefing import reading_member
 from yaaf.server.deps import db
 from yaaf.server.dispatcher import (
     activity_state,
@@ -1083,11 +1086,34 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
             "provisioned — GitHub events cannot become attested evidence yet",
             "settings")
 
+    # Each finding gets a name that outlives its numbers, so a suggestion the
+    # reader has put away stays away while "9 days" becomes "10", and comes back
+    # the moment it is about something new (another seat, another gate).
+    member = reading_member(session, project)
+    put_away = (member.health_acks or {}) if member is not None else {}
+    for check in checks:
+        check["sig"] = health_sig(check["key"], check["detail"])
+        ack = put_away.get(check["sig"]) if check["status"] == "warn" else None
+        check["acked_at"] = ack.get("at") if ack else None
+
     return {
         "ok": not any(c["status"] == "fail" for c in checks),
         "all_ok": all(c["status"] == "ok" for c in checks) if checks else True,
         "checks": checks,
     }
+
+
+def health_sig(key: str, detail: str) -> str:
+    """A health finding's identity: its kind and its words, numbers masked.
+
+    The header badge was lit on every project, every day, by advice the
+    chairman had already read — "founded under an older doctrine" says in its
+    own words that nothing is broken, and it never goes away. Putting one away
+    needs a name for it that a count ticking over does not change, and that a
+    different finding of the same kind does.
+    """
+    masked = re.sub(r"\d+(?:[.,]\d+)*", "#", detail)
+    return hashlib.sha1(f"{key}|{masked}".encode()).hexdigest()[:12]
 
 
 @router.get("/projects/{project_id}/plan", dependencies=[authority.READ])

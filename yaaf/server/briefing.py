@@ -257,7 +257,7 @@ def _aware(dt: datetime | None) -> datetime | None:
     return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
 
 
-def _member(session: Session, project: Project) -> ProjectMember | None:
+def reading_member(session: Session, project: Project) -> ProjectMember | None:
     """Whose mark: the person reading, when somebody is — each member's
     "since you were last here" is their own — and the chairman's when nobody is,
     which is the janitor composing the daily email it sends him."""
@@ -280,7 +280,7 @@ def window_start(session: Session, project: Project) -> tuple[datetime, str]:
     or since an hour ago. So the source travels with the timestamp and the
     panel prints it.
     """
-    member = _member(session, project)
+    member = reading_member(session, project)
     marked = _aware(member.last_briefed_at) if member is not None else None
     if marked is not None:
         return marked, "since you last read this"
@@ -294,7 +294,7 @@ def mark_read(session: Session, project: Project, at: datetime | None = None) ->
     """Stamp the reader's mark. Returns False when they have no member row to
     stamp — an instance admin reading a project they are not on, whose having
     looked must not move anybody else's window."""
-    member = _member(session, project)
+    member = reading_member(session, project)
     if member is None:
         return False
     member.last_briefed_at = at or utcnow()

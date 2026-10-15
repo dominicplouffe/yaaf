@@ -449,53 +449,88 @@ function ComingUp({ projectId }: { projectId: string }) {
 
 /** Setup & health. A healthy project gets one quiet affirmative line — silence
     is ambiguous with a broken health check, and the ambiguity costs more than
-    the pixels. Failing rows keep their plain-language fixes. */
+    the pixels. Failing rows keep their plain-language fixes.
+
+    Two kinds of row, said in the header badge's own words: a problem is
+    something broken, a suggestion is advice. A suggestion the reader has read
+    can be put away, and then it stops lighting the badge — most of what kept
+    the badge lit on every project was advice that is true forever and was
+    read on the first day. Put-away rows stay on the card, dimmed, with a way
+    back; a problem has no such button. `id` is the badge's target. */
 function HealthLine({ ctx }: { ctx: ProjectCtx }) {
   const { projectId, health: data, reloadHealth, reloadOrg } = ctx;
   const [show, setShow] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   if (!data) return null;
-  if (data.all_ok && !show) {
+  const isOpen = (c: HealthCheck) => c.status === "fail" || (c.status === "warn" && !c.acked_at);
+  const open = data.checks.filter(isOpen);
+  const putAway = data.checks.filter((c) => c.status === "warn" && c.acked_at);
+  if (!open.length && !show) {
     return (
-      <div className="health-line">
+      <div className="health-line" id="setup-health">
         <span className="good"><Icon name="check" size={15} strokeWidth={2.2} /></span>
         <b>Setup is healthy.</b>
-        <span className="help">All {data.checks.length} checks pass.</span>
+        <span className="help">
+          {putAway.length
+            ? `${putAway.length} suggestion${putAway.length === 1 ? "" : "s"} put away.`
+            : `All ${data.checks.length} checks pass.`}
+        </span>
         <span className="grow" />
         <button className="small" onClick={() => setShow(true)}>Details</button>
       </div>
     );
   }
-  const badge = (status: HealthCheck["status"]) => (
-    <span className={`badge ${status === "fail" ? "critical" : status === "warn" ? "warn" : "good"}`}>
-      {status === "fail" ? "broken" : status === "warn" ? "check" : "ok"}
+  const ack = async (check: HealthCheck, put: boolean) => {
+    setError(null);
+    try {
+      await post(`/admin/projects/${projectId}/health/ack`, { sig: check.sig, ack: put });
+      reloadHealth();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+  // Problems, then suggestions, then what passes, then what was put away.
+  const rank = (c: HealthCheck) =>
+    c.status === "fail" ? 0 : c.status === "warn" ? (c.acked_at ? 3 : 1) : 2;
+  const rows = [...data.checks].sort((a, b) => rank(a) - rank(b));
+  const badge = (c: HealthCheck) => (
+    <span className={`badge ${c.status === "fail" ? "critical" : c.status === "ok" ? "good" : c.acked_at ? "" : "warn"}`}>
+      {c.status === "fail" ? "problem" : c.status === "warn" ? (c.acked_at ? "put away" : "suggestion") : "ok"}
     </span>
   );
   return (
-    <section className="card ov-card" style={{ marginTop: "var(--s4)" }}>
+    <section className="card ov-card" id="setup-health" style={{ marginTop: "var(--s4)" }}>
       <div className="card-h">
         <h3>Setup &amp; health</h3>
         <span className="grow" />
-        {data.all_ok && <button className="small" onClick={() => setShow(false)}>Hide</button>}
+        {!open.length && <button className="small" onClick={() => setShow(false)}>Hide</button>}
       </div>
-      {!data.all_ok && (
+      {open.length > 0 && (
         <p className="help" style={{ margin: "0 0 8px" }}>
-          The project tells you what it needs instead of failing quietly at 9am. Fix the rows below
-          and this collapses back to one line.
+          A <b>problem</b> means something is broken: fix it. A <b>suggestion</b> is advice: act
+          on it, or press <b>Got it</b> once you have read it and it stops counting.
         </p>
       )}
-      {data.checks.map((check) => (
-        <div key={check.key} className={`hrow${check.status === "ok" ? " ok" : ""}`}>
-          {badge(check.status)}
+      {error && <div className="error">{error}</div>}
+      {rows.map((check) => (
+        <div key={check.key}
+          className={`hrow${check.status === "ok" ? " ok" : ""}${check.acked_at ? " put-away" : ""}`}>
+          {badge(check)}
           <span className="grow">{check.detail}</span>
-          {check.action?.kind === "repin" ? (
+          {check.action?.kind === "repin" && !check.acked_at ? (
             <button className="small" onClick={async () => {
               await post(`/admin/teams/${check.action!.team_id}/repin`, {});
               reloadHealth();
               reloadOrg();
             }}>adopt the latest role version</button>
-          ) : check.status !== "ok" && WHERE_TO[check.where ?? ""] ? (
+          ) : isOpen(check) && WHERE_TO[check.where ?? ""] ? (
             <Link to={`/projects/${projectId}/${WHERE_TO[check.where!][0]}`}>{WHERE_TO[check.where!][1]} →</Link>
           ) : null}
+          {check.status === "warn" && (
+            <button className="small" onClick={() => ack(check, !check.acked_at)}>
+              {check.acked_at ? "Show again" : "Got it"}
+            </button>
+          )}
         </div>
       ))}
     </section>

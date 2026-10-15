@@ -357,6 +357,13 @@ h3 { font-size: var(--t-h3); font-weight: 600; line-height: 1.35; margin: var(--
    lifting its border — an underline inside a pill reads as damage. */
 a.badge { color: var(--ink-2); cursor: pointer; }
 a.badge:hover { text-decoration: none; border-color: var(--ink-2); }
+/* The same pill when it is a button: the base button's height, padding and
+   ink would otherwise turn a status word into a form control. */
+button.badge {
+  min-height: 0; padding: 3px 10px; gap: 6px; font-size: var(--t-micro);
+  background: var(--surface-2); border-color: var(--border); color: var(--ink-2);
+}
+button.badge:hover { background: var(--surface-2); border-color: var(--ink-2); }
 
 /* ── tables ── */
 table { width: 100%; border-collapse: collapse; font-size: var(--t-small); }
@@ -2448,7 +2455,15 @@ button.linkish.inline { min-height: 0; padding: 0; border: 0; background: none; 
   border: 1px solid var(--border); border-radius: var(--radius); font-size: 13.5px;
 }
 .hrow { display: flex; gap: 10px; align-items: baseline; padding: 5px 0; font-size: 13px; }
-.hrow.ok { opacity: 0.55; }
+.hrow.ok, .hrow.put-away { opacity: 0.55; }
+.hrow > button.small { flex: none; }
+/* Where the header badge lands: a ring that fades, so the eye finds the card
+   it was sent to without the card itself changing colour. */
+#setup-health.flash { animation: target-flash 1.6s ease-out; }
+@keyframes target-flash {
+  from { box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.6); }
+  to { box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0); }
+}
 
 /* ── the Inbox: a list and the thing you picked ── */
 .inbox {

@@ -457,6 +457,11 @@ says so in days, with your two levers right there: cut scope, or move the date.
 - **Setup & health** — anything misconfigured, in plain language, with a fix
   link: dead billing, a credential of the wrong shape, an untested data source,
   a team on an outdated role version, a seat that hasn't run in over a week.
+  Each row is a **problem** (something is broken: fix it) or a **suggestion**
+  (advice). Press **Got it** on a suggestion you have read and it stops
+  counting, for you only; it comes back if the finding changes. Problems cannot
+  be put away. The badge beside the project's status counts the same rows —
+  "1 problem", "3 suggestions" — and clicking it takes you to the card.
   **A healthy project collapses this to one
   green line.**
 

@@ -736,6 +736,12 @@ class ProjectMember(Base):
     # started" rather than "since forever": a first visit should summarise the
     # project, not an empty window.
     last_briefed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    # The health-card suggestions this member has put away: {sig: {"key", "at"}}.
+    # Per member for the same reason as the mark above — "I have read this
+    # advice" is a fact about one reader, and a co-chair tidying their card must
+    # not silence the chairman's. Only advice can be put away; a problem stays
+    # on every card until it is fixed.
+    health_acks: Mapped[dict | None] = mapped_column(JSONVariant)
 
 
 # ── constitution (frozen policy) ────────────────────────────────────────────────

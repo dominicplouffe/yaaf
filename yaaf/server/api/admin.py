@@ -3358,6 +3358,56 @@ def briefing_seen(project_id: str, body: BriefingSeen | None = None,
             "last_briefed_at": (at or utcnow()).isoformat() if stamped else None}
 
 
+class HealthAck(BaseModel):
+    sig: str = Field(min_length=1, max_length=40)
+    ack: bool = True
+
+
+@router.post("/projects/{project_id}/health/ack", dependencies=[authority.READ])
+def health_ack(project_id: str, body: HealthAck, session: Session = Depends(db)) -> dict:
+    """Put one health-card suggestion away for the person reading — or, with
+    `ack: false`, bring it back.
+
+    Advice only. A finding with status `fail` is something broken, and hiding
+    it would let the badge say "healthy" over a project that cannot run; it
+    stays on the card until it is fixed. Per member, like the briefing's mark,
+    so one reader tidying their card never silences anybody else's.
+
+    Put-away findings that are no longer on the card are dropped on every
+    write, so a finding that clears and later comes back is news again rather
+    than something somebody decided about months ago.
+    """
+    from yaaf.server.api.observe import project_health
+    from yaaf.server.briefing import reading_member
+
+    project = _get_project(session, project_id)
+    member = reading_member(session, project)
+    if member is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Only a member of this project has a health card of their own to tidy.")
+    current = {c["sig"]: c for c in project_health(project.id, session=session)["checks"]}
+    check = current.get(body.sig)
+    if body.ack:
+        if check is None:
+            raise HTTPException(
+                status_code=404,
+                detail="That finding is no longer on the card — it has cleared or changed.")
+        if check["status"] != "warn":
+            raise HTTPException(
+                status_code=409,
+                detail="Only a suggestion can be put away. A problem stays on the card "
+                       "until it is fixed.")
+    acks = {sig: ack for sig, ack in (member.health_acks or {}).items() if sig in current}
+    if body.ack:
+        acks[body.sig] = {"key": check["key"], "at": utcnow().isoformat()}
+    else:
+        acks.pop(body.sig, None)
+    # A fresh dict, not an edit in place: a JSON column only notices assignment.
+    member.health_acks = acks
+    return {"ok": True, "sig": body.sig, "acked": body.ack}
+
+
 # ── approvals, hypotheses, amendments, threads ─────────────────────────────────
 
 

@@ -509,6 +509,11 @@ export interface HealthCheck {
   detail: string;
   where: string | null;
   action: { kind: string; team_id: string } | null;
+  /** This finding's identity: its kind and words with the numbers masked, so
+      it survives a count ticking over and changes when the finding does. */
+  sig: string;
+  /** When the reader put this suggestion away, or null. Only warnings can be. */
+  acked_at: string | null;
 }
 
 export interface ProjectHealth {
