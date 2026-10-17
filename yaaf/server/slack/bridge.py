@@ -54,7 +54,9 @@ from yaaf.core.models import (
     ChannelKind,
     Message,
     Project,
+    ProjectMember,
     Secret,
+    utcnow,
 )
 from yaaf.server.api.agent import WAKE_CHANNEL
 
@@ -379,7 +381,19 @@ def post_boardroom_from_chairman(
         sender_user_id=project.chairman_user_id,
         body=body,
         slack_ts=slack_ts,
+        created_at=utcnow(),
     )
     session.add(message)
     notify(session, WAKE_CHANNEL, project.id)
+    # Replying in Slack is the one sign Slack gives that he has read the room;
+    # reading alone tells the app nothing. His mark, explicitly — this path has
+    # no person bound, and it only ever trusts the chairman.
+    from yaaf.server.unread import mark_boardroom_read
+
+    chairman = session.execute(
+        select(ProjectMember).where(ProjectMember.project_id == project.id,
+                                    ProjectMember.user_id == project.chairman_user_id)
+    ).scalar_one_or_none()
+    if chairman is not None:
+        mark_boardroom_read(session, project, message.created_at, member=chairman)
     return message

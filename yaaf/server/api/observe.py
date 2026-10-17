@@ -86,6 +86,7 @@ from yaaf.server.dispatcher import (
 from yaaf.server.identity import Person, person_auth, signed_in
 from yaaf.server.receipt import receipt as receipt_projection
 from yaaf.server.rows import approval_row, requirement_name
+from yaaf.server.unread import boardroom_unread
 from yaaf.server.velocity import (
     commitment_projection,
     countable_scope,
@@ -343,6 +344,8 @@ def desk(live: bool = False, session: Session = Depends(db),
             # parking — so an autonomous project reads empty here, and the dial
             # itself rides the project dashboard for anyone who needs it.
             "awaiting_you": _awaiting_chairman(session, project, cons),
+            # The reader's own, so each row says which boardroom has news.
+            "boardroom_unread": boardroom_unread(session, project),
             "evidence_7d": policy.countable_external_evidence(session, project.id, week_ago),
             # Yesterday, paired: spend on its own is a vanity number, and
             # evidence on its own hides what it cost. Together they are the one
@@ -602,6 +605,8 @@ def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
         "chat_live": chat_session_live(session, project),
         "pending_approvals": pending_approvals,
         "requirements_proposed": requirements_proposed,
+        # The reader's, not the project's: None for someone with no seat here.
+        "boardroom_unread": boardroom_unread(session, project),
         "ceo_judgment": policy.ceo_judgment(session, project.id),
         "constitution": cons.model_dump(),
         "mode": project.mode,

@@ -91,7 +91,7 @@ from yaaf.runtimes import providers as runtime_providers
 from yaaf.runtimes.catalog import DEFAULT_EFFORT, DEFAULT_MODEL
 from yaaf.runtimes.seats import choosable
 from yaaf.runtimes.seats import refusal as seat_refusal
-from yaaf.server import acting, authority, briefing, policy
+from yaaf.server import acting, authority, briefing, policy, unread
 from yaaf.server.api.agent import WAKE_CHANNEL
 from yaaf.server.deps import db
 from yaaf.server.identity import Person, person_auth, signed_in
@@ -3181,10 +3181,29 @@ def boardroom_post(
         sender_user_id=_decider(project),
         thread_id=body.thread_id,
         body=body.body,
+        created_at=utcnow(),
     )
     session.add(message)
     notify(session, WAKE_CHANNEL, project.id)
+    # Whoever speaks has read the room up to what they said.
+    unread.mark_boardroom_read(session, project, message.created_at)
     return {"id": message.id}
+
+
+class BoardroomSeen(BaseModel):
+    # The newest message the page actually showed, not "now": anything that
+    # landed between that render and this call is still unread.
+    until: datetime | None = None
+
+
+@router.post("/projects/{project_id}/boardroom/seen", dependencies=[authority.READ])
+def boardroom_seen(project_id: str, body: BoardroomSeen | None = None,
+                   session: Session = Depends(db)) -> dict:
+    """Move the reader's boardroom mark — the chat page calls this when its
+    newest message is on screen. Per member; never moves backwards."""
+    project = _get_project(session, project_id)
+    marked = unread.mark_boardroom_read(session, project, body.until if body else None)
+    return {"ok": marked, "boardroom_unread": unread.boardroom_unread(session, project)}
 
 
 class RehearseIn(BaseModel):

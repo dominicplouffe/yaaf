@@ -81,6 +81,12 @@ REACHED = {
 #: Routes no tool reaches, and the reason. A reason is required: "we did not
 #: get to it" is a fine answer, but it has to be written down as one.
 WITHHELD = {
+    "POST /admin/projects/{project_id}/boardroom/seen":
+        "the unread count says what the person has not seen, and a model "
+        "reading the boardroom is not the person reading it — clearing the "
+        "badge on his behalf would hide exactly the news it exists to show. "
+        "Speaking through `boardroom_say` already moves the mark, because "
+        "whoever answers the room has read it.",
     "POST /admin/projects/{project_id}/health/ack":
         "putting a health suggestion away tidies one person's card and nothing "
         "else — every finding still reaches a model through `project` view=health, "

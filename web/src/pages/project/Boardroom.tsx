@@ -24,6 +24,7 @@ import {
   SEND_HINT,
   sendOnEnter,
 } from "../../ui";
+import { useProjectFrame } from "../../projectCtx";
 import { Avatar } from "../../ui/kit";
 
 /** What the poll re-fetches, and what one scroll back up costs. The tail is
@@ -284,6 +285,27 @@ export default function Boardroom({ projectId, dash, org }: {
       setSeenId(lastId);
     }
   }, [lastId, typing?.typing]);
+
+  // Tell the server how far the reader has got, so the sidebar's unread count
+  // clears. The newest message they were present for, not "now": a reply that
+  // lands between the render and this call is still news. Only while the tab
+  // is in front of them — a page left open behind other windows reads nothing.
+  const reloadFrame = useProjectFrame()?.ctx?.reload;
+  const reportedRef = useRef<string | null>(null);
+  useEffect(() => {
+    const report = () => {
+      if (!seenId || reportedRef.current === seenId || document.hidden) return;
+      const message = loaded.find((m) => m.id === seenId);
+      if (!message) return;
+      reportedRef.current = seenId;
+      post(`/admin/projects/${projectId}/boardroom/seen`, { until: message.at })
+        .then(() => reloadFrame?.())
+        .catch(() => { reportedRef.current = null; });
+    };
+    report();
+    document.addEventListener("visibilitychange", report);
+    return () => document.removeEventListener("visibilitychange", report);
+  }, [seenId, loaded, projectId, reloadFrame]);
 
   const unseen = useMemo(() => {
     if (pinned || !seenId) return 0;

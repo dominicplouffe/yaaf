@@ -99,6 +99,7 @@ function ProjectNav({
     if (cap > 0) aside.spend = `${Math.round((spent / cap) * 100)}%`;
     if (reviews?.open) aside.reviews = <span className="sb-pill">open</span>;
   }
+  const unread = ctx?.dash.boardroom_unread ?? 0;
   const explore = ctx?.dash.mode === "explore";
   const ceo = ctx ? firstName(ctx.ceoName) : null;
   const base = `/projects/${project.id}`;
@@ -126,7 +127,11 @@ function ProjectNav({
           end={p.path === ""}
           icon={p.icon}
           label={p.path === "chat" && ceo ? `Chat with ${ceo}` : p.label}
-          aside={aside[p.path] !== undefined ? <span className="sb-aside">{aside[p.path]}</span>
+          aside={p.path === "chat" && unread > 0
+            ? <span className="sb-badge" title={`${unread} new in the boardroom since you last read it`}>
+                {unread > 99 ? "99+" : unread}
+              </span>
+            : aside[p.path] !== undefined ? <span className="sb-aside">{aside[p.path]}</span>
             : p.path === "chat" ? <span className="sb-aside">CEO</span> : undefined}
           onClick={onNavigate}
         />

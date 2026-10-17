@@ -441,6 +441,17 @@ function WaitingChip({ p }: { p: DeskProject }) {
   );
 }
 
+/** New boardroom messages — news, not a demand, so accent rather than warn. */
+function UnreadChip({ p }: { p: DeskProject }) {
+  const n = p.boardroom_unread ?? 0;
+  if (n === 0) return null;
+  return (
+    <Link to={`/projects/${p.id}/chat`}>
+      <span className="chip accent">{n > 99 ? "99+" : n} new in chat</span>
+    </Link>
+  );
+}
+
 /** Goal text is clipped to its opening — some are memo-length, and a card that
     scrolls is a card nobody compares against its neighbour. */
 function ProjectCard({ p }: { p: DeskProject }) {
@@ -454,6 +465,7 @@ function ProjectCard({ p }: { p: DeskProject }) {
         </Link>
         {statusBadge(p.status)}
         <WaitingChip p={p} />
+        <UnreadChip p={p} />
         <div className="spacer" />
         <span className="mono help">{p.slug}</span>
       </div>
@@ -508,6 +520,7 @@ function ProjectRow({ p }: { p: DeskProject }) {
         </div>
       </div>
       <WaitingChip p={p} />
+      <UnreadChip p={p} />
       {!terminal && <BudgetBit p={p} />}
       <span className="help" style={{ whiteSpace: "nowrap" }}>active {fmtAgo(p.last_run_at)}</span>
       <Link to={`/projects/${p.id}`} className="rowgo" aria-label={`Open ${p.name}`}>→</Link>

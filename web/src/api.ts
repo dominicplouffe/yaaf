@@ -409,6 +409,9 @@ export interface Dashboard {
   /** Requirements the CEO proposed and is parked on — a decision only the
       chairman can make, taken on the Plan tab. */
   requirements_proposed: number;
+  /** Boardroom messages the reader has not seen yet — theirs, not the
+      project's. Null for a reader with no seat on this project. */
+  boardroom_unread: number | null;
   ceo_judgment: {
     tasks_created: number;
     tasks_with_verified_external: number;
@@ -819,6 +822,8 @@ export interface DeskProject {
     verdicts: { key: string; statement: string; name: string }[];
     commitment: { id: string; deliver_by: string; scope_count: number } | null;
   };
+  /** The reader's unread boardroom messages on this project. */
+  boardroom_unread: number | null;
   evidence_7d: number;
   /** Yesterday, paired — the "burned money, proved nothing" signal. */
   spend_24h: number;

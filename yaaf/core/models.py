@@ -742,6 +742,10 @@ class ProjectMember(Base):
     # not silence the chairman's. Only advice can be put away; a problem stays
     # on every card until it is fixed.
     health_acks: Mapped[dict | None] = mapped_column(JSONVariant)
+    # How far into the boardroom this member has read: everything after it,
+    # written by somebody else, is their unread count. Per member for the same
+    # reason as the two above. NULL means never opened — all of it is unread.
+    boardroom_read_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
 
 # ── constitution (frozen policy) ────────────────────────────────────────────────
