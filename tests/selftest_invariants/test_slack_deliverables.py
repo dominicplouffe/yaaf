@@ -24,7 +24,7 @@ from sqlalchemy import select
 
 from tests.conftest import ADMIN, live_token, make_project
 from yaaf.core.db import db_session
-from yaaf.core.models import Artifact
+from yaaf.core.models import Artifact, Channel, ChannelKind, Message
 from yaaf.server.slack import bridge
 
 BOT_TOKEN = "xoxb-test-token"
@@ -234,3 +234,52 @@ def test_a_shelf_that_predates_the_feature_is_not_flooded_into_slack(client, mon
     with db_session() as session:
         assert bridge.mirror_once(session) == 1
     assert len(calls) == 1
+
+
+def _boardroom_lines(project_id: str) -> list[Message]:
+    with db_session() as session:
+        return list(session.execute(
+            select(Message)
+            .join(Channel, Channel.id == Message.channel_id)
+            .where(Message.project_id == project_id,
+                   Channel.kind == ChannelKind.BOARDROOM)
+        ).scalars())
+
+
+def test_a_deliverable_is_announced_in_the_boardroom_chat_too(client):
+    """Slack announces a deliverable in the boardroom channel; the boardroom
+    chat must not be the one room that never hears about it. Slack is a
+    viewport onto the bus, so it may not know something the bus does not."""
+    project = make_project(client)
+    _run_id, token = live_token(project["id"], project["ceo_agent_id"])
+    assert _publish(client, token, "gw2_memo.md", b"# GW2 MEMO").status_code == 200
+
+    lines = [m for m in _boardroom_lines(project["id"]) if "gw2_memo.md" in m.body]
+    assert len(lines) == 1
+    assert lines[0].sender_agent_id is None and lines[0].sender_user_id is None, (
+        "a platform line: it spends no cadence and wakes nobody"
+    )
+
+
+def test_the_boardroom_line_does_not_double_the_slack_announcement(client, monkeypatch):
+    """The file upload is the line's Slack delivery. Mirroring the line as
+    text as well would say the same thing twice in the same channel."""
+    project = make_project(client)
+    _wire_slack(client, project)
+    _run_id, token = live_token(project["id"], project["ceo_agent_id"])
+    _publish(client, token, "report.md")
+
+    uploads: list[str] = []
+    posts: list[str] = []
+    monkeypatch.setattr(bridge, "_upload_file",
+                        lambda *a, **k: uploads.append("up") or "F1")
+    # Recorded, not raised: the mirror swallows a failed post and retries it,
+    # so a raising fake would let a double announcement pass silently.
+    monkeypatch.setattr(bridge, "_post_message",
+                        lambda tok, ch, text: posts.append(text) or "1.0")
+
+    with db_session() as session:
+        bridge.mirror_once(session)
+        bridge.mirror_once(session)
+    assert uploads == ["up"]
+    assert posts == [], "the file was the announcement; the line rides on it"

@@ -3585,6 +3585,20 @@ def artifact_put(
                               "satisfies": [r.key for r in satisfied]}},
         attention=Attention.FYI,
     )
+    # Slack announces it in the boardroom channel, so the boardroom chat says it
+    # too. Pre-stamped: the bridge's deliverable push posts the file into that
+    # same channel, and that is this line's Slack delivery.
+    from yaaf.server.notify import SLACK_VIA_DELIVERABLE, boardroom_line
+
+    size = f"{len(data) / 1024:.0f} KB" if len(data) >= 1024 else f"{len(data)} B"
+    boardroom_line(
+        session, ctx.project.id,
+        f"Deliverable published: **{filename}**"
+        + (f" (v{version})" if version > 1 else "")
+        + (f" — {', '.join(r.key for r in satisfied)}" if satisfied else "")
+        + f" · {size}. It is on the Deliverables page.",
+        slack_ts=SLACK_VIA_DELIVERABLE,
+    )
     # The digest is returned at write time so the author can record what it
     # shipped and a later reader can prove the store still holds those bytes.
     return {"uri": uri, "key": key, "size": len(data), "sha256": digest,

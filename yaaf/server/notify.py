@@ -123,7 +123,14 @@ MAIL_SPEND = "chairman.mailed"
 MAIL_HELD = "chairman.mail_held"
 
 
-def boardroom_line(session: Session, project_id: str, body: str) -> None:
+#: `Message.slack_ts` for a boardroom line whose Slack delivery belongs to the
+#: deliverable push: that push carries the file itself, so mirroring the line
+#: as text too would announce the same deliverable twice in one channel.
+SLACK_VIA_DELIVERABLE = "via-deliverable"
+
+
+def boardroom_line(session: Session, project_id: str, body: str,
+                   *, slack_ts: str | None = None) -> None:
     """A platform-authored boardroom line: no sender, so it spends no reporting
     cadence, mirrors to Slack through the bridge, and — because the dispatcher
     skips sender-less lines — never wakes an agent. The one channel that reaches
@@ -132,6 +139,9 @@ def boardroom_line(session: Session, project_id: str, body: str) -> None:
     Email is not that channel. A chairman who is mid-conversation in the
     boardroom does not see an SMTP notice, and the one thing the platform had to
     tell him about a finished project went only there.
+
+    `slack_ts` pre-stamps the line for the one case where another path owns its
+    Slack delivery (:data:`SLACK_VIA_DELIVERABLE`).
     """
     boardroom = session.execute(
         select(Channel).where(Channel.project_id == project_id,
@@ -144,6 +154,7 @@ def boardroom_line(session: Session, project_id: str, body: str) -> None:
         project_id=project_id,
         channel_id=boardroom.id,
         body=body,
+        slack_ts=slack_ts,
     ))
 
 
