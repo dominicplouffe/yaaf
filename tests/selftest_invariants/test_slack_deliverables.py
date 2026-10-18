@@ -19,6 +19,7 @@ exactly once — the same promise `Message.slack_ts` has always made.
 from __future__ import annotations
 
 import base64
+from urllib.parse import quote
 
 from sqlalchemy import select
 
@@ -283,3 +284,21 @@ def test_the_boardroom_line_does_not_double_the_slack_announcement(client, monke
         bridge.mirror_once(session)
     assert uploads == ["up"]
     assert posts == [], "the file was the announcement; the line rides on it"
+
+
+def test_the_boardroom_line_links_to_the_file_itself(client):
+    """A chat line that names a file and makes the chairman go find it is half
+    an announcement. The name opens that file's preview — the same
+    `?open=<key>` the Overview card links with — even when the name is
+    markdown-hostile."""
+    project = make_project(client)
+    _run_id, token = live_token(project["id"], project["ceo_agent_id"])
+    _publish(client, token, "q3 [draft]*.md")
+
+    with db_session() as session:
+        key = session.execute(
+            select(Artifact.storage_key).where(Artifact.project_id == project["id"])
+        ).scalar_one()
+    (line,) = [m for m in _boardroom_lines(project["id"]) if "draft" in m.body]
+    assert (f"[**q3 \\[draft\\]\\*.md**](#/projects/{project['id']}/deliverables"
+            f"?open={quote(key, safe='')})") in line.body

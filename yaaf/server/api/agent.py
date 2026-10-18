@@ -3587,16 +3587,23 @@ def artifact_put(
     )
     # Slack announces it in the boardroom channel, so the boardroom chat says it
     # too. Pre-stamped: the bridge's deliverable push posts the file into that
-    # same channel, and that is this line's Slack delivery.
+    # same channel, and that is this line's Slack delivery. The name links to
+    # the file's preview (the Deliverables page's `?open=<key>`, the same link
+    # the Overview card uses) so the chairman reads it without hunting for it.
+    from urllib.parse import quote
+
     from yaaf.server.notify import SLACK_VIA_DELIVERABLE, boardroom_line
 
     size = f"{len(data) / 1024:.0f} KB" if len(data) >= 1024 else f"{len(data)} B"
+    link = f"#/projects/{ctx.project.id}/deliverables?open={quote(key, safe='')}"
+    # A name is any non-path string, so `]` or `*` in it must not end the link.
+    label = "".join("\\" + c if c in "\\`*_[]" else c for c in filename)
     boardroom_line(
         session, ctx.project.id,
-        f"Deliverable published: **{filename}**"
+        f"Deliverable published: [**{label}**]({link})"
         + (f" (v{version})" if version > 1 else "")
         + (f" — {', '.join(r.key for r in satisfied)}" if satisfied else "")
-        + f" · {size}. It is on the Deliverables page.",
+        + f" · {size}.",
         slack_ts=SLACK_VIA_DELIVERABLE,
     )
     # The digest is returned at write time so the author can record what it
