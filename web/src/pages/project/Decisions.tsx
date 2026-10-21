@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import { plainStatus } from "../../ui/kit";
 import { Link } from "react-router-dom";
 import {
-  AmendmentRow, ApprovalDisclosure, ApprovalRow, AskRow, CeoDecisionRow, get, post,
-  splitWithout,
+  AmendmentRow, ApprovalDisclosure, ApprovalRow, AskRow, BriefDraft, CeoDecisionRow, get,
+  post, splitWithout,
 } from "../../api";
 import { fmtUsd, fmtWhen, usePoll } from "../../hooks";
 import { grantRoles, RoleGrants } from "../../roles";
@@ -23,6 +23,8 @@ function whyYours(kind: string): string {
       return "An agent is asking for a capability it does not have. Only you can grant one.";
     case "capacity":
       return "The project is asking for more room to work — runs, concurrency, queue depth or money. It is the one kind where the CEO argues for itself, so it stays yours at every autonomy setting. It is not blocking: the project keeps working at the cap it has, and if you say nothing the cap simply stays.";
+    case "brief":
+      return "Only you decide what this project is for. Until you confirm, every agent keeps working from the brief in force; once you do, this one replaces it in every agent's instructions, on every run.";
     case "assist":
       return "A step only a human can do — a captcha, a 2FA code, a form. Your note travels back verbatim (a code, a 'done', a 'no') and wakes the agent. The platform hands over security challenges; it never defeats them.";
     default:
@@ -293,6 +295,117 @@ function DecisionCard({
   );
 }
 
+const lines = (text: string) =>
+  text.split("\n").map((l) => l.replace(/^\s*[-•*]\s*/, "").trim()).filter(Boolean);
+
+/** Your direction, written back by the CEO for you to confirm. Everything on
+    it is editable, because "yes, but 12% not 15%" should be one click, not
+    another round through the boardroom. Confirming replaces the goal and the
+    standing orders every agent reads first. */
+function BriefCard({
+  approval,
+  dash,
+  onDecided,
+}: {
+  approval: ApprovalRow;
+  dash: ProjectCtx["dash"];
+  onDecided: () => void;
+}) {
+  const draft: BriefDraft = approval.brief ?? { goal: "", standing_orders: [], retired: [] };
+  const [goal, setGoal] = useState(draft.goal);
+  const [orders, setOrders] = useState(draft.standing_orders.join("\n"));
+  const [retired, setRetired] = useState(draft.retired.join("\n"));
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const now = dash.standing_orders ?? [];
+  const proposed = lines(orders);
+  const added = proposed.filter((o) => !now.includes(o));
+  const dropped = now.filter((o) => !proposed.includes(o));
+
+  async function decide(approve: boolean) {
+    if (!approve && !note.trim()) {
+      setError("Say what is wrong — the CEO re-drafts from your note.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await post(`/admin/approvals/${approval.id}/decide`, {
+        approve,
+        note: note.trim(),
+        ...(approve ? {
+          brief: { goal: goal.trim(), standing_orders: proposed, retired: lines(retired) },
+        } : {}),
+      });
+      onDecided();
+    } catch (e) {
+      setError((e as Error).message);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="card" style={{ marginBottom: 12 }}>
+      <div className="pill-row" style={{ margin: 0 }}>
+        <span className="chip accent">brief</span>
+        <div className="spacer" />
+        <span className={`clock ${clockClass(approval.expires_at)}`}>
+          Lapses in {fmtLeft(approval.expires_at).replace(" left", "")} — the current brief stays
+        </span>
+      </div>
+      <h3 style={{ margin: "10px 0 4px", fontSize: 15 }}>Is this what you want now?</h3>
+      <p className="help" style={{ marginTop: 0 }}>{whyYours("brief")}</p>
+      {draft.what_changed && (
+        <dl className="kv">
+          <dt>What you told the CEO</dt>
+          <dd style={{ whiteSpace: "pre-wrap" }}>{draft.what_changed}</dd>
+        </dl>
+      )}
+      <label className="grant-label">The goal</label>
+      <textarea value={goal} rows={5} onChange={(e) => setGoal(e.target.value)} />
+      {goal.trim() !== dash.goal && (
+        <details style={{ margin: "4px 0 8px" }}>
+          <summary className="help">The goal it replaces</summary>
+          <p className="help" style={{ whiteSpace: "pre-wrap" }}>{dash.goal}</p>
+        </details>
+      )}
+      <label className="grant-label">Standing orders — one per line, with the number</label>
+      <textarea value={orders} rows={Math.max(3, proposed.length + 1)}
+        onChange={(e) => setOrders(e.target.value)} />
+      {(added.length > 0 || dropped.length > 0) && (
+        <p className="help" style={{ margin: "4px 0 8px" }}>
+          {added.length > 0 && <>New: {added.join(" · ")}. </>}
+          {dropped.length > 0 && <>No longer an order: {dropped.join(" · ")}.</>}
+        </p>
+      )}
+      <label className="grant-label">No longer applies — agents told to ignore it wherever they find it</label>
+      <textarea value={retired} rows={Math.max(2, lines(retired).length + 1)}
+        onChange={(e) => setRetired(e.target.value)} />
+      <input
+        style={{ marginTop: 12 }}
+        value={note}
+        placeholder="A note to the CEO (required if it is not right)"
+        onChange={(e) => setNote(e.target.value)}
+      />
+      {error && <div className="error">{error}</div>}
+      <div className="actions">
+        <button className="primary" disabled={busy || goal.trim().length < 10}
+          onClick={() => decide(true)}>
+          ✓ Confirm — this is the brief
+        </button>
+        <button disabled={busy} onClick={() => decide(false)}>
+          Not right
+        </button>
+        <span className="help">
+          Confirming restarts the chat so the CEO you talk to reads it too.
+        </span>
+      </div>
+    </div>
+  );
+}
+
 /** What the CEO decided on its own authority.
 
     Autonomy was always audited and always emailed, and had nowhere to be READ:
@@ -442,7 +555,17 @@ export default function Decisions({ ctx }: { ctx: ProjectCtx }) {
           <h2 className="zone hot">
             Waiting on you <span className="cnt">{pending.length}</span>
           </h2>
-          {pending.map((a) => (
+          {pending.map((a) => a.kind === "brief" ? (
+            <BriefCard
+              key={a.id}
+              approval={a}
+              dash={dash}
+              onDecided={() => {
+                reloadApprovals();
+                ctx.reload();
+              }}
+            />
+          ) : (
             <DecisionCard
               key={a.id}
               approval={a}

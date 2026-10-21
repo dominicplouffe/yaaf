@@ -38,6 +38,7 @@ from yaaf.core.models import (
     Role,
     RoleVersion,
     Run,
+    RunKind,
     SideEffect,
     Suggestion,
     Task,
@@ -45,7 +46,7 @@ from yaaf.core.models import (
     Team,
     utcnow,
 )
-from yaaf.server import policy
+from yaaf.server import brief, policy
 from yaaf.server.rows import seat_row
 
 UNTRUSTED_NOTE = (
@@ -441,7 +442,8 @@ def build_system_prompt(session: Session, agent: Agent, project: Project,
     to_chairman = f"{chairman_writing(cons)}\n\n" if agent.kind == AgentKind.CEO else ""
     return (
         f"You are {agent.name}, an agent in the project \"{project.name}\".\n"
-        f"PROJECT GOAL: {project.goal}\n\n"
+        f"PROJECT GOAL: {project.goal}\n"
+        f"{brief.prompt_block(project)}\n"
         f"{position}\n\n{role_prompt}\n\n{to_chairman}{HOUSE_STYLE}\n\n"
         f"{PRECEDENCE}\n\n"
         f"{constitution_prose(cons, project)}\n\n"
@@ -479,7 +481,9 @@ PRECEDENCE = (
     "than the rules require. A charter that tells you to spend less, ship less or ask "
     "for less than the constitution allows is a preference somebody wrote before this "
     "week's evidence existed, not a limit. Say so, rather than quietly obeying the "
-    "tighter of the two."
+    "tighter of the two. The goal and standing orders at the top are the chairman's "
+    "current word and outrank your charter too: a charter is written once, at "
+    "founding, from the goal as it was then."
 )
 
 
@@ -689,6 +693,62 @@ def _unread_messages(session: Session, agent: Agent, include_recent: bool = Fals
         elif watermark > cursor.last_read_at:
             cursor.last_read_at = watermark
     return out
+
+
+CHAT_HEARD_LIMIT = 12
+
+
+def _chairman_in_chat(session: Session, run: Run, agent: Agent, project: Project,
+                      unread: list[dict]) -> dict | None:
+    """What the chairman said in the boardroom since this CEO's last work run.
+
+    The resident chat session runs as the same agent and polls the boardroom
+    every two seconds, and each read moved the one "last read" mark both lanes
+    share. So `unread` never held a single chairman message for a work run —
+    the run that plans the day, sizes the orders and writes the tasks. It knew
+    only what the chat session happened to write down mid-conversation, and
+    rebuilt each day from the goal. That is most of why a change of mind held
+    for a day or two and then quietly reverted.
+
+    Read here without touching the mark: the chat session still owns the
+    replies, and this lane only needs to know what was said.
+    """
+    if run.kind == RunKind.CHAT_SESSION:
+        return None
+    boardroom = session.execute(
+        select(Channel).where(Channel.project_id == project.id,
+                              Channel.kind == ChannelKind.BOARDROOM)
+    ).scalars().first()
+    if boardroom is None:
+        return None
+    since = session.execute(
+        select(func.max(Run.started_at)).where(Run.agent_id == agent.id,
+                                               Run.kind != RunKind.CHAT_SESSION,
+                                               Run.id != run.id)
+    ).scalar_one_or_none()
+    already = {m["id"] for c in unread for m in c["messages"]}
+    stmt = select(Message).where(Message.channel_id == boardroom.id,
+                                 Message.sender_user_id.is_not(None))
+    if since is not None:
+        stmt = stmt.where(Message.created_at > since)
+    newest = list(session.execute(
+        stmt.order_by(Message.created_at.desc()).limit(CHAT_HEARD_LIMIT + 1)
+    ).scalars())
+    rows = [m for m in reversed(newest[:CHAT_HEARD_LIMIT]) if m.id not in already]
+    if not rows:
+        return None
+    return {
+        "note": ("What the chairman said in the boardroom since your last run. Your "
+                 "chat session has already answered it: do not reply. Plan from it. "
+                 "If he changed direction and the brief at the top of your prompt does "
+                 "not say so yet, write it back to him with brief_propose."),
+        "messages": [{"id": m.id, **_speaker(session, project.id, m.sender_user_id),
+                      "body": _clip(m.body, UNREAD_BODY_CHARS,
+                                    "messages_read has the full text"),
+                      "at": m.created_at.isoformat()} for m in rows],
+        **({"earlier": "There is more before these; messages_read has it."}
+           if len(newest) > CHAT_HEARD_LIMIT else {}),
+    }
 
 
 def _you(session: Session, agent: Agent) -> dict:
@@ -1333,6 +1393,9 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
 
     if agent.kind == AgentKind.CEO:
         pack["chairman"] = _chairman_state(session, project, agent, now)
+        heard = _chairman_in_chat(session, run, agent, project, pack["unread"])
+        if heard:
+            pack["chairman_in_chat"] = heard
         pack["situation"] = _situation(session, project, cons)
         open_tasks = policy.open_top_level_tasks(session, project.id)
         pack["board"] = {

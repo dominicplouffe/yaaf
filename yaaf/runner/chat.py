@@ -56,7 +56,7 @@ from yaaf.runner.daemon import (
 from yaaf.runner.types import RunJob
 from yaaf.runtimes.harnesses import HARNESSES
 from yaaf.runtimes.seats import seat_for
-from yaaf.server import policy
+from yaaf.server import brief, policy
 from yaaf.server.contextpack import build_system_prompt, role_version_for
 
 log = logging.getLogger("yaaf.chat")
@@ -111,6 +111,16 @@ CHAT SESSION: You are in a live boardroom conversation with the chairman.
   create the task, check the board, record the memory — then say plainly
   what you did, in a sentence or two, not a play-by-play.
 - Directives come only from the chairman, only here.
+- WHEN HE CHANGES HIS MIND about what the project is for, how it should
+  work, or any limit, threshold or value ("forget the stop", "only one rule
+  now", "stop leading with HN"), write the whole brief back to him with
+  `brief_propose`: the goal in plain words as it stands NOW, every standing
+  order with its number, and what no longer applies. Then tell him in one
+  line that it is waiting for his Confirm. Agreeing in chat is not enough
+  and neither is a memory: the work runs plan from the brief at the top of
+  their prompt, and until he confirms, that is still the old one. Do it in
+  the same turn, not later, and re-draft the whole brief every time, so it
+  never grows a stack of corrections.
 - When he sets a STANDING rule about how or how often he wants reporting,
   file it with `directive_file`, citing the message id shown in brackets
   beside his words. Do not merely remember it: you run as separate
@@ -236,6 +246,15 @@ def _supervise_project(session: Session, project: Project) -> tuple[dict | None,
             _end_session(session, project, live_run,
                          "chat session restarted: the CEO's model credential changed")
             live_run, running_ids = None, set()
+
+    if live_run is not None and (live_run.trigger or {}).get("brief") != brief.mark(project):
+        # Same reason, the other thing baked in at boot: the system prompt. A
+        # session started before he confirmed a new brief goes on answering him
+        # from the old goal — the CEO he is actually talking to, of all of them,
+        # is the one that never hears he changed his mind.
+        _end_session(session, project, live_run,
+                     "chat session restarted: the chairman's brief changed")
+        live_run, running_ids = None, set()
 
     if live_run is not None:
         if live_run.token_revoked:
@@ -387,7 +406,8 @@ def _prepare_session(session: Session, project: Project, ceo: Agent) -> tuple[di
         agent_id=ceo.id,
         kind=RunKind.CHAT_SESSION,
         trigger={"type": "chat_session",
-                 "credential": _credential_mark(session, project, seat.provider)},
+                 "credential": _credential_mark(session, project, seat.provider),
+                 "brief": brief.mark(project)},
         status=RunStatus.RUNNING,
         worker=settings().worker_name,
         started_at=utcnow(),

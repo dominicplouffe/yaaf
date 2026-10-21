@@ -41,6 +41,7 @@ from yaaf.core.models import (
     AgentStatus,
     Amendment,
     Approval,
+    ApprovalKind,
     ApprovalStatus,
     AuditLog,
     AuditSample,
@@ -2636,6 +2637,10 @@ class ProjectPatch(BaseModel):
     # The chairman's mandate, not a constitutional rule: it redirects the
     # project rather than constraining it, and needs no written reason.
     goal: str | None = Field(default=None, min_length=10)
+    # The rest of the brief (yaaf.server.brief). Sent with or without `goal`;
+    # either way the three are saved together as one brief.
+    standing_orders: list[str] | None = None
+    retired_orders: list[str] | None = None
     billing_mode: str | None = Field(default=None, pattern="^(api_key|subscription)$")
     # An empty string detaches: the project keeps its mode and cannot run
     # until a credential is assigned. It is how a credential is freed for
@@ -2738,19 +2743,34 @@ def patch_project(project_id: str, body: ProjectPatch, session: Session = Depend
     if body.name is not None:
         project.name = body.name.strip()
         changed["name"] = project.name
-    if body.goal is not None and body.goal.strip() != project.goal:
+    if body.goal is not None or body.standing_orders is not None \
+            or body.retired_orders is not None:
         # The mandate moved. Agents read it live from the next context pack, so
         # the change lands on its own — but landing silently is how a CEO ends
-        # up defending a plan built for the old one. Tell it, in its own words.
-        was, project.goal = project.goal, body.goal.strip()
-        changed["goal"] = project.goal
-        _notice_ceo(
-            session, project.id, NoticeKind.GOAL_CHANGED,
-            f"The chairman changed this project's goal.\n\nIT IS NOW: {project.goal}\n\n"
-            f"IT WAS: {was}\n\nEverything already in flight — open tasks, bets, deliverables "
-            "— was planned against the old goal. Re-read the backlog against this one before "
-            "continuing, and close or re-aim whatever no longer serves it.",
-        )
+        # up defending a plan built for the old one. The brief module tells it,
+        # with the old text beside the new.
+        from yaaf.server import brief as briefs
+
+        draft = briefs.current(project)
+        if body.goal is not None:
+            draft["goal"] = body.goal
+        if body.standing_orders is not None:
+            draft["standing_orders"] = body.standing_orders
+        if body.retired_orders is not None:
+            draft["retired"] = body.retired_orders
+        try:
+            moved = briefs.is_change(project, draft)
+            if moved:
+                # Retired orders he edits here are the whole list, not a
+                # carry-forward: this is the one screen where he sees all of it.
+                briefs.apply(session, project, draft,
+                             how="The chairman edited the brief in Settings.",
+                             carry_retired=body.retired_orders is None)
+                changed["brief"] = briefs.current(project)
+        except briefs.BriefError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if moved:
+            changed["goal"] = project.goal
     if body.billing_mode is not None:
         project.billing_mode = body.billing_mode
         changed["billing_mode"] = body.billing_mode
@@ -2849,6 +2869,8 @@ def patch_project(project_id: str, body: ProjectPatch, session: Session = Depend
         )
     _audit(session, project.id, "project.patch", "project", project.id, changed)
     return {"id": project.id, "name": project.name, "goal": project.goal,
+            "standing_orders": project.standing_orders or [],
+            "retired_orders": project.retired_orders or [],
             "billing_mode": project.billing_mode,
             "billing_secret_id": project.billing_secret_id,
             "controlled_domains": project.controlled_domains, "integrations": project.integrations,
@@ -3433,6 +3455,10 @@ def health_ack(project_id: str, body: HealthAck, session: Session = Depends(db))
 class ApprovalDecision(BaseModel):
     approve: bool
     note: str = Field(default="", max_length=4000)
+    # A brief only: his own wording, edited on the card before he confirmed.
+    # Confirming the CEO's draft word for word is the usual case; fixing one
+    # number on it should not take a round trip through the boardroom.
+    brief: dict | None = None
 
 
 def _apply_decision(session: Session, approval: Approval, project: Project,
@@ -3496,6 +3522,8 @@ def decide_approval(
     if approval.status != ApprovalStatus.PENDING:
         raise HTTPException(status_code=409, detail=f"approval already {approval.status}")
     project = session.get(Project, approval.project_id)
+    if approval.kind == ApprovalKind.BRIEF:
+        return _decide_brief(session, approval, project, body)
     _apply_decision(
         session, approval, project, body.approve, body.note,
         notice_body=(f"Approval '{approval.title}' was "
@@ -3503,6 +3531,46 @@ def decide_approval(
                      + (f": {body.note}" if body.note else ".")),
     )
     return {"id": approval.id, "status": approval.status}
+
+
+def _decide_brief(session: Session, approval: Approval, project: Project,
+                  body: ApprovalDecision) -> dict:
+    """Confirming a brief IS the change: the goal is replaced, the standing
+    orders land in every agent's prompt, and the chat session restarts onto
+    them. Declining changes nothing, and his note is what the CEO re-drafts from."""
+    from yaaf.server import brief as briefs
+    from yaaf.server.notify import boardroom_line
+
+    if not body.approve:
+        _apply_decision(session, approval, project, False, body.note,
+                        notice_body=("The chairman did not confirm your draft of the brief"
+                                     + (f": {body.note}" if body.note else ".")
+                                     + " The brief in force is unchanged. If he told you "
+                                     "what is wrong, re-draft from that."))
+        return {"id": approval.id, "status": approval.status}
+    draft = {**(approval.brief or {}), **(body.brief or {})}
+    if "goal" not in draft:
+        raise HTTPException(status_code=422, detail="This brief carries no text to apply.")
+    edited = body.brief is not None and any(
+        draft.get(k) != (approval.brief or {}).get(k)
+        for k in ("goal", "standing_orders", "retired"))
+    try:
+        applied = briefs.apply(
+            session, project, draft,
+            how=("The chairman confirmed your brief"
+                 + (", after editing it — read his wording, not your draft."
+                    if edited else ".")))
+    except briefs.BriefError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    approval.brief = {**draft, **applied}
+    _apply_decision(session, approval, project, True, body.note,
+                    notice_body="The brief is confirmed and in force"
+                                + (f": {body.note}" if body.note else "."),
+                    audit_detail={"edited": edited})
+    boardroom_line(session, project.id,
+                   "✅ Brief confirmed. Every agent works from it from its next run"
+                   + (", with your edits" if edited else "") + ".")
+    return {"id": approval.id, "status": approval.status, "brief": applied}
 
 
 @router.get("/projects/{project_id}/accounts", dependencies=[authority.READ])

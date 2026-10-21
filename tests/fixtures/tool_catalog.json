@@ -222,6 +222,38 @@
     "name": "board"
   },
   {
+    "description": "CEO only. Write the chairman's CURRENT direction back to him for his Confirm: `goal` is the whole goal in plain words as it stands now (it replaces the old one, so write all of it, not a patch); `standing_orders` is every order in force, one sentence each WITH its number or value ('Max 15% of the book in one name', not 'keep positions sensible'); `retired` is what he has taken back, so agents that find it in a file or memory know it is dead; `what_changed` quotes what he said, with dates. Use it the moment he changes his mind about what the project is for, how it works, or any limit \u2014 agreeing in chat or saving a memory does NOT change what the other runs read. Nothing changes until he confirms; then every agent reads the new brief first on every run and you are told to rewrite the files, scripts and memories that still say the old thing. A new draft replaces any unconfirmed one. he reads it cold, so write it for a person who has not opened the project: plain words, things named by what they are rather than by an ID, numbers with what they compare to.",
+    "input_schema": {
+      "properties": {
+        "goal": {
+          "type": "string"
+        },
+        "retired": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "standing_orders": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "what_changed": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "goal",
+        "standing_orders",
+        "what_changed"
+      ],
+      "type": "object"
+    },
+    "name": "brief_propose"
+  },
+  {
     "description": "CEO only. Put a case to the chairman for MORE of a capacity dial \u2014 runs a day, runs an hour, concurrency, queue depth, the month's money. This is the verb for the constraint that is actually binding: if you have worked out that the run ration is what paces you, say so here with the arithmetic rather than describing it in the boardroom, where it is a remark nobody can act on. rule is the constitution field; `to` is the number you want. All three of buys / costs / without are required and are the point \u2014 what more room BUYS in outcomes, what it COSTS in money and runs, and what happens WITHOUT it. A request without them is a wish, and he reads it cold, so write it for a person who has not opened the project: plain words, things named by what they are rather than by an ID, numbers with what they compare to. It does not block and it does not move the dial: keep working at the cap you have, plan for it, and treat a yes as upside. Unanswered it expires to no, which is the same as today. You may not request a lower bar, a change to who decides, or less auditing \u2014 those are his judgement about the project, not its throughput.",
     "input_schema": {
       "properties": {

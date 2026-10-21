@@ -380,6 +380,11 @@ export interface Dashboard {
   status: string;
   status_reason: string | null;
   goal: string;
+  /** The rest of the brief every agent reads under the goal: the chairman's
+      current orders, and the ones he took back. */
+  standing_orders: string[];
+  retired_orders: string[];
+  brief_confirmed_at: string | null;
   billing_mode: string;
   /** explore | deliver | operate — decides whether a Plan exists at all. */
   mode: string;
@@ -722,6 +727,9 @@ export interface ApprovalRow {
       much it touches, an estimate, whether it can be undone, the case against.
       Null on every kind but a data write, and on one filed without it. */
   disclosure?: ApprovalDisclosure | null;
+  /** A brief only: the direction the CEO wrote back for you to confirm.
+      Confirming it replaces the goal and the standing orders. */
+  brief?: BriefDraft | null;
   /** Set on a data write: the one call approving it buys. A need for a
       credential is also a tool_request, and carries none. */
   grant?: { source: string; tool: string; arguments_sha256: string } | null;
@@ -737,6 +745,13 @@ export function splitWithout(body: string): [string, string | null] {
   const at = body.lastIndexOf(WITHOUT);
   if (at < 0) return [body, null];
   return [body.slice(0, at).trimEnd(), body.slice(at + WITHOUT.length).trim()];
+}
+
+export interface BriefDraft {
+  goal: string;
+  standing_orders: string[];
+  retired: string[];
+  what_changed?: string;
 }
 
 type Cell = string | number | boolean | null;

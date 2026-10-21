@@ -579,6 +579,11 @@ def dashboard(project_id: str, session: Session = Depends(db)) -> dict:
         "status": project.status,
         "status_reason": project.status_reason,
         "goal": project.goal,
+        # The rest of the brief, which Settings edits beside the goal.
+        "standing_orders": project.standing_orders or [],
+        "retired_orders": project.retired_orders or [],
+        "brief_confirmed_at": (project.brief_confirmed_at.isoformat()
+                               if project.brief_confirmed_at else None),
         **(standing(session, reader, project) if reader is not None else {}),
         "chairman": None if chairman is None else {
             "id": chairman.id, "email": chairman.email,

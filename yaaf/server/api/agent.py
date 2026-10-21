@@ -2274,6 +2274,12 @@ def approval_request(
     body: ApprovalRequest, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
 ) -> dict:
     cons = effective(session, ctx.project.id)
+    if body.kind == ApprovalKind.BRIEF:
+        # A brief is applied by being confirmed, so it must carry the text to
+        # apply. Prose describing a new direction would be confirmed and change
+        # nothing.
+        raise Refusal("A brief is filed with brief_propose, which carries the goal and "
+                      "standing orders his Confirm puts in force.", status_code=422)
     # An approval is a blocker on a human's desk with a default-deny clock on
     # it. Filing one for something the dial already put in the CEO's hands is
     # the one way an autonomous project can still stall on its chairman.
@@ -3094,6 +3100,92 @@ def capacity_request(
             "expires to no, which is the same as today — so plan for today's cap and "
             "treat a yes as upside."
         ),
+    }
+
+
+class BriefIn(BaseModel):
+    goal: str = Field(min_length=10, max_length=6000)
+    standing_orders: list[str] = Field(default_factory=list)
+    retired: list[str] = Field(default_factory=list)
+    # What he said that this brief captures, in his words with the dates. It is
+    # the half he checks you against: a brief that cannot quote him is the CEO's
+    # idea of the project, not his.
+    what_changed: str = Field(min_length=20, max_length=3000)
+
+
+@router.post("/brief")
+def brief_propose(
+    body: BriefIn, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
+) -> dict:
+    """Write the chairman's current direction back to him, for him to confirm.
+
+    The one way a change of mind outlives the conversation it was said in. A
+    memory, a workspace file or a handoff note is read only by an agent that
+    thinks to look; the brief is read by every agent, first, on every run — and
+    confirming it replaces the old one rather than sitting beside it.
+    """
+    from yaaf.server import brief as briefs
+
+    if ctx.agent.kind != AgentKind.CEO:
+        raise Refusal(
+            "Only the CEO writes the brief back to the chairman. If his direction and "
+            "your work disagree, tell the CEO — a suggestion survives your run.",
+            status_code=403,
+        )
+    try:
+        proposed = briefs.normalise(body.goal, body.standing_orders, body.retired)
+    except briefs.BriefError as exc:
+        raise Refusal(str(exc), status_code=422) from exc
+    if not briefs.is_change(ctx.project, proposed):
+        raise Refusal("That is the brief already in force, word for word. Nothing to "
+                      "confirm.", status_code=409)
+    # One draft at a time. He confirms the newest; an older one left beside it
+    # is a second, staler version of his mind on his desk.
+    for old in session.execute(
+        select(Approval).where(Approval.project_id == ctx.project.id,
+                               Approval.kind == ApprovalKind.BRIEF,
+                               Approval.status == ApprovalStatus.PENDING)
+    ).scalars():
+        old.status = ApprovalStatus.DENIED
+        old.decided_at = utcnow()
+        old.decision_note = "Replaced by a newer draft of the brief."
+    proposed["what_changed"] = body.what_changed.strip()
+    was = briefs.current(ctx.project)
+    lines = [f"What you told me: {proposed['what_changed']}", "",
+             f"The goal: {proposed['goal']}", "", "Standing orders:"]
+    lines += [f"- {o}" for o in proposed["standing_orders"]] or ["- (none)"]
+    if proposed["retired"]:
+        lines += ["", "No longer applies:"] + [f"- {o}" for o in proposed["retired"]]
+    lines += ["", "What happens without it: the brief stays as it is — "
+              + ("the goal the project was founded with." if not was["standing_orders"]
+                 and ctx.project.brief_confirmed_at is None else "the last one you confirmed.")]
+    approval = _file_approval(session, ctx, ApprovalKind.BRIEF,
+                              "Confirm the brief: goal and standing orders", "\n".join(lines))
+    approval.brief = proposed
+    session.flush()
+    orders = "\n".join(f"• {o}" for o in proposed["standing_orders"])
+    _boardroom_system_line(
+        session, ctx.project.id,
+        "📋 **Confirm the brief.** Your CEO wrote your current direction back to you. "
+        "Nothing changes until you confirm it; then every agent works from it, and the "
+        "old version is gone from their instructions.\n\n"
+        f"**Goal:** {proposed['goal'][:600]}"
+        + ("…" if len(proposed["goal"]) > 600 else "")
+        + (f"\n\n**Standing orders:**\n{orders}" if orders else "")
+        + (f"\n\n**No longer applies:** {'; '.join(proposed['retired'])}"
+           if proposed["retired"] else "")
+        + f"\n\n[Review, edit and confirm](#/projects/{ctx.project.id}/activity/decisions)")
+    chairman_notify(
+        session, ctx.project, "Your CEO asks you to confirm the brief",
+        "\n".join(lines), kind="approval_requested",
+        data={"approval": approval_row(approval)}, attention=Attention.ACTION,
+    )
+    return {
+        "approval_id": approval.id,
+        "note": ("Filed and posted to the boardroom. Nothing has changed yet: until he "
+                 "confirms, the brief at the top of your prompt is still the one in "
+                 "force. When he confirms you are told, and every agent reads the new "
+                 "one from its next run."),
     }
 
 

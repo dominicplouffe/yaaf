@@ -1046,6 +1046,28 @@ async def t_capacity_request(args):
 
 
 @tool(
+    "brief_propose",
+    "CEO only. Write the chairman's CURRENT direction back to him for his Confirm: "
+    "`goal` is the whole goal in plain words as it stands now (it replaces the old "
+    "one, so write all of it, not a patch); `standing_orders` is every order in force, "
+    "one sentence each WITH its number or value ('Max 15% of the book in one name', "
+    "not 'keep positions sensible'); `retired` is what he has taken back, so agents "
+    "that find it in a file or memory know it is dead; `what_changed` quotes what he "
+    "said, with dates. Use it the moment he changes his mind about what the project "
+    "is for, how it works, or any limit — agreeing in chat or saving a memory does "
+    "NOT change what the other runs read. Nothing changes until he confirms; then "
+    "every agent reads the new brief first on every run and you are told to rewrite "
+    "the files, scripts and memories that still say the old thing. A new draft "
+    "replaces any unconfirmed one. " + FOR_HIM + ".",
+    _schema({"goal": str, "standing_orders": list[str], "retired": list[str],
+             "what_changed": str},
+            optional=("retired",)),
+)
+async def t_brief_propose(args):
+    return _text(_call("POST", "/agent/brief", dict(args)))
+
+
+@tool(
     "need_request",
     "CEO only. File a NEED with the chairman: a capability the project lacks — 'I need "
     "AWS access, give me a key', 'we need a Stripe account', 'SMTP credentials for the "
@@ -1646,7 +1668,7 @@ ALL_TOOLS = [
     t_roles_list, t_hire, t_stand_down, t_recall, t_stand_down_when,
     t_hypothesis_add, t_hypothesis_kill, t_decision_add,
     t_approval_request, t_approvals_list, t_spend_book,
-    t_capacity_request, t_need_request, t_credentials_list, t_credential_scope,
+    t_capacity_request, t_brief_propose, t_need_request, t_credentials_list, t_credential_scope,
     t_assist_request, t_account_record, t_accounts_list,
     t_purchase_begin, t_purchase_finish,
     t_side_effect_begin, t_side_effect_finish,
@@ -1668,7 +1690,7 @@ ALL_TOOLS = [
 #: refusals still fire for a tool the agent was not given.
 CEO_ONLY_TOOLS = frozenset({
     "ask_chairman", "ask_close",
-    "capacity_request", "need_request",
+    "brief_propose", "capacity_request", "need_request",
     "commitment_propose", "commitment_reset",
     "credential_scope", "credentials_list",
     "directive_file",

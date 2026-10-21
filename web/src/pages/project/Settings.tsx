@@ -1683,6 +1683,14 @@ export default function Settings({
   // so the mandate is a field on the form, not something to fix afterwards.
   const [cloneGoal, setCloneGoal] = useState(dash.goal);
   const [goal, setGoal] = useState(dash.goal);
+  const savedOrders = (dash.standing_orders ?? []).join("\n");
+  const savedRetired = (dash.retired_orders ?? []).join("\n");
+  const [orders, setOrders] = useState(savedOrders);
+  const [retired, setRetired] = useState(savedRetired);
+  const briefLines = (text: string) =>
+    text.split("\n").map((l) => l.replace(/^\s*[-•*]\s*/, "").trim()).filter(Boolean);
+  const briefDirty = goal.trim() !== dash.goal || orders.trim() !== savedOrders
+    || retired.trim() !== savedRetired;
 
   const [amendReason, setAmendReason] = useState("");
   const [amendChanges, setAmendChanges] = useState("{}");
@@ -1918,30 +1926,47 @@ export default function Settings({
       )}
 
       <Section on={section === "brief"}>
-      <h2>Goal</h2>
+      <h2>The brief</h2>
       <div className="card">
         <p className="help" style={{ marginTop: 0 }}>
-          The mandate every agent reads at the top of its context. Unlike the constitution — which
-          constrains the project and is recorded as a formal amendment — this one simply
-          redirects it, so it needs no written reason. The CEO is told what changed
-          and asked to re-aim the backlog against it.
+          What every agent reads first, on every run: the goal, then your standing orders, then
+          what you have taken back. When you change your mind in chat, the CEO writes it back
+          here for you to confirm; you can also edit it yourself. Saving replaces the old
+          version in every agent's instructions — nothing is added next to it — and the CEO is
+          told to bring its files and checks into line.
+          {dash.brief_confirmed_at && <> Last confirmed {fmtWhen(dash.brief_confirmed_at)}.</>}
         </p>
+        <label className="grant-label">The goal</label>
         <textarea value={goal} onChange={(e) => setGoal(e.target.value)} minLength={10} />
+        <label className="grant-label">Standing orders — one per line, with the number</label>
+        <textarea value={orders} rows={Math.max(3, briefLines(orders).length + 1)}
+          placeholder={"Max 15% of the book in one name\nNo stop-loss on core holdings"}
+          onChange={(e) => setOrders(e.target.value)} />
+        <label className="grant-label">No longer applies — one per line</label>
+        <textarea value={retired} rows={Math.max(2, briefLines(retired).length + 1)}
+          placeholder="25% trailing stop on every position"
+          onChange={(e) => setRetired(e.target.value)} />
         <div className="actions">
           <button
             className="primary"
-            disabled={busy || goal.trim().length < 10 || goal.trim() === dash.goal}
+            disabled={busy || goal.trim().length < 10 || !briefDirty}
             onClick={() =>
               act(
-                () => patch(`/admin/projects/${projectId}`, { goal: goal.trim() }),
-                "Goal changed. Agents read it on their next run; the CEO has been told to re-aim the backlog.",
+                () => patch(`/admin/projects/${projectId}`, {
+                  goal: goal.trim(),
+                  standing_orders: briefLines(orders),
+                  retired_orders: briefLines(retired),
+                }),
+                "Brief saved. Every agent reads it from its next run; the CEO has been told to bring its files in line.",
               )
             }
           >
-            Save goal
+            Save the brief
           </button>
-          {goal.trim() !== dash.goal && (
-            <button type="button" className="small" onClick={() => setGoal(dash.goal)}>
+          {briefDirty && (
+            <button type="button" className="small" onClick={() => {
+              setGoal(dash.goal); setOrders(savedOrders); setRetired(savedRetired);
+            }}>
               Revert
             </button>
           )}

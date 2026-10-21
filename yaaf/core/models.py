@@ -429,6 +429,16 @@ class ApprovalKind(enum.StrEnum):
     # note and wakes the asker. The platform never tries to defeat a security
     # challenge at any autonomy level — it hands it over.
     ASSIST = "assist"
+    # The chairman changed his mind, and this is the CEO writing it back to him
+    # to confirm: the goal in plain words, every standing order with its value,
+    # and what no longer applies. Confirming it is what replaces the goal every
+    # agent reads first. Direction given in chat used to land in a memory or a
+    # file the next run had to think to look up, while the founding goal kept
+    # being pushed into every prompt — so each change held for a day or two and
+    # the original spirit came back. On one desk a stop the chairman had
+    # deleted cut an order five weeks later, "from the original project
+    # settings". The approval's `brief` carries the text; approving applies it.
+    BRIEF = "brief"
 
 
 class ApprovalStatus(enum.StrEnum):
@@ -714,6 +724,17 @@ class Project(Base):
     # recorded fact, never an inference that could drift.
     topology: Mapped[str] = mapped_column(String(24), default="ceo_leads_workers",
                                           server_default="ceo_leads_workers")
+    # The brief's other two halves; `goal` is the first. Standing orders are
+    # the chairman's current word, one plain sentence each with its value, and
+    # every agent reads them right under the goal on every run. Retired orders
+    # are what he has taken back: listed too, because the old rule does not
+    # leave the memories, files and check scripts it was written into, and an
+    # agent that finds it there needs to be told it is dead.
+    standing_orders: Mapped[list | None] = mapped_column(JSONVariant, default=list)
+    retired_orders: Mapped[list | None] = mapped_column(JSONVariant, default=list)
+    # When he last confirmed the brief. Null on a project still running on the
+    # goal it was founded with.
+    brief_confirmed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
 
 
@@ -1978,6 +1999,9 @@ class Approval(Base):
     # can be undone, and the case against. Prose for a person, never part of
     # the grant — the digest binds the arguments, not the argument.
     disclosure: Mapped[dict | None] = mapped_column(JSONVariant)
+    # A BRIEF approval's proposal: {"goal", "standing_orders", "retired",
+    # "what_changed"}. Approving it is what applies it.
+    brief: Mapped[dict | None] = mapped_column(JSONVariant)
 
 
 class Ask(Base):

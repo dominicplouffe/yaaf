@@ -28,6 +28,8 @@ def approval_row(a: Approval, *, outcome: dict | None = None) -> dict:
         "grant": a.grant,
         "spent_at": a.spent_at.isoformat() if a.spent_at else None,
         "disclosure": a.disclosure,
+        # A brief's proposed text — the goal, the standing orders, what is retired.
+        "brief": a.brief,
         # What the spent call was observed to do, filed by the agent afterwards.
         "outcome": outcome,
     }
