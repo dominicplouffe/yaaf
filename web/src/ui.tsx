@@ -830,7 +830,7 @@ export function decideLabels(a: Decidable): { yes: string; no: string; yesNote: 
     case "brief":
       return { yes: "Confirm", no: "Not yet", yesNote: "Note (optional) — the CEO answers it" };
     case "assist":
-      return { yes: "Done", no: "Couldn't",
+      return { yes: "Done", no: "Not done",
         yesNote: "What happened — the code, the fill (optional)" };
     default:
       return { yes: "Yes", no: "No", yesNote: "Note (optional) — the CEO answers it" };

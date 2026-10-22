@@ -279,7 +279,7 @@ Three kinds of thing come to you from the CEO, and each has its own tab.
   dial is raised, the brief is replaced, a call is allowed. Each button says
   what it does — *Approve $199*, *Raise to 60*, *Confirm* — and approving a
   capacity request raises the dial on the spot. An **assist** sits here too: a
-  step only a human can take, answered with *Done* or *Couldn't*.
+  step only a human can take, answered with *Done* or *Not done*.
 - **Acknowledge.** What you should know but not decide: a problem the CEO was
   obliged to raise, and a **heads-up** — something you asked to be told by a
   standing order in the brief ("send me tomorrow's ticket every evening"). One

@@ -313,7 +313,7 @@ function DecidedDetail({ d }: { d: Decided }) {
       <dl className="case">
         {d.type === "approval" ? (
           <>
-            <div><dt>Outcome</dt><dd>{d.row.status === "approved" ? (d.row.kind === "assist" ? "You did it" : "You said yes") : d.row.status === "denied" ? (d.row.kind === "assist" ? "You couldn't" : "You said no") : "It ran out of time"}</dd></div>
+            <div><dt>Outcome</dt><dd>{d.row.status === "approved" ? (d.row.kind === "assist" ? "You did it" : "You said yes") : d.row.status === "denied" ? (d.row.kind === "assist" ? "You didn't do it" : "You said no") : "It ran out of time"}</dd></div>
             {d.row.held_note ? <NoteAndAnswer held={d.row.held_note} />
               : d.row.decision_note && <div><dt>Your note</dt><dd>{d.row.decision_note}</dd></div>}
             <div><dt>The case</dt><dd className="pre">{d.row.body}</dd></div>
