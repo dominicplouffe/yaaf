@@ -231,7 +231,7 @@ function UpdateDetail({ u, onChanged }: { u: Update; onChanged: () => void }) {
           {h.acknowledged_at ? (
             <span className="help">You noted this {fmtAgo(h.acknowledged_at)}.</span>
           ) : (
-            <NoteAction label="Noted" className="small primary" confirmLabel="Noted"
+            <NoteAction instant label="Noted" className="small primary" confirmLabel="Noted"
               placeholder="Anything to say back? (optional) — the CEO answers it"
               onSubmit={async (note) => { await post(`/admin/heads_up/${h.id}/ack`, { note }); onChanged(); }} />
           )}
@@ -267,7 +267,7 @@ function UpdateDetail({ u, onChanged }: { u: Update; onChanged: () => void }) {
               {u.flag.acknowledgement ? `: “${clip(u.flag.acknowledgement, 120)}”` : ""}. It stays until the numbers turn.
             </span>
           ) : (
-            <NoteAction label="Noted" className="small primary" confirmLabel="Noted"
+            <NoteAction instant label="Noted" className="small primary" confirmLabel="Noted"
               placeholder="Anything to say back? (optional) — the CEO answers it"
               onSubmit={async (note) => { await post(`/admin/flags/${u.flag.id}/ack`, { note }); onChanged(); }} />
           )}

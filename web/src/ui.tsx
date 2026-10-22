@@ -719,6 +719,7 @@ export function NoteAction({
   placeholder,
   confirmLabel,
   requireNote = false,
+  instant = false,
   onSubmit,
 }: {
   label: string;
@@ -726,6 +727,11 @@ export function NoteAction({
   placeholder: string;
   confirmLabel?: string;
   requireNote?: boolean;
+  /** One click does it; the note is a separate, optional link beside it. For
+      every action where a note is optional — a second click to skip a text
+      box nobody needed is the extra step that teaches people to resent the
+      button. */
+  instant?: boolean;
   onSubmit: (note: string) => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
@@ -748,6 +754,19 @@ export function NoteAction({
     }
   }
 
+  if (!open && instant) {
+    return (
+      <>
+        <button className={className} disabled={busy} onClick={go}>
+          {label}
+        </button>
+        <button className="linkish small" disabled={busy} onClick={() => setOpen(true)}>
+          add a note
+        </button>
+        {error && <span className="help" style={{ color: "var(--critical)" }}>{error}</span>}
+      </>
+    );
+  }
   if (!open) {
     return (
       <button className={className} onClick={() => setOpen(true)}>
@@ -826,6 +845,7 @@ export function DecideButtons({ approval, onDone }: { approval: Decidable; onDon
   return (
     <>
       <NoteAction
+        instant
         label={l.yes}
         className="small primary"
         placeholder={l.yesNote}

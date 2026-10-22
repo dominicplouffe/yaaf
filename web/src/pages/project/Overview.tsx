@@ -634,6 +634,7 @@ export default function Overview({
         </div>
         <div className="flag-a">
           <NoteAction
+            instant
             label="Noted"
             className="small"
             placeholder={`Anything to say back? — ${ceo} reads this`}
