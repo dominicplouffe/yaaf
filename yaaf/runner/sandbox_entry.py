@@ -986,7 +986,9 @@ async def t_data_write_outcome(args):
     "the account in full. It goes straight to the chairman, not through your team, and "
     + FOR_HIM + ". His answer arrives "
     "verbatim in the decision that wakes you; unanswered it expires to no, so also "
-    "plan the work that does not depend on it.",
+    "plan the work that does not depend on it. If there is nothing for him to do "
+    "('no trade today, place nothing'), it is not an assist: a heads_up if a standing "
+    "order asks him to be told, otherwise the deliverable carries it.",
     {"what": str, "where": str},
 )
 async def t_assist_request(args):
@@ -1035,8 +1037,9 @@ async def t_accounts_list(args):
     "costs / without are required and are the point — what more room BUYS in outcomes, "
     "what it COSTS in money and runs, and what happens WITHOUT it. A request without "
     "them is a wish, and " + FOR_HIM + ". "
-    "It does not block and it does not move the dial: keep working at the cap you have, "
-    "plan for it, and treat a yes as upside. Unanswered it expires to no, which is the "
+    "It does not block and filing it does not move the dial: keep working at the cap "
+    "you have, plan for it, and treat a yes as upside — his yes is what raises it, and "
+    "you are told the number in force. Unanswered it expires to no, which is the "
     "same as today. You may not request a lower bar, a change to who decides, or less "
     "auditing — those are his judgement about the project, not its throughput.",
     {"rule": str, "to": float, "buys": str, "costs": str, "without": str},
@@ -1065,6 +1068,38 @@ async def t_capacity_request(args):
 )
 async def t_brief_propose(args):
     return _text(_call("POST", "/agent/brief", dict(args)))
+
+
+@tool(
+    "heads_up",
+    "CEO only. Tell the chairman something he ASKED to be told, for him to mark noted: "
+    "tomorrow's ticket when it is 'no trade', the weekly number he wants to see. "
+    "`standing_order` quotes the order in your brief that says to tell him — refused "
+    "without one, because then it is information and belongs in the deliverable or "
+    "the daily brief, not on his desk. No buttons to approve or deny and no expiry: "
+    "if he must DECIDE, file an approval; if he must DO something, an assist. "
+    + FOR_HIM + ".",
+    {"title": str, "body": str, "standing_order": str},
+)
+async def t_heads_up(args):
+    return _text(_call("POST", "/agent/heads_up", dict(args)))
+
+
+@tool(
+    "note_answer",
+    "CEO only. Answer a note the chairman wrote on a decision (your context's "
+    "chairman_notes lists every unanswered one, every run, until you do). `reply` is "
+    "one line he reads under his note: what you did with it. `standing` says whether "
+    "it applies beyond that one item. A standing note belongs in the brief: call "
+    "brief_propose with it folded in FIRST, or the answer is refused. Never answer one "
+    "by saving a memory.",
+    {"note_id": str, "reply": str, "standing": bool},
+)
+async def t_note_answer(args):
+    note_id = (args.get("note_id") or "").strip()
+    return _text(_call("POST", f"/agent/notes/{note_id}/answer",
+                       {"reply": args.get("reply", ""),
+                        "standing": bool(args.get("standing"))}))
 
 
 @tool(
@@ -1668,7 +1703,7 @@ ALL_TOOLS = [
     t_roles_list, t_hire, t_stand_down, t_recall, t_stand_down_when,
     t_hypothesis_add, t_hypothesis_kill, t_decision_add,
     t_approval_request, t_approvals_list, t_spend_book,
-    t_capacity_request, t_brief_propose, t_need_request, t_credentials_list, t_credential_scope,
+    t_capacity_request, t_brief_propose, t_heads_up, t_note_answer, t_need_request, t_credentials_list, t_credential_scope,
     t_assist_request, t_account_record, t_accounts_list,
     t_purchase_begin, t_purchase_finish,
     t_side_effect_begin, t_side_effect_finish,
@@ -1690,7 +1725,7 @@ ALL_TOOLS = [
 #: refusals still fire for a tool the agent was not given.
 CEO_ONLY_TOOLS = frozenset({
     "ask_chairman", "ask_close",
-    "brief_propose", "capacity_request", "need_request",
+    "brief_propose", "capacity_request", "heads_up", "need_request", "note_answer",
     "commitment_propose", "commitment_reset",
     "credential_scope", "credentials_list",
     "directive_file",

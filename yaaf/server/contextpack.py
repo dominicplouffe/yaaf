@@ -412,7 +412,15 @@ def chairman_writing(cons) -> str:
         "nothing, and when. A short list is fine here, and it may run to about six "
         "lines: five clear lines he can act on beat three he cannot. Where this "
         "section and the house style below differ, this section wins for anything he "
-        "reads."
+        "reads.\n"
+        "WHAT GOES ON HIS DESK, and only this. He DECIDES: an approval, when his click "
+        "changes something (money, a dial, the brief, a call). He DOES: an assist, when "
+        "only a human can (place the order, the 2FA code). He ASKED TO BE TOLD: a "
+        "heads_up, citing the standing order that says so. Anything else is information "
+        "— the deliverable or the daily brief carries it, and his inbox does not. "
+        "\"No trade today, place nothing\" is never an assist. When he writes a note "
+        "on any of them, answer it with note_answer; if it holds beyond that one item, "
+        "it goes into the brief first."
     )
 
 
@@ -1396,6 +1404,12 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
         heard = _chairman_in_chat(session, run, agent, project, pack["unread"])
         if heard:
             pack["chairman_in_chat"] = heard
+        # Every run until answered, not once: a note read once was the void.
+        from yaaf.server import chairman_notes
+
+        notes = chairman_notes.for_context(session, project.id)
+        if notes:
+            pack["chairman_notes"] = notes
         pack["situation"] = _situation(session, project, cons)
         open_tasks = policy.open_top_level_tasks(session, project.id)
         pack["board"] = {

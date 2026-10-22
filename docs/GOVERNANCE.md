@@ -271,6 +271,28 @@ that class is a *wait*, and the briefing renders every open wait live from the
 record in its "waiting on you" section — so the next brief still names it, and
 the audit log records both what was sent and what was held.
 
+### What reaches your inbox: decide, acknowledge, or neither
+
+Three kinds of thing come to you from the CEO, and each has its own tab.
+
+- **Decide.** An approval, where your click changes something: money is spent, a
+  dial is raised, the brief is replaced, a call is allowed. Each button says
+  what it does — *Approve $199*, *Raise to 60*, *Confirm* — and approving a
+  capacity request raises the dial on the spot. An **assist** sits here too: a
+  step only a human can take, answered with *Done* or *Couldn't*.
+- **Acknowledge.** What you should know but not decide: a problem the CEO was
+  obliged to raise, and a **heads-up** — something you asked to be told by a
+  standing order in the brief ("send me tomorrow's ticket every evening"). One
+  button, *Noted*. Nothing there blocks or expires. A heads-up that cites no
+  standing order is refused: without your order, it is information.
+- **Information** reaches no inbox at all. It is in the deliverable and the
+  daily briefing.
+
+**Your notes are answered.** Whatever you type on a decision is held until the
+CEO answers it, on every run, and you read its one-line answer under your note.
+A note that holds from now on ("yes, go ahead, every day") goes into the brief
+for you to confirm; the CEO cannot call it standing without drafting one.
+
 ### Runs
 
 | Rule | Default | What it does |

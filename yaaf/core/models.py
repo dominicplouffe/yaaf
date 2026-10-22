@@ -489,6 +489,9 @@ class NoticeKind(enum.StrEnum):
     # CEO that never learns what came of raising a flag is proposing into a
     # void, and the next one it raises is written the same way.
     FLAG_ACKNOWLEDGED = "flag_acknowledged"
+    # He noted a heads-up and wrote something on it. A bare "seen" makes no
+    # notice: nothing was waiting, and the CEO reads it off the row.
+    HEADS_UP_NOTED = "heads_up_noted"
     HYPOTHESIS_EXPIRED = "hypothesis_expired"
     BUDGET_WARNING = "budget_warning"
     BUDGET_EXHAUSTED = "budget_exhausted"
@@ -2002,6 +2005,75 @@ class Approval(Base):
     # A BRIEF approval's proposal: {"goal", "standing_orders", "retired",
     # "what_changed"}. Approving it is what applies it.
     brief: Mapped[dict | None] = mapped_column(JSONVariant)
+    # A CAPACITY approval's dial: {"rule", "from", "to", "shared"}. Approving it
+    # is what raises the dial. Sixteen were approved before this column existed
+    # and none moved anything; one desk filed the same token-cap raise three
+    # times, because each yes left the cap exactly where it was.
+    capacity: Mapped[dict | None] = mapped_column(JSONVariant)
+
+
+class HeadsUp(Base):
+    """Something the chairman asked to be told, and has to say he saw.
+
+    Three kinds of thing reach him from the CEO. Some he decides, and those are
+    approvals: the button changes something. Some are information, and those
+    belong in the deliverable or the daily brief, with no button at all. And
+    some he asked for himself — "make sure I know tomorrow's weather" — which
+    are neither: nothing to decide, but the CEO should know he saw it.
+
+    Before this, the third kind had no verb and went out as an assist. A trading
+    desk sent seventy-seven of them, many reading "No trade today. Place
+    nothing.", each with an Approve and a Deny button. So a heads-up names the
+    standing order it answers, and is refused when the brief holds none: that
+    sentence is what separates something he asked to hear from news.
+    """
+
+    __tablename__ = "heads_ups"
+    __table_args__ = (Index("ix_heads_ups_project", "project_id", "acknowledged_at"),)
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    agent_id: Mapped[str] = mapped_column(String(40))
+    title: Mapped[str] = mapped_column(String(300))
+    body: Mapped[str] = mapped_column(Text)
+    # Quoted from the brief at filing, so a later brief cannot orphan the reason.
+    standing_order: Mapped[str] = mapped_column(Text)
+    message_id: Mapped[str | None] = mapped_column(String(40))
+    acknowledged_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class ChairmanNote(Base):
+    """Something the chairman wrote on a decision, held until the CEO answers it.
+
+    His note used to ride the wake notice once and go nowhere. Sixty-four
+    decisions carried one, and one of them — on a credential request — read
+    "yes, please go ahead, every day": a standing order that no prompt ever
+    carried again. So a note is a row the CEO sees on every run until it
+    answers, and an answer that says the note applies beyond the one item is
+    refused unless a brief written after it exists for him to confirm.
+    """
+
+    __tablename__ = "chairman_notes"
+    __table_args__ = (
+        Index("ix_chairman_notes_open", "project_id", "answered_at"),
+        Index("ix_chairman_notes_source", "source_kind", "source_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    # approval | flag | heads_up
+    source_kind: Mapped[str] = mapped_column(String(16))
+    source_id: Mapped[str] = mapped_column(String(40))
+    # What it was written on, in his words on the screen: "Approved: Need: GitHub
+    # credential". The CEO reads this without fetching the item.
+    about: Mapped[str] = mapped_column(String(400))
+    body: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    answered_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    reply: Mapped[str | None] = mapped_column(Text)
+    # True: it applies beyond this one item, and the brief now carries it.
+    standing: Mapped[bool | None] = mapped_column(Boolean)
 
 
 class Ask(Base):

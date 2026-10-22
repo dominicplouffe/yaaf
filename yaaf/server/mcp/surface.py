@@ -44,6 +44,7 @@ REACHED = {
     "POST /admin/evidence/{evidence_id}/audit": "audit_decide",
     "POST /admin/tasks/{task_id}/audit": "audit_decide",
     "POST /admin/flags/{flag_id}/ack": "flag_ack",
+    "POST /admin/heads_up/{heads_up_id}/ack": "heads_up_ack",
     "POST /admin/projects/{project_id}/start": "lifecycle",
     "POST /admin/projects/{project_id}/pause": "lifecycle",
     "POST /admin/projects/{project_id}/stop": "lifecycle",

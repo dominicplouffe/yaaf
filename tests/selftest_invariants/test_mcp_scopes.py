@@ -20,7 +20,7 @@ READ_TOOLS = {"whoami", "projects", "desk", "project", "plan", "spend", "work",
 #: And every verb `steer` adds on top of them.
 STEER_TOOLS = {"boardroom_say", "approval_decide", "requirement_decide",
                "commitment_decide", "review_decide", "audit_decide", "flag_ack",
-               "lifecycle"}
+               "heads_up_ack", "lifecycle"}
 
 
 def tools_of(client, token) -> set[str]:

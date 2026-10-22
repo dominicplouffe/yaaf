@@ -7,7 +7,7 @@ import {
 } from "../../api";
 import { fmtUsd, fmtWhen, usePoll } from "../../hooks";
 import { grantRoles, RoleGrants } from "../../roles";
-import { clockClass, downloadCsv, ExportCsv, fmtLeft } from "../../ui";
+import { clockClass, decideLabels, downloadCsv, ExportCsv, fmtLeft } from "../../ui";
 import type { ProjectCtx } from "../Project";
 
 /** Which constitutional rule put this in front of the human, in one sentence. */
@@ -22,11 +22,11 @@ function whyYours(kind: string): string {
     case "tool_request":
       return "An agent is asking for a capability it does not have. Only you can grant one.";
     case "capacity":
-      return "The project is asking for more room to work — runs, concurrency, queue depth or money. It is the one kind where the CEO argues for itself, so it stays yours at every autonomy setting. It is not blocking: the project keeps working at the cap it has, and if you say nothing the cap simply stays.";
+      return "The project is asking for more room to work — runs, concurrency, queue depth or money. It is the one kind where the CEO argues for itself, so it stays yours at every autonomy setting. Saying yes raises the dial at once. It is not blocking: the project keeps working at the cap it has, and if you say nothing the cap simply stays.";
     case "brief":
       return "Only you decide what this project is for. Until you confirm, every agent keeps working from the brief in force; once you do, this one replaces it in every agent's instructions, on every run.";
     case "assist":
-      return "A step only a human can do — a captcha, a 2FA code, a form. Your note travels back verbatim (a code, a 'done', a 'no') and wakes the agent. The platform hands over security challenges; it never defeats them.";
+      return "A step only a human can do — a captcha, a 2FA code, placing an order. Press Done when it is done, with what happened if it matters (the code, the fill); it wakes the agent. The platform hands over security challenges; it never defeats them.";
     default:
       return "The constitution routes this kind of decision to the chairman.";
   }
@@ -133,6 +133,10 @@ function DecisionCard({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState("");
+  // A capacity request: the number he raises the dial to, the CEO's by default.
+  const [raiseTo, setRaiseTo] = useState(approval.capacity ? String(approval.capacity.to) : "");
+  const labels = decideLabels(approval.capacity && Number(raiseTo) > 0
+    ? { ...approval, capacity: { ...approval.capacity, to: Number(raiseTo) } } : approval);
   // The one-motion fulfillment for a need (kind=tool_request): credential
   // stored, roles scoped, need approved — one form instead of three screens.
   const [secretName, setSecretName] = useState("");
@@ -169,6 +173,7 @@ function DecisionCard({
       await post(`/admin/approvals/${approval.id}/decide`, {
         approve: approved,
         note: note.trim(),
+        ...(approved && approval.capacity && Number(raiseTo) > 0 ? { to: Number(raiseTo) } : {}),
       });
       onDecided();
     } catch (e) {
@@ -275,19 +280,27 @@ function DecisionCard({
           </div>
         </div>
       )}
+      {approval.capacity && (
+        <label className="field" style={{ marginTop: 12, display: "block" }}>
+          Raise it to{" "}
+          <input type="number" value={raiseTo} min={approval.capacity.from}
+            style={{ width: 140 }} onChange={(e) => setRaiseTo(e.target.value)} />
+          <span className="help"> — the CEO asked for {approval.capacity.to.toLocaleString()}; it is {approval.capacity.from.toLocaleString()} now. Saying yes changes it at once.</span>
+        </label>
+      )}
       <input
         style={{ marginTop: 12 }}
         value={note}
-        placeholder="Your note — the agent reads this (required to deny)"
+        placeholder="Your note — the CEO answers it, and puts it in the brief if it holds from now on (required to say no)"
         onChange={(e) => setNote(e.target.value)}
       />
       {error && <div className="error">{error}</div>}
       <div className="actions">
         <button className="primary" disabled={busy} onClick={() => decide(true)}>
-          ✓ Approve
+          ✓ {labels.yes}
         </button>
         <button className="danger" disabled={busy} onClick={() => decide(false)}>
-          ✕ Deny
+          ✕ {labels.no}
         </button>
         <span className="help">No undo — the decision is recorded and disclosed.</span>
       </div>
@@ -624,7 +637,7 @@ export default function Decisions({ ctx }: { ctx: ProjectCtx }) {
                 <th>Kind</th>
                 <th className="num">Amount</th>
                 <th>Outcome</th>
-                <th style={{ width: "26%" }}>Your note</th>
+                <th style={{ width: "26%" }}>Your note · the CEO's answer</th>
               </tr>
             </thead>
             <tbody>
@@ -635,7 +648,18 @@ export default function Decisions({ ctx }: { ctx: ProjectCtx }) {
                   <td className="mono">{a.kind.replaceAll("_", " ")}</td>
                   <td className="num">{a.amount_usd ? fmtUsd(a.amount_usd) : "—"}</td>
                   <td>{outcomeBadge(a)}</td>
-                  <td>{a.decision_note || <span className="help">no note</span>}</td>
+                  <td>
+                    {a.held_note ? (
+                      <>
+                        {a.held_note.note}
+                        <div className="help">
+                          {a.held_note.reply
+                            ? `CEO: ${a.held_note.reply}${a.held_note.standing ? " (into the brief)" : ""}`
+                            : "CEO has not answered yet"}
+                        </div>
+                      </>
+                    ) : a.decision_note || <span className="help">no note</span>}
+                  </td>
                 </tr>
               ))}
             </tbody>

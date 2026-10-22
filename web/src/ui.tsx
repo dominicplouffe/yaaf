@@ -781,30 +781,68 @@ export function NoteAction({
   );
 }
 
-/** The approve/deny pair, identical wherever an approval appears (Desk,
-    Overview, Boardroom rail, Records → Decisions) — a view of one decision,
-    not a second system. */
-export function DecideButtons({ approvalId, onDone }: { approvalId: string; onDone: () => void }) {
+/** What the two buttons on a decision say, by kind. Each names what the click
+    does — "Raise to 60", "Done", "Allow this call" — because Approve and Deny
+    on a request whose click changed nothing taught that the click means
+    nothing. One map, so every surface that shows a decision says the same. */
+export interface Decidable {
+  id: string;
+  kind: string;
+  amount_usd?: number | null;
+  capacity?: { from: number; to: number } | null;
+  grant?: unknown;
+}
+
+export function decideLabels(a: Decidable): { yes: string; no: string; yesNote: string } {
+  const fmt = (n: number) => n.toLocaleString();
+  switch (a.kind) {
+    case "spend":
+      return { yes: a.amount_usd ? `Approve $${fmt(a.amount_usd)}` : "Approve", no: "Decline",
+        yesNote: "Note (optional) — the CEO answers it" };
+    case "capacity":
+      return a.capacity
+        ? { yes: `Raise to ${fmt(a.capacity.to)}`, no: `Keep at ${fmt(a.capacity.from)}`,
+            yesNote: "Note (optional) — the CEO answers it" }
+        : { yes: "Approve", no: "Decline", yesNote: "Note (optional) — the CEO answers it" };
+    case "tool_request":
+      return { yes: a.grant ? "Allow this call" : "It's set up", no: "Decline",
+        yesNote: a.grant ? "Note (optional) — the CEO answers it"
+          : "Where it is (optional) — the CEO answers it" };
+    case "brief":
+      return { yes: "Confirm", no: "Not yet", yesNote: "Note (optional) — the CEO answers it" };
+    case "assist":
+      return { yes: "Done", no: "Couldn't",
+        yesNote: "What happened — the code, the fill (optional)" };
+    default:
+      return { yes: "Yes", no: "No", yesNote: "Note (optional) — the CEO answers it" };
+  }
+}
+
+/** The decision pair, identical wherever an approval appears (Inbox, Desk,
+    Boardroom rail, Records → Decisions) — a view of one decision, not a
+    second system. A note is held until the CEO answers it. */
+export function DecideButtons({ approval, onDone }: { approval: Decidable; onDone: () => void }) {
+  const l = decideLabels(approval);
   return (
     <>
       <NoteAction
-        label="Approve"
+        label={l.yes}
         className="small primary"
-        placeholder="Note (optional) — the CEO reads it"
-        confirmLabel="Approve"
+        placeholder={l.yesNote}
+        confirmLabel={l.yes}
         onSubmit={async (note) => {
-          await post(`/admin/approvals/${approvalId}/decide`, { approve: true, note });
+          await post(`/admin/approvals/${approval.id}/decide`, { approve: true, note });
           onDone();
         }}
       />
       <NoteAction
-        label="Deny"
+        label={l.no}
         className="small danger"
-        placeholder="Why? — the CEO reads this and replans"
-        confirmLabel="Deny"
+        placeholder="Why? — the CEO answers it and re-plans"
+        confirmLabel={l.no}
         requireNote
         onSubmit={async (note) => {
-          await post(`/admin/approvals/${approvalId}/decide`, { approve: false, note });
+          await post(`/admin/approvals/${approval.id}/decide`, { approve: false, note });
           onDone();
         }}
       />

@@ -629,7 +629,7 @@ export default function Boardroom({ projectId, dash, org }: {
                     Denies itself in {fmtLeft(a.expires_at).replace(" left", "")}
                   </div>
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                    <DecideButtons approvalId={a.id} onDone={reloadApprovals} />
+                    <DecideButtons approval={a} onDone={reloadApprovals} />
                   </div>
                 </div>
               ))}

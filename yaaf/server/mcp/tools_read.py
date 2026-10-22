@@ -237,10 +237,12 @@ def desk(principal: Principal, session: Session, arguments: dict) -> dict:
     description=(
         "One project's cockpit. view: overview (status, spend, org, the deliverable), "
         "health (the setup checklist), flags (obligations the platform opened), "
+        "heads_ups (what the chairman asked to be told, to note), "
         "agenda (what is scheduled), briefing (what changed since you last looked)."
     ),
     input_schema=_schema(
-        view={"type": "string", "enum": ["overview", "health", "flags", "agenda", "briefing"]},
+        view={"type": "string",
+              "enum": ["overview", "health", "flags", "heads_ups", "agenda", "briefing"]},
         days={"type": "integer", "description": "agenda only: horizon, default 14"},
     ),
 )
@@ -251,6 +253,9 @@ def project(principal: Principal, session: Session, arguments: dict) -> dict:
         payload = _observe(observe.project_health, project_id=row.id, session=session)
     elif view == "flags":
         payload = _observe(observe.project_flags, project_id=row.id, session=session)
+    elif view == "heads_ups":
+        payload = {"heads_ups": _observe(observe.project_heads_ups, project_id=row.id,
+                                         session=session)}
     elif view == "agenda":
         payload = _observe(observe.project_agenda, project_id=row.id,
                            days=int(arguments.get("days") or 14), session=session)

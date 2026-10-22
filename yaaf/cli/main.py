@@ -943,6 +943,14 @@ def ack_flag(flag_id: str, note: str = typer.Option("", "--note")) -> None:
 
 
 @app.command()
+def ack_heads_up(heads_up_id: str, note: str = typer.Option("", "--note")) -> None:
+    """Mark noted something you asked to be told. Nothing waits on it; a note is
+    held until the CEO answers it."""
+    with _client() as client:
+        _show(client.post(f"/admin/heads_up/{heads_up_id}/ack", json={"note": note}))
+
+
+@app.command()
 def unfreeze(message_id: str) -> None:
     with _client() as client:
         _show(client.post(f"/admin/threads/{message_id}/unfreeze"))

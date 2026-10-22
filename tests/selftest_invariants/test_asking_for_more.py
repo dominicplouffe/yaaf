@@ -28,7 +28,7 @@ ever make.
 
 from __future__ import annotations
 
-from tests.conftest import bearer, live_token, make_project
+from tests.conftest import ADMIN, bearer, live_token, make_project
 from tests.selftest_invariants.test_requirements import ceo_token, deliver_project
 from yaaf.core.db import db_session
 from yaaf.core.models import ApprovalKind, RunStatus
@@ -80,6 +80,58 @@ def test_the_dial_does_not_move_until_the_chairman_signs(client):
             "filing a capacity request raised the cap; a project that can grant its "
             "own request does not have a cap"
         )
+
+
+def test_and_moves_when_he_does(client):
+    """Sixteen were approved before this and none moved anything. One desk filed
+    the same token-cap raise three times, because each yes left it where it was."""
+    from yaaf.core.constitution import effective
+    from yaaf.core.models import Approval
+
+    project = deliver_project(client, constitution={"runs_per_project_per_day": 18})
+    approval_id = ask(client, ceo_token(project)).json()["approval_id"]
+    decided = client.post(f"/admin/approvals/{approval_id}/decide",
+                          json={"approve": True}, headers=ADMIN)
+    assert decided.status_code == 200, decided.text
+    with db_session() as session:
+        assert effective(session, project["id"]).runs_per_project_per_day == 60
+        assert session.get(Approval, approval_id).status == "approved"
+
+
+def test_he_can_grant_a_different_number(client):
+    from yaaf.core.constitution import effective
+
+    project = deliver_project(client, constitution={"runs_per_project_per_day": 18})
+    approval_id = ask(client, ceo_token(project)).json()["approval_id"]
+    client.post(f"/admin/approvals/{approval_id}/decide",
+                json={"approve": True, "to": 30}, headers=ADMIN)
+    with db_session() as session:
+        assert effective(session, project["id"]).runs_per_project_per_day == 30
+
+
+def test_a_yes_never_lowers_a_dial_he_already_raised(client):
+    from yaaf.core.constitution import effective
+
+    project = deliver_project(client, constitution={"runs_per_project_per_day": 18})
+    approval_id = ask(client, ceo_token(project)).json()["approval_id"]
+    client.post(f"/admin/projects/{project['id']}/amendments",
+                json={"reason": "raised it myself meanwhile",
+                      "changes": {"runs_per_project_per_day": 80}}, headers=ADMIN)
+    client.post(f"/admin/approvals/{approval_id}/decide",
+                json={"approve": True}, headers=ADMIN)
+    with db_session() as session:
+        assert effective(session, project["id"]).runs_per_project_per_day == 80
+
+
+def test_declining_keeps_the_dial(client):
+    from yaaf.core.constitution import effective
+
+    project = deliver_project(client, constitution={"runs_per_project_per_day": 18})
+    approval_id = ask(client, ceo_token(project)).json()["approval_id"]
+    client.post(f"/admin/approvals/{approval_id}/decide",
+                json={"approve": False, "note": "Not this month."}, headers=ADMIN)
+    with db_session() as session:
+        assert effective(session, project["id"]).runs_per_project_per_day == 18
 
 
 def test_the_arithmetic_is_required(client):

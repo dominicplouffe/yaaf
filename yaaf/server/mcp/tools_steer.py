@@ -37,6 +37,7 @@ from yaaf.core.models import (
     Commitment,
     Evidence,
     Flag,
+    HeadsUp,
     Message,
     Requirement,
     Review,
@@ -152,14 +153,18 @@ def boardroom_say(principal: Principal, session: Session, arguments: dict) -> di
     "approval_decide",
     scope="steer",
     description=(
-        "Approve or deny a pending approval. Fulfilling a credential need is not here "
+        "Approve or deny a pending approval. Approving a capacity request raises the "
+        "dial at once, to `to` if given. A note is held until the CEO answers it. "
+        "Fulfilling a credential need is not here "
         "on purpose — that means handing over a secret value, and it stays in the "
         "browser where the chairman is the only reader."
     ),
     input_schema=_schema(["approval", "approve"],
                          approval={"type": "string", "description": "Approval id"},
                          approve={"type": "boolean"},
-                         note={"type": "string"}),
+                         note={"type": "string"},
+                         to={"type": "number",
+                             "description": "capacity only: the number to raise it to"}),
 )
 def approval_decide(principal: Principal, session: Session, arguments: dict) -> dict:
     project = resolve_project(session, principal, required(arguments, "project"))
@@ -178,8 +183,10 @@ def approval_decide(principal: Principal, session: Session, arguments: dict) -> 
         return preview
 
     outcome = _call(principal, admin.decide_approval, approval_id=approval.id,
-                    body=admin.ApprovalDecision(approve=approve,
-                                                note=str(arguments.get("note") or "")),
+                    body=admin.ApprovalDecision(
+                        approve=approve, note=str(arguments.get("note") or ""),
+                        to=arguments.get("to") if isinstance(arguments.get("to"),
+                                                             (int, float)) else None),
                     session=session)
     return _record(session, principal, project.id, "approval_decide", arguments, outcome)
 
@@ -450,6 +457,33 @@ def flag_ack(principal: Principal, session: Session, arguments: dict) -> dict:
                     body=admin.FlagAck(note=str(arguments.get("reason") or "")),
                     session=session)
     return _record(session, principal, project.id, "flag_ack", arguments, outcome)
+
+
+@register(
+    "heads_up_ack",
+    scope="steer",
+    description=(
+        "Mark noted something the chairman asked to be told — a heads-up the CEO sent "
+        "because a standing order in the brief says to. Nothing waits on it. A note, if "
+        "given, is held until the CEO answers it."
+    ),
+    input_schema=_schema(["heads_up"],
+                         heads_up={"type": "string", "description": "The heads-up id"},
+                         reason=REASON_ARG),
+)
+def heads_up_ack(principal: Principal, session: Session, arguments: dict) -> dict:
+    project = resolve_project(session, principal, required(arguments, "project"))
+    row = _owned(session, project, HeadsUp, str(arguments.get("heads_up") or ""), "heads-up")
+
+    preview = confirm.gate(session, principal, "heads_up_ack", arguments, {
+        "heads_up": row.id, "title": row.title, "project": project.slug})
+    if preview:
+        return preview
+
+    outcome = _call(principal, admin.acknowledge_heads_up, heads_up_id=row.id,
+                    body=admin.HeadsUpAck(note=str(arguments.get("reason") or "")),
+                    session=session)
+    return _record(session, principal, project.id, "heads_up_ack", arguments, outcome)
 
 
 # ── lifecycle ───────────────────────────────────────────────────────────────────

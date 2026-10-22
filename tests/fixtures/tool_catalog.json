@@ -194,7 +194,7 @@
     "name": "ask_close"
   },
   {
-    "description": "Any agent. A step only a HUMAN can do is blocking you \u2014 a captcha, a 2FA code, a KYC form, a signature, an account only the chairman can touch. Never try to defeat a security challenge; hand it over. Before calling: save your session state to the workspace (playwright storage_state / cookies, the URL you were on, what remains to do) \u2014 the workspace persists across runs, so the next run resumes where you stopped. Say exactly WHAT you need ('the 6-digit code SMS'd to your phone', 'solve the captcha at this URL and tell me done') and WHERE, naming the site and the account in full. It goes straight to the chairman, not through your team, and he reads it cold, so write it for a person who has not opened the project: plain words, things named by what they are rather than by an ID, numbers with what they compare to. His answer arrives verbatim in the decision that wakes you; unanswered it expires to no, so also plan the work that does not depend on it.",
+    "description": "Any agent. A step only a HUMAN can do is blocking you \u2014 a captcha, a 2FA code, a KYC form, a signature, an account only the chairman can touch. Never try to defeat a security challenge; hand it over. Before calling: save your session state to the workspace (playwright storage_state / cookies, the URL you were on, what remains to do) \u2014 the workspace persists across runs, so the next run resumes where you stopped. Say exactly WHAT you need ('the 6-digit code SMS'd to your phone', 'solve the captcha at this URL and tell me done') and WHERE, naming the site and the account in full. It goes straight to the chairman, not through your team, and he reads it cold, so write it for a person who has not opened the project: plain words, things named by what they are rather than by an ID, numbers with what they compare to. His answer arrives verbatim in the decision that wakes you; unanswered it expires to no, so also plan the work that does not depend on it. If there is nothing for him to do ('no trade today, place nothing'), it is not an assist: a heads_up if a standing order asks him to be told, otherwise the deliverable carries it.",
     "input_schema": {
       "properties": {
         "what": {
@@ -254,7 +254,7 @@
     "name": "brief_propose"
   },
   {
-    "description": "CEO only. Put a case to the chairman for MORE of a capacity dial \u2014 runs a day, runs an hour, concurrency, queue depth, the month's money. This is the verb for the constraint that is actually binding: if you have worked out that the run ration is what paces you, say so here with the arithmetic rather than describing it in the boardroom, where it is a remark nobody can act on. rule is the constitution field; `to` is the number you want. All three of buys / costs / without are required and are the point \u2014 what more room BUYS in outcomes, what it COSTS in money and runs, and what happens WITHOUT it. A request without them is a wish, and he reads it cold, so write it for a person who has not opened the project: plain words, things named by what they are rather than by an ID, numbers with what they compare to. It does not block and it does not move the dial: keep working at the cap you have, plan for it, and treat a yes as upside. Unanswered it expires to no, which is the same as today. You may not request a lower bar, a change to who decides, or less auditing \u2014 those are his judgement about the project, not its throughput.",
+    "description": "CEO only. Put a case to the chairman for MORE of a capacity dial \u2014 runs a day, runs an hour, concurrency, queue depth, the month's money. This is the verb for the constraint that is actually binding: if you have worked out that the run ration is what paces you, say so here with the arithmetic rather than describing it in the boardroom, where it is a remark nobody can act on. rule is the constitution field; `to` is the number you want. All three of buys / costs / without are required and are the point \u2014 what more room BUYS in outcomes, what it COSTS in money and runs, and what happens WITHOUT it. A request without them is a wish, and he reads it cold, so write it for a person who has not opened the project: plain words, things named by what they are rather than by an ID, numbers with what they compare to. It does not block and filing it does not move the dial: keep working at the cap you have, plan for it, and treat a yes as upside \u2014 his yes is what raises it, and you are told the number in force. Unanswered it expires to no, which is the same as today. You may not request a lower bar, a change to who decides, or less auditing \u2014 those are his judgement about the project, not its throughput.",
     "input_schema": {
       "properties": {
         "buys": {
@@ -547,6 +547,29 @@
       "type": "object"
     },
     "name": "flags_list"
+  },
+  {
+    "description": "CEO only. Tell the chairman something he ASKED to be told, for him to mark noted: tomorrow's ticket when it is 'no trade', the weekly number he wants to see. `standing_order` quotes the order in your brief that says to tell him \u2014 refused without one, because then it is information and belongs in the deliverable or the daily brief, not on his desk. No buttons to approve or deny and no expiry: if he must DECIDE, file an approval; if he must DO something, an assist. he reads it cold, so write it for a person who has not opened the project: plain words, things named by what they are rather than by an ID, numbers with what they compare to.",
+    "input_schema": {
+      "properties": {
+        "body": {
+          "type": "string"
+        },
+        "standing_order": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "body",
+        "standing_order"
+      ],
+      "type": "object"
+    },
+    "name": "heads_up"
   },
   {
     "description": "CEO only. Put a role on this project \u2014 yours to decide, no approval needed. `role_slug` comes from roles_list, `employees` are the names these people will work under, `reason` says what work this seat is for \u2014 it is posted to the boardroom for the chairman, and he reads it cold, so write it for a person who has not opened the project: plain words, things named by what they are rather than by an ID, numbers with what they compare to. Optionally set stand_down_when now, in the same shape stand_down_when takes. Hiring does not buy you runs: the daily ration and the monthly wall belong to the PROJECT, so another seat spreads the same allowance thinner and adds wake-ups of its own. Hire because work needs doing that nobody here can do, never because a seat would be nice to have.",
@@ -844,6 +867,29 @@
       "type": "object"
     },
     "name": "need_request"
+  },
+  {
+    "description": "CEO only. Answer a note the chairman wrote on a decision (your context's chairman_notes lists every unanswered one, every run, until you do). `reply` is one line he reads under his note: what you did with it. `standing` says whether it applies beyond that one item. A standing note belongs in the brief: call brief_propose with it folded in FIRST, or the answer is refused. Never answer one by saving a memory.",
+    "input_schema": {
+      "properties": {
+        "note_id": {
+          "type": "string"
+        },
+        "reply": {
+          "type": "string"
+        },
+        "standing": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "note_id",
+        "reply",
+        "standing"
+      ],
+      "type": "object"
+    },
+    "name": "note_answer"
   },
   {
     "description": "Clear a real-world purchase against the spend envelope BEFORE paying \u2014 a refusal here costs nothing; the same refusal after paying costs the money. Records the purchase with a stable idempotency_key so a crash or retry can never buy twice: if the response says duplicate/completed, the money already moved \u2014 do NOT pay again. Then pay with whatever tool fits (the platform never holds the card for you), and call purchase_finish with the receipt. usd over the per-purchase line or the approval threshold needs an approved approval_id; the monthly external cap is a wall no approval overrides \u2014 recommend an amendment instead.",

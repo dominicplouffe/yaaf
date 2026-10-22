@@ -13,7 +13,8 @@ from zoneinfo import ZoneInfo
 from yaaf.core.models import Approval
 
 
-def approval_row(a: Approval, *, outcome: dict | None = None) -> dict:
+def approval_row(a: Approval, *, outcome: dict | None = None,
+                 held_note: dict | None = None) -> dict:
     return {
         "id": a.id, "kind": a.kind, "title": a.title, "body": a.body,
         "amount_usd": a.amount_usd, "status": a.status,
@@ -30,8 +31,11 @@ def approval_row(a: Approval, *, outcome: dict | None = None) -> dict:
         "disclosure": a.disclosure,
         # A brief's proposed text — the goal, the standing orders, what is retired.
         "brief": a.brief,
+        "capacity": a.capacity,
         # What the spent call was observed to do, filed by the agent afterwards.
         "outcome": outcome,
+        # His note as held for the CEO's answer, and the answer once given.
+        "held_note": held_note,
     }
 
 

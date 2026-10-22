@@ -3069,6 +3069,8 @@ def capacity_request(
     approval = _file_approval(
         session, ctx, ApprovalKind.CAPACITY,
         f"More room: {dial}, {current:g} → {body.to:g}", "\n".join(detail))
+    # Structured, so approving it is what raises the dial.
+    approval.capacity = {"rule": body.rule, "from": current, "to": body.to, "shared": shared}
     _boardroom_system_line(
         session, ctx.project.id,
         f"📈 MORE ROOM: your CEO asks to raise “{dial}” from {current:g} to {body.to:g}"
@@ -3096,9 +3098,9 @@ def capacity_request(
         "to": body.to,
         "note": (
             "Filed, with the arithmetic. You are not blocked and the cap has not "
-            "moved: keep working at the number you have. If he says nothing it "
-            "expires to no, which is the same as today — so plan for today's cap and "
-            "treat a yes as upside."
+            "moved: keep working at the number you have. His yes raises it — you are "
+            "told the number in force — and if he says nothing it expires to no, which "
+            "is the same as today. Plan for today's cap and treat a yes as upside."
         ),
     }
 
@@ -3187,6 +3189,84 @@ def brief_propose(
                  "force. When he confirms you are told, and every agent reads the new "
                  "one from its next run."),
     }
+
+
+class HeadsUpIn(BaseModel):
+    title: str = Field(min_length=4, max_length=300)
+    body: str = Field(min_length=10, max_length=4000)
+    # The standing order that says to tell him, quoted from the brief.
+    standing_order: str = Field(min_length=4, max_length=400)
+
+
+@router.post("/heads_up")
+def heads_up_send(
+    body: HeadsUpIn, ctx: RunContext = Depends(run_auth), session: Session = Depends(db)
+) -> dict:
+    """Tell the chairman something he asked to be told, for him to note.
+
+    Not a decision: no Approve, no Deny, no clock. Refused unless it answers a
+    standing order in the brief — without one it is information, and that goes
+    in the deliverable or the daily brief, not on his desk.
+    """
+    from yaaf.server import heads_up as heads
+
+    if ctx.agent.kind != AgentKind.CEO:
+        raise Refusal(
+            "Only the CEO puts things in front of the chairman. If he should hear "
+            "this, tell the CEO — a suggestion survives your run.", status_code=403)
+    try:
+        row = heads.file(session, ctx.project, ctx.agent.id, body.title, body.body,
+                         body.standing_order)
+    except heads.HeadsUpError as exc:
+        raise Refusal(str(exc), status_code=422) from exc
+    session.flush()
+    _boardroom_system_line(
+        session, ctx.project.id,
+        f"🔔 **{row.title}**\n{row.body[:1500]}"
+        + ("…" if len(row.body) > 1500 else "")
+        + f"\n\n_You asked for this: “{row.standing_order}”._ "
+        "[Mark it noted](#/inbox)")
+    chairman_notify(
+        session, ctx.project, f"Heads-up: {row.title}",
+        f"{row.body}\n\nYou asked for this: {row.standing_order}",
+        kind="heads_up", data={"heads_up": heads.row(row)}, attention=Attention.ACTION,
+    )
+    return {
+        "heads_up_id": row.id,
+        "standing_order": row.standing_order,
+        "note": ("On his desk to note, and posted to the boardroom. Nothing waits on it "
+                 "and it does not expire. If he writes a note when he marks it, you will "
+                 "be asked to answer it."),
+    }
+
+
+class NoteAnswerIn(BaseModel):
+    reply: str = Field(min_length=2, max_length=600)
+    # True: it applies beyond the one item it was written on. Then it belongs
+    # in the brief, and that is checked.
+    standing: bool
+
+
+@router.post("/notes/{note_id}/answer")
+def note_answer(
+    note_id: str, body: NoteAnswerIn, ctx: RunContext = Depends(run_auth),
+    session: Session = Depends(db),
+) -> dict:
+    """Answer a note the chairman wrote on a decision, in one line he reads under it."""
+    from yaaf.server import chairman_notes
+
+    if ctx.agent.kind != AgentKind.CEO:
+        raise Refusal("The chairman's notes are the CEO's to answer.", status_code=403)
+    try:
+        note = chairman_notes.answer(session, ctx.project.id, note_id, body.reply,
+                                     body.standing)
+    except chairman_notes.NoteError as exc:
+        raise Refusal(str(exc), status_code=422) from exc
+    session.add(AuditLog(
+        id=ids.new_id(ids.AUDIT), project_id=ctx.project.id, actor=f"agent:{ctx.agent.id}",
+        action="chairman_note.answer", entity="chairman_note", entity_id=note.id,
+        detail={"standing": body.standing}))
+    return {"id": note.id, "note": "Answered. He reads your reply under his note."}
 
 
 @router.post("/needs")

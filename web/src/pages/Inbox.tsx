@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { ApprovalRow, AskRow, DeskProject, get, post, splitWithout } from "../api";
+import { ApprovalRow, AskRow, DeskProject, get, HeadsUpRow, HeldNote, post, splitWithout } from "../api";
 import { BriefBody, DeskBrief, ProjectBrief } from "../briefing";
 import { isLive, Item, ItemType, needsYou, soonestClock, useDesk } from "../desk";
 import { fmtWhen, usePoll } from "../hooks";
@@ -14,27 +14,52 @@ import { flagPlain } from "../ui/project";
     It replaces the Desk, the action strip on every tab, the Overview's
     decision list and the asks hidden under Records → Decisions — four places,
     three definitions of "needs you", and a badge that disagreed with the page
-    under it. The Desk's rule survives intact: **Needs you** is exactly the
-    rows only the chairman can settle, each with what happens if he does
-    nothing, ranked by time to consequence, and it is the only tab the sidebar
-    badge counts.
+    under it. Three kinds of thing reach him, and each has its own tab:
 
-    The other tabs ask for nothing. **Updates** is news — what the CEO has been
-    made to bring you, and what happened while you were away. **Watching** is
-    every clock the CEO is running down on its own. **Done** is what you
-    decided. They exist so nothing happens silently; they carry no badge so
-    the one number that matters stays honest. */
+    **Decide** is exactly the rows only the chairman can settle — a click that
+    changes something, or a step only a human can do — each with what happens
+    if he does nothing, ranked by time to consequence. It is the only tab the
+    sidebar badge counts.
 
-type Tab = "needs" | "updates" | "watching" | "done";
+    **Acknowledge** is what he must know but not decide: a problem the CEO was
+    made to raise, and a heads-up he asked for by standing order. One button,
+    Noted. Nothing there blocks or expires.
+
+    **Updates** is information — the daily brief. **Watching** is every clock
+    the CEO is running down on its own. **Done** is what he decided, with the
+    CEO's answer to every note he wrote. */
+
+type Tab = "needs" | "ack" | "updates" | "watching" | "done";
 
 interface FlagRow {
   id: string; kind: string; status: string; summary: string; proposal: string | null;
   raised_at: string | null; acknowledged_at: string | null; acknowledgement: string | null;
+  held_note?: HeldNote | null;
 }
 
 type Update =
   | { key: string; type: "flag"; at: string; project: DeskProject; flag: FlagRow }
+  | { key: string; type: "heads_up"; at: string; project: DeskProject; heads: HeadsUpRow }
   | { key: string; type: "brief"; at: string; project: DeskProject; brief: ProjectBrief };
+
+const isAck = (u: Update) => u.type === "flag" || u.type === "heads_up";
+const unnoted = (u: Update) =>
+  u.type === "flag" ? !u.flag.acknowledged_at : u.type === "heads_up" ? !u.heads.acknowledged_at : true;
+
+/** Your note and what the CEO did with it. Every note is held until the CEO
+    answers, so "not answered yet" is a real state worth showing. */
+function NoteAndAnswer({ held }: { held: HeldNote }) {
+  return (
+    <>
+      <div><dt>Your note</dt><dd className="pre">{held.note}</dd></div>
+      <div><dt>The CEO's answer</dt><dd>
+        {held.reply ? (
+          <>{held.reply}{held.standing && <span className="help"> · applies from now on — it went into the brief</span>}</>
+        ) : <span className="help">Not answered yet. The CEO sees your note on every run until it does.</span>}
+      </dd></div>
+    </>
+  );
+}
 
 type Decided =
   | { key: string; type: "approval"; at: string; project: DeskProject; row: ApprovalRow }
@@ -51,7 +76,8 @@ function whyYours(kind: string): string {
   if (kind.includes("spend")) return "Above your approval threshold, so it is never an agent's call.";
   if (kind.includes("legal")) return "Anything with legal weight is yours by rule, at any autonomy setting.";
   if (kind.includes("tool")) return "A capability the project does not have — you hold the values.";
-  if (kind.includes("assist")) return "A step only a human can take. The platform hands these over, never defeats them.";
+  if (kind.includes("assist") || kind.includes("to do")) return "A step only a human can take. Press Done when it is done. The platform hands these over, never defeats them.";
+  if (kind.includes("capacity")) return "More room for the project to work. Saying yes raises the dial at once; saying nothing keeps it.";
   if (kind.includes("owner")) return "The CEO judged this yours rather than its own.";
   return "The constitution routes this kind of decision to you.";
 }
@@ -165,7 +191,7 @@ function ItemDetail({ item, desk }: { item: Item; desk: ReturnType<typeof useDes
       )}
       {item.type === "approval" && item.approvalId && (
         <div className="ib-acts">
-          <DecideButtons approvalId={item.approvalId} onDone={desk.reload} />
+          {item.approval && <DecideButtons approval={item.approval} onDone={desk.reload} />}
           <span className="grow" />
           <Link to={`/projects/${item.project.id}/chat`}><Icon name="message" size={13} /> Discuss with the CEO</Link>
         </div>
@@ -184,6 +210,37 @@ function ItemDetail({ item, desk }: { item: Item; desk: ReturnType<typeof useDes
 }
 
 function UpdateDetail({ u, onChanged }: { u: Update; onChanged: () => void }) {
+  if (u.type === "heads_up") {
+    const h = u.heads;
+    return (
+      <div className="ib-doc">
+        <div className="ib-meta">
+          <span className="kind-ic k-flag"><Icon name="info" size={15} /></span>
+          <span className="ib-kind">You asked to be told</span>
+          <ProjectTag p={u.project} />
+          <span className="grow" />
+          <span className="help">{fmtAgo(h.created_at)}</span>
+        </div>
+        <h2 className="ib-title">{h.title}</h2>
+        <dl className="case">
+          <div><dt>What the CEO says</dt><dd className="pre">{h.body}</dd></div>
+          <div><dt>Why it is here</dt><dd>Your standing order: “{h.standing_order}”</dd></div>
+          {h.note && <NoteAndAnswer held={h.note} />}
+        </dl>
+        <div className="ib-acts">
+          {h.acknowledged_at ? (
+            <span className="help">You noted this {fmtAgo(h.acknowledged_at)}.</span>
+          ) : (
+            <NoteAction label="Noted" className="small primary" confirmLabel="Noted"
+              placeholder="Anything to say back? (optional) — the CEO answers it"
+              onSubmit={async (note) => { await post(`/admin/heads_up/${h.id}/ack`, { note }); onChanged(); }} />
+          )}
+          <span className="grow" />
+          <Link to={`/projects/${u.project.id}/chat`}><Icon name="message" size={13} /> Talk it through</Link>
+        </div>
+      </div>
+    );
+  }
   if (u.type === "flag") {
     const plain = flagPlain(u.flag.kind);
     return (
@@ -201,6 +258,7 @@ function UpdateDetail({ u, onChanged }: { u: Update; onChanged: () => void }) {
           <div><dt>The CEO proposes</dt><dd className="pre">{u.flag.proposal ?? "Nothing yet."}</dd></div>
           <div><dt>In the platform's words</dt><dd>{u.flag.summary}</dd></div>
           <div><dt>If you say nothing</dt><dd>The proposal goes ahead. Nothing here blocks or expires.</dd></div>
+          {u.flag.held_note && <NoteAndAnswer held={u.flag.held_note} />}
         </dl>
         <div className="ib-acts">
           {u.flag.acknowledged_at ? (
@@ -210,7 +268,7 @@ function UpdateDetail({ u, onChanged }: { u: Update; onChanged: () => void }) {
             </span>
           ) : (
             <NoteAction label="Noted" className="small primary" confirmLabel="Noted"
-              placeholder="Anything to say back? — the CEO reads this"
+              placeholder="Anything to say back? (optional) — the CEO answers it"
               onSubmit={async (note) => { await post(`/admin/flags/${u.flag.id}/ack`, { note }); onChanged(); }} />
           )}
           <span className="grow" />
@@ -255,8 +313,9 @@ function DecidedDetail({ d }: { d: Decided }) {
       <dl className="case">
         {d.type === "approval" ? (
           <>
-            <div><dt>Outcome</dt><dd>{d.row.status === "approved" ? "You approved it" : d.row.status === "denied" ? "You denied it" : "It ran out of time"}</dd></div>
-            {d.row.decision_note && <div><dt>Your note</dt><dd>{d.row.decision_note}</dd></div>}
+            <div><dt>Outcome</dt><dd>{d.row.status === "approved" ? (d.row.kind === "assist" ? "You did it" : "You said yes") : d.row.status === "denied" ? (d.row.kind === "assist" ? "You couldn't" : "You said no") : "It ran out of time"}</dd></div>
+            {d.row.held_note ? <NoteAndAnswer held={d.row.held_note} />
+              : d.row.decision_note && <div><dt>Your note</dt><dd>{d.row.decision_note}</dd></div>}
             <div><dt>The case</dt><dd className="pre">{d.row.body}</dd></div>
           </>
         ) : (
@@ -273,8 +332,9 @@ function DecidedDetail({ d }: { d: Decided }) {
   );
 }
 
-/** What the CEO has been made to bring you, and what happened while you were
-    away — one request for the briefings, one per live project for its flags. */
+/** What the CEO has been made to bring you, what you asked to be told, and
+    what happened while you were away — one request for the briefings, and per
+    live project one for its flags and one for its heads-ups. */
 function useUpdates(projects: DeskProject[]) {
   const ids = projects.map((p) => p.id).join(",");
   const { data: brief, reload: reloadBrief } = usePoll(() => get<DeskBrief>("/observe/briefing"), 60000);
@@ -284,6 +344,12 @@ function useUpdates(projects: DeskProject[]) {
         .then((v) => v.flags.map((flag) => ({ project: p, flag })))
         .catch(() => []))).then((all) => all.flat()),
     30000, [ids]);
+  const { data: heads, reload: reloadHeads } = usePoll(
+    () => Promise.all(projects.map((p) =>
+      get<HeadsUpRow[]>(`/observe/projects/${p.id}/heads_ups`)
+        .then((v) => v.map((h) => ({ project: p, heads: h })))
+        .catch(() => []))).then((all) => all.flat()),
+    30000, [ids]);
   const updates = useMemo(() => {
     const byId = new Map(projects.map((p) => [p.id, p]));
     const out: Update[] = [];
@@ -291,15 +357,19 @@ function useUpdates(projects: DeskProject[]) {
       if (flag.status !== "raised") continue;
       out.push({ key: `flag-${flag.id}`, type: "flag", at: flag.raised_at ?? "", project, flag });
     }
+    for (const { project, heads: h } of heads ?? []) {
+      out.push({ key: `hu-${h.id}`, type: "heads_up", at: h.created_at, project, heads: h });
+    }
     for (const b of brief?.projects ?? []) {
       const p = byId.get(b.project_id);
       if (!p || b.quiet) continue;
       out.push({ key: `brief-${b.project_id}`, type: "brief", at: b.until, project: p, brief: b });
     }
     return out.sort((a, b) => b.at.localeCompare(a.at));
-  }, [brief, flags, projects]);
-  const unread = updates.filter((u) => u.type === "brief" || !u.flag.acknowledged_at).length;
-  return { updates, unread, reload: () => { reloadBrief(); reloadFlags(); } };
+  }, [brief, flags, heads, projects]);
+  const toNote = updates.filter((u) => isAck(u) && unnoted(u)).length;
+  const unread = updates.filter((u) => u.type === "brief").length;
+  return { updates, toNote, unread, reload: () => { reloadBrief(); reloadFlags(); reloadHeads(); } };
 }
 
 /** What you decided in the last week. Asked only when the tab is opened:
@@ -388,14 +458,15 @@ export default function Inbox() {
   const tab = (params.get("tab") as Tab | null) ?? "needs";
   const only = params.get("project");
   const projects = desk.data?.projects ?? [];
-  const { updates, unread, reload: reloadUpdates } = useUpdates(projects);
+  const { updates, toNote, unread, reload: reloadUpdates } = useUpdates(projects);
   const decided = useDecided(projects, tab === "done");
   const listRef = useRef<HTMLDivElement>(null);
 
   const inProject = <T extends { project: DeskProject }>(xs: T[]) => (only ? xs.filter((x) => x.project.id === only) : xs);
   const needs = inProject(desk.mine);
   const watching = inProject(desk.items.filter((i) => !needsYou(i)));
-  const news = inProject(updates);
+  const acks = inProject(updates.filter(isAck));
+  const news = inProject(updates.filter((u) => !isAck(u)));
   const done = inProject(decided ?? []);
 
   type Row = { key: string; render: () => React.ReactNode; detail: () => React.ReactNode };
@@ -415,18 +486,18 @@ export default function Inbox() {
         ),
         detail: () => <ItemDetail item={it} desk={desk} />,
       }))
-    : tab === "updates"
-      ? news.map((u) => ({
+    : tab === "updates" || tab === "ack"
+      ? (tab === "ack" ? acks : news).map((u) => ({
           key: u.key,
           render: () => (
             <>
-              <span className={`kind-ic k-${u.type}`}><Icon name={u.type === "flag" ? "flag" : "file"} size={15} /></span>
+              <span className={`kind-ic k-${u.type === "heads_up" ? "flag" : u.type}`}><Icon name={u.type === "flag" ? "flag" : u.type === "heads_up" ? "info" : "file"} size={15} /></span>
               <span className="grow">
-                <span className="ib-r1"><span className="ib-kind">{u.type === "flag" ? "From the CEO" : "While you were away"}</span>
+                <span className="ib-r1"><span className="ib-kind">{u.type === "flag" ? "A problem, raised" : u.type === "heads_up" ? "You asked to be told" : "While you were away"}</span>
                   <span className="grow" /><span className="help">{u.at ? fmtAgo(u.at) : ""}</span></span>
-                <span className="ib-t">{u.type === "flag" ? flagPlain(u.flag.kind).title : clip(u.brief.headline, 120)}</span>
+                <span className="ib-t">{u.type === "flag" ? flagPlain(u.flag.kind).title : u.type === "heads_up" ? u.heads.title : clip(u.brief.headline, 120)}</span>
                 <span className="ib-r3"><ProjectTag p={u.project} />
-                  {u.type === "flag" && u.flag.acknowledged_at && <span className="help">noted</span>}</span>
+                  {isAck(u) && !unnoted(u) && <span className="help">noted</span>}</span>
               </span>
             </>
           ),
@@ -506,7 +577,8 @@ export default function Inbox() {
             value={tab}
             onPick={setTab}
             options={[
-              { key: "needs", label: "Needs you", count: needs.length || undefined },
+              { key: "needs", label: "Decide", count: needs.length || undefined },
+              { key: "ack", label: "Acknowledge", count: toNote || undefined },
               { key: "updates", label: "Updates", count: unread || undefined },
               { key: "watching", label: "Watching", count: watching.length || undefined },
               { key: "done", label: "Done" },
@@ -524,8 +596,9 @@ export default function Inbox() {
             </div>
           )}
           <p className="ib-hint help">
-            {tab === "needs" && "Only what you alone can settle, soonest consequence first. Each says what happens if you do nothing."}
-            {tab === "updates" && "News to read: what the CEO was made to bring you, and what happened while you were away. Nothing here expires."}
+            {tab === "needs" && "Only what you alone can settle or do, soonest consequence first. Each says what happens if you do nothing."}
+            {tab === "ack" && "What you should know but not decide: problems the CEO raised, and what you asked to be told. One click — Noted. Nothing here expires."}
+            {tab === "updates" && "Information: what happened while you were away. Nothing to press."}
             {tab === "watching" && "Clocks the CEO is handling on its own. Nothing here waits on you."}
             {tab === "done" && "What you decided in the last seven days."}
           </p>
@@ -534,13 +607,14 @@ export default function Inbox() {
           {!desk.data ? <p className="help" style={{ padding: 16 }}>Loading…</p>
             : tab === "done" && decided === null ? <p className="help" style={{ padding: 16 }}>Loading…</p>
               : rows.length === 0 ? (
-                <EmptyState good={tab === "needs"} icon={tab === "needs" ? "check" : tab === "updates" ? "file" : tab === "watching" ? "eye" : "history"}
-                  title={tab === "needs" ? "Nothing needs you" : tab === "updates" ? "No news" : tab === "watching" ? "Nothing running down a clock" : "Nothing decided this week"}>
+                <EmptyState good={tab === "needs" || tab === "ack"} icon={tab === "needs" || tab === "ack" ? "check" : tab === "updates" ? "file" : tab === "watching" ? "eye" : "history"}
+                  title={tab === "needs" ? "Nothing needs you" : tab === "ack" ? "Nothing to note" : tab === "updates" ? "No news" : tab === "watching" ? "Nothing running down a clock" : "Nothing decided this week"}>
                   {tab === "needs"
                     ? running > 0
                       ? `${running} project${running === 1 ? " is" : "s are"} running, and nothing is waiting on a decision from you.`
                       : "No project is running right now — which is not the same as all clear."
-                    : tab === "updates" ? "Nothing new since you last looked." : tab === "watching" ? "No budget, proof or bet clocks are close." : "Decisions you make show up here with your note."}
+                    : tab === "ack" ? "No problem raised and nothing you asked to hear about is waiting."
+                    : tab === "updates" ? "Nothing new since you last looked." : tab === "watching" ? "No budget, proof or bet clocks are close." : "Decisions you make show up here with your note and the CEO's answer."}
                 </EmptyState>
               ) : rows.map((r) => (
                 <button key={r.key} className={`ib-row${selected?.key === r.key ? " on" : ""}`} onClick={() => select(r.key)}>

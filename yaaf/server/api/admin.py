@@ -3459,18 +3459,33 @@ class ApprovalDecision(BaseModel):
     # Confirming the CEO's draft word for word is the usual case; fixing one
     # number on it should not take a round trip through the boardroom.
     brief: dict | None = None
+    # A capacity request only: the number he is raising the dial to, when it is
+    # not the one the CEO asked for.
+    to: float | None = None
 
 
 def _apply_decision(session: Session, approval: Approval, project: Project,
                     approve: bool, note: str, notice_body: str,
-                    audit_detail: dict | None = None) -> None:
+                    audit_detail: dict | None = None,
+                    his_words: str | None = None) -> None:
     """ONE implementation of "an approval is decided": status, timestamps,
-    the requester's wake notice, the audit row, the wake. decide_approval and
-    fulfill_need both land here, so decision semantics can never fork."""
+    the requester's wake notice, the audit row, the wake, and his note held
+    for the CEO's answer. decide_approval and fulfill_need both land here, so
+    decision semantics can never fork. `his_words` is the note as he typed it,
+    when `note` carries a platform suffix as well."""
+    from yaaf.server import chairman_notes
+
     approval.status = ApprovalStatus.APPROVED if approve else ApprovalStatus.DENIED
     approval.decided_at = utcnow()
     approval.decision_note = note
     approval.decided_by_user_id = _decider(project)
+    held = chairman_notes.record(
+        session, approval.project_id, "approval", approval.id,
+        f"{'Approved' if approve else 'Declined'}: {approval.title}",
+        note if his_words is None else his_words)
+    if held is not None:
+        notice_body += (f" Answer his note with note_answer(note_id='{held.id}'): one line "
+                        "he reads under it, and whether it applies from now on.")
     session.add(
         Notice(
             id=ids.new_id(ids.NOTICE),
@@ -3524,6 +3539,8 @@ def decide_approval(
     project = session.get(Project, approval.project_id)
     if approval.kind == ApprovalKind.BRIEF:
         return _decide_brief(session, approval, project, body)
+    if approval.kind == ApprovalKind.CAPACITY and approval.capacity:
+        return _decide_capacity(session, approval, project, body)
     _apply_decision(
         session, approval, project, body.approve, body.note,
         notice_body=(f"Approval '{approval.title}' was "
@@ -3571,6 +3588,48 @@ def _decide_brief(session: Session, approval: Approval, project: Project,
                    "✅ Brief confirmed. Every agent works from it from its next run"
                    + (", with your edits" if edited else "") + ".")
     return {"id": approval.id, "status": approval.status, "brief": applied}
+
+
+def _decide_capacity(session: Session, approval: Approval, project: Project,
+                     body: ApprovalDecision) -> dict:
+    """Approving a capacity request IS raising the dial, through the ordinary
+    amendment path so it is versioned, audited and disclosed like every other
+    rule change. Sixteen were approved before this and none moved anything."""
+    from yaaf.server.notify import boardroom_line
+
+    ask = approval.capacity or {}
+    rule = ask["rule"]
+    dial = ConstitutionDoc.model_fields[rule].title or rule
+    if not body.approve:
+        _apply_decision(session, approval, project, False, body.note,
+                        notice_body=(f"The chairman kept “{dial}” where it is"
+                                     + (f": {body.note}" if body.note else ".")
+                                     + " Plan for the cap you have."))
+        return {"id": approval.id, "status": approval.status}
+    current = getattr(effective(session, project.id), rule)
+    to = body.to if body.to is not None else ask["to"]
+    if isinstance(current, int) and not isinstance(current, bool) and float(to).is_integer():
+        to = int(to)
+    if to <= current:
+        # He raised it himself while this waited, or chose a number at or below
+        # today's. Saying yes moves nothing down: lowering a dial is an amendment
+        # he makes on purpose, never the side effect of approving a raise.
+        moved = f"“{dial}” is already {current:g}, so nothing changed."
+    else:
+        amend_constitution(project.id, AmendmentIn(
+            reason=f"Approved the CEO's capacity request: {approval.title}"[:500],
+            changes={rule: to}), session)
+        moved = f"“{dial}” is now {to:g} (was {current:g}), in force now."
+    edited = body.to is not None and float(body.to) != float(ask["to"])
+    _apply_decision(session, approval, project, True, body.note,
+                    notice_body=(f"The chairman approved your capacity request. {moved}"
+                                 + (f" He chose {to:g}, not the {ask['to']:g} you asked "
+                                    "for." if edited else "")
+                                 + (f" His note: {body.note}" if body.note else "")),
+                    audit_detail={"rule": rule, "from": current, "to": to,
+                                  "edited": edited})
+    boardroom_line(session, project.id, f"📈 {moved}")
+    return {"id": approval.id, "status": approval.status, "rule": rule, "to": to}
 
 
 @router.get("/projects/{project_id}/accounts", dependencies=[authority.READ])
@@ -3686,6 +3745,7 @@ def fulfill_need(
                      + (f" His note: {body.note}" if body.note else "")),
         audit_detail={"fulfilled": True, "secret_name": secret.name,
                       "roles": body.roles, "filename": filename},
+        his_words=body.note,
     )
     return {"id": approval.id, "status": approval.status,
             "secret_name": secret.name, "env_var_hint": env_var,
@@ -4289,6 +4349,35 @@ def audit_task(task_id: str, body: TaskAudit, session: Session = Depends(db)) ->
     return {"id": row.id, "audit_status": row.audit_status}
 
 
+class HeadsUpAck(BaseModel):
+    note: str = Field(default="", max_length=4000)
+
+
+@router.post("/heads_up/{heads_up_id}/ack", dependencies=[authority.STEER])
+def acknowledge_heads_up(heads_up_id: str, body: HeadsUpAck,
+                         session: Session = Depends(db)) -> dict:
+    """He saw it. Nothing was waiting on this, so nothing moves but the CEO's
+    knowledge that he did — and his note, if he wrote one, held for an answer."""
+    from yaaf.core.models import HeadsUp
+    from yaaf.server import chairman_notes
+    from yaaf.server import heads_up as heads
+
+    row = session.get(HeadsUp, heads_up_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="unknown heads-up")
+    if row.acknowledged_at is not None:
+        raise HTTPException(status_code=409, detail="already noted")
+    heads.acknowledge(session, row)
+    held = chairman_notes.record(session, row.project_id, "heads_up", row.id,
+                                 f"Noted: {row.title}", body.note)
+    if held is not None:
+        # Only a note is worth a wake. A bare "seen" rides the next run.
+        _notice_ceo(session, row.project_id, NoticeKind.HEADS_UP_NOTED,
+                    f"The chairman noted your heads-up '{row.title}' and wrote: "
+                    f"{held.body} Answer it with note_answer(note_id='{held.id}').")
+    return heads.row(row, chairman_notes.row(held) if held else None)
+
+
 class FlagAck(BaseModel):
     note: str = Field(default="", max_length=4000)
 
@@ -4321,16 +4410,21 @@ def acknowledge_flag(flag_id: str, body: FlagAck, session: Session = Depends(db)
     project = session.get(Project, flag.project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="unknown project")
+    from yaaf.server import chairman_notes
+
     flag_lib.acknowledge(session, project, flag, body.note)
     _audit(session, flag.project_id, "flag.ack", "flag", flag.id,
            {"kind": flag.kind, "status": flag.status})
+    held = chairman_notes.record(session, flag.project_id, "flag", flag.id,
+                                 f"Noted: {flag.summary[:300]}", body.note)
     _notice_ceo(
         session, flag.project_id, NoticeKind.FLAG_ACKNOWLEDGED,
         f"The chairman answered the {flag.kind.replace('_', ' ')} flag you raised"
         + (f": {flag.acknowledgement}" if flag.acknowledgement else " and said nothing further.")
         + (" It is closed." if flag.status == FlagStatus.RESOLVED else
            " The condition is still true, so the flag stays open — what closes it is the "
-           "arithmetic turning, not this."),
+           "arithmetic turning, not this.")
+        + (f" Answer his note with note_answer(note_id='{held.id}')." if held else ""),
     )
     return {"id": flag.id, "status": flag.status,
             "acknowledged_at": flag.acknowledged_at.isoformat()}

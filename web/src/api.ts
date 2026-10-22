@@ -733,6 +733,9 @@ export interface ApprovalRow {
   /** Set on a data write: the one call approving it buys. A need for a
       credential is also a tool_request, and carries none. */
   grant?: { source: string; tool: string; arguments_sha256: string } | null;
+  capacity?: CapacityAsk | null;
+  /** Your note, and the CEO's answer to it once given. */
+  held_note?: HeldNote | null;
 }
 
 /** The platform files "what happens without it" as the last line of every
@@ -779,6 +782,40 @@ export interface DeskApproval {
   kind: string;
   amount_usd: number | null;
   expires_at: string;
+  capacity?: CapacityAsk | null;
+}
+
+/** A capacity request's dial. Approving it is what raises the dial. */
+export interface CapacityAsk {
+  rule: string;
+  from: number;
+  to: number;
+  shared: boolean;
+}
+
+/** A note you wrote on a decision, held until the CEO answers it. */
+export interface HeldNote {
+  id: string;
+  about: string;
+  note: string;
+  created_at: string;
+  reply: string | null;
+  /** True: the CEO said it applies from now on, and put it in the brief. */
+  standing: boolean | null;
+  answered_at: string | null;
+}
+
+/** Something you asked to be told: you note it, there is nothing to decide. */
+export interface HeadsUpRow {
+  id: string;
+  project_id: string;
+  title: string;
+  body: string;
+  /** The standing order in your brief that asked for it. */
+  standing_order: string;
+  created_at: string;
+  acknowledged_at: string | null;
+  note: HeldNote | null;
 }
 
 /** One of the CEO's questions to you, live or settled. Shaped like an

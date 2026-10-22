@@ -1,6 +1,6 @@
 import { createContext, ReactNode, useContext, useMemo } from "react";
 import { Link } from "react-router-dom";
-import { DeskProject, DeskView, get } from "./api";
+import { DeskApproval, DeskProject, DeskView, get } from "./api";
 import { usePoll } from "./hooks";
 import { clip, DecideButtons, fmtSoon, fmtUnit, fmtWhenShort, hoursSince, paceDate } from "./ui";
 
@@ -90,6 +90,7 @@ export interface Item {
   toLabel: string;
   /** Present on the two kinds a row can settle in place. */
   approvalId?: string;
+  approval?: DeskApproval;
   ask?: { id: string; body: string; defaultAction: string };
   amountUsd?: number | null;
   actions?: ReactNode;
@@ -226,8 +227,9 @@ export function itemsFor(p: DeskProject, reload: () => void): Item[] {
   for (const a of p.pending_approvals) {
     items.push({
       key: a.id, type: "approval", tier: 2, at: new Date(a.expires_at).getTime(), clocked: true,
-      yours: true, project: p, kind: `Approval · ${a.kind.replaceAll("_", " ")}`,
-      title: a.title, approvalId: a.id, amountUsd: a.amount_usd,
+      yours: true, project: p,
+      kind: a.kind === "assist" ? "For you to do" : `Decision · ${a.kind.replaceAll("_", " ")}`,
+      title: a.title, approvalId: a.id, amountUsd: a.amount_usd, approval: a,
       what: (
         <>
           {a.title}
@@ -238,7 +240,7 @@ export function itemsFor(p: DeskProject, reload: () => void): Item[] {
       ),
       consequence: `It is denied ${fmtSoon(a.expires_at)}. Silence is a decision here.`,
       to: `${to}/activity/decisions`, toLabel: "Read the full request",
-      actions: <DecideButtons approvalId={a.id} onDone={reload} />,
+      actions: <DecideButtons approval={a} onDone={reload} />,
     });
   }
   for (const ask of p.pending_asks) {

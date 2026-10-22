@@ -254,7 +254,7 @@ def desk(live: bool = False, session: Session = Depends(db),
         usd_mode = project.billing_mode == "api_key"
         pending = [
             {"id": a.id, "title": a.title, "kind": a.kind, "amount_usd": a.amount_usd,
-             "expires_at": aware(a.expires_at).isoformat()}
+             "expires_at": aware(a.expires_at).isoformat(), "capacity": a.capacity}
             for a in session.execute(
                 select(Approval)
                 .where(Approval.project_id == project.id,
@@ -483,10 +483,12 @@ def project_flags(project_id: str, session: Session = Depends(db)) -> dict:
     self-refuting on the chairman's own screen — which is what makes the
     mechanism trustworthy without asking him to trust it.
     """
+    from yaaf.server import chairman_notes
     from yaaf.server import flags as flag_lib
 
     project = _project(session, project_id)
     rows = flag_lib.open_flags(session, project.id)
+    held = chairman_notes.replies_for(session, "flag", [f.id for f in rows])
     return {
         "unraised": sum(1 for f in rows if f.status == "open"),
         "flags": [
@@ -504,6 +506,7 @@ def project_flags(project_id: str, session: Session = Depends(db)) -> dict:
                 "acknowledged_at": (
                     f.acknowledged_at.isoformat() if f.acknowledged_at else None),
                 "acknowledgement": f.acknowledgement,
+                "held_note": held.get(f.id),
             }
             for f in rows
         ],
@@ -1941,7 +1944,30 @@ def approvals(project_id: str, session: Session = Depends(db)) -> list[dict]:
             .order_by(AuditLog.at.asc())
         ).scalars():
             outcomes[entry.entity_id] = entry.detail or {}
-    return [approval_row(a, outcome=outcomes.get(a.id)) for a in rows]
+    from yaaf.server import chairman_notes
+
+    held = chairman_notes.replies_for(session, "approval", [a.id for a in rows])
+    return [approval_row(a, outcome=outcomes.get(a.id), held_note=held.get(a.id))
+            for a in rows]
+
+
+@router.get("/projects/{project_id}/heads_ups", dependencies=[authority.READ])
+def project_heads_ups(project_id: str, session: Session = Depends(db)) -> list[dict]:
+    """What he asked to be told: the unnoted ones, then the last week's noted."""
+    from yaaf.core.models import HeadsUp
+    from yaaf.server import chairman_notes
+    from yaaf.server import heads_up as heads
+
+    project = _project(session, project_id)
+    since = utcnow() - timedelta(days=7)
+    rows = list(session.execute(
+        select(HeadsUp).where(HeadsUp.project_id == project.id,
+                              or_(HeadsUp.acknowledged_at.is_(None),
+                                  HeadsUp.acknowledged_at >= since))
+        .order_by(HeadsUp.created_at.desc()).limit(100)
+    ).scalars())
+    held = chairman_notes.replies_for(session, "heads_up", [h.id for h in rows])
+    return [heads.row(h, held.get(h.id)) for h in rows]
 
 
 @router.get("/projects/{project_id}/asks", dependencies=[authority.READ])

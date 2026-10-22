@@ -84,7 +84,7 @@ from yaaf.core.models import (
     VerificationStatus,
     utcnow,
 )
-from yaaf.server import policy
+from yaaf.server import heads_up, policy
 from yaaf.server.dispatcher import heartbeat_only
 
 #: A window with no mark falls back to this. Only reached for a member row
@@ -996,6 +996,7 @@ def _waiting(session: Session, project: Project, cons: ConstitutionDoc) -> dict:
             Review.status == ReviewStatus.OPEN,
         )
     ).scalar_one()
+    heads_ups = len(heads_up.unacknowledged(session, project.id))
     soonest = _aware(pending[0].expires_at) if pending else None
     return {
         "approvals": len(pending),
@@ -1005,6 +1006,8 @@ def _waiting(session: Session, project: Project, cons: ConstitutionDoc) -> dict:
         "commitment": waiting["commitment"] is not None,
         "flags_raised": raised_flags,
         "open_reviews": int(open_review),
+        # What he asked to be told and has not noted yet.
+        "heads_ups": heads_ups,
         # Decisions only. `awaiting_chairman` above is careful that every
         # member of it is a decision the dial left with the chairman — "which
         # is what lets an autonomous project read empty and mean it" — and
@@ -1018,7 +1021,7 @@ def _waiting(session: Session, project: Project, cons: ConstitutionDoc) -> dict:
         # counted beside a thing that denies itself in six hours teaches the
         # reader that the number is padded, and then the number that matters
         # stops being read.
-        "to_read": raised_flags + int(open_review),
+        "to_read": raised_flags + int(open_review) + heads_ups,
     }
 
 
@@ -1457,8 +1460,12 @@ def render_text(brief: dict) -> str:
                         "proposal")
         if waiting["open_reviews"]:
             body.append(f"  · {waiting['open_reviews']} review(s) open")
+    elif waiting.get("to_read"):
+        body.append(f"Waiting on you: nothing to decide; {waiting['to_read']} to read.")
     else:
         body.append("Waiting on you: nothing.")
+    if waiting.get("heads_ups"):
+        body.append(f"  · {waiting['heads_ups']} heads-up(s) you asked for, not yet noted")
     # The fifth question, and the one that used to go unanswered: a quiet
     # window reads as a dead project unless something says when it moves next.
     next_up = brief.get("next_up")
