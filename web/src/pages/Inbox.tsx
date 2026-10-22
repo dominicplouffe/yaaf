@@ -4,7 +4,7 @@ import { ApprovalRow, AskRow, DeskProject, get, HeadsUpRow, HeldNote, post, spli
 import { BriefBody, DeskBrief, ProjectBrief } from "../briefing";
 import { isLive, Item, ItemType, needsYou, soonestClock, useDesk } from "../desk";
 import { fmtWhen, usePoll } from "../hooks";
-import { clip, DecideButtons, fmtAgo, fmtSoon, NoteAction, SEND_HINT, sendOnEnter } from "../ui";
+import { clip, DecideButtons, fmtAgo, fmtSoon, NotedButton, SEND_HINT, sendOnEnter } from "../ui";
 import { Avatar, EmptyState, Seg } from "../ui/kit";
 import { Icon, IconName } from "../ui/Icon";
 import { flagPlain } from "../ui/project";
@@ -231,8 +231,7 @@ function UpdateDetail({ u, onChanged }: { u: Update; onChanged: () => void }) {
           {h.acknowledged_at ? (
             <span className="help">You noted this {fmtAgo(h.acknowledged_at)}.</span>
           ) : (
-            <NoteAction instant label="Noted" className="small primary" confirmLabel="Noted"
-              placeholder="Anything to say back? (optional) — the CEO answers it"
+            <NotedButton
               onSubmit={async (note) => { await post(`/admin/heads_up/${h.id}/ack`, { note }); onChanged(); }} />
           )}
           <span className="grow" />
@@ -267,8 +266,7 @@ function UpdateDetail({ u, onChanged }: { u: Update; onChanged: () => void }) {
               {u.flag.acknowledgement ? `: “${clip(u.flag.acknowledgement, 120)}”` : ""}. It stays until the numbers turn.
             </span>
           ) : (
-            <NoteAction instant label="Noted" className="small primary" confirmLabel="Noted"
-              placeholder="Anything to say back? (optional) — the CEO answers it"
+            <NotedButton
               onSubmit={async (note) => { await post(`/admin/flags/${u.flag.id}/ack`, { note }); onChanged(); }} />
           )}
           <span className="grow" />

@@ -2732,3 +2732,32 @@ pre.trace { max-height: 360px; overflow: auto; width: 100%; font-size: 12px; }
 .team-h > button, .team-h > .reason-form { align-self: flex-start; }
 .team-h > button { background: transparent; border-color: var(--border); color: var(--muted); }
 .team-h > button:hover { color: var(--ink); border-color: var(--border-strong); }
+
+/* The split button (ui.tsx SplitAction): the common outcome on the left, one
+   click; the arrow on the right holds what needs words — a reply, a reason. */
+.split { position: relative; display: inline-flex; align-items: stretch; }
+.split > .split-main { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.split > .split-caret {
+  border-top-left-radius: 0; border-bottom-left-radius: 0; margin-left: -1px;
+  padding-left: 8px; padding-right: 8px;
+}
+.split > .split-caret.primary { border-left-color: color-mix(in srgb, var(--on-accent) 35%, transparent); }
+.split > .split-caret[aria-expanded="true"] svg { transform: rotate(180deg); }
+.split-menu {
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 30; min-width: 240px;
+  display: flex; flex-direction: column; padding: 4px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+}
+.split-menu > button {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  min-height: 0; padding: 8px 10px; border: 0; background: transparent;
+  text-align: left; font-size: 13px; font-weight: 600; color: var(--ink);
+}
+.split-menu > button small { font-weight: 400; font-size: 12px; color: var(--muted); }
+.split-menu > button:hover, .split-menu > button:focus-visible { background: var(--hover-strong); outline: none; }
+.split-menu > button.is-danger { color: var(--critical); }
+.split-compose { flex: 1 1 100%; display: flex; flex-direction: column; gap: 8px; }
+.split-compose-label { font-weight: 600; font-size: 13px; }
+.split-compose textarea { width: 100%; min-height: 56px; resize: vertical; font: inherit; }
+.split-compose-acts { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }

@@ -25,7 +25,7 @@ import {
   fmtSoon,
   fmtUnit,
   fmtWhenShort,
-  NoteAction,
+  NotedButton,
   paceDate,
   runHealth,
 } from "../../ui";
@@ -633,12 +633,8 @@ export default function Overview({
           you say otherwise.
         </div>
         <div className="flag-a">
-          <NoteAction
-            instant
-            label="Noted"
-            className="small"
-            placeholder={`Anything to say back? — ${ceo} reads this`}
-            confirmLabel="Noted"
+          <NotedButton
+            primary={false}
             onSubmit={async (note) => {
               await post(`/admin/flags/${f.id}/ack`, { note });
               reloadFlags();

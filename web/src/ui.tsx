@@ -5,7 +5,7 @@
 
 import type React from "react";
 import { Icon } from "./ui/Icon";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Activity, Dashboard, get, post, RunRow, SpendBucket } from "./api";
 
 // ── time ────────────────────────────────────────────────────────────────────────
@@ -719,7 +719,6 @@ export function NoteAction({
   placeholder,
   confirmLabel,
   requireNote = false,
-  instant = false,
   onSubmit,
 }: {
   label: string;
@@ -727,11 +726,6 @@ export function NoteAction({
   placeholder: string;
   confirmLabel?: string;
   requireNote?: boolean;
-  /** One click does it; the note is a separate, optional link beside it. For
-      every action where a note is optional — a second click to skip a text
-      box nobody needed is the extra step that teaches people to resent the
-      button. */
-  instant?: boolean;
   onSubmit: (note: string) => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
@@ -754,19 +748,6 @@ export function NoteAction({
     }
   }
 
-  if (!open && instant) {
-    return (
-      <>
-        <button className={className} disabled={busy} onClick={go}>
-          {label}
-        </button>
-        <button className="linkish small" disabled={busy} onClick={() => setOpen(true)}>
-          add a note
-        </button>
-        {error && <span className="help" style={{ color: "var(--critical)" }}>{error}</span>}
-      </>
-    );
-  }
   if (!open) {
     return (
       <button className={className} onClick={() => setOpen(true)}>
@@ -800,10 +781,173 @@ export function NoteAction({
   );
 }
 
-/** What the two buttons on a decision say, by kind. Each names what the click
-    does — "Raise to 60", "Done", "Allow this call" — because Approve and Deny
-    on a request whose click changed nothing taught that the click means
-    nothing. One map, so every surface that shows a decision says the same. */
+// ── the split button: one obvious click, the variants one arrow away ────────────
+
+/** A variant behind the arrow. Each one needs words — a reply, a reason — so
+    picking it opens a composer in place of the row; the primary never does. */
+export interface SplitChoice {
+  /** The menu line, ending in "…" because it asks for words. */
+  label: string;
+  /** The menu's second line: what the words are for. */
+  hint: string;
+  /** The composer's send button — the outcome, named. */
+  send: string;
+  placeholder: string;
+  requireNote?: boolean;
+  danger?: boolean;
+  run: (note: string) => Promise<void>;
+}
+
+/** GitHub's merge button, Outlook's Reply ▾: the common outcome is one click
+    with nothing to type, and everything that needs words sits behind the
+    arrow. A note is never a second click on the way to yes. */
+export function SplitAction({
+  label,
+  run,
+  choices,
+  primary = true,
+  small = true,
+  disabled = false,
+}: {
+  label: string;
+  run: () => Promise<void>;
+  choices: SplitChoice[];
+  primary?: boolean;
+  small?: boolean;
+  disabled?: boolean;
+}) {
+  const [menu, setMenu] = useState(false);
+  const [picked, setPicked] = useState<SplitChoice | null>(null);
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const wrap = useRef<HTMLSpanElement>(null);
+  const caret = useRef<HTMLButtonElement>(null);
+  const composeId = useId();
+
+  useEffect(() => {
+    if (!menu) return;
+    wrap.current?.querySelector<HTMLButtonElement>("[role=menuitem]")?.focus();
+    const away = (e: MouseEvent) => {
+      if (!wrap.current?.contains(e.target as Node)) setMenu(false);
+    };
+    document.addEventListener("mousedown", away);
+    return () => document.removeEventListener("mousedown", away);
+  }, [menu]);
+
+  async function go(fn: () => Promise<void>) {
+    setBusy(true);
+    setError(null);
+    try {
+      await fn();
+      setPicked(null);
+      setNote("");
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function onMenuKey(e: React.KeyboardEvent) {
+    const items = [...(wrap.current?.querySelectorAll<HTMLButtonElement>("[role=menuitem]") ?? [])];
+    const at = items.indexOf(document.activeElement as HTMLButtonElement);
+    if (e.key === "Escape") {
+      e.preventDefault();
+      setMenu(false);
+      caret.current?.focus();
+    } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      const step = e.key === "ArrowDown" ? 1 : -1;
+      items[(at + step + items.length) % items.length]?.focus();
+    } else if (e.key === "Tab") {
+      setMenu(false);
+    }
+  }
+
+  const size = small ? " small" : "";
+  const tone = primary ? " primary" : "";
+
+  if (picked) {
+    const empty = !note.trim();
+    const send = () => { if (!(picked.requireNote && empty)) go(() => picked.run(note.trim())); };
+    const cancel = () => { setPicked(null); setNote(""); setError(null); };
+    return (
+      <div className="split-compose">
+        <label className="split-compose-label" htmlFor={composeId}>
+          {picked.label.replace(/…$/, "")}
+          <span className="help"> · {picked.hint}</span>
+        </label>
+        <textarea
+          id={composeId}
+          autoFocus
+          rows={2}
+          value={note}
+          placeholder={picked.placeholder}
+          onChange={(e) => setNote(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") { e.preventDefault(); cancel(); return; }
+            sendOnEnter(send, { disabled: busy || (picked.requireNote && empty) })(e);
+          }}
+        />
+        <div className="split-compose-acts">
+          <button className={`${picked.danger ? "danger" : "primary"}${size}`}
+            disabled={busy || (picked.requireNote && empty)} onClick={send}>
+            {picked.send}
+          </button>
+          <button className={size.trim()} disabled={busy} onClick={cancel}>Cancel</button>
+          {error && <span className="help" style={{ color: "var(--critical)" }}>{error}</span>}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <span className="split" ref={wrap} onKeyDown={menu ? onMenuKey : undefined}>
+      <button className={`split-main${tone}${size}`} disabled={disabled || busy}
+        onClick={() => go(run)}>
+        {label}
+      </button>
+      <button ref={caret} className={`split-caret${tone}${size}`} disabled={disabled || busy}
+        aria-haspopup="menu" aria-expanded={menu} aria-label="More choices"
+        onClick={() => setMenu(!menu)}>
+        <Icon name="down" size={13} />
+      </button>
+      {menu && (
+        <span className="split-menu" role="menu">
+          {choices.map((c) => (
+            <button key={c.label} role="menuitem" className={c.danger ? "is-danger" : ""}
+              onClick={() => { setMenu(false); setPicked(c); }}>
+              {c.label}
+              <small>{c.hint}</small>
+            </button>
+          ))}
+        </span>
+      )}
+      {error && <span className="help" style={{ color: "var(--critical)" }}>{error}</span>}
+    </span>
+  );
+}
+
+/** Noted, with Reply behind the arrow — flags and heads-ups, where there is
+    nothing to decide and so nothing to say no to. */
+export function NotedButton({ onSubmit, primary = true }: {
+  onSubmit: (note: string) => Promise<void>;
+  primary?: boolean;
+}) {
+  return (
+    <SplitAction label="Noted" primary={primary} run={() => onSubmit("")} choices={[{
+      label: "Noted, with a reply…", hint: "Say something back; the CEO answers it",
+      send: "Noted, send reply", placeholder: "e.g. send it by 8pm from now on",
+      run: onSubmit,
+    }]} />
+  );
+}
+
+/** What a decision's outcomes say, by kind. Each names what the click does —
+    "Raise to 60", "Done", "Allow this call" — because Approve and Deny on a
+    request whose click changed nothing taught that the click means nothing.
+    One map, so every surface that shows a decision says the same. */
 export interface Decidable {
   id: string;
   kind: string;
@@ -812,61 +956,60 @@ export interface Decidable {
   grant?: unknown;
 }
 
-export function decideLabels(a: Decidable): { yes: string; no: string; yesNote: string } {
+export function decideLabels(a: Decidable): {
+  yes: string; no: string; yesMore: string; yesHint: string; yesPlaceholder: string;
+} {
   const fmt = (n: number) => n.toLocaleString();
+  const withNote = (yes: string, no: string) => ({
+    yes, no, yesMore: `${yes}, with a note…`, yesHint: "The CEO answers it, and briefs it if it holds",
+    yesPlaceholder: "e.g. only through November",
+  });
   switch (a.kind) {
     case "spend":
-      return { yes: a.amount_usd ? `Approve $${fmt(a.amount_usd)}` : "Approve", no: "Decline",
-        yesNote: "Note (optional) — the CEO answers it" };
+      return withNote(a.amount_usd ? `Approve $${fmt(a.amount_usd)}` : "Approve", "Decline");
     case "capacity":
       return a.capacity
-        ? { yes: `Raise to ${fmt(a.capacity.to)}`, no: `Keep at ${fmt(a.capacity.from)}`,
-            yesNote: "Note (optional) — the CEO answers it" }
-        : { yes: "Approve", no: "Decline", yesNote: "Note (optional) — the CEO answers it" };
+        ? withNote(`Raise to ${fmt(a.capacity.to)}`, `Keep at ${fmt(a.capacity.from)}`)
+        : withNote("Approve", "Decline");
     case "tool_request":
-      return { yes: a.grant ? "Allow this call" : "It's set up", no: "Decline",
-        yesNote: a.grant ? "Note (optional) — the CEO answers it"
-          : "Where it is (optional) — the CEO answers it" };
+      return a.grant ? withNote("Allow this call", "Decline")
+        : { ...withNote("It's set up", "Decline"), yesMore: "It's set up, here's where…",
+            yesHint: "Tell the CEO where to find it", yesPlaceholder: "e.g. it's in the aws-key credential" };
     case "brief":
-      return { yes: "Confirm", no: "Not yet", yesNote: "Note (optional) — the CEO answers it" };
+      return withNote("Confirm", "Not yet");
     case "assist":
-      return { yes: "Done", no: "Not done",
-        yesNote: "What happened — the code, the fill (optional)" };
+      return { yes: "Done", no: "Not done", yesMore: "Done, with a reply…",
+        yesHint: "Send the CEO a fill price, a code", yesPlaceholder: "e.g. filled at $48.15" };
     default:
-      return { yes: "Yes", no: "No", yesNote: "Note (optional) — the CEO answers it" };
+      return withNote("Yes", "No");
   }
 }
 
-/** The decision pair, identical wherever an approval appears (Inbox, Desk,
-    Boardroom rail, Records → Decisions) — a view of one decision, not a
-    second system. A note is held until the CEO answers it. */
-export function DecideButtons({ approval, onDone }: { approval: Decidable; onDone: () => void }) {
+/** A decision, identical wherever it appears (Inbox, Desk, Boardroom rail,
+    Records → Decisions) — a view of one decision, not a second system. Yes is
+    the one click; a note on yes, and a no with its reason, are behind the
+    arrow. A note is held until the CEO answers it. */
+export function DecideButtons({ approval, onDone, small = true }: {
+  approval: Decidable;
+  onDone: () => void;
+  small?: boolean;
+}) {
   const l = decideLabels(approval);
+  const decide = async (approve: boolean, note: string) => {
+    await post(`/admin/approvals/${approval.id}/decide`, {
+      approve, note,
+      ...(approve && approval.capacity ? { to: approval.capacity.to } : {}),
+    });
+    onDone();
+  };
   return (
-    <>
-      <NoteAction
-        instant
-        label={l.yes}
-        className="small primary"
-        placeholder={l.yesNote}
-        confirmLabel={l.yes}
-        onSubmit={async (note) => {
-          await post(`/admin/approvals/${approval.id}/decide`, { approve: true, note });
-          onDone();
-        }}
-      />
-      <NoteAction
-        label={l.no}
-        className="small danger"
-        placeholder="Why? — the CEO answers it and re-plans"
-        confirmLabel={l.no}
-        requireNote
-        onSubmit={async (note) => {
-          await post(`/admin/approvals/${approval.id}/decide`, { approve: false, note });
-          onDone();
-        }}
-      />
-    </>
+    <SplitAction small={small} label={l.yes} run={() => decide(true, "")} choices={[
+      { label: l.yesMore, hint: l.yesHint, send: l.yes, placeholder: l.yesPlaceholder,
+        run: (note) => decide(true, note) },
+      { label: `${l.no}…`, hint: "Say why; the CEO re-plans from it", send: l.no,
+        placeholder: "Why? The CEO reads it and re-plans", requireNote: true, danger: true,
+        run: (note) => decide(false, note) },
+    ]} />
   );
 }
 

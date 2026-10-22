@@ -7,7 +7,7 @@ import {
 } from "../../api";
 import { fmtUsd, fmtWhen, usePoll } from "../../hooks";
 import { grantRoles, RoleGrants } from "../../roles";
-import { clockClass, decideLabels, downloadCsv, ExportCsv, fmtLeft } from "../../ui";
+import { clockClass, DecideButtons, downloadCsv, ExportCsv, fmtLeft, SplitAction } from "../../ui";
 import type { ProjectCtx } from "../Project";
 
 /** Which constitutional rule put this in front of the human, in one sentence. */
@@ -132,11 +132,10 @@ function DecisionCard({
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [note, setNote] = useState("");
   // A capacity request: the number he raises the dial to, the CEO's by default.
   const [raiseTo, setRaiseTo] = useState(approval.capacity ? String(approval.capacity.to) : "");
-  const labels = decideLabels(approval.capacity && Number(raiseTo) > 0
-    ? { ...approval, capacity: { ...approval.capacity, to: Number(raiseTo) } } : approval);
+  const deciding = approval.capacity && Number(raiseTo) > 0
+    ? { ...approval, capacity: { ...approval.capacity, to: Number(raiseTo) } } : approval;
   // The one-motion fulfillment for a need (kind=tool_request): credential
   // stored, roles scoped, need approved — one form instead of three screens.
   const [secretName, setSecretName] = useState("");
@@ -161,26 +160,6 @@ function DecisionCard({
   const after = spent + (approval.amount_usd ?? 0);
   const overruns = usdMode && approval.amount_usd !== null && after > cap;
   const [theCase, without] = splitWithout(approval.body);
-
-  async function decide(approved: boolean) {
-    if (!approved && note.trim().length === 0) {
-      setError("A denial needs a reason — the agent reads it and re-plans from it.");
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    try {
-      await post(`/admin/approvals/${approval.id}/decide`, {
-        approve: approved,
-        note: note.trim(),
-        ...(approved && approval.capacity && Number(raiseTo) > 0 ? { to: Number(raiseTo) } : {}),
-      });
-      onDecided();
-    } catch (e) {
-      setError((e as Error).message);
-      setBusy(false);
-    }
-  }
 
   return (
     <div className="card" style={{ marginBottom: 12 }}>
@@ -266,7 +245,6 @@ function DecisionCard({
                     secret_name: secretName.trim(),
                     value: secretValue,
                     roles,
-                    note: note.trim(),
                   });
                   onDecided();
                 } catch (e) {
@@ -276,7 +254,7 @@ function DecisionCard({
               }}>
               🔑 Fulfill the need
             </button>
-            <span className="help">Or approve/deny below without a credential.</span>
+            <span className="help">Or answer below without a credential.</span>
           </div>
         </div>
       )}
@@ -288,20 +266,9 @@ function DecisionCard({
           <span className="help"> — the CEO asked for {approval.capacity.to.toLocaleString()}; it is {approval.capacity.from.toLocaleString()} now. Saying yes changes it at once.</span>
         </label>
       )}
-      <input
-        style={{ marginTop: 12 }}
-        value={note}
-        placeholder="Your note — the CEO answers it, and puts it in the brief if it holds from now on (required to say no)"
-        onChange={(e) => setNote(e.target.value)}
-      />
       {error && <div className="error">{error}</div>}
       <div className="actions">
-        <button className="primary" disabled={busy} onClick={() => decide(true)}>
-          ✓ {labels.yes}
-        </button>
-        <button className="danger" disabled={busy} onClick={() => decide(false)}>
-          ✕ {labels.no}
-        </button>
+        <DecideButtons small={false} approval={deciding} onDone={onDecided} />
         <span className="help">No undo — the decision is recorded and disclosed.</span>
       </div>
     </div>
@@ -328,35 +295,20 @@ function BriefCard({
   const [goal, setGoal] = useState(draft.goal);
   const [orders, setOrders] = useState(draft.standing_orders.join("\n"));
   const [retired, setRetired] = useState(draft.retired.join("\n"));
-  const [note, setNote] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
   const now = dash.standing_orders ?? [];
   const proposed = lines(orders);
   const added = proposed.filter((o) => !now.includes(o));
   const dropped = now.filter((o) => !proposed.includes(o));
 
-  async function decide(approve: boolean) {
-    if (!approve && !note.trim()) {
-      setError("Say what is wrong — the CEO re-drafts from your note.");
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    try {
-      await post(`/admin/approvals/${approval.id}/decide`, {
-        approve,
-        note: note.trim(),
-        ...(approve ? {
-          brief: { goal: goal.trim(), standing_orders: proposed, retired: lines(retired) },
-        } : {}),
-      });
-      onDecided();
-    } catch (e) {
-      setError((e as Error).message);
-      setBusy(false);
-    }
+  async function decide(approve: boolean, note: string) {
+    await post(`/admin/approvals/${approval.id}/decide`, {
+      approve,
+      note,
+      ...(approve ? {
+        brief: { goal: goal.trim(), standing_orders: proposed, retired: lines(retired) },
+      } : {}),
+    });
+    onDecided();
   }
 
   return (
@@ -396,21 +348,15 @@ function BriefCard({
       <label className="grant-label">No longer applies — agents told to ignore it wherever they find it</label>
       <textarea value={retired} rows={Math.max(2, lines(retired).length + 1)}
         onChange={(e) => setRetired(e.target.value)} />
-      <input
-        style={{ marginTop: 12 }}
-        value={note}
-        placeholder="A note to the CEO (required if it is not right)"
-        onChange={(e) => setNote(e.target.value)}
-      />
-      {error && <div className="error">{error}</div>}
       <div className="actions">
-        <button className="primary" disabled={busy || goal.trim().length < 10}
-          onClick={() => decide(true)}>
-          ✓ Confirm — this is the brief
-        </button>
-        <button disabled={busy} onClick={() => decide(false)}>
-          Not right
-        </button>
+        <SplitAction small={false} label="Confirm — this is the brief"
+          disabled={goal.trim().length < 10} run={() => decide(true, "")} choices={[
+            { label: "Confirm, with a note…", hint: "The CEO answers it", send: "Confirm",
+              placeholder: "e.g. revisit the 12% in January", run: (n) => decide(true, n) },
+            { label: "Not right…", hint: "Say what is wrong; the CEO re-drafts from it",
+              send: "Not right", placeholder: "What is wrong with it?", requireNote: true,
+              danger: true, run: (n) => decide(false, n) },
+          ]} />
         <span className="help">
           Confirming restarts the chat so the CEO you talk to reads it too.
         </span>
