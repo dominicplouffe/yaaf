@@ -394,7 +394,10 @@ controls: **Start**, **Pause**, **Stop**, and **Message** the CEO.
 **Four numbers**, each with the line that explains it:
 
 - **Delivery** — the promised date against the platform's projection, drawn as
-  a timeline with today on it, and how many days ahead or behind.
+  a timeline with today on it, and how many days ahead or behind. An Operate
+  project has no delivery date, so it shows **This cycle** instead: when the
+  open cycle is due or closes, and — when the world set its due-by — whether
+  the open work fits.
 - **Progress** — requirements settled out of scope, as a bar split by status.
   An Explore project shows **Bets in play** instead.
 - **Spent this month** — against the cap, with the warning line marked.

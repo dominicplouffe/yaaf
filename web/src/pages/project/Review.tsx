@@ -31,6 +31,7 @@ const COMMITMENT_PLAIN: Record<string, string> = {
   at_risk: "At risk",
   breached: "Date passed",
   met: "Delivered",
+  void: "Withdrawn",
 };
 
 function field(style: object = {}) {

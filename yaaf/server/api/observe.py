@@ -454,6 +454,8 @@ def _current_cycle_view(session: Session, project: Project) -> dict | None:
     """
     if project.mode != "operate":
         return None
+    from yaaf.server.janitor import next_cycle_roll
+
     cycle = policy.current_cycle(session, project.id)
     if cycle is None:
         return None
@@ -463,6 +465,11 @@ def _current_cycle_view(session: Session, project: Project) -> dict | None:
         "goal": cycle.goal,
         "due_at": cycle.due_at.isoformat() if cycle.due_at else None,
         "due_source": cycle.due_source,
+        # When this turn closes and is judged — the due-by if the world set one,
+        # the constitution's rhythm otherwise. What "on time" means for work
+        # that comes round again.
+        "rolls_at": next_cycle_roll(
+            cycle.opened_at, effective(session, project.id), cycle).isoformat(),
         "capacity": None,
     }
     if cycle.due_at is not None:
@@ -1187,7 +1194,11 @@ def plan_view(project_id: str, session: Session = Depends(db)) -> dict:
     # The promise and the line toward it. The projection is computed live from
     # the same producer the janitor stamps and the refusals quote; the status
     # is the janitor's (it owns the transitions and the disclosure).
-    commitment_row = session.execute(
+    #
+    # Deliver only. An Operate project has no finish line for a promise or a
+    # burn-up to point at — its dates are its cycles' — and the rows an Operate
+    # project picked up before that was refused are void, not history to draw.
+    commitment_row = None if project.mode == ProjectMode.OPERATE else session.execute(
         select(Commitment).where(Commitment.project_id == project.id)
         .order_by(Commitment.created_at.desc()).limit(1)
     ).scalar_one_or_none()

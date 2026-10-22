@@ -1811,6 +1811,15 @@ def check_commitment_propose(
             "delivery date could be a promise about. Its shape is bets and evidence.",
             status_code=422,
         )
+    if project.mode == ProjectMode.OPERATE:
+        raise Refusal(
+            "This is an Operate project: it runs on a rhythm and never finishes, so "
+            "there is no finish line for one delivery date to promise. Its dates "
+            "belong to its cycles: each turn rolls on the constitution's rhythm, or on "
+            "the due-by the world sets for that turn, and what is owed is judged at "
+            "every roll.",
+            status_code=422,
+        )
     plan = plan_requirement(session, project.id)
     if plan is None or plan.status != RequirementStatus.MET:
         raise Refusal(

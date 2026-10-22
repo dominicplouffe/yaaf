@@ -31,7 +31,7 @@ import {
 } from "../../ui";
 import { Avatar, Badge, Btn, Term, Verdict } from "../../ui/kit";
 import { Icon } from "../../ui/Icon";
-import { chairmanDecides, deliveryVerdict, flagPlain, fmtDate, fullyAutonomous } from "../../ui/project";
+import { chairmanDecides, deliveryVerdict, flagPlain, fmtDate, fmtRoll, fullyAutonomous } from "../../ui/project";
 import { heldFor, SeatState } from "../../ui/team";
 import { statusBadge } from "../Projects";
 import { SpendByTeam } from "./Spend";
@@ -162,9 +162,12 @@ function Kpis({ ctx }: { ctx: ProjectCtx }) {
   return (
     <section className="kpis" aria-label="Is it on track?">
       <Link className="kpi" to={explore ? `${base}/tasks` : `${base}/roadmap`}>
-        <span className="kpi-l"><Icon name="calendar" size={14} />Delivery</span>
+        <span className="kpi-l"><Icon name="calendar" size={14} />{dash.mode === "operate" ? "This cycle" : "Delivery"}</span>
         <span className={`kpi-v ${tone}`}>{verdict.label}</span>
         <span className="kpi-s">{verdict.sub}</span>
+        {dash.mode === "operate" && dash.cycle && (
+          <Timeline start={dash.cycle.opened_at} promised={dash.cycle.due_at ?? dash.cycle.rolls_at} projected={null} />
+        )}
         {c?.deliver_by && (
           <Timeline start={c.accepted_at ?? dash.created_at} promised={c.deliver_by} projected={c.projected_done_at} />
         )}
@@ -725,6 +728,9 @@ export default function Overview({
         <div className="eyebrow">
           <span className="chip">{dash.mode === "deliver" ? "Deliver" : dash.mode === "operate" ? "Operate" : "Explore"}</span>
           {ctx.plan?.commitment?.deliver_by && <span>Due {fmtDate(ctx.plan.commitment.deliver_by)}</span>}
+          {dash.mode === "operate" && dash.cycle && (
+            <span>Cycle {dash.cycle.ordinal} · {dash.cycle.due_at ? "due" : "closes"} {fmtRoll(dash.cycle.due_at ?? dash.cycle.rolls_at)}</span>
+          )}
           {!ctx.plan?.commitment?.deliver_by && dash.deadline && <span>Window closes {fmtDate(dash.deadline)}</span>}
           <span className="term-plain"><Term means={auto.means}>{auto.word}</Term></span>
           {dash.my_role && <span>You are {dash.my_role === "chairman" ? "the chairman" : dash.my_role === "co_chair" ? "a co-chair" : "an observer"}</span>}

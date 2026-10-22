@@ -610,7 +610,9 @@ async def t_scope_act(args):
 
 @tool(
     "commitment_propose",
-    "CEO only. Ask to commit to a delivery date. You do not and cannot write the date: "
+    "CEO only, Deliver projects only — an Operate project runs on cycles and has no "
+    "single date to promise. Ask to commit to a delivery date. You do not and cannot "
+    "write the date: "
     "the platform stamps its own projection from pace and scope, and the chairman "
     "accepts it (with that date or his own) or declines. Nothing binds until he does. "
     "The optional note travels with the proposal to him — what the date rests on; "

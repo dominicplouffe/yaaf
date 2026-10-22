@@ -294,7 +294,7 @@
     "name": "channels"
   },
   {
-    "description": "CEO only. Ask to commit to a delivery date. You do not and cannot write the date: the platform stamps its own projection from pace and scope, and the chairman accepts it (with that date or his own) or declines. Nothing binds until he does. The optional note travels with the proposal to him \u2014 what the date rests on; he reads it cold, so write it for a person who has not opened the project: plain words, things named by what they are rather than by an ID, numbers with what they compare to.",
+    "description": "CEO only, Deliver projects only \u2014 an Operate project runs on cycles and has no single date to promise. Ask to commit to a delivery date. You do not and cannot write the date: the platform stamps its own projection from pace and scope, and the chairman accepts it (with that date or his own) or declines. Nothing binds until he does. The optional note travels with the proposal to him \u2014 what the date rests on; he reads it cold, so write it for a person who has not opened the project: plain words, things named by what they are rather than by an ID, numbers with what they compare to.",
     "input_schema": {
       "properties": {
         "note": {

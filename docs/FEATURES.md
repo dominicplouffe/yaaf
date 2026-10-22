@@ -108,6 +108,11 @@ Outside Explore mode the root object is not the task, it is the
 
 ## 3. A delivery date the project cannot quietly break
 
+Deliver only. Operate runs on a rhythm and never finishes, so it has no single
+date to promise: the CEO's proposal is refused, and any commitment an Operate
+project picked up before that refusal existed is voided by the janitor. Its
+dates are its cycles' (§4).
+
 - **The commitment is a row the platform owns.** The CEO proposes; it never
   writes the date — `deliver_by` is stamped from the platform's own projection,
   and you may replace it with your own when you accept.

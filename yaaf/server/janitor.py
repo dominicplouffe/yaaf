@@ -49,6 +49,7 @@ from yaaf.core.models import (
     AuditLog,
     AuditSample,
     AuditSampleStatus,
+    Commitment,
     CommitmentStatus,
     Cycle,
     CycleStatus,
@@ -450,6 +451,54 @@ def _slip_moves_for_chairman(cons: ConstitutionDoc) -> str:
     )
 
 
+def void_operate_commitments(session: Session, project: Project) -> None:
+    """Retire any promise an Operate project is holding.
+
+    Operate refuses a project date everywhere a date can be written, but the
+    CEO's proposal path used to let one through — and under an autonomous dial
+    it signed itself, so a daily rhythm ended up "breached" against a finish
+    line it never had, with scope frozen and a red banner saying the chairman
+    signed a date he never saw. The proposal is refused now; this clears the
+    rows that got in before it was. State-based like everything here, so it is
+    idempotent and needs no migration to reach an install.
+    """
+    rows = session.execute(
+        select(Commitment).where(
+            Commitment.project_id == project.id,
+            Commitment.status.in_((CommitmentStatus.PROPOSED,
+                                   *policy.LIVE_COMMITMENT_STATUSES)))
+    ).scalars().all()
+    for row in rows:
+        was = row.status
+        row.status = CommitmentStatus.VOID
+        row.status_reason = (
+            "Voided by the platform: an Operate project runs on cycles and has no "
+            "single delivery date. Each cycle carries its own due-by.")
+        session.add(AuditLog(
+            id=ids.new_id(ids.AUDIT), project_id=project.id, actor="janitor",
+            action="commitment.void", entity="commitment", entity_id=row.id,
+            detail={"was": was, "deliver_by": row.deliver_by.isoformat()},
+        ))
+        _notice_ceo(
+            session, project, NoticeKind.COMMITMENT_REVALIDATED,
+            f"The commitment to {row.deliver_by:%Y-%m-%d} has been voided by the "
+            "platform. This is an Operate project: it runs on cycles, and a project-"
+            "wide delivery date has nothing to finish. Any scope freeze it caused is "
+            "lifted. Plan each cycle; the rhythm is the promise.",
+        )
+        if was != CommitmentStatus.PROPOSED:
+            chairman_notify(
+                session, project,
+                f"Delivery date {row.deliver_by:%Y-%m-%d} withdrawn",
+                "This project is Operate, which runs on a rhythm and never finishes, so "
+                "a single delivery date for it meant nothing — and it should never have "
+                "been accepted. The platform has withdrawn it. The project is judged "
+                "cycle by cycle instead: each turn's results, and what carried over, "
+                "are on its Overview. Nothing about the work itself changed.",
+                attention=Attention.FYI,
+            )
+
+
 def check_commitments(session: Session, project: Project, cons: ConstitutionDoc) -> None:
     """The forecast, recomputed; the promise, re-validated; every transition,
     disclosed.
@@ -462,6 +511,9 @@ def check_commitments(session: Session, project: Project, cons: ConstitutionDoc)
     inline from three different callers, and a hook misses every one it was
     not wired to.
     """
+    if project.mode == ProjectMode.OPERATE:
+        void_operate_commitments(session, project)
+        return
     commitment = policy.live_commitment(session, project.id)
     if commitment is None:
         return

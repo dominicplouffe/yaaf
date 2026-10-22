@@ -106,7 +106,7 @@ def constitution_prose(cons: ConstitutionDoc, project: Project) -> str:
         f"- Each run may hit at most {cons.refusal_cap_per_run} policy refusals before its "
         "token is revoked. A refusal is the system working; do not rephrase and retry.\n"
         f"{_cadence_clause(cons)}"
-        f"{_authority_clause(cons)}"
+        f"{_authority_clause(cons, project)}"
         "- Asking the chairman is allowed, never required. Default to deciding and "
         "reporting ('I decided X because Y — say so if you disagree'), or file an approval "
         "as a recommendation you would defend. When you feel strongly enough that you want "
@@ -192,7 +192,7 @@ def _envelope_clause(cons: ConstitutionDoc) -> str:
     )
 
 
-def _authority_clause(cons: ConstitutionDoc) -> str:
+def _authority_clause(cons: ConstitutionDoc, project: Project) -> str:
     """Which verbs the authority dial grants this CEO, stated where every other
     enforced limit is stated. Silent under the default (Supervised) dial — a
     paragraph about authority nobody granted is pure token cost."""
@@ -202,7 +202,9 @@ def _authority_clause(cons: ConstitutionDoc) -> str:
     if cons.scope_authority == "ceo":
         held.append("change the plan yourself — cut, reopen, restage, reestimate, "
                     "reword, unsequence (scope_act)")
-    if cons.commitment_authority == "ceo":
+    # Deliver only: an Operate project refuses a delivery date, so telling its
+    # CEO it may sign one is an invitation to a refusal.
+    if cons.commitment_authority == "ceo" and project.mode == ProjectMode.DELIVER:
         held.append("sign the delivery date: commitment_propose adopts the platform's "
                     "projection as the promise immediately, and commitment_reset "
                     "re-adopts it when the promise stops holding — you never write a "
