@@ -317,8 +317,8 @@ function pageHead(path: string, ctx: ProjectCtx): { title: string; lede?: string
     case "spend":
       return {
         title: "Spend",
-        lede: "Every run is metered by the platform. The budget is a hard limit no agent can talk "
-          + "its way past: it warns, then pauses the project.",
+        lede: "Every run is metered by the platform. The budget is the plan; no agent can talk "
+          + "its way past the hard stop, where the project pauses itself.",
       };
     case "reviews":
       return { title: "Reviews" };

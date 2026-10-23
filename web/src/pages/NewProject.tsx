@@ -1998,7 +1998,8 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
                 <span className="chip">{monthlyTokenCap.toLocaleString()} tokens/mo</span>
                 <span className="help">
                   metered against the selected subscription — the project pauses itself at
-                  the cap, and the plan's own windows apply before it
+                  {" "}{Number(craft.hard_stop_multiple ?? 3)}× this, and the plan's own windows
+                  apply before it
                 </span>
               </>
             ) : (
@@ -2006,7 +2007,8 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
                 <span className="chip">${usdCap}/mo</span>
                 <span className="help">
                   ≈ ${roughMonthly(hiredRoles)}/mo at this staffing — the project pauses
-                  itself at the cap
+                  itself at the hard stop, $
+                  {(usdCap * Number(craft.hard_stop_multiple ?? 3)).toLocaleString()}
                 </span>
               </>
             )}

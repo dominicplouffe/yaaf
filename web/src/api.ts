@@ -869,7 +869,10 @@ export interface DeskProject {
   status_reason: string | null;
   goal: string;
   billing_mode: string;
-  budget: { unit: "usd" | "tokens"; spent: number; cap: number; warn_ratio: number };
+  budget: {
+    unit: "usd" | "tokens"; spent: number; cap: number; warn_ratio: number;
+    hard_stop_multiple: number;
+  };
   open_tasks: number;
   queue_ceiling: number;
   /** Populated only for switches the chairman holds — empty on an autonomous

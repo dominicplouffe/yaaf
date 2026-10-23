@@ -302,7 +302,11 @@ export function budgetOf(dash: Dashboard) {
   const cap = usdMode ? dash.caps.monthly_usd_cap : dash.caps.monthly_token_cap;
   const warnRatio = Number(dash.constitution["budget_warn_ratio"] ?? 0.8);
   const frac = cap > 0 ? spent / cap : 0;
-  return { usdMode, unit, spent, cap, warnRatio, frac };
+  // The budget is a plan; the wall that pauses the project is this multiple
+  // of it. Every line that says where spending stops reads `wall`, never `cap`.
+  const hardStop = Number(dash.constitution["hard_stop_multiple"] ?? 3);
+  const wall = cap * hardStop;
+  return { usdMode, unit, spent, cap, warnRatio, frac, hardStop, wall };
 }
 
 /** What one spend row cost, in the same unit and by the same arithmetic the

@@ -315,7 +315,8 @@ export function itemsFor(p: DeskProject, reload: () => void): Item[] {
           lands <b>{fmtWhenShort(pace.toISOString())}</b>.
         </>
       ),
-      consequence: "The platform pauses the project at 100%.",
+      consequence: `Over the budget the CEO must account for it; the platform pauses the `
+        + `project at ${fmtUnit(b.cap * b.hard_stop_multiple, b.unit)}, the hard stop.`,
       to: `${to}/spend`, toLabel: "See the spend",
     });
   } else if (frac < 1 && frac >= b.warn_ratio) {

@@ -335,6 +335,10 @@ def desk(live: bool = False, session: Session = Depends(db),
                           + int(cache_creation) + int(cache_read)),
                 "cap": cons.monthly_usd_cap if usd_mode else cons.monthly_token_cap,
                 "warn_ratio": cons.budget_warn_ratio,
+                # The budget is the plan; this times the budget is the wall
+                # that pauses the project. A row that reads only the cap
+                # cannot say where spending actually stops.
+                "hard_stop_multiple": cons.hard_stop_multiple,
             },
             "open_tasks": len(policy.open_top_level_tasks(session, project.id)),
             "queue_ceiling": cons.queue_ceiling,

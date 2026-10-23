@@ -1993,7 +1993,8 @@ export default function Settings({
           {dash.billing_mode === "subscription"
             ? `${Number(dash.constitution["monthly_token_cap"]).toLocaleString()} tokens`
             : `$${Number(dash.constitution["monthly_usd_cap"]).toLocaleString()}`}{" "}
-          — the platform pauses the project by itself at 100%.
+          — the plan. The platform pauses the project by itself at{" "}
+          {Number(dash.constitution["hard_stop_multiple"] ?? 3)}× that, the hard stop.
         </p>
         <CredentialPicker value={billingCredentialId} onChange={id => setBillingCredentialId(id)} disabled={busy} />
         <div className="actions">
