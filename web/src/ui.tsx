@@ -339,6 +339,23 @@ export function clip(s: string, max = 150): string {
   return s.slice(0, max).replace(/\s+\S*$/, "") + "…";
 }
 
+/** `clip` for text that is then rendered as Markdown. Cutting a message
+    mid-emphasis leaves its opening `_` or `**` with no partner, and Markdown
+    then shows the bare marker — an ask's "_Answer by …_" footer read as
+    "_Answer by" in every preview. So a marker the cut orphaned is closed. */
+export function clipMarkdown(s: string, max = 150): string {
+  if (s.length <= max) return s;
+  const out = s.slice(0, max).replace(/\s+\S*$/, "");
+  let close = "";
+  for (const mark of ["_", "**", "`"]) {
+    // Count markers that open or close a span (not the `_` in snake_case).
+    const re = mark === "_" ? /(^|[^\w])_|_(?=[^\w]|$)/g
+      : new RegExp(mark.replace(/\*/g, "\\*"), "g");
+    if ((out.match(re) ?? []).length % 2 === 1) close += mark;
+  }
+  return out + "…" + close;
+}
+
 // ── composers: Enter sends, Shift+Enter is a newline ────────────────────────────
 
 /** The keydown handler every message composer in this app shares.

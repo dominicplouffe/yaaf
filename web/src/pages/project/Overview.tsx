@@ -20,6 +20,7 @@ import {
   AsOf,
   budgetOf,
   clip,
+  clipMarkdown,
   earlyRunSentence,
   fmtLeft,
   fmtSoon,
@@ -394,7 +395,7 @@ function CeoCard({ ctx, news }: { ctx: ProjectCtx; news: ReactNode[] }) {
       {last ? (
         <div className="ceo-last">
           <Avatar name={ctx.ceoName} team="leadership" />
-          <div className="ceo-body"><Markdown>{clip(last.body, 420)}</Markdown></div>
+          <div className="ceo-body"><Markdown>{clipMarkdown(last.body, 420)}</Markdown></div>
         </div>
       ) : (
         <p className="help">
