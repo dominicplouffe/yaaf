@@ -20,12 +20,24 @@ from datetime import datetime, timedelta
 from yaaf.core.models import CommitmentStatus, ProjectStatus, utcnow
 
 #: The verdicts, in the words a filter or a colour can key on.
-VERDICTS = ("done", "stopped", "not_started", "blocked", "paused", "late", "at_risk",
-            "needs_you", "stalled", "on_track", "idle")
+VERDICTS = ("done", "stopped", "not_started", "blocked", "paused", "failing", "late",
+            "at_risk", "needs_you", "stalled", "on_track", "idle")
+
+#: How many runs in a row must fail before the project's line says so. One
+#: failure is retried and usually gone; three is a project that is spending
+#: and producing nothing — the same count the credential pause uses.
+FAILING_AFTER = 3
 
 
 def _date(at: datetime | None) -> str:
     return f"{at.day} {at:%b}" if at else "an unknown date"
+
+
+_FAILURE = {
+    "auth": " — the provider refused the key",
+    "transient": " — the provider was unavailable",
+    "fatal": " — the run crashed",
+}
 
 
 def _money(unit: str, spent: float, cap: float) -> str:
@@ -37,20 +49,23 @@ def _money(unit: str, spent: float, cap: float) -> str:
 def status_line(*, status: str, status_reason: str | None, unpaid: bool,
                 commitment, waiting: int, open_tasks: int, runs_running: int,
                 last_run_at: datetime | None, stall_hours: float,
-                unit: str, spent: float, cap: float) -> dict:
+                unit: str, spent: float, cap: float,
+                failed_in_a_row: int = 0, last_error_kind: str | None = None) -> dict:
     """{verdict, headline, sentence} for one project, from the facts the desk
     holds. The headline is the verdict in words; the sentence adds the money,
     for a surface that has no money column of its own."""
     verdict, headline, with_money = _verdict(
         status=status, status_reason=status_reason, unpaid=unpaid, commitment=commitment,
         waiting=waiting, open_tasks=open_tasks, runs_running=runs_running,
-        last_run_at=last_run_at, stall_hours=stall_hours)
+        last_run_at=last_run_at, stall_hours=stall_hours,
+        failed_in_a_row=failed_in_a_row, last_error_kind=last_error_kind)
     sentence = f"{headline} {_money(unit, spent, cap)}" if with_money else headline
     return {"verdict": verdict, "headline": headline, "sentence": sentence}
 
 
 def _verdict(*, status, status_reason, unpaid, commitment, waiting, open_tasks,
-             runs_running, last_run_at, stall_hours) -> tuple[str, str, bool]:
+             runs_running, last_run_at, stall_hours, failed_in_a_row=0,
+             last_error_kind=None) -> tuple[str, str, bool]:
     if status == ProjectStatus.COMPLETED:
         return "done", "Finished.", True
     if status == ProjectStatus.STOPPED:
@@ -65,6 +80,15 @@ def _verdict(*, status, status_reason, unpaid, commitment, waiting, open_tasks,
     if status == ProjectStatus.PAUSED:
         why = f": {status_reason}" if status_reason else "."
         return "paused", f"Paused{why}", True
+    if failed_in_a_row >= FAILING_AFTER:
+        # Before the date and the decisions: a project whose runs all die
+        # will miss any date, and "On track" or "Working." over it is the
+        # line that sent the chairman away from a crashed first run.
+        # The harness's classification, never the run's own summary: this
+        # line reaches Claude through `desk`, and a summary is agent text.
+        why = _FAILURE.get(last_error_kind or "", "")
+        return ("failing", f"Failing: its last {failed_in_a_row} runs failed{why}. "
+                "Activity → Runs says why.", True)
 
     due = commitment.deliver_by if commitment is not None else None
     if commitment is not None and commitment.status == CommitmentStatus.BREACHED:

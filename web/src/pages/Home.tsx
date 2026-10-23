@@ -37,7 +37,7 @@ function ProjectCard({ p }: { p: DeskProject }) {
       {/* Is it OK, and if not why — before what it is for. The goal is a
           paragraph the reader wrote; the sentence is what they came to learn. */}
       {p.status_line
-        ? <span className={`hcard-goal${["blocked", "late", "at_risk", "stalled", "needs_you"]
+        ? <span className={`hcard-goal${["blocked", "failing", "late", "at_risk", "stalled", "needs_you"]
             .includes(p.status_line.verdict) ? " warn" : ""}`} title={p.goal}>
             {p.status_line.sentence}</span>
         : <span className="hcard-goal">{clip(p.goal, 160)}</span>}

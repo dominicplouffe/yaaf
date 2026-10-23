@@ -53,6 +53,7 @@ from yaaf.core.models import (
     Run,
     RunKind,
     RunQueue,
+    RunStatus,
     Secret,
     Suggestion,
     Task,
@@ -77,6 +78,7 @@ from yaaf.server import asks as ask_lib
 from yaaf.server.briefing import reading_member
 from yaaf.server.deps import db
 from yaaf.server.dispatcher import (
+    MODEL_RUN_KINDS,
     activity_state,
     chat_session_live,
     day_start,
@@ -86,7 +88,7 @@ from yaaf.server.dispatcher import (
 from yaaf.server.identity import Person, person_auth, signed_in
 from yaaf.server.receipt import receipt as receipt_projection
 from yaaf.server.rows import approval_row, chairman_time, requirement_name
-from yaaf.server.status_line import status_line
+from yaaf.server.status_line import FAILING_AFTER, status_line
 from yaaf.server.unread import boardroom_unread
 from yaaf.server.velocity import (
     commitment_projection,
@@ -323,6 +325,20 @@ def desk(live: bool = False, session: Session = Depends(db),
                 select(func.max(Run.started_at)).where(Run.project_id == project.id)
             ).scalar_one()
         )
+        # Consecutive failures, newest first, among the runs that call a
+        # model: the retry loop hides one, but three in a row is a project
+        # spending and producing nothing, which "Working." would paper over.
+        recent = session.execute(
+            select(Run.status, Run.error_kind)
+            .where(Run.project_id == project.id, Run.kind.in_(MODEL_RUN_KINDS),
+                   Run.finished_at.is_not(None))
+            .order_by(Run.finished_at.desc()).limit(FAILING_AFTER)
+        ).all()
+        failed_in_a_row = 0
+        for run_status, _ in recent:
+            if run_status != RunStatus.FAILED:
+                break
+            failed_in_a_row += 1
         projects_out.append({
             "id": project.id, "slug": project.slug, "name": project.name,
             "status": project.status, "status_reason": project.status_reason,
@@ -401,7 +417,9 @@ def desk(live: bool = False, session: Session = Depends(db),
                      + len(waiting["verdicts"]) + (1 if waiting["commitment"] else 0)),
             open_tasks=row["open_tasks"], runs_running=int(running), last_run_at=last_run_at,
             stall_hours=float(cons.stall_hours), unit=row["budget"]["unit"],
-            spent=row["budget"]["spent"], cap=row["budget"]["cap"])
+            spent=row["budget"]["spent"], cap=row["budget"]["cap"],
+            failed_in_a_row=failed_in_a_row,
+            last_error_kind=recent[0][1] if failed_in_a_row else None)
     return {"as_of": now.isoformat(), "finished": finished, "projects": projects_out}
 
 
