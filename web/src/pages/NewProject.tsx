@@ -20,6 +20,10 @@ import { CeoPicker, HirePanel, needsOf, roughMonthly } from "../roles";
 import { CredentialValue, SecretInput } from "../ui";
 import type { FounderStatus, PresetCard } from "./StartProject";
 
+/** Names for a seat the chairman hired without naming. Plain, distinct,
+    and short enough to read in a run log. */
+const SEAT_NAMES = ["Ada", "Juno", "Iris", "Theo", "Noor", "Kai", "Mira", "Sol", "Wren", "Otto"];
+
 interface TeamDraft {
   role_slug: string;
   name: string;
@@ -476,6 +480,30 @@ export default function NewProject() {
       { role_slug: pick.slug, name: "Review", employees: "Juno", lead: "" }]);
   }
 
+  // What Create will actually hire. Two gaps used to be silent: a team with a
+  // role and no names was dropped at submit, so a chairman who hired a
+  // Researcher got a project with nobody on it; and a preset asking for an
+  // independent read with no reader on the roster was refused at the very
+  // end. Both are filled here, in the open — the review step lists every seat
+  // this adds, and the read can be turned off there instead.
+  const autoReview = needsReviewSeat && reviewRoles.length > 0;
+  const effectiveTeams: (TeamDraft & { named?: boolean; added?: boolean })[] = (() => {
+    const staffed = teams.filter((t) => t.role_slug && t.name.trim());
+    const taken = new Set(staffed.flatMap((t) => t.employees.split(",").map((n) => n.trim())));
+    const fresh = () => {
+      const n = SEAT_NAMES.find((x) => !taken.has(x)) ?? `Seat ${taken.size + 1}`;
+      taken.add(n);
+      return n;
+    };
+    const out: (TeamDraft & { named?: boolean; added?: boolean })[] = staffed.map((t) =>
+      solo || t.employees.trim() ? t : { ...t, employees: fresh(), named: true });
+    if (autoReview) {
+      const pick = reviewRoles.find((r) => r.slug === "editor") ?? reviewRoles[0];
+      out.push({ role_slug: pick.slug, name: "Review", employees: fresh(), lead: "", added: true });
+    }
+    return out;
+  })();
+
   function setTeam(i: number, patch: Partial<TeamDraft>) {
     setTeams((prev) => prev.map((t, j) => (j === i ? { ...t, ...patch } : t)));
   }
@@ -521,9 +549,6 @@ export default function NewProject() {
       if (!ceoSlug && !bundle?.project.ceo_role_slug) return "Nobody is running this project";
       const staffed = teams.filter((t) => t.role_slug && t.name.trim());
       if (!staffed.length) return "Nobody is doing the work";
-      if (!solo && staffed.some((t) => !t.employees.trim())) {
-        return "A team with no employees does no work";
-      }
       return null;
     }
     if (n === 3) {
@@ -899,8 +924,7 @@ export default function NewProject() {
           ...(bundle?.project.ceo_harness_override
             ? { ceo_harness_override: bundle.project.ceo_harness_override } : {}),
           solo,
-          teams: teams
-            .filter((t) => t.role_slug && t.name && (solo || t.employees.trim()))
+          teams: effectiveTeams
             .map((t) => {
               const employees = t.employees.split(",").map((s) => s.trim()).filter(Boolean);
               // Daily wakes and model overrides ride the setup file per person.
@@ -1216,6 +1240,11 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
       </>
     );
   }
+
+  // The step rail marks a problem with a dot and lets you walk past it, so the
+  // first word a chairman heard about a missing name was the browser's own
+  // "Please fill out this field" on Create. The button says it instead.
+  const missing = [problemsOn(1), problemsOn(2)].filter((p): p is string => !!p);
 
   return (
     <>
@@ -1760,7 +1789,8 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
               background: "rgba(var(--warning-rgb), 0.09)", fontSize: 13 }}>
               This preset asks for the work to be read by somebody who did not write it,
               and no team on your roster does that — so the only reader of a deliverable
-              before you would be the agent that wrote it. Creating it will be refused.
+              before you would be the agent that wrote it.
+              {reviewRoles.length > 0 && " Create will hire a reviewer for you unless you choose otherwise."}
               {reviewRoles.length ? (
                 <>
                   {" "}
@@ -1977,12 +2007,21 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             <span className="chip accent">{roleLabel(bundle?.project.ceo_role_slug ?? ceoSlug)}</span>
             <span className="help">the only agent that speaks to you</span>
           </div>
-          {teams.filter((t) => t.role_slug && t.name).map((t, i) => (
+          {effectiveTeams.map((t, i) => (
             <div className="orgline" key={i}>
               <strong>{t.name}</strong>
               <span className="chip">{roleLabel(t.role_slug)}</span>
               <span className="help">
-                {t.employees.trim() || (solo ? "the CEO, working alone" : "nobody yet")}
+                {t.employees.trim() || "the CEO, working alone"}
+                {t.named && " — named for you"}
+                {t.added && <>
+                  {" — added because this preset has the work read by somebody who did "}
+                  {"not write it. "}
+                  <button type="button" className="small"
+                    onClick={() => setCraft((prev) => ({ ...prev, deliverable_review: "none" }))}>
+                    turn the read off instead
+                  </button>
+                </>}
               </span>
             </div>
           ))}
@@ -2233,7 +2272,10 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             )}
           </label>
           <div className="spacer" />
-          <button className="primary" disabled={busy}>
+          {missing.length > 0 && (
+            <span className="help serious">Still needed: {missing.join("; ")}.</span>
+          )}
+          <button className="primary" disabled={busy || missing.length > 0}>
             {busy ? "Creating…" : "Create project"}
           </button>
         </div>

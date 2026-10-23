@@ -594,6 +594,7 @@ export default function Overview({
   const ceo = firstName(ctx.ceoName);
   const auto = autonomyWord(dash);
   const base = `/projects/${projectId}`;
+  const unpaid = !dash.billing_secret_id && dash.integrations?.runtime !== "mock";
 
   // ── needs you ──
   // Only what decides itself against you if ignored, and nothing that merely
@@ -764,7 +765,17 @@ export default function Overview({
               ))}
             </button>
             {dash.can_steer !== false && dash.status !== "running" && dash.status !== "stopped" && (
-              <Btn kind="primary" icon="play" onClick={async () => { await post(`/admin/projects/${projectId}/start`); ctx.reload(); }}>Start</Btn>
+              // Starting a project nothing can pay for used to succeed and show
+              // "Running" while its first run died: the platform allows it (a
+              // keyless project is "not configured yet"), so the button says it.
+              unpaid ? (
+                <Link to={`${base}/settings?s=money`} className="btnlink primary"
+                  title="Agents cannot run without a billing credential">
+                  <Icon name="play" size={15} />Add a key to start
+                </Link>
+              ) : (
+                <Btn kind="primary" icon="play" onClick={async () => { await post(`/admin/projects/${projectId}/start`); ctx.reload(); }}>Start</Btn>
+              )
             )}
             {dash.can_steer !== false && dash.status === "running" && <Btn icon="pause" onClick={onPause}>Pause</Btn>}
             {dash.can_steer !== false && dash.status !== "stopped" && <Btn kind="danger" icon="stop" onClick={onStop}>Stop</Btn>}
