@@ -2926,3 +2926,6 @@ del.bd { color: var(--ink-2); background: rgba(var(--critical-rgb), 0.12);
 .answer-options { margin-bottom: 14px; }
 .answer-choices { display: flex; flex-wrap: wrap; gap: 8px; }
 .answer-choices button { white-space: normal; text-align: left; }
+
+/* What a person on the org chart runs on, and what they have cost. */
+.onode .on-work { font-size: 12px; color: var(--ink-2); }

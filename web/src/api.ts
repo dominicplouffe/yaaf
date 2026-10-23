@@ -1053,11 +1053,21 @@ export interface HypothesisRow {
   extended_once: boolean;
 }
 
+/** What a person runs on and has cost this month (`month_share` is their part
+    of the project's own month, 0..1). */
+export interface SeatWork {
+  model: string;
+  model_id: string;
+  provider: string;
+  month_usd: number;
+  month_share: number;
+}
+
 export interface OrgView {
-  ceo: {
+  ceo: ({
     id: string; name: string; status: string;
     role_slug: string | null; role_name: string | null;
-  } & Dormancy | null;
+  } & Dormancy & Partial<SeatWork>) | null;
   teams: {
     id: string;
     name: string;
@@ -1079,7 +1089,7 @@ export interface OrgView {
     stand_down_when: { kind: string; keys?: string[]; stage?: number } | null;
     agents: ({
       id: string; name: string; status: string; stood_down_reason: string | null;
-    } & Dormancy)[];
+    } & Dormancy & Partial<SeatWork>)[];
   }[];
 }
 

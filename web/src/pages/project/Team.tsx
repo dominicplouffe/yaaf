@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { OrgView, post } from "../../api";
+import { OrgView, post, SeatWork } from "../../api";
 import { useDesk } from "../../desk";
 import { firstName, ProjectCtx } from "../../projectCtx";
 import { HirePanel, gapsFor, needsOf, useRoleLibrary } from "../../roles";
@@ -34,10 +34,22 @@ export function SeatPill({ state }: { state: SeatState }) {
 }
 
 /** One face on the chart. */
-function SeatNode({ seat, onOpen, wide, extra }: {
+/** One line: what they run on, and what they have cost this month. */
+function workLine(work: Partial<SeatWork> | undefined): string | null {
+  if (!work?.model) return null;
+  const money = work.month_usd && work.month_usd > 0
+    ? ` · $${work.month_usd.toFixed(2)} this month`
+      + (work.month_share ? ` (${Math.round(work.month_share * 100)}%)` : "")
+    : "";
+  return `${work.model}${money}`;
+}
+
+function SeatNode({ seat, onOpen, wide, extra, work }: {
   seat: Seat; onOpen: (id: string) => void; wide?: boolean; extra?: React.ReactNode;
+  work?: Partial<SeatWork>;
 }) {
   const t = seat.today;
+  const line = workLine(work);
   return (
     <button className={`onode st-${seat.state}${wide ? " wide" : ""}`} onClick={() => onOpen(seat.id)}>
       <span className="on-id">
@@ -55,6 +67,7 @@ function SeatNode({ seat, onOpen, wide, extra }: {
         {seat.since && <span className="on-since">{heldFor(seat.since)}</span>}
       </span>
       <span className="on-doing">{seat.doing}</span>
+      {line && <span className="on-work">{line}</span>}
       <span className="on-foot">
         {seat.dormant && <span className="chip warn">{seat.dormant}</span>}
         <span>{t?.runs ?? 0} run{(t?.runs ?? 0) === 1 ? "" : "s"} today</span>
@@ -302,7 +315,7 @@ function OrgChart({ ctx }: { ctx: ProjectCtx }) {
           <div className="org-v" />
           {ceo && (
             <div className="org-level">
-              <SeatNode seat={ceo} onOpen={ctx.openAgent} wide
+              <SeatNode seat={ceo} onOpen={ctx.openAgent} wide work={org?.ceo ?? undefined}
                 extra={<span className="on-ceo"><Icon name="message" size={13} /> The only agent you talk to</span>} />
             </div>
           )}
@@ -313,7 +326,8 @@ function OrgChart({ ctx }: { ctx: ProjectCtx }) {
                 <TeamHead ctx={ctx} team={team} onRepinned={setRepinMsg} />
                 <div className="team-members">
                   {seats.filter((s) => s.teamId === team.id).map((s) => (
-                    <SeatNode key={s.id} seat={s} onOpen={ctx.openAgent} />
+                    <SeatNode key={s.id} seat={s} onOpen={ctx.openAgent}
+                      work={team.agents.find((a) => a.id === s.id)} />
                   ))}
                 </div>
               </div>

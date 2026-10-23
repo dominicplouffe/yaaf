@@ -1454,7 +1454,28 @@ def org(project_id: str, session: Session = Depends(db)) -> dict:
     project = _project(session, project_id)
     # The same helper the health finding reads, so the Team page can never mark
     # a seat the Overview does not name, or the other way round.
+    from yaaf.runtimes import catalog
+    from yaaf.runtimes.seats import seat_for
+    from yaaf.server.contextpack import role_version_for
+
     dormant = _dormant_seats(session, project)
+    # What each person runs on and has cost this month, so the chart answers
+    # "who is expensive?" where the people are rather than on another page.
+    month_start = utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    spent = dict(session.execute(
+        select(Run.agent_id, func.coalesce(func.sum(Run.cost_usd), 0.0))
+        .where(Run.project_id == project.id, Run.created_at >= month_start)
+        .group_by(Run.agent_id)
+    ).all())
+    total = sum(float(v) for v in spent.values()) or 0.0
+
+    def working(agent) -> dict:
+        seat = seat_for(agent, role_version_for(session, agent))
+        usd = float(spent.get(agent.id, 0.0))
+        return {"model": catalog.label(seat.model), "model_id": seat.model,
+                "provider": seat.provider, "month_usd": round(usd, 2),
+                "month_share": round(usd / total, 3) if total else 0.0}
+
     teams = []
     for team in session.execute(select(Team).where(Team.project_id == project.id)).scalars():
         members = policy.team_agents(session, team.id)
@@ -1494,7 +1515,7 @@ def org(project_id: str, session: Session = Depends(db)) -> dict:
                 "agents": [
                     {"id": a.id, "name": a.name, "status": a.status,
                      "stood_down_reason": a.stood_down_reason,
-                     **_dormancy(dormant, a.id)}
+                     **_dormancy(dormant, a.id), **working(a)}
                     for a in members
                 ],
             }
@@ -1507,7 +1528,7 @@ def org(project_id: str, session: Session = Depends(db)) -> dict:
     ceo_version = session.get(RoleVersion, ceo.role_version_id) if ceo else None
     ceo_role = session.get(Role, ceo_version.role_id) if ceo_version else None
     return {"ceo": {"id": ceo.id, "name": ceo.name, "status": ceo.status,
-                    **_dormancy(dormant, ceo.id),
+                    **_dormancy(dormant, ceo.id), **working(ceo),
                     "role_slug": ceo_role.slug if ceo_role else None,
                     # Named like a team's, for the same reason. No version:
                     # only teams can be repinned, and a version number beside

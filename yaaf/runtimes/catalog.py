@@ -124,6 +124,23 @@ def model(model_id: str | None) -> Model | None:
     return _BY_ID.get(model_id or "")
 
 
+_SPELLED = {"gpt": "GPT", "deepseek": "DeepSeek"}
+
+
+def label(model_id: str | None) -> str:
+    """A model as a person says it: "claude-sonnet-5-5" is "Claude Sonnet 5.5",
+    "gpt-5.6-luna" is "GPT 5.6 Luna". Runs of version digits join with dots."""
+    if not model_id:
+        return "the default model"
+    words: list[str] = []
+    for part in model_id.split("/")[-1].split("-"):
+        if part.isdigit() and words and words[-1].replace(".", "").isdigit():
+            words[-1] = f"{words[-1]}.{part}"
+        else:
+            words.append(_SPELLED.get(part, part if part[:1].isdigit() else part.capitalize()))
+    return " ".join(words)
+
+
 def tier(model_id: str | None) -> int:
     found = model(model_id)
     return found.tier if found else 0
