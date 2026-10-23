@@ -143,11 +143,28 @@ export function fmtRoll(iso: string): string {
     { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
 }
 
+/** A cycle whose closing time has gone by and is still open. The janitor
+    rolls cycles every few seconds, so a few minutes past is a tick in flight;
+    longer than that and the rhythm has stopped, which the screen must say
+    rather than go on promising a close that is already in the past. */
+const ROLL_GRACE = 5 * 60_000;
+
+export function cycleOverdue(cycle: { rolls_at: string } | null): boolean {
+  return !!cycle && Date.now() - new Date(cycle.rolls_at).getTime() > ROLL_GRACE;
+}
+
 function cycleVerdict(dash: Dashboard): Verdicts {
   const c = dash.cycle;
   if (!c) {
     return { tone: "good", label: "Between cycles", sub: "the next one opens on its own",
       headline: "One cycle has closed and the next is about to open.", daysLate: null };
+  }
+  if (cycleOverdue(c)) {
+    return { tone: "serious", label: "Overdue to close",
+      sub: `cycle ${c.ordinal} should have closed ${fmtRoll(c.rolls_at)}`,
+      headline: `Cycle ${c.ordinal} should have closed ${fmtRoll(c.rolls_at)} and is still open — `
+        + "the rhythm has stopped turning, so nothing is being judged.",
+      daysLate: null };
   }
   if (c.due_at && c.capacity) {
     return c.capacity.feasible

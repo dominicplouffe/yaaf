@@ -397,7 +397,9 @@ controls: **Start**, **Pause**, **Stop**, and **Message** the CEO.
   a timeline with today on it, and how many days ahead or behind. An Operate
   project has no delivery date, so it shows **This cycle** instead: when the
   open cycle is due or closes, and — when the world set its due-by — whether
-  the open work fits.
+  the open work fits. A cycle still open more than a few minutes past its
+  closing time reads **Overdue to close**: the rhythm has stopped turning, and
+  the screen says so rather than promising a close already in the past.
 - **Progress** — requirements settled out of scope, as a bar split by status.
   An Explore project shows **Bets in play** instead.
 - **Spent this month** — against the cap, with the warning line marked.
