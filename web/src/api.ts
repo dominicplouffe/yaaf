@@ -723,6 +723,7 @@ export interface ApprovalRow {
   kind: string;
   title: string;
   body: string;
+  undo?: string | null;
   amount_usd: number | null;
   status: string;
   requested_by: string;
@@ -790,6 +791,10 @@ export interface DeskApproval {
   amount_usd: number | null;
   expires_at: string;
   capacity?: CapacityAsk | null;
+  /** Whether a yes can be undone, where the kind alone says (yaaf.server.rows). */
+  undo?: string | null;
+  /** What silence decides on this project. */
+  if_silent?: "approved" | "declined";
 }
 
 /** A capacity request's dial. Approving it is what raises the dial. */

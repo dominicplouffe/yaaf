@@ -76,7 +76,7 @@ from yaaf.server.notify import (
     project_link,
 )
 from yaaf.server.policy import Refusal
-from yaaf.server.rows import approval_row, chairman_time
+from yaaf.server.rows import approval_row, approval_undo, chairman_time
 
 
 async def _the_agent_acts(ctx: RunContext = Depends(run_auth)) -> None:
@@ -2311,7 +2311,9 @@ def approval_request(
         session, ctx.project, f"waiting on your decision: {body.title}",
         f"{row.body[:4000]}\n\n"
         f"If you have not decided by {chairman_time(row.expires_at, cons.timezone)}, "
-        f"the answer is {silence}.\n{inbox_line(row.id)}",
+        f"the answer is {silence}."
+        + (f"\nCan you undo a yes? {undo}" if (undo := approval_undo(row.kind)) else "")
+        + f"\n{inbox_line(row.id)}",
         kind="approval_requested", data={"approval": approval_row(row)},
         attention=Attention.ACTION,
     )

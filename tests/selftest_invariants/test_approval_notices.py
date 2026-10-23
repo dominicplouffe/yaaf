@@ -23,7 +23,7 @@ import pathlib
 
 import pytest
 
-from tests.conftest import bearer, live_token, make_project
+from tests.conftest import ADMIN, bearer, live_token, make_project
 from yaaf.server import notify
 
 
@@ -170,3 +170,31 @@ def test_when_silence_decides_the_notice_says_which_way_and_what_now(client, wir
     assert "tell the CEO in chat" in body
     assert "https://yaaf.example.com/app/#/projects/" in body
     assert "UTC" not in body
+
+
+def test_a_spend_says_a_yes_cannot_be_taken_back(client, wire):
+    """The one answer the platform knows from the kind alone, said where he
+    decides: in the notice and on the row."""
+    project = make_project(client)
+    filed = _file(client, project)
+    (_, _, _, body), _ = _filed_notices(wire)[0]
+    assert "Can you undo a yes? No — a purchase cannot be taken back" in body
+    rows = client.get(f"/observe/projects/{project['id']}/approvals",
+                      headers=ADMIN).json()
+    assert next(r for r in rows if r["id"] == filed["id"])["undo"].startswith("No")
+
+
+def test_a_kind_the_platform_cannot_vouch_for_says_nothing(client, wire):
+    project = make_project(client)
+    _file(client, project, "legal")
+    (_, _, _, body), _ = _filed_notices(wire)[0]
+    assert "Can you undo" not in body
+
+
+def test_the_row_says_what_silence_decides_on_this_project(client, wire):
+    project = make_project(client, constitution={"approval_timeout_decision": "approve"})
+    filed = _file(client, project)
+    desk = client.get("/observe/desk", headers=ADMIN).json()
+    row = next(p for p in desk["projects"] if p["id"] == project["id"])
+    pending = next(a for a in row["pending_approvals"] if a["id"] == filed["id"])
+    assert pending["if_silent"] == "approved"

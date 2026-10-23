@@ -12,6 +12,20 @@ from zoneinfo import ZoneInfo
 
 from yaaf.core.models import Approval
 
+#: "Can I undo it?", said only where the platform knows the answer from the
+#: kind alone. A spend is money that left; a capacity dial and a brief are
+#: rules he can turn back. Every other kind depends on what was asked, and a
+#: guess here would be the platform vouching for something it cannot see.
+_UNDO = {
+    "spend": "No — a purchase cannot be taken back once it is made.",
+    "capacity": "Yes — lower it again any time in Settings → Rules in force.",
+    "brief": "Yes — edit the brief in Settings, or confirm a new one.",
+}
+
+
+def approval_undo(kind: str) -> str | None:
+    return _UNDO.get(kind)
+
 
 def approval_row(a: Approval, *, outcome: dict | None = None,
                  held_note: dict | None = None) -> dict:
@@ -32,6 +46,7 @@ def approval_row(a: Approval, *, outcome: dict | None = None,
         # A brief's proposed text — the goal, the standing orders, what is retired.
         "brief": a.brief,
         "capacity": a.capacity,
+        "undo": approval_undo(a.kind),
         # What the spent call was observed to do, filed by the agent afterwards.
         "outcome": outcome,
         # His note as held for the CEO's answer, and the answer once given.

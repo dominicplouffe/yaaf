@@ -105,6 +105,9 @@ function ApprovalCase({ item }: { item: Item }) {
         <div><dt>Amount</dt><dd>${item.amountUsd.toLocaleString()}</dd></div>
       )}
       <div className="silence"><dt>If you do nothing</dt><dd>{item.consequence}</dd></div>
+      {(row?.undo ?? item.approval?.undo) && (
+        <div><dt>Can you undo a yes?</dt><dd>{row?.undo ?? item.approval?.undo}</dd></div>
+      )}
     </dl>
   );
 }

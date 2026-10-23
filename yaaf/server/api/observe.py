@@ -87,7 +87,7 @@ from yaaf.server.dispatcher import (
 )
 from yaaf.server.identity import Person, person_auth, signed_in
 from yaaf.server.receipt import receipt as receipt_projection
-from yaaf.server.rows import approval_row, chairman_time, requirement_name
+from yaaf.server.rows import approval_row, approval_undo, chairman_time, requirement_name
 from yaaf.server.status_line import FAILING_AFTER, status_line
 from yaaf.server.unread import boardroom_unread
 from yaaf.server.velocity import (
@@ -261,7 +261,12 @@ def desk(live: bool = False, only: str | None = None, session: Session = Depends
         usd_mode = project.billing_mode == "api_key"
         pending = [
             {"id": a.id, "title": a.title, "kind": a.kind, "amount_usd": a.amount_usd,
-             "expires_at": aware(a.expires_at).isoformat(), "capacity": a.capacity}
+             "expires_at": aware(a.expires_at).isoformat(), "capacity": a.capacity,
+             "undo": approval_undo(a.kind),
+             # What silence decides on THIS project; the row said "denied"
+             # on every project, including those whose rules approve.
+             "if_silent": ("approved" if cons.approval_timeout_decision == "approve"
+                           else "declined")}
             for a in session.execute(
                 select(Approval)
                 .where(Approval.project_id == project.id,

@@ -242,7 +242,7 @@ export function itemsFor(p: DeskProject, reload: () => void): Item[] {
           )}
         </>
       ),
-      consequence: `It is denied ${fmtSoon(a.expires_at)}. Silence is a decision here.`,
+      consequence: `It is ${a.if_silent ?? "declined"} ${fmtSoon(a.expires_at)}. Silence is a decision here.`,
       to: `${to}/activity/decisions`, toLabel: "Read the full request",
       actions: <DecideButtons approval={a} onDone={reload} />,
     });
