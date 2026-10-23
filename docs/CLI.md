@@ -137,6 +137,7 @@ yaaf stop  my-slug --reason "shipped"
 
 | Command | Shows |
 |---|---|
+| `yaaf up --no-isolation [--email E] [--home DIR] [--port N]` | Start yaaf on this machine in one command — key, database, schema, server, runner, first admin, role library — and print the address. Refuses to pick the unsandboxed mode for you. See DEPLOYMENT.md. |
 | `yaaf projects [--json]` | Every project as one line: status, spend against the budget, the hard stop, and how many things wait on you. `--json` for the raw payload. |
 | `yaaf status [PROJECT] [--json]` | Is everything OK, in sentences: one paragraph across your projects, each project's status line (the same words Home, the Overview and Claude's `desk` say), then everything waiting on you, with ids. `--json` for the status lines alone. |
 | `yaaf rehearse SPEC_FILE [--days N] [--usd-per-run N] [--json]` | **A fire drill: run the spec as a project for nothing, before you fund it.** Needs no deployment and no key — `yaaf rehearse examples/01-your-first-hour.json` works on a fresh checkout. See [FEATURES §13](FEATURES.md). |

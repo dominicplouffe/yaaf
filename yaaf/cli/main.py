@@ -1398,14 +1398,21 @@ def _register_users() -> None:
     app.add_typer(users, name="users")
 
 
+def _register_up() -> None:
+    from yaaf.cli.up import up
+
+    app.command()(up)
+
+
 _register_spend()
 _register_users()
+_register_up()
 
 #: Where each command sits in `yaaf --help`, in the order somebody new reaches
 #: for them. The help used to be sixty commands in the order they were written.
 PANELS = {
-    "Get started": ("login", "logout", "whoami", "doctor", "rehearse", "create_project",
-                    "projects", "status"),
+    "Get started": ("up", "login", "logout", "whoami", "doctor", "rehearse",
+                    "create_project", "projects", "status"),
     "Run a project": ("start", "pause", "stop", "configure", "amend"),
     "Decide": ("say", "decide", "extend", "ack_flag", "ack_heads_up", "unfreeze", "audit",
                "audit_evidence"),

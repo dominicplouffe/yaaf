@@ -231,7 +231,10 @@ Secrets, images, Postgres, migrations, the role library, and — on a first
 install, with `--admin-email you@example.com` — a one-time link to choose your
 password, printed at the end. Safe to re-run. The dashboard binds to `127.0.0.1`, so reach
 it over SSH (`ssh -N -L 8080:localhost:8080 you@your-server`, then
-`localhost:8080/app`). Then connect Claude:
+`localhost:8080/app`). Just trying it on your own machine? From a checkout,
+`pip install -e .`, build the dashboard once (`cd web && npm install && npm run build`),
+then `yaaf up --no-isolation --email you@example.com` starts everything and prints
+the address (see [DEPLOYMENT.md](docs/DEPLOYMENT.md)). Then connect Claude:
 
 ```bash
 yaaf login                                   # your email and password, once

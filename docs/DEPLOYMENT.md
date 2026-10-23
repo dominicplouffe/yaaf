@@ -13,6 +13,15 @@ No Docker, SQLite instead of Postgres, and the sandbox replaced by a plain
 subprocess. This is the **contributor** path: if you want to *run* yaaf, use
 [the deploy script](#the-real-thing--your-own-server) below instead.
 
+**The short way:** from a checkout with the dashboard built (`cd web && npm install
+&& npm run build`), `yaaf up --no-isolation --email you@example.com` does every step
+below: it keeps a master key and a SQLite database in `~/.yaaf`, creates the schema,
+starts the server and the runner, makes you the first admin and prints your sign-in
+link, seeds an empty role library from `roles/` and `crews/`, and prints the address.
+Ctrl-C (or any SIGTERM) stops both processes. `--no-isolation` is required on
+purpose: it runs agents as you, with no sandbox, and yaaf will not choose that for
+you — set `YAAF_SANDBOX_MODE=docker` instead on anything other than a dev machine.
+
 The compose deployment does four things for you that you have to do by hand
 here. Miss any one and you get a project that looks alive and never moves — so
 each is called out.
