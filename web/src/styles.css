@@ -2854,3 +2854,27 @@ pre.trace { max-height: 360px; overflow: auto; width: 100%; font-size: 12px; }
 .split-compose-label { font-weight: 600; font-size: 13px; }
 .split-compose textarea { width: 100%; min-height: 56px; resize: vertical; font: inherit; }
 .split-compose-acts { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+/* ── what a brief draft changes ──────────────────────────────────────────────
+   The Decisions card opens on the changes, not on the whole brief re-typed:
+   one row per edit, the kind on the left, the words that moved marked in the
+   sentence they moved in. Struck is what goes; tinted is what comes. */
+.bd-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.bd-row { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 10px; align-items: baseline;
+  padding: 8px 10px; border: 1px solid var(--border); border-left-width: 3px;
+  border-radius: var(--radius-sm); background: var(--surface-2); font-size: 13px; line-height: 1.55; }
+.bd-row.bd-ok { border-left-color: var(--good); }
+.bd-row.bd-accent { border-left-color: var(--accent); }
+.bd-row.bd-critical { border-left-color: var(--critical); }
+.bd-row.bd-warn { border-left-color: var(--warning); }
+.bd-row > .chip { justify-self: start; }
+.bd-text { min-width: 0; overflow-wrap: anywhere; }
+.bd-text button.linkish { margin-left: 4px; font-size: 12px; line-height: inherit; }
+ins.bd { text-decoration: none; color: var(--ink); background: rgba(var(--good-rgb), 0.18);
+  border-radius: 3px; padding: 0 2px; }
+del.bd { color: var(--ink-2); background: rgba(var(--critical-rgb), 0.12);
+  text-decoration-color: rgba(var(--critical-rgb), 0.8); border-radius: 3px; padding: 0 2px; }
+.bd-fold { color: var(--muted); padding: 0 2px; }
+.bd-same { margin: 6px 0 0; padding-left: 18px; font-size: 12.5px; color: var(--ink-2); }
+.bd-same li { margin: 2px 0; }
+@media (max-width: 620px) { .bd-row { grid-template-columns: minmax(0, 1fr); gap: 4px; } }

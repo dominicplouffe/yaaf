@@ -102,6 +102,39 @@ def test_the_boardroom_shows_him_the_brief_and_where_to_confirm_it(client):
     assert f"#/projects/{project['id']}/activity/decisions" in line
 
 
+def test_a_redraft_is_shown_as_what_it_changes_not_the_whole_brief_again(client):
+    """Asked to move one sentence, the CEO writes back all of them; the chairman
+    read ten orders to find the one that moved. The post leads with the change,
+    against the brief in force, and only counts what stayed."""
+    project = make_project(client)
+    propose(client, project, standing_orders=[
+        "Max 15% of the book in one name", "No stop-loss on core holdings",
+        "Give the orders as prose", "Every figure carries its source URL"])
+    client.post(f"/admin/approvals/{pending_brief(project).id}/decide",
+                json={"approve": True}, headers=ADMIN)
+    propose(client, project, standing_orders=[
+        "Max 12% of the book in one name", "No stop-loss on core holdings",
+        "The orders lead the ticket as ONE table", "Every figure carries its source URL"],
+        retired=["25% trailing stop on every position", "Orders given as prose"])
+    with db_session() as session:
+        posted = [m.body for m in session.query(Message)
+                  .filter_by(channel_id=boardroom(client, project))
+                  .order_by(Message.created_at)]
+    line = [b for b in posted if "Confirm the brief" in b][-1]
+    assert "**Order, edited:** Max ~~15%~~ **12%** of the book in one name" in line
+    assert "**New order:** The orders lead the ticket as ONE table" in line
+    assert "**Order dropped:** ~~Give the orders as prose~~" in line
+    assert "**Now retired:** Orders given as prose" in line
+    assert "_Unchanged: the goal, 2 standing orders, 1 retired._" in line
+    # What did not move is counted, not re-printed.
+    assert "No stop-loss on core holdings" not in line
+    assert "25% trailing stop" not in line
+
+    mail = pending_brief(project).body
+    assert "- Order edited. Was: Max 15% of the book in one name" in mail
+    assert "  Now: Max 12% of the book in one name" in mail
+
+
 def test_confirming_replaces_the_goal_every_agent_reads(client):
     project = make_project(client)
     with db_session() as session:

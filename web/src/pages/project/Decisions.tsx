@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { plainStatus } from "../../ui/kit";
 import { Link } from "react-router-dom";
 import {
@@ -278,10 +278,159 @@ function DecisionCard({
 const lines = (text: string) =>
   text.split("\n").map((l) => l.replace(/^\s*[-•*]\s*/, "").trim()).filter(Boolean);
 
+type Piece = { op: "same" | "in" | "out"; text: string };
+
+/** Word-level a → b. Common ends are trimmed first, so a one-word edit in a
+    thousand-word goal costs a handful of cells, not a million. */
+function wordDiff(a: string, b: string): Piece[] {
+  const x = a.split(/\s+/).filter(Boolean);
+  const y = b.split(/\s+/).filter(Boolean);
+  let head = 0;
+  while (head < x.length && head < y.length && x[head] === y[head]) head++;
+  let tail = 0;
+  while (tail < x.length - head && tail < y.length - head
+    && x[x.length - 1 - tail] === y[y.length - 1 - tail]) tail++;
+  const xs = x.slice(head, x.length - tail);
+  const ys = y.slice(head, y.length - tail);
+  const n = xs.length, m = ys.length;
+  const lcs = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
+  for (let i = n - 1; i >= 0; i--)
+    for (let j = m - 1; j >= 0; j--)
+      lcs[i][j] = xs[i] === ys[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+  const out: Piece[] = [];
+  const push = (op: Piece["op"], w: string) => {
+    const last = out[out.length - 1];
+    if (last && last.op === op) last.text += " " + w;
+    else out.push({ op, text: w });
+  };
+  x.slice(0, head).forEach((w) => push("same", w));
+  let i = 0, j = 0;
+  while (i < n || j < m) {
+    if (i < n && j < m && xs[i] === ys[j]) { push("same", xs[i]); i++; j++; }
+    else if (j < m && (i >= n || lcs[i][j + 1] >= lcs[i + 1][j])) push("in", ys[j++]);
+    else push("out", xs[i++]);
+  }
+  x.slice(x.length - tail).forEach((w) => push("same", w));
+  // Struck before inserted, so a replacement reads "old → new".
+  for (let k = 1; k < out.length; k++) {
+    if (out[k].op === "out" && out[k - 1].op === "in") [out[k - 1], out[k]] = [out[k], out[k - 1]];
+  }
+  return out;
+}
+
+/** Share of words two orders have in common — difflib's ratio, which the
+    server's boardroom post pairs edits by (yaaf.server.brief.changes). */
+function likeness(a: string, b: string): number {
+  const d = wordDiff(a.toLowerCase(), b.toLowerCase());
+  const same = d.filter((p) => p.op === "same").reduce((k, p) => k + p.text.split(" ").length, 0);
+  const total = a.split(/\s+/).filter(Boolean).length + b.split(/\s+/).filter(Boolean).length;
+  return total ? (2 * same) / total : 1;
+}
+
+type Change =
+  | { kind: "goal"; was: string; now: string }
+  | { kind: "added" | "dropped" | "retired"; text: string }
+  | { kind: "edited"; was: string; now: string };
+
+/** What confirming would change, against the brief in force. Same rules as
+    the boardroom post: a reworded order is one edit, not a drop and an add;
+    retired orders carry forward on confirm, so only the newly retired count. */
+function briefChanges(
+  was: { goal: string; orders: string[]; retired: string[] },
+  now: { goal: string; orders: string[]; retired: string[] },
+) {
+  const low = (l: string[]) => new Set(l.map((o) => o.toLowerCase()));
+  const oldSet = low(was.orders), newSet = low(now.orders), retiredBefore = low(was.retired);
+  const gone = was.orders.filter((o) => !newSet.has(o.toLowerCase()));
+  const came = now.orders.filter((o) => !oldSet.has(o.toLowerCase()));
+  const pairs = gone.flatMap((g) => came.map((c) => ({ g, c, s: likeness(g, c) })))
+    .filter((p) => p.s >= 0.5).sort((a, b) => b.s - a.s);
+  const editedFrom = new Map<string, string>();
+  const used = new Set<string>();
+  for (const p of pairs) {
+    if (used.has(p.g) || editedFrom.has(p.c)) continue;
+    editedFrom.set(p.c, p.g);
+    used.add(p.g);
+  }
+  const list: Change[] = [];
+  if (was.goal.trim() !== now.goal.trim()) list.push({ kind: "goal", was: was.goal, now: now.goal });
+  for (const c of came) {
+    const g = editedFrom.get(c);
+    list.push(g ? { kind: "edited", was: g, now: c } : { kind: "added", text: c });
+  }
+  for (const g of gone) if (!used.has(g)) list.push({ kind: "dropped", text: g });
+  for (const r of now.retired) if (!retiredBefore.has(r.toLowerCase())) list.push({ kind: "retired", text: r });
+  return {
+    list,
+    goalSame: was.goal.trim() === now.goal.trim(),
+    sameOrders: now.orders.filter((o) => oldSet.has(o.toLowerCase())),
+    stillRetired: now.retired.filter((r) => retiredBefore.has(r.toLowerCase())),
+  };
+}
+
+/** Context kept around an edit in a long goal; the rest folds to "…". */
+const GOAL_CONTEXT = 8;
+
+function Inline({ pieces, context }: { pieces: Piece[]; context?: number }) {
+  return (
+    <>
+      {pieces.map((p, i) => {
+        const gap = i > 0 ? " " : "";
+        if (p.op === "in") return <span key={i}>{gap}<ins className="bd">{p.text}</ins></span>;
+        if (p.op === "out") return <span key={i}>{gap}<del className="bd">{p.text}</del></span>;
+        const words = p.text.split(" ");
+        if (context === undefined || words.length <= 2 * context + 1) return <span key={i}>{gap}{p.text}</span>;
+        const head = i > 0 ? words.slice(0, context).join(" ") + " " : "";
+        const tail = i < pieces.length - 1 ? " " + words.slice(-context).join(" ") : "";
+        return <span key={i}>{gap}{head}<span className="bd-fold">…</span>{tail}</span>;
+      })}{" "}
+    </>
+  );
+}
+
+const CHANGE_LABEL: Record<Change["kind"], [string, string]> = {
+  goal: ["Goal", "accent"],
+  added: ["New order", "ok"],
+  edited: ["Edited", "accent"],
+  dropped: ["Dropped", "critical"],
+  retired: ["Now retired", "warn"],
+};
+
+function ChangeRow({ c }: { c: Change }) {
+  const [whole, setWhole] = useState(false);
+  const [label, tone] = CHANGE_LABEL[c.kind];
+  return (
+    <li className={`bd-row bd-${tone}`}>
+      <span className={`chip ${tone}`}>{label}</span>
+      <div className="bd-text">
+        {c.kind === "goal" ? (
+          <>
+            <Inline pieces={wordDiff(c.was, c.now)} context={whole ? undefined : GOAL_CONTEXT} />
+            <button className="linkish" onClick={() => setWhole(!whole)}>
+              {whole ? "Only the edits" : "The whole goal"}
+            </button>
+          </>
+        ) : c.kind === "edited" ? (
+          <Inline pieces={wordDiff(c.was, c.now)} />
+        ) : c.kind === "dropped" ? (
+          <del className="bd">{c.text}</del>
+        ) : (
+          c.text
+        )}
+      </div>
+    </li>
+  );
+}
+
 /** Your direction, written back by the CEO for you to confirm. Everything on
     it is editable, because "yes, but 12% not 15%" should be one click, not
     another round through the boardroom. Confirming replaces the goal and the
-    standing orders every agent reads first. */
+    standing orders every agent reads first.
+
+    It opens on what the draft CHANGES, not on the draft: asked to move one
+    sentence, the CEO writes back all ten, and reading ten to find the one is
+    how the one he did not ask for slips through. The whole text is the other
+    lens, and editing it there redraws the changes. */
 function BriefCard({
   approval,
   dash,
@@ -295,10 +444,23 @@ function BriefCard({
   const [goal, setGoal] = useState(draft.goal);
   const [orders, setOrders] = useState(draft.standing_orders.join("\n"));
   const [retired, setRetired] = useState(draft.retired.join("\n"));
-  const now = dash.standing_orders ?? [];
+  const [lens, setLens] = useState<"changes" | "whole">("changes");
   const proposed = lines(orders);
-  const added = proposed.filter((o) => !now.includes(o));
-  const dropped = now.filter((o) => !proposed.includes(o));
+  const diff = useMemo(() => briefChanges(
+    { goal: dash.goal, orders: dash.standing_orders ?? [], retired: dash.retired_orders ?? [] },
+    { goal, orders: proposed, retired: lines(retired) },
+  ), [goal, orders, retired, dash.goal, dash.standing_orders, dash.retired_orders]);
+  const youEdited = goal !== draft.goal || orders !== draft.standing_orders.join("\n")
+    || retired !== draft.retired.join("\n");
+  const since = dash.brief_confirmed_at
+    ? `the brief you confirmed ${fmtWhen(dash.brief_confirmed_at)}`
+    : (dash.standing_orders ?? []).length ? "the brief in force" : "the goal the project was founded with";
+  const unchanged = [
+    diff.goalSame && "the goal",
+    diff.sameOrders.length > 0
+      && `${diff.sameOrders.length} standing order${diff.sameOrders.length === 1 ? "" : "s"}`,
+    diff.stillRetired.length > 0 && `${diff.stillRetired.length} retired`,
+  ].filter(Boolean).join(" · ");
 
   async function decide(approve: boolean, note: string) {
     await post(`/admin/approvals/${approval.id}/decide`, {
@@ -328,26 +490,60 @@ function BriefCard({
           <dd style={{ whiteSpace: "pre-wrap" }}>{draft.what_changed}</dd>
         </dl>
       )}
-      <label className="grant-label">The goal</label>
-      <textarea value={goal} rows={5} onChange={(e) => setGoal(e.target.value)} />
-      {goal.trim() !== dash.goal && (
-        <details style={{ margin: "4px 0 8px" }}>
-          <summary className="help">The goal it replaces</summary>
-          <p className="help" style={{ whiteSpace: "pre-wrap" }}>{dash.goal}</p>
-        </details>
+      <div className="pill-row" style={{ margin: "14px 0 8px", alignItems: "center" }}>
+        <div className="seg" role="tablist">
+          <button role="tab" aria-selected={lens === "changes"} className={lens === "changes" ? "on" : ""}
+            onClick={() => setLens("changes")}>
+            What changes<span className="n">{diff.list.length}</span>
+          </button>
+          <button role="tab" aria-selected={lens === "whole"} className={lens === "whole" ? "on" : ""}
+            onClick={() => setLens("whole")}>
+            The whole brief
+          </button>
+        </div>
+        {youEdited && <span className="help">· includes your edits</span>}
+      </div>
+      {lens === "changes" ? (
+        <>
+          <p className="help" style={{ margin: "0 0 6px" }}>Against {since}.</p>
+          {diff.list.length === 0 ? (
+            <p className="help">Word for word the brief in force — confirming changes nothing.</p>
+          ) : (
+            <ul className="bd-list">
+              {diff.list.map((c, i) => <ChangeRow key={`${c.kind}-${i}`} c={c} />)}
+            </ul>
+          )}
+          {unchanged && (
+            <details style={{ margin: "8px 0 0" }}>
+              <summary className="help">Unchanged: {unchanged}</summary>
+              {diff.sameOrders.length > 0 && (
+                <ul className="bd-same">{diff.sameOrders.map((o) => <li key={o}>{o}</li>)}</ul>
+              )}
+              {diff.stillRetired.length > 0 && (
+                <>
+                  <div className="grant-label">Still retired</div>
+                  <ul className="bd-same">{diff.stillRetired.map((o) => <li key={o}>{o}</li>)}</ul>
+                </>
+              )}
+            </details>
+          )}
+          <p className="help" style={{ margin: "8px 0 0" }}>
+            Want to change a word? <button className="linkish" onClick={() => setLens("whole")}>
+              Edit the whole brief</button> — the changes here follow your edits.
+          </p>
+        </>
+      ) : (
+        <>
+          <label className="grant-label">The goal</label>
+          <textarea value={goal} rows={5} onChange={(e) => setGoal(e.target.value)} />
+          <label className="grant-label">Standing orders — one per line, with the number</label>
+          <textarea value={orders} rows={Math.max(3, proposed.length + 1)}
+            onChange={(e) => setOrders(e.target.value)} />
+          <label className="grant-label">No longer applies — agents told to ignore it wherever they find it</label>
+          <textarea value={retired} rows={Math.max(2, lines(retired).length + 1)}
+            onChange={(e) => setRetired(e.target.value)} />
+        </>
       )}
-      <label className="grant-label">Standing orders — one per line, with the number</label>
-      <textarea value={orders} rows={Math.max(3, proposed.length + 1)}
-        onChange={(e) => setOrders(e.target.value)} />
-      {(added.length > 0 || dropped.length > 0) && (
-        <p className="help" style={{ margin: "4px 0 8px" }}>
-          {added.length > 0 && <>New: {added.join(" · ")}. </>}
-          {dropped.length > 0 && <>No longer an order: {dropped.join(" · ")}.</>}
-        </p>
-      )}
-      <label className="grant-label">No longer applies — agents told to ignore it wherever they find it</label>
-      <textarea value={retired} rows={Math.max(2, lines(retired).length + 1)}
-        onChange={(e) => setRetired(e.target.value)} />
       <div className="actions">
         <SplitAction small={false} label="Confirm — this is the brief"
           disabled={goal.trim().length < 10} run={() => decide(true, "")} choices={[
