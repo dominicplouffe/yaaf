@@ -452,15 +452,31 @@ def create_project(spec_file: Path) -> None:
                     _json_or_die(client.post("/admin/roles", json=role))
                     typer.echo(f"added role {role['slug']} from the setup file")
             wanted = project.pop("billing_secret_name", None)
+            others = project.pop("credential_names", None) or {}
+            listed = (_json_or_die(client.get("/admin/settings/llm-credentials"))
+                      if wanted or others else [])
+
+            def named(name: str) -> dict | None:
+                return next((c for c in listed
+                             if c["name"].lower() == str(name).lower()), None)
+
             if wanted and not project.get("billing_secret_id"):
-                listed = _json_or_die(client.get("/admin/settings/llm-credentials"))
-                match = next((c for c in listed
-                              if c["name"].lower() == str(wanted).lower()), None)
+                match = named(wanted)
                 if match:
                     project["billing_secret_id"] = match["id"]
                 else:
                     typer.echo(f"no LLM credential called {wanted!r} — the project is "
                                "created unable to start; assign one in its Settings → Money",
+                               err=True)
+            # The other providers' credentials travel by name too, resolved the
+            # way the web form and the Founder resolve them.
+            for provider, name in others.items():
+                match = named(name)
+                if match and (match.get("provider") or "anthropic") == provider:
+                    project.setdefault("credentials", {})[provider] = match["id"]
+                else:
+                    typer.echo(f"no {provider} credential called {name!r} on this install "
+                               "— seats on that provider cannot run until one is assigned",
                                err=True)
             spec = project
         _show(client.post("/admin/projects", json=spec))

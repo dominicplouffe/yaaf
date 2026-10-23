@@ -168,3 +168,29 @@ def test_status_says_the_sentences_and_lists_what_they_counted(client, monkeypat
 
     as_json = runner.invoke(cli.app, ["status", "desk-one", "--json"])
     assert json.loads(as_json.output)[0]["verdict"] == "needs_you"
+
+
+def test_a_setup_file_names_its_other_providers_credentials_by_name(client, monkeypatch, tmp_path):
+    """An export carries the second provider's credential by name, as it does
+    the billing one. The CLI used to drop it, and R5 refused the project for
+    want of a credential the install had."""
+    from tests.selftest_invariants.test_providers import _credential, _id
+
+    as_admin = TestClient(client.app, headers=ADMIN)
+    monkeypatch.setattr(cli, "_client", lambda: contextlib.nullcontext(as_admin))
+    client.post("/admin/users", json={"email": "chair@example.com", "display_name": "Chair"},
+                headers=ADMIN)
+    seed_role(client, "ceo", is_ceo=True)
+    deepseek = _id(_credential(client, "DeepSeek key", provider="deepseek"))
+    spec = tmp_path / "bundle.json"
+    spec.write_text(json.dumps({"yaaf_bundle": 1, "roles": [], "project": {
+        "slug": "two-providers", "name": "Two providers",
+        "goal": "Write one carried note, sourced.", "chairman_email": "chair@example.com",
+        "ceo_role_slug": "ceo", "credential_names": {"deepseek": "DeepSeek key"}}}))
+
+    result = runner.invoke(cli.app, ["create-project", str(spec)])
+    assert result.exit_code == 0, result.output
+    project = next(p for p in client.get("/observe/projects", headers=ADMIN).json()
+                   if p["slug"] == "two-providers")
+    dash = client.get(f"/observe/projects/{project['id']}", headers=ADMIN).json()
+    assert deepseek in json.dumps(dash), "the named credential is the one assigned"
