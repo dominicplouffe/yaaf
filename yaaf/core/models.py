@@ -2028,6 +2028,28 @@ class Approval(Base):
     capacity: Mapped[dict | None] = mapped_column(JSONVariant)
 
 
+class Snooze(Base):
+    """One person's "not now" on one thing in their Inbox.
+
+    Personal, not the project's: a co-chair snoozing a decision must not hide it
+    from the chairman. And never past the thing's own clock — an approval or a
+    question that decides itself comes back well before it does (the route
+    refuses a later `until`), because a snooze that outlived the deadline would
+    turn "remind me later" into a default nobody chose.
+    """
+
+    __tablename__ = "snoozes"
+    __table_args__ = (Index("ix_snoozes_user_item", "user_id", "item_key", unique=True),)
+
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    #: The Inbox row's key: an approval or ask id, or a row the desk derives.
+    item_key: Mapped[str] = mapped_column(String(120))
+    until: Mapped[datetime] = mapped_column(UTCDateTime)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
 class HeadsUp(Base):
     """Something the chairman asked to be told, and has to say he saw.
 

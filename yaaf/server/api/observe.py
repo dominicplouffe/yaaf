@@ -437,7 +437,15 @@ def desk(live: bool = False, only: str | None = None, session: Session = Depends
             failed_in_a_row=failed_in_a_row,
             last_error_kind=recent[0][1] if failed_in_a_row else None,
             spinning_runs=spinning)
-    return {"as_of": now.isoformat(), "finished": finished, "projects": projects_out}
+    # The reader's own "not now"s, so every surface that draws their Inbox
+    # leaves out the same rows. Personal: nobody else's Inbox changes.
+    from yaaf.server.api import me as me_api
+
+    reader = person if isinstance(person, Person) else authority.acting_person(session)
+    snoozed = (me_api.active(session, reader.id, {p.id for p in listing})
+               if reader is not None else [])
+    return {"as_of": now.isoformat(), "finished": finished, "projects": projects_out,
+            "snoozed": snoozed}
 
 
 def _spinning_runs(session: Session, project: Project, now: datetime) -> int:
