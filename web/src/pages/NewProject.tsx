@@ -283,6 +283,7 @@ export default function NewProject() {
   const [status, setStatus] = useState<FounderStatus | null>(null);
   const [solo, setSolo] = useState(false);
   const [done, setDone] = useState<string | null>(null);
+  const [started, setStarted] = useState(false);
   const [webhooks, setWebhooks] = useState<{
     projectId: string;
     github: { url: string; secret: string };
@@ -1122,7 +1123,10 @@ export default function NewProject() {
           /* the project exists; a missing briefing is not worth failing on */
         }
       }
-      if (startNow && canStartNow) await post(`/admin/projects/${created.id}/start`);
+      if (startNow && canStartNow) {
+        await post(`/admin/projects/${created.id}/start`);
+        setStarted(true);
+      }
       if (created.webhooks) setDone(created.id);
       else navigate(`/projects/${created.id}`);
     } catch (err) {
@@ -1132,15 +1136,43 @@ export default function NewProject() {
     }
   }
 
-  // The project exists; what this screen still owes the chairman is the
-  // webhook secrets, shown exactly once with the endpoint beside each — and
-  // the names of the Slack rooms it just made, which are no use to anyone
-  // sitting in a log file.
+  // The project exists, and the question in front of the chairman is what
+  // happens now. This screen used to open on two webhook URLs, two HMAC
+  // secrets and an openssl recipe — optional, readable later in Settings, and
+  // the first thing a new project said. They fold away under it now; the
+  // Slack rooms it just made stay, because they are no use in a log file.
   if (done && webhooks) {
     const origin = window.location.origin;
+    const plans = mode !== "explore";
     return (
       <>
         <h1>Project created</h1>
+        <div className="card" style={{ maxWidth: 760 }}>
+          <p style={{ marginTop: 0 }}>
+            <b>{started ? "It is running."
+              : canStartNow ? "It is created, and not started."
+              : "It is created, and cannot start yet: nothing is set to pay for it."}</b>
+          </p>
+          <p className="help">
+            {!plans
+              ? "The CEO's first job is to state a bet — something evidence can prove wrong — with a kill date."
+              : autonomy === "supervised"
+                ? "The CEO's first job is a plan. It appears on the Roadmap as proposed, and "
+                  + "nothing is built until you accept it. It lands in your Inbox when it is ready."
+                : "The CEO's first job is a plan. It accepts its own and starts; you are told "
+                  + "what it chose, and every choice can be undone from the Roadmap."}
+          </p>
+          <div className="actions" style={{ justifyContent: "flex-start" }}>
+            <button className="primary" onClick={() => navigate(`/projects/${done}`)}>
+              Open the project
+            </button>
+            {!canStartNow && (
+              <button onClick={() => navigate(`/projects/${done}/settings?s=money`)}>
+                Add a key to start
+              </button>
+            )}
+          </div>
+        </div>
         {slack && (
           <div className="card" style={{ maxWidth: 760 }}>
             <p style={{ marginTop: 0 }}>
@@ -1186,9 +1218,11 @@ export default function NewProject() {
             </p>
           </div>
         )}
-        <div className="card" style={{ maxWidth: 760 }}>
-          <p style={{ marginTop: 0 }}>
-            <b>Inbound evidence endpoints — optional, skippable.</b> Use these when an
+        <details className="card" style={{ maxWidth: 760 }}>
+          <summary><b>Inbound evidence endpoints</b> — optional, and always in Settings →
+            Integrations</summary>
+          <p>
+            Use these when an
             outside system should <em>prove</em> something happened: GitHub proving code
             merged, Stripe proving money landed, your app proving a signup. Evidence
             arriving signed with these secrets is platform-attested — proof no agent can
@@ -1233,10 +1267,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
           <p className="help">
             Both secrets stay readable (and regenerable) in Settings → Integrations.
           </p>
-          <button className="primary" onClick={() => navigate(`/projects/${done}`)}>
-            Open the project
-          </button>
-        </div>
+        </details>
       </>
     );
   }
