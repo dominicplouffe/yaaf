@@ -57,3 +57,24 @@ def test_or_since_a_date(client):
     brief = payload(call(client, reader["token"], "project",
                          {"project": SLUG, "view": "briefing", "since": "2026-01-01"}))
     assert brief["since"].startswith("2026-01-01")
+
+
+def test_the_desk_leads_with_a_sentence_naming_what_is_not_fine(client):
+    """Read before the rows, and written before the trim: a long desk loses
+    rows to the context budget, and the one that needed him must survive."""
+    project = make_project(client, slug=SLUG)
+    with_order(project)
+    heads_up(client, project)
+    make_project(client, slug="calm", integrations={"runtime": "mock"})
+    reader = mint(client)
+
+    desk = payload(call(client, reader["token"], "desk", {}))
+    assert list(desk)[0] == "summary"
+    summary = desk["summary"]
+    assert summary.startswith("2 projects.")
+    # The suite's default project has nothing to pay with: that is news.
+    assert "Cannot run: nothing is set to pay for it." in summary
+    assert "1 other is fine." in summary
+    assert summary.endswith("Also yours: 1 heads-up.")
+    # Platform words only; the CEO's title stays in the rows, wrapped.
+    assert "No trade tomorrow" not in summary
