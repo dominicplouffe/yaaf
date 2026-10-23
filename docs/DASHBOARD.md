@@ -138,9 +138,14 @@ into a screenshot.
 One sentence answers it — how many things need you, across how many projects,
 when the soonest decides itself, and how many runs are in flight — and the page
 then shows the decisions themselves (the first five, each with its button), a
-card per project (status, what it is for, runs in flight, spend against the
-cap, how many things on it need you), and **While you were away**: one line
+card per project (status, one sentence on how it is doing, runs in flight,
+spend against the cap, how many things on it need you), and **While you were away**: one line
 per project that moved, from the same briefing your morning mail carries.
+
+The sentence on each card is the project's one-line status — finished,
+stopped, cannot run, paused, late, at risk, decisions waiting, gone quiet, on
+track — decided once on the server, so `yaaf projects` and Claude's `desk`
+say exactly the same thing.
 
 It replaced the Desk as the first screen. The Desk answered "what needs me?"
 very well and nothing else, so a chairman with four healthy projects opened the
@@ -189,8 +194,10 @@ happens if you do nothing**, and the action. Open one and the right pane has
 the whole case:
 
 - **An approval** shows what was asked, by whom, the amount, the reason, and
-  the time left before it denies itself, with **Approve** and **Deny** beside
-  it.
+  the time left before it denies itself, with **Approve** and **Decline…** side
+  by side — declining asks for the reason the CEO re-plans from. Approving a
+  spend asks once more, naming the amount, because a purchase cannot be taken
+  back.
 - **A question from the CEO** shows the question, the default the CEO falls
   back to if you stay silent, and a box to answer it. Your answer is posted to
   the boardroom as a reply to that question, so the CEO reads it where it reads
@@ -639,7 +646,10 @@ used to be answered by reading two lists with different shapes.
 - **A row per file**, with the type, the name (its folder dimmed in front of
   it), whether it is **published** or **working**, its size and the time it
   landed. Published rows carry what the receipt says: the version, the
-  requirements it satisfies, its hash. Earlier versions of the same deliverable
+  requirements it satisfies, its hash — and how those were checked, in the
+  platform's words: **verified** (it ran the acceptance test), **judged** (an
+  observable somebody judged), or **not yet checked**. A judgement is never
+  shown as a verification. Earlier versions of the same deliverable
   fold under the one that replaced it.
 - **Three filters and a search**, all of them in the URL so the view is a link:
   published or working, file type (the extensions this project actually has,
