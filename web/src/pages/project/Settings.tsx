@@ -1,7 +1,7 @@
 import { CredentialPicker, PlanMeter, ProviderCredentials } from "../../llmCredentials";
 import { plainStatus } from "../../ui/kit";
 import { Fragment, useCallback, useEffect, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   AmendmentRow,
   CloneResult,
@@ -1991,12 +1991,32 @@ export default function Settings({
       <div className="card">
         <p className="help" style={{ marginTop: 0 }}>
           What every agent reads first, on every run: the goal, then your standing orders, then
-          what you have taken back. When you change your mind in chat, the CEO writes it back
-          here for you to confirm; you can also edit it yourself. Saving replaces the old
-          version in every agent's instructions — nothing is added next to it — and the CEO is
-          told to bring its files and checks into line.
+          what you have taken back. A change replaces the old version everywhere — nothing is
+          added next to it.
           {dash.brief_confirmed_at && <> Last confirmed {fmtWhen(dash.brief_confirmed_at)}.</>}
         </p>
+        {/* Two doors to the same brief, said side by side so neither is a
+            surprise: editing here is immediate; asking the CEO gets the change
+            drafted with what it means for the plan, for you to confirm. */}
+        <div className="dial-summary" style={{ marginTop: 10 }}>
+          <div className="dial-row">
+            <span className="dial-name">Edit it here</span>
+            <span className="dial-value help">
+              In force from every agent's next run. The CEO is told to bring its files and
+              checks into line.
+            </span>
+          </div>
+          <div className="dial-row">
+            <span className="dial-name">Or ask the CEO</span>
+            <span className="dial-value help">
+              Say what you want in chat. The CEO writes the whole brief back — the goal, every
+              standing order, what no longer applies — and nothing changes until you confirm
+              it from your Inbox, where it shows beside the brief in force.
+            </span>
+            <Link className="btnlink small" to={`/projects/${projectId}/chat`}
+              state={{ draft: "I want to change direction: " }}>Ask the CEO</Link>
+          </div>
+        </div>
         <label className="grant-label">The goal</label>
         <textarea value={goal} onChange={(e) => setGoal(e.target.value)} minLength={10} />
         <label className="grant-label">Standing orders — one per line, with the number</label>
