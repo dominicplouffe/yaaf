@@ -22,7 +22,13 @@
       "monthly_usd_cap": 20,
       "approval_threshold_usd": 5,
       "drought_hours": 168,
-      "external_ratio_min": 0.0
+      "external_ratio_min": 0.0,
+      "plan_authority": "chairman",
+      "scope_authority": "chairman",
+      "commitment_authority": "chairman",
+      "verdict_policy": "chairman",
+      "capability_authority": "chairman",
+      "deliverable_review": "none"
     },
     "integrations": {
       "runtime": "agent_sdk"

@@ -932,6 +932,8 @@ export interface RehearsalStep {
       project has no plan gate and no commitment by design, and drawing those
       as misses would report an absent feature as a broken one. */
   na?: boolean;
+  /** Why the rung does not apply: an Explore shape, or a rule left off. */
+  na_reason?: string | null;
   detail: string | null;
   tick: number | null;
 }

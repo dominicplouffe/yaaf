@@ -504,10 +504,18 @@ def build(client, project_id: str | None, spec: dict, steps: list[dict],
     by_key = {s["key"]: s for s in steps}
     for key, label in WALK:
         step = by_key.get(key)
+        # Why a rung does not apply, in words, because there are two reasons and
+        # the report used to give the first one for both: a Deliver project
+        # without the read was told its step was "not in an Explore project's
+        # shape".
+        na_reason = ("not in an Explore project's shape" if explore and key in NOT_IN_EXPLORE
+                     else "this project does not ask for it (deliverable_review: none)"
+                     if key == "work_read" and no_read else None)
         walk.append({
             "key": key, "label": label,
             "ok": bool(step and step["ok"]),
-            "na": (explore and key in NOT_IN_EXPLORE) or (key == "work_read" and no_read),
+            "na": na_reason is not None,
+            "na_reason": na_reason,
             "detail": step["detail"] if step else None,
             "tick": step["tick"] if step else None,
         })
@@ -603,7 +611,7 @@ def render_text(report: dict) -> str:
     out.append("The walk")
     for step in report["walk"]:
         if step.get("na"):
-            out.append(f"  – {step['label']} — not in an Explore project's shape")
+            out.append(f"  – {step['label']} — {step['na_reason']}")
             continue
         mark = "✓" if step["ok"] else "·"
         beat = f"  beat {step['tick']}" if step["tick"] else ""

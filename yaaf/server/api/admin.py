@@ -3262,6 +3262,16 @@ def _carry_library_roles(session: Session, spec: dict) -> dict:
     named = {project.get("ceo_role_slug") or "ceo"}
     named.update(team.get("role_slug") for team in (project.get("teams") or [])
                  if isinstance(team, dict) and team.get("role_slug"))
+    # A spec asking for an independent read with no reader on its roster is
+    # refused, and the refusal lists the reviewing roles it could hire. In the
+    # drill those come from the drill's own library — which held only the roles
+    # the spec named — so it told the chairman none were installed and to seed
+    # a library that had nine. Carry the reviewers too, so it names them.
+    constitution = project.get("constitution") if isinstance(project.get("constitution"),
+                                                            dict) else {}
+    if constitution.get("deliverable_review") == "independent_read":
+        named.update(session.execute(
+            select(Role.slug).where(Role.category == REVIEW_CATEGORY)).scalars())
     carried = [r for r in (spec.get("roles") or []) if isinstance(r, dict)]
     missing = named - {r.get("slug") for r in carried} - {None}
     if not missing:
