@@ -18,10 +18,18 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from yaaf.core import artifacts
-from yaaf.core.constitution import effective, tempo_for, tempo_name
+from yaaf.core.constitution import (
+    TEMPO_COPY,
+    TEMPO_PRESETS,
+    TEMPO_RULES,
+    effective,
+    tempo_for,
+    tempo_name,
+)
 from yaaf.core.models import (
     Agent,
     AgentStatus,
+    Amendment,
     Approval,
     ApprovalStatus,
     Artifact,
@@ -866,31 +874,25 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
                 "Adopting it repins this team to the current charter.",
                 "overview", {"kind": "repin", "team_id": team.id})
 
-    # ── doctrine drift ──────────────────────────────────────────────────────
+    # ── what the Founder has learned since ───────────────────────────────────
     #
-    # The Founder runs once, so a project keeps the doctrine it was made under
-    # for its whole life. Six fixes landed in five days and the desk being
-    # watched had been founded before all of them; it would have run nine more
-    # months on 26 August's rules with nobody able to see that from anywhere but
+    # The Founder runs once, so a project keeps what it was set up with for its
+    # whole life. Six fixes landed in five days and the desk being watched had
+    # been founded before all of them; nobody could see that from anywhere but
     # `git log`.
     #
-    # All three checks are arithmetic over rows, at zero tokens. Re-grading the
-    # goal prose against the current grammar needs a model and real money, and
-    # is deliberately NOT here — these are the structural half, and the
-    # structural half is what the FPL desk was actually missing.
+    # What reaches a running project is each of those fixes as a finding of its
+    # own: the roster below, the rhythm and the pace further down, a role's new
+    # charter above. Each says what this project lacks and how to get it. There
+    # used to be a row here as well that said only that the Founder's text had
+    # changed, with two fingerprints, on every project at once. It lit for an
+    # edit to how the Founder interviews a chairman, which cannot reach a
+    # project that has already been founded, and it had no action — so it
+    # taught people to press "Got it" without reading. A doctrine change that a
+    # running project should hear about ships its own check here, in words
+    # about the project. `project.doctrine_stamp` stays the record, and the
+    # goal re-grade reports it.
     if project.status == ProjectStatus.RUNNING:
-        from yaaf.founder import doctrine
-
-        if not doctrine.is_current(project.doctrine_stamp):
-            was = project.doctrine_stamp or "before the platform recorded it"
-            add("doctrine-drift", "warn",
-                f"founded under doctrine {was}; the current doctrine is "
-                f"{doctrine.fingerprint()}. What the Founder has learned since is not "
-                "reaching this project — the Founder runs once, at creation. Nothing "
-                "here is broken; this is a decision for you about whether to carry the "
-                "changes across.",
-                "overview")
-
         # A roster with nobody whose job is to disagree. DESIGN_DOCTRINE says
         # plan-adversary survives the cut on purpose and belongs on every
         # Deliver and Operate project, and gives the reason: the CEO wrote the
@@ -1032,26 +1034,32 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
             # amendable and the tempo is not derived again afterwards —
             # deliberately: a platform that silently re-paced a live desk
             # because a rule moved is a worse failure than the one it fixes. So
-            # this is a sentence the chairman reads and decides on, the same
-            # posture `doctrine-drift` above already takes.
+            # the chairman is asked, with both answers on the row.
+            #
+            # Asked about a mismatch nobody chose, never about one somebody
+            # did. A pace picked in Settings after the rhythm last moved is a
+            # decision, and re-raising it on every load is how advice becomes
+            # wallpaper. A mismatch born at creation cannot be told apart, so
+            # it is asked once, and "Keep" is the answer that puts it away.
+            per_run = policy.avg_usd_per_run_box(session)
             if project.mode == ProjectMode.OPERATE:
                 wanted = tempo_for("operate", rules.get("cycle_frequency"))
-                if on is not None and on != wanted:
+                moved = _rhythm_moved_after_pace(session, project.id)
+                if on is not None and on != wanted and moved is not False:
                     add("tempo-vs-rhythm", "warn",
-                        f"this project rolls a {rules['cycle_frequency']} cycle but "
-                        f"thinks on the '{on}' tempo, which is what a project of a "
-                        f"different rhythm wants — '{wanted}' is the one that matches. "
-                        "Nothing is broken and nothing was changed for you; if the "
-                        "rhythm moved and the pace did not, this is where you would "
-                        "notice.",
-                        "settings")
+                        _tempo_mismatch(rules["cycle_frequency"], on, wanted, moved,
+                                        per_run),
+                        "settings",
+                        {"kind": "tempo", "to": wanted,
+                         "to_label": TEMPO_COPY[wanted]["label"],
+                         "keep_label": TEMPO_COPY[on]["label"],
+                         "changes": dict(TEMPO_PRESETS[wanted])})
 
             # The ceiling and the budget describing different projects. Only
             # where the box has actually priced runs: `avg_usd_per_run_box`
             # answers None under five of them, because a fresh install saying
             # nothing is the honest behaviour and a guess here would be quoted
             # back as arithmetic.
-            per_run = policy.avg_usd_per_run_box(session)
             if per_run and project.billing_mode == "api_key" and rules["monthly_usd_cap"]:
                 # Both lanes. The inbox ceiling is a SEPARATE additive allowance
                 # — `daily_runs_used` excludes those runs from the work total on
@@ -1124,12 +1132,66 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
     }
 
 
+def _rhythm_moved_after_pace(session: Session, project_id: str) -> datetime | bool | None:
+    """Whether the rhythm moved after the pace was last set, from the amendments.
+
+    A datetime: the cycle was amended then, and no pace rule since. False: the
+    pace was chosen at or after the rhythm's last change, so the two disagree
+    on purpose. None: neither was ever amended, and the creation record does
+    not say whether a person chose that pace or was given it.
+    """
+    rhythm = pace = None
+    for amendment in session.execute(
+        select(Amendment).where(Amendment.project_id == project_id,
+                                Amendment.applied_constitution_id.is_not(None))
+        .order_by(Amendment.effective_at)
+    ).scalars():
+        keys = set(amendment.changes or {})
+        if "cycle_frequency" in keys:
+            rhythm = amendment.effective_at
+        if keys & set(TEMPO_RULES):
+            pace = amendment.effective_at
+    if pace is not None and (rhythm is None or pace >= rhythm):
+        return False
+    return rhythm
+
+
+def _pace_words(name: str) -> str:
+    rules = TEMPO_PRESETS[name]
+    wakes = ("agents waking whenever a message arrives"
+             if rules["inbox_runs_per_project_per_day"]
+             else "agents reading messages only when they wake on schedule")
+    return (f"up to {rules['runs_per_project_per_day']} runs a day, the CEO planning "
+            f"every {rules['ceo_heartbeat_hours']:g} hours, {wakes}")
+
+
+def _tempo_mismatch(cycle: str, on: str, wanted: str, moved: datetime | None,
+                    per_run: float | None) -> str:
+    """The tempo row in the reader's words: what the project is doing, what a
+    project of its rhythm usually does, what each costs, and when each is right."""
+    now, usual = (f"“{TEMPO_COPY[name]['label']}”" for name in (on, wanted))
+    lead = (f"You changed this project's cycle to {cycle} on {moved:%b} {moved.day}, and its "
+            f"pace stayed on {now}" if moved else
+            f"This project works on a {cycle} cycle but is paced {now}")
+    cost = ""
+    if per_run:
+        def month(name: str) -> float:
+            rules = TEMPO_PRESETS[name]
+            return (rules["runs_per_project_per_day"]
+                    + rules["inbox_runs_per_project_per_day"]) * 30 * per_run
+        cost = (f" At the ${per_run:.2f} a run this install averages, that is a ceiling "
+                f"of about ${month(on):,.0f} a month against ${month(wanted):,.0f}.")
+    return (f"{lead}: {_pace_words(on)}. Projects on a {cycle} cycle are usually paced {usual}: "
+            f"{_pace_words(wanted)}.{cost} Keep {now} if it has to react during the "
+            f"day; switch if it mostly works to its {cycle} schedule.")
+
+
 def health_sig(key: str, detail: str) -> str:
     """A health finding's identity: its kind and its words, numbers masked.
 
     The header badge was lit on every project, every day, by advice the
-    chairman had already read — "founded under an older doctrine" says in its
-    own words that nothing is broken, and it never goes away. Putting one away
+    chairman had already read — advice that says in its own words that
+    nothing is broken, and is still true the next day. Putting one away
     needs a name for it that a count ticking over does not change, and that a
     different finding of the same kind does.
     """

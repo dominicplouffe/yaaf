@@ -97,8 +97,8 @@ WITHHELD = {
     "POST /admin/projects/{project_id}/regrade-goal":
         "grading goal prose calls a model, so this verb spends every time it is "
         "used — and unlike the rest of the drift picture it answers a question "
-        "that only changes when the grammar does. The free half (doctrine-drift, "
-        "no-adversary, no-standing-scope) is arithmetic over rows and already "
+        "that only changes when the grammar does. The free half (no-adversary, "
+        "no-standing-scope, tempo-vs-rhythm) is arithmetic over rows and already "
         "reaches every surface that reads project health, so a model holding "
         "this would be paying for an answer it can mostly already see. It stays "
         "a deliberate click by the person whose money it is.",

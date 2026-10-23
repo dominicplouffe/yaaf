@@ -503,6 +503,22 @@ function HealthLine({ ctx }: { ctx: ProjectCtx }) {
       setError(e instanceof Error ? e.message : String(e));
     }
   };
+  // The pace row answers itself: switching is an amendment like any made in
+  // Settings, with its reason written for him, so it is on the record and
+  // disclosed to the CEO the same way.
+  const switchTempo = async (check: HealthCheck) => {
+    if (check.action?.kind !== "tempo") return;
+    setError(null);
+    try {
+      await post(`/admin/projects/${projectId}/amendments`, {
+        reason: `Pace set to ${check.action.to_label} from Setup & health, to match the project's cycle.`,
+        changes: check.action.changes,
+      });
+      reloadHealth();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
   // Problems, then suggestions, then what passes, then what was put away.
   const rank = (c: HealthCheck) =>
     c.status === "fail" ? 0 : c.status === "warn" ? (c.acked_at ? 3 : 1) : 2;
@@ -521,8 +537,8 @@ function HealthLine({ ctx }: { ctx: ProjectCtx }) {
       </div>
       {open.length > 0 && (
         <p className="help" style={{ margin: "0 0 8px" }}>
-          A <b>problem</b> means something is broken: fix it. A <b>suggestion</b> is advice: act
-          on it, or press <b>Got it</b> once you have read it and it stops counting.
+          A <b>problem</b> means something is broken: fix it. A <b>suggestion</b> is a choice
+          for you: act on it, or put it away once you have decided and it stops counting.
         </p>
       )}
       {error && <div className="error">{error}</div>}
@@ -533,16 +549,23 @@ function HealthLine({ ctx }: { ctx: ProjectCtx }) {
           <span className="grow">{check.detail}</span>
           {check.action?.kind === "repin" && !check.acked_at ? (
             <button className="small" onClick={async () => {
-              await post(`/admin/teams/${check.action!.team_id}/repin`, {});
+              if (check.action?.kind !== "repin") return;
+              await post(`/admin/teams/${check.action.team_id}/repin`, {});
               reloadHealth();
               reloadOrg();
             }}>adopt the latest role version</button>
+          ) : check.action?.kind === "tempo" && !check.acked_at ? (
+            <button className="small" onClick={() => switchTempo(check)}>
+              Switch to {check.action.to_label}
+            </button>
           ) : isOpen(check) && WHERE_TO[check.where ?? ""] ? (
             <Link to={`/projects/${projectId}/${WHERE_TO[check.where!][0]}`}>{WHERE_TO[check.where!][1]} →</Link>
           ) : null}
           {check.status === "warn" && (
             <button className="small" onClick={() => ack(check, !check.acked_at)}>
-              {check.acked_at ? "Show again" : "Got it"}
+              {check.acked_at
+                ? "Show again"
+                : check.action?.kind === "tempo" ? `Keep ${check.action.keep_label}` : "Got it"}
             </button>
           )}
         </div>

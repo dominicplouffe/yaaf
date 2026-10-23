@@ -16,11 +16,16 @@ coming back:
 Five days of fixes, none of which reached the desk being watched, which would
 have run to GW38 — nine months — on the doctrine of 26 August.
 
+What reaches an existing project is each fix that applies to it, as a finding
+about it with its way out. The fingerprint is kept as the record and is never
+itself a finding: it moves for edits that cannot reach a founded project, and
+a row saying only "the Founder changed" taught people to put it away unread.
+
 Nothing here changes a running project. Every check is a warning the chairman
 reads and decides on, because a platform that silently rewrote a live desk's
 goal and roster mid-season would be a worse failure than the one it fixes.
 
-All three are arithmetic over rows, at zero tokens. Re-grading goal prose
+All of them are arithmetic over rows, at zero tokens. Re-grading goal prose
 against the current grammar needs a model and real money and is deliberately
 not here — the structural half is what FPL was actually missing.
 """
@@ -50,31 +55,21 @@ def test_a_new_project_is_stamped_with_todays_doctrine(client):
     assert "doctrine-drift" not in checks(client, project)
 
 
-def test_a_project_founded_before_the_stamp_reads_as_drifted(client):
-    """NULL is not "current". Every project that exists on the day this ships
-    is unstamped, and those are precisely the ones this exists to find —
-    treating unknown as fine would hide the entire population."""
-    project = make_project(client, slug="august")
-    with db_session() as session:
-        session.get(Project, project["id"]).doctrine_stamp = None
-
-    drift = checks(client, project).get("doctrine-drift")
-    assert drift, "a project founded under unknown doctrine reported nothing"
-    assert drift["status"] == "warn"
-    assert "before the platform recorded it" in drift["detail"]
-
-
-def test_changing_the_doctrine_drifts_every_project_founded_before_it(client):
-    """The fingerprint is content, not a version number somebody must remember
-    to bump — because the chore is exactly what was skipped six times."""
-    project = make_project(client, slug="yesterday")
-    assert "doctrine-drift" not in checks(client, project)
-
-    with db_session() as session:
-        session.get(Project, project["id"]).doctrine_stamp = "0000deadbeef"
-    drift = checks(client, project).get("doctrine-drift")
-    assert drift and doctrine.fingerprint() in drift["detail"]
-    assert "0000deadbeef" in drift["detail"]
+def test_older_doctrine_is_told_as_what_it_lacks_never_as_a_fingerprint(client):
+    """The chairman cannot act on "the doctrine is 578387eceeca now". The row
+    that said so lit on every project for an edit to how the Founder interviews,
+    which no founded project can receive, and offered no way out. What he can
+    act on is the specific thing his project lacks, so that is what he is told —
+    and the stamp stays as it was, unknown or old."""
+    project = make_project(client, slug="august", mode=ProjectMode.OPERATE)
+    for stamp in (None, "0000deadbeef"):
+        with db_session() as session:
+            session.get(Project, project["id"]).doctrine_stamp = stamp
+        found = checks(client, project)
+        assert "doctrine-drift" not in found
+        assert not any(doctrine.fingerprint() in c["detail"] for c in found.values())
+        # The structural fixes still reach it, each in words about the project.
+        assert "no-standing-scope" in found
 
 
 def test_the_fingerprint_actually_tracks_the_doctrine_text(tmp_path, monkeypatch):
@@ -168,7 +163,7 @@ def test_drift_is_reported_and_never_applied(client):
         before = (row.goal, row.mode, row.topology)
 
     reported = checks(client, project)
-    assert "doctrine-drift" in reported and "no-standing-scope" in reported
+    assert "no-standing-scope" in reported
 
     with db_session() as session:
         row = session.get(Project, project["id"])
