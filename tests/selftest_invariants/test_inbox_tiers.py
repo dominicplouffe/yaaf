@@ -165,3 +165,23 @@ def test_a_standing_note_must_be_in_a_brief_first(client):
                                  "standing": True},
                            headers=bearer(ceo(project)))
     assert answered.status_code == 200, answered.text
+
+
+def test_a_reply_can_follow_a_heads_up_already_noted_by_reading_it(client):
+    """Opening it in the Inbox notes it; a reply written after that still
+    reaches the CEO, held for an answer like any other note."""
+    project = make_project(client)
+    with_order(project)
+    heads_id = heads_up(client, project).json()["heads_up_id"]
+    assert client.post(f"/admin/heads_up/{heads_id}/ack", json={"note": ""},
+                       headers=ADMIN).status_code == 200
+    with db_session() as session:
+        first = session.get(HeadsUp, heads_id).acknowledged_at
+
+    replied = client.post(f"/admin/heads_up/{heads_id}/ack",
+                          json={"note": "Send it by 8pm, not 10pm."}, headers=ADMIN)
+    assert replied.status_code == 200, replied.text
+    with db_session() as session:
+        assert session.get(HeadsUp, heads_id).acknowledged_at == first, "noted once"
+    held = pack(client, project)["chairman_notes"]["notes"]
+    assert [n["he_wrote"] for n in held] == ["Send it by 8pm, not 10pm."]

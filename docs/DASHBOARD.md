@@ -165,7 +165,7 @@ the right, **j**/**k** to walk the list. Five tabs:
 | Tab | Holds |
 |---|---|
 | **Decide** | The decisions only you can make — the "needs you" list. This is the old Desk, unchanged in its rule, and the only tab the sidebar badge counts. |
-| **Acknowledge** | What you must know but not decide: a problem the CEO was made to raise, and a heads-up you asked for by standing order. One button, **Noted**. Nothing there blocks or expires. |
+| **Acknowledge** | What you must know but not decide: a problem the CEO was made to raise (answer it with **Noted**), and a heads-up you asked for by standing order (opening it notes it; **Reply to the CEO…** if you have something to say). Nothing there blocks or expires. |
 | **Updates** | Each project's briefing — what moved since you last looked. |
 | **Watching** | Clocks the CEO resolves: droughts, kill dates still ahead, budget pace, unaudited work. Nothing here waits on a click. |
 | **Done** | Approvals and questions decided in the last seven days, and how — by you, or by their clock running out. |

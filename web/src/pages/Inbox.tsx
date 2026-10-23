@@ -212,37 +212,71 @@ function ItemDetail({ item, desk }: { item: Item; desk: ReturnType<typeof useDes
   );
 }
 
-function UpdateDetail({ u, onChanged }: { u: Update; onChanged: () => void }) {
-  if (u.type === "heads_up") {
-    const h = u.heads;
-    return (
-      <div className="ib-doc">
-        <div className="ib-meta">
-          <span className="kind-ic k-flag"><Icon name="info" size={15} /></span>
-          <span className="ib-kind">You asked to be told</span>
-          <ProjectTag p={u.project} />
-          <span className="grow" />
-          <span className="help">{fmtAgo(h.created_at)}</span>
-        </div>
-        <h2 className="ib-title">{h.title}</h2>
-        <dl className="case">
-          <div><dt>What the CEO says</dt><dd className="pre">{h.body}</dd></div>
-          <div><dt>Why it is here</dt><dd>Your standing order: “{h.standing_order}”</dd></div>
-          {h.note && <NoteAndAnswer held={h.note} />}
-        </dl>
-        <div className="ib-acts">
-          {h.acknowledged_at ? (
-            <span className="help">You noted this {fmtAgo(h.acknowledged_at)}.</span>
-          ) : (
-            <NotedButton
-              onSubmit={async (note) => { await post(`/admin/heads_up/${h.id}/ack`, { note }); onChanged(); }} />
-          )}
-          <span className="grow" />
-          <Link to={`/projects/${u.project.id}/chat`}><Icon name="message" size={13} /> Talk it through</Link>
-        </div>
+/** A reply to the CEO about something already seen. */
+function ReplyBox({ onSend }: { onSend: (note: string) => Promise<void> }) {
+  const [open, setOpen] = useState(false);
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (!open) return <button className="small" onClick={() => setOpen(true)}>Reply to the CEO…</button>;
+  return (
+    <span className="split-confirm" style={{ flexWrap: "wrap" }}>
+      <textarea aria-label="Your reply" value={note} rows={2} autoFocus
+        placeholder="e.g. send it by 8pm from now on" onChange={(e) => setNote(e.target.value)} />
+      <button className="small primary" disabled={busy || !note.trim()} onClick={async () => {
+        setBusy(true);
+        try { await onSend(note.trim()); setOpen(false); setNote(""); }
+        catch (e) { setError((e as Error).message); }
+        finally { setBusy(false); }
+      }}>Send</button>
+      <button className="small" disabled={busy} onClick={() => setOpen(false)}>Cancel</button>
+      {error && <span className="help" style={{ color: "var(--critical)" }}>{error}</span>}
+    </span>
+  );
+}
+
+/** A heads-up asks for nothing, so opening it is noting it: the CEO learns he
+    read it without a "Noted" click per message he asked to receive. */
+function HeadsUpDetail({ u, onChanged }: {
+  u: Extract<Update, { type: "heads_up" }>; onChanged: () => void;
+}) {
+  const h = u.heads;
+  useEffect(() => {
+    if (h.acknowledged_at) return;
+    post(`/admin/heads_up/${h.id}/ack`, { note: "" }).then(onChanged).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [h.id]);
+  return (
+    <div className="ib-doc">
+      <div className="ib-meta">
+        <span className="kind-ic k-flag"><Icon name="info" size={15} /></span>
+        <span className="ib-kind">You asked to be told</span>
+        <ProjectTag p={u.project} />
+        <span className="grow" />
+        <span className="help">{fmtAgo(h.created_at)}</span>
       </div>
-    );
-  }
+      <h2 className="ib-title">{h.title}</h2>
+      <dl className="case">
+        <div><dt>What the CEO says</dt><dd className="pre">{h.body}</dd></div>
+        <div><dt>Why it is here</dt><dd>Your standing order: “{h.standing_order}”</dd></div>
+        {h.note && <NoteAndAnswer held={h.note} />}
+      </dl>
+      <div className="ib-acts">
+        <span className="help">Seen — the CEO knows you read it.</span>
+        {!h.note && (
+          <ReplyBox onSend={async (note) => {
+            await post(`/admin/heads_up/${h.id}/ack`, { note }); onChanged();
+          }} />
+        )}
+        <span className="grow" />
+        <Link to={`/projects/${u.project.id}/chat`}><Icon name="message" size={13} /> Talk it through</Link>
+      </div>
+    </div>
+  );
+}
+
+function UpdateDetail({ u, onChanged }: { u: Update; onChanged: () => void }) {
+  if (u.type === "heads_up") return <HeadsUpDetail u={u} onChanged={onChanged} />;
   if (u.type === "flag") {
     const plain = flagPlain(u.flag.kind);
     return (

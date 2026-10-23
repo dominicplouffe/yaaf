@@ -215,7 +215,7 @@ no agent knows which claim will be checked. Sampling never blocks.
 |---|---|---|
 | `cycle_frequency` | `"weekly"` | Operate projects only: `daily`, `weekly`, `monthly` or `quarterly`. Each roll closes the cycle, carries unfinished scope forward and reopens the plan gate. |
 | `cycle_day` | 0 | Weekly: 0=Monday … 6=Sunday. Monthly/quarterly: day 1–28 — the 29th to 31st are refused rather than quietly moved. |
-| `review_interval_days` | 7 | The standing meeting. The janitor opens it on schedule regardless of budget or an empty board and emails you the numbers; the CEO files its variance narrative on a reserved governance run. |
+| `review_interval_days` | 7 | The standing meeting. The janitor opens it on schedule regardless of budget or an empty board and emails you the numbers; the CEO files its variance narrative on a reserved governance run. A review nobody needs closes itself after 24 hours as "no changes" — only when the CEO's narrative is filed and recommends nothing, the promised date still holds, no spot-check failed and the month is inside its plan — and you get the narrative by email; anything else chases you instead. |
 | `commitment_failure_reforecast` | 5 | Dead runs against the plan before the platform re-projects the date and tells the CEO the ground moved. 0 turns this trigger off. |
 
 ### Reporting to you

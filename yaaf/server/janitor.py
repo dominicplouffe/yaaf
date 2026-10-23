@@ -1513,6 +1513,10 @@ def nag_reviews(session: Session, project: Project) -> None:
         return
     now = utcnow()
     age_hours = (now - review.opened_at).total_seconds() / 3600
+    if (review.nag_sent_at is None and age_hours >= REVIEW_NAG_HOURS
+            and _review_needs_nobody(review)):
+        _close_green_review(session, project, review)
+        return
     if review.nag_sent_at is None and age_hours >= REVIEW_NAG_HOURS:
         chairman_notify(
             session, project, f"review #{review.number} is waiting on you",
@@ -1542,6 +1546,52 @@ def nag_reviews(session: Session, project: Project) -> None:
             entity_id=review.id,
             detail={"number": review.number, "open_hours": round(age_hours)},
         ))
+
+
+def _review_needs_nobody(review: Review) -> str | None:
+    """Why this meeting has nothing for him, or None if it might. All four,
+    from the numbers frozen when it opened and the CEO's own filing: the CEO
+    explained the period and recommended no change; the promised date (if
+    any) still holds; no spot-check failed; the month is inside its plan.
+    Anything else — no narrative yet, a recommendation, a date at risk, a
+    failed audit, an overrun — is a meeting worth having, and it chases him."""
+    numbers = review.numbers or {}
+    if not review.narrative or review.recommended:
+        return None
+    commitment = numbers.get("commitment") or {}
+    if commitment.get("status") in (CommitmentStatus.AT_RISK, CommitmentStatus.BREACHED):
+        return None
+    if (numbers.get("audit_coverage") or {}).get("failed"):
+        return None
+    budget = numbers.get("budget") or {}
+    if budget.get("cap") and (budget.get("spent_mtd") or 0) > budget["cap"]:
+        return None
+    return ("every number was inside its plan and the CEO recommended no change")
+
+
+def _close_green_review(session: Session, project: Project, review: Review) -> None:
+    """Close a review nobody needed, as "no changes", and say so — with the
+    CEO's narrative, so what he would have read in the meeting still reaches
+    him. Every lever the meeting offered stays on the Roadmap and in Settings,
+    where it always was."""
+    from yaaf.server.api.admin import finish_review
+
+    why = _review_needs_nobody(review)
+    finish_review(session, project, review, by_user_id=None,
+                  note=f"Closed by the platform: {why}.")
+    session.add(AuditLog(
+        id=ids.new_id(ids.AUDIT), project_id=project.id, actor="system:janitor",
+        action="review.auto_close", entity="review", entity_id=review.id,
+        detail={"number": review.number, "why": why}))
+    chairman_notify(
+        session, project, f"review #{review.number} closed itself — nothing needed you",
+        f"Review #{review.number} closed with no changes after {REVIEW_NAG_HOURS}h: {why}. "
+        f"The CEO's account of the period:\n\n{(review.narrative or '')[:3000]}\n\n"
+        "Nothing was decided for you. Every lever the meeting offered — cut, add, move "
+        "the date, raise the budget — is still on the Roadmap and in Settings."
+        + project_link(project.id, "reviews", "Read the review"),
+        attention=Attention.FYI,
+    )
 
 
 # ── the sampled audit: drawn after the fact, never blocking ─────────────────────

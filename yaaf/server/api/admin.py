@@ -4433,7 +4433,12 @@ class HeadsUpAck(BaseModel):
 def acknowledge_heads_up(heads_up_id: str, body: HeadsUpAck,
                          session: Session = Depends(db)) -> dict:
     """He saw it. Nothing was waiting on this, so nothing moves but the CEO's
-    knowledge that he did — and his note, if he wrote one, held for an answer."""
+    knowledge that he did — and his note, if he wrote one, held for an answer.
+
+    Opening a heads-up in the Inbox notes it: it asked for nothing, so reading
+    it was the whole of his part, and a "Noted" button was one more click per
+    message he had asked to receive. A reply can follow on a heads-up already
+    noted — it carries the note, and nothing else changes."""
     from yaaf.core.models import HeadsUp
     from yaaf.server import chairman_notes
     from yaaf.server import heads_up as heads
@@ -4441,9 +4446,10 @@ def acknowledge_heads_up(heads_up_id: str, body: HeadsUpAck,
     row = session.get(HeadsUp, heads_up_id)
     if row is None:
         raise HTTPException(status_code=404, detail="unknown heads-up")
-    if row.acknowledged_at is not None:
+    if row.acknowledged_at is not None and not body.note.strip():
         raise HTTPException(status_code=409, detail="already noted")
-    heads.acknowledge(session, row)
+    if row.acknowledged_at is None:
+        heads.acknowledge(session, row)
     held = chairman_notes.record(session, row.project_id, "heads_up", row.id,
                                  f"Noted: {row.title}", body.note)
     if held is not None:
@@ -5239,9 +5245,21 @@ def close_review(
         raise HTTPException(status_code=409,
                             detail=f"review #{review.number} is already {review.status}")
     project = _get_project(session, review.project_id)
+    decisions = finish_review(session, project, review, by_user_id=_decider(project),
+                              note=body.note)
+    _audit(session, project.id, "review.close", "review", review.id,
+           {"number": review.number, "decisions": len(decisions)})
+    return {"id": review.id, "number": review.number, "status": review.status,
+            "decisions": decisions}
+
+
+def finish_review(session: Session, project: Project, review: Review, *,
+                  by_user_id: str | None, note: str = "") -> list:
+    """Close the meeting and tell the CEO what it decided. One implementation
+    for his Close and for the janitor closing a green review nobody needed."""
     review.status = ReviewStatus.CLOSED
     review.closed_at = utcnow()
-    review.closed_by_user_id = _decider(project)
+    review.closed_by_user_id = by_user_id
     decisions = review.decisions or []
     summary = ("; ".join(f"{d['kind']}: {d['detail']} — {d['reason'][:120]}"
                          for d in decisions)
@@ -5266,13 +5284,10 @@ def close_review(
     _notice_ceo(
         session, project.id, NoticeKind.GOAL_CHANGED,
         f"Review #{review.number} is closed. Decisions: {summary}."
-        + (f" His closing note: {body.note[:500]}" if body.note else "")
+        + (f" His closing note: {note[:500]}" if note else "")
         + " Each will be shown at the next review beside what it bought.",
     )
-    _audit(session, project.id, "review.close", "review", review.id,
-           {"number": review.number, "decisions": len(decisions)})
-    return {"id": review.id, "number": review.number, "status": review.status,
-            "decisions": decisions}
+    return decisions
 
 
 # ── the commitment: the chairman owns the date ──────────────────────────────────

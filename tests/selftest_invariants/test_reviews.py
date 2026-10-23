@@ -299,3 +299,69 @@ def test_a_missed_review_nags_then_escalates_and_blocks_nothing(client):
     # The work never stopped: scope can still be proposed and accepted.
     proposed = propose(client, token, statement="Work continues under an open meeting")
     assert proposed["key"] == "R-01"
+
+
+# ── a review nobody needed closes itself ────────────────────────────────────────
+
+
+def _narrated(client, project: dict, review: dict, **extra) -> None:
+    filed = client.post("/agent/review_narrative", headers=bearer(ceo_token(project)), json={
+        "narrative": "Pace held at plan. The one slow requirement was the data pull, "
+                     "which landed on Tuesday; nothing else moved against the plan.",
+        **extra})
+    assert filed.status_code == 200, filed.text
+
+
+def _age(review: dict, hours: float) -> None:
+    with db_session() as session:
+        session.get(Review, review["id"]).opened_at = utcnow() - timedelta(hours=hours)
+
+
+def test_a_green_review_with_nothing_recommended_closes_itself_and_says_so(client, monkeypatch):
+    sent: list[tuple[str, str]] = []
+    monkeypatch.setattr("yaaf.server.janitor.chairman_notify",
+                        lambda session, proj, subject, body, **kw: sent.append((subject, body)))
+    project = deliver_project(client, slug="green")
+    review = open_review(project)
+    _narrated(client, project, review)
+
+    _age(review, 10)
+    run_review_tick(project)
+    with db_session() as session:
+        assert session.get(Review, review["id"]).status == ReviewStatus.OPEN, "his day first"
+
+    _age(review, 30)
+    run_review_tick(project)
+    with db_session() as session:
+        row = session.get(Review, review["id"])
+        assert row.status == ReviewStatus.CLOSED
+        assert row.closed_by_user_id is None
+        assert row.nag_sent_at is None, "closed, not chased"
+    subject, body = next((s, b) for s, b in sent if "closed itself" in s)
+    assert "Pace held at plan" in body, "what he would have read in the meeting reaches him"
+
+
+def test_a_recommendation_is_a_meeting_worth_having(client):
+    project = deliver_project(client, slug="recommends")
+    review = open_review(project)
+    _narrated(client, project, review, recommended="Cut the glossary to make the date.")
+    _age(review, 30)
+    run_review_tick(project)
+    with db_session() as session:
+        row = session.get(Review, review["id"])
+        assert row.status == ReviewStatus.OPEN
+        assert row.nag_sent_at is not None
+
+
+def test_a_failed_spot_check_is_a_meeting_worth_having(client):
+    project = deliver_project(client, slug="failed-audit")
+    review = open_review(project)
+    _narrated(client, project, review)
+    with db_session() as session:
+        row = session.get(Review, review["id"])
+        row.numbers = {**row.numbers, "audit_coverage": {**row.numbers["audit_coverage"],
+                                                          "failed": 1}}
+    _age(review, 30)
+    run_review_tick(project)
+    with db_session() as session:
+        assert session.get(Review, review["id"]).status == ReviewStatus.OPEN
