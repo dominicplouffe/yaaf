@@ -3153,7 +3153,14 @@ def brief_propose(
         old.decision_note = "Replaced by a newer draft of the brief."
     proposed["what_changed"] = body.what_changed.strip()
     was = briefs.current(ctx.project)
+    since = ("the goal the project was founded with" if not was["standing_orders"]
+             and ctx.project.brief_confirmed_at is None else
+             "the brief you confirmed"
+             + (f" on {ctx.project.brief_confirmed_at:%-d %B}"
+                if ctx.project.brief_confirmed_at else ""))
     lines = [f"What you told me: {proposed['what_changed']}", "",
+             f"What changes against {since}:", *briefs.changes_text(was, proposed), "",
+             "The whole brief, as it would stand:", "",
              f"The goal: {proposed['goal']}", "", "Standing orders:"]
     lines += [f"- {o}" for o in proposed["standing_orders"]] or ["- (none)"]
     if proposed["retired"]:
@@ -3165,18 +3172,17 @@ def brief_propose(
                               "Confirm the brief: goal and standing orders", "\n".join(lines))
     approval.brief = proposed
     session.flush()
-    orders = "\n".join(f"• {o}" for o in proposed["standing_orders"])
+    # The post leads with what moved, not the whole brief again: he asked for
+    # one thing to change and should not have to re-read ten to find it. The
+    # full text is on the card the link opens.
     _boardroom_system_line(
         session, ctx.project.id,
         "📋 **Confirm the brief.** Your CEO wrote your current direction back to you. "
         "Nothing changes until you confirm it; then every agent works from it, and the "
         "old version is gone from their instructions.\n\n"
-        f"**Goal:** {proposed['goal'][:600]}"
-        + ("…" if len(proposed["goal"]) > 600 else "")
-        + (f"\n\n**Standing orders:**\n{orders}" if orders else "")
-        + (f"\n\n**No longer applies:** {'; '.join(proposed['retired'])}"
-           if proposed["retired"] else "")
-        + f"\n\n[Review, edit and confirm](#/projects/{ctx.project.id}/activity/decisions)")
+        + briefs.changes_markdown(was, proposed, since=since)
+        + f"\n\n[Review the whole brief, edit and confirm]"
+          f"(#/projects/{ctx.project.id}/activity/decisions)")
     chairman_notify(
         session, ctx.project, "Your CEO asks you to confirm the brief",
         "\n".join(lines), kind="approval_requested",
