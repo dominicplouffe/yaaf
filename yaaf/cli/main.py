@@ -783,7 +783,7 @@ def projects(as_json: bool = typer.Option(False, "--json", help="the raw payload
     def money(budget: dict, n: float) -> str:
         return f"${n:,.0f}" if budget.get("unit") == "usd" else f"{n:,.0f} tok"
 
-    table = [("PROJECT", "STATUS", "SPENT / BUDGET", "HARD STOP", "WAITING ON YOU")]
+    table = [("PROJECT", "STATUS", "SPENT / BUDGET", "HARD STOP", "WAITING ON YOU", "NOW")]
     for row in rows:
         budget = row.get("budget") or {}
         waiting = row.get("awaiting_you") or {}
@@ -794,7 +794,9 @@ def projects(as_json: bool = typer.Option(False, "--json", help="the raw payload
         table.append((row.get("slug", ""), row.get("status", ""),
                       f"{money(budget, budget.get('spent') or 0)} / {money(budget, cap)}",
                       money(budget, cap * (budget.get("hard_stop_multiple") or 1)),
-                      str(count) if count else "—"))
+                      str(count) if count else "—",
+                      # The server's verdict in words; the money is in its own column.
+                      (row.get("status_line") or {}).get("headline", "")))
     widths = [max(len(r[c]) for r in table) for c in range(len(table[0]))]
     for r in table:
         typer.echo("  ".join(cell.ljust(widths[c]) for c, cell in enumerate(r)).rstrip())

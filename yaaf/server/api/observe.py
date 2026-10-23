@@ -86,6 +86,7 @@ from yaaf.server.dispatcher import (
 from yaaf.server.identity import Person, person_auth, signed_in
 from yaaf.server.receipt import receipt as receipt_projection
 from yaaf.server.rows import approval_row, requirement_name
+from yaaf.server.status_line import status_line
 from yaaf.server.unread import boardroom_unread
 from yaaf.server.velocity import (
     commitment_projection,
@@ -391,6 +392,16 @@ def desk(live: bool = False, session: Session = Depends(db),
             "runs_running": int(running),
             "last_run_at": last_run_at.isoformat() if last_run_at else None,
         })
+        row = projects_out[-1]
+        waiting = row["awaiting_you"]
+        row["status_line"] = status_line(
+            status=project.status, status_reason=project.status_reason,
+            unpaid=row["unpaid"], commitment=policy.live_commitment(session, project.id),
+            waiting=(len(pending) + len(pending_asks) + (1 if waiting["plan"] else 0)
+                     + len(waiting["verdicts"]) + (1 if waiting["commitment"] else 0)),
+            open_tasks=row["open_tasks"], runs_running=int(running), last_run_at=last_run_at,
+            stall_hours=float(cons.stall_hours), unit=row["budget"]["unit"],
+            spent=row["budget"]["spent"], cap=row["budget"]["cap"])
     return {"as_of": now.isoformat(), "finished": finished, "projects": projects_out}
 
 

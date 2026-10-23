@@ -34,7 +34,13 @@ function ProjectCard({ p }: { p: DeskProject }) {
         <span className="grow"><b>{p.name}</b><span className="help">{p.last_run_at ? `last ran ${fmtAgo(p.last_run_at)}` : "has not run yet"}</span></span>
         {statusBadge(p.status, p.unpaid)}
       </span>
-      <span className="hcard-goal">{clip(p.goal, 160)}</span>
+      {/* Is it OK, and if not why — before what it is for. The goal is a
+          paragraph the reader wrote; the sentence is what they came to learn. */}
+      {p.status_line
+        ? <span className={`hcard-goal${["blocked", "late", "at_risk", "stalled", "needs_you"]
+            .includes(p.status_line.verdict) ? " warn" : ""}`} title={p.goal}>
+            {p.status_line.sentence}</span>
+        : <span className="hcard-goal">{clip(p.goal, 160)}</span>}
       <span className="hcard-stats">
         <span><b>{p.runs_running}</b> running now</span>
         <span><b>{fmtUnit(b.spent, b.unit)}</b> of {fmtUnit(b.cap, b.unit)}</span>

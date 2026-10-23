@@ -869,6 +869,9 @@ export interface DeskProject {
   status_reason: string | null;
   /** Nothing pays for it, so nothing it starts can run. */
   unpaid?: boolean;
+  /** One verdict and one sentence, decided on the server so every surface
+      says the same thing (yaaf.server.status_line). */
+  status_line?: { verdict: string; sentence: string };
   goal: string;
   billing_mode: string;
   budget: {
