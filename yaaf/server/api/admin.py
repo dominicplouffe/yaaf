@@ -4225,6 +4225,28 @@ def amend_constitution(
     }
 
 
+@router.post("/projects/{project_id}/tempo/keep", dependencies=[authority.STEER])
+def keep_tempo(project_id: str, session: Session = Depends(db)) -> dict:
+    """Answer the pace row with "keep": this pace on this rhythm is on purpose.
+
+    The other answer, switching, is an ordinary amendment. Keeping changes no
+    rule, so there is nothing to amend; it is recorded instead, and the row
+    stays away for every chair until the cycle or the pace moves.
+    """
+    from yaaf.core.constitution import tempo_name
+
+    project = _get_project(session, project_id)
+    rules = effective(session, project.id).model_dump()
+    tempo = tempo_name(rules)
+    if tempo is None:
+        raise HTTPException(status_code=409,
+                            detail="This project's pace is set rule by rule, not by a card, "
+                                   "so there is no pace to keep.")
+    _audit(session, project.id, "tempo.keep", "project", project.id,
+           {"cycle_frequency": rules["cycle_frequency"], "tempo": tempo})
+    return {"ok": True, "tempo": tempo, "cycle_frequency": rules["cycle_frequency"]}
+
+
 def _amendment_status(a: Amendment) -> str:
     if a.applied_constitution_id:
         return "applied"

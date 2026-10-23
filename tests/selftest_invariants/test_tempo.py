@@ -453,7 +453,7 @@ def test_a_rhythm_that_moves_without_the_pace_is_reported(client):
     """cycle_frequency is amendable and the tempo is not re-derived afterwards
     — deliberately: a platform that silently re-paced a live desk because a
     rule moved is a worse failure than the one it fixes. So the chairman is
-    told and decides, which is the posture `doctrine-drift` already takes."""
+    asked, and decides."""
     project = make_project(client, mode="operate",
                            constitution={"cycle_frequency": "weekly"})
     assert "tempo-vs-rhythm" not in _checks(client, project)
@@ -462,7 +462,9 @@ def test_a_rhythm_that_moves_without_the_pace_is_reported(client):
                   reason="This desk turned out to be an order queue.").status_code == 200
     check = _checks(client, project).get("tempo-vs-rhythm")
     assert check and check["status"] == "warn"
-    assert "hourly" in check["detail"] and "live" in check["detail"]
+    # Named the way the Settings cards name them, with what each one does.
+    assert "hourly" in check["detail"] and "Live" in check["detail"]
+    assert "150 runs a day" in check["detail"] and "12 runs a day" in check["detail"]
     # Told, never applied: the pace rules are exactly where they were.
     assert tempo_name(_rules(client, project)) == "few_times_daily"
 
@@ -473,6 +475,58 @@ def test_a_hand_tuned_project_is_not_nagged_about_its_rhythm(client):
                            constitution={"cycle_frequency": "weekly",
                                          "runs_per_project_per_day": 37})
     assert "tempo-vs-rhythm" not in _checks(client, project)
+
+
+def test_a_pace_chosen_after_the_rhythm_is_a_decision_not_news(client):
+    """A chairman who moved the cycle and then picked a pace that differs from
+    the usual one has answered the question. Asking it again on every load is
+    how a suggestion becomes something he presses past unread."""
+    project = make_project(client, mode="operate",
+                           constitution={"cycle_frequency": "weekly"})
+    assert _amend(client, project, {"cycle_frequency": "hourly"},
+                  reason="This desk turned out to be an order queue.").status_code == 200
+    assert "tempo-vs-rhythm" in _checks(client, project)
+
+    assert _amend(client, project, dict(TEMPO_PRESETS["working_hours"]),
+                  reason="Hourly orders, but only while the market is open.").status_code == 200
+    assert "tempo-vs-rhythm" not in _checks(client, project)
+
+
+def test_the_pace_row_carries_both_answers(client):
+    """A mismatch born at creation cannot be told apart from a choice, so it is
+    asked once with both answers on the row: switching is the amendment the row
+    carries, and keeping is recorded for the project. Either one ends it."""
+    project = make_project(client, mode="operate",
+                           constitution={"cycle_frequency": "weekly",
+                                         **TEMPO_PRESETS["live"]})
+    check = _checks(client, project)["tempo-vs-rhythm"]
+    action = check["action"]
+    assert action["kind"] == "tempo" and action["to"] == "few_times_daily"
+    assert (action["to_label"], action["keep_label"]) == ("A few times a day", "Live")
+    assert "weekly cycle" in check["detail"] and "Paced “Live”" in check["detail"]
+
+    switched = _amend(client, project, action["changes"],
+                      reason="Pace set to A few times a day from Setup & health.")
+    assert switched.status_code == 200, switched.text
+    assert tempo_name(_rules(client, project)) == "few_times_daily"
+    assert "tempo-vs-rhythm" not in _checks(client, project)
+
+
+def test_keeping_the_pace_answers_for_the_whole_project(client):
+    """"Keep" is a decision about the project, so it is asked once, not once per
+    chair. It holds until the cycle or the pace moves, and then it is a new
+    question."""
+    project = make_project(client, mode="operate",
+                           constitution={"cycle_frequency": "weekly",
+                                         **TEMPO_PRESETS["live"]})
+    kept = client.post(f"/admin/projects/{project['id']}/tempo/keep", headers=ADMIN)
+    assert kept.status_code == 200, kept.text
+    assert "tempo-vs-rhythm" not in _checks(client, project)
+
+    assert _amend(client, project, {"cycle_frequency": "monthly", "cycle_day": 1},
+                  reason="Monthly reviews from now on.").status_code == 200
+    check = _checks(client, project).get("tempo-vs-rhythm")
+    assert check and "monthly" in check["detail"]
 
 
 def test_a_budget_that_cannot_buy_the_ceiling_is_reported(client):
@@ -732,3 +786,28 @@ def test_the_brief_names_both_cards(client):
             since=utcnow() - timedelta(hours=1))
     assert brief["tempo"] == "few_times_daily"
     assert "bar" in brief
+
+
+def test_one_problem_is_one_row(client):
+    """A weekly desk on Live with a $75 budget had two rows quoting the same
+    $855: the pace and the budget. Switching the pace answers both, so it is
+    one row that says so, and the budget row stays for a budget the switch
+    would not fix."""
+    project = make_project(client, mode="operate",
+                           constitution={"cycle_frequency": "weekly",
+                                         **TEMPO_PRESETS["live"], "monthly_usd_cap": 75.0})
+    with db_session() as session:
+        for _ in range(5):
+            session.add(Run(
+                id=ids.new_id(ids.RUN), project_id=project["id"],
+                agent_id=project["ceo_agent_id"], kind="agent_run", trigger={},
+                status=RunStatus.DONE, cost_usd=0.15,
+                started_at=utcnow(), finished_at=utcnow()))
+    found = _checks(client, project)
+    assert "tempo-vs-budget" not in found
+    assert "$75" in found["tempo-vs-rhythm"]["detail"]
+
+    assert _amend(client, project, {"monthly_usd_cap": 20.0},
+                  reason="A smaller budget for the quiet months.").status_code == 200
+    found = _checks(client, project)
+    assert "tempo-vs-budget" in found and "tempo-vs-rhythm" in found
