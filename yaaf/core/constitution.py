@@ -935,6 +935,28 @@ def stated_tempo(constitution: dict[str, Any]) -> str | None:
     return tempo_name(constitution)
 
 
+#: When a new project's daily briefing arrives if nobody said. A schedule, not
+#: a model call: the briefing is composed from rows at zero tokens.
+DEFAULT_BRIEF_AT = "08:00"
+
+
+def default_briefing(constitution: dict[str, Any]) -> dict[str, Any]:
+    """A creation-time constitution with the daily briefing switched on if it
+    was silent.
+
+    The field default stays `None` for the reason `DEFAULT_AUTONOMY` gives:
+    it is what an omitted rule means for a document already stored, and
+    flipping it would start mailing every existing project's chairman one
+    morning without anybody choosing it. A new project with no opinion gets the
+    letter, because the alternative was that the one notice which arrives when
+    nothing is wrong was off unless somebody found the rule that turns it on.
+    An explicit `null` is an opinion, and is left alone.
+    """
+    if "brief_daily_at" in constitution:
+        return dict(constitution)
+    return {**constitution, "brief_daily_at": DEFAULT_BRIEF_AT}
+
+
 def default_tempo(mode: str, constitution: dict[str, Any]) -> dict[str, Any]:
     """A creation-time constitution with the tempo filled in if it was silent.
 

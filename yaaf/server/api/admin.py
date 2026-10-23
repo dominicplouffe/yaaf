@@ -29,6 +29,7 @@ from yaaf.core.constitution import (
     ConstitutionDoc,
     create_initial,
     default_autonomy,
+    default_briefing,
     default_tempo,
     effective,
     effective_version,
@@ -1268,7 +1269,8 @@ def create_project(body: ProjectCreate, session: Session = Depends(db)) -> dict:
     try:
         doc = ConstitutionDoc.model_validate(
             {**ConstitutionDoc().model_dump(),
-             **default_tempo(body.mode, default_autonomy(body.constitution))})
+             **default_tempo(body.mode,
+                             default_briefing(default_autonomy(body.constitution)))})
     except ValidationError as exc:
         # A rule that cannot hold — a 29th of every month — is the founder's to
         # fix, not a 500. It reached here unchecked for as long as the suite's

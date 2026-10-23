@@ -228,7 +228,7 @@ remember is a suggestion. It's a refusal now.
 | `chairman_report_interval_hours` | 0.0 | Hours between unprompted status reports. **0 = you never asked for a cadence and nothing is refused.** |
 | `chairman_report_window_local` | none | `"09:00-20:00"`, or blank for any hour. Must not wrap midnight. |
 | `timezone` | `"UTC"` | IANA name, e.g. `America/New_York`. **One zone for the whole rulebook** — the reporting window, the daily CEO wake and every recurring rhythm are read in it. (Was `chairman_report_timezone`, and was also set a second time in project config; one place too many to get wrong.) |
-| `brief_daily_at` | none | `"08:00"` in `timezone`, or blank for none. The daily **briefing** — what happened since the last one, composed by the platform from the record at **zero tokens**. |
+| `brief_daily_at` | `"08:00"` for a new project; none for one created before this default | `"08:00"` in `timezone`, or blank for none. The daily **briefing** — what happened since the last one, composed by the platform from the record at **zero tokens**. A project created without an opinion gets 08:00; a spec that says `null` keeps it off. |
 | `mail_max_per_day` | 5 | How many emails **waiting on a decision from you** the platform may send in a rolling 24 hours. Past it the waits are read in the briefing instead. Alarms are never held. 0 = no limit. |
 
 Replying to something you actually said is always allowed and is not a status.

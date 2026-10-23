@@ -290,7 +290,11 @@ def send_daily_brief(session: Session, project: Project) -> bool:
     else:
         beat.last_fired_at = now
 
-    brief = briefing.project_briefing(session, project, cons, since=since, until=now)
+    brief = briefing.project_briefing(
+        session, project, cons, since=since, until=now,
+        # The morning letter's edges, said the way a person would; it used to
+        # call its own schedule "the window you asked for".
+        source="since yesterday's briefing" if beat is not None else "since this project started")
     chairman_notify(
         session, project,
         f"briefing — {brief['headline'][:100]}",

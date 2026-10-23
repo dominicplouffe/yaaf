@@ -329,7 +329,10 @@ def test_a_finished_project_stops_writing(client, monkeypatch):
 
 
 def test_no_time_set_means_no_daily_briefing(client, monkeypatch):
-    project = make_project(client, slug="unset")
+    # Set to nothing on purpose. A project created with no opinion now gets the
+    # morning letter (`constitution.default_briefing`); one that says null is
+    # the chairman turning it off, and that is what this guards.
+    project = make_project(client, slug="unset", constitution={"brief_daily_at": None})
     sent: list[str] = []
     monkeypatch.setattr(
         "yaaf.server.janitor.chairman_notify",
@@ -785,3 +788,30 @@ def test_a_draft_project_never_gets_a_daily_briefing(client, monkeypatch):
     )
     assert _fire(project) is False
     assert sent == []
+
+
+def test_a_new_project_with_no_opinion_gets_the_morning_letter(client):
+    from yaaf.core.constitution import DEFAULT_BRIEF_AT
+
+    project = make_project(client, slug="letter")
+    dash = client.get(f"/observe/projects/{project['id']}", headers=ADMIN).json()
+    assert dash["constitution"]["brief_daily_at"] == DEFAULT_BRIEF_AT
+
+
+def test_saying_no_letter_is_kept(client):
+    project = make_project(client, slug="noletter", constitution={"brief_daily_at": None})
+    dash = client.get(f"/observe/projects/{project['id']}", headers=ADMIN).json()
+    assert dash["constitution"]["brief_daily_at"] is None
+
+
+def test_the_morning_letter_names_its_window_the_way_a_person_would(client, monkeypatch):
+    project = deliver_project(client, slug="named")
+    _set_brief_time(client, project, "00:01")
+    sent: list[str] = []
+    monkeypatch.setattr(
+        "yaaf.server.janitor.chairman_notify",
+        lambda session, proj, subject, body, **kw: sent.append(body),
+    )
+    assert _fire(project) is True
+    assert "the window you asked for" not in sent[0]
+    assert "since this project started" in sent[0]

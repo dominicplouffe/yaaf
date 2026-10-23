@@ -1295,7 +1295,8 @@ def _ordered(lines: list[dict]) -> list[dict]:
 def project_briefing(session: Session, project: Project,
                      cons: ConstitutionDoc | None = None,
                      since: datetime | None = None,
-                     until: datetime | None = None) -> dict:
+                     until: datetime | None = None,
+                     source: str | None = None) -> dict:
     """One project's briefing over one window. Pure read — the mark is only
     ever stamped by :func:`mark_read`, so polling this page can never lose the
     chairman the window he has not looked at yet."""
@@ -1304,7 +1305,8 @@ def project_briefing(session: Session, project: Project,
     if since is None:
         since, source = window_start(session, project)
     else:
-        source = "the window you asked for"
+        # The caller names a window it chose; a reader who forced one asked.
+        source = source or "the window you asked for"
     since = min(_aware(since) or until, until)
 
     lines: list[dict] = []
