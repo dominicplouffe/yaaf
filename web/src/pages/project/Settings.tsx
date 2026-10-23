@@ -2293,11 +2293,9 @@ export default function Settings({
       <h2>Rules in force</h2>
       <div className="card">
         <p className="help" style={{ marginTop: 0 }}>
-          Every limit the platform enforces, and every one of them yours to change. Edit what
-          you need, say why, and confirm — <b>the new rules are in force on the very next agent
-          call</b>. Nothing waits. Every change is recorded with your reason and disclosed to
-          the CEO, which is what keeps the rulebook accountable: the agents cannot move these
-          limits, and you always can.
+          Every limit the platform enforces. Agents cannot move them; you can. Change one, say
+          why, and it is <b>in force from the next agent call</b>, recorded with your reason
+          and disclosed to the CEO.
         </p>
         {schema.length === 0 && <p className="help">Loading the rulebook…</p>}
         {presets && <DialSummary presets={presets} cons={cons}
