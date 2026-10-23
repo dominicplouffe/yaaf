@@ -435,6 +435,9 @@ export interface Dashboard {
     goal: string | null;
     due_at: string | null;
     due_source: { kind: string; url: string | null; note: string | null } | null;
+    /** When this turn closes and is judged: the due-by if the world set one,
+        the constitution's rhythm otherwise. */
+    rolls_at: string;
     /** The platform's own arithmetic on whether the open work reaches the date.
         Four numbers and never a point estimate — see yaaf/server/capacity.py. */
     capacity: {

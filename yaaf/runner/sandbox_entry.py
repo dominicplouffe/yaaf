@@ -610,7 +610,9 @@ async def t_scope_act(args):
 
 @tool(
     "commitment_propose",
-    "CEO only. Ask to commit to a delivery date. You do not and cannot write the date: "
+    "CEO only, Deliver projects only — an Operate project runs on cycles and has no "
+    "single date to promise. Ask to commit to a delivery date. You do not and cannot "
+    "write the date: "
     "the platform stamps its own projection from pace and scope, and the chairman "
     "accepts it (with that date or his own) or declines. Nothing binds until he does. "
     "The optional note travels with the proposal to him — what the date rests on; "
@@ -702,6 +704,28 @@ async def t_memory_forget(args):
 async def t_evidence_add(args):
     payload = {k: v for k, v in args.items() if v not in (None, "")}
     return _text(_call("POST", "/agent/evidence", payload))
+
+
+@tool(
+    "cycle_goal",
+    "CEO only, Operate projects only. Say what THIS cycle is for — one outcome, in "
+    "words the chairman would recognise — and, when the outside world sets a "
+    "deadline for this turn's work (a gameweek deadline, a filing date, a carrier "
+    "cutoff), when it is due. due_at is an ISO datetime and is a fact you found, "
+    "not a promise you are making, so it must cite where it came from: "
+    "due_source_kind='data' with the due_source_url you read it from, or "
+    "'calendar' when it follows from the rhythm itself. With a due_at the cycle "
+    "rolls on that moment instead of the constitution's rhythm, and the platform "
+    "answers with its own arithmetic on whether the open work fits before then — "
+    "if it does not, that is news for the chairman now. Leave due_at out when the "
+    "rhythm is the deadline. Call again to correct either; every call is audited.",
+    _schema({"goal": str, "due_at": str, "due_source_kind": str,
+             "due_source_url": str, "due_source_note": str},
+            optional=("due_at", "due_source_kind", "due_source_url", "due_source_note")),
+)
+async def t_cycle_goal(args):
+    payload = {k: v for k, v in args.items() if v not in (None, "")}
+    return _text(_call("POST", "/agent/cycle_goal", payload))
 
 
 @tool(
@@ -1697,7 +1721,7 @@ ALL_TOOLS = [
     t_ask_chairman, t_ask_close,
     t_memory_search, t_memory_add, t_memory_supersede, t_memory_compact, t_memory_forget,
     t_memory_tool,
-    t_evidence_add, t_review_narrative, t_commitment_propose, t_commitment_reset,
+    t_evidence_add, t_review_narrative, t_cycle_goal, t_commitment_propose, t_commitment_reset,
     t_scope_act,
     t_flag_raise, t_flags_list, t_roster_activity,
     t_roles_list, t_hire, t_stand_down, t_recall, t_stand_down_when,
@@ -1728,6 +1752,7 @@ CEO_ONLY_TOOLS = frozenset({
     "brief_propose", "capacity_request", "heads_up", "need_request", "note_answer",
     "commitment_propose", "commitment_reset",
     "credential_scope", "credentials_list",
+    "cycle_goal",
     "directive_file",
     "flag_raise",
     "hire", "recall", "roles_list", "stand_down", "stand_down_when",

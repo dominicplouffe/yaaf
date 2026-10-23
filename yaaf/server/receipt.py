@@ -34,6 +34,7 @@ from yaaf.core.models import (
     AuditSample,
     AuditSampleStatus,
     Commitment,
+    CommitmentStatus,
     Decision,
     Evidence,
     EvidenceKind,
@@ -133,7 +134,10 @@ def _verified(session: Session, project: Project) -> dict:
     external = [e for e in evidence if e.kind == EvidenceKind.EXTERNAL]
     commitment = policy.live_commitment(session, project.id)
     promised = session.execute(
-        select(func.count(Commitment.id)).where(Commitment.project_id == project.id)
+        # A void row was never a promise anybody stood behind (see VOID).
+        select(func.count(Commitment.id)).where(
+            Commitment.project_id == project.id,
+            Commitment.status != CommitmentStatus.VOID)
     ).scalar_one()
 
     return {

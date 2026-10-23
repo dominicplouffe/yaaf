@@ -167,6 +167,77 @@ def test_only_the_ceo_proposes_and_explore_cannot(client):
     assert "Explore" in refused.json()["error"]
 
 
+def test_operate_cannot_promise_a_delivery_date(client):
+    """A rhythm has no finish line, so there is nothing for one date to promise.
+
+    Creating and editing an Operate project already refused a date; the CEO's
+    proposal did not, and under an autonomous dial it signed itself — which is
+    how a daily brief came to show "the date you signed passed 2 days ago" to a
+    chairman who never signed anything. Refused with a plan that holds, so the
+    refusal is the mode's and not the plan gate's."""
+    project = make_project(client, slug="rhythm-cmt", mode="operate",
+                           constitution={"commitment_authority": "ceo"})
+    token = ceo_token(project)
+    accept(client, propose(client, token)["requirement_id"], project)
+
+    refused = client.post("/agent/commitments", json={}, headers=bearer(token))
+    assert refused.status_code == 422, refused.text
+    assert "Operate" in refused.json()["error"]
+    with db_session() as session:
+        assert session.query(Commitment).filter_by(project_id=project["id"]).count() == 0
+
+
+def test_an_operate_promise_that_got_in_before_the_refusal_is_voided(client):
+    """Installs carry rows from before the refusal, breached and freezing scope.
+    The janitor voids them — kept for the record, binding nothing — and the
+    freeze they held lifts with them."""
+    from yaaf.core import ids
+    from yaaf.core.models import AuditLog
+
+    project = make_project(client, slug="rhythm-void", mode="operate")
+    token = ceo_token(project)
+    rid = propose(client, token)["requirement_id"]
+    accept(client, rid, project)
+    with db_session() as session:
+        session.add(Commitment(
+            id=ids.new_id(ids.COMMITMENT), project_id=project["id"],
+            status=CommitmentStatus.BREACHED, deliver_by=utcnow() - timedelta(days=2),
+            accepted_at=utcnow() - timedelta(days=5), scope_snapshot=["R-01"]))
+
+    run_commitment_check(project)
+    run_commitment_check(project)  # state-based: a second look changes nothing
+
+    with db_session() as session:
+        row = session.query(Commitment).filter_by(project_id=project["id"]).one()
+        assert row.status == CommitmentStatus.VOID
+        assert "Operate" in row.status_reason
+        assert session.query(AuditLog).filter_by(
+            project_id=project["id"], action="commitment.void").count() == 1
+
+    view = client.get(f"/observe/projects/{project['id']}/plan", headers=ADMIN).json()
+    assert view["commitment"] is None, "a void promise is not drawn as one"
+    assert view["burnup"] is None
+    # The breach froze new scope; with the promise gone, so is the freeze.
+    more = propose(client, token, statement="A second report exists, sourced and dated")
+    assert more.get("requirement_id"), more
+
+
+def test_an_operate_ceo_is_not_told_it_may_sign_a_date(client):
+    """The prompt states the verbs the dial grants. Telling an Operate CEO it may
+    sign a delivery date is an invitation to a refusal."""
+    from yaaf.core.constitution import effective
+    from yaaf.core.models import Project
+    from yaaf.server.contextpack import constitution_prose
+
+    for mode in ("operate", "deliver"):
+        project = make_project(client, slug=f"prose-{mode}", mode=mode,
+                               constitution={"commitment_authority": "ceo"})
+        with db_session() as session:
+            row = session.get(Project, project["id"])
+            prose = constitution_prose(effective(session, row.id), row)
+        assert ("commitment_propose" in prose) == (mode == "deliver"), mode
+
+
 def test_one_promise_at_a_time(client):
     project, token, _, _ = committed_project(client)
     second = client.post("/agent/commitments", json={}, headers=bearer(token))

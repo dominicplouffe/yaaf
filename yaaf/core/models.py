@@ -305,6 +305,11 @@ class CommitmentStatus(enum.StrEnum):
     AT_RISK = "at_risk"    # the projection lands past deliver_by
     BREACHED = "breached"  # deliver_by passed with scope still open
     MET = "met"            # every requirement in scope settled true
+    # Retired by the platform because the project is Operate. A rhythm has no
+    # finish line for one date to promise, so such a row binds nothing — the
+    # cycle's own `due_at` is where an Operate date lives. Kept, not deleted:
+    # a promise that existed is part of the record.
+    VOID = "void"
 
 
 class EvidenceProvenance(enum.StrEnum):

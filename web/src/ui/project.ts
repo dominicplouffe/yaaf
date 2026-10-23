@@ -136,6 +136,50 @@ function daysBetween(a: string, b: string): number {
   return Math.round((new Date(a).getTime() - new Date(b).getTime()) / DAY);
 }
 
+/** When a cycle closes, said the way a person would: a daily rhythm rolls
+    every midnight, so the day alone would not say which midnight. */
+export function fmtRoll(iso: string): string {
+  return new Date(iso).toLocaleString(undefined,
+    { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
+}
+
+/** A cycle whose closing time has gone by and is still open. The janitor
+    rolls cycles every few seconds, so a few minutes past is a tick in flight;
+    longer than that and the rhythm has stopped, which the screen must say
+    rather than go on promising a close that is already in the past. */
+const ROLL_GRACE = 5 * 60_000;
+
+export function cycleOverdue(cycle: { rolls_at: string } | null): boolean {
+  return !!cycle && Date.now() - new Date(cycle.rolls_at).getTime() > ROLL_GRACE;
+}
+
+function cycleVerdict(dash: Dashboard): Verdicts {
+  const c = dash.cycle;
+  if (!c) {
+    return { tone: "good", label: "Between cycles", sub: "the next one opens on its own",
+      headline: "One cycle has closed and the next is about to open.", daysLate: null };
+  }
+  if (cycleOverdue(c)) {
+    return { tone: "serious", label: "Overdue to close",
+      sub: `cycle ${c.ordinal} should have closed ${fmtRoll(c.rolls_at)}`,
+      headline: `Cycle ${c.ordinal} should have closed ${fmtRoll(c.rolls_at)} and is still open — `
+        + "the rhythm has stopped turning, so nothing is being judged.",
+      daysLate: null };
+  }
+  if (c.due_at && c.capacity) {
+    return c.capacity.feasible
+      ? { tone: "good", label: "On time", sub: `cycle ${c.ordinal} is due ${fmtRoll(c.due_at)}`,
+          headline: `Cycle ${c.ordinal} is due ${fmtRoll(c.due_at)}, and the open work fits.`,
+          daysLate: null }
+      : { tone: "serious", label: "Won't fit", sub: `cycle ${c.ordinal} is due ${fmtRoll(c.due_at)}`,
+          headline: `Cycle ${c.ordinal} is due ${fmtRoll(c.due_at)}, and the open work does not fit.`,
+          daysLate: null };
+  }
+  return { tone: "good", label: `Cycle ${c.ordinal}`, sub: `closes ${fmtRoll(c.rolls_at)}`,
+    headline: `Cycle ${c.ordinal} is running. It closes and is judged ${fmtRoll(c.rolls_at)}.`,
+    daysLate: null };
+}
+
 /** The one question a project screen exists to answer. */
 export function deliveryVerdict(dash: Dashboard, plan: PlanView | null): Verdicts {
   if (dash.status === "stopped") {
@@ -150,6 +194,11 @@ export function deliveryVerdict(dash: Dashboard, plan: PlanView | null): Verdict
     return { tone: "warn", label: "Paused", sub: dash.status_reason ?? "nothing new is starting",
       headline: "This project is paused. Nothing new is starting.", daysLate: null };
   }
+
+  // Work that comes round again has no finish line, so no delivery date: it is
+  // judged a turn at a time. Asked "is this on track?", an Operate project
+  // answers for the cycle it is in.
+  if (dash.mode === "operate") return cycleVerdict(dash);
 
   const c = plan?.commitment;
   if (c && c.projected_done_at && c.deliver_by) {

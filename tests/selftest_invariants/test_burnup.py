@@ -12,7 +12,7 @@ the real endpoint the screen reads.
     the solid line and the dashed ray drawn from its tip cannot come from two
     different datasets
   * the line can never climb above its own ceiling, which is what a burn-up of
-    recurring work used to do every cycle
+    recurring work used to do every cycle — so recurring work has none
   * the floor refuses a bad date without refusing the promise: a CEO on a fresh
     plan can still commit, from arithmetic that says what it is
 
@@ -215,9 +215,13 @@ def test_the_line_never_climbs_above_its_own_ceiling(client):
 
     An Operate project's ceiling is the open cycle's scope while its met-events
     span every cycle it has ever run, so the cumulative line walked straight
-    through the top of its own axis — every turn of the rhythm, forever. The
-    burn-up is now Deliver-only on screen, but the payload must be coherent
-    whoever reads it: the CLI and the MCP reader get this same dictionary.
+    through the top of its own axis — every turn of the rhythm, forever. That
+    was first hidden on screen, then patched in the payload; it is now closed
+    at the root. A burn-up is the line toward a promised date, and Operate has
+    no promised date (the CEO's proposal is refused, test_commitments), so the
+    payload carries no burn-up for it at all — for the screen, the CLI and the
+    MCP reader alike. Two turns of the rhythm with work met in both is the
+    shape that used to break it, so that is the shape held here.
     """
     from yaaf.core.constitution import effective
     from yaaf.core.models import Project
@@ -231,12 +235,8 @@ def test_the_line_never_climbs_above_its_own_ceiling(client):
         row = propose(client, token, statement=f"Cycle output {n} exists")
         accept(client, row["requirement_id"], project)
         first.append(row["requirement_id"])
-    # A commitment, or there is no burn-up in the payload at all and this test
-    # would pass by having nothing to look at.
-    proposed = client.post("/agent/commitments", json={}, headers=bearer(token))
-    assert proposed.status_code == 200, proposed.text
-    chairman_accept(client, proposed.json()["commitment_id"],
-                    deliver_by=utcnow() + timedelta(days=60))
+    refused = client.post("/agent/commitments", json={}, headers=bearer(token))
+    assert refused.status_code == 422, refused.text
 
     for rid in first:
         fabricate_met(project["id"], rid)
@@ -247,36 +247,21 @@ def test_the_line_never_climbs_above_its_own_ceiling(client):
     with db_session() as session:
         cycle = session.query(Cycle).filter_by(project_id=project["id"]).one()
         cycle.opened_at = utcnow() - timedelta(days=8)
-        opened_first = cycle.id
     with db_session() as session:
         row = session.get(Project, project["id"])
         janitor.roll_cycles(session, row, effective(session, row.id))
     with db_session() as session:
         assert session.query(Cycle).filter_by(project_id=project["id"]).count() == 2, \
             "the rhythm did not turn; this test would prove nothing"
-    # A second turn of the rhythm. Its scope is what the ceiling counts, while
-    # the project's met-events span both cycles — which is the whole of the
-    # bug: three landed last week plus one this week made a cumulative four
-    # against a ceiling of two.
-    second = []
-    for n in range(2):
-        row = propose(client, token, statement=f"Next turn output {n} exists")
-        accept(client, row["requirement_id"], project)
-        second.append(row["requirement_id"])
-    fabricate_met(project["id"], second[0])
-    assert opened_first
+    row = propose(client, token, statement="Next turn output exists")
+    accept(client, row["requirement_id"], project)
+    fabricate_met(project["id"], row["requirement_id"])
 
-    burnup = plan_view(client, project)["burnup"]
-    assert burnup is not None, "no burn-up in the payload; this test proves nothing"
-    assert burnup["met_points"], "no points on the line; this test proves nothing"
-    for point in burnup["met_points"]:
-        assert point["count"] <= burnup["scope_total"], (
-            f"the line reached {point['count']} against a ceiling of "
-            f"{burnup['scope_total']} — a cumulative count walking out through "
-            "the top of its own axis is what a burn-up of recurring work did "
-            "every cycle"
-        )
-    assert burnup["settled"] == 1, (
-        "this cycle has settled one thing; last cycle's three belong to last "
-        "cycle's record, not to this cycle's line"
+    view = plan_view(client, project)
+    assert view["planless"] is False, "Operate still has a plan; only the promise is gone"
+    assert view["commitment"] is None
+    assert view["burnup"] is None, (
+        "work that comes round again has no line to burn up — a cumulative count "
+        "across cycles against one cycle's ceiling is what walked out through the "
+        "top of its own axis"
     )
