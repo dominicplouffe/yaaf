@@ -252,7 +252,14 @@ export function Shell({ children }: { children: ReactNode }) {
   // the query, so a filter or a selection inside a page keeps your place.
   // A layout effect, so it runs before a page's own mount effect that scrolls
   // to something on purpose (NewProject's `?start=file`).
-  useLayoutEffect(() => window.scrollTo(0, 0), [location.pathname]);
+  //
+  // A block body, never `() => window.scrollTo(0, 0)`: whatever an effect
+  // returns, React keeps as its cleanup and calls on the next navigation.
+  // Browsers return undefined, but an extension that replaces scrollTo may
+  // not, and then every link threw "destroy is not a function".
+  useLayoutEffect(() => {
+    window.scrollTo(0, 0);
+  }, [location.pathname]);
 
   const close = () => setNavOpen(false);
   return (
