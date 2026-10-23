@@ -369,11 +369,11 @@ Status column tracks implementation. `M1`…`M4` are the milestones below.
 | `work` | Runs, one run's trace, the context pack it ran on. Long text walks by `offset`. | `GET /observe/projects/{id}/runs`, `/runs/{id}/trace` `/context` | **done** (M1) |
 | `proof` | Evidence, provenance, snapshots, audit samples. | `GET /observe/projects/{id}/evidence` `/audit_samples` `/spot_audit`, `/observe/evidence/{id}/snapshot` | **done** (M1) |
 | `receipt` | Whole-life cost beside what the platform verified. `format=text` returns the pasteable block. No envelope, because it carries no agent prose. | `GET /observe/projects/{id}/receipt` | **done** |
-| `org` | Teams, agents, schedules, one agent's detail, the board — and what each seat actually did in a window (`since`: `today`, `yesterday`, `7d`, a date). | `GET /observe/projects/{id}/org` `/board` `/activity`, `/observe/agents/{id}` | **done** (M1) |
+| `org` | Teams, agents, schedules, one agent's detail, the board — what each seat actually did in a window (`since`: `today`, `yesterday`, `7d`, a date) — and who works when: each person's runs over the last 12h and scheduled wakes over the next. | `GET /observe/projects/{id}/org` `/board` `/activity` `/schedule`, `/observe/agents/{id}` | **done** (M1) |
 | `channels` | Channel list and messages. **Wraps agent text.** | `GET /observe/projects/{id}/channels`, `/observe/channels/{id}/messages` | **done** (M1) |
 | `inbox` | Each agent's unread messages and the inbox-read allowance — what the dashboard's inbox banner counts. `agent` for one. **Wraps agent text.** | `GET /observe/projects/{id}/inbox` | **done** |
 | `files` | Workspace listing and file content. **Wraps agent text.** Long files walk by `offset`. | `GET /observe/projects/{id}/files` `/files/content` | **done** (M1) |
-| `record` | The judgement record. `view`: `decisions` \| `reviews` \| `cycles` \| `hypotheses` \| `suggestions` \| `memories` \| `approvals`. | `GET /observe/projects/{id}/ceo_decisions` and siblings | **done** (M1) |
+| `record` | The judgement record. `view`: `decisions` \| `reviews` \| `cycles` \| `hypotheses` \| `suggestions` \| `memories` \| `approvals` \| `everything` (every message, run, decision and proof, each action with the permission it ran on; `kind`, `agent`, `days`) \| `results` (published deliverables, who made each and who checked it). | `GET /observe/projects/{id}/ceo_decisions` `/record` `/results` and siblings | **done** (M1) |
 
 ### Steer — `steer` scope
 
