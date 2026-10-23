@@ -198,6 +198,7 @@ def test_an_approval_that_timed_out_is_reported_as_having_decided_itself(client)
     line = next(x for x in payload["lines"] if x["kind"] == "approvals_expired")
     assert line["tone"] == "bad"
     assert "buy the data feed" in line["text"]
+    assert "declined, as your rules say silence means" in line["text"]
 
 
 def test_a_question_that_ran_out_of_time_is_named_here_too(client):

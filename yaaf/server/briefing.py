@@ -827,11 +827,18 @@ def _self_acting_lines(session: Session, project: Project, since, until) -> list
     ).scalars())
     if expired_approvals:
         titles = ", ".join(f"“{a.title[:60]}”" for a in expired_approvals[:3])
+        # Which way silence went, because "decided by default" leaves him to
+        # work out whether something he never saw is now going ahead.
+        said_yes = sum(1 for a in expired_approvals if a.status == ApprovalStatus.APPROVED)
+        said_no = len(expired_approvals) - said_yes
+        was = _plural(len(expired_approvals), "was", "were")
+        outcome = (f"{was} {'approved' if said_yes else 'declined'}, as your rules say "
+                   "silence means" if not (said_yes and said_no) else
+                   f"{was} settled by your rules: {said_yes} approved, {said_no} declined")
         lines.append(_line(
             "approvals_expired",
             f"{len(expired_approvals)} {_plural(len(expired_approvals), 'approval')} "
-            f"timed out unanswered and {_plural(len(expired_approvals), 'was', 'were')} "
-            f"decided by the constitution's default ({titles})",
+            f"ran out of time without you and {outcome} ({titles})",
             tone="bad", count=len(expired_approvals), where="records/decisions",
         ))
 

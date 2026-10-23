@@ -142,3 +142,31 @@ def test_no_notice_names_a_screen_that_no_longer_exists():
              for line, text in _sent_strings(path)
              if any(screen in text for screen in RETIRED_SCREENS)]
     assert not stale, "\n".join(stale)
+
+
+def test_when_silence_decides_the_notice_says_which_way_and_what_now(client, wire):
+    """"DENIED per this constitution" told him a rule had fired, not what was
+    now true or how to undo it."""
+    from datetime import timedelta
+
+    from yaaf.core.constitution import effective
+    from yaaf.core.db import db_session
+    from yaaf.core.models import Approval, Project, utcnow
+    from yaaf.server import janitor
+
+    project = make_project(client)
+    filed = _file(client, project)
+    with db_session() as session:
+        session.get(Approval, filed["id"]).expires_at = utcnow() - timedelta(minutes=1)
+    with db_session() as session:
+        row = session.get(Project, project["id"])
+        janitor.expire_approvals(session, row, effective(session, row.id))
+
+    sent = [(args, kw) for args, kw in wire.hooks if kw.get("kind") == "approval_expired"]
+    assert len(sent) == 1, wire.hooks
+    (_, _, subject, body), _ = sent[0]
+    assert subject.endswith("no decision, so no: Buy the $199 projections feed")
+    assert "it is declined and the CEO will plan without it" in body
+    assert "tell the CEO in chat" in body
+    assert "https://yaaf.example.com/app/#/projects/" in body
+    assert "UTC" not in body

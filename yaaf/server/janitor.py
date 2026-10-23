@@ -1959,11 +1959,18 @@ def expire_approvals(session: Session, project: Project, cons: ConstitutionDoc) 
             approval.status = ApprovalStatus.EXPIRED
             approval.decision_note = "expired: no chairman decision in time; default is deny"
         approval.decided_at = now
+        # The answer silence gave, in the words he would have used, and what
+        # to do if it was the wrong one — "DENIED per this constitution" told
+        # him a rule fired, not what happens now.
         chairman_notify(
             session, project,
-            f"approval expired: {approval.title}",
-            f"'{approval.title}' expired at {now:%Y-%m-%d %H:%M} UTC without a decision and "
-            f"is {'APPROVED' if approve_on_timeout else 'DENIED'} per this constitution.",
+            f"no decision, so {'yes' if approve_on_timeout else 'no'}: {approval.title}",
+            f"'{approval.title}' ran out of time without your decision. Your rules answer "
+            + ("yes on silence, so it is approved and the CEO is going ahead."
+               if approve_on_timeout else
+               "no on silence, so it is declined and the CEO will plan without it. "
+               "If you wanted it, tell the CEO in chat and it will ask again.")
+            + project_link(project.id, "activity/decisions", "See the decision"),
             kind="approval_expired", data={"approval": approval_row(approval)},
             attention=Attention.FYI,
         )
