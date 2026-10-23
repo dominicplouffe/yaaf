@@ -944,11 +944,18 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
                 ).scalars()
             }
             if "challenge" not in categories:
+                # Said for the dial this project is on: a Supervised chairman
+                # read that the CEO "on an autonomous project, accepted it too"
+                # about a plan he had accepted himself.
+                if effective(session, project.id).plan_authority == "ceo":
+                    who = ("The CEO wrote it and accepted it too — so it is the only "
+                           "reader of that plan with no distance from it.")
+                else:
+                    who = ("The CEO wrote it and you accept it — so you are its only "
+                           "reader with any distance from it.")
                 add("no-adversary", "warn",
-                    "no seat on this project exists to disagree with the plan. The CEO "
-                    "wrote it and, on an autonomous project, accepted it too — so it is "
-                    "the only reader of that plan with no distance from it. Hiring one "
-                    "`challenge` role is the whole fix.",
+                    "no seat on this project exists to disagree with the plan. " + who
+                    + " Hiring one `challenge` role is the whole fix.",
                     "settings")
 
         # An Operate project with no standing scope is re-creating the same

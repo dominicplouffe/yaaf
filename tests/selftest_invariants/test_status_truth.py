@@ -75,3 +75,18 @@ def test_the_health_card_reads_a_question_s_deadline_as_a_time_not_a_timestamp(c
     assert "question(s) from your CEO waiting on you" in text
     assert not re.search(r"stopping at \d{4}-\d{2}-\d{2}T", text)
     assert re.search(r"stopping (?:\w{3} )?\d{1,2} \w{3}|stopping \w{3}", text), text[:600]
+
+
+def test_the_no_skeptic_warning_is_said_for_the_dial_the_project_is_on(client):
+    from yaaf.core.constitution import AUTONOMY_PRESETS
+    from yaaf.core.models import ProjectMode
+
+    def detail(slug, preset):
+        project = make_project(client, slug=slug, mode=ProjectMode.DELIVER,
+                               constitution=dict(AUTONOMY_PRESETS[preset]))
+        health = client.get(f"/observe/projects/{project['id']}/health", headers=ADMIN).json()
+        return next(c["detail"] for c in health["checks"] if c["key"] == "no-adversary")
+
+    assert "you accept it" in detail("held", "supervised")
+    assert "autonomous" not in detail("held2", "supervised")
+    assert "accepted it too" in detail("handed", "autonomous")

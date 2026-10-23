@@ -225,7 +225,12 @@ export default function Roles() {
       </div>
 
       {visible.length === 0 && (
-        <p className="help">No role matches that. Clear the search, or write a new one.</p>
+        <p className="help">
+          {roles.length === 0
+            ? <>The library is empty. Load the shipped roles with{" "}
+                <code>yaaf seed-roles roles/</code>, or write one.</>
+            : "No role matches that. Clear the search, or write a new one."}
+        </p>
       )}
 
       {groups.map((group) => (
