@@ -49,6 +49,9 @@ export YAAF_DATABASE_URL=sqlite:////tmp/yaaf.db \
 .venv/bin/yaaf seed-roles roles/
 ```
 
+Then `yaaf doctor` checks every one of these at once — and `seed-crews`,
+which the picker needs — and prints the fix for anything missing.
+
 Open the link `bootstrap` printed, choose a password, and you are in the
 dashboard at **http://localhost:8080/app**. See [AUTH.md](AUTH.md) for who
 may do what once more people are on the box.

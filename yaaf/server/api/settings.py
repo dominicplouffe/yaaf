@@ -24,6 +24,8 @@ Both stores are the ones that already existed: plain values in
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
@@ -847,3 +849,83 @@ def delete_model_price(model: str, session: Session = Depends(db)) -> dict:
     session.delete(row)
     _audit(session, None, "model_price.clear", "model", model, {})
     return {"model": model, "removed": True}
+
+
+# ── doctor: is this install able to do its job? ─────────────────────────────────
+
+
+#: How long a queued run may wait, with nothing started anywhere, before the
+#: doctor says the runner looks down. Long enough to sit out a concurrency cap.
+_RUNNER_QUIET = timedelta(minutes=10)
+
+
+def _check(name: str, ok: bool, detail: str, fix: str, *, problem: bool = True) -> dict:
+    return {"name": name, "ok": ok, "level": "problem" if problem else "suggestion",
+            "detail": detail, "fix": None if ok else fix}
+
+
+@router.get("/doctor", dependencies=[authority.INSTANCE_ADMIN])
+def doctor(session: Session = Depends(db)) -> dict:
+    """Every way this install can look alive and do nothing, checked at once,
+    each with the command or the page that fixes it.
+
+    The dev path alone has four steps that, missed, leave "a project that looks
+    alive and never moves" (docs/DEPLOYMENT.md), and a fresh box met them one
+    at a time: an empty crew picker, a 500 on the first saved secret, runs
+    queued forever, a Founder asking for a second key. `yaaf doctor` reads this.
+    """
+    from sqlalchemy import func, select
+
+    from yaaf.core import llm_credentials
+    from yaaf.core.config import settings as config
+    from yaaf.core.models import Crew, Role, Run, RunQueue, utcnow
+    from yaaf.server.app import _web_dist
+
+    cfg = config()
+    roles = session.execute(select(func.count(Role.id))).scalar_one()
+    crews = session.execute(select(func.count(Crew.id))).scalar_one()
+    keys = len(session.execute(llm_credentials.offerable()).scalars().all())
+    quiet_since = utcnow() - _RUNNER_QUIET
+    waiting = session.execute(select(func.count(RunQueue.id)).where(
+        RunQueue.created_at < quiet_since,
+        (RunQueue.not_before.is_(None)) | (RunQueue.not_before < quiet_since),
+    )).scalar_one()
+    started = session.execute(select(func.count(Run.id)).where(
+        Run.started_at >= quiet_since)).scalar_one()
+    checks = [
+        _check("dashboard", _web_dist() is not None,
+               "the web dashboard is built" if _web_dist() else "the dashboard is not built",
+               "cd web && npm install && npm run build — the API serves only a JSON note "
+               "at /app without it"),
+        _check("master key", bool(cfg.master_key),
+               "secrets can be stored" if cfg.master_key else "YAAF_MASTER_KEY is unset",
+               "set YAAF_MASTER_KEY (a Fernet key) — without it saving any credential fails"),
+        _check("roles", roles > 0, f"{roles} role(s) in the library",
+               "yaaf seed-roles roles/ — nobody can be hired from an empty library"),
+        _check("crews", crews > 0, f"{crews} crew(s) on the hiring desk",
+               "yaaf seed-crews crews/ — the 'start from a crew' picker is empty without it",
+               problem=False),
+        _check("a key to pay with", keys > 0, f"{keys} LLM credential(s)",
+               "add one under Settings → LLM credentials, or `yaaf create-llm-credential "
+               "NAME` — a project with none is created unable to start"),
+        _check("the Founder's key", platform.has_credential(session),
+               "the Founder can draft" if platform.has_credential(session)
+               else "the Founder cannot draft",
+               "`yaaf set-platform-key --from-credential NAME`, or one click under "
+               "Settings → Founder", problem=False),
+        _check("runner", waiting == 0 or started > 0,
+               f"{waiting} run(s) waiting over 10 minutes, none started" if waiting and not started
+               else "runs are being picked up",
+               "start yaaf-runner — the server queues runs but never executes them"),
+        _check("public address", bool(cfg.public_base_url),
+               cfg.public_base_url or "YAAF_PUBLIC_BASE_URL is unset",
+               "set YAAF_PUBLIC_BASE_URL to the address people open — notices link to "
+               "the Inbox only with it, and claude.ai cannot connect without it",
+               problem=False),
+        _check("email", bool(cfg.smtp_host),
+               "mail is configured" if cfg.smtp_host else "no SMTP host",
+               "set YAAF_SMTP_HOST — without it decisions and alarms reach only the "
+               "Inbox and any webhook", problem=False),
+    ]
+    return {"ok": all(c["ok"] for c in checks if c["level"] == "problem"),
+            "checks": checks}

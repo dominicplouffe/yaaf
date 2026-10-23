@@ -26,6 +26,7 @@ Every command that takes a project accepts **either a slug or an id**.
 
 | Command | What it does |
 |---|---|
+| `yaaf doctor` | Check the install end to end — server, your sign-in, the dashboard build, the master key, roles and crews, a key to pay with, the Founder's key, the runner, the public address, email — and print the command or page that fixes each failure. Exits 1 while a problem stands. |
 | `yaaf seed-roles [DIR] [--only-missing]` | Load every `*.json` in the directory (default `roles/`) into the role library. Re-running creates new role *versions* — which is how an edited prompt reaches a running install. `--only-missing` skips the slugs the library already has, which is what you want after an update adds roles to the checkout; it still refiles those roles' **category and domains**, because those live on the role rather than the version and so can move without putting a live team behind its prompt. |
 | `yaaf seed-crews [DIR] [--only-missing]` | Load every `*.json` in the directory (default `crews/`) into the crew library — the pre-staffed teams the hiring desk offers. Crews are not versioned: one is read at hiring time and copied into the project's own teams, so re-seeding an edited crew can never reach a project that already started. Run it after `seed-roles`. |
 | `yaaf create-user EMAIL NAME [--admin]` | Invite somebody (instance admins only). Prints the one-time link that lets them choose a password — the box sends no mail, so hand it on. Idempotent by email. |

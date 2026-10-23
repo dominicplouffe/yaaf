@@ -242,6 +242,8 @@ WITHHELD = {
         "a subscription's plan meter is the account owner's, not any one project's.",
     "GET /admin/settings":
         "the app-wide configuration screen, above every project a client is scoped to.",
+    "GET /admin/settings/doctor":
+        "the install's own wiring, above every project a client is scoped to.",
     "GET /admin/projects/{project_id}/credentials":
         "the same list rides the project's dashboard (`credentials`), which `project` "
         "already returns — a second read path would be a second definition of it.",

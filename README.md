@@ -235,6 +235,7 @@ it over SSH (`ssh -N -L 8080:localhost:8080 you@your-server`, then
 
 ```bash
 yaaf login                                   # your email and password, once
+yaaf doctor                                  # checks the install, says what to fix
 yaaf mcp-token mint my-laptop --scopes read
 # → ymt_…
 

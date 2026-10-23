@@ -360,6 +360,38 @@ def logout() -> None:
 
 
 @app.command()
+def doctor() -> None:
+    """Check this install end to end and say what to do about anything wrong:
+    the server, your sign-in, the dashboard, roles, keys, the runner, email."""
+    def line(ok: bool, name: str, detail: str, fix: str | None = None,
+             problem: bool = True) -> None:
+        mark = "✓" if ok else ("✗" if problem else "!")
+        typer.echo(f"{mark} {name}: {detail}")
+        if not ok and fix:
+            typer.echo(f"    → {fix}")
+
+    with _client() as client:
+        client.get("/healthz")  # an unreachable server exits here, in one line
+        line(True, "server", f"answering at {_api_base()}")
+        me = client.get("/auth/me")
+        if me.status_code == 401:
+            line(False, "signed in", "not signed in", "yaaf login")
+            raise typer.Exit(1)
+        who = me.json()
+        line(True, "signed in", f"as {who.get('email', who.get('id', 'you'))}")
+        report = client.get("/admin/settings/doctor")
+        if report.status_code == 403:
+            typer.echo("The rest of the checks are an instance admin's to run.")
+            return
+        body = _json_or_die(report)
+    for check in body["checks"]:
+        line(check["ok"], check["name"], check["detail"], check.get("fix"),
+             problem=check["level"] == "problem")
+    if not body["ok"]:
+        raise typer.Exit(1)
+
+
+@app.command()
 def whoami() -> None:
     """Who this CLI is signed in as, and against which install."""
     with _client() as client:
@@ -1289,7 +1321,8 @@ _register_users()
 #: Where each command sits in `yaaf --help`, in the order somebody new reaches
 #: for them. The help used to be sixty commands in the order they were written.
 PANELS = {
-    "Get started": ("login", "logout", "whoami", "rehearse", "create_project", "projects"),
+    "Get started": ("login", "logout", "whoami", "doctor", "rehearse", "create_project",
+                    "projects"),
     "Run a project": ("start", "pause", "stop", "configure", "amend"),
     "Decide": ("say", "decide", "extend", "ack_flag", "ack_heads_up", "unfreeze", "audit",
                "audit_evidence"),
