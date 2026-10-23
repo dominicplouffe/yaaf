@@ -2890,3 +2890,12 @@ del.bd { color: var(--ink-2); background: rgba(var(--critical-rgb), 0.12);
 
 /* A wide table scrolls inside its own box instead of pushing the page sideways. */
 .table-scroll { overflow-x: auto; max-width: 100%; }
+
+/* An optional section on the review step: a heading you can open. */
+.opt-sec { margin: 18px 0 6px; }
+.opt-sec > summary { cursor: pointer; list-style: none; display: flex; align-items: baseline;
+  gap: 10px; flex-wrap: wrap; }
+.opt-sec > summary::-webkit-details-marker { display: none; }
+.opt-sec > summary::before { content: "▸"; color: var(--ink-3, var(--ink-2)); }
+.opt-sec[open] > summary::before { content: "▾"; }
+.opt-sec > summary h2 { display: inline; margin: 0; }

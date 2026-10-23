@@ -17,7 +17,7 @@ import {
   sourceReady,
 } from "../datasource";
 import { CeoPicker, HirePanel, needsOf, roughMonthly } from "../roles";
-import { CredentialValue, SecretInput } from "../ui";
+import { clip, CredentialValue, SecretInput } from "../ui";
 import type { FounderStatus, PresetCard } from "./StartProject";
 
 /** Names for a seat the chairman hired without naming. Plain, distinct,
@@ -2058,6 +2058,29 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
             <span className="chip">{MODES.find((m) => m.value === mode)?.label ?? mode}</span>
             <span className="help">{MODES.find((m) => m.value === mode)?.blurb}</span>
           </div>
+          {/* The two questions the summary did not answer: how much it does
+              without asking, and who reads the work before you do. */}
+          <div className="orgline">
+            <strong>Say-so</strong>
+            <span className="chip">
+              {autonomyPresets.find((p) => p.value === autonomy)?.label ?? autonomy}</span>
+            <span className="help">
+              {clip(autonomyPresets.find((p) => p.value === autonomy)?.blurb ?? "", 160)}</span>
+          </div>
+          <div className="orgline">
+            <strong>Checked</strong>
+            {craft.deliverable_review === "independent_read" && !solo ? (
+              <>
+                <span className="chip">by a second agent</span>
+                <span className="help">someone who did not write it reads each deliverable before you do</span>
+              </>
+            ) : (
+              <>
+                <span className="chip">by you</span>
+                <span className="help">nobody reads a deliverable before you except the agent that wrote it</span>
+              </>
+            )}
+          </div>
           <div className="orgline">
             <strong>Cap</strong>
             {tokensMode ? (
@@ -2130,7 +2153,12 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
           })}
         </div>
 
-        <h2>Service credentials (optional)</h2>
+        {/* Optional, so folded: open only when a hire needs a key or one was
+            already added — otherwise two paragraphs of plumbing sat between
+            the summary and the button that creates the project. */}
+        <details className="opt-sec" open={requiredScopes.length > 0 || credentials.length > 0}>
+        <summary><h2>Service credentials (optional)</h2>
+          <span className="help">keys for WordPress, GitHub, Stripe… — or add them later in Settings</span></summary>
         <p className="subtitle">
           Keys your agents will need for outside services (WordPress, GitHub, Stripe…). Encrypted
           at rest and injected only into the sandboxes of roles you tick — agents are told the
@@ -2227,8 +2255,11 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
         >
           + Add credential
         </button>
+        </details>
 
-        <h2>Data sources (optional)</h2>
+        <details className="opt-sec" open={dataSources.length > 0}>
+        <summary><h2>Data sources (optional)</h2>
+          <span className="help">MCP servers your agents may read from — or add them later in Settings</span></summary>
         <DataSourceIntro>
           One added here is saved with the project and tested again before it starts.
           Afterwards, sources are added and changed in Settings → Data sources.
@@ -2265,6 +2296,7 @@ curl -X POST "${origin}${webhooks.generic.url}" \\
         >
           + Add data source
         </button>
+        </details>
 
         {/* The drill. It sits above the create button because that is the
             order the question comes in: a chairman about to hand over a budget
