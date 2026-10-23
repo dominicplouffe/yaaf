@@ -2057,13 +2057,41 @@ def _file_index(project: Project) -> file_index.Snapshot:
     return file_index.snapshot(project.id, _workspace_root(project), f"projects/{project.id}/")
 
 
-def _receipt(a: Artifact, key_of: dict[str, str]) -> dict:
+#: Acceptance tests the platform runs itself. An observable is judged by a
+#: person or the CEO; it can be met, but it was never machine-checked.
+_MACHINE_CHECKED = ("command", "metric")
+
+
+def _checked(satisfied: list) -> tuple[str | None, str | None]:
+    """How the requirements a deliverable claims were settled, as one label.
+
+    The proof lived on another page (Activity → Proof) and the file showed
+    only that it "satisfies R-02" — a claim the agent made at publish, which
+    says nothing about whether anything checked it. The label never upgrades a
+    judgement to a verification: one observable among them makes it "judged".
+    """
+    if not satisfied:
+        return None, None
+    keys = ", ".join(r.key for r in satisfied)
+    if any(r.status != RequirementStatus.MET for r in satisfied):
+        unsettled = ", ".join(r.key for r in satisfied if r.status != RequirementStatus.MET)
+        return "pending", f"{unsettled} not settled yet"
+    if all((r.acceptance_test or {}).get("type") in _MACHINE_CHECKED for r in satisfied):
+        return "verified", f"the platform ran the acceptance test for {keys}"
+    return "judged", f"{keys} met by judgement — an observable no script can check"
+
+
+def _receipt(a: Artifact, reqs: dict) -> dict:
+    satisfied = [reqs[rid] for rid in a.requirement_ids or [] if rid in reqs]
+    checked, why = _checked(satisfied)
     return {
         "id": a.id, "name": a.name, "version": a.version, "sha256": a.sha256,
         "size": a.size_bytes, "key": a.storage_key,
         "published_at": a.published_at.isoformat(),
         "published_by": a.published_by_agent_id,
-        "satisfies": sorted(key_of.get(rid, rid) for rid in a.requirement_ids or []),
+        "satisfies": sorted(reqs[rid].key if rid in reqs else rid
+                            for rid in a.requirement_ids or []),
+        "checked": checked, "checked_why": why,
     }
 
 
@@ -2088,9 +2116,9 @@ def project_files(project_id: str, session: Session = Depends(db)) -> dict:
     # The receipts: published rows with a real hash, a real timestamp, and the
     # requirements each claims to satisfy. The listing above is what the store
     # HOLDS; this is what was formally shipped, and the two can differ.
-    key_of = {r.id: r.key for r in policy.scope_requirements(session, project.id)}
+    reqs = {r.id: r for r in policy.scope_requirements(session, project.id)}
     published = [
-        _receipt(a, key_of)
+        _receipt(a, reqs)
         for a in session.execute(
             select(Artifact).where(Artifact.project_id == project.id)
             .order_by(Artifact.published_at.desc()).limit(200)
@@ -2118,8 +2146,8 @@ def _receipts(session: Session, project: Project, items: list) -> dict[str, dict
         ).scalars().all()
     if not rows:
         return {}
-    key_of = {r.id: r.key for r in policy.scope_requirements(session, project.id)}
-    return {a.storage_key: _receipt(a, key_of) for a in rows}
+    reqs = {r.id: r for r in policy.scope_requirements(session, project.id)}
+    return {a.storage_key: _receipt(a, reqs) for a in rows}
 
 
 def _file_row(item: file_index.Item, pos: int | None, receipts: dict[str, dict],

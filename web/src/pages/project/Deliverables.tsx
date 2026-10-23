@@ -15,6 +15,21 @@ interface PublishedRow {
   published_at: string;
   published_by: string | null;
   satisfies: string[];
+  /** How the requirements it claims were settled — the platform's word, not
+      the agent's: verified (a test the platform ran), judged (an observable
+      somebody judged), pending (not settled yet). Absent when it claims none. */
+  checked?: "verified" | "judged" | "pending" | null;
+  checked_why?: string | null;
+}
+
+/** The proof, on the file. It used to live on another page, so a deliverable
+    said only what its author claimed it satisfied. */
+function CheckedChip({ receipt }: { receipt: PublishedRow | null | undefined }) {
+  if (!receipt?.checked) return null;
+  const [tone, word] = receipt.checked === "verified" ? ["ok", "✓ verified"]
+    : receipt.checked === "judged" ? ["accent", "judged"]
+      : ["", "not yet checked"];
+  return <span className={`chip ${tone}`} title={receipt.checked_why ?? undefined}>{word}</span>;
 }
 
 /** One row as the index sends it. The server does the searching, sorting and
@@ -732,6 +747,7 @@ function Preview({
               {entry.receipt?.satisfies.length
                 ? ` · satisfies ${entry.receipt.satisfies.join(", ")}`
                 : ""}
+              {entry.receipt?.checked_why ? ` — ${entry.receipt.checked_why}` : ""}
               {entry.receipt && (
                 <>
                   {" · "}
@@ -882,6 +898,7 @@ function Row(props: RowProps) {
                 : `${entry.receipt.satisfies.length} requirements`}
             </span>
           ) : null}
+          <CheckedChip receipt={entry.receipt} />
           {entry.older.length > 0 && (
             <button
               className="chip vchip"
