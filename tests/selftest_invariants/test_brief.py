@@ -20,7 +20,7 @@ in chat since it last ran.
 
 from __future__ import annotations
 
-from tests.conftest import ADMIN, agent_by_name, bearer, live_token, make_project
+from tests.conftest import ADMIN, agent_by_name, bearer, channel_of, live_token, make_project
 from tests.selftest_invariants.test_chat_lane import _attach_billing, _fake_sandbox
 from yaaf.core.db import db_session
 from yaaf.core.models import (
@@ -288,3 +288,39 @@ def test_a_work_run_is_told_what_he_said_in_chat(client):
     # The chat lane itself is not told twice: it holds the transcript.
     chat_pack = client.get("/agent/context", headers=bearer(chat_token)).json()
     assert "chairman_in_chat" not in chat_pack
+
+
+def test_a_refusal_the_retry_got_past_stops_warning(client):
+    """The boardroom card said "last refused … check the board before believing
+    it" beside a CEO truthfully reporting a brief filed: its first draft ran
+    over the length cap, the second went through. The card now knows which call
+    was refused, and when the same call later succeeded."""
+    project = make_project(client)
+    run_id, token = live_token(project["id"], project["ceo_agent_id"], kind="chat_session")
+    long = {**BRIEF, "standing_orders": ["Daily orders as a table " + "x" * 480]}
+    refused = client.post("/agent/brief", json=long, headers=bearer(token))
+    assert refused.status_code == 422, refused.text
+
+    def row() -> dict:
+        runs = client.get(f"/observe/projects/{project['id']}/runs", headers=ADMIN).json()
+        return next(r for r in runs if r["id"] == run_id)
+
+    assert "400 characters" in row()["last_refusal"]
+    assert row()["last_refusal_at"] and row()["last_refusal_cleared_at"] is None
+
+    # A different call going through answers nothing about the brief.
+    boardroom = channel_of(client, project["id"], "boardroom")
+    typed = client.post("/agent/typing", json={"channel_id": boardroom},
+                        headers=bearer(token))
+    assert typed.status_code == 200, typed.text
+    assert row()["last_refusal_cleared_at"] is None
+
+    # The same call refused again stays a live wall.
+    assert client.post("/agent/brief", json=long, headers=bearer(token)).status_code == 422
+    assert row()["last_refusal_cleared_at"] is None
+
+    filed = client.post("/agent/brief", json=BRIEF, headers=bearer(token))
+    assert filed.status_code == 200, filed.text
+    after = row()
+    assert after["last_refusal_cleared_at"] is not None
+    assert "400 characters" in after["last_refusal"]  # the Runs page keeps the wall

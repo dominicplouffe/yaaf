@@ -660,6 +660,10 @@ export interface RunRow {
   refusals: number;
   /** The last wall this run hit — set whenever the platform refused a call. */
   last_refusal: string | null;
+  last_refusal_at: string | null;
+  /** When the same call that was refused later went through in this run. A
+      retry that worked is not a reason to doubt what the agent then said. */
+  last_refusal_cleared_at: string | null;
   summary: string | null;
   has_trace: boolean;
   has_context: boolean;
