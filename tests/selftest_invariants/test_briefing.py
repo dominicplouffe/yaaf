@@ -860,3 +860,15 @@ def test_without_a_public_origin_the_letter_names_results_and_links_nowhere(clie
         brief = briefing.project_briefing(session, session.get(Project, project["id"]))
     assert brief["delivered"][0]["link"] is None
     assert "+ memo.md\n" in briefing.render_text(brief)
+
+
+def test_the_letter_leads_with_what_is_his_and_speaks_his_clock(client):
+    """Decisions first, then results, then the account; and no UTC stamp for
+    him to convert — the constitution already names his timezone."""
+    project = make_project(client, slug="clock", constitution={"timezone": "America/New_York"})
+    with db_session() as session:
+        brief = briefing.project_briefing(session, session.get(Project, project["id"]))
+    text = briefing.render_text(brief)
+    assert text.index("Waiting on you") < text.index("Window:")
+    assert "UTC" not in text
+    assert ("EDT" in text) or ("EST" in text)

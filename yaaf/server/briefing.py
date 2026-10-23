@@ -86,6 +86,7 @@ from yaaf.core.models import (
 )
 from yaaf.server import heads_up, policy
 from yaaf.server.dispatcher import heartbeat_only
+from yaaf.server.rows import chairman_time
 
 #: A window with no mark falls back to this. Only reached for a member row
 #: that predates the column, since a new one composes from the project start.
@@ -1386,6 +1387,9 @@ def project_briefing(session: Session, project: Project,
         "until": until.isoformat(),
         "window_source": source,
         "window_hours": round((until - since).total_seconds() / 3600.0, 2),
+        # Every time in the letter is said in the reader's zone; the panel's
+        # browser does the same sum on its side.
+        "timezone": cons.timezone,
         "quiet": not substantive,
         "headline": _headline(
             project, substantive, pulse, waiting,
@@ -1446,6 +1450,36 @@ def desk_briefing(session: Session, since: datetime | None = None,
 # ── the same content, as text ───────────────────────────────────────────────────
 
 
+def _waiting_lines(waiting: dict, when) -> list[str]:
+    """What is his to do, as the letter's first block."""
+    body: list[str] = []
+    if waiting["total"]:
+        body.append(f"Waiting on you: {waiting['total']}")
+        if waiting["approvals"]:
+            soonest = when(waiting["soonest_expiry"]) if waiting["soonest_expiry"] else "unknown"
+            body.append(f"  · {waiting['approvals']} approval(s); the soonest "
+                        f"decides itself {soonest}")
+        if waiting["plan"]:
+            body.append(f"  · {waiting['plan']} proposed requirement(s) to accept "
+                        "— proposed scope is not scope")
+        if waiting["verdicts"]:
+            body.append(f"  · {waiting['verdicts']} observable close(s) only you can judge")
+        if waiting["commitment"]:
+            body.append("  · a delivery date to sign")
+        if waiting["flags_raised"]:
+            body.append(f"  · {waiting['flags_raised']} flag(s) the CEO raised with a "
+                        "proposal")
+        if waiting["open_reviews"]:
+            body.append(f"  · {waiting['open_reviews']} review(s) open")
+    elif waiting.get("to_read"):
+        body.append(f"Waiting on you: nothing to decide; {waiting['to_read']} to read.")
+    else:
+        body.append("Waiting on you: nothing.")
+    if waiting.get("heads_ups"):
+        body.append(f"  · {waiting['heads_ups']} heads-up(s) you asked for, not yet noted")
+    return body
+
+
 def render_text(brief: dict) -> str:
     """The daily push. One composer, two deliveries — a panel and an email that
     cannot disagree about what happened, because there is no second query."""
@@ -1456,9 +1490,14 @@ def render_text(brief: dict) -> str:
            else f"{money['month_to_date']:,.0f} tokens")
     cap = (f"${money['cap']:,.0f}" if money["unit"] == "usd"
            else f"{money['cap']:,.0f} tokens")
-    body = [brief["headline"], ""]
-    # Results before the account of how they were made: what the project
-    # produced is what the reader opened the letter for.
+    tz = brief.get("timezone")
+
+    def when(iso: str) -> str:
+        return chairman_time(datetime.fromisoformat(iso), tz)
+
+    # What waits on him first, then what it produced, then the account of how:
+    # the order he acts in, not the order the record was written.
+    body = [brief["headline"], ""] + _waiting_lines(brief["waiting"], when) + [""]
     delivered = brief.get("delivered") or []
     if delivered:
         body.append("Delivered")
@@ -1470,8 +1509,8 @@ def render_text(brief: dict) -> str:
             body.append(f"  … and {len(delivered) - DELIVERED_LISTED} more in Deliverables")
         body.append("")
     body += [
-        f"Window: {brief['window_source']} — {brief['since'][:16].replace('T', ' ')} "
-        f"to {brief['until'][:16].replace('T', ' ')} UTC ({brief['window_hours']}h)",
+        f"Window: {brief['window_source']} — {when(brief['since'])} "
+        f"to {when(brief['until'])}",
         "",
     ]
     if brief["lines"]:
@@ -1496,45 +1535,16 @@ def render_text(brief: dict) -> str:
         body.append("  · nothing — no scope settled, no work closed, no proof landed")
         body.append(f"  · {pulse['open_tasks']} task(s) open, {pulse['running']} run(s) "
                     f"in flight, last run "
-                    + (pulse["last_run_at"][:16].replace("T", " ") + " UTC"
-                       if pulse["last_run_at"] else "never"))
+                    + (when(pulse["last_run_at"]) if pulse["last_run_at"] else "never"))
     body += ["", f"Money: {spent} this window; {mtd} of {cap} this month."]
 
-    waiting = brief["waiting"]
-    body.append("")
-    if waiting["total"]:
-        body.append(f"Waiting on you: {waiting['total']}")
-        if waiting["approvals"]:
-            when = (waiting["soonest_expiry"][:16].replace("T", " ") + " UTC"
-                    if waiting["soonest_expiry"] else "unknown")
-            body.append(f"  · {waiting['approvals']} approval(s); the soonest "
-                        f"auto-decides {when}")
-        if waiting["plan"]:
-            body.append(f"  · {waiting['plan']} proposed requirement(s) to accept "
-                        "— proposed scope is not scope")
-        if waiting["verdicts"]:
-            body.append(f"  · {waiting['verdicts']} observable close(s) only you can judge")
-        if waiting["commitment"]:
-            body.append("  · a delivery date to sign")
-        if waiting["flags_raised"]:
-            body.append(f"  · {waiting['flags_raised']} flag(s) the CEO raised with a "
-                        "proposal")
-        if waiting["open_reviews"]:
-            body.append(f"  · {waiting['open_reviews']} review(s) open")
-    elif waiting.get("to_read"):
-        body.append(f"Waiting on you: nothing to decide; {waiting['to_read']} to read.")
-    else:
-        body.append("Waiting on you: nothing.")
-    if waiting.get("heads_ups"):
-        body.append(f"  · {waiting['heads_ups']} heads-up(s) you asked for, not yet noted")
     # The fifth question, and the one that used to go unanswered: a quiet
     # window reads as a dead project unless something says when it moves next.
     next_up = brief.get("next_up")
     if next_up:
         body.append("")
         if next_up["at"]:
-            when = next_up["at"][:16].replace("T", " ") + " UTC"
-            body.append(f"Next: {next_up['label']} — {when}")
+            body.append(f"Next: {next_up['label']} — {when(next_up['at'])}")
         else:
             body.append(f"Next: nothing scheduled. {next_up['why']}")
     body += [

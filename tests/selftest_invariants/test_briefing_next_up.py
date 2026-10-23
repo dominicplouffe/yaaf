@@ -19,11 +19,14 @@ Every one of those was answerable from rows, for nothing.
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from tests.conftest import ADMIN, make_project
 from yaaf.core.constitution import effective
 from yaaf.core.db import db_session
 from yaaf.core.models import Project, ProjectStatus
 from yaaf.server.briefing import project_briefing, render_text
+from yaaf.server.rows import chairman_time
 
 
 def _brief(project_id: str) -> dict:
@@ -55,7 +58,10 @@ def test_the_email_says_it_too_and_cannot_disagree_with_the_panel(client):
     assert "Next:" in text
     if brief["next_up"]["at"]:
         assert brief["next_up"]["label"] in text
-        assert brief["next_up"]["at"][:16].replace("T", " ") in text
+        # The same moment the panel shows, said in the reader's zone rather
+        # than as a UTC stamp he has to convert.
+        at = datetime.fromisoformat(brief["next_up"]["at"])
+        assert chairman_time(at, brief["timezone"]) in text
 
 
 def test_a_paused_project_says_nothing_is_scheduled_and_why(client):
