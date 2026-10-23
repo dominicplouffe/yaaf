@@ -18,7 +18,7 @@ from yaaf.server.api import observe
 from yaaf.server.mcp import envelope
 from yaaf.server.mcp.auth import Principal, ToolRefusal, reachable_projects, resolve_project
 from yaaf.server.mcp.registry import register, required, whole
-from yaaf.server.status_line import VERDICTS
+from yaaf.server.status_line import portfolio_summary
 
 #: Goals are written to brief a CEO, not to fit in a list. Full text is one
 #: `project` call away (M1); this is the line that tells them apart.
@@ -232,42 +232,8 @@ def desk(principal: Principal, session: Session, arguments: dict) -> dict:
     filtered["also_yours"] = _also_yours(session, reachable)
     # First, and written before the trim: a long desk loses rows to the
     # context budget, and the project that needed him must not be one of them.
-    summary = _desk_summary(filtered.get("projects") or [], filtered["also_yours"])
+    summary = portfolio_summary(filtered.get("projects") or [], filtered["also_yours"])
     return envelope.fit({"summary": summary, **filtered}, arguments.get("detail"))
-
-
-#: Verdicts that are news. The rest are a count: "4 others are fine" is the
-#: whole of what a reader needs to hear about a project that is fine.
-_QUIET = ("on_track", "idle", "done", "not_started")
-
-
-def _desk_summary(rows: list[dict], also: list[dict]) -> str:
-    """The desk in prose, from platform-written facts only: the project's own
-    name and its status headline — never an approval title or a CEO's words,
-    which ride the rows below wrapped as data."""
-    if not rows:
-        return "No projects."
-    order = {v: i for i, v in enumerate(VERDICTS)}
-    news = sorted((r for r in rows if (r.get("status_line") or {}).get("verdict")
-                   not in _QUIET),
-                  key=lambda r: order.get(r["status_line"]["verdict"], len(order)))
-    parts = [f"{len(rows)} project{'s' if len(rows) != 1 else ''}."]
-    if news:
-        parts.append(" ".join(f"{r['name']}: {r['status_line']['headline']}" for r in news))
-    rest = len(rows) - len(news)
-    if rest and news:
-        parts.append(f"{rest} other{'s are' if rest != 1 else ' is'} fine.")
-    elif rest:
-        parts.append("All fine.")
-    if also:
-        counts: dict[str, int] = {}
-        for item in also:
-            counts[item["kind"]] = counts.get(item["kind"], 0) + 1
-        words = {"flag": "flag", "heads_up": "heads-up", "review": "open review"}
-        listed = ", ".join(f"{n} {words.get(k, k)}{'s' if n != 1 else ''}"
-                           for k, n in counts.items())
-        parts.append(f"Also yours: {listed}.")
-    return " ".join(parts)
 
 
 def _also_yours(session: Session, reachable: set[str]) -> list[dict]:

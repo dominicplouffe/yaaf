@@ -109,3 +109,39 @@ def _verdict(*, status, status_reason, unpaid, commitment, waiting, open_tasks,
     if open_tasks or runs_running:
         return "on_track", "Working.", True
     return "idle", "Nothing open right now.", True
+
+
+#: Verdicts that are news. The rest are a count: "4 others are fine" is the
+#: whole of what a reader needs to hear about a project that is fine.
+_QUIET = ("on_track", "idle", "done", "not_started")
+
+
+def portfolio_summary(rows: list[dict], also: list[dict] | None = None) -> str:
+    """Every project in one paragraph, from desk rows: how many, each one whose
+    verdict is news with its headline, how many others are fine, and what else
+    waits (`also`, as counts). Platform-written facts only — the project's own
+    name and its headline, never an approval title or a CEO's words — because
+    Claude reads it unwrapped through `desk`; `yaaf status` prints the same."""
+    if not rows:
+        return "No projects."
+    order = {v: i for i, v in enumerate(VERDICTS)}
+    news = sorted((r for r in rows if (r.get("status_line") or {}).get("verdict")
+                   not in _QUIET),
+                  key=lambda r: order.get(r["status_line"]["verdict"], len(order)))
+    parts = [f"{len(rows)} project{'s' if len(rows) != 1 else ''}."]
+    if news:
+        parts.append(" ".join(f"{r['name']}: {r['status_line']['headline']}" for r in news))
+    rest = len(rows) - len(news)
+    if rest and news:
+        parts.append(f"{rest} other{'s are' if rest != 1 else ' is'} fine.")
+    elif rest:
+        parts.append("All fine.")
+    if also:
+        counts: dict[str, int] = {}
+        for item in also:
+            counts[item["kind"]] = counts.get(item["kind"], 0) + 1
+        words = {"flag": "flag", "heads_up": "heads-up", "review": "open review"}
+        listed = ", ".join(f"{n} {words.get(k, k)}{'s' if n != 1 else ''}"
+                           for k, n in counts.items())
+        parts.append(f"Also yours: {listed}.")
+    return " ".join(parts)

@@ -142,3 +142,29 @@ def test_seeding_while_signed_out_says_so_once_and_fails(client, monkeypatch, tm
     assert result.exit_code == 1
     assert result.output.count("401") == 1
     assert "yaaf login" in result.output
+
+
+def test_status_says_the_sentences_and_lists_what_they_counted(client, monkeypatch):
+    """The count in a project's sentence and the list under it are one set:
+    a sentence that says two decisions over a list of one sends the reader
+    looking for the other."""
+    from tests.conftest import bearer, live_token, make_project
+
+    as_admin = TestClient(client.app, headers=ADMIN)
+    monkeypatch.setattr(cli, "_client", lambda: contextlib.nullcontext(as_admin))
+    project = make_project(client, slug="desk-one", integrations={"runtime": "mock"})
+    _, token = live_token(project["id"], project["ceo_agent_id"])
+    filed = client.post("/agent/approvals", headers=bearer(token), json={
+        "kind": "spend", "title": "Buy the $49 injury-news feed",
+        "body": "Team news reaches us a day late.", "if_declined": "We react a day late.",
+        "amount_usd": 49})
+    assert filed.status_code == 200, filed.text
+
+    result = runner.invoke(cli.app, ["status"])
+    assert result.exit_code == 0, result.output
+    assert result.output.startswith("1 project. Desk")
+    assert "desk-one  1 decision waiting on you." in result.output
+    assert "desk-one: Buy the $49 injury-news feed" in result.output
+
+    as_json = runner.invoke(cli.app, ["status", "desk-one", "--json"])
+    assert json.loads(as_json.output)[0]["verdict"] == "needs_you"

@@ -853,6 +853,55 @@ def projects(as_json: bool = typer.Option(False, "--json", help="the raw payload
 
 
 @app.command()
+def status(
+    project: str = typer.Argument(None, help="one project's id or slug; all of them if left out"),
+    as_json: bool = typer.Option(False, "--json", help="the status lines as JSON"),
+) -> None:
+    """Is everything OK, and if not, what — in sentences. The same words Home,
+    the project Overview and Claude's desk say, and what is waiting on you."""
+    from yaaf.server.status_line import portfolio_summary
+
+    with _client() as client:
+        only = _resolve_project(client, project) if project else None
+        desk = _json_or_die(client.get("/observe/desk", params={"only": only} if only else {}))
+    rows = desk.get("projects", [])
+    if as_json:
+        typer.echo(json.dumps([{"project": r.get("slug"), **(r.get("status_line") or {})}
+                               for r in rows], indent=2))
+        return
+    if not rows:
+        typer.echo("No projects yet. `yaaf rehearse examples/01-your-first-hour.json` "
+                   "tries one for nothing.")
+        return
+    if not only:
+        typer.echo(portfolio_summary(rows))
+        typer.echo("")
+    width = max(len(r.get("slug", "")) for r in rows)
+    for row in rows:
+        line = (row.get("status_line") or {}).get("sentence", row.get("status", ""))
+        typer.echo(f"{row.get('slug', '').ljust(width)}  {line}")
+    waiting: list[str] = []
+    for row in rows:
+        slug, yours = row.get("slug", ""), row.get("awaiting_you") or {}
+        for item in [*(row.get("pending_approvals") or []), *(row.get("pending_asks") or [])]:
+            waiting.append(f"{slug}: {item.get('title', '')}  [{item.get('id', '')}]")
+        # The rest of what the sentence counted, so the list and the count agree.
+        if yours.get("plan"):
+            waiting.append(f"{slug}: {yours['plan']} proposed requirement(s) to accept "
+                           "(its Roadmap)")
+        for verdict in yours.get("verdicts") or []:
+            waiting.append(f"{slug}: is it done? {verdict.get('name', '')}  "
+                           f"[{verdict.get('key', '')}]")
+        if yours.get("commitment"):
+            waiting.append(f"{slug}: a delivery date to sign (its Roadmap)")
+    if waiting:
+        typer.echo("")
+        typer.echo("Waiting on you:")
+        for line in waiting:
+            typer.echo(f"  {line}")
+
+
+@app.command()
 def dashboard(project: str) -> None:
     """Everything one project's Overview reads, as JSON."""
     with _client() as client:
@@ -1340,7 +1389,7 @@ _register_users()
 #: for them. The help used to be sixty commands in the order they were written.
 PANELS = {
     "Get started": ("login", "logout", "whoami", "doctor", "rehearse", "create_project",
-                    "projects"),
+                    "projects", "status"),
     "Run a project": ("start", "pause", "stop", "configure", "amend"),
     "Decide": ("say", "decide", "extend", "ack_flag", "ack_heads_up", "unfreeze", "audit",
                "audit_evidence"),
