@@ -37,3 +37,25 @@ def test_a_project_with_a_credential_is_paid_for(client):
     assert created.status_code == 201, created.text
     project = make_project(client, billing_secret_id=created.json()["id"])
     assert _row(client, project["id"])["unpaid"] is False
+
+
+def test_the_roadmap_tells_the_chairman_scope_waits_on_him_in_his_own_words(client):
+    """The plan gate's reasons are written to the CEO ("waiting on him, not on
+    you") and were shown verbatim on the Roadmap, beside rows badged "waiting
+    for you". The chairman's screen says it to him; the CEO's is untouched."""
+    from tests.selftest_invariants.test_requirements import (
+        ceo_token,
+        deliver_project,
+        propose,
+    )
+
+    project = deliver_project(client, slug="scope")
+    propose(client, ceo_token(project))
+    plan = client.get(f"/observe/projects/{project['id']}/plan", headers=ADMIN).json()
+    gaps = " ".join(plan["plan"]["outstanding"])
+    assert "you decide what is in scope" in gaps
+    assert "waiting on him" not in gaps
+
+    pack = client.get("/agent/context", headers={
+        "Authorization": f"Bearer {ceo_token(project)}"}).json()
+    assert "waiting on him, not on you" in str(pack)

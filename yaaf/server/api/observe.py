@@ -436,6 +436,23 @@ def project_briefing(project_id: str, hours: float | None = None,
     return briefing.project_briefing(session, project, since=at)
 
 
+#: The plan gate's reasons are written to the CEO, which reads them in its
+#: context pack — and they were shown verbatim on the chairman's Roadmap, so a
+#: Supervised chairman read that scope was "waiting on him, not on you" beside
+#: rows badged "waiting for you". The CEO's words stay as they are; the
+#: chairman's screen is told the same fact in the second person.
+_CHAIRMAN_WORDING = {
+    "the chairman decides what is in scope, so this is waiting on him, not on you.":
+        "you decide what is in scope — accept or cut them on the Roadmap.",
+}
+
+
+def _to_chairman(gap: str) -> str:
+    for theirs, yours in _CHAIRMAN_WORDING.items():
+        gap = gap.replace(theirs, yours)
+    return gap
+
+
 @router.get("/projects/{project_id}/agenda", dependencies=[authority.READ])
 def project_agenda(project_id: str, days: int = agenda.DEFAULT_DAYS,
                    session: Session = Depends(db)) -> dict:
@@ -1292,7 +1309,8 @@ def plan_view(project_id: str, session: Session = Depends(db)) -> dict:
         "plan": {
             "status": plan.status if plan else None,
             "holds": plan is not None and plan.status == RequirementStatus.MET,
-            "outstanding": policy.evaluate_plan(session, project, cons),
+            "outstanding": [_to_chairman(gap)
+                            for gap in policy.evaluate_plan(session, project, cons)],
             "arithmetic": policy.plan_arithmetic(session, project, cons),
             "planning_spend": spend.get(plan.id, {"runs": 0, "usd": 0}) if plan else None,
         },
