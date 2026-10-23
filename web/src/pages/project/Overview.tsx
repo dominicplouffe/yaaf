@@ -741,7 +741,7 @@ export default function Overview({
         <div className="ov-title-row">
           <div className="grow">
             <h1 className="ov-title">
-              {dash.name} {statusBadge(dash.status)}
+              {dash.name} {statusBadge(dash.status, unpaid)}
               {dash.drought_active && (
                 <Badge tone="serious">
                   <Term means="Nothing outside this project has verified any of its claims for longer than your rules allow. Work carries on; new internal-only work is refused until proof lands.">

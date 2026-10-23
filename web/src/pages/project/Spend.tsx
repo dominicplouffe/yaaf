@@ -29,7 +29,9 @@ export function BudgetCard({ ctx }: { ctx: ProjectCtx }) {
   const { dash, projectId } = ctx;
   const { usdMode, unit, spent, cap, warnRatio, frac, hardStop, wall } = budgetOf(dash);
   const pace = paceDate(spent, cap);
-  const state = wall > 0 && spent >= wall ? { tone: "critical" as const, label: "Hard stop — paused" }
+  const unpaid = !dash.billing_secret_id && dash.integrations?.runtime !== "mock";
+  const state = unpaid ? { tone: "warn" as const, label: "Nothing pays for it" }
+    : wall > 0 && spent >= wall ? { tone: "critical" as const, label: "Hard stop — paused" }
     : frac >= 1 ? { tone: "critical" as const, label: "Over budget" }
       : frac >= warnRatio ? { tone: "warn" as const, label: "Past its warning line" }
         : { tone: "good" as const, label: "Healthy" };

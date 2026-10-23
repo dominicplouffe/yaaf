@@ -867,6 +867,8 @@ export interface DeskProject {
   name: string;
   status: string;
   status_reason: string | null;
+  /** Nothing pays for it, so nothing it starts can run. */
+  unpaid?: boolean;
   goal: string;
   billing_mode: string;
   budget: {

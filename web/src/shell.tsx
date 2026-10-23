@@ -115,6 +115,8 @@ function ProjectNav({
             <i className={`dot ${project.status === "running" ? "run" : ""}`} />
             {project.status === "running" ? "Running" : project.status === "paused" ? "Paused"
               : project.status === "draft" ? "Not started" : project.status}
+            {ctx && !ctx.dash.billing_secret_id && ctx.dash.integrations?.runtime !== "mock"
+              && <> · <span className="warn">no key</span></>}
             {needs > 0 && <> · <span className="warn">{needs} need you</span></>}
           </span>
         </span>

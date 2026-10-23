@@ -326,6 +326,11 @@ def desk(live: bool = False, session: Session = Depends(db),
             "id": project.id, "slug": project.slug, "name": project.name,
             "status": project.status, "status_reason": project.status_reason,
             "goal": project.goal, "billing_mode": project.billing_mode,
+            # Nothing pays for it, so nothing it starts can run. A row that
+            # said "Running" here sent the chairman to a project whose first
+            # run had already died on the missing key.
+            "unpaid": (project.billing_secret_id is None
+                       and (project.integrations or {}).get("runtime") != "mock"),
             "budget": {
                 "unit": "usd" if usd_mode else "tokens",
                 # Token mode must match enforcement (janitor.month_to_date):

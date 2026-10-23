@@ -32,7 +32,7 @@ function ProjectCard({ p }: { p: DeskProject }) {
       <span className="hcard-h">
         <Avatar name={p.name} team={p.name} />
         <span className="grow"><b>{p.name}</b><span className="help">{p.last_run_at ? `last ran ${fmtAgo(p.last_run_at)}` : "has not run yet"}</span></span>
-        {statusBadge(p.status)}
+        {statusBadge(p.status, p.unpaid)}
       </span>
       <span className="hcard-goal">{clip(p.goal, 160)}</span>
       <span className="hcard-stats">

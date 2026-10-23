@@ -6,7 +6,13 @@ import { usePoll } from "../hooks";
 import { AsOf, Skeleton, clip, fmtAgo, fmtUnit } from "../ui";
 import { needsYouCount } from "../desk";
 
-export function statusBadge(status: string) {
+export function statusBadge(status: string, unpaid = false) {
+  // A project that cannot pay for a run is not running, whatever its row says:
+  // its first run dies on the missing key. Say so where the status is read.
+  if (unpaid && (status === "running" || status === "draft")) {
+    return <span className="badge warn" title="No billing credential: agents cannot run">
+      {plainStatus(status)} · no key</span>;
+  }
   const cls =
     status === "running"
       ? "good"
@@ -290,7 +296,9 @@ export default function Projects() {
                 </span>
               ))}
               {waiting > 0 && (
-                <Link to="/inbox"><span className="chip warn">{waiting} waiting on you</span></Link>
+                <Link to="/inbox"><span className="chip warn">
+                  {waiting} {waiting === 1 ? "decision" : "decisions"} waiting on you
+                </span></Link>
               )}
             </div>
           )}
@@ -463,7 +471,7 @@ function ProjectCard({ p }: { p: DeskProject }) {
         <Link to={`/projects/${p.id}`}>
           <strong style={{ fontSize: 15 }}>{p.name}</strong>
         </Link>
-        {statusBadge(p.status)}
+        {statusBadge(p.status, p.unpaid)}
         <WaitingChip p={p} />
         <UnreadChip p={p} />
         <div className="spacer" />
@@ -509,7 +517,7 @@ function ProjectRow({ p }: { p: DeskProject }) {
   const { terminal } = vitals(p);
   return (
     <div className={`wrow prow${terminal ? " done" : ""}`}>
-      {statusBadge(p.status)}
+      {statusBadge(p.status, p.unpaid)}
       <div className="grow">
         <Link to={`/projects/${p.id}`}><strong>{p.name}</strong></Link>{" "}
         <span className="mono help">{p.slug}</span>
