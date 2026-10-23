@@ -600,7 +600,7 @@ button.eye:hover { color: var(--ink); }
 .markdown img { max-width: 100%; }
 
 /* ── misc ── */
-.list-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+.list-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr));
   gap: 14px; }
 /* min-width:0 on both children is load-bearing: grid items default to
    min-width:auto, so one unbreakable token — an agent's `python3 -c "…"`
@@ -755,7 +755,7 @@ pre.block {
 /* portfolio cards (Projects) & role library. align-items:start so a card is as
    tall as its own contents — one neighbour whose title wrapped used to add an
    inch of dead space to the bottom of every card beside it. */
-.list-grid.wide { grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); align-items: start; }
+.list-grid.wide { grid-template-columns: repeat(auto-fill, minmax(min(380px, 100%), 1fr)); align-items: start; }
 
 /* Audit cards hold a wall of agent prose next to a shell command; 300px tracks
    were never going to hold that. align-items:start keeps a short card short
@@ -853,7 +853,7 @@ pre.block {
 .card.clickable { cursor: pointer; transition: border-color 0.12s; }
 .card.clickable:hover { border-color: var(--accent); }
 .role-grid {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(min(330px, 100%), 1fr));
   gap: 14px; margin-top: 16px;
 }
 .fs { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--grid); }
@@ -2220,7 +2220,7 @@ button.rolepick { width: 100%; text-align: left; background: var(--surface-2); }
 
 /* ── segmented control ── one place, several lenses */
 .seg {
-  display: inline-flex; background: var(--surface-2);
+  display: inline-flex; flex-wrap: wrap; max-width: 100%; background: var(--surface-2);
   border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 3px;
 }
 .seg button {
@@ -2751,7 +2751,7 @@ pre.trace { max-height: 360px; overflow: auto; width: 100%; font-size: 12px; }
 
 /* ── Home ── */
 .home-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: var(--s4); align-items: start; }
-.pgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.pgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr)); gap: 12px; }
 .hcard {
   display: flex; flex-direction: column; gap: 10px; padding: 16px; color: var(--ink);
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--e1);
@@ -2878,3 +2878,6 @@ del.bd { color: var(--ink-2); background: rgba(var(--critical-rgb), 0.12);
 .bd-same { margin: 6px 0 0; padding-left: 18px; font-size: 12.5px; color: var(--ink-2); }
 .bd-same li { margin: 2px 0; }
 @media (max-width: 620px) { .bd-row { grid-template-columns: minmax(0, 1fr); gap: 4px; } }
+
+/* A wide table scrolls inside its own box instead of pushing the page sideways. */
+.table-scroll { overflow-x: auto; max-width: 100%; }

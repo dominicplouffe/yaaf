@@ -164,6 +164,7 @@ export function SpendBreakdown({ projectId, usdMode }: { projectId: string; usdM
         ))}
         <span className="help">last 30 days</span>
       </div>
+      <div className="table-scroll">
       <table>
         <thead>
           <tr>
@@ -192,6 +193,7 @@ export function SpendBreakdown({ projectId, usdMode }: { projectId: string; usdM
           ))}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }
