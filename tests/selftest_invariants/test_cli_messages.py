@@ -114,3 +114,18 @@ def test_a_setup_file_brings_the_roles_the_library_lacks(client, monkeypatch, tm
     result = runner.invoke(cli.app, ["create-project", str(spec)])
     assert result.exit_code == 0, result.output
     assert "added role scribe from the setup file" in result.output
+
+
+def test_the_drill_report_is_the_first_thing_printed():
+    """Deliberately slow: one whole drill (~3s), because the noise it guards
+    against only exists while a drill runs. In a subprocess, because a drill
+    re-points the process-global engine this module's other tests are using."""
+    import subprocess
+    import sys
+
+    done = subprocess.run(
+        [sys.executable, "-m", "yaaf.cli.main", "rehearse",
+         str(EXAMPLES / "01-your-first-hour.json")],
+        capture_output=True, text=True, timeout=120, check=False)
+    assert done.stdout.startswith("Fire drill — "), done.stdout[:300]
+    assert done.stderr.strip() == "", done.stderr[:500]

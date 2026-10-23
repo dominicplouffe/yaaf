@@ -816,6 +816,8 @@ def rehearse(
         help="what you actually pay for a run; without it the drill reports the "
              "break-even instead of inventing a price"),
     as_json: bool = typer.Option(False, "--json"),
+    verbose: bool = typer.Option(False, "--verbose",
+                                 help="also print the platform's own log lines"),
 ) -> None:
     """Run a project spec as a project for nothing, before you fund it.
 
@@ -830,9 +832,17 @@ def rehearse(
     works on a fresh checkout.
     """
     import json as _json
+    import logging
 
     from yaaf import rehearsal
     from yaaf.rehearsal import report as rehearsal_report
+
+    # The drill runs the real platform in this process, and the platform logs
+    # like a server: a deployment warning, the rules it relaxed as a raw dict,
+    # every refusal its scripted crew hit. Printed above the report, that was
+    # the first thing a newcomer read. The report already says all of it.
+    if not verbose:
+        logging.getLogger("yaaf").setLevel(logging.ERROR)
 
     try:
         result = rehearsal.rehearse(
