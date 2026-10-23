@@ -129,6 +129,20 @@ MAIL_HELD = "chairman.mail_held"
 SLACK_VIA_DELIVERABLE = "via-deliverable"
 
 
+def inbox_url(item_key: str) -> str | None:
+    """The one Inbox row, as a link — when this install knows its
+    browser-facing origin. Never the API's own origin: inside compose that is
+    `http://api:8080`, a link nobody's browser can open."""
+    origin = (settings().public_base_url or "").rstrip("/")
+    return f"{origin}/app/#/inbox?item={item_key}" if origin else None
+
+
+def inbox_line(item_key: str) -> str:
+    """Where to decide it, as the last line of a notice."""
+    url = inbox_url(item_key)
+    return f"Decide it in your Inbox: {url}" if url else "Decide it in your Inbox."
+
+
 def boardroom_line(session: Session, project_id: str, body: str,
                    *, slack_ts: str | None = None) -> None:
     """A platform-authored boardroom line: no sender, so it spends no reporting

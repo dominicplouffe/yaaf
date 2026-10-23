@@ -83,7 +83,7 @@ from yaaf.core.models import (
 )
 from yaaf.server import asks as ask_lib
 from yaaf.server import briefing, metrics, policy, staffing
-from yaaf.server.notify import Attention, boardroom_line, chairman_notify
+from yaaf.server.notify import Attention, boardroom_line, chairman_notify, inbox_line
 from yaaf.server.policy import Refusal
 from yaaf.server.rows import approval_row, chairman_time, requirement_name
 from yaaf.server.verifier import verify_pending_evidence
@@ -1916,8 +1916,8 @@ def nag_approvals(session: Session, project: Project, cons: ConstitutionDoc) -> 
             f"approval expiring: {approval.title}",
             f"{approval.body[:4000]}\n\n"
             f"If you have not decided by {chairman_time(approval.expires_at, cons.timezone)}, "
-            f"the answer is {silence} — that is what this project's rules say. "
-            "Decide it on the Decisions screen.",
+            f"the answer is {silence} — that is what this project's rules say.\n"
+            + inbox_line(approval.id),
             kind="approval_expiring", data={"approval": approval_row(approval)},
             attention=Attention.ACTION,
         )
@@ -2675,7 +2675,7 @@ def nag_observable_requirements(
         session, project, subject,
         f"{_plural_reqs(len(due))} reached an acceptance test the platform cannot "
         f"run, so the verdict is yours:\n\n{detail}\n\n"
-        "Nothing downstream of them can start until you rule. Open the Plan tab and "
+        "Nothing downstream of them can start until you rule. Open the Roadmap and "
         "record met or not met.",
         attention=Attention.ACTION,
     )
@@ -2761,7 +2761,7 @@ def nag_awaiting_chairman(
                                       project.id, PROPOSAL_NAG_HOURS)
         if not recent:
             more = ("" if len(proposed) <= 10
-                    else f"\n  … and {len(proposed) - 10} more on the Plan tab")
+                    else f"\n  … and {len(proposed) - 10} more on the Roadmap")
             session.add(AuditLog(
                 id=ids.new_id(ids.AUDIT), project_id=project.id, actor="system:janitor",
                 action="scope.proposal_nag", entity="project", entity_id=project.id,
@@ -2775,7 +2775,7 @@ def nag_awaiting_chairman(
                 + more
                 + "\n\nProposed scope is not scope. No work can be created against any "
                   "of these until you accept them, so the plan they belong to cannot "
-                  "start. Open the Plan tab to accept, reword, or decline."
+                  "start. Open the Roadmap to accept, reword, or decline."
                 + ("" if not ever else "\n\nThis is a repeat — they are still waiting."),
                 attention=Attention.ACTION,
             )
@@ -2802,7 +2802,7 @@ def nag_awaiting_chairman(
                 "platform's own projection of measured pace — the CEO did not write it "
                 "and cannot.\n\nNothing binds until you sign: until then the project "
                 "is working without a promise, so no slip can freeze new scope and "
-                "nothing tells you when the date stops holding. Open the Plan tab to "
+                "nothing tells you when the date stops holding. Open the Roadmap to "
                 "sign it, or set your own."
                 + ("" if not ever else "\n\nThis is a repeat — it is still unsigned."),
                 attention=Attention.ACTION,

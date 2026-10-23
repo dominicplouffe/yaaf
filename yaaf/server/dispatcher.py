@@ -1054,7 +1054,7 @@ def _activity_brief(state: dict) -> dict:
             "warn", "your call",
             f"waiting on you — {asks}",
             f"Waiting on you: {asks}.",
-            " ".join(why) + " Decide it on the Plan tab.")
+            " ".join(why) + " Decide it on the Roadmap.")
 
     if gate == "awaiting_ceo":
         # The same three causes as awaiting_chairman, on a project whose dial
