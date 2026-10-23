@@ -1218,6 +1218,12 @@ table.csv .rownum {
 .rule-grp { font-size: 12px; font-weight: 600; letter-spacing: 0.3px;
   color: var(--ink-2); margin: 20px 0 2px; }
 .rule-grp:first-child { margin-top: 6px; }
+.dial-summary { border: 1px solid var(--border); border-radius: 8px; margin: 4px 0 14px; }
+.dial-row { display: flex; align-items: baseline; gap: 12px; padding: 9px 12px;
+  flex-wrap: wrap; }
+.dial-row + .dial-row { border-top: 1px solid var(--border); }
+.dial-name { width: 120px; flex: none; font-size: 12.5px; color: var(--ink-2); }
+.dial-value { flex: 1 1 200px; min-width: 0; }
 
 /* The pending-changes tray. Edits span tabs, so the one question the old page
    could not answer — "what have I actually touched?" — gets a permanent

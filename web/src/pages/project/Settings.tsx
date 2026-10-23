@@ -32,7 +32,7 @@ import { fmtWhen, usePoll } from "../../hooks";
 import type { FounderStatus, PresetCard } from "../StartProject";
 import { RoleGrants } from "../../roles";
 import { MembersPanel } from "./Members";
-import { ConfirmModal, CredentialValue, SecretInput, StoredSecret } from "../../ui";
+import { ConfirmModal, CredentialValue, fmtUnit, SecretInput, StoredSecret } from "../../ui";
 
 /** "amazon-audit-v2" → "amazon-audit-v3"; "Acme" → "Acme (clone)". Twins come
     in numbered runs far more often than they come in ones. */
@@ -1549,6 +1549,58 @@ function CardPicker({
   );
 }
 
+/** The three dials, read before the rulebook: which card each family is set
+    to, in one line apiece, so "how is this project set up?" is answered
+    without opening three tabs. Each line jumps to the tab that changes it. */
+function DialSummary({
+  presets, cons, usd, onOpen,
+}: {
+  presets: FounderStatus["presets"];
+  cons: Record<string, unknown>;
+  usd: boolean;
+  onOpen: (theme: string) => void;
+}) {
+  const cap = Number(usd ? cons.monthly_usd_cap : cons.monthly_token_cap) || 0;
+  const wall = cap * (Number(cons.hard_stop_multiple) || 1);
+  const amount = (n: number) => usd ? fmtUnit(Math.round(n), "usd") : `${fmtUnit(n, "tokens")} tokens`;
+  const purchase = Number(cons.max_usd_per_purchase) || 0;
+  const asEdit = (value: unknown) => String(value ?? "");
+  const inForce = (cards: PresetCard[]) => cards.find((card) =>
+    Object.entries(card.constitution).every(([k, v]) => asEdit(cons[k]) === asEdit(v)));
+  const dials: { name: string; theme: string; cards: PresetCard[] }[] = [
+    { name: "Say-so", theme: "Autonomy", cards: presets.autonomy },
+    { name: "Pace", theme: "Pace & brakes", cards: presets.tempo },
+    { name: "Quality bar", theme: "The bar", cards: presets.bar },
+  ];
+  return (
+    <div className="dial-summary">
+      <div className="dial-row">
+        <span className="dial-name">Money</span>
+        <span className="dial-value">
+          <b>{amount(cap)} a month</b>
+          <span className="help"> · pauses itself at {amount(wall)}
+            {purchase > 0 ? ` · asks you before any purchase over $${purchase.toLocaleString()}` : ""}</span>
+        </span>
+        <button className="small" onClick={() => onOpen("Money")}>Change</button>
+      </div>
+      {dials.filter((d) => d.cards.length).map((d) => {
+        const card = inForce(d.cards);
+        return (
+          <div key={d.name} className="dial-row">
+            <span className="dial-name">{d.name}</span>
+            <span className="dial-value">
+              <b>{card ? card.label : "Hand-tuned"}</b>
+              {card?.headline && <span className="help"> · {card.headline}</span>}
+              {!card && <span className="help"> · set rule by rule, so no preset describes it</span>}
+            </span>
+            <button className="small" onClick={() => onOpen(d.theme)}>Change</button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function changedRules(
   fields: ConstitutionField[],
   edits: Record<string, string>,
@@ -2246,6 +2298,8 @@ export default function Settings({
           limits, and you always can.
         </p>
         {schema.length === 0 && <p className="help">Loading the rulebook…</p>}
+        {presets && <DialSummary presets={presets} cons={cons}
+          usd={dash.billing_mode === "api_key"} onOpen={(t) => go("rules", t)} />}
 
         {/* Six tabs rather than fourteen headings on one scroll. The dot says
             which tab holds an edit, so a pending change is never somewhere you
