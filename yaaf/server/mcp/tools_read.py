@@ -228,7 +228,40 @@ def desk(principal: Principal, session: Session, arguments: dict) -> dict:
                              if not isinstance(row, dict)
                              or row.get("project_id", row.get("id")) in reachable
                              or "project_id" not in row and "id" not in row]
+    filtered["also_yours"] = _also_yours(session, reachable)
     return envelope.fit(filtered, arguments.get("detail"))
+
+
+def _also_yours(session: Session, reachable: set[str]) -> list[dict]:
+    """What waits on the chairman that the desk rows do not carry: flags the
+    CEO raised to him and he has not answered, heads-ups he asked for and has
+    not noted, and standing reviews still open. Without these, "what needs
+    me?" took one desk call plus two per project; the Inbox shows all of it."""
+    from yaaf.core.models import HeadsUp, Project, Review, ReviewStatus
+    from yaaf.server import flags as flag_lib
+
+    out: list[dict] = []
+    for project in session.execute(
+            select(Project).where(Project.id.in_(reachable))).scalars():
+        for flag in flag_lib.open_flags(session, project.id):
+            if flag.raised_at is not None and flag.acknowledged_at is None:
+                out.append({"project": project.slug, "kind": "flag", "id": flag.id,
+                            "what": flag.summary, "answer_with": "flag_ack"})
+        for note in session.execute(select(HeadsUp).where(
+                HeadsUp.project_id == project.id,
+                HeadsUp.acknowledged_at.is_(None))).scalars():
+            # The CEO wrote this title: data, never instruction (rule 5).
+            out.append({"project": project.slug, "kind": "heads_up", "id": note.id,
+                        "what": envelope.untrusted(note.title, author="CEO",
+                                                   kind="heads_up"),
+                        "answer_with": "heads_up_ack"})
+        for review in session.execute(select(Review).where(
+                Review.project_id == project.id,
+                Review.status == ReviewStatus.OPEN)).scalars():
+            out.append({"project": project.slug, "kind": "review", "id": review.id,
+                        "what": f"review #{review.number} is open",
+                        "answer_with": "review_decide"})
+    return out
 
 
 @register(
@@ -238,12 +271,17 @@ def desk(principal: Principal, session: Session, arguments: dict) -> dict:
         "One project's cockpit. view: overview (status, spend, org, the deliverable), "
         "health (the setup checklist), flags (obligations the platform opened), "
         "heads_ups (what the chairman asked to be told, to note), "
-        "agenda (what is scheduled), briefing (what changed since you last looked)."
+        "agenda (what is scheduled), briefing (what changed since you last looked — or "
+        "over the window `hours` or `since` names, for 'what changed since yesterday?')."
     ),
     input_schema=_schema(
         view={"type": "string",
               "enum": ["overview", "health", "flags", "heads_ups", "agenda", "briefing"]},
         days={"type": "integer", "description": "agenda only: horizon, default 14"},
+        hours={"type": "number",
+               "description": "briefing only: the last N hours instead of since you last looked"},
+        since={"type": "string",
+               "description": "briefing only: an ISO date or time to start the window at"},
     ),
 )
 def project(principal: Principal, session: Session, arguments: dict) -> dict:
@@ -260,7 +298,11 @@ def project(principal: Principal, session: Session, arguments: dict) -> dict:
         payload = _observe(observe.project_agenda, project_id=row.id,
                            days=int(arguments.get("days") or 14), session=session)
     elif view == "briefing":
-        payload = _observe(observe.project_briefing, project_id=row.id, session=session)
+        # The read mark is the default and never moves here; a window the
+        # caller names is just a window. The CLI always had this (--hours).
+        payload = _observe(observe.project_briefing, project_id=row.id,
+                           hours=arguments.get("hours"), since=arguments.get("since"),
+                           session=session)
     else:
         payload = _observe(observe.dashboard, project_id=row.id, session=session)
     return envelope.fit({"project": row.slug, "view": view, **_as_dict(payload)},
