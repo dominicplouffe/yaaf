@@ -143,9 +143,10 @@ spend against the cap, how many things on it need you), and **While you were awa
 per project that moved, from the same briefing your morning mail carries.
 
 The sentence on each card is the project's one-line status — finished,
-stopped, cannot run, paused, late, at risk, decisions waiting, gone quiet, on
-track — decided once on the server, so `yaaf projects` and Claude's `desk`
-say exactly the same thing.
+stopped, cannot run, paused, failing (its last three runs died), late, at
+risk, decisions waiting, gone quiet, on track — decided once on the server,
+so the Projects page, the project's Overview, `yaaf projects`, `yaaf status`
+and Claude's `desk` and `project` say exactly the same thing.
 
 It replaced the Desk as the first screen. The Desk answered "what needs me?"
 very well and nothing else, so a chairman with four healthy projects opened the
@@ -397,7 +398,8 @@ A five-second read, top to bottom.
 
 **The header** says what kind of project this is (its shape, the date it is due,
 how much the CEO decides on its own, your role on it), its name and status, the
-goal (with the platform's status brief one click away), who is on it, and the
+project's one-line status (the same sentence as Home, with a link to the page
+that fixes it when something is wrong), the goal (with the platform's status brief one click away), who is on it, and the
 controls: **Start**, **Pause**, **Stop**, and **Message** the CEO.
 
 **Four numbers**, each with the line that explains it:
