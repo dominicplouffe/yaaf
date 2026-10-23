@@ -7,7 +7,7 @@
 // button. "Review & create" hands the draft to the New Project screen through
 // the same path a setup file takes.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { ApiError, del, get, post, ProjectBundle, put } from "../api";
 import Markdown from "../Markdown";
@@ -280,7 +280,6 @@ export default function Founding() {
   // composer under it would be a second answer competing with the first.
   // "Something's off" is what opens it.
   const [reopening, setReopening] = useState(false);
-  const bottom = useRef<HTMLDivElement | null>(null);
   const composer = useRef<HTMLTextAreaElement | null>(null);
 
   async function loadStatus() {
@@ -379,8 +378,30 @@ export default function Founding() {
     }
   }, [key]);
 
+  // Follow the conversation, but only for a reader who is at the foot of it.
+  // This used to scroll on every progress step the Founder reported, so
+  // scrolling up to reread an earlier round lasted until the next step landed
+  // — a second or two — and the page was dragged back down. Same rule the
+  // boardroom keeps: whether you are following is decided by where you left
+  // the page, and sending something puts you back at the end.
+  //
+  // Instant rather than smooth: a smooth scroll emits scroll events that
+  // report "not at the bottom" mid-flight, which would unpin the reader the
+  // page itself was moving.
+  const following = useRef(true);
   useEffect(() => {
-    bottom.current?.scrollIntoView({ behavior: "smooth" });
+    const onScroll = () => {
+      const doc = document.documentElement;
+      following.current = doc.scrollHeight - window.scrollY - window.innerHeight < 120;
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+  // The page's own foot, not a marker inside it: the composer sits below the
+  // conversation, and stopping at a marker short of it would both hide the
+  // place to type and leave the reader far enough up to count as unpinned.
+  useLayoutEffect(() => {
+    if (following.current) window.scrollTo(0, document.documentElement.scrollHeight);
   }, [turns.length, busy, progress?.steps.length, key]);
 
   async function post_(payload: { message: string; answers?: Answer[] }) {
@@ -409,6 +430,7 @@ export default function Founding() {
   async function send() {
     const text = message.trim();
     if (!text || busy) return;
+    following.current = true;
     setBusy(true);
     setError(null);
     setProgress(null);
@@ -435,6 +457,7 @@ export default function Founding() {
   function answer() {
     if (!asking) return;
     const payload = { answers: toAnswers(asking, picks.picks), message: roundNote.trim() };
+    following.current = true;
     if (busy) {
       setQueued(payload);
       return;
@@ -586,7 +609,6 @@ export default function Founding() {
           )}
 
           {busy && <Steps progress={progress} />}
-          <div ref={bottom} />
 
           {error && <p className="error">{error}</p>}
 
