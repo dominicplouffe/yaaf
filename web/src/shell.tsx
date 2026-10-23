@@ -1,4 +1,4 @@
-import { ReactNode, useEffect, useState } from "react";
+import { ReactNode, useEffect, useLayoutEffect, useState } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { DeskProject } from "./api";
 import { useDesk } from "./desk";
@@ -243,6 +243,16 @@ export function Shell({ children }: { children: ReactNode }) {
 
   // A phone's drawer closes itself once you have gone somewhere.
   useEffect(() => setNavOpen(false), [location.pathname]);
+
+  // A new page starts at its top. The window is the scroller and HashRouter
+  // restores nothing, so without this every navigation kept the last page's
+  // offset — and the project tabs share one frame that is already loaded, so
+  // the new tab drew at full height and you landed as far down it as you had
+  // been on the old one: on a shorter page, the bottom. Keyed on the path, not
+  // the query, so a filter or a selection inside a page keeps your place.
+  // A layout effect, so it runs before a page's own mount effect that scrolls
+  // to something on purpose (NewProject's `?start=file`).
+  useLayoutEffect(() => window.scrollTo(0, 0), [location.pathname]);
 
   const close = () => setNavOpen(false);
   return (
