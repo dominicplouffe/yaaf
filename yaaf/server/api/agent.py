@@ -68,7 +68,13 @@ from yaaf.core.models import (
 from yaaf.server import acting, activity, policy, typing_state
 from yaaf.server.contextpack import _speaker
 from yaaf.server.deps import RunContext, db, run_auth
-from yaaf.server.notify import Attention, chairman_notify, inbox_line, inbox_url
+from yaaf.server.notify import (
+    Attention,
+    chairman_notify,
+    inbox_line,
+    inbox_url,
+    project_link,
+)
 from yaaf.server.policy import Refusal
 from yaaf.server.rows import approval_row, chairman_time
 
@@ -2821,7 +2827,8 @@ def book_spend(
             f"month at ${committed + body.usd:,.2f} of the ${cap:,.0f} envelope. "
             "Booked rather than refused — the money had already moved, and an "
             "unrecorded spend is worse than an overshot one. Further purchases are "
-            "walled; the spend itself is on the ledger and the audit.",
+            "walled; the spend itself is on the ledger and the audit."
+            + project_link(ctx.project.id, "spend", "See the spend"),
             attention=Attention.ALARM,
         )
         return {"id": row.id,

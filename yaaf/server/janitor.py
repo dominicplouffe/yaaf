@@ -83,7 +83,13 @@ from yaaf.core.models import (
 )
 from yaaf.server import asks as ask_lib
 from yaaf.server import briefing, metrics, policy, staffing
-from yaaf.server.notify import Attention, boardroom_line, chairman_notify, inbox_line
+from yaaf.server.notify import (
+    Attention,
+    boardroom_line,
+    chairman_notify,
+    inbox_line,
+    project_link,
+)
 from yaaf.server.policy import Refusal
 from yaaf.server.rows import approval_row, chairman_time, requirement_name
 from yaaf.server.verifier import verify_pending_evidence
@@ -646,7 +652,8 @@ def check_commitments(session: Session, project: Project, cons: ConstitutionDoc)
             session, project, "commitment BREACHED",
             f"The promised date {commitment.deliver_by:%Y-%m-%d} has passed with "
             f"{projection['remaining']} requirement(s) still open; {landing}. "
-            "New scope is frozen. " + _slip_moves_for_chairman(cons),
+            "New scope is frozen. " + _slip_moves_for_chairman(cons)
+            + project_link(project.id, "roadmap", "Cut scope or move the date"),
             attention=Attention.ALARM,
         )
     elif status == CommitmentStatus.AT_RISK:
@@ -981,7 +988,8 @@ def roll_cycles(session: Session, project: Project, cons: ConstitutionDoc) -> No
                 f"Cycles {previous.ordinal} and {cycle.ordinal} both closed with "
                 "nothing made true. The platform paused the project rather than "
                 "billing you for a third. Resume from the project page when you have "
-                "decided what changes — the next cycle opens on resume.",
+                "decided what changes — the next cycle opens on resume."
+                + project_link(project.id, "", "Resume it"),
                 attention=Attention.ALARM,
             )
             log.warning("project %s paused: two skipped cycles", project.slug)
@@ -1110,7 +1118,8 @@ def check_explore_deadline(session: Session, project: Project) -> None:
         f"This month's spend so far: ${usd:,.2f} / {tokens:,} tokens.\n\n"
         "Your call, as it always was: stop it, extend the window (set a new date in "
         "Settings), or convert what worked into a Deliver project with real "
-        "requirements. The project keeps working until you decide.",
+        "requirements. The project keeps working until you decide."
+        + project_link(project.id, "settings", "Decide"),
         attention=Attention.ALARM,
     )
 
@@ -2304,7 +2313,8 @@ def enforce_budget(session: Session, project: Project, cons: ConstitutionDoc) ->
             f"hard stop at {hard_stop:,.0f}. Live runs were revoked and the queue "
             "purged. This is the runaway wall rather than the plan — the CEO is "
             "allowed to go over the plan and report, so reaching this means "
-            "something else is wrong. Resume from the project page.",
+            "something else is wrong. Resume from the project page."
+            + project_link(project.id, "spend", "See where it went"),
             attention=Attention.ALARM,
         )
         log.warning("project %s auto-paused: hard stop at %.0f", project.slug, hard_stop)
@@ -2874,7 +2884,8 @@ def warn_stall(session: Session, project: Project, cons: ConstitutionDoc) -> Non
     chairman_notify(
         session, project, "the project has gone quiet",
         f"No run has started in {cons.stall_hours:g}h and there is still work open.\n\n"
-        f"{brief['headline']} {brief['detail']}",
+        f"{brief['headline']} {brief['detail']}"
+        + project_link(project.id, "activity/runs", "See its runs"),
         attention=Attention.ALARM,
     )
     log.warning("stall in %s after %sh: %s", project.slug, cons.stall_hours,

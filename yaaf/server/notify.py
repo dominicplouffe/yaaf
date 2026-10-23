@@ -137,6 +137,17 @@ def inbox_url(item_key: str) -> str | None:
     return f"{origin}/app/#/inbox?item={item_key}" if origin else None
 
 
+def project_link(project_id: str, page: str = "", label: str = "Open it") -> str:
+    """A last line linking an alarm to the page that fixes it, or nothing when
+    this install has no browser-facing origin. An alarm that names the fix
+    ("reconnect billing in Settings") still made the reader find the project,
+    then the tab, then the card — on the morning it stopped."""
+    origin = (settings().public_base_url or "").rstrip("/")
+    if not origin:
+        return ""
+    return f"\n\n{label}: {origin}/app/#/projects/{project_id}{'/' + page if page else ''}"
+
+
 def inbox_line(item_key: str) -> str:
     """Where to decide it, as the last line of a notice."""
     url = inbox_url(item_key)
