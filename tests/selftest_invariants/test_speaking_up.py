@@ -278,6 +278,38 @@ def test_a_deadline_is_a_fact_and_needs_its_source(client):
         assert cycle is not None
 
 
+def test_the_ceo_reads_back_the_goal_and_due_by_it_set(client):
+    """A goal recorded where the CEO cannot see it next run is a goal it will
+    set again, or forget. The pack's current cycle carries what `cycle_goal`
+    wrote, and when the cycle closes — which a due_at moves."""
+    from yaaf.core.models import Agent, Project, Run, RunStatus
+    from yaaf.server.contextpack import build_context_pack
+
+    project = make_project(client, slug="readback", mode="operate")
+    _, ceo = live_token(project["id"], project["ceo_agent_id"])
+    due = utcnow() + timedelta(hours=30)
+    set_goal = client.post("/agent/cycle_goal", json={
+        "goal": "Ship the gameweek memo before the deadline.",
+        "due_at": due.isoformat(), "due_source_kind": "calendar",
+    }, headers=bearer(ceo))
+    assert set_goal.status_code == 200, set_goal.text
+
+    with db_session() as session:
+        run = Run(id="run_" + project["id"][-8:], project_id=project["id"],
+                  agent_id=project["ceo_agent_id"], status=RunStatus.RUNNING,
+                  trigger={"reasons": []})
+        session.add(run)
+        session.flush()
+        pack = build_context_pack(session, run,
+                                  session.get(Agent, project["ceo_agent_id"]),
+                                  session.get(Project, project["id"]))
+    current = pack["cycles"]["current"]
+    assert current["goal"] == "Ship the gameweek memo before the deadline."
+    assert current["due_at"] is not None
+    assert current["rolls_at"] == current["due_at"], "a due_at is when the cycle rolls"
+    assert "cycle_goal" in pack["cycles"]["note"]
+
+
 def test_the_due_by_drives_the_roll_not_the_calendar(client):
     """A rhythm that cannot follow the world is a rhythm the work ignores. The
     platform believed one project rolled on Tuesdays while its real deadline

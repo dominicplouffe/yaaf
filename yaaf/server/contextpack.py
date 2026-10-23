@@ -1472,9 +1472,15 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
                                     Cycle.status != CycleStatus.OPEN)
                 .order_by(Cycle.ordinal.desc()).limit(3)
             ).scalars())
+            from yaaf.server.janitor import next_cycle_roll
+
             pack["cycles"] = {
                 "current": ({"ordinal": cycle.ordinal,
-                             "opened_at": cycle.opened_at.isoformat()}
+                             "opened_at": cycle.opened_at.isoformat(),
+                             "goal": cycle.goal,
+                             "due_at": cycle.due_at.isoformat() if cycle.due_at else None,
+                             "rolls_at": next_cycle_roll(
+                                 cycle.opened_at, cons, cycle).isoformat()}
                             if cycle is not None else None),
                 "recent_narratives": [
                     {"ordinal": c.ordinal, "status": c.status,
@@ -1483,8 +1489,9 @@ def build_context_pack(session: Session, run: Run, agent: Agent, project: Projec
                 ],
                 "note": ("Each cycle plans fresh: R-00 reopens when the rhythm "
                          "rolls. Read these narratives FIRST — they are what the "
-                         "last three turns learned, verbatim — then propose this "
-                         "cycle's requirements."),
+                         "last three turns learned, verbatim — then say what this "
+                         "cycle is for with cycle_goal (and its due_at, if the world "
+                         "set one) and propose its requirements."),
             }
 
         # The open review, if one is waiting on this CEO's narrative. The
