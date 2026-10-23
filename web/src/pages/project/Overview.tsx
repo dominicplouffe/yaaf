@@ -426,6 +426,50 @@ function HealthLine({ ctx }: { ctx: ProjectCtx }) {
       setError(e instanceof Error ? e.message : String(e));
     }
   };
+  // The pace row answers itself: switching is an amendment like any made in
+  // Settings, with its reason written for him, so it is on the record and
+  // disclosed to the CEO the same way.
+  const switchTempo = async (check: HealthCheck) => {
+    if (check.action?.kind !== "tempo") return;
+    setError(null);
+    try {
+      await post(`/admin/projects/${projectId}/amendments`, {
+        reason: `Pace set to ${check.action.to_label} from Setup & health, to match the project's cycle.`,
+        changes: check.action.changes,
+      });
+      reloadHealth();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+  // The missing seat, hired the way the Team page hires one: on the role's
+  // own model, with its own channel, disclosed in the audit trail.
+  const hire = async (check: HealthCheck) => {
+    if (check.action?.kind !== "hire") return;
+    setError(null);
+    try {
+      await post(`/admin/projects/${projectId}/teams`, {
+        role_slug: check.action.role_slug,
+        name: check.action.team_name,
+        employees: [check.action.employee],
+      });
+      reloadHealth();
+      reloadOrg();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+  // Keeping is the project's answer, not one reader's tidying, so it is a
+  // decision on the record and the row leaves every chair's card.
+  const keepTempo = async () => {
+    setError(null);
+    try {
+      await post(`/admin/projects/${projectId}/tempo/keep`, {});
+      reloadHealth();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
   // Problems, then suggestions, then what passes, then what was put away.
   const rank = (c: HealthCheck) =>
     c.status === "fail" ? 0 : c.status === "warn" ? (c.acked_at ? 3 : 1) : 2;
@@ -444,8 +488,8 @@ function HealthLine({ ctx }: { ctx: ProjectCtx }) {
       </div>
       {open.length > 0 && (
         <p className="help" style={{ margin: "0 0 8px" }}>
-          A <b>problem</b> means something is broken: fix it. A <b>suggestion</b> is advice: act
-          on it, or press <b>Got it</b> once you have read it and it stops counting.
+          A <b>problem</b> means something is broken: fix it. A <b>suggestion</b> is a choice
+          for you: act on it, or put it away once you have decided and it stops counting.
         </p>
       )}
       {error && <div className="error">{error}</div>}
@@ -456,14 +500,29 @@ function HealthLine({ ctx }: { ctx: ProjectCtx }) {
           <span className="grow">{check.detail}</span>
           {check.action?.kind === "repin" && !check.acked_at ? (
             <button className="small" onClick={async () => {
-              await post(`/admin/teams/${check.action!.team_id}/repin`, {});
+              if (check.action?.kind !== "repin") return;
+              await post(`/admin/teams/${check.action.team_id}/repin`, {});
               reloadHealth();
               reloadOrg();
             }}>adopt the latest role version</button>
+          ) : check.action?.kind === "hire" && !check.acked_at ? (
+            <button className="small" onClick={() => hire(check)}>
+              {check.action.label}
+            </button>
+          ) : check.action?.kind === "tempo" && !check.acked_at ? (
+            <button className="small" onClick={() => switchTempo(check)}>
+              Switch to “{check.action.to_label}”
+            </button>
           ) : isOpen(check) && WHERE_TO[check.where ?? ""] ? (
-            <Link to={`/projects/${projectId}${WHERE_TO[check.where!][0]}`}>{WHERE_TO[check.where!][1]} →</Link>
+            <Link to={WHERE_TO[check.where!][2]
+              ? WHERE_TO[check.where!][0]
+              : `/projects/${projectId}${WHERE_TO[check.where!][0]}`}>{WHERE_TO[check.where!][1]} →</Link>
           ) : null}
-          {check.status === "warn" && (
+          {check.action?.kind === "tempo" && !check.acked_at ? (
+            <button className="small" onClick={() => keepTempo()}>
+              Keep “{check.action.keep_label}”
+            </button>
+          ) : check.status === "warn" && (
             <button className="small" onClick={() => ack(check, !check.acked_at)}>
               {check.acked_at ? "Show again" : "Got it"}
             </button>
@@ -476,11 +535,14 @@ function HealthLine({ ctx }: { ctx: ProjectCtx }) {
 
 /** Where a health check says the fix lives — a check that names a place the
     reader cannot click is read once and then skipped. */
-const WHERE_TO: Record<string, [string, string]> = {
+const WHERE_TO: Record<string, [string, string, boolean?]> = {
   settings: ["/details/settings", "fix in Settings"],
   plan: ["/details/roadmap", "open the Roadmap"],
   boardroom: ["/chat", "open the chat"],
   team: ["", "see the team"],
+  // A price is the install's, not the project's, so it is set where prices
+  // live — an app-wide page, not one under the project.
+  prices: ["/settings?section=prices", "open Model prices", true],
 };
 
 /** Where each problem verdict is fixed: page under the project, and the link. */

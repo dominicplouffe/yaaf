@@ -719,8 +719,9 @@ class Project(Base):
     # What the Founder knew when this project was made. A content fingerprint
     # of the doctrine files, so "founded under older doctrine than we now ship"
     # is a fact the platform holds rather than something a person reconstructs
-    # from `git log`. Null on every project founded before the stamp existed,
-    # which is exactly the population it exists to find.
+    # from `git log`. Null on every project founded before the stamp existed.
+    # A record, not a finding: the chairman hears about each fix his project
+    # lacks, in its own words (yaaf/founder/doctrine.py).
     doctrine_stamp: Mapped[str | None] = mapped_column(String(16))
     deadline: Mapped[datetime | None] = mapped_column(UTCDateTime)
     # Where that date came from, in the shape `cycles.due_source` established:

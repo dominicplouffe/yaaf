@@ -19,10 +19,18 @@ from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.orm import Session
 
 from yaaf.core import artifacts
-from yaaf.core.constitution import effective, tempo_for, tempo_name
+from yaaf.core.constitution import (
+    TEMPO_COPY,
+    TEMPO_PRESETS,
+    TEMPO_RULES,
+    effective,
+    tempo_for,
+    tempo_name,
+)
 from yaaf.core.models import (
     Agent,
     AgentStatus,
+    Amendment,
     Approval,
     ApprovalStatus,
     Artifact,
@@ -924,19 +932,16 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
             metered.setdefault(seat.model, set()).add(harness.label)
     for gap in price_gaps(session, sorted(metered)):
         price = catalog.price(gap["model"])
+        over = gap["drift"] > 0
         add(f"price-gap:{gap['model']}", "warn",
-            f"yaaf prices {gap['model']} {abs(gap['drift']):.0%} "
-            f"{'above' if gap['drift'] > 0 else 'below'} what it is billed at: the "
-            f"harnesses that report their own cost charged "
-            f"${gap['reported_usd']:.2f} over its last {gap['runs']} runs on this "
-            f"install, and the price table puts the same tokens at "
-            f"${gap['priced_usd']:.2f}. Seats on "
-            f"{', '.join(sorted(metered[gap['model']]))} are metered by that table, so "
-            f"their budget is {'over' if gap['drift'] > 0 else 'under'}-counted by as "
-            f"much — the prices in yaaf/runtimes/catalog.py"
-            f"{f' (as of {price.as_of})' if price else ''} need checking against the "
-            "provider's current list.",
-            "runs")
+            f"Spending on {gap['model']} is {'over' if over else 'under'}-counted: "
+            f"yaaf's price list{f' (as of {price.as_of})' if price else ''} is "
+            f"{abs(gap['drift']):.0%} {'above' if over else 'below'} what the last "
+            f"{gap['runs']} runs were actually billed (${gap['priced_usd']:.2f} against "
+            f"${gap['reported_usd']:.2f}), so budgets for seats on "
+            f"{', '.join(sorted(metered[gap['model']]))} are off by as much. Set its "
+            "current price under Model prices.",
+            "prices")
 
     secrets = session.execute(
         select(Secret).where(or_(Secret.project_id == project.id,
@@ -1004,49 +1009,35 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
             # Say what moved, not just that something did. A drift warning with
             # no content is a number nobody acts on: it reports that a newer
             # version exists and gives the reader nothing to decide with, so it
-            # sits on the screen for months. each version's `description` is what
+            # sits on the screen for months. A version's `description` is what
             # its author already wrote when publishing it.
-            behind = session.execute(
-                select(RoleVersion).where(
-                    RoleVersion.role_id == role.id,
-                    RoleVersion.version > pinned.version,
-                ).order_by(RoleVersion.version)
-            ).scalars().all()
-            changes = "; ".join(
-                f"v{v.version}: {(v.description or 'no description').strip()[:160]}"
-                for v in behind[:4]
-            )
+            # The newest version's own words, once. Every version's notes in a
+            # row made the line a changelog nobody read to the end.
+            changes = (latest.description or "no description given").strip()[:160]
             add(f"role-drift:{team.name}", "warn",
-                f"team '{team.name}' runs role '{role.slug}' v{pinned.version}; "
-                f"v{latest.version} exists. What changed since — {changes}. "
-                "Adopting it repins this team to the current charter.",
+                f"A newer version of the '{role.slug}' role is out for team "
+                f"'{team.name}' (v{pinned.version} → v{latest.version}): {changes}.",
                 "overview", {"kind": "repin", "team_id": team.id})
 
-    # ── doctrine drift ──────────────────────────────────────────────────────
+    # ── what the Founder has learned since ───────────────────────────────────
     #
-    # The Founder runs once, so a project keeps the doctrine it was made under
-    # for its whole life. Six fixes landed in five days and the desk being
-    # watched had been founded before all of them; it would have run nine more
-    # months on 26 August's rules with nobody able to see that from anywhere but
+    # The Founder runs once, so a project keeps what it was set up with for its
+    # whole life. Six fixes landed in five days and the desk being watched had
+    # been founded before all of them; nobody could see that from anywhere but
     # `git log`.
     #
-    # All three checks are arithmetic over rows, at zero tokens. Re-grading the
-    # goal prose against the current grammar needs a model and real money, and
-    # is deliberately NOT here — these are the structural half, and the
-    # structural half is what the FPL desk was actually missing.
+    # What reaches a running project is each of those fixes as a finding of its
+    # own: the roster below, the rhythm and the pace further down, a role's new
+    # charter above. Each says what this project lacks and how to get it. There
+    # used to be a row here as well that said only that the Founder's text had
+    # changed, with two fingerprints, on every project at once. It lit for an
+    # edit to how the Founder interviews a chairman, which cannot reach a
+    # project that has already been founded, and it had no action — so it
+    # taught people to press "Got it" without reading. A doctrine change that a
+    # running project should hear about ships its own check here, in words
+    # about the project. `project.doctrine_stamp` stays the record, and the
+    # goal re-grade reports it.
     if project.status == ProjectStatus.RUNNING:
-        from yaaf.founder import doctrine
-
-        if not doctrine.is_current(project.doctrine_stamp):
-            was = project.doctrine_stamp or "before the platform recorded it"
-            add("doctrine-drift", "warn",
-                f"founded under doctrine {was}; the current doctrine is "
-                f"{doctrine.fingerprint()}. What the Founder has learned since is not "
-                "reaching this project — the Founder runs once, at creation. Nothing "
-                "here is broken; this is a decision for you about whether to carry the "
-                "changes across.",
-                "overview")
-
         # A roster with nobody whose job is to disagree. DESIGN_DOCTRINE says
         # plan-adversary survives the cut on purpose and belongs on every
         # Deliver and Operate project, and gives the reason: the CEO wrote the
@@ -1063,19 +1054,27 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
                 ).scalars()
             }
             if "challenge" not in categories:
-                # Said for the dial this project is on: a Supervised chairman
-                # read that the CEO "on an autonomous project, accepted it too"
-                # about a plan he had accepted himself.
-                if effective(session, project.id).plan_authority == "ceo":
-                    who = ("The CEO wrote it and accepted it too — so it is the only "
-                           "reader of that plan with no distance from it.")
-                else:
-                    who = ("The CEO wrote it and you accept it — so you are its only "
-                           "reader with any distance from it.")
+                # The fix is one hire, so the row offers it: the library's own
+                # plan reviewer when the install has it, otherwise the Team
+                # page, where any challenge role can be hired. Said for the dial
+                # this project is on: a Supervised chairman read that the CEO
+                # "accepted it too" about a plan he had accepted himself.
+                reviewer = session.execute(
+                    select(Role).where(Role.slug == PLAN_REVIEWER_ROLE)
+                ).scalar_one_or_none()
+                who = ("The CEO wrote it and accepted it too, so nobody else checks it."
+                       if effective(session, project.id).plan_authority == "ceo" else
+                       "The CEO wrote it and you accept it, so you are the only one who "
+                       "checks it.")
                 add("no-adversary", "warn",
-                    "no seat on this project exists to disagree with the plan. " + who
-                    + " Hiring one `challenge` role is the whole fix.",
-                    "settings")
+                    "Nobody on this team is there to disagree with the CEO's plan. " + who
+                    + (" Adding a plan reviewer puts one more agent on the team whose "
+                       "job is to find what the plan is missing." if reviewer else
+                       " Hire a role whose job is to challenge the plan."),
+                    "team",
+                    {"kind": "hire", "role_slug": PLAN_REVIEWER_ROLE,
+                     "team_name": "Plan review", "employee": "Plan Reviewer",
+                     "label": "Add a plan reviewer"} if reviewer else None)
 
         # An Operate project with no standing scope is re-creating the same
         # obligation by hand every cycle. `Recurrence.STANDING` exists for
@@ -1090,11 +1089,11 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
             ).scalar_one()
             if not standing:
                 add("no-standing-scope", "warn",
-                    "this project runs on a rhythm and owns no standing requirements, so "
-                    "whatever it owes again next cycle is being re-proposed by hand every "
-                    "time — and a burn-down of work that recurs reads as nearly finished. "
-                    "`recurrence: standing` is what that shape is for.",
-                    "plan")
+                    "Nothing in this project's plan is marked as repeating, so the CEO "
+                    "re-plans the same work by hand every cycle and progress looks "
+                    "nearly done when it isn't. Ask the CEO to mark the work that "
+                    "comes back each cycle as standing.",
+                    "boardroom")
 
     # Slack: config present implies its secrets exist.
     slack = integrations.get("slack") or {}
@@ -1119,9 +1118,9 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
                 "in seconds", None)
         else:
             add("chat", "warn",
-                "CEO chat session is not live — boardroom replies fall back to "
-                "queued runs (minutes). It starts within seconds of the runner "
-                "seeing the project; if this persists, check the runner's logs.",
+                "The CEO's live chat isn't running, so boardroom replies take "
+                "minutes instead of seconds. It normally restarts by itself; if this "
+                "stays, check the runner's logs.",
                 "runs")
 
     # News the CEO has been told to deliver and has not. Loud on purpose: the
@@ -1131,10 +1130,8 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
     unraised = flag_lib.unraised_count(session, project.id)
     if unraised:
         add("flags", "warn",
-            f"{unraised} flag(s) opened by the platform that your CEO has not yet "
-            "raised with you — each one is arithmetic or a failed check, not an "
-            "opinion. It is required to bring them to the boardroom with a proposal, "
-            "and the reporting cadence does not hold it back from doing so.",
+            f"The platform found {unraised} issue(s) your CEO has not yet raised "
+            "with you. It has to bring each one to the boardroom with a proposal.",
             "boardroom")
 
     # Questions the CEO put to you and is still waiting on. Not a warning: it
@@ -1147,9 +1144,7 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
         add("asks", "ok",
             f"{len(pending_asks)} question(s) from your CEO waiting on you, the first "
             f"stopping {chairman_time(soonest, effective(session, project.id).timezone)}. "
-            "Nothing is blocked: "
-            "each one names what it will do unanswered, and it will tell you when it "
-            "does.",
+            "Nothing is blocked: each says what the CEO will do if you don't answer.",
             "boardroom")
 
     # Liveness. Every other check on this page asks "is this project set up
@@ -1196,27 +1191,42 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
             # amendable and the tempo is not derived again afterwards —
             # deliberately: a platform that silently re-paced a live desk
             # because a rule moved is a worse failure than the one it fixes. So
-            # this is a sentence the chairman reads and decides on, the same
-            # posture `doctrine-drift` above already takes.
+            # the chairman is asked, with both answers on the row.
+            #
+            # Asked about a mismatch nobody chose, never about one somebody
+            # did. A pace picked in Settings after the rhythm last moved is a
+            # decision, and re-raising it on every load is how advice becomes
+            # wallpaper. A mismatch born at creation cannot be told apart, so
+            # it is asked once, and "Keep" is the answer, for the whole project.
+            per_run = policy.avg_usd_per_run_box(session)
+            cap = rules["monthly_usd_cap"] if project.billing_mode == "api_key" else None
+            switch_fits_budget = False
             if project.mode == ProjectMode.OPERATE:
                 wanted = tempo_for("operate", rules.get("cycle_frequency"))
-                if on is not None and on != wanted:
+                moved = _rhythm_moved_after_pace(session, project.id)
+                if (on is not None and on != wanted and moved is not False
+                        and not tempo_kept(session, project.id,
+                                           rules["cycle_frequency"], on)):
+                    # Switching is also the answer to the budget row below when
+                    # the usual pace fits the budget, and two rows quoting the
+                    # same $855 read as two problems. Then it is one row.
+                    switch_fits_budget = bool(
+                        per_run and cap and _month_ceiling(wanted, per_run) <= cap)
                     add("tempo-vs-rhythm", "warn",
-                        f"this project rolls a {rules['cycle_frequency']} cycle but "
-                        f"thinks on the '{on}' tempo, which is what a project of a "
-                        f"different rhythm wants — '{wanted}' is the one that matches. "
-                        "Nothing is broken and nothing was changed for you; if the "
-                        "rhythm moved and the pace did not, this is where you would "
-                        "notice.",
-                        "settings")
+                        _tempo_mismatch(rules["cycle_frequency"], on, wanted, moved,
+                                        per_run, cap if switch_fits_budget else None),
+                        "settings",
+                        {"kind": "tempo", "to": wanted,
+                         "to_label": TEMPO_COPY[wanted]["label"],
+                         "keep_label": TEMPO_COPY[on]["label"],
+                         "changes": dict(TEMPO_PRESETS[wanted])})
 
             # The ceiling and the budget describing different projects. Only
             # where the box has actually priced runs: `avg_usd_per_run_box`
             # answers None under five of them, because a fresh install saying
             # nothing is the honest behaviour and a guess here would be quoted
             # back as arithmetic.
-            per_run = policy.avg_usd_per_run_box(session)
-            if per_run and project.billing_mode == "api_key" and rules["monthly_usd_cap"]:
+            if per_run and cap and not switch_fits_budget:
                 # Both lanes. The inbox ceiling is a SEPARATE additive allowance
                 # — `daily_runs_used` excludes those runs from the work total on
                 # purpose — so a `live` project's real ceiling is 190 a day, not
@@ -1227,15 +1237,14 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
                 per_day = (rules["runs_per_project_per_day"]
                            + rules["inbox_runs_per_project_per_day"])
                 ceiling = per_day * 30 * per_run
-                if ceiling > rules["monthly_usd_cap"]:
+                if ceiling > cap:
                     add("tempo-vs-budget", "warn",
-                        f"{per_day} runs a day — {rules['runs_per_project_per_day']} of "
-                        f"work plus {rules['inbox_runs_per_project_per_day']} of reading "
-                        f"— at the ${per_run:.2f} a run this install has averaged is "
-                        f"about ${ceiling:,.0f} a month, against a budget of "
-                        f"${rules['monthly_usd_cap']:,.0f}. The budget is a plan rather "
-                        "than a wall so neither number is wrong, but they describe "
-                        "different projects — one of the two is the one you meant.",
+                        f"Your pace allows up to {per_day} runs a day "
+                        f"({rules['runs_per_project_per_day']} of work plus "
+                        f"{rules['inbox_runs_per_project_per_day']} of reading). At "
+                        f"${per_run:.2f} a run that could cost about ${ceiling:,.0f} a "
+                        f"month, but your budget is ${rules['monthly_usd_cap']:,.0f}. "
+                        "Lower the pace or raise the budget.",
                         "settings")
 
             act = activity_state(session, project, live_cons)
@@ -1257,18 +1266,17 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
                                                  key=lambda kv: names.get(kv[0], ""))]
             seats = "1 seat hasn't" if len(each) == 1 else f"{len(each)} seats haven't"
             add("dormant-seats", "warn",
-                f"{seats} run in over a week: {', '.join(each)}. A seat that never "
-                "wakes isn't doing its part, and messages to it pile up unread. Ask "
-                "the CEO to give it work or stand it down, or pause it from the Team "
-                "page.",
+                f"{seats} run in over a week: {', '.join(each)}. Messages to them pile "
+                "up unread. Ask the CEO to give them work or stand them down, or "
+                "pause them on the Team page.",
                 "team")
 
     # Connectors: controlled GitHub accounts registered but webhooks unprovisioned.
     if any(str(d).startswith("github:") for d in (project.controlled_domains or [])) \
             and not integrations.get("github_webhook_secret"):
         add("connectors", "warn",
-            "controlled GitHub accounts are registered but webhook secrets are not "
-            "provisioned — GitHub events cannot become attested evidence yet",
+            "Your GitHub accounts are added, but GitHub can't send its events to "
+            "yaaf yet, so work done on GitHub can't count as proof.",
             "settings")
 
     # Each finding gets a name that outlives its numbers, so a suggestion the
@@ -1288,12 +1296,88 @@ def project_health(project_id: str, session: Session = Depends(db)) -> dict:
     }
 
 
+def _rhythm_moved_after_pace(session: Session, project_id: str) -> datetime | bool | None:
+    """Whether the rhythm moved after the pace was last set, from the amendments.
+
+    A datetime: the cycle was amended then, and no pace rule since. False: the
+    pace was chosen at or after the rhythm's last change, so the two disagree
+    on purpose. None: neither was ever amended, and the creation record does
+    not say whether a person chose that pace or was given it.
+    """
+    rhythm = pace = None
+    for amendment in session.execute(
+        select(Amendment).where(Amendment.project_id == project_id,
+                                Amendment.applied_constitution_id.is_not(None))
+        .order_by(Amendment.effective_at)
+    ).scalars():
+        keys = set(amendment.changes or {})
+        if "cycle_frequency" in keys:
+            rhythm = amendment.effective_at
+        if keys & set(TEMPO_RULES):
+            pace = amendment.effective_at
+    if pace is not None and (rhythm is None or pace >= rhythm):
+        return False
+    return rhythm
+
+
+#: The library role the "nobody disagrees" row offers to hire. DESIGN_DOCTRINE
+#: names it as the challenge seat every Deliver and Operate project carries.
+PLAN_REVIEWER_ROLE = "plan-adversary"
+
+
+def _month_ceiling(tempo: str, per_run: float) -> float:
+    """What a month at a pace's full allowance costs, both lanes counted."""
+    rules = TEMPO_PRESETS[tempo]
+    return (rules["runs_per_project_per_day"]
+            + rules["inbox_runs_per_project_per_day"]) * 30 * per_run
+
+
+def _tempo_mismatch(cycle: str, on: str, wanted: str, moved: datetime | None,
+                    per_run: float | None, budget: float | None = None) -> str:
+    """The tempo row in one breath: what the pace allows, what a project of this
+    rhythm usually runs, and the money between them when the install knows it.
+    The cards in Settings say the rest; a row that restates them is not read."""
+    def runs(name: str) -> int:
+        return TEMPO_PRESETS[name]["runs_per_project_per_day"]
+
+    now, usual = (f"“{TEMPO_COPY[name]['label']}”" for name in (on, wanted))
+    lead = (f"You changed the cycle to {cycle} on {moved:%b} {moved.day}, but the pace "
+            f"is still {now} (up to {runs(on)} runs a day)." if moved else
+            f"Paced {now} (up to {runs(on)} runs a day), but this project works on a "
+            f"{cycle} cycle.")
+    cost = ""
+    if per_run:
+        cost = (f", about ${_month_ceiling(wanted, per_run):,.0f} a month instead of "
+                f"${_month_ceiling(on, per_run):,.0f}")
+    over = (f" Your budget is ${budget:,.0f} a month, so the current pace could "
+            "outspend it." if budget and per_run and _month_ceiling(on, per_run) > budget
+            else "")
+    return (f"{lead} {cycle.capitalize()} projects usually run {usual} "
+            f"(up to {runs(wanted)} runs a day{cost}).{over}")
+
+
+def tempo_kept(session: Session, project_id: str, cycle: str, tempo: str) -> bool:
+    """Whether a chair has already decided to keep this pace on this rhythm.
+
+    A project's decision, not one reader's tidying: once a chair says "keep",
+    nobody else on the project is asked again. Kept on the audit trail, which
+    is where a decision about the project's pace belongs, and matched on both
+    values so a later change to either is a new question.
+    """
+    kept = session.execute(
+        select(AuditLog).where(AuditLog.project_id == project_id,
+                               AuditLog.action == "tempo.keep")
+        .order_by(AuditLog.at.desc()).limit(1)
+    ).scalar_one_or_none()
+    return bool(kept) and (kept.detail or {}) == {"cycle_frequency": cycle, "tempo": tempo}
+
+
 def health_sig(key: str, detail: str) -> str:
     """A health finding's identity: its kind and its words, numbers masked.
 
     The header badge was lit on every project, every day, by advice the
-    chairman had already read — "founded under an older doctrine" says in its
-    own words that nothing is broken, and it never goes away. Putting one away
+    chairman had already read — advice that says in its own words that
+    nothing is broken, and is still true the next day. Putting one away
     needs a name for it that a count ticking over does not change, and that a
     different finding of the same kind does.
     """

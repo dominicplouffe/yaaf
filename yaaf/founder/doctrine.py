@@ -10,15 +10,21 @@ the chairman was actually watching was founded on 26 August. It received none of
 them, and will run to GW38 — nine months — on the doctrine of that day, unless
 something notices.
 
-This module is that something. The stamp is a **content fingerprint**, not a
+The stamp is that something's record. It is a **content fingerprint**, not a
 version number somebody has to remember to bump: a version number is a promise
-to do a chore later, and the chore is exactly what was skipped six times. Change
-a word of the doctrine and every project founded before that word becomes
-visibly older, with no ceremony.
+to do a chore later, and the chore is exactly what was skipped six times.
 
-It is deliberately not a gate. A project running old doctrine is not broken and
-must not be stopped or silently rewritten mid-season — it is a project whose
-chairman should be told, so he can decide.
+It is not what the chairman reads. A fingerprint moving says the Founder's text
+changed, not that this project is missing anything — the edit that taught the
+Founder to interview in rounds moved it on every project, and none of them can
+be interviewed again. What a running project is owed is each fix that applies
+to it, said about it: no seat to disagree with the plan, a rhythm with no
+standing scope, a pace that does not match the cycle, a role with a newer
+charter. Those are findings on the health card, each with its way out. A
+doctrine change that should reach running projects ships one more of them.
+
+It is deliberately not a gate either. A project set up under older doctrine is
+not broken and must not be stopped or silently rewritten mid-season.
 """
 
 from __future__ import annotations
@@ -106,9 +112,3 @@ def fingerprint() -> str:
         digest.update(name.encode())
         digest.update(text(name).encode())
     return digest.hexdigest()[:12]
-
-
-def is_current(stamp: str | None) -> bool:
-    """An unstamped project is not current: it predates the stamp itself, which
-    is the population this exists to find."""
-    return bool(stamp) and stamp == fingerprint()

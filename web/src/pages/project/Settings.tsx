@@ -1463,6 +1463,63 @@ function AmendmentSave({
   );
 }
 
+interface GoalGrade {
+  elements: { element: string; verdict: "present" | "weak" | "missing"; note: string }[];
+  summary: string;
+  ready: boolean;
+}
+
+/** The goal checked against the goal-writing rules the Founder uses today.
+
+    A project keeps the goal it was founded with, and the rules for writing one
+    have moved since some projects were made. This is the way to find out
+    whether yours is missing something those rules now ask for. It calls a
+    model, so it runs only when pressed, and it changes nothing: what it finds
+    is for the chairman to fix in the goal above, or not. */
+function GoalCheck({ projectId }: { projectId: string }) {
+  const [grade, setGrade] = useState<GoalGrade | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const gaps = (grade?.elements ?? []).filter((e) => e.verdict !== "present");
+  return (
+    <div style={{ marginTop: 14 }}>
+      <button type="button" className="small" disabled={busy} onClick={async () => {
+        setBusy(true); setError(null);
+        try {
+          setGrade(await post<GoalGrade>(`/admin/projects/${projectId}/regrade-goal`, {}));
+        } catch (e) {
+          setError(e instanceof Error ? e.message : String(e));
+        } finally {
+          setBusy(false);
+        }
+      }}>
+        {busy ? "Checking…" : "Check the goal against today's rules"}
+      </button>{" "}
+      <span className="help">One model call. Changes nothing.</span>
+      {error && <div className="error">{error}</div>}
+      {grade && (
+        <div className="help" style={{ marginTop: 8 }}>
+          {gaps.length === 0 ? (
+            <b>Nothing missing. {grade.summary}</b>
+          ) : (
+            <>
+              <b>{grade.summary}</b>
+              <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+                {gaps.map((e) => (
+                  <li key={e.element}>
+                    <b>{e.element.replace(/_/g, " ")}</b>
+                    {e.verdict === "weak" ? " is weak" : " is missing"}: {e.note}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Turn the edited strings back into the types the constitution expects, and
     keep only what actually differs from what is in force. */
 
@@ -2052,6 +2109,7 @@ export default function Settings({
             </button>
           )}
         </div>
+        <GoalCheck projectId={projectId} />
       </div>
 
       </Section>
